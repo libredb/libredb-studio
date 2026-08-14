@@ -1016,14 +1016,13 @@ describe("DataCharts", () => {
       expect(queryByTestId("mock-scatter-chart")).toBeNull();
     });
 
-    test("a specification asking for a series split falls back, because this component draws none", () => {
-      // Rendering it without the split would put the app's frame around a picture
-      // nobody asked for, which is the same failure as the flat zero.
-      const { queryByTestId } = render(
-        React.createElement(DataCharts, { result: fewCategoricalResult, spec: spec({ series: "type" }) }),
-      );
-
-      expect(queryByTestId("mock-pie-chart")).not.toBeNull();
+    test("every column a spec can name is a column this component actually draws", () => {
+      // The guard this replaces dropped any spec carrying `series`, which made the
+      // renderer the last of four layers to disagree about a field the other three
+      // accepted. `series` is gone from the contract, the schema and the type, so
+      // the property no longer exists to be dropped — and the way that stays true is
+      // that a spec's keys are exactly what `AgentChartSpec` declares.
+      expect(Object.keys(spec({}))).toEqual(["type", "x", "y", "caption"]);
     });
 
     test("a specification over a result nothing can chart still shows why it cannot", () => {

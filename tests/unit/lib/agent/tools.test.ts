@@ -24,7 +24,12 @@ import {
   selectAgentTools,
 } from "@/lib/agent/tools";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
-import type { AgentRunEvent, AgentRunRecord, AgentRunWorkflowType } from "@/lib/agent/types";
+import {
+  AGENT_WORKFLOW_PRESENTS_ANSWER,
+  type AgentRunEvent,
+  type AgentRunRecord,
+  type AgentRunWorkflowType,
+} from "@/lib/agent/types";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
@@ -229,6 +234,23 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
       expect(names, sqlAuthoring).not.toContain(sqlAuthoring);
     }
     expect(names).toEqual(["inspect_operations", "recommend_change", "compose_report"]);
+  });
+
+  test("present_answer is offered exactly where AGENT_WORKFLOW_PRESENTS_ANSWER says it is", () => {
+    // The binding that keeps four layers agreeing. The rail offers the auto-execute
+    // checkbox from this record, the route accepts the field from it, and
+    // `investigation.ts` states AUTO_EXECUTE_RULE from it — all three describing a
+    // hand-over that only `present_answer` can perform. A workflow that gained the
+    // tool without the flag would take the setting silently and never offer it;
+    // one that gained the flag without the tool would promise a hand-over it cannot
+    // make. Asserted over EVERY workflow, so neither direction can drift.
+    for (const workflowType of WORKFLOW_TYPES) {
+      const names = selectAgentTools(persisted("agent", workflowType)).map((tool) => tool.name);
+      expect(names.includes("present_answer"), workflowType).toBe(AGENT_WORKFLOW_PRESENTS_ANSWER[workflowType]);
+    }
+    // And the record is not vacuously false everywhere, which would satisfy the loop
+    // above while the feature did not exist.
+    expect(AGENT_WORKFLOW_PRESENTS_ANSWER["data-analysis"]).toBe(true);
   });
 
   test("no workflow but operations is offered the curated reading", () => {
@@ -2567,7 +2589,14 @@ describe("present_answer records which result IS the answer, and how to show it"
     expect(outcome.modelText).toContain("compose_report");
   });
 
-  test("a series column is validated like every other column the spec names", () => {
+  test("a spec asking for a series split is refused at the parser, because nothing draws one", () => {
+    // The contract does not invite `series` and the schema is strict, so a model that
+    // asks for one is told at the door rather than being told nothing. The defect
+    // this replaces was the other shape: the field was invited, validated, recorded
+    // on the ledger and narrated by the rail, and then dropped by `DataCharts` —
+    // which has no series split — so the picture on screen was not the picture the
+    // ledger recorded and nothing said so. Inviting only what the renderer can draw
+    // is the #356 rule applied to a field instead of to a tool.
     const h = harness();
     const events = answered(h);
 
@@ -2578,19 +2607,93 @@ describe("present_answer records which result IS the answer, and how to show it"
         spec: { type: "line", x: "region", y: ["net_total"], series: "region", caption: "by region" },
       },
     });
-    const invented = present(h, events, {
-      artifact: ANSWER_CORRELATION,
-      presentation: {
-        kind: "chart",
-        spec: { type: "line", x: "region", y: ["net_total"], series: "channel", caption: "by channel" },
+
+    if (withSeries.kind !== "unavailable") throw new Error("expected the series spec to be refused");
+    expect(withSeries.reasonCode).toBe("INVALID_TOOL_INPUT");
+    // And the refusal carries the contract, so the model is told what IS accepted.
+    expect(withSeries.modelText).toContain(AGENT_ANSWER_CONTRACT);
+  });
+
+  test("the answer contract invites no series field, and says what to do instead", () => {
+    // The contract is the only thing a model reads before composing a spec, so a
+    // sentence here inviting a field the renderer drops is how the original defect
+    // reached the ledger. What is asserted is the absence of the KEY — the word
+    // itself still appears, in the sentence redirecting the model to several y
+    // columns, which is the redirection that makes the absence actionable rather
+    // than merely silent.
+    expect(AGENT_ANSWER_CONTRACT).not.toContain('"series"');
+    expect(AGENT_ANSWER_CONTRACT).toContain("there is no separate series field");
+  });
+
+  describe("the plan the gate weighs is joined to the answer by what the statement IS", () => {
+    /**
+     * The same statement as `ANSWER_SQL`, formatted the way a model formats an
+     * aggregate it is about to show someone: several lines, and a terminator.
+     *
+     * The two statements this join compares are drafted INDEPENDENTLY — one as
+     * `run_read_query`'s argument, one as `inspect_plan`'s — so this is not a
+     * contrived difference. The join used to be exact string equality and missed it,
+     * resolving to `plan-risky`: fail-closed and safe, but it made the gate inert far
+     * more often than §2.4.0 implies, and a user reads a working gate as broken.
+     */
+    const PLAN_SQL = "select region,\n       sum(net_total) as net_total\nfrom orders\ngroup by region;";
+
+    /** A cheap plan: an index scan under the cost ceiling, so the gate can say yes. */
+    const withCheapPlan = (h: Harness) =>
+      h.artifacts.put(
+        {
+          correlationId: "corr-plan",
+          runId: "run-1",
+          operationId: "sql.explain.estimate",
+          createdAtMs: 1_000,
+          value: queryResult({
+            rows: [{ "QUERY PLAN": [{ Plan: { "Node Type": "Index Scan", "Total Cost": 8, "Plan Rows": 3 } }] }],
+          }),
+        },
+        1_000,
+      );
+
+    const planEvents = (sql: string): AgentRunEvent[] => [
+      { kind: "statement-drafted", atMs: 3, stepId: "step-plan", sql, rationale: "what will this cost" },
+      {
+        kind: "tool-completed",
+        atMs: 4,
+        stepId: "step-plan",
+        artifact: {
+          correlationId: "corr-plan",
+          runId: "run-1",
+          operationId: "sql.explain.estimate",
+          summary: { rowCount: 1, columnNames: ["QUERY PLAN"], elapsedMs: 2 },
+        },
       },
+    ];
+
+    test("a plan of the same statement typed differently is FOUND, and the gate hands over", () => {
+      const h = harness();
+      withCheapPlan(h);
+      const events = [...answered(h), ...planEvents(PLAN_SQL)];
+
+      const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } }, true);
+
+      if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+      expect(outcome.answer.handover).toBe("auto-executed");
+      expect(outcome.answer.handoverWarning).toBeUndefined();
     });
 
-    if (withSeries.kind !== "answered") throw new Error("expected the series spec to be accepted");
-    if (withSeries.answer.presentation.kind !== "chart") throw new Error("expected a chart");
-    expect(withSeries.answer.presentation.spec.series).toBe("region");
-    if (invented.kind !== "unavailable") throw new Error("expected a refusal");
-    expect(invented.reasonCode).toBe("CHART_COLUMN_NOT_IN_RESULT");
+    test("a plan of a DIFFERENT statement is still not found, so the canonical form is not a blur", () => {
+      // The other direction, and the one that matters for safety: literals keep their
+      // exact spelling in the repair ledger's canonical form, so a cheap plan of one
+      // statement cannot license the hand-over of another.
+      const h = harness();
+      withCheapPlan(h);
+      const events = [...answered(h), ...planEvents("SELECT region FROM customers WHERE id = 1")];
+
+      const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } }, true);
+
+      if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+      expect(outcome.answer.handover).toBe("applied");
+      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+    });
   });
 
   test("a table answer needs no chart validation: one row and no numeric column is an answer", () => {

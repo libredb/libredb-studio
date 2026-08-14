@@ -78,8 +78,17 @@ You choose three things before pressing Start, and two of them are controls in t
 | **Agent** | The model is given the read-only tools and investigates: it drafts statements, reads results, and finishes by composing a report whose claims cite what it read. |
 
 **2. The workflow — what the run is for** (`AgentRail.tsx:433-448`, labels at `AgentRail.tsx:94-98`):
-**Investigate**, **Optimize**, **Assess**. Offered in both modes, because "how would you make this
-faster?" is an ordinary thing to ask a plan for.
+**Investigate**, **Optimize**, **Assess**, **Operate**, **Analyze**. Offered in both modes, because
+"how would you make this faster?" is an ordinary thing to ask a plan for.
+
+**Analyze** is the one that answers a question about the *data* rather than about the database:
+"which region brought in the most revenue last quarter", "how many orders shipped but were never
+invoiced", "did signups fall after the pricing change". It finishes by saying which result *is* the
+answer and how it should be shown — as a chart when the result has a category and a number to plot,
+and as a table when it is a single number, a single row, or has no numeric column at all. A table is
+a complete answer there, not a lesser one. It is also the only workflow that offers the auto-execute
+checkbox below, because handing a statement to your editor is part of presenting an answer and the
+other four workflows have no answer to present.
 
 **3. The objective** — the box labelled *"What should the run investigate?"*, placeholder *"Why is
 checkout slow?"*, bounded to 4000 characters (`AGENT_MAX_OBJECTIVE_LENGTH` in
@@ -239,12 +248,21 @@ resolve in what it has read says so in amber rather than looking checked
 
 ## Auto-execute: when the run runs the answer in your editor
 
-A run can be opened with **auto-execute**. It changes one thing and it is worth being exact about
+An **Analyze** run in **Agent** mode can be opened with **auto-execute**. It changes one thing and it
+is worth being exact about
 which: the run's own answer is produced the same way either way — from a result it read on its own
 bounded path, at 200 rows and a 10-second ceiling, with a ledger entry behind it. What the setting
 adds is that the answer's statement is also placed in your editor **and run there**, on your
 connection, at the editor's 500-row limit and with **no time limit**. Writes and DDL are refused
 either way.
+
+**It is offered on Analyze alone, and only in Agent mode.** Auto-execute hands over *the answer*, and
+Analyze is the only workflow that produces one — an Investigate, Optimize, Assess or Operate run
+finishes with a report, not with a statement it is nominating as the answer, so there would be
+nothing to hand over. The checkbox therefore appears only when Analyze and Agent are both selected,
+and it disappears if you switch away; a run started after switching is started without the setting
+rather than with a setting that could not be honoured. (The API refuses `autoExecute: true` on the
+other workflows outright, rather than accepting it and quietly doing nothing.)
 
 **The control is the checkbox above Start**, *"Also run the final answer in my editor"*, with the
 terms under it in the words above: what the run keeps for its own read (200 rows, 10 seconds), what
@@ -371,11 +389,20 @@ the figures stay the run's.
 | **Optimize** | 36 | 30 | 7.5 min | 90 s |
 | **Assess** | 48 | 45 | 10.5 min | 135 s |
 | **Operations** | 20 | 12 | 5.0 min | 60 s |
+| **Analyze** | 60 | 42 | 15.0 min | 180 s |
 
 **These figures are approved and pending live measurement.** They are the starting point a
 measurement confirms or corrects, not numbers read off measured runs. Operations is the small row on
 purpose: it sends no SQL, so it never spends a statement drafting one and never repairs one, and its
-readings come from a closed set of six kinds.
+readings come from a closed set of six kinds. Analyze is the large row for the opposite reason: it
+iterates towards an aggregate rather than repeating a reading, and a `GROUP BY` over a fact table
+costs far more database time than a catalog read.
+
+**If you self-host behind a reverse proxy, Analyze needs a longer read timeout than the default.** A
+15-minute drive holds one streaming response open for its whole life, and nginx's default
+`proxy_read_timeout` is 60 seconds — so a long Analyze run has its stream cut and the rail loses it,
+even though the run itself survives on the server. `docs/AGENT.md` ("Deployment") gives the setting
+for nginx, ingress-nginx and the common PaaS routers.
 
 Before any run is open there is no header to read, and the meter shows the investigation figures —
 the same reading the server takes for a ledger that names no workflow.

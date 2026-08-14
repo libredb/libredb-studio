@@ -179,8 +179,12 @@ export interface AgentChartSpec {
   readonly x: string;
   /** One or more columns of the artifact. Numeric in the delivered rows, or refused. */
   readonly y: readonly [string, ...string[]];
-  /** Optional series split — one column, for the stacked and multi-line shapes. */
-  readonly series?: string;
+  /**
+   * No series split. `DataCharts` has none — several series ARE several `y` columns
+   * there — so a `series` field would be a field the contract invites, the server
+   * validates and the ledger records, and the renderer then silently discards. The
+   * multi-series shapes are reachable by naming several `y` columns instead.
+   */
   /** The model's own words about what the chart shows. Rendered quoted. */
   readonly caption: string;
 }

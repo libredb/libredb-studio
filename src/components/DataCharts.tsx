@@ -111,12 +111,12 @@ interface DataChartsProps {
  * rather than into an error. A specification that does not survive this is dropped,
  * and the inference draws the chart instead.
  *
- * `series` is refused outright: this component has no series split — several series
- * are several y columns — so honouring the rest of a spec that asked for one would
- * draw a different picture from the one that was specified.
+ * There is no series-split case to reject any more. This component draws several
+ * series as several `y` columns and never had another way, so `AgentChartSpec` no
+ * longer carries a `series` field for the contract to invite and this function to
+ * throw away — a disagreement between four layers is now a field that does not exist.
  */
 function specApplies(spec: AgentChartSpec, analysis: DataAnalysis): boolean {
-  if (spec.series !== undefined) return false;
   if (!analysis.fields.some((field) => field.name === spec.x)) return false;
   if (!spec.y.every((column) => analysis.numericFields.includes(column))) return false;
   // Scatter reads both axes as numbers, so a categorical x is the same failure.

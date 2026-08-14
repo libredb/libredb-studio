@@ -187,10 +187,19 @@ export default function Studio() {
   // Artifact hydration (#329 T11). The rail cites what a run stored; showing it puts
   // the rows into the bottom panel that already renders rows, and applying a drafted
   // statement puts it into the editor that already holds statements. There is no
-  // second grid, no second chart component and no second editor, and none of it
-  // happens without a user action. Which surface opens is the hydration's answer, and
-  // it comes from what the run recorded — the operation for a read or a plan, the
-  // composed answer for a chart — never from the shape of the rows.
+  // second grid, no second chart component and no second editor. Which surface opens
+  // is the hydration's answer, and it comes from what the run recorded — the operation
+  // for a read or a plan, the composed answer for a chart — never from the shape of
+  // the rows.
+  //
+  // HYDRATION happens on a user action — a click on a citation. The HAND-OVER below
+  // does not, and this comment used to claim otherwise. The rail's handover effect
+  // calls `onApplyStatement` (for `handover: "applied"`) and `onRunStatement` (for
+  // `"auto-executed"`) from a `useEffect` over ledger entries, so an auto-execute run
+  // writes `currentTab.query` with no click at that moment. The consent was given
+  // once, when the run was opened with the checkbox ticked, and it is the whole of
+  // what makes this acceptable — so anything added here that would lose unsaved
+  // editor content must guard it rather than trusting a click to have happened.
   const agentArtifact = useAgentArtifact({
     explainFormat: metadata?.capabilities.explainFormat,
     onShown: (surface) => queryExec.setBottomPanelMode(surface),

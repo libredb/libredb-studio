@@ -1,5 +1,29 @@
 # The data-analyst face — design and decisions
 
+> ## Status: implemented
+>
+> **This was a proposal and is now built.** The `data-analysis` workflow shipped on branch
+> `feat/agent-data-analysis` (stacked on `feat/agent-operations-workflow`), across the slices
+> `de63e77` → `df0dbd0` and the review-fix commits after them. Sections 1 through 4 describe shipped
+> behaviour; Section 5 and "What is deliberately not in this design" remain unbuilt by intent.
+>
+> **The document has been reconciled with what was actually built**, because a design document the
+> code does not match is the defect class this repository keeps finding. Every place the
+> implementation diverged from the proposal now states what exists, in a `> **Built:**` note beside
+> the proposal it replaces. The divergences, in one list:
+>
+> | Proposed | Built | Why |
+> | --- | --- | --- |
+> | §3.2 `AgentChartSpec.series` — an optional series-split column | **No `series` field at all** | `DataCharts` has no series split; several series are several `y` columns there. The field was invited, validated, recorded and then discarded by the renderer — so it was removed from all four layers rather than implemented in one more. |
+> | §3.3 validation includes `series` in the column check | The check covers `x` and every `y` | Follows from the above. |
+> | §2.6 the checkbox, with no workflow scope stated | Offered on **`data-analysis` in agent mode only**, and `POST /api/agent/runs` refuses `autoExecute: true` anywhere else | Auto-execute hands over `present_answer`'s answer, and that tool is offered to this workflow alone. Rendering it elsewhere promised a hand-over four workflows cannot perform. |
+> | §2.4.0 condition 2 joins the plan to the answer's statement | Joined on `fingerprintStatement`, the repair ledger's canonical form | Exact string equality between two independently drafted statements missed on whitespace, case or a trailing semicolon, which made the gate inert far more often than §2.4.0 implies. |
+> | §1.6 budget figures | Shipped exactly as approved: 60 / 42 / 900 s / 180 s | No divergence — recorded here because these figures are **still pending the live measurement** the owner's decision made a condition of freezing them. |
+>
+> The `operations` assumption below was written when that workflow was an uncommitted local branch.
+> It has since become a real branch and this work is stacked on it, which is why
+> `AgentRunWorkflowType` carries both members and every total `Record` over it decides for both.
+
 A design document, not an implementation plan. It proposes one new agent workflow (`data-analysis`),
 the autonomy control the owner asked for, the chart contract, the verdict rule, and what the run
 would need to understand a business question. Every claim is tied to the code that makes it true, in
@@ -7,8 +31,9 @@ would need to understand a business question. Every claim is tied to the code th
 inference rather than a reading, it says so.
 
 It assumes the DBA-face `operations` workflow lands and follows its patterns. It does not redesign
-it. What that workflow is doing today is a local branch with no commits beyond `main`, so nothing
-here is written against its code — only against the three workflow-shaped seams every workflow uses
+it. What that workflow was doing when this was written is a local branch with no commits beyond
+`main`, so nothing here is written against its code — only against the three workflow-shaped seams
+every workflow uses
 (`WORKFLOW_TOOLS` in `src/lib/agent/tools.ts:443`, `WORKFLOW_OBJECTIVES` / `WORKFLOW_TOOL_RULES` in
 `src/lib/agent/investigation.ts:207,219`, and `AGENT_WORKFLOW_GOALS` in
 `src/lib/agent/goal-verifier.ts:281`).
@@ -542,6 +567,22 @@ Using all three is strictly more conservative than any one of them, which is the
 a control whose failure mode is a stalled production database. The cost is one statement out of the
 run's budget for the `EXPLAIN`, which the per-workflow ceiling in §1.6 must account for.
 
+> **Built: as stated, with the plan joined on the canonical statement rather than the exact one.**
+> Condition 2 needs the plan the run holds *for this statement*, and the first implementation found it
+> by comparing the two statements as strings. Those two statements are drafted **independently** —
+> one as `run_read_query`'s argument, one as `inspect_plan`'s — so a model that formats its aggregate
+> over four lines and then re-emits it on one has written the same statement twice and typed it
+> differently. Exact equality missed those, and the gate resolved to `plan-risky`: fail-closed and
+> therefore safe, but it made the shipped feature inert far more often than this section implies, and
+> a user reads a working gate as a broken one.
+>
+> The join is on `fingerprintStatement` (`src/lib/agent/repair-ledger.ts`) — the repair ledger's own
+> canonical form, reused rather than reinvented. Whitespace, comments, unquoted case and a trailing
+> terminator normalise away; literals and quoted names keep their exact spelling, so a cheap plan of
+> `WHERE id = 1` still cannot license the hand-over of `WHERE id = 2`. Condition 1 is unchanged and
+> stays exact equality, correctly: both of its statements come from the same ledger, so there is no
+> independent drafting to absorb.
+
 #### 2.4.1 Why the analysis preferred the measurement
 
 The question asked whether to gate on `inspect_plan`'s engine estimate. My answer is that the
@@ -645,6 +686,23 @@ limit), it names the bound that remains (500 rows), and it says what the run doe
 declines — so a user who sees the statement sitting unrun in their editor knows that was the
 feature working.
 
+> **Built: the copy as proposed, and a scope this section never stated.** The checkbox is offered on
+> **`data-analysis` in agent mode only.** This section wrote the control's words without saying which
+> runs it belongs to, and the first implementation rendered it for all five workflows in both modes —
+> which is what that omission produces. Ticking it on an Investigate run promised a user the final
+> statement would be placed and run in their editor, a hand-over that workflow has no tool to
+> perform, while the system prompt told the model to call `inspect_plan` "on the statement that IS the
+> answer before you present it", a presentation it had no tool to make.
+>
+> That is §4.3's own check applied to the control rather than to the verdict: auto-execute hands over
+> `present_answer`'s answer, so it means something exactly where `present_answer` is offered. One
+> record, `AGENT_WORKFLOW_PRESENTS_ANSWER` (`src/lib/agent/types.ts`), is read by all four layers that
+> have an opinion — the rail's rendering, the route's validation, `investigation.ts`'s decision to
+> state `AUTO_EXECUTE_RULE`, and the tool set — and `tools.test.ts` asserts over every workflow that
+> the tool and the flag agree. `POST /api/agent/runs` **refuses** `autoExecute: true` elsewhere rather
+> than normalising it to `false`, because a silent downgrade is how a user comes to believe a feature
+> ran.
+
 ---
 
 ## 3. Charts
@@ -693,6 +751,21 @@ interface AgentChartSpec {
 }
 ```
 
+> **Built: without `series`.** The shipped `AgentChartSpec` (`src/lib/types.ts`) is the shape above
+> minus that field. The proposal did not check it against the renderer, and the renderer has no
+> series split — in `DataCharts`, several series *are* several `y` columns. Implemented as proposed,
+> the field was invited by `AGENT_ANSWER_CONTRACT`, accepted by `chartSpecSchema`, checked against the
+> artifact's columns by `refuseChartSpec`, written to the durable ledger and narrated by the rail —
+> and then dropped by `specApplies`, which returned false for any spec carrying it, so the inference
+> drew a different chart. The picture on screen was not the picture the ledger recorded and nothing
+> said so.
+>
+> It was removed from all four layers rather than implemented in the renderer, and the contract now
+> redirects a model that wants several series to name several `y` columns. The rule that decides this
+> is the same one §4.3 applies to the verdict, one level down: **invite only what the layer below can
+> honour.** A field the contract offers and the renderer discards is the #356 shape in a spec instead
+> of in a rule.
+
 Decisions inside that shape:
 
 - **The chart type is chosen by the model, not inferred.** `DataCharts.analyzeData` infers a type
@@ -723,7 +796,7 @@ Four checks, each with its own refusal so the model is told which one it failed:
 
 | Check | Against | Refusal code |
 | --- | --- | --- |
-| `x`, every `y`, and `series` appear in the result's columns | `artifact.summary.columnNames` (`types.ts:166`) | `CHART_COLUMN_NOT_IN_RESULT` |
+| `x` and every `y` appear in the result's columns (**built:** `series` is gone, per §3.2) | `artifact.summary.columnNames` (`types.ts:166`) | `CHART_COLUMN_NOT_IN_RESULT` |
 | Every `y` is numeric in the delivered rows | the stored rows, using the same >80 % rule `DataCharts.tsx:103` uses | `CHART_COLUMN_NOT_NUMERIC` |
 | The result has at least two rows | `artifact.summary.rowCount` | `CHART_TOO_FEW_ROWS` |
 | Shape rule per type — `pie` takes exactly one `y`; `scatter` needs `x` numeric too | the spec and the rows | `CHART_SHAPE_MISMATCH` |
@@ -904,6 +977,24 @@ measuring anything. So the `data-analysis` case needs at least: a run that compo
 column the result does not have (must be refused, and must recover); a run whose result is one row
 (must present a table and be scored `answered`); and a run with auto-execute unticked (must still be
 scored `answered`) — that last one being the direct regression test for §4.3.
+
+> **Built: `tests/evals/data-analysis.test.ts`**, one `describe` block per prerequisite above, plus
+> two additions the writing of them suggested. The chart-refusal block asserts not only that the
+> refusal is produced but that it **carries the result's real column names**, which is the half that
+> makes it recoverable rather than merely correct; the one-row block asserts that a *chart* of that
+> row is actively refused, so a run reaching for one is told why and has somewhere to go; and the
+> auto-execute block drives the same arc twice, differing **only** in the setting, because one run
+> scoring `answered` proves little where two identical runs reaching the same verdict prove the
+> verdict does not read it. `EvalRunOptions.autoExecute` was added to the harness for that pair.
+>
+> One thing those six cases cannot establish, because they drive a scripted model: whether a **live**
+> model can act on the refusal. A model that cannot re-sends a spec, is refused again, and spends the
+> workflow's 60 turns on it. That belongs in `tests/evals/real-model.ts`, which is deliberately not a
+> test file because its verdict is not a function of the code under review, and a `charted-answer`
+> case was added there with a `chartRefusalShortfall` judge: more than two chart refusals in one run
+> is recorded as `chart-refusal-loop`, and a run that was never refused and presented a table anyway
+> for an objective that asked for a chart is recorded as `chart-asked-table-given`. **It has not been
+> run against a live model in this change.**
 
 ---
 

@@ -1936,8 +1936,29 @@ describe("AgentRail", () => {
         },
       })}\n`;
 
-    async function runWith(props: Record<string, unknown>) {
+    /**
+     * The rail with Analyze selected — the only workflow this control is offered on.
+     *
+     * Every test below goes through this rather than through the default
+     * (Investigate) rail, because the control is scoped now: auto-execute is
+     * `present_answer`'s hand-over, and `present_answer` is offered to `data-analysis`
+     * alone. A test that still rendered the default rail would be asserting the
+     * defect this scoping removes.
+     */
+    function analyze(props: Record<string, unknown> = {}) {
       const view = render(<AgentRail {...DEFAULT_PROPS} {...props} />);
+      // Both axes, because the rail opens in PLANNING mode on Investigate and the
+      // control belongs to neither. That the block used to reach the checkbox without
+      // either click is precisely the defect: it rendered in a toolless mode, on a
+      // workflow with no `present_answer`, and offered to run an answer that could
+      // not be composed.
+      fireEvent.click(view.getByTestId("agent-mode-agent"));
+      fireEvent.click(view.getByTestId("agent-workflow-data-analysis"));
+      return view;
+    }
+
+    async function runWith(props: Record<string, unknown>) {
+      const view = analyze(props);
       fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
       await act(async () => {
         fireEvent.click(view.getByTestId("agent-start"));
@@ -1945,8 +1966,50 @@ describe("AgentRail", () => {
       return view;
     }
 
+    test("the control is offered on Analyze alone, and in agent mode alone", () => {
+      // The scoping, asserted over EVERY workflow rather than on a sample: the
+      // checkbox used to render for all five in both modes, so ticking it on an
+      // Investigate run promised a hand-over that workflow has no tool to perform
+      // and had the server tell the model to inspect the plan of an answer it could
+      // not present. That is the #350/#356 shape, and this is the test that keeps it
+      // from returning.
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.click(view.getByTestId("agent-mode-agent"));
+      for (const workflow of ["investigation", "query-optimization", "database-assessment", "operations"]) {
+        fireEvent.click(view.getByTestId(`agent-workflow-${workflow}`));
+        expect(view.queryByTestId("agent-auto-execute"), workflow).toBeNull();
+      }
+      fireEvent.click(view.getByTestId("agent-workflow-data-analysis"));
+      expect(view.queryByTestId("agent-auto-execute")).not.toBeNull();
+
+      // Planning is toolless whatever the run is for, so there is no `present_answer`
+      // in its empty tool set either.
+      fireEvent.click(view.getByTestId("agent-mode-planning"));
+      expect(view.queryByTestId("agent-auto-execute")).toBeNull();
+    });
+
+    test("a setting ticked on Analyze is not sent after a switch to a workflow that cannot honour it", async () => {
+      // The checkbox's own state is not the authority. Hiding the control leaves the
+      // ticked state behind it, and sending that `true` would now be REFUSED by the
+      // route — a failed start rather than the silent no-op the hidden control
+      // implies. Resolved from the same record the control is rendered from.
+      const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+      const view = analyze();
+      fireEvent.click(view.getByTestId("agent-auto-execute"));
+      fireEvent.click(view.getByTestId("agent-workflow-investigation"));
+      expect(view.queryByTestId("agent-auto-execute")).toBeNull();
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+
+      const sent = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      expect(sent.workflowType).toBe("investigation");
+      expect(sent.autoExecute).toBe(false);
+    });
+
     test("the control names the bound it gives up, the one it keeps, and what happens instead", () => {
-      const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+      const { getByTestId } = analyze();
 
       expect(getByTestId("agent-auto-execute-label").textContent).toBe("Also run the final answer in my editor");
       const terms = getByTestId("agent-auto-execute-terms").textContent ?? "";
@@ -1963,19 +2026,19 @@ describe("AgentRail", () => {
     });
 
     test("a SQLite connection is told what a long read there costs; another engine is not", () => {
-      const sqlite = render(<AgentRail {...DEFAULT_PROPS} connectionType="sqlite" />);
+      const sqlite = analyze({ connectionType: "sqlite" });
       expect(sqlite.getByTestId("agent-auto-execute-sqlite").textContent).toBe(
         "On SQLite a read is not interrupted when it runs long: it blocks other writers and this application until it finishes.",
       );
       cleanup();
 
-      const postgres = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" />);
+      const postgres = analyze({ connectionType: "postgres" });
       expect(postgres.queryByTestId("agent-auto-execute-sqlite")).toBeNull();
     });
 
     test("the setting is sent at start, and off is sent as off", async () => {
       const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
-      const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+      const { getByTestId } = analyze();
 
       fireEvent.change(getByTestId("agent-objective"), { target: { value: "sales by region" } });
       await act(async () => {
@@ -1985,7 +2048,7 @@ describe("AgentRail", () => {
 
       cleanup();
       const ticked = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
-      const second = render(<AgentRail {...DEFAULT_PROPS} />);
+      const second = analyze();
       fireEvent.click(second.getByTestId("agent-auto-execute"));
       fireEvent.change(second.getByTestId("agent-objective"), { target: { value: "sales by region" } });
       await act(async () => {

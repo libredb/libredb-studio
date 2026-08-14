@@ -11,7 +11,13 @@ import {
   AGENT_REPORT_RESERVE_TURNS,
   AGENT_WORKFLOW_BUDGETS,
 } from "@/lib/agent/execution-policy";
-import type { AgentChartSpec, AgentRunMode, AgentRunStatus, AgentRunWorkflowType } from "@/lib/agent/types";
+import {
+  AGENT_WORKFLOW_PRESENTS_ANSWER,
+  type AgentChartSpec,
+  type AgentRunMode,
+  type AgentRunStatus,
+  type AgentRunWorkflowType,
+} from "@/lib/agent/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { DatabaseType } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -375,7 +381,14 @@ export function AgentRail({
     // Both axes, always. They are independent (#325): a planning run of a query
     // optimization is an ordinary thing to ask for, and sending the workflow only in
     // agent mode made the rail unable to express one.
-    void run.start({ mode, workflowType, autoExecute, objective: objective.trim(), connectionId });
+    // The setting is sent only where it can be honoured, and the checkbox's own
+    // state is not the authority: a user who ticks it on Analyze and then switches to
+    // Investigate would otherwise send `true` on a run that cannot present an answer,
+    // which the route now refuses outright — a rejected start rather than the silent
+    // no-op the hidden control implies. Resolved from the same record the control is
+    // rendered from, so what is offered and what is sent are one decision.
+    const handsOver = mode === "agent" && autoExecute && AGENT_WORKFLOW_PRESENTS_ANSWER[workflowType];
+    void run.start({ mode, workflowType, autoExecute: handsOver, objective: objective.trim(), connectionId });
   };
 
   /**
@@ -612,43 +625,54 @@ export function AgentRail({
           editor's — so a ceiling changed in one place cannot leave a promise here
           that nothing keeps.
         */}
-        <div className="mt-2">
-          <label htmlFor="agent-auto-execute" className="flex items-start gap-2 cursor-pointer">
-            <input
-              id="agent-auto-execute"
-              data-testid="agent-auto-execute"
-              type="checkbox"
-              checked={autoExecute}
-              disabled={runOpen}
-              onChange={(e) => setAutoExecute(e.target.checked)}
-              className="mt-0.5 rounded border-white/20 bg-zinc-900/50 disabled:opacity-40"
-            />
-            <span data-testid="agent-auto-execute-label" className="text-xs text-zinc-300">
-              Also run the final answer in my editor
-            </span>
-          </label>
-          <p data-testid="agent-auto-execute-terms" className="mt-1 text-[0.625rem] text-zinc-500">
-            {autoExecuteTerms}
-          </p>
-          {/*
+        {/*
+          Offered ONLY where the run could hand something over: agent mode, and a
+          workflow that is offered `present_answer`. It used to render for all five
+          workflows in both modes, which promised a hand-over four of them have no
+          tool to perform and had the server tell those models to inspect the plan of
+          an answer they could not present. `AGENT_WORKFLOW_PRESENTS_ANSWER` is the
+          same record the route validates against and `investigation.ts` states the
+          rule from, so the control, the request and the prompt cannot disagree.
+        */}
+        {mode === "agent" && AGENT_WORKFLOW_PRESENTS_ANSWER[workflowType] && (
+          <div className="mt-2">
+            <label htmlFor="agent-auto-execute" className="flex items-start gap-2 cursor-pointer">
+              <input
+                id="agent-auto-execute"
+                data-testid="agent-auto-execute"
+                type="checkbox"
+                checked={autoExecute}
+                disabled={runOpen}
+                onChange={(e) => setAutoExecute(e.target.checked)}
+                className="mt-0.5 rounded border-white/20 bg-zinc-900/50 disabled:opacity-40"
+              />
+              <span data-testid="agent-auto-execute-label" className="text-xs text-zinc-300">
+                Also run the final answer in my editor
+              </span>
+            </label>
+            <p data-testid="agent-auto-execute-terms" className="mt-1 text-[0.625rem] text-zinc-500">
+              {autoExecuteTerms}
+            </p>
+            {/*
             One more sentence where the engine changes what a long read costs, in the
             words the budget meter already uses for the same fact: SQLite does not
             preempt a statement over its timeout, so the editor's missing time limit
             is a different promise there than it is on PostgreSQL.
           */}
-          {connectionType === "sqlite" && (
-            <p data-testid="agent-auto-execute-sqlite" className="mt-1 text-[0.625rem] text-amber-400/70">
-              On SQLite a read is not interrupted when it runs long: it blocks other writers and this application until
-              it finishes.
-            </p>
-          )}
-          {runOpen && (
-            <p data-testid="agent-auto-execute-frozen" className="mt-1 text-[0.625rem] text-zinc-600">
-              This is decided when the run is opened and stays what it was: a later request cannot widen a run the
-              server already holds.
-            </p>
-          )}
-        </div>
+            {connectionType === "sqlite" && (
+              <p data-testid="agent-auto-execute-sqlite" className="mt-1 text-[0.625rem] text-amber-400/70">
+                On SQLite a read is not interrupted when it runs long: it blocks other writers and this application
+                until it finishes.
+              </p>
+            )}
+            {runOpen && (
+              <p data-testid="agent-auto-execute-frozen" className="mt-1 text-[0.625rem] text-zinc-600">
+                This is decided when the run is opened and stays what it was: a later request cannot widen a run the
+                server already holds.
+              </p>
+            )}
+          </div>
+        )}
 
         {connectionId === null && (
           <p data-testid="agent-unresolvable-connection" className="mt-2 text-xs text-amber-400/80">

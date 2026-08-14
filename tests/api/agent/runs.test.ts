@@ -293,18 +293,55 @@ describe("POST /api/agent/runs", () => {
   });
 
   test("auto-execute is persisted when asked for, and the response echoes what was PERSISTED", async () => {
-    const res = await POST(startRequest({ ...VALID_BODY, autoExecute: true }));
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "data-analysis", autoExecute: true }));
     const body = await parseResponseJSON<{ autoExecute: boolean }>(res);
 
     expect(res.status).toBe(202);
     expect(body.autoExecute).toBe(true);
     expect(mockStart).toHaveBeenCalledWith({
       mode: "agent",
+      workflowType: "data-analysis",
       autoExecute: true,
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
       objective: "why is checkout slow",
     });
+  });
+
+  test("auto-execute is refused on every workflow that cannot present an answer", async () => {
+    // The hand-over IS `present_answer`'s, and that tool is offered to `data-analysis`
+    // alone. Accepting the field elsewhere would persist a run record claiming a
+    // hand-over nothing could perform and would have the system prompt tell the model
+    // to inspect the plan of a presentation it has no tool to make — the #350/#356
+    // shape. Refused rather than normalised to `false`, because a silent downgrade is
+    // how a user comes to believe a feature ran.
+    for (const workflowType of ["investigation", "query-optimization", "database-assessment", "operations"]) {
+      const res = await POST(startRequest({ ...VALID_BODY, workflowType, autoExecute: true }));
+      expect(res.status, workflowType).toBe(400);
+      const body = await parseResponseJSON<{ error: string }>(res);
+      expect(body.error, workflowType).toContain("data-analysis");
+    }
+    // Absent workflow means an investigation, which is one of the four above — so the
+    // default must be refused too rather than slipping past the named cases.
+    expect((await POST(startRequest({ ...VALID_BODY, autoExecute: true }))).status).toBe(400);
+  });
+
+  test("auto-execute is refused in planning mode, which is offered no tools at all", async () => {
+    const res = await POST(
+      startRequest({ ...VALID_BODY, mode: "planning", workflowType: "data-analysis", autoExecute: true }),
+    );
+
+    expect(res.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(res)).error).toContain("agent mode");
+  });
+
+  test("auto-execute false is accepted anywhere, because it asks for nothing", async () => {
+    // Only `true` claims a hand-over. An explicit `false` is a client saying the
+    // setting is off, which every workflow can honour.
+    for (const workflowType of ["investigation", "operations", "data-analysis"]) {
+      const res = await POST(startRequest({ ...VALID_BODY, workflowType, autoExecute: false }));
+      expect(res.status, workflowType).toBe(202);
+    }
   });
 
   test("a body that names no auto-execute reaches the service without the field at all", async () => {

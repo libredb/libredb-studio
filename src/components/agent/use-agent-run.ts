@@ -310,8 +310,12 @@ export function useAgentRun(): AgentRunFollower {
     Memoised on the entries alone, which is the whole of the fold's input. Without
     it the fold re-walked the entire accumulated ledger on every render of the rail
     rather than on every new event — a multiplier that cost nothing while a run was
-    sixteen turns and is worth removing now that a drive may take forty-eight and
-    spend forty-five statements. What it does not remove is the fold's O(n) work per
+    sixteen turns and is worth removing now that a drive may take sixty turns and
+    spend forty-two statements — `data-analysis`, which is the largest row in
+    `AGENT_WORKFLOW_BUDGETS` and the one to size this against. (It was written
+    against `database-assessment`'s forty-eight and forty-five, which understated the
+    ceiling by a quarter the moment the analysis row landed.) What it does not remove
+    is the fold's O(n) work per
     new entry, which is O(n squared) over a run's life; that is measured as fine at
     these sizes and is not optimised on a list nobody has seen be slow.
   */

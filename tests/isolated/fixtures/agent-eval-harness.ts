@@ -267,6 +267,13 @@ export interface EvalRunOptions {
   readonly workflowType?: AgentRunWorkflowType;
   readonly objective?: string;
   readonly actor?: AgentRunActor;
+  /**
+   * Whether the run may also hand its answer to the editor. Defaults to off, as the
+   * store does — which is the setting §4.4's third case is about: a run with this
+   * unticked must still score `answered`, because the verdict asks what the run
+   * PRODUCED and the hand-over is only where that answer was delivered.
+   */
+  readonly autoExecute?: boolean;
   /** What the scripted engine answers a MODEL statement with. Catalog reads are served by the preset. */
   readonly answer?: (sql: string) => Promise<QueryResult>;
   /**
@@ -347,6 +354,7 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
   const record = await opened.service.start({
     mode,
     ...(options.workflowType === undefined ? {} : { workflowType: options.workflowType }),
+    ...(options.autoExecute === undefined ? {} : { autoExecute: options.autoExecute }),
     actor,
     connectionId: engine.connection.id,
     objective,

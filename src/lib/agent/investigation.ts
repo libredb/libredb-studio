@@ -82,13 +82,14 @@ import {
   runReadQueryTool,
   selectAgentTools,
 } from "./tools";
-import type {
-  AgentContextSnapshot,
-  AgentRunEvent,
-  AgentRunRecord,
-  AgentRunStopReason,
-  AgentRunTerminalStatus,
-  AgentRunWorkflowType,
+import {
+  AGENT_WORKFLOW_PRESENTS_ANSWER,
+  type AgentContextSnapshot,
+  type AgentRunEvent,
+  type AgentRunRecord,
+  type AgentRunStopReason,
+  type AgentRunTerminalStatus,
+  type AgentRunWorkflowType,
 } from "./types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END, fenceUntrustedContent } from "./untrusted-content";
 
@@ -345,10 +346,17 @@ const AUTO_EXECUTE_RULE = [
 
 function systemPrompt(record: AgentRunRecord): string {
   const rules = record.mode === "agent" ? `${AGENT_RULES} ${WORKFLOW_TOOL_RULES[record.workflowType]}` : PLANNING_RULES;
-  // Said only where it can happen. A planning run has no tools and a run opened
-  // without the setting hands nothing anywhere, so telling either would be a rule
-  // about something that cannot occur.
-  const handover = record.mode === "agent" && record.autoExecute ? ` ${AUTO_EXECUTE_RULE}` : "";
+  // Said only where it can happen, on all THREE counts. A planning run has no tools;
+  // a run opened without the setting hands nothing anywhere; and a workflow that is
+  // not offered `present_answer` has no way to make the presentation this rule is
+  // about — it would be told to call `inspect_plan` "on the statement that IS the
+  // answer before you present it" and then have no tool with which to present one.
+  // The third check is the #350/#356 rule: never state a rule to a model whose tool
+  // set cannot satisfy it. `AGENT_WORKFLOW_PRESENTS_ANSWER` is the same record the
+  // rail and the route read, so the setting cannot be offered where it is unsaid.
+  const canHandOver =
+    record.mode === "agent" && record.autoExecute && AGENT_WORKFLOW_PRESENTS_ANSWER[record.workflowType];
+  const handover = canHandOver ? ` ${AUTO_EXECUTE_RULE}` : "";
   return `You are the LibreDB Studio database investigator. ${rules}${handover} ${WORKFLOW_OBJECTIVES[record.workflowType]} ${SHARED_RULES}`;
 }
 

@@ -90,6 +90,38 @@ export type AgentRunWorkflowType =
  */
 export const DEFAULT_AGENT_WORKFLOW_TYPE: AgentRunWorkflowType = "investigation";
 
+/**
+ * Which workflows can hand a user an answer — and therefore which ones auto-execute
+ * is a meaningful setting for.
+ *
+ * ONE fact, read by four layers that would otherwise each decide for themselves: the
+ * rail decides whether to offer the checkbox, `POST /api/agent/runs` decides whether
+ * to accept the field, `investigation.ts` decides whether to state
+ * `AUTO_EXECUTE_RULE` to the model, and `tools.ts` decides whether to offer
+ * `present_answer` at all. It lives HERE rather than in `tools.ts` because the rail
+ * is a client component and `tools.ts` is the server's database seam; a total record
+ * of booleans is the part both sides can hold.
+ *
+ * The binding to the tool set is not left to prose. `tools.test.ts` asserts, over
+ * every workflow, that `selectAgentTools` offers `present_answer` exactly when this
+ * record says true — so a workflow that gains the tool without gaining the flag, or
+ * the reverse, fails rather than shipping the mismatch.
+ *
+ * The mismatch is worth naming because it shipped once: the checkbox rendered for
+ * every workflow while `present_answer` was offered to one, so ticking it on an
+ * Investigate run promised the user a hand-over that could not happen and told the
+ * model to `inspect_plan` before a presentation it had no tool to make. That is the
+ * #350/#356 shape — a rule stated to a model whose tool set cannot satisfy it — and
+ * a total record is what stops it recurring silently.
+ */
+export const AGENT_WORKFLOW_PRESENTS_ANSWER: Readonly<Record<AgentRunWorkflowType, boolean>> = Object.freeze({
+  investigation: false,
+  "query-optimization": false,
+  "database-assessment": false,
+  operations: false,
+  "data-analysis": true,
+} satisfies Record<AgentRunWorkflowType, boolean>);
+
 /** A run that has stopped, and why. Terminal states are never re-entered. */
 export type AgentRunTerminalStatus = "succeeded" | "failed" | "cancelled";
 

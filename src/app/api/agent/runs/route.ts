@@ -3,7 +3,12 @@ import { admitAgentModel } from "@/lib/agent/capability-gate";
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
 import { AGENT_MAX_OBJECTIVE_LENGTH } from "@/lib/agent/execution-policy";
 import { driveAgentRun, getAgentRunService } from "@/lib/agent/runtime";
-import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
+import {
+  AGENT_WORKFLOW_PRESENTS_ANSWER,
+  DEFAULT_AGENT_WORKFLOW_TYPE,
+  type AgentRunMode,
+  type AgentRunWorkflowType,
+} from "@/lib/agent/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { guardRoute } from "@/lib/api/require-session";
 import { logger } from "@/lib/logger";
@@ -99,6 +104,28 @@ export async function POST(req: Request) {
     // statement nobody agreed to run.
     if (autoExecute !== undefined && typeof autoExecute !== "boolean") {
       return badRequest("autoExecute must be a boolean");
+    }
+    // The setting only means something where the run can present an answer, because
+    // the hand-over IS `present_answer`'s. Accepting it elsewhere would persist a run
+    // record claiming a hand-over that nothing could ever perform, and would have the
+    // system prompt tell the model to inspect the plan of a presentation it has no
+    // tool to make. Refused rather than quietly normalised to `false`: a caller that
+    // asked for this got a run that will not do it, and a silent downgrade is how a
+    // user comes to believe a feature ran.
+    const requestedWorkflow = (workflowType ?? DEFAULT_AGENT_WORKFLOW_TYPE) as AgentRunWorkflowType;
+    if (autoExecute === true && !AGENT_WORKFLOW_PRESENTS_ANSWER[requestedWorkflow]) {
+      return badRequest(
+        `autoExecute is only available on workflows that present an answer: ${Object.keys(
+          AGENT_WORKFLOW_PRESENTS_ANSWER,
+        )
+          .filter((candidate) => AGENT_WORKFLOW_PRESENTS_ANSWER[candidate as AgentRunWorkflowType])
+          .join(", ")}`,
+      );
+    }
+    // Planning is toolless whatever the run is for, so the same argument applies to
+    // it in full: there is no `present_answer` in an empty tool set.
+    if (autoExecute === true && mode !== "agent") {
+      return badRequest("autoExecute is only available in agent mode: a planning run is offered no tools");
     }
     if (typeof objective !== "string" || objective.trim().length === 0) {
       return badRequest("objective must be a non-empty string");

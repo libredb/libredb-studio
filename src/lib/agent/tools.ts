@@ -438,7 +438,6 @@ const chartSpecSchema = z.strictObject({
   type: z.enum(CHART_TYPE_NAMES),
   x: z.string().min(1),
   y: z.array(z.string().min(1)).min(1),
-  series: z.string().min(1).optional(),
   caption: z.string().min(1),
 });
 
@@ -487,7 +486,7 @@ export const AGENT_ANSWER_CONTRACT = [
       caption: "<what the chart shows, in your own words>",
     },
   })} for a chart.`,
-  `"type" is one of: ${CHART_TYPE_NAMES.join(", ")}. Add "series" only to split the values into series.`,
+  `"type" is one of: ${CHART_TYPE_NAMES.join(", ")}. For several series, name several y columns: there is no separate series field.`,
   "Every column a chart names must be a column of THAT result, spelled as the result spells it, and every y column must hold numbers.",
   "A chart needs at least two rows; a pie takes exactly one y; a scatter needs a numeric x as well.",
   "Present a table when the result is a single number, has one row, or has no numeric column: that is a complete answer, not a lesser one.",
@@ -2093,7 +2092,7 @@ function refuseChartSpec(
   spec: AgentChartSpec,
 ): (AgentAnswerOutcome & { kind: "unavailable" }) | null {
   const columns = new Set(artifact.summary.columnNames);
-  const named = [spec.x, ...spec.y, ...(spec.series === undefined ? [] : [spec.series])];
+  const named = [spec.x, ...spec.y];
   if (named.some((column) => !columns.has(column))) return chartColumnRefusal(artifact);
   if (artifact.summary.rowCount < 2) return unavailable("CHART_TOO_FEW_ROWS");
   if (spec.type === "pie" && spec.y.length !== 1) return unavailable("CHART_SHAPE_MISMATCH");
@@ -2151,8 +2150,22 @@ function executedStatements(events: readonly AgentRunEvent[]): readonly string[]
  */
 function heldPlanFor(context: AgentToolContext, events: readonly AgentRunEvent[], sql: string): AgentPlanSide | null {
   const plans = estimatedPlansOf(events);
+  // Joined on the canonical form, not on the exact characters. The two statements
+  // being compared were drafted INDEPENDENTLY — one as `run_read_query`'s argument
+  // and one as `inspect_plan`'s — so a model that formats its aggregate over four
+  // lines and then re-emits it on one has written the same statement twice and typed
+  // it differently. Exact equality missed those, and the gate then resolved to
+  // `plan-risky`: fail-closed and safe, but it made the feature inert far more often
+  // than §2.4.0 implies, and a user reads a working gate as a broken one.
+  //
+  // `fingerprintStatement` is the repair ledger's own canonical form rather than a
+  // second normalisation invented here, which matters in both directions: whitespace,
+  // comments, unquoted case and a trailing terminator normalise away, while literals
+  // and quoted names keep their exact spelling — so this cannot join a plan of
+  // `WHERE id = 1` to an answer of `WHERE id = 2`.
+  const wanted = fingerprintStatement(sql);
   for (const [correlationId, plan] of plans) {
-    if (plan.sql !== sql) continue;
+    if (fingerprintStatement(plan.sql) !== wanted) continue;
     const side = readPlanSide(context, plans, correlationId);
     if (typeof side !== "string") return side;
   }
@@ -2245,7 +2258,6 @@ export function presentAnswerTool(
       // The tuple cast is carried by the schema's `.min(1)`, which the type system
       // cannot see; an unreachable emptiness guard would be a line no test can cover.
       y: shown.spec.y as [string, ...string[]],
-      ...(shown.spec.series === undefined ? {} : { series: shown.spec.series }),
       caption: shown.spec.caption,
     };
     const refusal = refuseChartSpec(context, artifact, spec);

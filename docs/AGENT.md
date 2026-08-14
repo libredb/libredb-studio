@@ -155,7 +155,7 @@ tool-selection function is re-checked at the execution seam, so a caller holding
 still cannot execute a tool the selector would never have offered.
 
 The **workflow type** is WHAT the run is for — `investigation` (the default),
-`query-optimization`, `database-assessment` or `operations` — and it is fixed at start for the same reason and by
+`query-optimization`, `database-assessment`, `operations` or `data-analysis` — and it is fixed at start for the same reason and by
 the same mechanism. Both `selectAgentTools` and `verifyRunGoal` are functions of the run's own
 persisted value, so there is no parameter through which a workflow could arrive twice, and no other
 route accepts one. It is **optional in the request body**: omitting it opens an investigation, which
@@ -541,6 +541,42 @@ scalars — no `sql` key exists on it at all. The honest edge: `SlowQueryStats.q
 redacted without answering a different question, so it is declared here — and an operator who does not
 want it can deny this one operation id in the audit stream without denying any other agent read.
 
+### The data-analysis template
+
+A run opened as `data-analysis` answers a **question about the data itself** — "which region brought
+in the most revenue last quarter", "how many orders have shipped but never been invoiced", "did
+signups fall after the pricing change" — rather than a question about the database's shape or its
+health. It is the only workflow whose bar asks the run to say *which result is the answer*, and the
+only one that can.
+
+| Offered | Not offered |
+| --- | --- |
+| The read class (`inspect_schema`, `run_read_query`, `inspect_plan`, `compose_report`), plus `profile_table` and `present_answer` | `compare_plans`, `recommend_change`, `inspect_operations` |
+
+**`present_answer` is the tool that makes it a workflow rather than an investigation with a different
+name.** Its verdict, `agent-data-analysis.1`, is the investigation baseline **and** an `answer-composed`
+entry; a run that reports its findings and produces nothing to show for them has answered a question
+about the data with prose alone.
+
+**`profile_table` is borrowed from the assessment template rather than duplicated,** and for a reason
+specific to this workflow: the schema carries no row counts, so a 400 M-row fact table and a 12-row
+lookup table are indistinguishable in the inventory, and a `shipped_at` that is 80% null next to a
+`placed_at` that is fully populated says which date column the business actually fills. Basic depth
+answers both, costs one statement per table, and reads no value out of any column — which is what
+makes pointing it at a table of personal data acceptable at all.
+
+**It gets `medium` ER detail** — the columns that join, not every key's indexes. Joining a fact table
+to the dimension a question groups by is a question about *which* columns join, which is the
+optimization's need; how each key is indexed is what an assessment asks and an analysis never does.
+
+**It carries the largest budget row** (60 turns, 42 statements, 900 s, 180 s of database time) because
+its shape is iterative rather than repetitive: a handful of exploratory reads to find the fact table,
+several attempts at getting one aggregate right, then a comparison window or two. See
+[What bounds a run](#what-bounds-a-run) for what each figure buys, and
+[Deployment](#deployment) for the reverse-proxy timeout its 900 s deadline requires.
+
+Auto-execute (below) is offered on this workflow alone.
+
 ### Presenting an answer
 
 `present_answer` records the one thing a ledger otherwise cannot express: **which result IS the
@@ -548,10 +584,20 @@ answer, and how it should be shown.** The read itself is already on the ledger �
 before it, `tool-completed` after — but "this result is the answer, and it should be drawn as a bar
 chart of region against net_total" is a decision, and it gets its own event, `answer-composed`.
 
-**The tool exists and no workflow is offered it yet.** `AGENT_TOOL_DEFINITIONS` carries it and no
-`WORKFLOW_TOOLS` set names it, so a run that calls it is told there is no such tool. That is a
-decision recorded in the one place a tool set is decided, not an oversight: the workflow that asks a
-run for an answer arrives separately, and the tool is ready for it.
+**One workflow is offered it: `data-analysis`.** `DATA_ANALYSIS_TOOLS` names it and no other
+`WORKFLOW_TOOLS` set does, so an investigation or an assessment that calls it is told there is no
+such tool. That is the axis made load-bearing rather than an omission: `data-analysis` is the only
+workflow whose verdict (`agent-data-analysis.1`) requires an answer, so it is the only one that can
+produce one, and offering the tool to a run whose bar never asks for it would only distract it.
+
+The same record decides three other things, so they cannot disagree with the tool set:
+`AGENT_WORKFLOW_PRESENTS_ANSWER` (`src/lib/agent/types.ts`) is what the rail reads to decide whether
+to offer the auto-execute checkbox, what `POST /api/agent/runs` reads to decide whether to accept an
+`autoExecute` field at all, and what `investigation.ts` reads to decide whether to state
+`AUTO_EXECUTE_RULE` to the model. `tests/unit/lib/agent/tools.test.ts` asserts over every workflow
+that `selectAgentTools` offers `present_answer` exactly when that record says true — because a
+workflow with the flag and no tool would promise a hand-over it cannot perform, and one with the tool
+and no flag would take the setting and silently never offer it.
 
 | Field | Where it comes from |
 | --- | --- |
@@ -562,13 +608,22 @@ run for an answer arrives separately, and the tool is ready for it.
 | `handoverWarning` | The gate, when it declined. Present exactly when `handover` is `applied`. |
 
 **A chart spec is a specification, never a picture**: a type from a closed list
-(`bar`, `line`, `area`, `pie`, `scatter`, `stacked-bar`), an `x`, a non-empty `y`, an optional
-`series`, and a `caption` that is the model's own prose and is rendered quoted. No colours, no title,
+(`bar`, `line`, `area`, `pie`, `scatter`, `stacked-bar`), an `x`, a non-empty `y`,
+and a `caption` that is the model's own prose and is rendered quoted. No colours, no title,
 no size, no aggregation — presentation belongs to the app, and an aggregation here would be a second
 aggregation nothing recorded. `histogram` is deliberately absent although `DataCharts` offers it: it
 bins raw values in the browser, so the picture would show something the artifact does not contain. A
 bucketing wanted is a bucketing the SQL should do, and then it is a bar chart of an aggregate the run
 can cite.
+
+**There is no `series` field, and its absence has a history worth keeping.** One was invited by the
+contract, accepted by `chartSpecSchema`, checked against the artifact's columns, written to the
+durable ledger and narrated by the rail — and then discarded by `DataCharts`, which has no series
+split and never had one (several series ARE several `y` columns there). So the picture on screen was
+not the picture the ledger recorded, and nothing said so. The field is gone from all four layers
+rather than implemented in the renderer, and the contract now redirects a model that wants several
+series to name several `y` columns. Inviting only what the renderer can draw is the same rule as
+never stating a rule a model's tool set cannot satisfy, one level down.
 
 **Why the spec is validated rather than trusted:** `DataCharts` renders a value it cannot parse as
 `Number(value) || 0`. A chart over the wrong column does not fail and does not render blank — it
@@ -612,6 +667,23 @@ this runtime owns.
 `workflowType`, and for the same two reasons: a resumed drive must behave like the drive that died,
 and no later request may widen a run once it is open. `POST /api/agent/runs` is the only place it is
 decided — absent means `false`, and a value that is not a boolean is refused rather than coerced.
+
+**It is offered on `data-analysis` in agent mode and nowhere else,** because the hand-over is
+`present_answer`'s and that tool is offered to that workflow alone. The rail renders the checkbox
+only there, the route **refuses** `autoExecute: true` on any other workflow or in planning mode
+rather than normalising it to `false`, and `investigation.ts` states `AUTO_EXECUTE_RULE` to the model
+only when the same record says the run can present an answer. All four read
+`AGENT_WORKFLOW_PRESENTS_ANSWER`.
+
+This is worth stating because the first version got it wrong in an instructive way: the checkbox
+rendered for every workflow in both modes. Ticking it on an Investigate run promised a user that the
+final statement would be placed and run in their editor — a hand-over that workflow has no tool to
+perform — while the system prompt told the model to "call `inspect_plan` on the statement that IS the
+answer before you present it", a presentation it had no tool to make, and on `operations` a tool the
+run is not even offered. That is the #350/#356 shape exactly: a rule stated to a model whose tool set
+cannot satisfy it. A refusal rather than a silent downgrade is the second half of the fix — a caller
+that asked for a hand-over and got a run that will not do it should be told, because a silent
+downgrade is how a user comes to believe a feature ran.
 
 **The gate is three conditions, all of which must hold** (`src/lib/agent/auto-execute.ts`, a pure
 function enumerated over all eight combinations by its test):
@@ -739,12 +811,25 @@ workflow type is decided once when the run opens and read from the ledger therea
 | `query-optimization` | 36 | 30 | 450 s | 90 s | `agent-read-only.query-optimization.1` |
 | `database-assessment` | 48 | 45 | 630 s | 135 s | `agent-read-only.database-assessment.1` |
 | `operations` | 20 | 12 | 300 s | 60 s | `agent-read-only.operations.1` |
+| `data-analysis` | 60 | 42 | 900 s | 180 s | `agent-read-only.data-analysis.1` |
 
 **These figures are approved and pending live measurement.** They were approved on 2026-08-14 as the
 starting point a measurement then confirms or corrects; no run has been measured against them yet.
 `operations` is lower than the analytical rows on purpose: it sends no SQL, so it never drafts a
 statement, never repairs one and never iterates towards an aggregate that came out wrong — and its
 reads come from a closed set of six curated kinds, so twelve statements is every kind twice.
+
+`data-analysis` is the largest row, and every one of its four figures is bought rather than
+inherited. An analytical run's shape is a handful of exploratory reads to find the fact table,
+several attempts at getting one aggregate right — which is where the repair budget goes — and then
+one or two comparison windows: it needs room to ITERATE where an assessment needs room to repeat.
+Its database time is the ceiling most likely to bind first, because a `GROUP BY` over a fact table is
+not a catalog read, and 900 s is what makes 60 turns reachable rather than decorative (900 s − 180 s
+of database time is 720 s of model time, which is 60 turns at the slow end of this workload's
+latency). **A 900 s run outlives the default idle timeout of most reverse proxies** — nginx's
+`proxy_read_timeout` is 60 s — so a deployment in front of a container must raise its own timeout to
+at least the longest deadline it wants to serve, and there is no re-attach path for a stream cut
+mid-run (B9).
 
 **What every row shares:**
 
@@ -935,6 +1020,23 @@ build until somebody decides what "answered" means for it.
 | `agent` (query-optimization) | The baseline above, **and** either a plan comparison on the ledger or an index recommendation citing a plan this run read. `agent-query-optimization.2`. | the above, plus `no-plan-comparison`, `no-plan-evidence` |
 | `agent` (database-assessment) | The baseline above, **and** a table profiled. `agent-database-assessment.1`. | the above, plus `no-table-profile` |
 | `agent` (operations) | A report citing at least one operational reading this run took. `agent-operations.1`. **Not** composed on the baseline: an empty reading is an answer, so the emptiness clause is dropped. | `no-report`, `no-operations-reading`, `cancelled` |
+| `agent` (data-analysis) | The baseline above, **and** an `answer-composed` entry: which result IS the answer, and how to show it. `agent-data-analysis.1`. | the above, plus `no-answer` |
+
+**Why `agent-data-analysis.1` asks for an artifact rather than for a picture.** Every valid answer
+this workflow can give produces an `answer-composed` entry: a chart of an aggregate, a table for a
+one-row or non-numeric result, a single number as a one-row table, and a two-window comparison are
+all one artifact presented one way. A rule that required a *chart* would have been stated in terms of
+an artifact only some of the valid answers can produce — and an earlier draft made the verdict depend
+on the editor hand-over instead, which would have scored a run `unanswered` for having a checkbox
+switched off. Both are the #356 shape, and the rule was changed before any of it was written.
+`tests/evals/data-analysis.test.ts` drives the one-row case and the auto-execute-off case directly,
+because a requirement about what a run produces is enforced only by something that runs one.
+
+Its stated blind spot: a run that answers purely from the schema snapshot — "which table holds
+sales?" — cites the snapshot, passes the baseline, has no artifact to present, and is scored
+`unanswered`. That is deliberate. This workflow's objective is a question about the DATA, and an
+analysis that read none is not an analysis; the remedy for a schema question is to route it to
+`investigation`, not to widen what counts as evidence here.
 
 A run stopped by its user reports `cancelled` instead of the missing output: a stop is not
 a defect of the run, and counting it as one would make every cancellation read as a model
@@ -1156,16 +1258,23 @@ is per process, which is consistent with the zero-config backend below being sin
 
 ## Deployment
 
-**An agent-capable deployment needs a reverse-proxy read timeout of at least 15 minutes, and the
+**An agent-capable deployment needs a reverse-proxy read timeout of at least 16 minutes, and the
 chart does not set one for you.** The rail follows a run through a single long-lived streaming
 response, so the run and the HTTP response have the same lifetime. The longest drive any workflow may
-take today is `database-assessment`'s 630 s wall clock, and 900 s is what the ceilings are provisioned
-to — so a response can legitimately stay open far longer than the 60 s that is nginx's
+take today is `data-analysis`'s **900 s** wall clock — so a response can legitimately stay open far
+longer than the 60 s that is nginx's
 default `proxy_read_timeout`, and longer than the comparable defaults of the ingress controllers,
-load balancers and PaaS routers Studio is deployed behind. Raise it to **900 s** where the traffic
-enters (`proxy_read_timeout 900s;` for nginx, `nginx.ingress.kubernetes.io/proxy-read-timeout: "900"`
+load balancers and PaaS routers Studio is deployed behind. Raise it to **960 s** where the traffic
+enters (`proxy_read_timeout 960s;` for nginx, `nginx.ingress.kubernetes.io/proxy-read-timeout: "960"`
 for the ingress-nginx annotation, the equivalent idle timeout elsewhere). Nothing in this repository
 can do it for you: the timeout belongs to the proxy, not to the container.
+
+The figure is 960 rather than 900 deliberately: a timeout set to exactly the longest deadline has no
+headroom, and would cut the run at the very moment it was entitled to be finishing. This number is a
+ceiling to survive, not a duration to wait for — a run that ends sooner closes its own stream, and
+raising the timeout does not make any run longer. It was 900 s while `database-assessment`'s 630 s
+was the longest drive; the `data-analysis` row moved the thing it is derived from, which is why it is
+stated here as a function of the budget table rather than as a constant.
 
 **A keep-alive would not be a substitute, and the reason is worth knowing.** The stream emits one
 line per ledger event, so an active run keeps the socket warm by itself — but a run spends most of a

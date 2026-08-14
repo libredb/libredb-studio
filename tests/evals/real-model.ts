@@ -22,6 +22,7 @@
  */
 
 import { createAgentModel } from "@/lib/agent/model-adapter";
+import type { AgentRunWorkflowType } from "@/lib/agent/types";
 import { LLMRateLimitError } from "@/lib/llm/types";
 import { DEPARTMENTS, type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
 import type { EvalDrive } from "../isolated/fixtures/agent-eval-harness";
@@ -29,6 +30,8 @@ import type { EvalDrive } from "../isolated/fixtures/agent-eval-harness";
 interface RealModelCase {
   readonly name: string;
   readonly engine: EvalEngine;
+  /** What the run is FOR. Absent means the store's default, an investigation. */
+  readonly workflowType?: AgentRunWorkflowType;
   readonly objective: string;
   /** What a run that did its job looks like, in one sentence a reader can check. */
   readonly expectation: string;
@@ -295,6 +298,53 @@ const populationShortfall = (drive: EvalDrive): string | undefined => {
 };
 
 /**
+ * How many chart refusals a run may collect before the refusal is the problem.
+ *
+ * One is ordinary and is the path working: a model drafts a spec from the question,
+ * learns the result's real column names from the refusal, and corrects it. Two is a
+ * model taking a second look. Three or more is a model that is not reading the
+ * refusal at all, which on this workflow's 60-turn budget is a run that will spend
+ * them.
+ */
+const CHART_REFUSAL_TOLERANCE = 2;
+
+/**
+ * Whether the run could ACT on a chart refusal — the one thing about this workflow a
+ * scripted model cannot establish.
+ *
+ * Runs only over a run the ledger already scored `answered`, like every judge here,
+ * so it is never reporting the smaller of two problems: a run that composed no answer
+ * at all is already `no-answer` and never reaches this.
+ *
+ * Two shortfalls, and they are different failures:
+ *
+ *  - `chart-refusal-loop` — the run was refused a chart more than twice. The refusal
+ *    text names the result's real columns, so a model that keeps missing is one the
+ *    refusal does not reach. This is the live-only failure: every scripted run
+ *    corrects on the turn the script tells it to.
+ *  - `chart-asked-table-given` — the objective asked for a chart in as many words and
+ *    the run presented a table without ever being refused one. A table IS a complete
+ *    answer (§3.4) and this is deliberately not a verdict-level shortfall, but on a
+ *    request that said "as a chart" it is worth seeing, because it is what a model
+ *    does when the contract reads as harder than it is.
+ *
+ * **What this cannot see:** whether the chart was the RIGHT chart. The columns are
+ * checked by the server and the caption is the model's prose, and grading prose with
+ * prose establishes nothing — the limit `goal-verifier.ts` states about its own bar.
+ */
+const chartRefusalShortfall = (drive: EvalDrive): string | undefined => {
+  const refusals = drive.transcripts.filter((transcript) =>
+    transcript.includes("A chart may only name columns of the result it presents"),
+  ).length;
+  if (refusals > CHART_REFUSAL_TOLERANCE) return "chart-refusal-loop";
+
+  const answers = drive.events.flatMap((event) => (event.kind === "answer-composed" ? [event] : []));
+  const charted = answers.some((event) => event.presentation.kind === "chart");
+  if (!charted && refusals === 0) return "chart-asked-table-given";
+  return undefined;
+};
+
+/**
  * The cases, exported so the shapes that decide a verdict can be driven WITHOUT a
  * credential.
  *
@@ -380,6 +430,34 @@ export const CASES: readonly RealModelCase[] = [
     objective: "How would you find out why the orders report is slow?",
     expectation: "produces a plan in prose; performs zero database operations",
   },
+  {
+    /*
+      The `data-analysis` template, and the one thing about it a scripted model
+      cannot measure: whether a live model can ACT on a chart refusal.
+
+      `tests/evals/data-analysis.test.ts` proves the refusal is produced, that it
+      carries the result's real column names, and that a run which corrects its spec
+      recovers on the next turn. What it cannot prove is that a real model reads the
+      correction out of it. That distinction is this file's whole reason for existing,
+      and the failure it guards against is specific: a model that cannot act on
+      `CHART_COLUMN_NOT_IN_RESULT` re-sends a spec, is refused again, and spends the
+      workflow's 60 turns on it — a live-only loop of exactly the shape #341's
+      turn-exhaustion defect had.
+
+      The world is the same eight-department one every other case uses, so the columns
+      a chart could name are `department` and `headcount` and nothing else. The
+      objective asks for a chart deliberately: it is the shortest path to a model
+      drafting a spec from the QUESTION rather than from the result, which is how the
+      column names come out wrong in the first place.
+    */
+    name: "charted-answer",
+    engine: "postgres",
+    workflowType: "data-analysis",
+    objective: "Which department has the most employees? Show me the answer as a chart.",
+    expectation: "presents an answer, and recovers rather than looping if its first chart spec is refused",
+    answer: countsFor,
+    judge: chartRefusalShortfall,
+  },
 ];
 
 /** Between cases, so a burst does not spend the free tier's per-minute allowance. */
@@ -428,6 +506,7 @@ export async function openCaseRun(testCase: RealModelCase): Promise<EvalRun> {
   return openEvalRun({
     engine: testCase.engine,
     objective: testCase.objective,
+    ...(testCase.workflowType === undefined ? {} : { workflowType: testCase.workflowType }),
     ...(testCase.name === "planning" ? { mode: "planning" as const } : {}),
     ...(testCase.answer === undefined ? {} : { answer: testCase.answer }),
   });

@@ -1846,6 +1846,29 @@ describe("a run opened with auto-execute is told what the gate needs", () => {
 
     expect(rulesOf(script.turns[0] as Turn)).not.toContain("AUTO-EXECUTE IS ON");
   });
+
+  test("a workflow with no present_answer is told nothing either, whatever the record says", async () => {
+    // The third condition, and the one that shipped wrong: the record can carry
+    // `autoExecute: true` on a run whose tool set has no `present_answer` — a ledger
+    // written before the route refused it, or a workflow that loses the tool later.
+    // Stating the rule there would tell the model to "call inspect_plan on the
+    // statement that IS the answer before you present it" and then offer it no way to
+    // present one, which is a rule stated to a model whose tool set cannot satisfy it
+    // (#350/#356). Asserted over every non-presenting workflow, not a sample.
+    for (const workflowType of ["investigation", "query-optimization", "database-assessment", "operations"] as const) {
+      const b = boot(freshDataDir());
+      const run = await startRun(b, "agent", workflowType, true);
+      const script = scriptedModel(answersProse("ok"));
+
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+      });
+
+      expect(rulesOf(script.turns[0] as Turn), workflowType).not.toContain("AUTO-EXECUTE IS ON");
+    }
+  });
 });
 
 describe("the handover an answer records comes from the run's own setting", () => {
