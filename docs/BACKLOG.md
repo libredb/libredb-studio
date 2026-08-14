@@ -399,6 +399,58 @@ shipped product, and the entry is deleted then and not before.
 
 ---
 
+## Chart configuration surface
+
+Both entries were found on 2026-08-14 while reviewing #362, which added the Gateway API
+`HTTPRoute` template. Neither is caused by that change; both are gaps it made visible.
+
+### N1. The chart cannot expose the app on OpenShift, where `Route` is the native way in
+
+`grep -rl 'route.openshift.io' charts/ operator/` returns nothing: the chart renders an `Ingress`
+(`templates/ingress.yaml`) and, since #362, a Gateway API `HTTPRoute` (`templates/route.yaml`), but
+never a `route.openshift.io/v1` `Route`. Meanwhile the chart carries an OpenShift security-context
+adaptation (`templates/_helpers.tpl`, `templates/deployment.yaml`) and the repository publishes an
+OpenShift operator to OperatorHub, so OpenShift is a first-class target everywhere except the one
+object that makes the app reachable there.
+
+The consequence is the same symptom #362 was opened to fix, one platform over: `helm install`
+succeeds, the pod runs, and the operator has to hand-write a `Route` outside the chart and keep it in
+sync across upgrades. An `Ingress` is *sometimes* served on OpenShift by the router's ingress
+translation, but that is a compatibility shim with its own annotation dialect, not the native path,
+and it does not cover re-encrypt or passthrough TLS.
+
+Note the naming collision this now carries: `route.*` in `values.yaml` means Gateway API as of #362,
+so an OpenShift `Route` cannot reuse that key. `openshiftRoute.*` is the obvious alternative, and
+whichever key is chosen should be stated in the chart README next to `ingress.*` and `route.*` so the
+three exposure paths read as siblings.
+
+Done when an OpenShift cluster can be served by the chart alone, with TLS termination selectable, and
+when the README says which of the three exposure mechanisms belongs to which platform.
+
+### N2. `AUTH_COOKIE_SECURE` is reachable in every distribution channel except the chart
+
+`grep -rl AUTH_COOKIE_SECURE charts/ operator/helm-charts/` returns nothing. The variable is read at
+`src/lib/auth.ts:90` and is the documented answer for a browser reaching the app over plain HTTP on a
+non-loopback host (`docs/OIDC.md`, `docs/DISTRIBUTION.md`), where auth cookies otherwise carry the
+`Secure` flag, the browser rejects them, and — in the words of the comment at `src/lib/auth.ts:117` —
+"login silently loops". The upstream report that produced that comment is getumbrel/umbrel-apps#5847.
+
+Every other `config.*` key in this class already has a first-class value (`storageProvider`,
+`llmProvider`, `oidcIssuer`, ...) rendered by `templates/configmap.yaml` under the established
+`{{- if .Values.config.X }}` pattern. A chart user has to reach for `extraEnv` instead, which means
+the one setting most likely to be needed on a LAN or home-server install is the one setting that is
+not discoverable from `values.yaml`.
+
+This is not hypothetical: plain-HTTP channels shipping without the override has already been
+diagnosed on three separate distribution channels.
+
+Done when `config.authCookieSecure` exists, renders through the configmap like its siblings, is
+documented in the chart README's values table, and leaves the app's own default in place when unset —
+the variable's semantics are three-state (`true` / `false` / unset lets the app decide), so a plain
+boolean value with a `false` default would silently change behaviour for existing installs.
+
+---
+
 ## Security Phase 1 deferrals
 
 Each of these was decided during Phase 1, not overlooked. Delete an entry when the work lands.
