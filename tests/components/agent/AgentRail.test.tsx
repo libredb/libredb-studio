@@ -1558,6 +1558,23 @@ describe("AgentRail", () => {
     });
 
     /**
+     * The reserve (the data-analyst design, §1.5). A run near either ceiling is asked
+     * to stop and report what it has established, so a user watching a run end short
+     * of its ceilings is reading a run that was asked to stop rather than one that
+     * gave up. The meter is where that is said, because it is where the ceilings are.
+     */
+    test("the meter says the last turns are kept back for the report", () => {
+      const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      // Written out rather than read back from the constants, for the same reason
+      // the ceilings above are: a rendered constant proves nothing about the reading.
+      const reserve = getByTestId("agent-budget-reserve").textContent ?? "";
+      expect(reserve).toContain("2 model turns");
+      expect(reserve).toContain("20.0 s");
+      expect(reserve).toContain("asked to stop");
+    });
+
+    /**
      * The ceilings are per workflow, and the meter's whole promise is that it states
      * what the SERVER enforces for THIS run. Every figure on the line and on the two
      * measurable gauges is therefore asserted against the constant the enforcement

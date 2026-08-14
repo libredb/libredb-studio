@@ -47,7 +47,12 @@ import { createHash } from "node:crypto";
 import { type ModelMessage, type ToolSet, streamText, tool } from "ai";
 import { captureContextSnapshot, packContextForTask, reusableSnapshot } from "./context-snapshot";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
-import { AGENT_MODEL_TURN_TIMEOUT_MS, AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
+import {
+  AGENT_MODEL_TURN_TIMEOUT_MS,
+  AGENT_REPORT_RESERVE_MS,
+  AGENT_REPORT_RESERVE_TURNS,
+  AGENT_WORKFLOW_BUDGETS,
+} from "./execution-policy";
 import { type AgentModel, mapAgentModelError } from "./model-adapter";
 import {
   type AgentRunInvocation,
@@ -171,13 +176,46 @@ const SHARED_RULES = [
  * a `SELECT 1` sent to the database purely to keep thinking — while holding the
  * correlation id it needed. The example object costs one line.
  */
+/**
+ * The bar a report is held to, in one sentence and in ONE place.
+ *
+ * Written once because it is said twice: in the rules a run opens with, and again in
+ * the reserve notice when the run is told to finish. Two wordings of one contract is
+ * how #350 happened — the model is then told two bars while the tool enforces one —
+ * so the second saying repeats this sentence rather than paraphrasing it.
+ */
+export const AGENT_CITATION_RULE =
+  "Every claim must cite an artifact this run read or the schema snapshot it captured.";
+
 const AGENT_RULES = [
   "You investigate a database read-only, through the tools you were given.",
   "Every statement you send is bounded and read-only; writes and DDL are refused before the database is reached.",
   "If a statement fails, draft a DIFFERENT one: the same statement is refused rather than retried, and your repair attempts are limited.",
   "A refusal that names a policy decision is a boundary, not a defect in your SQL. Rewording will not change it.",
-  "Finish by calling compose_report. Every claim must cite an artifact this run read or the schema snapshot it captured.",
+  `Finish by calling compose_report. ${AGENT_CITATION_RULE}`,
   AGENT_EVIDENCE_CONTRACT,
+].join(" ");
+
+/**
+ * What the run is told when it has come within the reserve of a ceiling (§1.5 of
+ * `docs/AGENT_ANALYST_DESIGN.md`).
+ *
+ * "Finish by calling compose_report" is already in `AGENT_RULES`; what nothing said
+ * until now is WHEN the room ran out. That is the #350 lesson applied ahead of time:
+ * a rule the model is not told is a rule live runs fail, and a run that hits a
+ * ceiling mid-thought leaves nothing behind at all.
+ *
+ * Server-authored and unfenced, like every other opening message: nothing a database
+ * wrote is in it, so there is nothing here for a fence to mark. It does not lower the
+ * bar either — `composeReportTool` still checks every citation against this run's own
+ * event log — which is why it repeats `AGENT_CITATION_RULE` verbatim rather than
+ * softening it: a forced report is a cited report or it is no report.
+ */
+export const AGENT_REPORT_RESERVE_NOTICE = [
+  "This run is nearly out of room: treat this as your last turn.",
+  "Call compose_report now with what you have already established, and leave out what you have not.",
+  AGENT_CITATION_RULE,
+  "A run that ends without a report answers nothing at all, so a partial report you can cite is worth more than a fuller one you never send.",
 ].join(" ");
 
 /**
@@ -813,6 +851,24 @@ export async function runInvestigation(
 
   let turns = 0;
   let text = "";
+  /** The reserve notice is a one-shot: a run is told once that it is out of room. */
+  let reserveAnnounced = false;
+
+  /**
+   * Tells the run, once, that it has come within the reserve of a ceiling.
+   *
+   * A message and not a rule change, which is what makes it safe: it spends no
+   * statement, consults no deadline admission and takes no turn of its own — it rides
+   * on the turn that was about to be taken anyway — and it does not touch the policy
+   * version or the verifier. A planning run is never told: it has no `compose_report`
+   * to call, so this would be an instruction the mode cannot follow (#350).
+   */
+  const announceReserve = (remainingMs: number): void => {
+    if (reserveAnnounced || record.mode !== "agent") return;
+    if (maxTurns - turns > AGENT_REPORT_RESERVE_TURNS && remainingMs > AGENT_REPORT_RESERVE_MS) return;
+    reserveAnnounced = true;
+    messages.push({ role: "user", content: AGENT_REPORT_RESERVE_NOTICE });
+  };
 
   /*
     Every terminal path goes through here, which is why the ledger writes belong here
@@ -837,6 +893,10 @@ export async function runInvestigation(
     // Inside the drive rather than before the loop, so a run that is already
     // cancelled or already out of time ends without reading a catalog first.
     if (!contextEstablished) await establishContext();
+    // After the context, so the inventory a first turn is given still arrives before
+    // the sentence telling it to finish, and before the turn is counted, because the
+    // notice rides on this turn rather than costing one.
+    announceReserve(remainingMs);
     turns += 1;
     // Whichever bound is smaller applies, and which one it was decides what the user
     // is told: a call that never returned is not a run that used its time.

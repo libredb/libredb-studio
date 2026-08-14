@@ -258,6 +258,35 @@ export const AGENT_MODEL_TURN_TIMEOUT_MS = 90_000;
 export const AGENT_MINIMUM_CALL_MS = 250;
 
 /**
+ * How close to a ceiling a run may come before it is told to write its report.
+ *
+ * A run that reaches a ceiling ends `failed` with no `report-composed` entry and a
+ * goal verdict of `unanswered`: the whole spend buys nothing, and raising the
+ * ceilings multiplies the cost of that outcome rather than reducing its chance. So
+ * the loop, which already knows both distances, spends the reserve on one message —
+ * *this is your last turn, call `compose_report` now with what you have established*
+ * (`AGENT_REPORT_RESERVE_NOTICE` in `investigation.ts`, which is what actually says
+ * it).
+ *
+ * Two constants and not one because the two ceilings are reached by different runs:
+ * a run that spends its turns on refused tool calls never approaches the clock, and a
+ * run that spends four minutes inside one model call never approaches the turns.
+ * Whichever is crossed first fires the same single message.
+ *
+ * Both figures are sized for what the reserved turn DOES rather than for the ceiling
+ * they sit under, which is why neither is a fraction of a budget row: `compose_report`
+ * reaches no database, spends no statement and takes no deadline admission, so what a
+ * report costs is one model call. Two turns, because the notice is delivered at the
+ * START of a turn and a model that answers with prose rather than a tool call has then
+ * spent it; twenty seconds, because that is a comfortable multiple of a measured turn
+ * on this workload and still under a tenth of the shortest run deadline.
+ */
+export const AGENT_REPORT_RESERVE_TURNS = 2;
+
+/** @see AGENT_REPORT_RESERVE_TURNS — the same reserve, against the wall clock. */
+export const AGENT_REPORT_RESERVE_MS = 20_000;
+
+/**
  * How many statements that FAILED AT THE DATABASE a run may try to repair.
  *
  * Policy denials and approval requirements deliberately do not consume one — they

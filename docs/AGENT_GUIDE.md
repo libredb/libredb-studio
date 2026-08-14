@@ -289,7 +289,7 @@ failure whose reason is in the server log.
 ## The budget meter's numbers
 
 The meter above the timeline shows **three gauges, and it shows only what the server actually
-enforces and the ledger actually records** (`AgentRail.tsx:650-678`, gauges built in
+enforces and the ledger actually records** (`AgentRail.tsx:662-699`, gauges built in
 `timeline.ts:668-672`):
 
 | Gauge | Reads | The limit, and where it comes from |
@@ -325,7 +325,15 @@ the same reading the server takes for a ledger that names no workflow.
 **There is no token gauge, and its absence is deliberate**: this build enforces no token budget, so
 a figure would mean nothing (`docs/BACKLOG.md` B10).
 
-Then the caveat, which is the part worth reading twice (`AgentRail.tsx:670-677`):
+**A run that ends early was asked to stop.** When a run comes within 2 model turns or 20 seconds of
+either of those ceilings, the server tells it once — in its own words, not the database's — that this
+is its last turn and that it should report what it has established now. So a run that finishes well
+short of every figure on the meter is usually a run that took that offer, and its report is a
+partial answer rather than a missing one. The bar does not move when it happens: a claim still has to
+cite something the run read, so a forced report is a cited report or it is no report at all. Nothing
+is asked of a **Plan** run, which has no report tool to call. The meter says this under the ceilings.
+
+Then the caveat, which is the part worth reading twice (`AgentRail.tsx:692-699`):
 
 - **Every ceiling is per drive.** A run resumed after a restart starts each of them again, so these
   totals can read past a single drive's ceiling.

@@ -628,6 +628,26 @@ number that produced it. The turn ceiling is the backstop for a loop that never 
 at all, and it moves with the wall clock rather than alone: at a deadline that cannot pay for the
 turns, a larger turn ceiling only changes which word the ledger records.
 
+**A run keeps its last turns back for its report.** Within `AGENT_REPORT_RESERVE_TURNS` (2) model
+turns of its turn ceiling, or `AGENT_REPORT_RESERVE_MS` (20 s) of its run deadline — whichever it
+reaches first — the loop pushes one server-authored user message before the next turn: this is your
+last turn, call `compose_report` now with what you have established, and a claim still has to cite an
+artifact this run read. Without it a run that reaches a ceiling ends `failed` / `turn-limit` with no
+`report-composed` entry and a verdict of `unanswered`, and the whole spend buys nothing.
+
+Four properties make that a message rather than a weakening, and each is asserted rather than
+claimed: it **costs nothing to reach** (`compose_report` reaches no database, so the notice spends no
+statement, takes no deadline admission and consumes no turn of its own — it rides on the turn that
+was about to be taken); it **does not lower the bar**, because `composeReportTool` still checks every
+citation against the run's own event log, so a forced report is a cited report or it is no report;
+it **is not a rule change**, so it touches neither the policy version nor the goal verifier, and a
+run that ignores it still ends `turn-limit` or `deadline-exceeded` exactly as before; and it is
+**said once per drive**, in planning mode never — that mode has no `compose_report` to call, and
+telling a model to use a tool it does not have is the #350 failure. The wording repeats the citation
+sentence the run's own rules carry (`AGENT_CITATION_RULE`) rather than a second phrasing of it, for
+the same reason. The rail states the reserve beside the ceilings, so a run that ends short of every
+figure reads as one that was asked to stop rather than one that gave up.
+
 **The per-call ceiling exists because the run deadline used to be the only bound on a single
 request.** A measured run ended at exactly 300.0 s — the whole run deadline of the day — with a
 two-event ledger: one call never answered

@@ -5,7 +5,12 @@ import { Bot, Loader2, PencilLine, Play, Square, TableProperties } from "lucide-
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
 import { describeAgentCapability } from "@/lib/agent/capability-labels";
-import { AGENT_MAX_OBJECTIVE_LENGTH, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
+import {
+  AGENT_MAX_OBJECTIVE_LENGTH,
+  AGENT_REPORT_RESERVE_MS,
+  AGENT_REPORT_RESERVE_TURNS,
+  AGENT_WORKFLOW_BUDGETS,
+} from "@/lib/agent/execution-policy";
 import type { AgentRunMode, AgentRunStatus, AgentRunWorkflowType } from "@/lib/agent/types";
 import { cn } from "@/lib/utils";
 import { type AgentBudgetGauge, type AgentTimelineTone, describeFailureReason } from "./timeline";
@@ -673,6 +678,17 @@ export function AgentRail({
         <p data-testid="agent-budget-limits" className="pt-0.5 text-[0.625rem] text-zinc-600">
           Each statement gets {seconds(meterBudget.policy.budgets.statementTimeoutMs)} s, each drive{" "}
           {(meterBudget.runDeadlineMs / 60_000).toFixed(1)} min and at most {meterBudget.maxModelTurns} model turns.
+        </p>
+        {/*
+          The reserve, stated where the ceilings are. Without it a run that ends short
+          of every figure above reads as one that gave up; it was asked to stop, and
+          the report it composed is the point of asking.
+        */}
+        <p data-testid="agent-budget-reserve" className="text-[0.625rem] text-zinc-600">
+          The last {AGENT_REPORT_RESERVE_TURNS} model turns and the last {seconds(AGENT_REPORT_RESERVE_MS)} s are kept
+          back for the report: whichever it reaches first, the run is asked once to stop and report what it has
+          established. So a run that ends short of these figures was asked to stop rather than having given up, and its
+          claims still cite what it read. A plan run is never asked, having no report to compose.
         </p>
         <p data-testid="agent-budget-caveats" className="text-[0.625rem] text-zinc-600">
           Every ceiling is per drive, so a run resumed after a restart starts each of them again and these totals can

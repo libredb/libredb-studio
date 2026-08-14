@@ -4,6 +4,8 @@ import {
   AGENT_MAX_REPAIR_ATTEMPTS,
   AGENT_MINIMUM_CALL_MS,
   AGENT_MODEL_TURN_TIMEOUT_MS,
+  AGENT_REPORT_RESERVE_MS,
+  AGENT_REPORT_RESERVE_TURNS,
   AGENT_WORKFLOW_BUDGETS,
 } from "@/lib/agent/execution-policy";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
@@ -274,5 +276,43 @@ describe("the run-level constants the tool layer and the run service share", () 
 
   test("the repair budget is the three attempts the milestone pinned", () => {
     expect(AGENT_MAX_REPAIR_ATTEMPTS).toBe(3);
+  });
+});
+
+/**
+ * The report reserve (the data-analyst design, §1.5). The figures are restated here
+ * rather than read back, for the same reason the decision table is: a test that
+ * renders a constant into its own expectation proves the constant agrees with itself.
+ */
+describe("the ending a run keeps back for its report", () => {
+  test("the reserve is two model turns and twenty seconds", () => {
+    expect(AGENT_REPORT_RESERVE_TURNS).toBe(2);
+    expect(AGENT_REPORT_RESERVE_MS).toBe(20_000);
+  });
+
+  /**
+   * A reserve at or above a ceiling would be crossed before the run had done
+   * anything, so every run would open by being told to finish. Asserted per workflow,
+   * because the ceilings differ and the reserve does not.
+   */
+  test.each(workflowTypes)("%s can reach its reserve rather than starting inside it", (workflow) => {
+    const budget = AGENT_WORKFLOW_BUDGETS[workflow];
+    expect(AGENT_REPORT_RESERVE_TURNS).toBeLessThan(budget.maxModelTurns);
+    expect(AGENT_REPORT_RESERVE_MS).toBeLessThan(budget.runDeadlineMs);
+  });
+
+  /**
+   * The reserved time has to be enough for the one turn it is reserved FOR, and
+   * `compose_report` reaches no database — so what it needs is a model call, not a
+   * statement. A reserve under the per-call ceiling would be a promise the transport
+   * cannot keep; it is not required to exceed it, because the loop clamps the call to
+   * whatever is left and a report turn is short.
+   */
+  test("the reserved time is worth more than a statement's own ceiling", () => {
+    for (const workflow of workflowTypes) {
+      expect(AGENT_REPORT_RESERVE_MS, workflow).toBeGreaterThan(
+        AGENT_WORKFLOW_BUDGETS[workflow].policy.budgets.statementTimeoutMs,
+      );
+    }
   });
 });

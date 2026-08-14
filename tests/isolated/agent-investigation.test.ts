@@ -4,8 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
-import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
-import { type AgentToolResources, runInvestigation } from "@/lib/agent/investigation";
+import { AGENT_REPORT_RESERVE_TURNS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
+import {
+  AGENT_CITATION_RULE,
+  AGENT_REPORT_RESERVE_NOTICE,
+  type AgentToolResources,
+  runInvestigation,
+} from "@/lib/agent/investigation";
 import type { AgentModel } from "@/lib/agent/model-adapter";
 import { resolveAgentProviderAdapter } from "@/lib/agent/provider-registry";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
@@ -1129,6 +1134,189 @@ describe("the run loop is bounded", () => {
     expect(script.turns).toHaveLength(0);
     expect(result.status).toBe("failed");
     expect(result.stopReason).toBe("deadline-exceeded");
+  });
+});
+
+// ─── the reserved ending ────────────────────────────────────────────────────
+
+/**
+ * The report reserve (the data-analyst design, §1.5).
+ *
+ * A run that exhausts its turns ends `failed` / `turn-limit` with no report at all,
+ * and the whole spend is lost — so the loop, which already knows both distances to
+ * its ceilings, tells the model once when it has run out of room. What these tests
+ * pin is that the message is a MESSAGE and not a rule change: it costs no statement,
+ * no repair attempt, no deadline admission and no turn of its own, it does not lower
+ * the citation bar, and a run that ignores it fails exactly as it did before.
+ */
+const noticesIn = (turn: Turn): number => promptText(turn).split(AGENT_REPORT_RESERVE_NOTICE).length - 1;
+
+/** The messages the server put on the wire, as roles and verbatim content. */
+const wireMessages = (turn: Turn): { role?: unknown; content?: unknown }[] =>
+  (turn.body.messages ?? []) as { role?: unknown; content?: unknown }[];
+
+describe("a run reserves its last turns for its report", () => {
+  test("the turn reserve pushes the notice once, and no later turn pushes a second", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    // Four turns of tool calls against a ceiling of four: the reserve is crossed
+    // before the third, and the fourth must not add another notice.
+    const script = scriptedModel(
+      ...Array.from({ length: 4 }, (_unused, index) =>
+        callsTool("run_read_query", { sql: `SELECT ${index} FROM orders` }, `call_${index}`),
+      ),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+      maxTurns: 4,
+    });
+
+    expect(script.turns.map((turn) => noticesIn(turn))).toEqual([0, 0, 1, 1]);
+    // Server-authored and verbatim: the notice reaches the model as its own user
+    // message, exactly as this repository wrote it, with nothing spliced in.
+    expect(wireMessages(script.turns[2] as Turn)).toContainEqual({
+      role: "user",
+      content: AGENT_REPORT_RESERVE_NOTICE,
+    });
+    // A run that is asked to report and does not still ends the way it always did.
+    expect(result.status).toBe("failed");
+    expect(result.stopReason).toBe("turn-limit");
+    expect(result.turns).toBe(4);
+  });
+
+  test("the millisecond reserve fires on its own, with turns to spare", async () => {
+    // 15 s of run left against a 20 s reserve, and a turn ceiling nowhere near: the
+    // only bound that can produce the notice here is the clock.
+    const b = boot(freshDataDir(), { spentMs: AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs - 15_000 });
+    const run = await startRun(b);
+    const script = scriptedModel(callsTool("run_read_query", { sql: "SELECT id FROM orders" }), reportOn());
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(noticesIn(script.turns[0] as Turn)).toBe(1);
+    expect(AGENT_WORKFLOW_BUDGETS.investigation.maxModelTurns - script.turns.length).toBeGreaterThan(
+      AGENT_REPORT_RESERVE_TURNS,
+    );
+    // And a run that takes the offer answers, rather than ending on the clock.
+    expect(result.status).toBe("succeeded");
+    expect(result.stopReason).toBe("report-composed");
+  });
+
+  test("a run that is asked to report and does not still ends on its own clock", async () => {
+    // The turn ceiling's side of this is pinned above; this is the clock's side. An
+    // agent run inside the reserve that spends its last turn on anything but a report
+    // must still end the way it ended before the notice existed — the notice offers a
+    // better ending, it does not change what happens when the offer is declined.
+    const b = boot(freshDataDir(), { spentMs: AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs - 100 });
+    const run = await startRun(b);
+    const script = scriptedModel(unansweredCall);
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+      turnTimeoutMs: 60_000,
+    });
+
+    expect(noticesIn(script.turns[0] as Turn)).toBe(1);
+    expect(result.status).toBe("failed");
+    expect(result.stopReason).toBe("deadline-exceeded");
+  });
+
+  test("a planning run is never told to call a tool it does not have", async () => {
+    // One turn against a ceiling of one: an agent run in this position would be
+    // inside its reserve before its first turn.
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(answersProse("I would start with the orders table."));
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+      maxTurns: 1,
+    });
+
+    expect(script.turns.map((turn) => noticesIn(turn))).toEqual([0]);
+    expect(result.status).toBe("succeeded");
+    expect(result.stopReason).toBe("model-stopped");
+  });
+
+  /**
+   * "It costs nothing to reach" is asserted as a COMPARISON rather than as a set of
+   * expected counts: the same script is driven twice, once inside the reserve and
+   * once nowhere near it, and every meter the run is charged against must read the
+   * same afterwards. Expected counts would pin what the drive spends; this pins that
+   * the notice is not part of it.
+   */
+  test("the notice spends no statement, no repair attempt, no admission and no turn", async () => {
+    const drive = async (maxTurns: number) => {
+      const b = boot(freshDataDir());
+      const run = await startRun(b);
+      const admit = spyOn(b.resources.deadline, "admit");
+      const script = scriptedModel(callsTool("run_read_query", { sql: "SELECT id FROM orders" }), reportOn());
+      const result = await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+        maxTurns,
+      });
+      return {
+        turns: result.turns,
+        stopReason: result.stopReason,
+        notices: script.turns.map((turn) => noticesIn(turn)),
+        admissions: admit.mock.calls.length,
+        statements: b.resources.tracker.usage(run.runId).executedStatements,
+        repairs: b.resources.repairs.attemptsUsed,
+        reads: b.queryReadOnly.mock.calls.length,
+      };
+    };
+
+    // A ceiling of three puts the second of two turns inside the reserve; the run's
+    // own ceiling of 36 leaves the same two turns outside it.
+    const reserved = await drive(3);
+    const unreserved = await drive(AGENT_WORKFLOW_BUDGETS.investigation.maxModelTurns);
+
+    expect(reserved.notices).toEqual([0, 1]);
+    expect(unreserved.notices).toEqual([0, 0]);
+    expect(reserved.turns).toBe(unreserved.turns);
+    expect(reserved.stopReason).toBe(unreserved.stopReason);
+    expect(reserved.admissions).toBe(unreserved.admissions);
+    expect(reserved.statements).toBe(unreserved.statements);
+    expect(reserved.repairs).toBe(unreserved.repairs);
+    expect(reserved.reads).toBe(unreserved.reads);
+  });
+
+  /**
+   * #350's lesson in the other direction: the notice must not become a second
+   * wording of the citation contract, because the day the two disagree the model is
+   * being told two different bars and the tool enforces one of them.
+   */
+  test("the notice restates the run's own citation rule rather than inventing one", async () => {
+    expect(AGENT_REPORT_RESERVE_NOTICE).toContain("compose_report");
+    expect(AGENT_REPORT_RESERVE_NOTICE).toContain(AGENT_CITATION_RULE);
+    // Nothing a database wrote is in it, so it carries no fence and needs none.
+    expect(AGENT_REPORT_RESERVE_NOTICE).not.toContain(UNTRUSTED_CONTENT_BEGIN);
+
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(answersProse("nothing to add"));
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    // The same sentence the run opened with: the rules the model was given carry it,
+    // so the notice repeats the bar rather than restating it in other words.
+    expect(JSON.stringify(script.turns[0]?.body)).toContain(AGENT_CITATION_RULE);
   });
 });
 
