@@ -53,7 +53,24 @@ import type { AgentRunFailureReason } from "./types";
  * reference, so the TTL is a comfortable multiple of the longest a run may live.
  */
 const AGENT_ARTIFACT_TTL_MS = AGENT_RUN_DEADLINE_MS * 4;
-const AGENT_MAX_ARTIFACTS = 64;
+
+/**
+ * The entry cap of the process-wide artifact store, computed rather than picked:
+ * `45 statements × 4 runs = 180`. 45 is the largest per-workflow statement
+ * ceiling the frozen decision table admits (`database-assessment`) and a run
+ * cannot produce more artifacts than it is allowed statements; 4 is the number
+ * of runs this single agent process is assumed to carry at once. Below that
+ * product a run at its own ceiling would evict its own earliest result while it
+ * was still being offered on the rail as "Show result". It is sized for the
+ * ceiling, not for what a policy enforces at any one moment, so a statement
+ * budget lower than 45 leaves the cap correct and merely slack.
+ *
+ * The cap is spent run-fairly (`ExecutionArtifactStore.put`), so this is a bound
+ * on the whole process rather than a share handed to each run: four runs together
+ * cannot exceed it, and one run below the assumed concurrency may use more of it
+ * than its own quarter.
+ */
+export const AGENT_MAX_ARTIFACTS = 180;
 
 /**
  * The process-wide pair. Lazily built so that merely importing this module — which

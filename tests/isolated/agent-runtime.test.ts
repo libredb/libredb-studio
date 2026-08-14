@@ -61,7 +61,9 @@ mock.module("@/lib/db", () => ({ createDatabaseProvider: async () => ({ getCapab
 mock.module("@/lib/agent/model-adapter", () => ({ createAgentModel: mockCreateAgentModel }));
 mock.module("@/lib/agent/investigation", () => ({ runInvestigation: mockRunInvestigation }));
 
-const { driveAgentRun, getAgentRunService, readAgentArtifact } = await import("@/lib/agent/runtime");
+const { AGENT_MAX_ARTIFACTS, driveAgentRun, getAgentRunService, readAgentArtifact } = await import(
+  "@/lib/agent/runtime"
+);
 
 const ACTOR = { sessionId: "ada", role: "user" } as const;
 
@@ -342,5 +344,22 @@ describe("readAgentArtifact", () => {
 
   test("an id nothing ever stored is undefined rather than an error", () => {
     expect(readAgentArtifact("corr_never", 1_000)).toBeUndefined();
+  });
+});
+
+describe("AGENT_MAX_ARTIFACTS", () => {
+  /**
+   * The largest per-workflow statement ceiling the decision table freezes
+   * (`database-assessment`, 45) and the number of concurrent runs the single
+   * agent process is sized for (4). Asserted as a product rather than as the
+   * number itself so the assertion still means something when another workflow
+   * row lands: `data-analysis` at 42 statements is under this, and a row above
+   * 45 must move the constant with it.
+   */
+  const LARGEST_STATEMENT_CEILING = 45;
+  const ASSUMED_CONCURRENT_RUNS = 4;
+
+  test("holds every artifact the busiest workflow can produce, on all the runs assumed at once", () => {
+    expect(AGENT_MAX_ARTIFACTS).toBeGreaterThanOrEqual(LARGEST_STATEMENT_CEILING * ASSUMED_CONCURRENT_RUNS);
   });
 });

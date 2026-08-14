@@ -960,6 +960,15 @@ on an explicit user action. Chart and export hydration are not wired (B14), and 
 results are released when the run ends, so a report can outlive the rows its citations point at
 (B15).
 
+**Those results live in process memory, and the store that holds them is bounded.** It keeps 180
+entries at once — the largest statement ceiling any workflow may be given (45) times the four
+concurrent runs one agent process is sized for — and each entry is at most what the execution
+profile's byte cap admitted. A run cannot produce more artifacts than it is allowed statements, so at
+the budgets in force above, a single run never reaches that bound on its own. When the bound is
+reached, the run that is storing gives up **its own** oldest artifact rather than the store's, so a
+run that executes a lot cannot make "Show result" 404 on a quieter run that is still live. The store
+is per process, which is consistent with the zero-config backend below being single-instance.
+
 ## Deployment
 
 **The zero-config backend is single-instance.** `local` keeps run state in a directory on local disk
