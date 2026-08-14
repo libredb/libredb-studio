@@ -73,7 +73,7 @@ export type AgentRunMode = "planning" | "agent";
  * later request cannot widen a run after it opens — not because a filter rejects one,
  * but because there is no parameter through which a workflow could arrive twice.
  */
-export type AgentRunWorkflowType = "investigation" | "query-optimization" | "database-assessment";
+export type AgentRunWorkflowType = "investigation" | "query-optimization" | "database-assessment" | "operations";
 
 /**
  * What a run is for when nothing said.
@@ -119,6 +119,11 @@ export type AgentRunFailureReason =
    * The connection's engine has no database-native read-only execution profile, so
    * this run could never have been permitted on it. A property of the connection the
    * user chose, not a fault of the server — which is why it is not `internal`.
+   *
+   * WORKFLOW-CONDITIONAL since the `operations` workflow (#325): that workflow reads
+   * only the curated provider methods every engine implements, under its own
+   * execution profile, so it never asks for a read-only STATEMENT path and can never
+   * end this way. Every other workflow still can, and does, on the same connection.
    */
   | "engine-unsupported"
   /** The run's persisted connection no longer resolves on the server. */

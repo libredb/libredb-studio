@@ -58,7 +58,8 @@ export type AgentGoalVerifierId =
    */
   | "agent-query-optimization.1"
   | "agent-query-optimization.2"
-  | "agent-database-assessment.1";
+  | "agent-database-assessment.1"
+  | "agent-operations.1";
 
 /**
  * What a run was required to produce and did not. Deliberately a closed union of
@@ -99,6 +100,16 @@ export type AgentGoalShortfall =
    * is what the workflow is for.
    */
   | "no-table-profile"
+  /**
+   * An operations run composed a report that cites no operational reading.
+   *
+   * The template's own artifact, and the only thing this workflow is asked for beyond
+   * composing a report at all. Note what it is deliberately NOT: a reading that came
+   * back EMPTY still satisfies it. "Nothing is blocked" is an answer, and a rule that
+   * treated it as an absence of evidence would mark every run against a healthy
+   * database unanswered — the #356 error in a new place.
+   */
+  | "no-operations-reading"
   /**
    * The run was stopped before it could conclude. Substituted for the missing
    * output rather than reported alongside it: a user's stop is not a defect of the
@@ -278,10 +289,59 @@ function verifyDatabaseAssessmentGoal(run: VerifiableAgentRun): readonly AgentGo
  * bar nobody applied. A versioned id whose meaning can change silently is worse
  * than no id at all, so the two halves are one value.
  */
+/** The operation a curated operational reading is stored under. */
+const OPERATIONS_OPERATION = "db.operations.read";
+
+/** Every operational reading THIS run took, by the id a citation would name. */
+function operationsArtifacts(events: readonly AgentRunEvent[]): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const event of events) {
+    if (event.kind === "tool-completed" && event.artifact.operationId === OPERATIONS_OPERATION) {
+      ids.add(event.artifact.correlationId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * The operations bar: a report that rests on what the engine said about ITSELF.
+ *
+ * **The one template that does NOT compose on the investigation baseline, and the
+ * exception is the whole #356 lesson applied rather than repeated.** The baseline
+ * ends a run `empty-evidence` when every result it cited returned zero rows, and for
+ * a bounded read that is right — `0 rows` means the question found nothing. For an
+ * operational reading it is precisely backwards. "No session is blocked", "the engine
+ * reports no slow queries", "no index is unused" are ANSWERS, and they are the
+ * answers a healthy database gives. Holding this workflow to the baseline would mark
+ * every run against a healthy server unanswered, which is the same error as demanding
+ * an artifact only some valid answers can produce.
+ *
+ * So the emptiness clause is dropped and the citation requirement stays, because the
+ * citation is what this workflow is for: a report that cites a reading is grounded in
+ * what the engine reported, however many rows that was; a report that cites something
+ * else is the run's own opinion of what a database like this one probably does.
+ *
+ * `no-report` and `cancelled` are unchanged — a run that composed nothing has not
+ * answered whatever it is for — and they are written out here rather than borrowed,
+ * so that a later change to the baseline's emptiness rule cannot silently arrive
+ * through a call this function no longer makes.
+ */
+function verifyOperationsGoal(run: VerifiableAgentRun): readonly AgentGoalShortfall[] {
+  const claims = composedClaims(run.events);
+  if (claims.length === 0) return run.status === "cancelled" ? ["cancelled"] : ["no-report"];
+
+  const readings = operationsArtifacts(run.events);
+  const cited = claims.some((claim) =>
+    claim.evidence.some((reference) => reference.source === "artifact" && readings.has(reference.correlationId)),
+  );
+  return cited ? [] : ["no-operations-reading"];
+}
+
 export const AGENT_WORKFLOW_GOALS: Readonly<Record<AgentRunWorkflowType, AgentWorkflowGoal>> = Object.freeze({
   investigation: { verifier: "agent-investigation.1", verify: verifyInvestigationGoal },
   "query-optimization": { verifier: "agent-query-optimization.2", verify: verifyQueryOptimizationGoal },
   "database-assessment": { verifier: "agent-database-assessment.1", verify: verifyDatabaseAssessmentGoal },
+  operations: { verifier: "agent-operations.1", verify: verifyOperationsGoal },
 } satisfies Record<AgentRunWorkflowType, AgentWorkflowGoal>);
 
 const PLANNING_GOAL: AgentWorkflowGoal = { verifier: AGENT_PLANNING_VERIFIER, verify: verifyPlanningGoal };

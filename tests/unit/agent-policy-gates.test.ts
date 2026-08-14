@@ -34,7 +34,12 @@ afterAll(() => {
   for (const dir of dataDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-const WORKFLOWS: readonly AgentRunWorkflowType[] = ["investigation", "query-optimization", "database-assessment"];
+const WORKFLOWS: readonly AgentRunWorkflowType[] = [
+  "investigation",
+  "query-optimization",
+  "database-assessment",
+  "operations",
+];
 
 // ─── Gate 1: planning performs zero database operations ─────────────────────
 

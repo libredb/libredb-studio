@@ -101,6 +101,7 @@ describe("foldLedgerEntries", () => {
       ["investigation", "an investigation"],
       ["query-optimization", "query optimization"],
       ["database-assessment", "a database assessment"],
+      ["operations", "an operations reading"],
     ] as const) {
       const view = foldLedgerEntries([{ ...OPENED, workflowType }]);
       expect(view.items[0].headline, workflowType).toBe(`Run opened in agent mode for ${words}`);
@@ -326,6 +327,32 @@ describe("foldLedgerEntries", () => {
     expect(view.items[0].headline).toBe("Result stored");
     expect(view.items[0].detail).toBe("3 rows, 2 columns, 12 ms (corr_9)");
     expect(view.items[0].tone).toBe("progress");
+  });
+
+  test("an operational reading says it is a MOMENT, which an ordinary read does not", () => {
+    // A curated reading settles as an ordinary `tool-completed`, so without this the
+    // timeline would show a session list exactly as it shows a table read and a
+    // reader would have no way to tell the rows describe an instant already past.
+    // Attached on the operation id, the only thing on the event that identifies it.
+    const reading = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-completed",
+          atMs: 7,
+          stepId: "s1",
+          artifact: {
+            correlationId: "corr_ops",
+            runId: "arun_1",
+            operationId: "db.operations.read",
+            summary: { rowCount: 3, columnNames: ["pid", "state"], elapsedMs: 4 },
+          },
+        },
+      }),
+    ]);
+
+    expect(reading.items[0].detail).toContain("3 rows, 2 columns, 4 ms (corr_ops)");
+    expect(reading.items[0].detail).toContain("A moment, not a history");
   });
 
   /**
@@ -1123,6 +1150,7 @@ describe("an ending says whether the run ANSWERED, not only how it stopped (B24)
       "no-plan-comparison",
       "no-plan-evidence",
       "no-table-profile",
+      "no-operations-reading",
       "cancelled",
     ]) {
       const view = foldLedgerEntries([

@@ -417,11 +417,89 @@ describe("a query-optimization run is judged by its own artifact as well as the 
   });
 });
 
+describe("an operations run answers on what the ENGINE said about itself", () => {
+  const READING = "4f2c9a10-0000-4000-8000-000000000005";
+
+  /** A curated reading this run took, settled under its own operation id. */
+  function reading(correlationId: string, rowCount: number): AgentRunEvent {
+    return {
+      kind: "tool-completed",
+      atMs: 20,
+      stepId: `step_${correlationId}`,
+      artifact: {
+        correlationId,
+        runId: "arun_1",
+        operationId: "db.operations.read",
+        summary: { rowCount, columnNames: ["pid", "state", "query"], elapsedMs: 4 },
+      },
+    };
+  }
+
+  const readingAttempted: AgentRunEvent = {
+    kind: "tool-invoked",
+    atMs: 15,
+    stepId: "step_sessions",
+    tool: "inspect_operations",
+    operationId: "db.operations.read",
+  };
+
+  const operations = (events: readonly AgentRunEvent[]) =>
+    verifyRunGoal(run("agent", "succeeded", events, "operations"));
+
+  test("a report citing a reading this run took is answered", () => {
+    const verdict = operations([readingAttempted, reading(READING, 6), reportCiting(ARTIFACT(READING))]);
+
+    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-operations.1", unmet: [] });
+  });
+
+  test("a report resting on something other than a reading is short of the bar", () => {
+    const verdict = operations([
+      readingAttempted,
+      reading(READING, 6),
+      completed(CORRELATION.full, 8),
+      reportCiting(ARTIFACT(CORRELATION.full)),
+    ]);
+
+    expect(verdict.unmet).toEqual(["no-operations-reading"]);
+  });
+
+  test("an EMPTY reading is an answer, not an absence of evidence — the #356 arm", () => {
+    // The producibility rule in this workflow's own terms. "No session is blocked"
+    // and "the engine reports no slow queries" are what a healthy server says, and
+    // they arrive as zero rows. The investigation baseline would call that
+    // `empty-evidence` and mark the run unanswered for reporting the truth, which is
+    // why this template deliberately does not compose on it.
+    const verdict = operations([
+      readingAttempted,
+      reading(CORRELATION.empty, 0),
+      reportCiting(ARTIFACT(CORRELATION.empty)),
+    ]);
+
+    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-operations.1", unmet: [] });
+    // And the same ledger judged as an investigation IS empty-evidence, which is what
+    // makes the exception a decision rather than an accident.
+    expect(
+      verifyRunGoal(
+        run("agent", "succeeded", [reading(CORRELATION.empty, 0), reportCiting(ARTIFACT(CORRELATION.empty))]),
+      ).unmet,
+    ).toEqual(["empty-evidence"]);
+  });
+
+  test("a run that composed nothing is told THAT, not that it cited no reading", () => {
+    expect(operations([readingAttempted, reading(READING, 6), closing]).unmet).toEqual(["no-report"]);
+  });
+
+  test("a cancelled run without a report reports the cancellation instead", () => {
+    expect(verifyRunGoal(run("agent", "cancelled", [readingAttempted], "operations")).unmet).toEqual(["cancelled"]);
+  });
+});
+
 describe("the verifier registry", () => {
   test("names one rule per workflow type, so a new workflow cannot inherit another one's bar", () => {
     expect(Object.keys(AGENT_WORKFLOW_GOALS).sort()).toEqual([
       "database-assessment",
       "investigation",
+      "operations",
       "query-optimization",
     ]);
   });

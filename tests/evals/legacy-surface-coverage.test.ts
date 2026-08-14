@@ -225,8 +225,15 @@ const SQLITE_OBJECTS = [
   { name: "departments", type: "table", sql: "CREATE TABLE departments (id INTEGER PRIMARY KEY)" },
 ];
 
-/** The inventory each engine hands out, in that engine's own catalog shape. */
-const INVENTORY: Readonly<Record<EvalEngine, (sql: string) => ReturnType<typeof rows> | null>> = {
+/**
+ * The inventory each engine hands out, in that engine's own catalog shape.
+ *
+ * Keyed on the two engines that ANSWER a composed statement rather than on every
+ * preset the harness offers: the third one exists for the operations workflow, which
+ * composes no catalog and sends no statement, so an entry here would be a fixture for
+ * a call that cannot happen.
+ */
+const INVENTORY: Readonly<Record<"postgres" | "sqlite", (sql: string) => ReturnType<typeof rows> | null>> = {
   postgres: (sql) => {
     if (sql.includes("information_schema.columns")) {
       return rows(PG_COLUMNS, ["table_schema", "table_name", "column_name", "data_type", "is_nullable"]);
@@ -257,7 +264,7 @@ const INVENTORY: Readonly<Record<EvalEngine, (sql: string) => ReturnType<typeof 
 /** 1200 rows, and 900 of them have no department. */
 const PROFILE_ROW = { row_count: 1200, present_0: 1200, present_1: 300, present_2: 1200 };
 
-async function openAssessment(engine: EvalEngine): Promise<EvalRun> {
+async function openAssessment(engine: "postgres" | "sqlite"): Promise<EvalRun> {
   const run = await openEvalRun({
     engine,
     workflowType: "database-assessment",
@@ -363,42 +370,50 @@ describe("Autopilot's happy path, as an agent run", () => {
  * where the whole list lives with the code that proves each entry.
  */
 describe("what the removed panels did that these runs do not", () => {
-  test("the tool set has no monitoring member, whatever such a tool would be called (B17, B27)", () => {
-    // Autopilot's whole input came from `/api/db/monitoring`: slow queries, index
-    // usage, cache and connection metrics. This is asserted over the TOOL SET rather
-    // than over a name, and the difference is the whole promise of this block: an
-    // earlier shape drove a run asking for the invented `read_monitoring` and
-    // asserted the generic unknown-tool sentence, which is true of every name that
-    // is not a tool and would have stayed green while a monitoring tool shipped
-    // under another one — B27 calls it "a monitor snapshot".
+  test("the monitoring member EXISTS now, and reaches exactly one workflow (B17, B27 resolved)", () => {
+    // This assertion used to say the opposite, and its own docblock said what to do
+    // on the day it stopped being true: decide what the honest sentence is. That day
+    // is the `operations` workflow. Autopilot's whole input came from
+    // `/api/db/monitoring` — slow queries, index usage, cache and connection metrics
+    // — and `inspect_operations` reads those same provider methods, under a
+    // descriptor B27 asked for by name ("a metrics read needs a descriptor shape for
+    // non-SQL reads").
     //
-    // So: the members, and what each of them may reach. A monitoring tool adds a
-    // member here, and a usable one also joins a workflow's offer below.
+    // What is asserted is still the tool SET rather than a name, for the reason the
+    // old shape got wrong: a member added under any other name has to land here.
     expect(Object.keys(AGENT_TOOL_DEFINITIONS).sort()).toEqual([
       "compare_plans",
       "compose_report",
+      "inspect_operations",
       "inspect_plan",
       "inspect_schema",
       "profile_table",
       "recommend_change",
       "run_read_query",
     ]);
-    // Three canonical operations, all composed SQL, plus the ledger-only tools that
-    // reach nothing. Engine metrics are provider methods no descriptor covers, so
-    // there is no operation id a monitoring tool could even name.
+    // Four canonical operations: three composed SQL, and the curated read that names
+    // no statement at all. That fourth id is the thing B27 said did not exist.
     expect([...new Set(Object.values(AGENT_TOOL_DEFINITIONS).map((tool) => tool.operationId))].sort()).toEqual([
+      "db.operations.read",
       "sql.explain.estimate",
       "sql.query.read",
       "sql.table.profile",
       undefined,
     ]);
-    // And what an assessment run — Autopilot's counterpart — is actually offered.
+    // The honest bound on the restored capability: it reaches ONE workflow. An
+    // assessment run — Autopilot's closer counterpart — is still not offered it, so
+    // "the agent can read monitoring data" is only true of a run opened to Operate.
     expect(selectAgentTools({ mode: "agent", workflowType: "database-assessment" }).map((tool) => tool.name)).toEqual([
       "inspect_schema",
       "run_read_query",
       "inspect_plan",
       "compose_report",
       "profile_table",
+    ]);
+    expect(selectAgentTools({ mode: "agent", workflowType: "operations" }).map((tool) => tool.name)).toEqual([
+      "inspect_operations",
+      "recommend_change",
+      "compose_report",
     ]);
   });
 

@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { AGENT_EXECUTION_POLICY, AGENT_EXECUTION_PROFILE } from "@/lib/agent/execution-policy";
+import {
+  AGENT_EXECUTION_POLICY,
+  AGENT_EXECUTION_PROFILE,
+  AGENT_OPERATIONS_PROFILE,
+} from "@/lib/agent/execution-policy";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AgentRepairLedger, fingerprintStatement } from "@/lib/agent/repair-ledger";
 import {
@@ -8,6 +12,7 @@ import {
   comparePlansTool,
   composeReportTool,
   executeAgentOperation,
+  inspectOperationsTool,
   inspectPlanTool,
   inspectSchemaTool,
   planTableProfile,
@@ -148,7 +153,15 @@ afterEach(() => {
   consoleSpy.mockRestore();
 });
 
-const WORKFLOW_TYPES = ["investigation", "query-optimization", "database-assessment"] as const;
+const WORKFLOW_TYPES = ["investigation", "query-optimization", "database-assessment", "operations"] as const;
+
+/**
+ * The workflows built ON the read-class four. `operations` is deliberately not one of
+ * them: all three read-class tools it leaves out reach `provider.queryReadOnly`, so
+ * offering any of them would put back, tool by tool, the engine restriction that
+ * workflow exists to escape.
+ */
+const SQL_WORKFLOW_TYPES = ["investigation", "query-optimization", "database-assessment"] as const;
 
 /** A run record narrowed to what tool selection is allowed to read. */
 const persisted = (
@@ -182,8 +195,8 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
     }
   });
 
-  test("the read-class four are what every workflow starts from", () => {
-    for (const workflowType of WORKFLOW_TYPES) {
+  test("the read-class four are what every SQL-authoring workflow starts from", () => {
+    for (const workflowType of SQL_WORKFLOW_TYPES) {
       const names = selectAgentTools(persisted("agent", workflowType)).map((tool) => tool.name);
       expect(names.slice(0, 4), workflowType).toEqual([
         "inspect_schema",
@@ -191,6 +204,25 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
         "inspect_plan",
         "compose_report",
       ]);
+    }
+  });
+
+  test("the operations workflow carries NONE of the tools that send SQL to a database", () => {
+    // The property the whole workflow rests on, asserted as an exclusion rather than
+    // as a list: a tool added to the read class later must not silently reach a run
+    // that is offered on engines with no read-only statement path at all.
+    const names = selectAgentTools(persisted("agent", "operations")).map((tool) => tool.name);
+
+    for (const sqlAuthoring of ["inspect_schema", "run_read_query", "inspect_plan", "profile_table", "compare_plans"]) {
+      expect(names, sqlAuthoring).not.toContain(sqlAuthoring);
+    }
+    expect(names).toEqual(["inspect_operations", "recommend_change", "compose_report"]);
+  });
+
+  test("no workflow but operations is offered the curated reading", () => {
+    for (const workflowType of SQL_WORKFLOW_TYPES) {
+      const names = selectAgentTools(persisted("agent", workflowType)).map((tool) => tool.name);
+      expect(names, workflowType).not.toContain("inspect_operations");
     }
   });
 
@@ -252,6 +284,7 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
     // the array comparison this assertion used to make was blind to every tool that
     // declares no operation — it passed unchanged when two more were added.
     expect([...operations].sort()).toStrictEqual([
+      "db.operations.read",
       "sql.explain.estimate",
       "sql.query.read",
       "sql.query.read",
@@ -1937,5 +1970,364 @@ describe("profileTableTool — the model names a table, the server decides the r
     if (second.kind !== "planned") throw new Error("expected a plan");
     expect(second.plan.columns).toHaveLength(4);
     expect(second.plan.remaining).toBe(0);
+  });
+});
+
+// ============================================================================
+// inspectOperationsTool — the curated reading, which sends no statement
+// ============================================================================
+
+/**
+ * The tool that exists so this workflow can run where the others cannot.
+ *
+ * The harness below is deliberately NOT the one every other suite uses: that one's
+ * provider is `{ queryReadOnly }` and nothing else, which is exactly the provider
+ * shape this tool must never depend on. A curated reading calls the reporting methods
+ * the `DatabaseProvider` interface declares for every engine, so the stub here carries
+ * those and no `queryReadOnly` at all — a provider that would be REFUSED by the
+ * read-only profile and is served by the operations one.
+ */
+const SESSION = {
+  pid: 42,
+  user: "app",
+  database: "orders",
+  state: "active",
+  query: "SELECT * FROM orders WHERE id = 1",
+  duration: "00:00:12",
+  durationMs: 12_000,
+  blocked: true,
+  waitEvent: "transactionid",
+};
+
+interface CuratedStub {
+  readonly getActiveSessions: ReturnType<typeof mock>;
+  readonly getSlowQueries: ReturnType<typeof mock>;
+  readonly getTableStats: ReturnType<typeof mock>;
+  readonly getIndexStats: ReturnType<typeof mock>;
+  readonly getStorageStats: ReturnType<typeof mock>;
+  readonly getHealth: ReturnType<typeof mock>;
+}
+
+function curatedHarness(
+  overrides: Partial<AgentToolContext> = {},
+  providerOverrides: Partial<Record<keyof CuratedStub, unknown>> = {},
+): Harness & { readonly curated: CuratedStub } {
+  const curated: CuratedStub = {
+    getActiveSessions: mock(async () => [SESSION]),
+    getSlowQueries: mock(async () => [
+      { queryId: "q1", query: "SELECT 1", calls: 3, totalTime: 30, avgTime: 10, rows: 3 },
+    ]),
+    getTableStats: mock(async () => [
+      {
+        schemaName: "public",
+        tableName: "orders",
+        rowCount: 100,
+        tableSize: "8 MB",
+        tableSizeBytes: 8_000_000,
+        totalSize: "9 MB",
+        totalSizeBytes: 9_000_000,
+        lastVacuum: new Date(0),
+      },
+    ]),
+    getIndexStats: mock(async () => [
+      {
+        schemaName: "public",
+        tableName: "orders",
+        indexName: "orders_pkey",
+        columns: ["id", "tenant"],
+        isUnique: true,
+        isPrimary: true,
+        indexSize: "1 MB",
+        indexSizeBytes: 1_000_000,
+        scans: 0,
+      },
+    ]),
+    getStorageStats: mock(async () => [{ name: "pg_default", size: "20 MB", sizeBytes: 20_000_000 }]),
+    getHealth: mock(async () => ({
+      activeConnections: 4,
+      databaseSize: "20 MB",
+      cacheHitRatio: "99.1",
+      slowQueries: [],
+      activeSessions: [],
+    })),
+  };
+
+  const provider = { ...curated, ...providerOverrides } as unknown as DatabaseProvider;
+  const acquireProvider = mock(async () => provider);
+  const tracker = new ExecutionBudgetTracker();
+  const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });
+  const deadline = new AgentRunDeadline(AGENT_EXECUTION_POLICY.budgets.maxTotalRunMs * 2, frozenClock);
+  const repairs = new AgentRepairLedger();
+
+  let tick = 1_000;
+  const context: AgentToolContext = {
+    runId: "run-1",
+    mode: "agent",
+    actor: { sessionId: "session-1", role: "user" },
+    // A connection type with no read-only statement path at all, which is the whole
+    // point: this is the engine the other tools are refused on.
+    connection: { ...connection, type: "mysql" },
+    capabilities,
+    registry: createCanonicalOperationRegistry(),
+    scope: createTargetScope("conn-1"),
+    tracker,
+    artifacts,
+    deadline,
+    repairs,
+    acquireProvider,
+    clock: () => {
+      tick += 3;
+      return tick;
+    },
+    ...overrides,
+  };
+
+  return {
+    context,
+    curated,
+    queryReadOnly: mock(async () => queryResult()),
+    acquireProvider,
+    tracker,
+    artifacts,
+    deadline,
+    repairs,
+  };
+}
+
+describe("inspectOperationsTool — what the engine says about ITSELF", () => {
+  test("acquires under the OPERATIONS profile, not the read-only statement one", async () => {
+    // The engine gate, seen from the tool: this provider has no `queryReadOnly` and
+    // the call still completes, because the profile it asks for does not require one.
+    const h = curatedHarness();
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "sessions" });
+
+    expect(outcome.kind).toBe("completed");
+    expect(h.acquireProvider.mock.calls[0][1]).toBe(AGENT_OPERATIONS_PROFILE);
+    expect(h.acquireProvider.mock.calls[0][1]).not.toBe(AGENT_EXECUTION_PROFILE);
+  });
+
+  test("projects a session reading into a QueryResult with declared columns", async () => {
+    const h = curatedHarness();
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "sessions", limit: 5 });
+
+    if (outcome.kind !== "completed") throw new Error("expected completed");
+    expect(outcome.artifact.operationId).toBe("db.operations.read");
+    expect(outcome.artifact.summary.rowCount).toBe(1);
+    expect(outcome.artifact.summary.columnNames).toContain("blocked");
+    expect(h.curated.getActiveSessions).toHaveBeenCalledWith({ limit: 5 });
+
+    const stored = h.artifacts.get(outcome.artifact.correlationId, 1_000);
+    expect(stored?.value.rows[0]).toMatchObject({ pid: 42, blocked: true, waitEvent: "transactionid" });
+    // Absent optional fields are projected as null rather than dropped, so every row
+    // has the shape the declared columns promise.
+    expect(stored?.value.rows[0]).toHaveProperty("clientAddr", null);
+  });
+
+  test("declares its columns even when the engine reports nothing", async () => {
+    // An empty reading is an ANSWER — "nothing is blocked right now" — so it must
+    // still say what it would have contained. Fields derived from the first row would
+    // make an empty result shapeless.
+    const h = curatedHarness({}, { getSlowQueries: mock(async () => []) });
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "slow-queries" });
+
+    if (outcome.kind !== "completed") throw new Error("expected completed");
+    expect(outcome.artifact.summary.rowCount).toBe(0);
+    expect(outcome.artifact.summary.columnNames).toEqual([
+      "queryId",
+      "query",
+      "calls",
+      "totalTime",
+      "avgTime",
+      "minTime",
+      "maxTime",
+      "rows",
+    ]);
+  });
+
+  test("every kind reaches its own provider method, and none of them reaches a statement", async () => {
+    const h = curatedHarness();
+
+    for (const kind of ["sessions", "slow-queries", "table-stats", "index-stats", "storage", "health"]) {
+      const outcome = await inspectOperationsTool(h.context, {
+        kind,
+        schema: kind === "table-stats" ? "public" : undefined,
+      });
+      expect(outcome.kind, kind).toBe("completed");
+    }
+
+    expect(h.curated.getActiveSessions).toHaveBeenCalled();
+    expect(h.curated.getSlowQueries).toHaveBeenCalled();
+    expect(h.curated.getTableStats).toHaveBeenCalledWith({ schema: "public" });
+    expect(h.curated.getIndexStats).toHaveBeenCalledWith({});
+    expect(h.curated.getStorageStats).toHaveBeenCalled();
+    expect(h.curated.getHealth).toHaveBeenCalled();
+    expect(h.queryReadOnly).not.toHaveBeenCalled();
+  });
+
+  test("dates the engine reported become text, and index columns become one field", async () => {
+    const h = curatedHarness();
+
+    const tables = await inspectOperationsTool(h.context, { kind: "table-stats" });
+    const indexes = await inspectOperationsTool(h.context, { kind: "index-stats" });
+
+    if (tables.kind !== "completed" || indexes.kind !== "completed") throw new Error("expected completed");
+    expect(h.artifacts.get(tables.artifact.correlationId, 1_000)?.value.rows[0]).toMatchObject({
+      lastVacuum: new Date(0).toISOString(),
+      lastAnalyze: null,
+    });
+    expect(h.artifacts.get(indexes.artifact.correlationId, 1_000)?.value.rows[0]).toMatchObject({
+      columns: "id, tenant",
+      scans: 0,
+    });
+  });
+
+  test("health is projected as ONE row of figures, and never as a second copy of the other readings", async () => {
+    // `HealthInfo` nests its own slow-query and session lists, and both have their own
+    // kind. Projecting them here would give one fact two shapes and two ways to cite it.
+    const h = curatedHarness();
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "health" });
+
+    if (outcome.kind !== "completed") throw new Error("expected completed");
+    expect(outcome.artifact.summary.rowCount).toBe(1);
+    expect(outcome.artifact.summary.columnNames).not.toContain("slowQueries");
+    expect(h.artifacts.get(outcome.artifact.correlationId, 1_000)?.value.rows[0]).toMatchObject({
+      activeConnections: 4,
+      slowQueryCount: 0,
+      activeSessionCount: 0,
+    });
+  });
+
+  test("the model's arguments are re-validated against the tool's OWN schema", async () => {
+    const h = curatedHarness();
+
+    const missing = await inspectOperationsTool(h.context, {});
+    const invented = await inspectOperationsTool(h.context, { kind: "tablespaces" });
+    const smuggled = await inspectOperationsTool(h.context, { kind: "sessions", sql: "DROP TABLE orders" });
+
+    for (const outcome of [missing, invented, smuggled]) {
+      expect(outcome.kind).toBe("unavailable");
+      if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+      expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
+    }
+    expect(h.acquireProvider).not.toHaveBeenCalled();
+  });
+
+  test("a provider that does not serve a kind is REFUSED, not crashed", async () => {
+    // The pinned promise: some engines have no concept of some of these. The run is
+    // told plainly and carries on, rather than dying on a TypeError.
+    const h = curatedHarness({}, { getStorageStats: undefined });
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "storage" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("KIND_UNSUPPORTED_BY_PROVIDER");
+    expect(outcome.modelText).toContain("serves no reading of that kind");
+  });
+
+  test("a reading larger than the run may carry is refused rather than truncated", async () => {
+    // The same promise the read path makes: a delivered result is a COMPLETE one, so
+    // an overflow is an answer to correct rather than rows to quietly drop.
+    const overflowing = Array.from({ length: AGENT_EXECUTION_POLICY.budgets.maxResultRows + 1 }, (_, index) => ({
+      name: `store-${index}`,
+      size: "1 MB",
+      sizeBytes: 1_000_000,
+    }));
+    const h = curatedHarness({}, { getStorageStats: mock(async () => overflowing) });
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "storage" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("READING_OVER_BUDGET");
+    expect(outcome.modelText).toContain("smaller limit");
+  });
+
+  test("a limit above the run's row budget is clamped to it, never widened", async () => {
+    const h = curatedHarness();
+
+    await inspectOperationsTool(h.context, { kind: "sessions", limit: 200 });
+
+    expect(h.curated.getActiveSessions).toHaveBeenCalledWith({
+      limit: AGENT_EXECUTION_POLICY.budgets.maxResultRows,
+    });
+  });
+
+  test("an engine failure is a repairable refusal, and the same reading is not sent twice", async () => {
+    const h = curatedHarness(
+      {},
+      {
+        getSlowQueries: mock(async () => {
+          throw new QueryError("pg_stat_statements is not loaded", "postgres");
+        }),
+      },
+    );
+
+    const first = await inspectOperationsTool(h.context, { kind: "slow-queries" });
+    const second = await inspectOperationsTool(h.context, { kind: "slow-queries" });
+
+    if (first.kind !== "refused") throw new Error("expected refused");
+    expect(first.refusal.class).toBe("database-error");
+    // The engine's own words are untrusted and reach the model fenced.
+    expect(first.modelText).toContain(UNTRUSTED_CONTENT_BEGIN);
+    if (second.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(second.reasonCode).toBe("STATEMENT_ALREADY_FAILED");
+  });
+
+  test("an environment failure propagates, exactly as it does on the statement path", async () => {
+    const h = curatedHarness(
+      {},
+      {
+        getActiveSessions: mock(async () => {
+          throw new ConnectionError("host unreachable", "mysql");
+        }),
+      },
+    );
+
+    await expect(inspectOperationsTool(h.context, { kind: "sessions" })).rejects.toBeInstanceOf(ConnectionError);
+  });
+
+  test("planning mode reaches no provider at this seam either", async () => {
+    const h = curatedHarness({ mode: "planning" });
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "sessions" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("MODE_HAS_NO_TOOLS");
+    expect(h.acquireProvider).not.toHaveBeenCalled();
+  });
+
+  test("two readings that differ only in argument ORDER are one call to the repair ledger", async () => {
+    // The fingerprint is canonical, so the ledger's refusal cannot be sidestepped by
+    // re-ordering the same request.
+    const h = curatedHarness();
+
+    const first = await inspectOperationsTool(h.context, { kind: "sessions", limit: 5 });
+    const second = await inspectOperationsTool(h.context, { limit: 5, kind: "sessions" });
+
+    if (first.kind !== "completed" || second.kind !== "completed") throw new Error("expected completed");
+    // Two successful reads are both allowed — only FAILURES are recorded — but they
+    // fingerprint identically, which is what the ledger is keyed on.
+    expect(fingerprintStatement("operations:sessions:5:")).toBe(fingerprintStatement("operations:sessions:5:"));
+  });
+
+  test("the handover sentence names the artifact and shows how to cite it", async () => {
+    const h = curatedHarness();
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "sessions" });
+
+    if (outcome.kind !== "completed") throw new Error("expected completed");
+    expect(outcome.modelText).toContain(outcome.artifact.correlationId);
+    expect(outcome.modelText).toContain('{"source":"artifact","correlationId":');
+    // Rows are database content and reach the model fenced, like every other result.
+    expect(outcome.modelText).toContain(UNTRUSTED_CONTENT_BEGIN);
+    expect(outcome.modelText).toContain(UNTRUSTED_CONTENT_END);
+  });
+
+  test("the tool tells the model, in its own description, that a reading is a moment", async () => {
+    // Pinned decision 8's prompt half. The timeline carries the other half.
+    expect(AGENT_TOOL_DEFINITIONS.inspect_operations.description).toContain("EVERY READING IS A MOMENT");
   });
 });

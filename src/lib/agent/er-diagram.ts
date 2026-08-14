@@ -47,11 +47,18 @@ export type AgentErDetail = "minimal" | "medium" | "full";
  * reasons about keys and their indexes, so it gets everything; an optimization cares
  * which columns join, so it gets the columns; an investigation mostly needs to know
  * what connects to what.
+ *
+ * `operations` answers `minimal` and never uses it: that workflow captures no schema
+ * snapshot at all (`investigation.ts` says why), so there is no inventory for a
+ * diagram to be drawn from. The entry exists because the record is total, and it
+ * names the least-saying level rather than inventing a fourth one for a case that
+ * cannot arise.
  */
 const WORKFLOW_DETAIL: Readonly<Record<AgentRunWorkflowType, AgentErDetail>> = Object.freeze({
   investigation: "minimal",
   "query-optimization": "medium",
   "database-assessment": "full",
+  operations: "minimal",
 } satisfies Record<AgentRunWorkflowType, AgentErDetail>);
 
 export const erDetailForWorkflow = (workflowType: AgentRunWorkflowType): AgentErDetail => WORKFLOW_DETAIL[workflowType];

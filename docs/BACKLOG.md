@@ -1348,36 +1348,6 @@ asserting it (`tests/unit/packaging-payload-prune.test.ts` pins what the payload
 nearest existing home for such an assertion), and when `docs/AGENT.md`'s deployment section loses the
 caveat that points here.
 
-### B17. Monitoring tools are deferred; profiling landed with #330 T3
-
-**Half of this entry is done and the other half is unchanged.** #330 T3 instructed that profiling
-reach the database "as new descriptors in `descriptors.ts` at R0/R1", which reopened the
-three-descriptor product decision this entry rested on: `sql.table.profile` is registered, and
-`profile_table` is offered to the `database-assessment` workflow. What follows is the original
-reasoning, kept because the monitoring half still stands on it.
-
-
-
-Recorded as #329's own narrowing (planning decision P1), not as something discovered later. The
-canonical operation set is exactly three descriptors (`src/lib/db/operations/descriptors.ts`), and the
-parent epic pinned that number as a product decision, so a tool has to fit one of them or it does not
-exist. The M2 tool set is therefore schema inspection, a bounded read, an estimating plan inspection
-and report composition.
-
-The two that were left out sit on opposite sides of that line. **Table profiling** (row counts, null
-ratios, cardinality, value distributions) fits: it is a bounded read whose SQL the server composes
-per dialect, exactly like the catalog read. What it multiplies is scope — each statistic is a
-dialect-specific composition with its own cost, and a profile that silently scans a large table is
-its own hazard. **Monitoring** does not fit at all: it reaches `getMetrics`, slow-query listings and
-session listings, which are provider methods no descriptor covers, so wiring it would be a database
-reach outside `src/lib/db/operations/` — a defect by this milestone's constraint rather than a
-shortcut.
-
-Done, for profiling, when the composed statements exist per dialect with their own cost bound and the
-tool is added to the read-class set. Done, for monitoring, only after a decision about whether the
-operation set grows a fourth descriptor for non-SQL metadata reads — which drags the verification
-marker, the provider triad and the security matrix with it, and is a human product call.
-
 ### B20. A Gemini deployment behind a proxy is not configurable, on either surface
 
 `resolveApiUrl` (`src/lib/llm/utils/config.ts`) returns `LLM_API_URL` for every provider kind, so the
@@ -1496,18 +1466,6 @@ landed rather than approximated.
 
 Done when the shape tests are per-dialect predicates rather than one shared `LIKE`, with the digit
 run among them and each verified against that engine's own grammar.
-
-### B27. A database assessment reports no monitor snapshot
-
-#330 T3 lists a monitor snapshot among the assessment template's outputs. It is not built, for the
-reason B17 gives: engine health reaches `getMetrics`, slow-query listings and session listings, which
-are provider methods no operation descriptor covers. A profiling descriptor could be added because a
-profile is a composed SQL statement; a metrics read is not, so it needs a descriptor shape for
-non-SQL reads — with its own verification marker, its own provider triad and its own security-matrix
-row — which is a product decision rather than a subtask.
-
-Done when that shape exists and the assessment template reports engine health beside its table
-profiles.
 
 ### B28. A profile that times out reports nothing rather than falling back to catalog statistics
 

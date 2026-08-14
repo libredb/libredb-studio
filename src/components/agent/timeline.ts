@@ -212,6 +212,22 @@ const PLAN_ESTIMATE_CAVEAT =
 /** Said on every recommendation, because the run does not make the change. */
 const NOT_APPLIED_CAVEAT = "Not applied: nothing here runs this statement.";
 
+/**
+ * The honesty an operational reading owes its reader, for the same reason the plan
+ * caveat exists: the app says it, rather than trusting the model to remember.
+ *
+ * A curated reading settles as an ordinary `tool-completed`, which renders "Result
+ * stored" and nothing about WHAT kind of result it is — so without this the timeline
+ * would show a session list exactly as it shows a table read, and a reader would have
+ * no way to tell that the rows describe an instant that has already passed. Attached
+ * on the operation id, which is the only thing on the event that identifies the
+ * reading.
+ */
+const POINT_IN_TIME_CAVEAT = "A moment, not a history: this reading says what the engine reported as it was taken.";
+
+/** The operation a curated operational reading is stored under. */
+const OPERATIONS_OPERATION_ID = "db.operations.read";
+
 /** How an engine reaches the rows, in words. Total, so a new access kind cannot render blank. */
 const ACCESS_WORDS: Readonly<Record<AgentPlanAccess, string>> = {
   "full-scan": "a full scan",
@@ -240,6 +256,7 @@ const WORKFLOW_WORDS: Readonly<Record<AgentRunWorkflowType, string>> = {
   investigation: "an investigation",
   "query-optimization": "query optimization",
   "database-assessment": "a database assessment",
+  operations: "an operations reading",
 };
 
 /**
@@ -378,6 +395,8 @@ const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
   "no-plan-evidence":
     "The index was recommended without citing a plan this run read, so nothing the engine said backs it.",
   "no-table-profile": "No table was profiled, so the state of the data was never established.",
+  "no-operations-reading":
+    "The report cites no operational reading, so it rests on something other than what the engine reported about itself.",
   cancelled: "The run was stopped before it could finish.",
 };
 
@@ -437,13 +456,15 @@ function describeEvent(
         headline: "Tool invoked",
         detail: event.operationId === undefined ? event.tool : `${event.tool} via ${event.operationId}`,
       };
-    case "tool-completed":
+    case "tool-completed": {
+      const stored = `${event.artifact.summary.rowCount} ${event.artifact.summary.rowCount === 1 ? "row" : "rows"}, ${event.artifact.summary.columnNames.length} ${event.artifact.summary.columnNames.length === 1 ? "column" : "columns"}, ${event.artifact.summary.elapsedMs} ms (${event.artifact.correlationId})`;
       return {
         tone: "progress",
         headline: "Result stored",
-        detail: `${event.artifact.summary.rowCount} ${event.artifact.summary.rowCount === 1 ? "row" : "rows"}, ${event.artifact.summary.columnNames.length} ${event.artifact.summary.columnNames.length === 1 ? "column" : "columns"}, ${event.artifact.summary.elapsedMs} ms (${event.artifact.correlationId})`,
+        detail: event.artifact.operationId === OPERATIONS_OPERATION_ID ? `${stored} ${POINT_IN_TIME_CAVEAT}` : stored,
         artifactId: event.artifact.correlationId,
       };
+    }
     case "tool-refused":
       return { tone: "refused", ...describeRefusal(event.refusal) };
     case "report-composed":
