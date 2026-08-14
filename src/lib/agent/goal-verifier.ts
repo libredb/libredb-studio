@@ -59,7 +59,8 @@ export type AgentGoalVerifierId =
   | "agent-query-optimization.1"
   | "agent-query-optimization.2"
   | "agent-database-assessment.1"
-  | "agent-operations.1";
+  | "agent-operations.1"
+  | "agent-data-analysis.1";
 
 /**
  * What a run was required to produce and did not. Deliberately a closed union of
@@ -110,6 +111,15 @@ export type AgentGoalShortfall =
    * database unanswered — the #356 error in a new place.
    */
   | "no-operations-reading"
+  /**
+   * A data-analysis run reported its findings and produced nothing to show for them.
+   *
+   * The template's own artifact. A report is what a run SAYS; an `answer-composed`
+   * event is which result it is saying it about, and how that result should be put in
+   * front of the user. A run that composed the first and not the second answered a
+   * question about the data with prose alone.
+   */
+  | "no-answer"
   /**
    * The run was stopped before it could conclude. Substituted for the missing
    * output rather than reported alongside it: a user's stop is not a defect of the
@@ -280,6 +290,39 @@ function verifyDatabaseAssessmentGoal(run: VerifiableAgentRun): readonly AgentGo
 }
 
 /**
+ * The analysis bar: the investigation baseline, and then an answer to show for it.
+ *
+ * Composed the same way the optimization and assessment rules are, and the baseline
+ * dominates for the same reason: a run that answered nothing has not become
+ * acceptable by presenting a result, so telling it that it skipped an answer would
+ * name the smaller of two problems.
+ *
+ * **Both presentations satisfy it, and that is the #356 check applied rather than
+ * repeated.** Every valid answer this workflow can give produces the event: a chart
+ * of an aggregate, a table for a one-row or non-numeric result, a single number as a
+ * one-row table, and a two-window comparison are all one artifact presented one way.
+ * An earlier draft of the design made the editor hand-over what PRODUCED the answer,
+ * which would have scored a run `unanswered` for having that control switched off —
+ * the exact shape of #356, and the reason the design changed before any of this was
+ * written.
+ *
+ * **The stated blind spot.** A run that answers purely from the schema snapshot —
+ * "which table holds sales?" — cites the snapshot, passes the baseline, has no
+ * artifact to present, and is scored `unanswered`. That is deliberate rather than
+ * overlooked: this workflow's objective is a question about the DATA, and an analysis
+ * that read none is not an analysis. It is a judgement and not a proof, so it is
+ * written here the way `empty-evidence`'s mechanical limit is written at the top of
+ * this file. If live users routinely ask schema questions of this workflow, the
+ * remedy is to route them to `investigation` — not to widen what counts as evidence
+ * here, because every such widening is a step back toward the escape hatch.
+ */
+function verifyDataAnalysisGoal(run: VerifiableAgentRun): readonly AgentGoalShortfall[] {
+  const baseline = verifyInvestigationGoal(run);
+  if (baseline.length > 0) return baseline;
+  return run.events.some((event) => event.kind === "answer-composed") ? [] : ["no-answer"];
+}
+
+/**
  * Workflow type → the rule an agent run of it is judged by, AND the id that names
  * that rule — ONE entry, so the two cannot drift.
  *
@@ -342,6 +385,7 @@ export const AGENT_WORKFLOW_GOALS: Readonly<Record<AgentRunWorkflowType, AgentWo
   "query-optimization": { verifier: "agent-query-optimization.2", verify: verifyQueryOptimizationGoal },
   "database-assessment": { verifier: "agent-database-assessment.1", verify: verifyDatabaseAssessmentGoal },
   operations: { verifier: "agent-operations.1", verify: verifyOperationsGoal },
+  "data-analysis": { verifier: "agent-data-analysis.1", verify: verifyDataAnalysisGoal },
 } satisfies Record<AgentRunWorkflowType, AgentWorkflowGoal>);
 
 const PLANNING_GOAL: AgentWorkflowGoal = { verifier: AGENT_PLANNING_VERIFIER, verify: verifyPlanningGoal };

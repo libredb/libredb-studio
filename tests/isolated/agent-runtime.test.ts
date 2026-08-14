@@ -370,7 +370,7 @@ describe("readAgentArtifact", () => {
   /**
    * The TTL is derived from the LONGEST workflow deadline, and it has to be: the store
    * is process-wide, so a TTL taken from a shorter row would expire a
-   * `database-assessment` run's earliest result while that run was still allowed to
+   * `data-analysis` run's earliest result while that run was still allowed to
    * cite it — the dead reference §1.2 of the design says the multiple exists to
    * prevent. Asserted behaviourally, because the constant is private to the module.
    */
@@ -394,7 +394,7 @@ describe("readAgentArtifact", () => {
     }
     expect(readAgentArtifact("corr_ttl", 1_000 + LONGEST_DEADLINE_MS * 4 - 1)).toBeDefined();
     expect(readAgentArtifact("corr_ttl", 1_000 + LONGEST_DEADLINE_MS * 4)).toBeUndefined();
-    expect(LONGEST_DEADLINE_MS).toBe(AGENT_WORKFLOW_BUDGETS["database-assessment"].runDeadlineMs);
+    expect(LONGEST_DEADLINE_MS).toBe(AGENT_WORKFLOW_BUDGETS["data-analysis"].runDeadlineMs);
   });
 
   test("an id nothing ever stored is undefined rather than an error", () => {

@@ -104,6 +104,13 @@ const DECIDED: Readonly<
     databaseMs: 60_000,
     version: "agent-read-only.operations.1",
   },
+  "data-analysis": {
+    turns: 60,
+    statements: 42,
+    runDeadlineMs: 900_000,
+    databaseMs: 180_000,
+    version: "agent-read-only.data-analysis.1",
+  },
 };
 
 describe("AGENT_WORKFLOW_BUDGETS — accepted by the real pipeline", () => {
@@ -166,6 +173,7 @@ describe("AGENT_WORKFLOW_BUDGETS — the frozen decision table", () => {
       "query-optimization",
       "database-assessment",
       "operations",
+      "data-analysis",
     ];
     expect([...workflowTypes].sort()).toEqual([...expected].sort());
   });

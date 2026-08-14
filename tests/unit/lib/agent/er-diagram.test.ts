@@ -309,5 +309,9 @@ describe("which level a workflow is given", () => {
     expect(erDetailForWorkflow("investigation")).toBe("minimal");
     expect(erDetailForWorkflow("query-optimization")).toBe("medium");
     expect(erDetailForWorkflow("database-assessment")).toBe("full");
+    // An analysis joins a fact table to its dimensions, so WHICH columns join is the
+    // part it needs; how each key is indexed is the assessment's question, not this
+    // one's.
+    expect(erDetailForWorkflow("data-analysis")).toBe("medium");
   });
 });

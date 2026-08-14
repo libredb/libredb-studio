@@ -54,7 +54,7 @@ import type { AgentRunFailureReason } from "./types";
  *
  * The LONGEST deadline any workflow may take, not one workflow's — the store is
  * process-wide and holds artifacts from every workflow at once, so a TTL derived from
- * a shorter row would expire a `database-assessment` run's earliest evidence while
+ * a shorter row would expire a `data-analysis` run's earliest evidence while
  * that run was still going. A workflow with a shorter deadline simply gets more
  * headroom than the multiple promises.
  */

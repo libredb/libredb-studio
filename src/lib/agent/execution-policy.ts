@@ -190,6 +190,22 @@ function workflowBudget(input: {
  *   a run that wanted more would be re-reading a moment rather than learning anything.
  *   The pre-decision wall clock is kept for the same reason: there is no repair loop
  *   here for a longer clock to serve.
+ * - **`data-analysis`, 60 / 42 / 900 s / 180 s** — the largest row, and every one of
+ *   its four figures is bought rather than inherited. An analytical run's shape is a
+ *   handful of exploratory reads to find the fact table, several attempts at getting
+ *   one aggregate right — which is where the repair budget goes — and then one or two
+ *   comparison windows, so it needs room to ITERATE where an assessment needs room to
+ *   repeat. Its database time is the ceiling most likely to bind first, because a
+ *   `GROUP BY` over a fact table is not a catalog read: 180 s is what keeps
+ *   `TOTAL_RUN_BUDGET_EXCEEDED` from arriving before the statement budget does. And
+ *   900 s is what makes 60 turns REACHABLE rather than decorative — 900 s − 180 s of
+ *   database time is 720 s of model time, which is 60 turns at the slow end of this
+ *   workload's latency. Two consequences are deliberate purchases and are stated
+ *   rather than discovered: by the quadratic shape above this row costs several times
+ *   an investigation, not 1.7× it; and a 900 s run outlives the default idle timeout
+ *   of most reverse proxies (nginx's `proxy_read_timeout` is 60 s), so a deployment
+ *   in front of a container needs its own timeout raised — stated in `docs/AGENT.md`
+ *   under "Deployment" rather than silently assumed.
  *
  * Every one of these ceilings is per DRIVE, not per run. The budget tracker, the repair
  * ledger and the deadline all live in the process that drives a run, so a run resumed
@@ -227,6 +243,13 @@ export const AGENT_WORKFLOW_BUDGETS: Readonly<Record<AgentRunWorkflowType, Agent
     maxStatementsPerRun: 12,
     runDeadlineMs: 300_000,
     maxTotalRunMs: 60_000,
+  }),
+  "data-analysis": workflowBudget({
+    workflowType: "data-analysis",
+    maxModelTurns: 60,
+    maxStatementsPerRun: 42,
+    runDeadlineMs: 900_000,
+    maxTotalRunMs: 180_000,
   }),
 } satisfies Record<AgentRunWorkflowType, AgentWorkflowBudget>);
 

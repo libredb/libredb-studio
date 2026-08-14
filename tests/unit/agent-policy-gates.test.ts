@@ -39,6 +39,7 @@ const WORKFLOWS: readonly AgentRunWorkflowType[] = [
   "query-optimization",
   "database-assessment",
   "operations",
+  "data-analysis",
 ];
 
 // ─── Gate 1: planning performs zero database operations ─────────────────────
