@@ -731,6 +731,19 @@ function enumerated over all eight combinations by its test):
    and no row estimate to weigh, the engine does not preempt a read that overruns, and a runaway read
    blocks writers and this application until it finishes. Any other dialect is risky, the same
    fail-closed posture `summarisePlan` takes.
+
+   **A plan the server could only PARTLY read is risky too**, which is the same rule one level down.
+   `summariseSqlite` recognises `SEARCH` and `SCAN`, so a plan holding either of those beside a step
+   it does not interpret — `USE TEMP B-TREE FOR ORDER BY`, or anything a later SQLite emits —
+   summarised as a flat `index` and passed the gate: "said nothing about that step" read as "said it
+   was cheap". The summary now carries `uninterpretedStep` beside `access`, and the gate refuses on
+   it before either engine's rule. The flag sits beside `access` rather than collapsing it to
+   `unknown`, because what the recognised steps said is still true and `compare_plans` still wants
+   it — the comparison is described exactly as it was before the field existed. **PostgreSQL sets no
+   such flag,** deliberately: a PG plan is mostly nodes this reading does not tally (`Sort`,
+   `Hash Join`, `Aggregate`), none of them a relation access, and the engine both reports a whole-plan
+   `Total Cost` this gate already weighs and preempts a statement that overruns. On SQLite the access
+   reading is the gate's entire evidence, and a reading that skipped a step is not evidence.
 3. **The measured elapsed time**, `artifact.summary.elapsedMs` for that very result, at most 2 000 ms.
    Already on the ledger, so it costs nothing to read.
 
