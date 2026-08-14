@@ -114,14 +114,32 @@ const READ_TARGETS = /\b(?:from|join)\s+([a-z0-9_."]+)/gi;
  * name` — made a single-table question answer with two tables' rows, which is the
  * self-contradiction the rest of this fixture exists to avoid. What a statement reads
  * is a fact about its structure, so it is read off the structure.
+ *
+ * No fallback here, and that is the difference from `tablesNamedIn` below: a
+ * statement naming no table reads no table, which is what the empty-result bar has to
+ * be able to say about `SELECT 1`.
  */
-const tablesNamedIn = (sql: string): readonly string[] => {
+const readTargetsIn = (sql: string): ReadonlySet<string> => {
   const read = new Set<string>();
   for (const match of sql.matchAll(READ_TARGETS)) {
     // `public.legal`, `"legal"` and `legal` are the same table to this world.
     const bare = (match[1] ?? "").replaceAll('"', "").split(".").pop();
     if (bare !== undefined) read.add(bare.toLowerCase());
   }
+  return read;
+};
+
+/**
+ * Which of this world's tables a statement is asking about, for ANSWERING it.
+ *
+ * The fallback is a property of the engine, not of the statement: a statement naming
+ * no table still has to be answered something, and answering it nothing would teach
+ * the model to disbelieve the fixture. It is deliberately NOT the predicate a bar
+ * judges a citation by — treating "named no table" as "named all eight" would hand
+ * `SELECT 1` the whole database as evidence, which is #331 T7's second review finding.
+ */
+const tablesNamedIn = (sql: string): readonly string[] => {
+  const read = readTargetsIn(sql);
   const named = DEPARTMENTS.filter((table) => read.has(table));
   return named.length > 0 ? named : DEPARTMENTS;
 };
@@ -145,6 +163,17 @@ const countsFor = async (sql: string) => {
   }
   return rows(tablesNamedIn(sql).flatMap(peopleIn), ["id", "name"]);
 };
+
+/**
+ * The table the empty-result case asks about, named ONCE.
+ *
+ * Its objective, the world's answers and the case's own bar are three statements
+ * about the same table, and the bar is the one that fails silently if they drift: a
+ * question about a table the bar is not watching would score `answered` on any
+ * citation at all. Typed as a member of this world's tables, so it cannot name one
+ * the inventory does not hold.
+ */
+const EMPTY_RESULT_TABLE: (typeof DEPARTMENTS)[number] = "legal";
 
 /**
  * Does this statement ask for the rows that have NO name?
@@ -186,7 +215,7 @@ const noneUnnamed = async (sql: string) => {
 };
 
 /**
- * Did the report rest ONLY on the zero?
+ * Did the run ESTABLISH the table's population before saying nothing was missing?
  *
  * The ledger cannot answer this, and the count shape is why. `empty-evidence` fires
  * when EVERY cited result came back empty; a count of the unnamed rows comes back as
@@ -197,18 +226,46 @@ const noneUnnamed = async (sql: string) => {
  *
  * What is checked is what the claims RESTED on, which is a fact about the run: the
  * statement behind each cited artifact, resolved through the step that drafted it. A
- * run that cited only null-predicate reads has presented the zero itself as the
- * finding; a run that also cited the table's population — its total, its complement,
- * or its rows — established that there are five rows and that none of them is
- * unnamed, and then said so.
+ * run passes only if some cited statement READ the target table without asking for
+ * the unnamed rows — its total, its complement, or its own rows. That is the run
+ * establishing that `legal` holds five rows and that all five carry a name, which is
+ * the difference the case exists to measure: "established there are none and said so"
+ * against "reported the zero it was looking for".
  *
- * What it deliberately does NOT check is the model's prose, for the reason
- * `goal-verifier.ts` gives: grading the answer with the answer establishes nothing.
- * So this cannot tell a graceful sentence from a curt one, and it does not claim to.
- * A citation of the context snapshot is not population either — the snapshot says the
- * table and the column exist, never how many rows are in them.
+ * Both halves of that predicate were widenings that review had to take back, and the
+ * shortfall ids are separate because each names a different way a report can fail to
+ * establish it:
+ *
+ *  - `snapshot-not-population` — no artifact was cited at all. Zero artifact
+ *    citations does not mean "no report": `judge` runs only over a run the ledger
+ *    ALREADY scored `answered`, so it means every claim rested on the context
+ *    snapshot. The snapshot says the table and the column exist; it never says how
+ *    many rows are in them.
+ *  - `zero-as-finding` — the run cited its null-predicate read and nothing that read
+ *    the table otherwise. The original defect.
+ *  - `probe-not-population` — the cited statements read no target table at all. This
+ *    is `SELECT 1 as x` and `SELECT sqlite_version()`, which are not hypotheticals:
+ *    a live model sent exactly those in earlier runs of this case (#350). A bar that
+ *    only asked "does this statement avoid the word NULL?" counted them as the
+ *    table's population.
+ *
+ * **What this bar still cannot see**, stated because every widening of what counts as
+ * evidence is a step back toward the escape hatch it replaced:
+ *
+ *  - The model's PROSE, for the reason `goal-verifier.ts` gives — grading the answer
+ *    with the answer establishes nothing. It cannot tell a graceful sentence from a
+ *    curt one, a hedge from a claim, or a sentence that contradicts the very result
+ *    it cites.
+ *  - Whether the cited population read was about the right COLUMN, or returned
+ *    anything relevant. `SELECT id FROM legal` passes; so would a read of `legal`
+ *    that never mentions `name`.
+ *  - A read of the target table reached under another name — a view, or a CTE whose
+ *    body this fixture never resolves. Nothing in this world has one, so the limit is
+ *    latent rather than live.
+ *  - Whether the model UNDERSTOOD what it cited. The bar is about what the claims
+ *    rest on, and a run can rest on the right result for the wrong reason.
  */
-const restedOnlyOnTheZero = (drive: EvalDrive): string | undefined => {
+const populationShortfall = (drive: EvalDrive): string | undefined => {
   const draftedFor = new Map<string, string>();
   for (const event of drive.events) {
     if (event.kind === "statement-drafted") draftedFor.set(event.stepId, event.sql);
@@ -224,14 +281,17 @@ const restedOnlyOnTheZero = (drive: EvalDrive): string | undefined => {
     .flatMap((event) => (event.kind === "report-composed" ? event.claims : []))
     .flatMap((claim) => claim.evidence)
     .flatMap((reference) => (reference.source === "artifact" ? [reference.correlationId] : []));
-  // No report is the ledger's own shortfall, and it has already been reported.
-  if (cited.length === 0) return undefined;
+  // The ledger has already accepted this run, so this is a report whose every claim
+  // cited the inventory rather than a result — never a run that composed nothing.
+  if (cited.length === 0) return "snapshot-not-population";
 
-  const restsOnPopulation = cited.some((correlationId) => {
+  const citedStatements = cited.flatMap((correlationId) => {
     const sql = statementBehind.get(correlationId);
-    return sql !== undefined && !asksForUnnamed(sql);
+    return sql === undefined ? [] : [sql];
   });
-  return restsOnPopulation ? undefined : "zero-as-finding";
+  const readTheTable = citedStatements.filter((sql) => readTargetsIn(sql).has(EMPTY_RESULT_TABLE));
+  if (readTheTable.some((sql) => !asksForUnnamed(sql))) return undefined;
+  return readTheTable.length > 0 ? "zero-as-finding" : "probe-not-population";
 };
 
 /**
@@ -295,20 +355,24 @@ export const CASES: readonly RealModelCase[] = [
       requires every cited result to be empty; the count is one row, so a run that
       reports `0` while citing it is recorded `answered` by the verifier. `judge`
       re-establishes the distinction the case was written for, on the only ground a
-      machine has: what the claims RESTED on. A report citing only null-predicate
-      reads is `zero-as-finding`; one that also cites the table's population
-      established the five rows and the five names before saying none are missing.
+      machine has: what the claims RESTED on. It passes only a report that cites a
+      statement which READ the table without asking for the unnamed rows — the run
+      establishing the five rows and the five names before saying none are missing.
+      A report resting on the captured inventory alone is `snapshot-not-population`,
+      one resting on the null-predicate read is `zero-as-finding`, and one resting on
+      statements that touched no table is `probe-not-population`.
 
       What neither the verdict nor the judge can see is the prose — whether the
-      sentence is graceful, hedged or curt — and `restedOnlyOnTheZero` says so where
-      it is defined rather than letting this comment imply otherwise.
+      sentence is graceful, hedged or curt — and `populationShortfall` lists that and
+      the bar's other blind spots where it is defined, rather than letting this
+      comment imply there are none.
     */
     name: "empty-result",
     engine: "postgres",
-    objective: "Which people in the legal table have no name recorded?",
-    expectation: "cites the table's population, not only the zero it was looking for",
+    objective: `Which people in the ${EMPTY_RESULT_TABLE} table have no name recorded?`,
+    expectation: "cites a read of the table's population, not only the zero it was looking for",
     answer: noneUnnamed,
-    judge: restedOnlyOnTheZero,
+    judge: populationShortfall,
   },
   {
     name: "planning",

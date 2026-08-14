@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import type { EvalRun } from "../isolated/fixtures/agent-eval-harness";
-import { answersProse, callsTool, reportOn, reportOnAll } from "../isolated/fixtures/agent-scripted-model";
+import {
+  answersProse,
+  callsTool,
+  reportCitingWhatWasOffered,
+  reportOn,
+  reportOnAll,
+} from "../isolated/fixtures/agent-scripted-model";
 import { CASES, openCaseRun, summarise } from "./real-model";
 
 /**
@@ -105,6 +111,55 @@ describe("the empty-result case can still fail on the defect it was written for"
     expect(drive.verdict.unmet).toEqual(["empty-evidence"]);
     expect(EMPTY.judge?.(drive)).toBe("zero-as-finding");
     expect(summarise(EMPTY, drive).verdict).toBe("unanswered (empty-evidence)");
+  });
+
+  test("a report resting only on the captured inventory is not the table's population", async () => {
+    // Zero artifact citations is NOT "no report" — the ledger's verdict has already
+    // said this run answered, so what it means here is that every claim rested on the
+    // context snapshot. The snapshot says the `legal` table exists and that `name` is
+    // nullable; it says nothing about how many rows are in either, which is exactly
+    // the fact this case requires the run to have established. The model needs no
+    // encouragement to try it: this run composes its report on the FIRST turn, from
+    // the only citation the opening prompt offers.
+    const run = await open("empty-result");
+
+    const drive = await run.drive([reportCitingWhatWasOffered("No row in the legal table is missing a name.")]);
+
+    expect(drive.modelStatements).toEqual([]);
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-investigation.1", unmet: [] });
+    expect(summarise(EMPTY, drive).verdict).toBe("unanswered (snapshot-not-population)");
+  });
+
+  test("a cited statement that never READS the table is not population evidence", async () => {
+    // The probe shape a live model actually produced in earlier runs of this very
+    // case (#350): `SELECT 1 as x;`, sent while it worked out how to cite what it
+    // already had. It mentions no NULL, so a bar that asked only "does this statement
+    // avoid the null predicate?" counted it as the table's population and scored the
+    // run answered — one probe laundering a report that rests on the zero.
+    const run = await open("empty-result");
+
+    const drive = await run.drive([
+      callsTool("run_read_query", { sql: COUNT_UNNAMED, rationale: "count the unnamed rows" }),
+      callsTool("run_read_query", { sql: "SELECT 1 AS x", rationale: "check the connection" }, "call_2"),
+      reportOnAll("0 people in the legal table have no name recorded."),
+    ]);
+
+    expect(summarise(EMPTY, drive).verdict).toBe("unanswered (zero-as-finding)");
+  });
+
+  test("a report resting on probes alone is named as that, not as the zero", async () => {
+    // Nothing about the target table was read at all, so the run cannot have reported
+    // the zero either. Named separately because the eval's table is what a reader
+    // sees: `zero-as-finding` about a run that never counted anything would send the
+    // next reader looking for a count that does not exist.
+    const run = await open("empty-result");
+
+    const drive = await run.drive([
+      callsTool("run_read_query", { sql: "SELECT 1 AS x", rationale: "check the connection" }),
+      reportOnAll("Nobody in the legal table is missing a name."),
+    ]);
+
+    expect(summarise(EMPTY, drive).verdict).toBe("unanswered (probe-not-population)");
   });
 
   test("a run that composed nothing is reported as that, not as the case's own shortfall", async () => {
