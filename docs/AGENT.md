@@ -209,7 +209,9 @@ database would investigate the seed and report on it as though it were the one o
 
 A run emits a closed set of **semantic events**, and they are the whole of what the UI renders:
 `run-started`, `context-captured`, `statement-drafted`, `tool-invoked`, `tool-completed`,
-`tool-refused`, `report-composed`, `closing-statement`, `run-finished`.
+`tool-refused`, `report-composed`, `closing-statement`, `run-finished`, plus the four a single
+workflow's own tool writes — `plan-comparison`, `recommendation`, `table-profiled` and
+`answer-composed`.
 
 **`closing-statement` is the model's closing prose, and it is deliberately not a report.** It carries
 no citations and claims none, which is why it has its own kind rather than a lenient
@@ -538,6 +540,63 @@ scalars — no `sql` key exists on it at all. The honest edge: `SlowQueryStats.q
 `ActiveSessionDetails.user` is an identity. That is inherent to "which queries are slow" and cannot be
 redacted without answering a different question, so it is declared here — and an operator who does not
 want it can deny this one operation id in the audit stream without denying any other agent read.
+
+### Presenting an answer
+
+`present_answer` records the one thing a ledger otherwise cannot express: **which result IS the
+answer, and how it should be shown.** The read itself is already on the ledger — `tool-invoked`
+before it, `tool-completed` after — but "this result is the answer, and it should be drawn as a bar
+chart of region against net_total" is a decision, and it gets its own event, `answer-composed`.
+
+**The tool exists and no workflow is offered it yet.** `AGENT_TOOL_DEFINITIONS` carries it and no
+`WORKFLOW_TOOLS` set names it, so a run that calls it is told there is no such tool. That is a
+decision recorded in the one place a tool set is decided, not an oversight: the workflow that asks a
+run for an answer arrives separately, and the tool is ready for it.
+
+| Field | Where it comes from |
+| --- | --- |
+| `artifact` | The model names the artifact id. Checked against this run's own ledger the way a citation is. |
+| `sql` | **The ledger**, never the model: `tool-completed` says which step produced the result and `statement-drafted` says what that step asked. |
+| `presentation` | The model: `{"kind":"table"}` or `{"kind":"chart","spec":{…}}`. |
+| `handover` | The run. One value today — `none` — because nothing in this runtime sends a statement anywhere. |
+
+**A chart spec is a specification, never a picture**: a type from a closed list
+(`bar`, `line`, `area`, `pie`, `scatter`, `stacked-bar`), an `x`, a non-empty `y`, an optional
+`series`, and a `caption` that is the model's own prose and is rendered quoted. No colours, no title,
+no size, no aggregation — presentation belongs to the app, and an aggregation here would be a second
+aggregation nothing recorded. `histogram` is deliberately absent although `DataCharts` offers it: it
+bins raw values in the browser, so the picture would show something the artifact does not contain. A
+bucketing wanted is a bucketing the SQL should do, and then it is a bar chart of an aggregate the run
+can cite.
+
+**Why the spec is validated rather than trusted:** `DataCharts` renders a value it cannot parse as
+`Number(value) || 0`. A chart over the wrong column does not fail and does not render blank — it
+renders a confident flat line of zeros, inside this application's own frame. So every spec is checked
+before the event is written, and each check has its own refusal that restates the half of the contract
+it enforces, because a refusal is read by a model that is demonstrably confused:
+
+| Refusal | What it means |
+| --- | --- |
+| `ANSWER_ARTIFACT_UNKNOWN` | The answer names a result this run never produced. |
+| `ANSWER_STATEMENT_UNKNOWN` | The result is this run's and no statement the model drafted produced it (a catalog read, a profile), so there is no statement to hand over. |
+| `ANSWER_RESULT_RELEASED` | The rows are no longer held, so a chart cannot be checked against them. |
+| `CHART_COLUMN_NOT_IN_RESULT` | A column named is not a column of that result. The refusal **lists the real column names, fenced** — they are engine-supplied text like any other. |
+| `CHART_COLUMN_NOT_NUMERIC` | A `y` column does not hold numbers, by the same >80 %-of-non-null rule `DataCharts` applies. |
+| `CHART_TOO_FEW_ROWS` | Fewer than two rows; the component renders an empty state below two. |
+| `CHART_SHAPE_MISMATCH` | A pie with more than one `y`, or a scatter whose `x` is not numeric. |
+
+The numeric check reads the **live** artifact store, which is why it can read rows at all: that store
+is process memory released when the run ends, and `answer-composed` is written during the run. One
+instant later the rows are gone, and the honest answer then is `ANSWER_RESULT_RELEASED` rather than a
+spec that passed because nothing was left to check it against.
+
+**A table is a first-class outcome, not a fallback.** A single scalar, a one-row result and a result
+with no numeric column are all answers, and every one of them would render an empty chart. The
+refusals say so in their own text, and a table answer is accepted with no chart validation at all.
+
+**And a chart is never a substitute for a claim.** The presentation shows an artifact, the artifact is
+the evidence, and the claim is the answer — a run that drew a picture and reported nothing has drawn a
+picture. The tool's own reply says so and points at `compose_report`.
 
 ### What the fence is proved to hold against
 

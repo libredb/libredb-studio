@@ -221,6 +221,40 @@ export interface AgentReportClaim {
 }
 
 /**
+ * How one result is to be DRAWN. A specification, never a picture.
+ *
+ * Every column it names is checked against the artifact's real columns before the
+ * event carrying it is written, because the component that renders it does not fail
+ * on a column holding no numbers: `Number(value) || 0` (`src/components/DataCharts.tsx`)
+ * turns one into a confident flat line of zeros. A refused spec costs one turn; an
+ * unvalidated one puts this application's frame around a wrong picture.
+ *
+ * What is absent is as load-bearing as what is here:
+ *
+ * - **`histogram` is excluded**, though `DataCharts` offers it. It bins raw values
+ *   in the browser, so the picture would show something the artifact does not
+ *   contain. A histogram wanted is a bucketing the SQL should do — and then it is a
+ *   bar chart of an aggregate the run can cite.
+ * - **No aggregation field.** `DataCharts` can aggregate; doing it here would be a
+ *   second aggregation nobody recorded and nothing can check. Aggregation belongs in
+ *   the statement, where it is on the ledger.
+ * - **No colours, no titles, no sizes.** Presentation belongs to the app. `caption`
+ *   is the model's own prose and is rendered as quoted model prose, never as a
+ *   sentence the app is saying.
+ */
+export interface AgentChartSpec {
+  readonly type: "bar" | "line" | "area" | "pie" | "scatter" | "stacked-bar";
+  /** One column of the artifact, by the name the result actually carries. */
+  readonly x: string;
+  /** One or more columns of the artifact. Numeric in the delivered rows, or refused. */
+  readonly y: readonly [string, ...string[]];
+  /** Optional series split — one column, for the stacked and multi-line shapes. */
+  readonly series?: string;
+  /** The model's own words about what the chart shows. Rendered quoted. */
+  readonly caption: string;
+}
+
+/**
  * The schema inventory a run reasons over, plus the fingerprint that decides
  * whether a refresh has to read anything at all.
  *
@@ -385,6 +419,51 @@ export type AgentRunEvent =
        */
       readonly artifact: AgentArtifactReference;
       readonly profile: AgentTableProfile;
+    })
+  | (AgentRunEventBase & {
+      /**
+       * This artifact IS the answer, and this is how it should be shown.
+       *
+       * The READ is already on the ledger — `tool-invoked` before it, `tool-completed`
+       * after — but the DECISION is not: "this result is the answer, and it should be
+       * drawn as a bar chart of region against net_total" is a fact about the run that
+       * no other event can express.
+       *
+       * `artifact` is required, not optional. An answer that names no artifact is a
+       * claim, and a claim belongs in the report with its citations attached.
+       *
+       * And a chart is never a substitute for a claim. The presentation SHOWS an
+       * artifact, the artifact is the evidence, and the claim is the answer; a run
+       * that drew a picture and reported nothing has drawn a picture.
+       */
+      readonly kind: "answer-composed";
+      /**
+       * The statement the answer rests on — what "Apply to editor" hands over.
+       *
+       * Read from this run's own ledger, never supplied by the model: a statement the
+       * model described about its own work could name a read that produced something
+       * else, which is the mislabelling `plan-comparison` also refuses to allow.
+       */
+      readonly sql: string;
+      /** The artifact this answer IS. Verified against this run's own ledger. */
+      readonly artifact: AgentArtifactReference;
+      /**
+       * How to render it. A table is a first-class outcome, not a fallback: a single
+       * scalar, a one-row result and a result with no numeric column are all answers,
+       * and a chart of any of them would render an empty state.
+       */
+      readonly presentation: { readonly kind: "table" } | { readonly kind: "chart"; readonly spec: AgentChartSpec };
+      /**
+       * Whether the run also sent the statement somewhere to be run.
+       *
+       * ONE value today, and that is the whole truth rather than a placeholder:
+       * nothing in this runtime hands a statement to anything, so `none` is the only
+       * outcome that can be recorded and the field states it rather than implying a
+       * choice was made. The union widens with the gate that produces the other
+       * outcomes, and every reader keyed on it as a total record is then made to
+       * decide what they mean.
+       */
+      readonly handover: "none";
     })
   | (AgentRunEventBase & {
       readonly kind: "run-finished";

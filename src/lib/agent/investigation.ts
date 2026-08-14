@@ -135,9 +135,16 @@ export interface AgentInvestigationResult {
 type DatabaseToolName = Exclude<AgentToolName, LedgerOnlyToolName>;
 
 /**
- * Tools `handleCall` dispatches itself rather than through `invokeDatabaseTool`.
+ * Tools that do NOT go through `invokeDatabaseTool`.
  *
- * Three of them reach nothing at all. `profile_table` DOES reach a database and DOES
+ * `present_answer` is on this list and `handleCall` has no branch for it, which is
+ * the honest state rather than an omission: no workflow offers the tool yet, so the
+ * dispatch is unreachable, and a branch for it would be a line no test could cover.
+ * It is named here because the exclusion above is where a tool's side is DECIDED —
+ * leaving it out would put it in the database class, where the fall-through would
+ * route an answer to `inspectPlanTool` the moment a workflow offered it.
+ *
+ * Four of them reach nothing at all. `profile_table` DOES reach a database and DOES
  * go through `service.runStep` — it is here only because its statement is composed
  * from the run's own inventory, so its step id has to be derived from the RESOLVED
  * target rather than from the model's arguments.
@@ -148,7 +155,7 @@ type DatabaseToolName = Exclude<AgentToolName, LedgerOnlyToolName>;
  * after the model's turn could not stop the read. Found by review on #345. Both
  * properties come back from settling the step like every other database reach.
  */
-type LedgerOnlyToolName = "compose_report" | "compare_plans" | "recommend_change" | "profile_table";
+type LedgerOnlyToolName = "compose_report" | "compare_plans" | "recommend_change" | "profile_table" | "present_answer";
 
 // ============================================================================
 // Prompting

@@ -309,6 +309,31 @@ describe("AgentRunStore — durability", () => {
     expect(view?.unsettledStepIds).toEqual(["s1"]);
   });
 
+  test("an answer survives the fold and a second store's re-read, presentation and all", async () => {
+    // The kind has to be in `EVENT_KINDS` or the line is refused as unknown on the
+    // way back in — the fold is where an event the writer knew about and the reader
+    // did not becomes a malformed ledger rather than a missing entry.
+    const { store, dataDir } = storeAt();
+    const { runId } = await store.openRun(OPEN_INPUT);
+    const answer = event("answer-composed", 4, {
+      sql: "SELECT region, SUM(net_total) AS net_total FROM orders GROUP BY region",
+      artifact: artifactFor(runId, "corr_answer"),
+      presentation: {
+        kind: "chart",
+        spec: { type: "bar", x: "id", y: ["net_total"], caption: "Net total by region." },
+      },
+      handover: "none",
+    });
+
+    await store.appendEvent(runId, event("run-started", 1, { mode: "agent" }));
+    await store.appendEvent(runId, answer);
+
+    const restarted = new AgentRunStore({ world: worldAt(dataDir) });
+    const view = await restarted.read(runId);
+
+    expect(view?.record.events).toEqual([event("run-started", 1, { mode: "agent" }), answer]);
+  });
+
   test("two runs whose ids share a prefix never read each other's entries", async () => {
     const { store } = storeAt();
     const shorter = await store.openRun({ ...OPEN_INPUT, runId: "arun_aaa" });

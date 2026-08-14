@@ -1427,3 +1427,80 @@ describe("the verdict and the sentence beneath it are read as one pair (#350)", 
     expect(view.items[1]?.detail).toBeUndefined();
   });
 });
+
+describe("an answer reads as the app's decision, with the model's caption quoted", () => {
+  const ANSWER_SQL = "SELECT region, SUM(net_total) AS net_total FROM orders GROUP BY region";
+
+  const answer = (presentation: unknown): AgentLedgerEntry =>
+    event({
+      kind: "event",
+      event: {
+        kind: "answer-composed",
+        atMs: 9,
+        sql: ANSWER_SQL,
+        artifact: {
+          correlationId: "corr-answer",
+          runId: "run-1",
+          operationId: "sql.query.read",
+          summary: { rowCount: 4, columnNames: ["region", "net_total"], elapsedMs: 11 },
+        },
+        presentation,
+        handover: "none",
+      },
+    } as AgentLedgerEntry & { kind: "event" });
+
+  test("a chart answer names the type in the app's own words and quotes the caption", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      answer({
+        kind: "chart",
+        spec: { type: "bar", x: "region", y: ["net_total"], caption: "Net total by region, largest first." },
+      }),
+    ]);
+
+    expect(view.items[1]?.headline).toBe("Answer composed");
+    expect(view.items[1]?.detail).toContain("bar chart");
+    // The caption is the model's own prose and is rendered as quoted content, never
+    // spliced into a sentence a user would read as the app speaking.
+    expect(view.items[1]?.quoted).toBe("Net total by region, largest first.");
+  });
+
+  test("a table answer is stated as an answer, not as a fallback", () => {
+    const view = foldLedgerEntries([OPENED, answer({ kind: "table" })]);
+
+    expect(view.items[1]?.headline).toBe("Answer composed");
+    expect(view.items[1]?.detail).toContain("table");
+    // There is no caption on a table answer, so there is nothing to quote.
+    expect(view.items[1]?.quoted).toBeUndefined();
+  });
+
+  test("the result is offered by id, and the statement is offered to the editor", () => {
+    const view = foldLedgerEntries([OPENED, answer({ kind: "table" })]);
+
+    expect(view.items[1]?.artifactId).toBe("corr-answer");
+    expect(view.items[1]?.applySql).toBe(ANSWER_SQL);
+  });
+
+  test("the entry says what did NOT happen: nothing was sent anywhere to be run", () => {
+    // `handover` records the outcome, and today it has one value. The sentence is
+    // keyed on it as a total record, so the wording cannot outlive its truth.
+    const view = foldLedgerEntries([OPENED, answer({ kind: "table" })]);
+
+    expect(view.items[1]?.detail).toContain("Nothing was sent to the editor");
+  });
+
+  test("the columns the chart names never reach the app's own sentence", () => {
+    // Column names are engine-supplied text. They belong in the quoted field or in
+    // the result itself, never in a line the user reads as the app speaking.
+    const view = foldLedgerEntries([
+      OPENED,
+      answer({
+        kind: "chart",
+        spec: { type: "pie", x: "region", y: ["net_total"], caption: "share by region" },
+      }),
+    ]);
+
+    expect(view.items[1]?.detail).not.toContain("net_total");
+    expect(view.items[1]?.detail).not.toContain("region");
+  });
+});

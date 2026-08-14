@@ -744,6 +744,29 @@ describe("planning mode performs zero database operations", () => {
     expect(script.turns[1]?.transcript).toContain("run_read_query");
     expect(result.status).toBe("succeeded");
   });
+
+  test("no workflow may present an answer yet, so an agent run calling it is told there is no such tool", async () => {
+    // `present_answer` exists in the tool record and is in no workflow's set, and
+    // this is that decision seen from the run loop: the model is answered in prose,
+    // no step is invoked, and no database is reached. The workflow that offers the
+    // tool is what makes it callable, and it does not exist yet.
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent");
+    const script = scriptedModel(
+      callsTool("present_answer", { artifact: "corr_1", presentation: { kind: "table" } }),
+      answersProse("understood"),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(invocationsOf(await eventsOf(b.store, run.runId))).toEqual([]);
+    expect(script.turns[1]?.transcript).toContain("present_answer");
+    expect(result.status).toBe("succeeded");
+  });
 });
 
 // ─── durability across a restart ────────────────────────────────────────────

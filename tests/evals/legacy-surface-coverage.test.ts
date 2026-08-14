@@ -387,6 +387,9 @@ describe("what the removed panels did that these runs do not", () => {
       "inspect_operations",
       "inspect_plan",
       "inspect_schema",
+      // Registered, and offered by no workflow yet — asserted over every workflow
+      // type in `tests/unit/lib/agent/tools.test.ts`.
+      "present_answer",
       "profile_table",
       "recommend_change",
       "run_read_query",

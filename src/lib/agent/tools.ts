@@ -91,6 +91,7 @@ import {
 } from "./table-profile";
 import type {
   AgentArtifactReference,
+  AgentChartSpec,
   AgentContextSnapshot,
   AgentEvidenceReference,
   AgentPlanSide,
@@ -117,7 +118,15 @@ export type AgentToolName =
   /** Query optimization only: a change the user may apply. Never executed here. */
   | "recommend_change"
   /** Operations only: one curated reading of what the engine says about itself. */
-  | "inspect_operations";
+  | "inspect_operations"
+  /**
+   * Which result IS the answer, and how it should be shown. Reaches no database.
+   *
+   * Offered by no workflow yet: the record below is the one place a tool set is
+   * decided, and this slice decides that nothing may call it until the workflow that
+   * asks for an answer exists.
+   */
+  | "present_answer";
 
 /**
  * The canonical operations a tool may drive. `sql.explain.analyze` is a member so
@@ -221,6 +230,20 @@ export type AgentToolUnavailableCode =
   | "KIND_UNSUPPORTED_BY_PROVIDER"
   /** The reading came back larger than the run may carry, so it is refused rather than truncated. */
   | "READING_OVER_BUDGET"
+  /** The answer names an artifact this run never produced. */
+  | "ANSWER_ARTIFACT_UNKNOWN"
+  /** The answer's result exists, and no statement this run drafted produced it. */
+  | "ANSWER_STATEMENT_UNKNOWN"
+  /** The answer's result was this run's, and its rows are no longer held to be checked. */
+  | "ANSWER_RESULT_RELEASED"
+  /** A chart names a column the result does not have. */
+  | "CHART_COLUMN_NOT_IN_RESULT"
+  /** A chart's value column does not hold numbers in the rows that were delivered. */
+  | "CHART_COLUMN_NOT_NUMERIC"
+  /** A chart of fewer than two rows: the component renders an empty state. */
+  | "CHART_TOO_FEW_ROWS"
+  /** The chart type does not fit the columns named. */
+  | "CHART_SHAPE_MISMATCH"
   | AgentDeadlineDenyCode
   | AgentRepairDenyCode;
 
@@ -253,6 +276,16 @@ export type AgentRecommendation = Omit<Extract<AgentRunEvent, { kind: "recommend
 
 export type AgentRecommendationOutcome =
   | { readonly kind: "recommended"; readonly recommendation: AgentRecommendation; readonly modelText: string }
+  | { readonly kind: "unavailable"; readonly reasonCode: AgentToolUnavailableCode; readonly modelText: string };
+
+/** Everything an `answer-composed` event carries except when it happened. */
+export type AgentComposedAnswer = Omit<Extract<AgentRunEvent, { kind: "answer-composed" }>, "kind" | "atMs">;
+
+/** How an answer is to be shown, as the event records it and the description shows it. */
+type AgentAnswerPresentation = AgentComposedAnswer["presentation"];
+
+export type AgentAnswerOutcome =
+  | { readonly kind: "answered"; readonly answer: AgentComposedAnswer; readonly modelText: string }
   | { readonly kind: "unavailable"; readonly reasonCode: AgentToolUnavailableCode; readonly modelText: string };
 
 export type AgentReportOutcome =
@@ -382,6 +415,82 @@ const planComparisonSchema = z.strictObject({
   after: z.string().min(1),
 });
 
+/**
+ * The chart types a spec may ask for, as a total record over the durable union.
+ *
+ * A record rather than a bare list, for the reason `EVENT_KINDS` is one: the compiler
+ * is the exhaustiveness check. A type added to `AgentChartSpec` and not offered here
+ * would be a type the ledger can hold and the model is never told about.
+ */
+const CHART_TYPES: Readonly<Record<AgentChartSpec["type"], true>> = Object.freeze({
+  bar: true,
+  line: true,
+  area: true,
+  pie: true,
+  scatter: true,
+  "stacked-bar": true,
+});
+
+const CHART_TYPE_NAMES = Object.keys(CHART_TYPES) as [AgentChartSpec["type"], ...AgentChartSpec["type"][]];
+
+const chartSpecSchema = z.strictObject({
+  type: z.enum(CHART_TYPE_NAMES),
+  x: z.string().min(1),
+  y: z.array(z.string().min(1)).min(1),
+  series: z.string().min(1).optional(),
+  caption: z.string().min(1),
+});
+
+/**
+ * An answer names ONE artifact and how to show it, and nothing else.
+ *
+ * Deliberately no statement text, for the reason `compare_plans` takes none: the
+ * ledger already records which statement produced which result, so the server joins
+ * them itself. A model-supplied statement would let an answer hand the user a
+ * statement that produced something other than the result on screen.
+ */
+const presentAnswerSchema = z.strictObject({
+  artifact: z.string().min(1),
+  presentation: z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("table") }),
+    z.strictObject({ kind: z.literal("chart"), spec: chartSpecSchema }),
+  ]),
+});
+
+/** ONE presentation, rendered as the object the schema above accepts. */
+const showAs = (presentation: AgentAnswerPresentation): string => JSON.stringify(presentation);
+
+/**
+ * The presentation contract in one place, said identically wherever it is said.
+ *
+ * The `AGENT_EVIDENCE_CONTRACT` pattern, and it exists for the same reason: the
+ * EXAMPLE the description shows and the object the parser accepts are produced by the
+ * same call, so the two cannot disagree. `tests/unit/lib/agent/tools.test.ts` closes
+ * the loop from the other side — it lifts every literal object out of the description
+ * and parses it through this tool's own `inputSchema`.
+ *
+ * Module-private, unlike the evidence contract, and only because nothing outside this
+ * file says it yet: the two places that will — a workflow's opening rules and its
+ * goal verdict — arrive with the workflow. It is exported the moment a second file
+ * states it, never copied into one.
+ */
+const AGENT_ANSWER_CONTRACT = [
+  `"presentation" is ONE object: ${showAs({ kind: "table" })} for a table,`,
+  `or ${showAs({
+    kind: "chart",
+    spec: {
+      type: "bar",
+      x: "<a column of that result>",
+      y: ["<a numeric column of that result>"],
+      caption: "<what the chart shows, in your own words>",
+    },
+  })} for a chart.`,
+  `"type" is one of: ${CHART_TYPE_NAMES.join(", ")}. Add "series" only to split the values into series.`,
+  "Every column a chart names must be a column of THAT result, spelled as the result spells it, and every y column must hold numbers.",
+  "A chart needs at least two rows; a pie takes exactly one y; a scatter needs a numeric x as well.",
+  "Present a table when the result is a single number, has one row, or has no numeric column: that is a complete answer, not a lesser one.",
+].join(" ");
+
 const recommendationSchema = z.strictObject({
   change: z.enum(["index", "rewrite"]),
   statement: z.string().min(1),
@@ -435,6 +544,11 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
       "Read what the engine says about ITSELF, right now. Pass kind to choose the reading: sessions (who is connected, what each is running, how long it has been running and whether it is blocked), slow-queries (the statements this engine reports as costly), table-stats (row counts and sizes, and dead rows where the engine tracks them), index-stats (size and how many scans each index has served, so an unused one is visible), storage (space and its growth) or health (one row of connection, size and cache figures). No SQL is involved: you name the reading and the server calls the engine's own reporting interface, so these are the readings that work on every engine. limit bounds the sessions and slow-queries readings; schema narrows the table and index ones. EVERY READING IS A MOMENT, not a history: it says what is true as it is taken, and calling it twice does not make a trend.",
     inputSchema: agentCuratedReadInput,
     operationId: "db.operations.read",
+  },
+  present_answer: {
+    name: "present_answer",
+    description: `Record that one result you have already read IS the answer, and how it should be shown. Pass the artifact id that read reported; the statement behind it comes from this run's own ledger, so you do not supply it. The columns a chart names are checked against that result's real columns and refused if they do not match. ${AGENT_ANSWER_CONTRACT}`,
+    inputSchema: presentAnswerSchema,
   },
   compose_report: {
     name: "compose_report",
@@ -567,6 +681,24 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
     "This database serves no reading of that kind, so nothing was read. Ask for a different kind, or report what the other readings established — including that this one is unavailable here.",
   READING_OVER_BUDGET:
     "That reading came back larger than this run may carry, so none of it was kept: a partial reading would be a misleading one. Ask again with a smaller limit, or narrow it to one schema.",
+  // The six answer refusals each restate the half of the contract they enforce, and
+  // each one names the way out. A description is read by a model that is not yet
+  // confused; these are read by one that demonstrably is, and a table is almost
+  // always a correct answer it can give instead.
+  ANSWER_ARTIFACT_UNKNOWN:
+    "That is not the id of a result this run read, so there is nothing to present. Pass the artifact id a completed read reported in this run, or read the data first.",
+  ANSWER_STATEMENT_UNKNOWN:
+    "That result was not produced by a statement you wrote, so there is no statement to put behind the answer. Answer with a read you drafted yourself.",
+  ANSWER_RESULT_RELEASED:
+    "That result was this run's, but its rows are no longer held, so a chart's columns cannot be checked against them. Read it again, or present the answer as a table.",
+  CHART_COLUMN_NOT_IN_RESULT:
+    "A chart may only name columns of the result it presents, and at least one of these is not one. The result's own column names follow: spell them exactly as they are spelled there, or present the answer as a table.",
+  CHART_COLUMN_NOT_NUMERIC:
+    "Every y column of a chart has to hold numbers in the rows that were delivered, and at least one of these does not. Chart a column that holds numbers, or present the answer as a table — a table is a complete answer.",
+  CHART_TOO_FEW_ROWS:
+    "A chart needs at least two rows and this result has fewer, so a chart of it would render an empty state. Present the answer as a table: one row is a complete answer, not a lesser one.",
+  CHART_SHAPE_MISMATCH:
+    "That chart type does not fit the columns named: a pie takes exactly one y column, and a scatter needs a numeric x as well as a numeric y. Choose a type that fits the columns, or present the answer as a table.",
   RUN_DEADLINE_EXCEEDED:
     "The run has spent its whole time budget. Stop calling tools and finish with what has already been established.",
   INSUFFICIENT_TIME_REMAINING:
@@ -1839,18 +1971,187 @@ function matchesCard(change: "index" | "rewrite", statement: string): boolean {
   return (violation === null || violation === "NON_READ_STATEMENT") && CREATE_INDEX_STATEMENT.test(statement);
 }
 
+/**
+ * The artifact this run produced under that id, or null.
+ *
+ * Both events that carry an artifact this run produced. A profile settles no step, so
+ * it writes no `tool-completed`; omitting it here made a profile uncitable and its own
+ * workflow's bar unreachable.
+ *
+ * The reference-checking rule lives HERE rather than being written twice, because
+ * `present_answer` needs the artifact itself — its column names are what a chart spec
+ * is checked against — while a citation only needs to know it exists. Two loops would
+ * be two things to keep equal, and the one that drifted would be the one letting an
+ * unproduced id through.
+ */
+function producedArtifact(events: readonly AgentRunEvent[], correlationId: string): AgentArtifactReference | null {
+  for (const event of events) {
+    const artifact = event.kind === "tool-completed" || event.kind === "table-profiled" ? event.artifact : null;
+    if (artifact !== null && artifact.correlationId === correlationId) return artifact;
+  }
+  return null;
+}
+
 /** Does this reference name something the run actually produced? */
 function verifiedAgainst(events: readonly AgentRunEvent[], reference: AgentEvidenceReference): boolean {
+  if (reference.source === "artifact") return producedArtifact(events, reference.correlationId) !== null;
+  return events.some((event) => event.kind === "context-captured" && event.fingerprint === reference.fingerprint);
+}
+
+/**
+ * The statement behind one result, read from the ledger — never from the model.
+ *
+ * `tool-completed` says which step produced the artifact and `statement-drafted` says
+ * what that step asked, which is the same join `compare_plans` makes. A result with no
+ * drafted statement is a server-composed read (a catalog inspection, a profile): real
+ * evidence, and nothing an answer could hand to an editor, so it is refused rather
+ * than answered with someone else's SQL.
+ */
+function statementBehind(events: readonly AgentRunEvent[], correlationId: string): string | null {
+  let stepId: string | null = null;
   for (const event of events) {
-    if (reference.source === "artifact") {
-      // Both events that carry an artifact this run produced. A profile settles no
-      // step, so it writes no `tool-completed`; omitting it here made a profile
-      // uncitable and its own workflow's bar unreachable.
-      const artifact = event.kind === "tool-completed" || event.kind === "table-profiled" ? event.artifact : null;
-      if (artifact !== null && artifact.correlationId === reference.correlationId) return true;
-    } else if (event.kind === "context-captured" && event.fingerprint === reference.fingerprint) return true;
+    if (event.kind === "tool-completed" && event.artifact.correlationId === correlationId) stepId = event.stepId;
   }
-  return false;
+  if (stepId === null) return null;
+  for (const event of events) {
+    if (event.kind === "statement-drafted" && event.stepId === stepId) return event.sql;
+  }
+  return null;
+}
+
+/**
+ * Is this column numeric in the rows that were actually delivered?
+ *
+ * The rule is `DataCharts.analyzeField`'s, to the letter: more than 80% of the
+ * non-null values parse as numbers (`src/components/DataCharts.tsx`). That component
+ * is what will draw the chart, so a stricter rule here would refuse specs that render
+ * correctly and a looser one would admit the flat line of zeros `Number(value) || 0`
+ * draws over a column of text. It is restated rather than imported because the
+ * component is a client module that pulls a charting library into whatever imports it.
+ */
+function isNumericColumn(rows: readonly Record<string, unknown>[], column: string): boolean {
+  const values = rows.map((row) => row[column]).filter((value) => value !== null && value !== undefined);
+  const numeric = values.filter(
+    (value) => typeof value === "number" || (typeof value === "string" && !Number.isNaN(Number(value))),
+  ).length;
+  return numeric > values.length * 0.8;
+}
+
+/** The column-name refusal, listing the real names — engine text, so fenced. */
+function chartColumnRefusal(artifact: AgentArtifactReference): AgentAnswerOutcome & { kind: "unavailable" } {
+  const names = artifact.summary.columnNames;
+  return {
+    kind: "unavailable",
+    reasonCode: "CHART_COLUMN_NOT_IN_RESULT",
+    modelText: `${UNAVAILABLE_TEXT.CHART_COLUMN_NOT_IN_RESULT}\n${fenceUntrustedContent(names.join("\n"), {
+      label: `the ${names.length} column name(s) of result ${artifact.correlationId}`,
+      operationId: artifact.operationId,
+      reference: artifact.correlationId,
+    })}`,
+  };
+}
+
+/**
+ * The `verifiedAgainst` posture, one level down: a spec is refused unless every
+ * column it names is a column the artifact actually has, and every value column holds
+ * numbers in the rows that were delivered.
+ *
+ * The numeric half needs the ROWS, so it can only run while the run is live: the
+ * artifact store is process memory released when the run ends, and `answer-composed`
+ * is written during the run, which is why the rows are there to read. One instant
+ * later they are not — and then the honest answer is `ANSWER_RESULT_RELEASED`, never
+ * a spec that passed because there was nothing left to check it against.
+ */
+function refuseChartSpec(
+  context: AgentToolContext,
+  artifact: AgentArtifactReference,
+  spec: AgentChartSpec,
+): (AgentAnswerOutcome & { kind: "unavailable" }) | null {
+  const columns = new Set(artifact.summary.columnNames);
+  const named = [spec.x, ...spec.y, ...(spec.series === undefined ? [] : [spec.series])];
+  if (named.some((column) => !columns.has(column))) return chartColumnRefusal(artifact);
+  if (artifact.summary.rowCount < 2) return unavailable("CHART_TOO_FEW_ROWS");
+  if (spec.type === "pie" && spec.y.length !== 1) return unavailable("CHART_SHAPE_MISMATCH");
+
+  const stored = context.artifacts.get(artifact.correlationId, (context.clock ?? Date.now)());
+  if (stored === undefined) return unavailable("ANSWER_RESULT_RELEASED");
+  if (!spec.y.every((column) => isNumericColumn(stored.value.rows, column))) {
+    return unavailable("CHART_COLUMN_NOT_NUMERIC");
+  }
+  if (spec.type === "scatter" && !isNumericColumn(stored.value.rows, spec.x))
+    return unavailable("CHART_SHAPE_MISMATCH");
+  return null;
+}
+
+/**
+ * Which result IS the answer, and how it should be shown.
+ *
+ * Reaches no database: the read already happened and is on the ledger. What this adds
+ * is the DECISION, which nothing else can express — and it is checked twice over,
+ * because both halves have a way of being confidently wrong. The artifact is checked
+ * against this run's own ledger the way a citation is, so an answer cannot name a
+ * result the run never produced; the chart spec is checked against that artifact's
+ * real columns, because `DataCharts` does not fail on a column of text, it draws a
+ * flat line of zeros with this application's frame around it.
+ *
+ * A table needs no chart validation and is accepted for a single scalar, a one-row
+ * result or a result with no numeric column at all. That is a first-class outcome,
+ * and the refusals say so rather than leaving the model to infer it.
+ */
+export function presentAnswerTool(
+  context: AgentToolContext,
+  run: Pick<AgentRunRecord, "runId" | "events">,
+  input: unknown,
+): AgentAnswerOutcome {
+  if (context.mode !== "agent") return unavailable("MODE_HAS_NO_TOOLS");
+  // A throw, for the reason `composeReportTool` throws: the model cannot cause this
+  // and cannot fix it, so a model-visible refusal would loop while the wiring bug
+  // stayed invisible.
+  if (run.runId !== context.runId) {
+    throw new Error("agent tool layer: the answer's run record does not belong to this run");
+  }
+
+  const parsed = parseToolInput(presentAnswerSchema, input);
+  if (!parsed.ok) {
+    return {
+      kind: "unavailable",
+      reasonCode: "INVALID_TOOL_INPUT",
+      modelText: `${UNAVAILABLE_TEXT.INVALID_TOOL_INPUT} ${AGENT_ANSWER_CONTRACT}`,
+    };
+  }
+
+  const artifact = producedArtifact(run.events, parsed.value.artifact);
+  if (artifact === null) return unavailable("ANSWER_ARTIFACT_UNKNOWN");
+  const sql = statementBehind(run.events, artifact.correlationId);
+  if (sql === null) return unavailable("ANSWER_STATEMENT_UNKNOWN");
+
+  const shown = parsed.value.presentation;
+  let presentation: AgentAnswerPresentation = { kind: "table" };
+  if (shown.kind === "chart") {
+    const spec: AgentChartSpec = {
+      type: shown.spec.type,
+      x: shown.spec.x,
+      // The tuple cast is carried by the schema's `.min(1)`, which the type system
+      // cannot see; an unreachable emptiness guard would be a line no test can cover.
+      y: shown.spec.y as [string, ...string[]],
+      ...(shown.spec.series === undefined ? {} : { series: shown.spec.series }),
+      caption: shown.spec.caption,
+    };
+    const refusal = refuseChartSpec(context, artifact, spec);
+    if (refusal !== null) return refusal;
+    presentation = { kind: "chart", spec };
+  }
+
+  return {
+    kind: "answered",
+    // `handover` is the only value it can be: nothing in this runtime hands a
+    // statement anywhere.
+    answer: { sql, artifact, presentation, handover: "none" },
+    // The caption is the model's prose and the columns are the engine's text, so
+    // neither is echoed here. What the model is told is what happens next: the chart
+    // shows the result, and the claims are what say what it means.
+    modelText: `Answer recorded against result ${artifact.correlationId}, shown as a ${presentation.kind}. Nothing was executed and nothing was sent to the editor. Now call compose_report: the presentation shows the result, the claims are the answer.`,
+  };
 }
 
 export function composeReportTool(

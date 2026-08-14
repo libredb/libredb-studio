@@ -103,6 +103,7 @@ const EVENT_KINDS: ReadonlySet<string> = new Set(
     "plan-comparison": true,
     recommendation: true,
     "closing-statement": true,
+    "answer-composed": true,
     "run-finished": true,
   } satisfies Record<AgentRunEvent["kind"], true>),
 );

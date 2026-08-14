@@ -16,6 +16,7 @@ import {
   inspectPlanTool,
   inspectSchemaTool,
   planTableProfile,
+  presentAnswerTool,
   profileTableTool,
   recommendChangeTool,
   runReadQueryTool,
@@ -296,16 +297,17 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
       undefined,
       undefined,
       undefined,
+      undefined,
     ]);
   });
 
-  test("exactly the three ledger-only tools declare no operation", () => {
+  test("exactly the four ledger-only tools declare no operation", () => {
     const withoutOperation = Object.values(AGENT_TOOL_DEFINITIONS)
       .filter((tool) => tool.operationId === undefined)
       .map((tool) => tool.name)
       .sort();
 
-    expect(withoutOperation).toEqual(["compare_plans", "compose_report", "recommend_change"]);
+    expect(withoutOperation).toEqual(["compare_plans", "compose_report", "present_answer", "recommend_change"]);
   });
 
   test("the returned set is frozen, so a caller cannot push a tool into it", () => {
@@ -2393,5 +2395,373 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
   test("the tool tells the model, in its own description, that a reading is a moment", async () => {
     // Pinned decision 8's prompt half. The timeline carries the other half.
     expect(AGENT_TOOL_DEFINITIONS.inspect_operations.description).toContain("EVERY READING IS A MOMENT");
+  });
+});
+
+/*
+  `present_answer` — the answer-composed decision, and the spec the app will draw
+  (design §3.1-3.4).
+
+  The reason a spec is validated instead of trusted is one line in `DataCharts`:
+  `Number(value) || 0`. A chart over a column that holds no numbers does not render
+  blank and does not fail — it renders a confident flat line of zeros, inside this
+  application's own frame. So every column a spec names is checked against the
+  artifact that answer IS, and a refusal restates the half of the contract that was
+  broken, because a refusal is read by a model that is demonstrably confused.
+*/
+/**
+ * Every JSON object literal in a piece of text, as a model would lift it.
+ *
+ * Brace-counting rather than a regular expression, because a presentation object
+ * NESTS a spec and a regex over `{...}` stops at the first inner brace — which would
+ * quietly lift half an example and assert against something no model would send.
+ */
+function jsonObjectsIn(text: string): unknown[] {
+  const objects: unknown[] = [];
+  for (let start = text.indexOf("{"); start !== -1; start = text.indexOf("{", start + 1)) {
+    let depth = 0;
+    for (let index = start; index < text.length; index += 1) {
+      if (text[index] === "{") depth += 1;
+      else if (text[index] === "}") depth -= 1;
+      if (depth !== 0) continue;
+      try {
+        objects.push(JSON.parse(text.slice(start, index + 1)));
+        start = index;
+      } catch {
+        // Not a complete JSON object — prose with braces in it, and not an example.
+      }
+      break;
+    }
+  }
+  return objects;
+}
+
+describe("present_answer records which result IS the answer, and how to show it", () => {
+  const ANSWER_CORRELATION = "corr-answer";
+
+  /** The read that produced the answer, as the ledger holds it: a draft, then a result. */
+  function answered(
+    h: Harness,
+    overrides: {
+      readonly rows?: Record<string, unknown>[];
+      readonly columnNames?: string[];
+      readonly rowCount?: number;
+      readonly stored?: boolean;
+    } = {},
+  ): AgentRunEvent[] {
+    const rows = overrides.rows ?? [
+      { region: "north", net_total: 120 },
+      { region: "south", net_total: 90 },
+    ];
+    const columnNames = overrides.columnNames ?? ["region", "net_total"];
+    const artifact = {
+      correlationId: ANSWER_CORRELATION,
+      runId: "run-1",
+      operationId: "sql.query.read" as const,
+      summary: { rowCount: overrides.rowCount ?? rows.length, columnNames, elapsedMs: 11 },
+    };
+    if (overrides.stored !== false) {
+      h.artifacts.put(
+        {
+          correlationId: ANSWER_CORRELATION,
+          runId: "run-1",
+          operationId: "sql.query.read",
+          createdAtMs: 1_000,
+          value: queryResult({ rows, fields: columnNames, rowCount: rows.length }),
+        },
+        1_000,
+      );
+    }
+    return [
+      { kind: "statement-drafted", atMs: 1, stepId: "step-1", sql: ANSWER_SQL, rationale: "the question, in SQL" },
+      { kind: "tool-completed", atMs: 2, stepId: "step-1", artifact },
+    ];
+  }
+
+  const ANSWER_SQL = "SELECT region, SUM(net_total) AS net_total FROM orders GROUP BY region";
+
+  const CHART = {
+    kind: "chart",
+    spec: { type: "bar", x: "region", y: ["net_total"], caption: "Net total by region." },
+  } as const;
+
+  const present = (h: Harness, events: AgentRunEvent[], input: unknown) =>
+    presentAnswerTool(h.context, { runId: "run-1", events }, input);
+
+  test("the tool is registered, reaches no database, and no workflow is offered it yet", () => {
+    // The record stays the one place a tool set is decided: this slice adds the tool
+    // and decides, here, that nothing may call it yet — the workflow that offers it
+    // arrives with the workflow itself.
+    expect(AGENT_TOOL_DEFINITIONS.present_answer.name).toBe("present_answer");
+    expect(AGENT_TOOL_DEFINITIONS.present_answer.operationId).toBeUndefined();
+    for (const workflowType of WORKFLOW_TYPES) {
+      const names = selectAgentTools(persisted("agent", workflowType)).map((tool) => tool.name);
+      expect(names, workflowType).not.toContain("present_answer");
+    }
+  });
+
+  test("the description shows both presentations, and its own schema accepts them", () => {
+    // The `AGENT_EVIDENCE_CONTRACT` pattern: the example and the parser come from one
+    // piece of code, so a description offering a shape the schema refuses fails here
+    // rather than in a run.
+    const offered = jsonObjectsIn(AGENT_TOOL_DEFINITIONS.present_answer.description);
+
+    expect(offered.map((object) => (object as { kind: string }).kind).sort()).toEqual(["chart", "table"]);
+    for (const presentation of offered) {
+      const parsed = AGENT_TOOL_DEFINITIONS.present_answer.inputSchema.safeParse({
+        artifact: ANSWER_CORRELATION,
+        presentation,
+      });
+      expect(parsed.success, JSON.stringify(presentation)).toBe(true);
+    }
+  });
+
+  test("the description names every chart type the contract admits, and no other", () => {
+    const description = AGENT_TOOL_DEFINITIONS.present_answer.description;
+
+    for (const type of ["bar", "line", "area", "pie", "scatter", "stacked-bar"]) {
+      expect(description, type).toContain(type);
+    }
+    // The one the component offers and this contract does not: it bins values in the
+    // browser, so the picture would show something the artifact does not contain.
+    expect(description).not.toContain("histogram");
+  });
+
+  test("a chart over the run's own result is recorded, with the ledger's statement", () => {
+    const h = harness();
+    const events = answered(h);
+
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: CHART });
+
+    if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+    expect(outcome.answer.sql).toBe(ANSWER_SQL);
+    expect(outcome.answer.artifact.correlationId).toBe(ANSWER_CORRELATION);
+    expect(outcome.answer.presentation).toEqual(CHART);
+    // Nothing in this runtime hands a statement anywhere, so this is the only value
+    // the field can carry — and it says so rather than implying a choice was made.
+    expect(outcome.answer.handover).toBe("none");
+    // The chart is not the answer: the claims are, and the model is told so here.
+    expect(outcome.modelText).toContain("compose_report");
+  });
+
+  test("a series column is validated like every other column the spec names", () => {
+    const h = harness();
+    const events = answered(h);
+
+    const withSeries = present(h, events, {
+      artifact: ANSWER_CORRELATION,
+      presentation: {
+        kind: "chart",
+        spec: { type: "line", x: "region", y: ["net_total"], series: "region", caption: "by region" },
+      },
+    });
+    const invented = present(h, events, {
+      artifact: ANSWER_CORRELATION,
+      presentation: {
+        kind: "chart",
+        spec: { type: "line", x: "region", y: ["net_total"], series: "channel", caption: "by channel" },
+      },
+    });
+
+    if (withSeries.kind !== "answered") throw new Error("expected the series spec to be accepted");
+    if (withSeries.answer.presentation.kind !== "chart") throw new Error("expected a chart");
+    expect(withSeries.answer.presentation.spec.series).toBe("region");
+    if (invented.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(invented.reasonCode).toBe("CHART_COLUMN_NOT_IN_RESULT");
+  });
+
+  test("a table answer needs no chart validation: one row and no numeric column is an answer", () => {
+    // §3.4: a table is a first-class outcome. This result would fail every chart
+    // check there is — one row, one non-numeric column — and is a complete answer.
+    const h = harness();
+    const events = answered(h, { rows: [{ status: "healthy" }], columnNames: ["status"], stored: false });
+
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } });
+
+    if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+    expect(outcome.answer.presentation).toEqual({ kind: "table" });
+  });
+
+  test("an artifact id this run never produced is refused", () => {
+    // The `verifiedAgainst` posture, one level up: the answer names a result, and it
+    // has to be a result on THIS run's ledger.
+    const h = harness();
+
+    const outcome = present(h, answered(h), { artifact: "corr-someone-elses", presentation: { kind: "table" } });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("ANSWER_ARTIFACT_UNKNOWN");
+  });
+
+  test("a result no statement of this run drafted has nothing to hand over, and is refused", () => {
+    // A profile's artifact is real and this run's, and no statement the model wrote
+    // produced it — so there is no statement to put behind the answer.
+    const h = harness();
+    const events: AgentRunEvent[] = [
+      {
+        kind: "table-profiled",
+        atMs: 1,
+        artifact: {
+          correlationId: ANSWER_CORRELATION,
+          runId: "run-1",
+          operationId: "sql.table.profile",
+          summary: { rowCount: 1, columnNames: ["row_count"], elapsedMs: 4 },
+        },
+        profile: { table: "orders", depth: "basic", rowCount: 3, columns: [], findings: [] },
+      },
+    ];
+
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("ANSWER_STATEMENT_UNKNOWN");
+  });
+
+  test("a column the result does not have is refused, and the real names are listed FENCED", () => {
+    const h = harness();
+
+    const outcome = present(h, answered(h), {
+      artifact: ANSWER_CORRELATION,
+      presentation: { kind: "chart", spec: { type: "bar", x: "regoin", y: ["net_total"], caption: "typo" } },
+    });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("CHART_COLUMN_NOT_IN_RESULT");
+    // Column names are engine-supplied text. The refusal has to list them so the
+    // model can correct itself, and therefore owes them the same fence the rows get.
+    expect(outcome.modelText).toContain(UNTRUSTED_CONTENT_BEGIN);
+    expect(outcome.modelText).toContain(UNTRUSTED_CONTENT_END);
+    expect(outcome.modelText).toContain("net_total");
+    expect(outcome.modelText).toContain("region");
+  });
+
+  test("a y column that holds no numbers is refused, against the rows that were delivered", () => {
+    const h = harness();
+    const events = answered(h, {
+      rows: [
+        { region: "north", net_total: "unknown" },
+        { region: "south", net_total: "n/a" },
+      ],
+    });
+
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: CHART });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("CHART_COLUMN_NOT_NUMERIC");
+  });
+
+  test("the numeric check reads the LIVE artifact store, so a released result refuses", () => {
+    // B15, pinned: the store is process memory released when the run ends, and
+    // `answer-composed` is written DURING the run — which is exactly why this check
+    // can read rows at all. One instant later it cannot, and the honest answer then
+    // is a refusal, never a spec that passed because nothing was there to check it.
+    const h = harness();
+    const events = answered(h);
+
+    h.artifacts.releaseRun("run-1");
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: CHART });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("ANSWER_RESULT_RELEASED");
+  });
+
+  test("the >80% rule is the one DataCharts applies, boundary included", () => {
+    const h = harness();
+    const fourOfFive = answered(h, {
+      rows: [
+        { region: "a", net_total: 1 },
+        { region: "b", net_total: 2 },
+        { region: "c", net_total: 3 },
+        { region: "d", net_total: 4 },
+        { region: "e", net_total: "later" },
+      ],
+    });
+
+    // 4 of 5 is exactly 80%, and the rule is MORE than 80%: refused.
+    const boundary = present(h, fourOfFive, { artifact: ANSWER_CORRELATION, presentation: CHART });
+
+    if (boundary.kind !== "unavailable") throw new Error("expected a refusal at the boundary");
+    expect(boundary.reasonCode).toBe("CHART_COLUMN_NOT_NUMERIC");
+
+    // Nulls are not values: they are excluded before the ratio is taken, and numeric
+    // STRINGS count, because that is what the component will parse.
+    const other = harness();
+    const numericStrings = answered(other, {
+      rows: [
+        { region: "a", net_total: "120.5" },
+        { region: "b", net_total: null },
+        { region: "c", net_total: 90 },
+      ],
+    });
+
+    expect(present(other, numericStrings, { artifact: ANSWER_CORRELATION, presentation: CHART }).kind).toBe("answered");
+  });
+
+  test("fewer than two rows is refused: the component renders an empty state below two", () => {
+    const h = harness();
+    const events = answered(h, { rows: [{ region: "north", net_total: 120 }] });
+
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: CHART });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("CHART_TOO_FEW_ROWS");
+    // And the refusal says what to do instead, because a table IS the answer here.
+    expect(outcome.modelText).toContain("table");
+  });
+
+  test("a pie takes exactly one y, and a scatter needs a numeric x", () => {
+    const h = harness();
+    const events = answered(h);
+
+    const pie = present(h, events, {
+      artifact: ANSWER_CORRELATION,
+      presentation: {
+        kind: "chart",
+        spec: { type: "pie", x: "region", y: ["net_total", "region"], caption: "two slices of what?" },
+      },
+    });
+    const scatter = present(h, events, {
+      artifact: ANSWER_CORRELATION,
+      presentation: {
+        kind: "chart",
+        spec: { type: "scatter", x: "region", y: ["net_total"], caption: "against a label" },
+      },
+    });
+
+    if (pie.kind !== "unavailable") throw new Error("expected the pie to be refused");
+    expect(pie.reasonCode).toBe("CHART_SHAPE_MISMATCH");
+    if (scatter.kind !== "unavailable") throw new Error("expected the scatter to be refused");
+    expect(scatter.reasonCode).toBe("CHART_SHAPE_MISMATCH");
+  });
+
+  test("arguments that do not parse are answered with the contract itself", () => {
+    const h = harness();
+
+    const outcome = present(h, answered(h), { artifact: ANSWER_CORRELATION, presentation: { kind: "picture" } });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
+    expect(
+      jsonObjectsIn(outcome.modelText)
+        .map((object) => (object as { kind: string }).kind)
+        .sort(),
+    ).toEqual(["chart", "table"]);
+  });
+
+  test("planning mode has no such tool, and another run's ledger is a wiring bug, not a refusal", () => {
+    const planning = harness({ mode: "planning" });
+    const h = harness();
+
+    const outcome = present(planning, [], { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("MODE_HAS_NO_TOOLS");
+    expect(() =>
+      presentAnswerTool(
+        h.context,
+        { runId: "run-2", events: [] },
+        { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } },
+      ),
+    ).toThrow(/does not belong to this run/);
   });
 });

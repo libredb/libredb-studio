@@ -224,6 +224,21 @@ const PLAN_ESTIMATE_CAVEAT =
 const NOT_APPLIED_CAVEAT = "Not applied: nothing here runs this statement.";
 
 /**
+ * What an answer's `handover` means, in the app's own words.
+ *
+ * A total record over the field rather than a sentence written beside it: the field
+ * has one value today because nothing in this runtime hands a statement anywhere, and
+ * keying on it is what stops "Nothing was sent to the editor" outliving its truth —
+ * a widened union stops this file compiling until somebody words the new outcome.
+ * And when a run does hand a statement over, what the EDITOR then did with it is the
+ * editor's business and visible there; this entry records only that the run offered.
+ */
+const HANDOVER_SENTENCES: Readonly<Record<Extract<AgentRunEvent, { kind: "answer-composed" }>["handover"], string>> =
+  Object.freeze({
+    none: "Nothing was sent to the editor; applying the statement is the user's own action.",
+  });
+
+/**
  * The honesty an operational reading owes its reader, for the same reason the plan
  * caveat exists: the app says it, rather than trusting the model to remember.
  *
@@ -520,6 +535,22 @@ function describeEvent(
             : `${event.profile.rowCount} row(s) at ${event.profile.depth} depth. ${event.profile.findings
                 .map((finding) => `${finding.column}: ${finding.code} — ${finding.detail}`)
                 .join(" ")}`,
+      };
+    case "answer-composed":
+      return {
+        tone: "progress",
+        // The app's own words for the app's own decision. The chart TYPE is one of
+        // this repository's own vocabulary, so it may be spoken here; the columns
+        // are the engine's text and may not, which is why none of them appear.
+        headline: "Answer composed",
+        detail: `Shown as a ${event.presentation.kind === "chart" ? `${event.presentation.spec.type} chart` : "table"}, from ${event.artifact.summary.rowCount} row(s). ${HANDOVER_SENTENCES[event.handover]}`,
+        // The model's own prose about what the chart shows, quoted as model prose. A
+        // table answer has no caption, so there is nothing to quote.
+        ...(event.presentation.kind === "chart" ? { quoted: event.presentation.spec.caption } : {}),
+        // The statement the answer rests on, offered to the editor. A user action is
+        // still what applies it, and the run itself sent it nowhere.
+        applySql: event.sql,
+        artifactId: event.artifact.correlationId,
       };
     case "closing-statement":
       return {
