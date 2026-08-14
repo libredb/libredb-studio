@@ -224,7 +224,7 @@
     "@workflow/world-local": "4.2.4",
     "@workflow/world-postgres": "4.3.3",
     "ai": "7.0.59",
-    "eslint": "^9.39.5",
+    "eslint": "^10.8.1",
     "eslint-config-next": "^16.3.0",
     "happy-dom": "^20.11.2",
     "knip": "^6.32.1",
