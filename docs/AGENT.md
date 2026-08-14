@@ -1065,6 +1065,9 @@ declared-target allowlist, the statement guard and the role's own grants are the
   against drift, but that guard derives only the agent paths: every other family is still hand-kept,
   and even here only a path's presence is asserted, never that a documented shape still matches its
   handler.
+- **B33** — a run is observable only from its own ledger. There is no OpenTelemetry export and no
+  metrics: the record described above is complete, and getting it into a stack the operator already
+  runs is designed (#332) and deliberately unbuilt.
 
 ## Related documentation
 

@@ -1582,3 +1582,23 @@ Done when the guard derives every family from `src/app/api/**` under one stated 
 as documented, and the reference is reshaped where that rule does not currently hold. It is also
 worth noting what the guard does NOT check even for the agent: that a documented request or response
 shape still matches the handler. Only presence is asserted.
+
+### B33. An agent run is observable only from its own ledger — nothing exports it
+
+A run's whole record is the append-only ledger: lifecycle, tool invocations, refusals with their deny
+class, budget counters and the goal verdict. The rail and the eval harness both read runs out of it,
+and an operator debugging a run today reads it directly. What does not exist is a way to get that
+record into the observability stack a self-hosting team already runs — no OpenTelemetry spans, no
+OTLP export, no metrics.
+
+Designed in full and deliberately not built (#332, closed 2026-08-14): endpoint-gated activation on
+`OTEL_EXPORTER_OTLP_ENDPOINT`, a dynamic import so no exporter module loads while it is unset,
+metadata-only span attributes by default with a documented verbose delta, and no second global SDK
+registration in the embedded build. The reason it is deferred is dependency surface and timing rather
+than doubt about the design: it adds `@ai-sdk/otel` plus an exporter to a package libredb-platform
+also consumes, and the agent's event model is still gaining kinds — instrumenting it now means
+maintaining a span catalogue against a moving target. Nothing in Phase 1 depends on it and no user is
+waiting on it.
+
+Done when the event model has settled and somebody is running Studio beside a stack that wants agent
+runs in it. The decisions above are the starting point; #332 holds the full scope.
