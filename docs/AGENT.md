@@ -99,7 +99,7 @@ run by asking `GET /api/agent/config`, the same way it discovers the storage mod
 | --- | --- | --- |
 | `LIBREDB_AGENT_ENABLED` | unset (derive) | The explicit **off**-switch. `false`/`off`/`0` mean no agent even with AI configured — the supported way to keep the AI configuration and decline the agent. `true`/`on`/`1` are still accepted and mean the default; they cannot conjure a model, because an override that renders a rail whose Start must fail is the outcome deriving exists to prevent. An unrecognized value warns and is ignored. |
 | `WORKFLOW_TARGET_WORLD` | unset (`local`) | Durable backend for run state. Exactly two values are accepted: `local` (zero-config, on-disk, **single instance**) and `@workflow/world-postgres` (opt-in, multi-replica, needs `WORKFLOW_POSTGRES_URL`). Anything else is **refused**, not defaulted. |
-| `WORKFLOW_LOCAL_DATA_DIR` | unset — but the packaged artifacts set it: `/app/data/workflow` in the container image, `~/.libredb-studio/workflow-data` under `npx`. The SDK's own fallback, which those replace, is `.workflow-data` relative to the working directory. | Where the `local` backend keeps run state, and therefore the second condition above. See [Deployment](#deployment) — the SDK's fallback is wrong in a container and wrong under `npx`, so neither artifact leaves it in force. |
+| `WORKFLOW_LOCAL_DATA_DIR` | unset — but the packaged artifacts set it: `/app/data/workflow` from the Helm chart and (from an app version later than `0.11.0`) the container image, `~/.libredb-studio/workflow-data` under `npx`. The SDK's own fallback, which those replace, is `.workflow-data` relative to the working directory. | Where the `local` backend keeps run state, and therefore the second condition above. See [Deployment](#deployment) — the SDK's fallback is wrong in a container and wrong under `npx`, so no artifact leaves it in force. |
 
 The refusal is not pedantry. The workflow runtime reads that variable itself and treats any value
 other than its own keywords as a **module specifier to `require()`**, so the allowlist in
@@ -886,36 +886,42 @@ enable `persistence`, if runs should survive a recreate.
 A correction to what this document used to say, checked on `main` on 2026-08-13 by rendering the chart:
 `readOnlyRootFilesystem: true` does **not** prevent the local backend from working. `/app/data` is
 mounted on every render — an `emptyDir` by default, the PVC when `persistence.enabled` — so the
-backend can write there. Before the image default landed, what was missing was a **default pointing at
-it**: the chart writes agent environment only through `extraEnv`, so a default `helm install` left
-`WORKFLOW_LOCAL_DATA_DIR` unset and the agent honestly reported itself absent. Since the image carries
-the default, a default `helm install` inherits it (verified by rendering: the chart sets no
-`WORKFLOW_*` variable of its own, so nothing overrides the image), and the agent appears as soon as a
-model is configured — with an ephemeral ledger until `persistence.enabled`. An `agent` values block
-that makes the path explicit in the chart is still a separate chart change (a packaged chart edit
-forces a manual `Chart.yaml` version bump and an operator mirror), tracked on
-[#331](https://github.com/libredb/libredb-studio/issues/331); the recipe in
-[`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md) still works and its
-`--set-string` trap still applies. Note also that the opt-in Postgres backend is not reachable in the
-container image or the npx payload today (B16), so multi-replica agent runs need that fixed first.
+backend can write there. What was missing was a **default pointing at it**: the chart wrote agent
+environment only through `extraEnv`, so a default `helm install` left `WORKFLOW_LOCAL_DATA_DIR` unset
+and the agent honestly reported itself absent.
 
-> **Read the chart's own documentation with this correction in hand: it still states the pre-T5
-> default, and this PR deliberately did not change it.** Six packaged files say the agent is off
-> unless `LIBREDB_AGENT_ENABLED` is set — `README.md` ("Agent Runtime (off by default)", and "it is
-> **off unless you turn it on**"), `values.yaml` ("the agent runtime (off by default)") and the
-> `Chart.yaml` changelog entry, each of them mirrored under `operator/helm-charts/libredb-studio/`.
-> That was true before T5. It is not true now: availability is derived from the AI configuration and
-> the ledger, and the variable is only the off-switch. Setting it to `true`, as the chart README's
-> recipe does, is still valid and still means what the recipe intends — it is simply no longer
-> required.
->
-> They were left alone **on purpose, not out of scope creep avoidance**: every one is a packaged chart
-> file, so editing any of them forces a manual `Chart.yaml` `version` bump plus the
-> `operator/helm-charts` mirror and an `operator/bundle` refresh, which is a different required check
-> and a different release gate. A follow-up PR under
-> [#331](https://github.com/libredb/libredb-studio/issues/331) corrects all six together with the
-> `agent` values block described above. Until it merges, this document is the authority on what the
-> flag means, and the chart README is the authority on how to set it.
+The chart supplies that default itself, and it has to — the image cannot yet. `image.tag` defaults to
+the chart's `appVersion`, and the Dockerfile's `WORKFLOW_LOCAL_DATA_DIR` landed **after** the `0.11.0`
+tag that `appVersion` names, so the image a default install pulls today has no such ENV. Leaning on
+the image would have left the ledger resolving to `.workflow-data` under `WORKDIR /app` — read-only —
+and the probe answering `LEDGER_UNAVAILABLE` on an install the chart advertises as working. With the
+chart writing it (verified by rendering `charts/libredb-studio` at its defaults), the agent appears as
+soon as a model is configured, with an ephemeral ledger until `persistence.enabled`. Both places name
+`/app/data/workflow`, so when an image carrying the ENV ships, the two agree.
+
+**The chart now says the same thing** (chart `0.1.34`). It carries an `agent` block whose only field
+is the off-switch, and the block's whole design is to write as little as possible:
+
+- `agent.enabled` unset — the default — writes **no** `LIBREDB_AGENT_ENABLED` at all, so a Kubernetes
+  install derives availability exactly as every other deployment does. A chart that hard-coded a
+  value here would undo T5 for the one channel most operators use.
+- `agent.enabled: false` writes `LIBREDB_AGENT_ENABLED=false`, quoted by the chart (which is what
+  retired the `--set-string` trap the old `extraEnv` recipe had to explain). It is the documented way
+  to upgrade a deployment that already has an `LLM_API_KEY` and does not want an agent.
+- The chart sets `WORKFLOW_LOCAL_DATA_DIR=/app/data/workflow`, for the release-topology reason above,
+  and writes it before `extraEnv` so an operator can still move the ledger. It is the one place the
+  block writes more rather than less, and a test holds the chart's copy equal to the Dockerfile's.
+- The chart **refuses to render** when an agent could run there and more than one replica is asked
+  for, and its message names all three ways out — one replica, `agent.enabled=false`, or the Postgres
+  world through `extraEnv` — while saying plainly that the third one does not work with the published
+  image (B16). "Could run" counts an inline `llmApiKey` or a key-optional provider (`ollama`,
+  `custom`). The guard reads these values only, so it cannot see a model configured through
+  `secrets.existingSecret`, `extraEnvFrom` or `extraEnv`; all three blind spots are listed in the
+  chart README rather than hidden.
+
+The one thing the chart cannot fix is durability: with `persistence.enabled=false` the ledger is an
+`emptyDir`, so run history goes with the pod. `values.yaml`, the chart README and the install notes
+each say so.
 
 Plain Docker used to fail quietly, and that is what the image default fixes: `/app` is writable in the
 image, so nothing errored — the ledger simply sat in the container's writable layer and went with the

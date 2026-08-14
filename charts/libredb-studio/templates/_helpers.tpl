@@ -156,6 +156,96 @@ is sqlite. NOTES.txt warns when this happens.
 {{- end }}
 
 {{/*
+The explicit agent off-switch, when the operator set one. Empty means "unset":
+the chart then writes no LIBREDB_AGENT_ENABLED and the app derives availability
+itself (#331 T5), which is the whole point of the derived default and the one
+thing this chart must not undo by hard-coding a value.
+
+Absent, present-but-null and a key deleted by a user's `agent: null` all land on
+"unset", so the caller never has to tell those three apart.
+*/}}
+{{- define "libredb-studio.agentFlagSet" -}}
+{{- $agent := .Values.agent | default dict }}
+{{- if and (hasKey $agent "enabled") (not (kindIs "invalid" (get $agent "enabled"))) }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
+Whether an agent run could start in this deployment - the chart's own, deliberately
+conservative reading of the runtime's rule (a configured model plus a writable
+ledger). It answers "true" only for what this chart can see in its values:
+
+  - agent.enabled=true  -> the operator said so, model or not
+  - agent.enabled=false -> never, whatever else is set
+  - unset               -> true when the AI configuration in these values would
+                           validate: an inline llmApiKey, or one of the providers
+                           that needs no key at all
+
+KEY-OPTIONAL PROVIDERS are taken from the app, not guessed: validateConfig
+(src/lib/llm/utils/config.ts) requires an API key for "gemini" and "openai" only.
+"ollama" needs neither key nor URL, and "custom" needs LLM_API_URL rather than a
+key - so requiring an inline llmApiKey of either would miss a model that is fully
+configured, and a multi-replica install would render and then derive an available
+agent on every pod. Both therefore count on their own. Any provider added to the
+llmProvider enum in values.schema.json must be classified into this list or the
+one above it.
+
+BLIND SPOTS - the complete list, because a partial one tells the reader the rest
+were checked. This helper reads .Values and nothing else, so a model configured
+in any of these three places passes it unseen:
+
+  - secrets.existingSecret - a Secret the chart does not create and cannot read
+  - extraEnvFrom           - envFrom sources, whose keys are not visible here
+  - extraEnv               - rendered verbatim, and NOT inspected for LLM_API_KEY,
+                             LLM_API_URL or LLM_PROVIDER (the one entry it does
+                             look for is WORKFLOW_TARGET_WORLD, in
+                             agentPostgresWorld, which is a different question)
+
+None of the three is counted, and that is a deliberate trade rather than an
+oversight: counting what cannot be read would refuse to render every existing HA
+install that keeps a JWT secret in an existingSecret and configures no AI at all.
+The cost is that a multi-replica release configuring its model any of those ways
+needs agent.enabled=false set by hand.
+*/}}
+{{- define "libredb-studio.agentPossible" -}}
+{{- $agent := .Values.agent | default dict }}
+{{- $keyless := list "ollama" "custom" }}
+{{- if include "libredb-studio.agentFlagSet" . }}
+{{- if get $agent "enabled" }}{{- true }}{{- end }}
+{{- else if or .Values.secrets.llmApiKey (has (.Values.config.llmProvider | toString | trim | lower) $keyless) }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
+Whether this release can run more than one pod. The HPA governs when it is
+effectively enabled (the deployment then renders no replicas at all), so its
+ceiling is the number that matters there; otherwise replicaCount is.
+*/}}
+{{- define "libredb-studio.multiReplica" -}}
+{{- if include "libredb-studio.autoscalingEnabled" . }}
+{{- if gt (int .Values.autoscaling.maxReplicas) 1 }}{{- true }}{{- end }}
+{{- else if gt (int .Values.replicaCount) 1 }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
+Whether extraEnv selects the multi-replica durable backend. There is no values
+field for it on purpose: that backend also needs WORKFLOW_POSTGRES_URL, which
+belongs in a Secret and therefore in an extraEnv entry with valueFrom - so the
+chart reads the operator's own entry rather than adding a second way to say it.
+*/}}
+{{- define "libredb-studio.agentPostgresWorld" -}}
+{{- range .Values.extraEnv }}
+{{- if and (eq (.name | default "") "WORKFLOW_TARGET_WORLD") (eq (.value | default "" | toString) "@workflow/world-postgres") }}
+{{- true }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 Whether the chart's fixed UID/GID fields must be dropped for OpenShift.
 OpenShift's restricted-v2 SCC assigns runAsUser/fsGroup from a per-namespace
 range, so a pod that hard-codes IDs outside that range is rejected at

@@ -97,6 +97,15 @@ first start (stored in /app/data/auth-bootstrap.json).
 {{- end }}
 {{- end }}
 
+{{- if and (include "libredb-studio.agentPossible" .) (not (include "libredb-studio.persistenceEnabled" .)) }}
+
+NOTE: this release can run the investigation agent (an AI configuration is set),
+and run history is not persistent. The agent's ledger lives under /app/data,
+which is an emptyDir here: every run is written and the whole history goes with
+the pod. Set persistence.enabled=true to keep it, or agent.enabled=false to run
+no agent at all.
+{{- end }}
+
 {{- if and (eq (include "libredb-studio.storageProvider" .) "sqlite") (gt (int .Values.replicaCount) 1) }}
 
 WARNING: SQLite storage with multiple replicas is not recommended.

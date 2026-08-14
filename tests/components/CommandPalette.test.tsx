@@ -405,8 +405,11 @@ describe("CommandPalette", () => {
   });
 
   /**
-   * The agent runtime is off by default, and a palette entry that could only do
-   * nothing is the "control that can only error" this shell avoids elsewhere.
+   * Agent availability is derived, not defaulted (#353): a deployment with no model
+   * configured, or an unwritable ledger, wires no `onAskAgent` — and a palette entry
+   * that could only do nothing is the "control that can only error" this shell avoids
+   * elsewhere. The palette asks the prop, never the runtime, so it stays right
+   * whichever way that derivation lands.
    */
   test("no agent item is offered when the shell wires no agent", () => {
     const props = createDefaultProps({ onAskAgent: undefined });

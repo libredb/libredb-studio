@@ -41,6 +41,8 @@ const ENV_EXAMPLE = read(".env.example");
 const BACKLOG = read("docs/BACKLOG.md");
 const AGENT_CONFIG = read("src/lib/agent/config.ts");
 const CHART_VALUES = read("charts/libredb-studio/values.yaml");
+/** The ledger directory the chart writes; the same path the image will also set. */
+const CHART_LEDGER_PATH = "/app/data/workflow";
 const CHART_README = read("charts/libredb-studio/README.md");
 
 describe("docs/AGENT.md is reachable from the architecture document", () => {
@@ -271,10 +273,30 @@ describe("the chart says the zero-config durable backend is single-instance", ()
     expect(section).toContain("@workflow/world-postgres");
     expect(section).toMatch(/single-instance/i);
     expect(section).toMatch(/replicaCount[^.]*\b1\b/);
-    // The recipe has to work under the chart's own readOnlyRootFilesystem default:
-    // the local backend writes to WORKFLOW_LOCAL_DATA_DIR, which must be steered
-    // into the one writable volume or no run can start.
-    expect(section).toMatch(/WORKFLOW_LOCAL_DATA_DIR[\s\S]*\/app\/data/);
+    // The README must name the path the chart actually writes, so a reader who
+    // overrides it knows what they are replacing.
+    expect(section).toContain(`WORKFLOW_LOCAL_DATA_DIR=${CHART_LEDGER_PATH}`);
+  });
+
+  /**
+   * This assertion used to be `/WORKFLOW_LOCAL_DATA_DIR[\s\S]*\/app\/data/` on the
+   * README, guarding an `extraEnv` recipe. It survived the recipe's deletion — the
+   * two tokens still appeared in prose that said there was NO such variable to
+   * remember — and so it passed while a default install was broken. A documentation
+   * regex cannot check a deployment; the deployment can. What actually has to hold
+   * is that the packaged chart steers the ledger into the one writable volume,
+   * because `securityContext.readOnlyRootFilesystem: true` leaves the SDK's
+   * cwd-relative default (`.workflow-data` under `WORKDIR /app`) unwritable and no
+   * run can start. The image carries its own copy only from an app version later
+   * than the `appVersion` this chart deploys, so the chart is what makes a default
+   * install work today.
+   */
+  test("the chart itself writes the ledger into the writable volume", () => {
+    const deployment = read("charts/libredb-studio/templates/deployment.yaml");
+    expect(deployment).toMatch(new RegExp(`- name: WORKFLOW_LOCAL_DATA_DIR\\s*\\n\\s*value: ${CHART_LEDGER_PATH}\\b`));
+    // The volume that path lives in is mounted unconditionally, not only under
+    // persistence: an emptyDir still makes the agent work, it only makes it forget.
+    expect(deployment).toMatch(/mountPath: \/app\/data\b/);
   });
 
   test("the operator's verbatim chart copy still matches the source chart", () => {

@@ -16,12 +16,14 @@ global:
       adaptSecurityContext: auto
 
 # -- Number of replicas. Note: SQLite storage mode only supports 1 replica.
-# The agent runtime (off by default) carries a second single-instance
-# constraint: its zero-config durable backend keeps run state on local disk
-# behind file locks, so running agents on more than one replica requires
-# WORKFLOW_TARGET_WORLD=@workflow/world-postgres. Enabling the agent here also
-# needs WORKFLOW_LOCAL_DATA_DIR pointed inside /app/data, because the root
-# filesystem is read-only. See "Agent Runtime" in the chart README.
+# The agent runtime carries a second single-instance constraint: its zero-config
+# durable backend keeps run state on local disk behind file locks, and each pod
+# gets its own copy, so a run started on one replica is invisible to the next
+# request. Lifting it needs WORKFLOW_TARGET_WORLD=@workflow/world-postgres,
+# which the published image cannot load yet - so the chart REFUSES TO RENDER
+# when an agent could run here and more than one replica is asked for. Set
+# agent.enabled=false to run Studio on many replicas without agents. See
+# "Agent Runtime" in the chart README.
 replicaCount: 1
 
 image:
@@ -117,6 +119,38 @@ config:
   oidcRoleClaim: ""
   # -- OIDC admin role values (comma-separated)
   oidcAdminRoles: "admin"
+
+# =============================================================================
+# Agent Runtime
+# =============================================================================
+# The read-only investigation agent is NOT a separate on-switch: the app derives
+# whether it can run from what is true at runtime - a model configured through
+# the AI settings above (there is no second place to enter a key) plus a writable
+# ledger directory - and GET /api/agent/config reports which of the two failed.
+# The chart sets WORKFLOW_LOCAL_DATA_DIR=/app/data/workflow itself, inside the
+# volume mounted on /app/data in every render, so the ledger is writable under
+# readOnlyRootFilesystem: true with nothing to configure. It sets it rather than
+# leaning on the image because image.tag defaults to this chart's appVersion, and
+# the container image gained its own default for that variable in a LATER app
+# version: on the image a default install pulls today, an unset variable resolves
+# to .workflow-data under WORKDIR /app, which is read-only, and every run refuses
+# with LEDGER_UNAVAILABLE. Both name the same path, so the two agree once such an
+# image ships. Override it through extraEnv (written after this, so it wins).
+#
+# WHERE RUN HISTORY LIVES: in that ledger, under /app/data. With
+# persistence.enabled=false that path is an emptyDir - the agent works, every run
+# is written, and the whole history goes with the pod. Set persistence.enabled=true
+# if a finished run should still be readable after a restart or a node drain.
+agent:
+  # -- Explicit off-switch, and nothing else. Leave it unset (the default) and the
+  # chart writes no LIBREDB_AGENT_ENABLED at all, so the runtime keeps deriving the
+  # answer. `false` writes LIBREDB_AGENT_ENABLED=false, which is the supported way
+  # to have AI configured and no agent - use it when upgrading a deployment that
+  # already has an LLM key and does not want an agent. `true` is accepted and
+  # explicit, but it cannot conjure a model: with no AI configuration the agent
+  # still reports itself absent. The value is rendered as a quoted string, so no
+  # --set-string is needed.
+  enabled: null
 
 # =============================================================================
 # Persistence — PVC for SQLite storage mode

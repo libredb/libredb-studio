@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis
 type: application
-version: 0.1.33
+version: 0.1.34
 appVersion: "0.11.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -43,9 +43,11 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Documentation only. No default, template or image change, so an upgrade from 0.1.32 alters nothing a cluster runs"
-    - "Documented the optional agent runtime: it is off unless LIBREDB_AGENT_ENABLED is set, it reuses the existing AI configuration, and both of its variables are passed through extraEnv"
-    - "Documented the single-instance constraint the agent runtime adds. Its zero-config durable backend keeps run state on local disk behind file locks, so running agents above replicaCount 1 requires WORKFLOW_TARGET_WORLD set to the opt-in PostgreSQL backend, which is not yet reachable in the published image"
+    - "Corrected what this chart says about the agent runtime. It is no longer off until a flag is set: the app derives whether an agent can run from a configured model plus a writable ledger, so an install that sets an LLM API key has an agent without asking for one"
+    - "Added an agent values block. Left unset, the chart writes no LIBREDB_AGENT_ENABLED at all and the runtime keeps deriving its own answer; agent.enabled false writes the off-switch, which is how a deployment that already has an LLM key declines the agent on upgrade"
+    - "The chart now REFUSES TO RENDER when an agent could run here and more than one replica is asked for, naming the three ways out. The single-instance ledger made that combination silently broken before"
+    - "Said plainly that run history lives in the ledger under /app/data, so with persistence disabled it is an emptyDir and goes with the pod. The install notes now say it too"
+    - "The chart now sets WORKFLOW_LOCAL_DATA_DIR=/app/data/workflow itself, so the agent's ledger is writable under readOnlyRootFilesystem with no extraEnv recipe to copy. The README's recipe is gone because the chart does it, not because it stopped being needed: the container image gains its own default for that variable in an app version later than the 0.11.0 this chart deploys. An extraEnv entry of the same name still overrides it"
 dependencies:
   - name: postgresql
     version: "16.x.x"

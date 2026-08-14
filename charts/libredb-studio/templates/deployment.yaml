@@ -21,6 +21,17 @@ namespace range instead of podSecurityContext, so chowning to the configured
 runAsUser/fsGroup would target the wrong owner anyway. Refuse the combination
 rather than render a manifest that cannot work (#170).
 */}}
+{{- /*
+The agent's zero-config durable backend keeps run state in a directory on local
+disk and takes file locks. Each pod mounts its own /app/data, so above one replica
+a run started on one pod is simply not there when the browser's next request lands
+on another - and on a shared RWX volume the locks contend instead. The only backend
+that lifts this is @workflow/world-postgres, which the published image cannot load
+at all (docs/BACKLOG.md B16), so this is refused rather than rendered broken (#331).
+*/}}
+{{- if and (include "libredb-studio.agentPossible" .) (include "libredb-studio.multiReplica" .) (not (include "libredb-studio.agentPostgresWorld" .)) }}
+{{- fail "the agent runtime is single-instance: its zero-config ledger keeps run state on each pod's own disk behind file locks, so above one replica a run started on one pod is invisible to the next request. This release can run agents (an AI configuration is set in these values, or agent.enabled=true) and asks for more than one replica. Set replicaCount=1 (with autoscaling off) to keep the agent, or agent.enabled=false to run Studio on many replicas with no agent. The one backend that lifts the constraint, WORKFLOW_TARGET_WORLD=@workflow/world-postgres, is not loadable in the published container image today (B16 in docs/BACKLOG.md), so multi-replica agent runs are unsupported rather than merely unconfigured: set it (with WORKFLOW_POSTGRES_URL) through extraEnv only if image.repository points at an image that carries that world" }}
+{{- end }}
 {{- if and .Values.persistence.fixPermissions (include "libredb-studio.adaptOpenShiftSecurityContext" .) }}
 {{- fail "persistence.fixPermissions cannot be combined with the OpenShift security-context adaptation: restricted-v2 rejects the root init container, and the pod's UID/GID come from the namespace range rather than podSecurityContext, so the chown would target the wrong owner. On OpenShift, use a storage class whose volumes the kubelet applies fsGroup to (or pre-chown the volume) and leave persistence.fixPermissions=false; set global.compatibility.openshift.adaptSecurityContext=disabled only if this is not an OpenShift cluster" }}
 {{- end }}
@@ -199,6 +210,29 @@ spec:
             - name: SEED_CACHE_TTL_MS
               value: {{ .Values.seedConnections.cacheTTL | default 60000 | quote }}
             {{- end }}
+            {{- /* Only when the operator said something. Unset writes nothing, so the app
+                   derives availability from the AI configuration and the ledger (#331 T5);
+                   quoted because EnvVar.value is a string and an unquoted `true` is rejected
+                   by the API server. Written before extraEnv so an extraEnv entry of the same
+                   name still wins. */}}
+            {{- if include "libredb-studio.agentFlagSet" . }}
+            - name: LIBREDB_AGENT_ENABLED
+              value: {{ get .Values.agent "enabled" | quote }}
+            {{- end }}
+            {{- /* The agent's ledger directory, set by the chart because the image a
+                   default install pulls does not yet set it. image.tag defaults to
+                   .Chart.AppVersion, and the Dockerfile's own
+                   WORKFLOW_LOCAL_DATA_DIR default landed after that version was
+                   tagged - so on the image this chart actually deploys today the
+                   ledger would resolve to `.workflow-data` under WORKDIR /app, which
+                   securityContext.readOnlyRootFilesystem makes unwritable, and every
+                   run would refuse with LEDGER_UNAVAILABLE. /app/data is mounted in
+                   every render (emptyDir, or the PVC when persistence is enabled).
+                   Once an image carrying the ENV is released the two agree on the
+                   same path, so this stays correct rather than becoming redundant.
+                   Written before extraEnv, so an operator can still move it. */}}
+            - name: WORKFLOW_LOCAL_DATA_DIR
+              value: /app/data/workflow
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
