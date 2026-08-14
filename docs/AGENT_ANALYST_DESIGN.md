@@ -20,6 +20,7 @@
 > | §2.4.0 condition 2 joins the plan to the answer's statement | Joined on `fingerprintStatement`, the repair ledger's canonical form | Exact string equality between two independently drafted statements missed on whitespace, case or a trailing semicolon, which made the gate inert far more often than §2.4.0 implies. |
 > | §2.4.0 condition 2 on SQLite reads `access === "index"` | **And no `uninterpretedStep`**: a plan the server could only PARTLY read is risky too | `summariseSqlite` recognises `SEARCH` and `SCAN`, so `SEARCH …` beside an uninterpreted step summarised as a flat `index` and passed the gate. `unknown` resolving to risky only held when NO step had been recognised. |
 > | §2.6 the checkbox, scoped by workflow and mode | **And by the host**: no `onRunStatement`, no checkbox | The prop is optional, so an embedding host may have no runner. The rail used to offer the promise and fall back to applying the statement, which left the timeline saying it "ran on your connection" about something that did not happen. |
+> | §2.1/§2.6 "run it there — on your connection", with the connection assumed fixed | **And only on the connection the run was opened on**: the rail declines the hand-over when the editor has moved elsewhere, and says so beside the entry | The host runs a statement against its ACTIVE connection. A user who switched databases mid-run got the statement run, unbounded, against a database whose plan was never inspected — and its rows shown as the answer. |
 > | §2.3 one `answer-composed` event, with nothing said about a second | **A run answers once**: a second presentation is refused with `ANSWER_ALREADY_RECORDED` | `present_answer` is non-terminal, so a model could present twice. Two entries mean two statements handed to the editor and, with auto-execute on, two run there — under a checkbox that promised the final answer. |
 > | §1.6 budget figures | Shipped exactly as approved: 60 / 42 / 900 s / 180 s | No divergence — recorded here because these figures are **still pending the live measurement** the owner's decision made a condition of freezing them. |
 >
@@ -744,6 +745,24 @@ feature working.
 > start request and the delivery effect now read one value, and an `auto-executed` entry goes to the
 > runner or nowhere. The statement is never lost: every answer entry still offers it through
 > `applySql`, as the user's own action.
+>
+> **And a fourth: it must be the same connection.** "On your connection" (§2.1, §2.6) reads as one
+> connection because this document never contemplated the user changing it mid-run. They can. The host
+> resolves every execution from its ACTIVE connection (`use-query-execution.ts`), while the run read
+> its rows from the connection it was opened on and persisted; a user who switches databases while a
+> run is going would have had the approved statement run — with no timeout, against an engine whose
+> plan for it was never inspected and whose elapsed time was never measured — on a database this run
+> never saw, and would have been shown that database's rows as the answer. `AgentRail` now remembers
+> the connection it opened the run on and **declines** the hand-over when the two no longer match. It
+> declines rather than redirecting: nothing on this surface can reach the run's own connection, and
+> executing a statement against a database the user is not looking at is the defect, not the remedy.
+> The refusal is said beside the entry that claims the execution, because that entry is folded from
+> the ledger and still says the statement ran — the one place this surface contradicts the run, and it
+> does so where the sentence a reader would otherwise believe is written. It is scoped to the
+> hand-over that RUNS; an `applied` entry claims no execution, so a connection change does not change
+> what it means. The check lives in the rail rather than in `Studio.tsx`'s callback because the
+> callback is an optional public prop: a guard written in one host is a guard the next host does not
+> inherit.
 
 ---
 

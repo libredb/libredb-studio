@@ -2161,6 +2161,147 @@ describe("AgentRail", () => {
       });
     });
 
+    /**
+     * A hand-over may only run on the connection the run was opened on (#373 review).
+     *
+     * `onRunStatement` runs the statement against whatever the HOST's editor is
+     * pointed at now — `use-query-execution.ts` resolves every execution from
+     * `activeConnection` — while the run read its rows from the connection it was
+     * opened on. A user who switches connection while a run is going would otherwise
+     * have the approved statement run, without a timeout, against a database whose plan
+     * was never inspected and whose elapsed time was never measured, and be shown that
+     * other database's rows as "the answer".
+     *
+     * The check lives HERE rather than in the host's callback because the callback is
+     * an optional public prop: a second host wiring it differently would not inherit a
+     * guard written in Studio. Declining is the whole remedy — there is no way to reach
+     * the run's connection from here, and inventing one would run a statement somewhere
+     * the user is not looking.
+     */
+    describe("a hand-over is declined when the editor has moved to another connection", () => {
+      /**
+       * A stream that stays OPEN, so the answer can arrive after the connection has
+       * changed. Every other test here streams its whole ledger before the first
+       * assertion, which is the one ordering this defect cannot happen in.
+       */
+      function mockOpenAgentFetch() {
+        let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+        const fetchMock = mock(async (input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+          if (!url.endsWith("/stream")) {
+            return jsonResponse({ runId: "arun_1", status: "queued", mode: "agent" }, 202);
+          }
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(open) {
+                controller = open;
+                open.enqueue(encoder.encode(OPENED_LINE));
+                open.enqueue(encoder.encode(STARTED_LINE));
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/x-ndjson" } },
+          );
+        });
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        return {
+          push: (line: string) => {
+            controller?.enqueue(encoder.encode(line));
+          },
+        };
+      }
+
+      test("the statement is not run, and the entry that claims it ran is contradicted", async () => {
+        const stream = mockOpenAgentFetch();
+        const onRunStatement = mock(() => {});
+        const onApplyStatement = mock(() => {});
+        const view = analyze({ onRunStatement, onApplyStatement });
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+
+        // The user switches the editor to another database while the run is going.
+        view.rerender(
+          <AgentRail
+            {...DEFAULT_PROPS}
+            connectionId="seed:analytics"
+            connectionName="Analytics"
+            onRunStatement={onRunStatement}
+            onApplyStatement={onApplyStatement}
+          />,
+        );
+        await act(async () => {
+          stream.push(answerLine("auto-executed"));
+        });
+
+        const declined = await view.findByTestId("agent-handover-declined");
+        // Nothing ran anywhere: not on the run's connection, which this surface cannot
+        // reach, and not on the one the editor moved to.
+        expect(onRunStatement).not.toHaveBeenCalled();
+        // And not quietly placed either: the entry says the statement RAN, and placing
+        // it unrun beside that sentence is the claim the previous round removed.
+        expect(onApplyStatement).not.toHaveBeenCalled();
+        // Said beside the entry that claims the execution, because that is where the
+        // sentence a user would otherwise believe is written.
+        expect(declined.textContent).toContain("was not run");
+        expect(declined.textContent).toContain("Sales");
+      });
+
+      test("an answer on the run's own connection is still run, so the check is about the change", async () => {
+        // The pair: the same arc with the connection left alone hands the statement
+        // over exactly as before. Without it the test above would pass on a rail that
+        // never hands anything over at all.
+        const stream = mockOpenAgentFetch();
+        const onRunStatement = mock(() => {});
+        const view = analyze({ onRunStatement });
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+
+        await act(async () => {
+          stream.push(answerLine("auto-executed"));
+        });
+
+        await waitFor(() => {
+          expect(onRunStatement).toHaveBeenCalledWith(ANSWER_SQL);
+        });
+        expect(view.queryByTestId("agent-handover-declined")).toBeNull();
+      });
+
+      test("an APPLIED answer is unaffected, because placing a statement claims no execution", async () => {
+        // The narrowing is about the hand-over that RUNS. Putting a statement in the
+        // editor is the user's own next action either way, and the entry beside it says
+        // exactly that.
+        const stream = mockOpenAgentFetch();
+        const onRunStatement = mock(() => {});
+        const onApplyStatement = mock(() => {});
+        const view = analyze({ onRunStatement, onApplyStatement });
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+
+        view.rerender(
+          <AgentRail
+            {...DEFAULT_PROPS}
+            connectionId="seed:analytics"
+            connectionName="Analytics"
+            onRunStatement={onRunStatement}
+            onApplyStatement={onApplyStatement}
+          />,
+        );
+        await act(async () => {
+          stream.push(answerLine("applied", "Not run for you: yours to run."));
+        });
+
+        await waitFor(() => {
+          expect(onApplyStatement).toHaveBeenCalledWith(ANSWER_SQL);
+        });
+        expect(view.queryByTestId("agent-handover-declined")).toBeNull();
+      });
+    });
+
     test("a declined answer is placed unrun, and the run's own reason is beside it", async () => {
       const warning = "Not run for you: the engine reported a full table read, so this one is yours to run.";
       mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("applied", warning)]);

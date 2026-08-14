@@ -400,8 +400,21 @@ export function AgentRail({
   */
   const canHandOver = mode === "agent" && AGENT_WORKFLOW_PRESENTS_ANSWER[workflowType] && onRunStatement !== undefined;
 
+  /**
+   * The connection this run was opened on, kept for as long as the rail follows it.
+   *
+   * `connectionId` is the connection the HOST is on NOW: it is resolved from the
+   * active connection on every render, so it moves the moment the user selects
+   * another database. The run's own connection does not move — it is persisted on the
+   * run record, and every row the run read came from it. The two are the same value
+   * until a user switches mid-run, and telling them apart is the whole of the check
+   * below.
+   */
+  const openedOn = useRef<{ readonly id: string; readonly name: string | null } | null>(null);
+
   const handleStart = () => {
     if (connectionId === null || !canStart) return;
+    openedOn.current = { id: connectionId, name: connectionName };
     // Both axes, always. They are independent (#325): a planning run of a query
     // optimization is an ordinary thing to ask for, and sending the workflow only in
     // agent mode made the rail unable to express one.
@@ -439,14 +452,46 @@ export function AgentRail({
   */
   const handedOverRunId = useRef<string | null>(null);
   const handedOver = useRef<Set<string>>(new Set());
+  /**
+   * The entries whose hand-over this surface refused to perform, so the entry that
+   * claims the execution can be contradicted where it is written.
+   *
+   * Ids rather than a single flag: the fact is about ONE entry, and a notice detached
+   * from it would be a sentence a reader has to match to a line themselves.
+   */
+  const [declinedHandovers, setDeclinedHandovers] = useState<
+    readonly { readonly id: string; readonly openedOn: string | null }[]
+  >([]);
   useEffect(() => {
     if (handedOverRunId.current !== run.runId) {
       handedOverRunId.current = run.runId;
       handedOver.current.clear();
+      setDeclinedHandovers([]);
     }
     for (const item of run.timeline.items) {
       if (item.handover === undefined || handedOver.current.has(item.id)) continue;
       handedOver.current.add(item.id);
+      /*
+        A hand-over runs on the connection the EDITOR is on, and the run read its rows
+        from the connection it was opened on (#373 review). Those are the same database
+        until the user selects another one mid-run, and then they are not: the host
+        resolves every execution from its active connection
+        (`use-query-execution.ts`), so the statement would run — without a timeout,
+        with no plan of it ever inspected on that engine and no elapsed time ever
+        measured there — against a database this run never read, and the rows on screen
+        would be another database's answer to the question.
+
+        So it is declined, and said. There is no way from here to reach the run's own
+        connection, and inventing one would execute a statement against a database the
+        user is not looking at; the honest act is to perform nothing and contradict the
+        entry that says otherwise. The statement is not lost — the entry carries
+        `applySql`, and taking it is the user's own action, on the connection they
+        chose.
+      */
+      if (item.handover.kind === "auto-executed" && connectionId !== openedOn.current?.id) {
+        setDeclinedHandovers((declined) => [...declined, { id: item.id, openedOn: openedOn.current?.name ?? null }]);
+        continue;
+      }
       // An `auto-executed` entry says the statement RAN on the user's connection, so
       // it is delivered to the runner or to nothing: applying it silently instead
       // would leave that sentence on the timeline about something that did not happen.
@@ -456,7 +501,7 @@ export function AgentRail({
       const deliver = item.handover.kind === "auto-executed" ? onRunStatement : onApplyStatement;
       deliver?.(item.handover.sql);
     }
-  }, [run.runId, run.timeline.items, onApplyStatement, onRunStatement]);
+  }, [run.runId, run.timeline.items, onApplyStatement, onRunStatement, connectionId]);
 
   /*
     Stopping is the only control offered, and the two that are absent are absent
@@ -915,6 +960,29 @@ export function AgentRail({
                 <span className="text-xs text-zinc-300">{item.headline}</span>
               </div>
               {item.detail !== undefined && <p className="mt-0.5 pl-3.5 text-xs text-zinc-500">{item.detail}</p>}
+              {/*
+                The one place this surface contradicts the ledger, and it does so beside
+                the sentence it contradicts. The entry above is folded from what the RUN
+                recorded — that it handed the statement over to be run — and this rail
+                declined to perform it, so a reader who saw only the entry would believe
+                an execution that never happened. Said here rather than in a banner:
+                the fact is about this answer, and a notice elsewhere would be a
+                sentence the reader has to match to a line themselves.
+              */}
+              {declinedHandovers
+                .filter((declined) => declined.id === item.id)
+                .map((declined) => (
+                  <p
+                    key={declined.id}
+                    data-testid="agent-handover-declined"
+                    className="mt-0.5 pl-3.5 text-xs text-amber-400/80"
+                  >
+                    It was not run: this run was opened on {declined.openedOn ?? "another connection"} and your editor
+                    has moved to a different one since. Running it here would have read a database this run never saw,
+                    so nothing was executed. The statement is below — take it yourself if you want it on the connection
+                    you are on now.
+                  </p>
+                ))}
               {/*
               Verbatim content from the model, the engine or the user, kept in its own
               block rather than folded into a sentence: it is untrusted input, and the

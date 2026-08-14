@@ -793,7 +793,22 @@ off the ledger and delivers the statement once per entry: `auto-executed` goes t
 nowhere else — a host without one delivers nothing rather than applying it silently, since the entry
 says the statement ran — `applied` places it unrun beside the run's own reason, `none` hands over
 nothing. The statement is never lost either way: every answer entry carries `applySql`, so the
-control beside it still offers the statement as the user's own action. The re-run
+control beside it still offers the statement as the user's own action.
+
+**And it delivers only on the connection the run was opened on.** The host runs a statement against
+whatever connection it is on NOW; the run read its rows from the connection persisted on its record.
+Those are the same database until the user selects another one mid-run, and then the hand-over would
+run — unbounded, on an engine whose plan for it was never inspected and whose elapsed time was never
+measured there — against a database the run never read, and put that database's rows on screen as the
+answer. `AgentRail` remembers the connection it opened the run on and declines when the two no longer
+match, saying so beside the entry that claims the execution: that entry is folded from the ledger and
+still says the statement ran, so the contradiction belongs where the sentence is. It declines rather
+than redirecting, because nothing on the surface can reach the run's own connection and executing
+against a database the user is not looking at is the defect rather than the remedy. The narrowing is
+about the hand-over that RUNS: an `applied` entry claims no execution, so a connection change does
+not change what it means. It is enforced in the rail rather than in the host's callback, because that
+callback is an optional public prop and a guard written in one host is one the next host does not
+inherit. The re-run
 goes through `useQueryExecution.executeHandedOverStatement`, which takes no execution options at all
 and forces `DEFAULT_QUERY_LIMIT` with `unlimited: false` — a tab a user widened for a statement they
 wrote must not widen one the run handed over (§2.1). The setting itself is offered as a checkbox in

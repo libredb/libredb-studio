@@ -302,6 +302,13 @@ the feature working, not the feature failing.
 look like a complete chart, and every number on it would be right, which is worse than an obvious
 error.
 
+**And it is only ever run on the connection you started the run on.** If you switch the editor to a
+different connection while a run is going, the statement is **not** run: it would have run against a
+database this run never read, and you would have been shown that database's rows as the answer. The
+timeline says so beside the answer — the run recorded that it handed the statement over, and this is
+the app telling you it did not carry that out. The statement is still there: take it with the control
+beside the entry and run it yourself, on whichever connection you are on now.
+
 **What the editor then does is the editor's own business.** It runs on the route the rest of the
 application uses, which is not the agent's audited pipeline, so there is no ledger entry for it. The
 timeline records that the run handed the statement over, and says that what happened next is visible
