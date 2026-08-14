@@ -307,6 +307,11 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
     "Answer from data you have READ. The schema tells you where to look; only a result you ran can be the answer.",
     "profile_table at basic depth is how you tell a fact table from a lookup one, and a date column the business fills from an audit column nobody does: it returns row counts and how many rows have a value, and reads no value out of any column. Go deeper only if a basic profile leaves a question.",
     "When you have the answer, call present_answer with the artifact id of the read that IS the answer.",
+    // The tool layer's `ANSWER_OPERATION` rule, in the model's terms (#350). A plan
+    // step carries a drafted statement and settles like any other, so nothing in what
+    // the model sees distinguishes a plan artifact from a read one; a rule enforced
+    // only by a refusal is a rule the model meets by spending a turn on it.
+    "Only a result of run_read_query can be presented: a plan describes a statement without running it, and a profile counts a table rather than answering the question. Cite either as evidence, but present a read.",
     "A chart names columns of THAT result: they are checked against the result's real column names and refused if they do not match.",
     AGENT_ANSWER_CONTRACT,
     "Then call compose_report. The presentation shows the result; the claims are what say what it means.",

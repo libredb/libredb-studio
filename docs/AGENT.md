@@ -621,9 +621,26 @@ that `selectAgentTools` offers `present_answer` exactly when that record says tr
 workflow with the flag and no tool would promise a hand-over it cannot perform, and one with the tool
 and no flag would take the setting and silently never offer it.
 
+**What may be PRESENTED is narrower than what may be CITED.** A claim may rest on a plan the run
+read — `recommend_change` is built on exactly that — so the citation check asks only "did this run
+produce it". An answer is a different act: it nominates one result as what the question asked for,
+hands that result's statement to the rail, and is what the verdict counts. So only a `sql.query.read`
+result may be presented. Without that, a run could name an `sql.explain.estimate` artifact — the
+engine's *description* of a statement, with nothing executed and `QUERY PLAN` text for rows — and
+satisfy `agent-data-analysis.1` without having read the data it was opened to analyse. A profile is
+excluded on the same line and deliberately: it is a real reading, but it returns counts the server
+composed about a table rather than rows the model asked for, its statement is the server's so there is
+nothing of the model's to hand over, and its single aggregate row fails every chart check — so
+admitting it would only change which refusal it gets. The check runs **before** the statement is
+resolved, because a plan step does carry a drafted statement; a check after it would have accepted the
+plan. One consequence, recorded rather than left to be found: the gate's first condition can no longer
+fail from this layer, since a read's own statement is by construction among the statements the run
+executed. It stays enforced in `auto-execute.ts`, which is pure and enumerated over every combination
+in its own suite.
+
 | Field | Where it comes from |
 | --- | --- |
-| `artifact` | The model names the artifact id. Checked against this run's own ledger the way a citation is. |
+| `artifact` | The model names the artifact id. Checked against this run's own ledger the way a citation is, and then narrowed: only a data read may be the answer. |
 | `sql` | **The ledger**, never the model: `tool-completed` says which step produced the result and `statement-drafted` says what that step asked. |
 | `presentation` | The model: `{"kind":"table"}` or `{"kind":"chart","spec":{…}}`. |
 | `handover` | The run, from its own record and the gate below: `none`, `applied` or `auto-executed`. |
@@ -656,7 +673,8 @@ it enforces, because a refusal is read by a model that is demonstrably confused:
 | Refusal | What it means |
 | --- | --- |
 | `ANSWER_ARTIFACT_UNKNOWN` | The answer names a result this run never produced. |
-| `ANSWER_STATEMENT_UNKNOWN` | The result is this run's and no statement the model drafted produced it (a catalog read, a profile), so there is no statement to hand over. |
+| `ANSWER_NOT_A_DATA_READ` | The result is this run's and is not a reading of the data — a plan, or a profile. It may still be cited as evidence. |
+| `ANSWER_STATEMENT_UNKNOWN` | The result is this run's own data read and no statement the model drafted produced it (a catalog read), so there is no statement to hand over. |
 | `ANSWER_RESULT_RELEASED` | The rows are no longer held, so a chart cannot be checked against them. |
 | `CHART_COLUMN_NOT_IN_RESULT` | A column named is not a column of that result. The refusal **lists the real column names, fenced** — they are engine-supplied text like any other. |
 | `CHART_COLUMN_NOT_NUMERIC` | A `y` column does not hold numbers, by the same >80 %-of-non-null rule `DataCharts` applies. |

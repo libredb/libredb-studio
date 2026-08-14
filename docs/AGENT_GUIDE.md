@@ -86,7 +86,11 @@ You choose three things before pressing Start, and two of them are controls in t
 invoiced", "did signups fall after the pricing change". It finishes by saying which result *is* the
 answer and how it should be shown — as a chart when the result has a category and a number to plot,
 and as a table when it is a single number, a single row, or has no numeric column at all. A table is
-a complete answer there, not a lesser one. It is also the only workflow that offers the auto-execute
+a complete answer there, not a lesser one. What it presents is always a result it *read*: a query
+plan is the engine describing a statement rather than running it, and a table profile is a count
+about a table, so neither can be nominated as the answer — the run can still cite either as evidence
+in its report, and its report has to cite the result it presented, or the run is marked as not having
+answered. It is also the only workflow that offers the auto-execute
 checkbox below, because handing a statement to your editor is part of presenting an answer and the
 other four workflows have no answer to present.
 

@@ -227,6 +227,8 @@ export type AgentToolUnavailableCode =
   | "ANSWER_ALREADY_RECORDED"
   /** The answer names an artifact this run never produced. */
   | "ANSWER_ARTIFACT_UNKNOWN"
+  /** The answer's result is this run's, and it is not a reading of the DATA. */
+  | "ANSWER_NOT_A_DATA_READ"
   /** The answer's result exists, and no statement this run drafted produced it. */
   | "ANSWER_STATEMENT_UNKNOWN"
   /** The answer's result was this run's, and its rows are no longer held to be checked. */
@@ -542,7 +544,7 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
   },
   present_answer: {
     name: "present_answer",
-    description: `Record that one result you have already read IS the answer, and how it should be shown. Pass the artifact id that read reported; the statement behind it comes from this run's own ledger, so you do not supply it. The columns a chart names are checked against that result's real columns and refused if they do not match. Your report must then cite this same artifact in at least one claim: the presentation shows the result and the claims say what it means, so a report resting on other evidence entirely leaves the run scored as not having answered. ${AGENT_ANSWER_CONTRACT}`,
+    description: `Record that one result you have already read IS the answer, and how it should be shown. Only a result of a run_read_query you drafted can be the answer: a plan describes a statement without running it and a profile returns counts about a table, so neither may be presented — both may still be cited as evidence. Pass the artifact id that read reported; the statement behind it comes from this run's own ledger, so you do not supply it. The columns a chart names are checked against that result's real columns and refused if they do not match. Your report must then cite this same artifact in at least one claim: the presentation shows the result and the claims say what it means, so a report resting on other evidence entirely leaves the run scored as not having answered. ${AGENT_ANSWER_CONTRACT}`,
     inputSchema: presentAnswerSchema,
   },
   compose_report: {
@@ -707,6 +709,8 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
     "This run has already recorded its answer, and a run answers once: nothing was changed and no second answer was composed. If that answer was the wrong one, say so in your claims. Now call compose_report — the presentation shows the result, the claims are the answer.",
   ANSWER_ARTIFACT_UNKNOWN:
     "That is not the id of a result this run read, so there is nothing to present. Pass the artifact id a completed read reported in this run, or read the data first.",
+  ANSWER_NOT_A_DATA_READ:
+    "That result is this run's, and it is not a reading of the data, so it cannot be the answer: a plan DESCRIBES a statement without running it, and a profile returns counts the server composed about a table. Present the result of a run_read_query you drafted — run the read first if you have not. A plan or a profile can still be cited as evidence in your report.",
   ANSWER_STATEMENT_UNKNOWN:
     "That result was not produced by a statement you wrote, so there is no statement to put behind the answer. Answer with a read you drafted yourself.",
   ANSWER_RESULT_RELEASED:
@@ -2105,6 +2109,44 @@ function producedArtifact(events: readonly AgentRunEvent[], correlationId: strin
   return null;
 }
 
+/**
+ * The one operation whose result may be an ANSWER (#373 review).
+ *
+ * `producedArtifact` above asks "did this run produce that?", which is the right
+ * question for a CITATION and the wrong one for an answer. A claim may rest on a plan
+ * the run read — that is what `recommend_change` is built on — so narrowing that path
+ * would make an honest report uncomposable. An answer is a different act: it nominates
+ * one result as WHAT THE QUESTION ASKED FOR, hands its statement to the rail, and is
+ * what `agent-data-analysis.1` counts. Without this, a run could present a
+ * `sql.explain.estimate` artifact — the engine's DESCRIPTION of a statement, with no
+ * data read, no rows and no measured duration — and satisfy the workflow's verdict
+ * without ever having read the data it was opened to analyse.
+ *
+ * **A profile is excluded too, and that is a decision rather than a side effect.** A
+ * profile IS a real reading of data, so the question is honest. Three things settle it:
+ * it returns COUNTS the server composed from the run's own inventory rather than rows
+ * the model asked for, so what would be shown is not an answer to the user's question
+ * but an aggregate about a table; its statement is the server's, so there is nothing of
+ * the model's to hand to an editor, which is why it could never have been presented
+ * anyway (`statementBehind` returns null for it, and today that is the refusal it
+ * gets); and its single aggregate row fails `CHART_TOO_FEW_ROWS` on every chart. So
+ * admitting it would only change which refusal it is given — and the refusal it is
+ * given now is the true one, which is the whole point of moving this check ahead of
+ * the statement.
+ *
+ * The check goes BEFORE `statementBehind`, because a plan step DOES carry a drafted
+ * statement: a check placed after it would have accepted the plan outright.
+ *
+ * One consequence, recorded rather than left to be discovered: the auto-execute gate's
+ * first condition — "this run executed that exact statement" — can no longer FAIL from
+ * this layer, because the only artifact presentable is a read whose own drafted
+ * statement is by construction among `executedStatements`. Presenting a plan was the
+ * one way to reach it. The condition stays in `auto-execute.ts` anyway: it is pure and
+ * enumerated over every combination there, and a gate guarding an unbounded execution
+ * path must not depend on which artifacts some other layer happens to admit.
+ */
+const ANSWER_OPERATION: AgentOperationId = "sql.query.read";
+
 /** Does this reference name something the run actually produced? */
 function verifiedAgainst(events: readonly AgentRunEvent[], reference: AgentEvidenceReference): boolean {
   if (reference.source === "artifact") return producedArtifact(events, reference.correlationId) !== null;
@@ -2363,6 +2405,7 @@ export function presentAnswerTool(
 
   const artifact = producedArtifact(run.events, parsed.value.artifact);
   if (artifact === null) return unavailable("ANSWER_ARTIFACT_UNKNOWN");
+  if (artifact.operationId !== ANSWER_OPERATION) return unavailable("ANSWER_NOT_A_DATA_READ");
   const sql = statementBehind(run.events, artifact.correlationId);
   if (sql === null) return unavailable("ANSWER_STATEMENT_UNKNOWN");
 

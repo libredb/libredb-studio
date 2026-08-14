@@ -23,6 +23,7 @@
 > | §2.1/§2.6 "run it there — on your connection", with the connection assumed fixed | **And only on the connection the run was opened on**: the rail declines the hand-over when the editor has moved elsewhere, and says so beside the entry | The host runs a statement against its ACTIVE connection. A user who switched databases mid-run got the statement run, unbounded, against a database whose plan was never inspected — and its rows shown as the answer. |
 > | §2.3 one `answer-composed` event, with nothing said about a second | **A run answers once**: a second presentation is refused with `ANSWER_ALREADY_RECORDED` | `present_answer` is non-terminal, so a model could present twice. Two entries mean two statements handed to the editor and, with auto-execute on, two run there — under a checkbox that promised the final answer. |
 > | §4.2 the rule: the baseline, **and** an `answer-composed` entry | **And at least one claim citing the presented artifact**, with the shortfall `answer-uncited` | Nothing linked the report to the answer, so a run could chart artifact A while every claim cited artifact B and still score `answered` — unrelated prose beside a picture. |
+> | §3.3 the answer's artifact is checked the way a citation is | **And narrowed**: only a `sql.query.read` result may be PRESENTED, refused as `ANSWER_NOT_A_DATA_READ` | A citation may legitimately name a plan; an answer may not. A plan step carries a drafted statement, so a run could present the engine's description of a statement and meet the verdict without reading any data. |
 > | §1.6 budget figures | Shipped exactly as approved: 60 / 42 / 900 s / 180 s | No divergence — recorded here because these figures are **still pending the live measurement** the owner's decision made a condition of freezing them. |
 >
 > The `operations` assumption below was written when that workflow was an uncommitted local branch.
@@ -853,6 +854,29 @@ Decisions inside that shape:
 (`tools.ts:1447-1458`). The same posture, one level down: **a chart spec is refused unless every
 column it names is a column the artifact actually has.** Checked at record time, against the artifact
 the answer names, before anything is written to the ledger.
+
+> **Built: and the ARTIFACT is checked before its columns are.** This section borrows
+> `verifiedAgainst`'s posture and, with it, `verifiedAgainst`'s question — "did this run produce
+> that?" — which is right for a citation and too wide for an answer. An `inspect_plan` step settles
+> like any other and carries a drafted statement, so a run could nominate the engine's *description*
+> of a statement as the answer: nothing executed, no data read, `QUERY PLAN` text for rows, and
+> `agent-data-analysis.1` satisfied by a run that never read the data it was opened to analyse. Only a
+> `sql.query.read` result may be presented now, refused as `ANSWER_NOT_A_DATA_READ`.
+>
+> The citation path is deliberately NOT narrowed: a claim resting on a plan the run read is an honest
+> claim, and `recommend_change` is built on exactly that. A profile is excluded from the answer path
+> and that is a decision rather than a side effect — it is a real reading of data, but it returns
+> counts the server composed about a table rather than rows the model asked for, its statement is the
+> server's so there is nothing of the model's to hand to an editor, and its single aggregate row fails
+> `CHART_TOO_FEW_ROWS` on every chart; admitting it would only change which refusal it gets. The check
+> runs BEFORE the statement is resolved, because a plan step does carry one. The model is told in
+> `WORKFLOW_TOOL_RULES["data-analysis"]` and in the tool description, not only by the refusal (#350).
+>
+> One consequence, recorded: §2.4.0's condition 1 can no longer FAIL from this layer, because the only
+> presentable artifact is a read whose own statement is by construction among the statements the run
+> executed — presenting a plan was the one way to reach it. It stays enforced in `auto-execute.ts`,
+> which is pure and enumerated over every combination in its own suite: a gate guarding an unbounded
+> execution path must not depend on which artifacts another layer admits.
 
 Four checks, each with its own refusal so the model is told which one it failed:
 

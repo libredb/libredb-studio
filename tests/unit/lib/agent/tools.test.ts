@@ -2918,20 +2918,21 @@ describe("present_answer records which result IS the answer, and how to show it"
   });
 
   test("a result no statement of this run drafted has nothing to hand over, and is refused", () => {
-    // A profile's artifact is real and this run's, and no statement the model wrote
-    // produced it — so there is no statement to put behind the answer.
+    // The catalog read `inspect_schema` composes: a real result of this run, under the
+    // read operation, and produced by a statement the SERVER wrote — so there is no
+    // statement of the model's to put behind the answer.
     const h = harness();
     const events: AgentRunEvent[] = [
       {
-        kind: "table-profiled",
+        kind: "tool-completed",
         atMs: 1,
+        stepId: "step-catalog",
         artifact: {
           correlationId: ANSWER_CORRELATION,
           runId: "run-1",
-          operationId: "sql.table.profile",
-          summary: { rowCount: 1, columnNames: ["row_count"], elapsedMs: 4 },
+          operationId: "sql.query.read",
+          summary: { rowCount: 12, columnNames: ["table_name", "column_name"], elapsedMs: 4 },
         },
-        profile: { table: "orders", depth: "basic", rowCount: 3, columns: [], findings: [] },
       },
     ];
 
@@ -2939,6 +2940,101 @@ describe("present_answer records which result IS the answer, and how to show it"
 
     if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
     expect(outcome.reasonCode).toBe("ANSWER_STATEMENT_UNKNOWN");
+  });
+
+  /**
+   * What may be PRESENTED is narrower than what may be CITED (#373 review).
+   *
+   * `producedArtifact` answers "did this run produce that?", which is the right
+   * question for a citation: a claim may legitimately rest on a plan the run read, and
+   * narrowing that would make an honest report uncomposable. It is the wrong question
+   * for an ANSWER. A plan is the engine's DESCRIPTION of a statement — nothing was
+   * executed, no data was read, and its rows are `QUERY PLAN` text — so a run could
+   * name a `sql.explain.estimate` artifact, be accepted, and satisfy this workflow's
+   * verdict without ever having read the data it was opened to analyse.
+   */
+  describe("only a reading of the data can be the ANSWER", () => {
+    const PLAN_CORRELATION = "corr-plan-answer";
+
+    /** A plan this run inspected: its own artifact, with its own drafted statement. */
+    const inspectedPlan = (): AgentRunEvent[] => [
+      { kind: "statement-drafted", atMs: 3, stepId: "step-plan", sql: ANSWER_SQL, rationale: "what will this cost" },
+      {
+        kind: "tool-completed",
+        atMs: 4,
+        stepId: "step-plan",
+        artifact: {
+          correlationId: PLAN_CORRELATION,
+          runId: "run-1",
+          operationId: "sql.explain.estimate",
+          summary: { rowCount: 1, columnNames: ["QUERY PLAN"], elapsedMs: 2 },
+        },
+      },
+    ];
+
+    test("a plan is refused, though it is this run's artifact and carries a drafted statement", () => {
+      const h = harness();
+
+      const outcome = present(h, inspectedPlan(), { artifact: PLAN_CORRELATION, presentation: { kind: "table" } });
+
+      if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+      expect(outcome.reasonCode).toBe("ANSWER_NOT_A_DATA_READ");
+      // The way out, named: this run has a tool that reads data, and the refusal says so.
+      expect(outcome.modelText).toContain("run_read_query");
+    });
+
+    test("the refusal comes BEFORE the statement is resolved, so the reason names the real problem", () => {
+      // Order matters for what the model is told. A plan step DOES carry a drafted
+      // statement, so a check placed after `statementBehind` would have accepted the
+      // plan; a profile has none, so it would have been told its result had no
+      // statement when the truth is that a profile is not an answer at all.
+      const h = harness();
+      const events: AgentRunEvent[] = [
+        {
+          kind: "table-profiled",
+          atMs: 1,
+          artifact: {
+            correlationId: ANSWER_CORRELATION,
+            runId: "run-1",
+            operationId: "sql.table.profile",
+            summary: { rowCount: 1, columnNames: ["row_count"], elapsedMs: 4 },
+          },
+          profile: { table: "orders", depth: "basic", rowCount: 3, columns: [], findings: [] },
+        },
+      ];
+
+      const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } });
+
+      if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+      expect(outcome.reasonCode).toBe("ANSWER_NOT_A_DATA_READ");
+    });
+
+    test("the same plan may still be CITED, so the citation path is untouched", () => {
+      // The half that must NOT change. A claim resting on a plan the run read is an
+      // honest claim, and `recommend_change` and `compose_report` both depend on it.
+      const h = harness();
+
+      const composed = composeReportTool(
+        h.context,
+        { runId: "run-1", events: inspectedPlan() },
+        {
+          claims: [
+            {
+              claim: "The aggregate reaches its rows with a sequential scan.",
+              evidence: [{ source: "artifact", correlationId: PLAN_CORRELATION }],
+            },
+          ],
+        },
+      );
+
+      expect(composed.kind).toBe("composed");
+    });
+
+    test("the description states the constraint, so the model is told rather than discovering it", () => {
+      // #350's half. A rule enforced only by a refusal is a rule the model meets by
+      // spending a turn on it.
+      expect(AGENT_TOOL_DEFINITIONS.present_answer.description).toContain("run_read_query");
+    });
   });
 
   test("a column the result does not have is refused, and the real names are listed FENCED", () => {
@@ -3191,18 +3287,22 @@ describe("present_answer records which result IS the answer, and how to show it"
     expect(outcome.answer.handover).toBe("applied");
   });
 
-  test("a statement the run only EXPLAINED is not a statement the run executed", () => {
-    // Condition 1, at the one place it can actually fail here: a plan artifact is
-    // this run's and carries a drafted statement, and nothing ever ran that text
-    // under the row, byte and time ceilings. So it is handed over unrun.
+  test("a statement the run only EXPLAINED never reaches the gate at all", () => {
+    // This case used to reach condition 1: a plan artifact is this run's and carries a
+    // drafted statement, nothing ever ran that text, and the answer was handed over
+    // unrun with "never executed this exact statement". It is refused earlier now, and
+    // the consequence is worth recording — condition 1 can no longer FAIL from this
+    // layer, because the only artifact that may be presented is a read whose own
+    // statement is by construction among the statements the run executed. The
+    // condition stays in `auto-execute.ts`, which is pure and enumerated over every
+    // combination in its own suite: a gate that guards an unbounded execution path
+    // must not depend on which artifacts some other layer happens to admit.
     const h = harness();
     const events = [...answered(h), ...planned(h, "SELECT * FROM orders", CHEAP_PLAN)];
 
     const outcome = present(h, events, { artifact: "corr-plan", presentation: { kind: "table" } }, true);
 
-    if (outcome.kind !== "answered") throw new Error("expected an answer");
-    expect(outcome.answer.handover).toBe("applied");
-    expect(outcome.answer.handoverWarning).toContain("never executed this exact statement");
+    expect(outcome).toMatchObject({ kind: "unavailable", reasonCode: "ANSWER_NOT_A_DATA_READ" });
   });
 
   test("the measurement the gate weighs is the one the ledger recorded for this result", () => {

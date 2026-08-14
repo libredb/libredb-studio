@@ -328,6 +328,64 @@ describe("the tightened verdict is producible, and the model is told it", () => 
 });
 
 /**
+ * A plan is not an answer (#373 review).
+ *
+ * `present_answer` accepted any artifact this run produced, and a plan is one: an
+ * `inspect_plan` step settles like any other and carries a drafted statement, so a run
+ * could nominate the engine's DESCRIPTION of a statement as the answer and satisfy the
+ * workflow's verdict without ever having read the data. The unit tests prove the
+ * refusal exists; this proves it is one a run can act on, and that the arc it forces is
+ * the ordinary one.
+ */
+describe("a plan presented as the answer is refused, and the run recovers", () => {
+  const PLANS = callsTool(
+    "inspect_plan",
+    { sql: "SELECT region, SUM(net_total) AS net_total FROM orders GROUP BY region" },
+    "call_plan",
+  );
+
+  /** Presents the plan: the newest artifact on the ledger by the time it is called. */
+  const presentsThePlan = (turn: Turn): Response =>
+    chatToolCallStream(
+      "present_answer",
+      JSON.stringify({ artifact: correlationIdsIn(turn.transcript).at(-1), presentation: { kind: "table" } }),
+      "call_answer_plan",
+    );
+
+  test("the refusal says which kind of result it wanted, and the answer that follows is the read", async () => {
+    const run = await open();
+
+    const drive = await run.drive([
+      READS,
+      PLANS,
+      presentsThePlan,
+      // The correction: `asTable` names the FIRST artifact in the transcript, which is
+      // the read.
+      asTable,
+      reportOn("The north region brought in the most revenue."),
+    ]);
+
+    const refusal = drive.transcripts[3] ?? "";
+    expect(refusal).toContain("not a reading of the data");
+    // The way out is named, and it is a tool this run has.
+    expect(refusal).toContain("run_read_query");
+    // Exactly one answer was recorded, and it is the read rather than the plan.
+    const answers = drive.events.filter((event) => event.kind === "answer-composed");
+    expect(answers).toHaveLength(1);
+    expect(answers[0]?.kind === "answer-composed" && answers[0].artifact.operationId).toBe("sql.query.read");
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-data-analysis.1", unmet: [] });
+  });
+
+  test("the model is told the rule before its first turn, rather than discovering it", async () => {
+    const run = await open();
+
+    const drive = await run.drive([READS, asTable, reportOn("The north region brought in the most revenue.")]);
+
+    expect(drive.transcripts[0] ?? "").toContain("Only a result of run_read_query can be presented");
+  });
+});
+
+/**
  * The harness has to bound a run the way the SERVER bounds it (#373 review).
  *
  * `driveAgentRun` reads the workflow off the persisted record and hands
