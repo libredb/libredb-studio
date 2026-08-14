@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
-import { type Turn, callsTool, correlationIdIn, reportOn } from "../isolated/fixtures/agent-scripted-model";
+import {
+  type Turn,
+  callsTool,
+  correlationIdIn,
+  correlationIdsIn,
+  reportOn,
+} from "../isolated/fixtures/agent-scripted-model";
 import { chatToolCallStream } from "../isolated/fixtures/agent-transport";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 
@@ -230,6 +236,94 @@ describe("§4.4 case 3: auto-execute unticked", () => {
 
     expect(without.verdict).toEqual(with_.verdict);
     expect(with_.verdict.outcome).toBe("answered");
+  });
+});
+
+/**
+ * §4.2's third arm: the report has to be ABOUT the result that was presented
+ * (#373 review).
+ *
+ * A cited report and a presented result were two unconnected facts, so a run could
+ * chart artifact A while every claim cited artifact B and still score `answered`.
+ * These drives are the #356 half of the fix — the check that the tightened rule is
+ * producible by the tools in the order this workflow calls them — and the #350 half,
+ * that the model is told it before it has to satisfy it. A unit test can assert the
+ * rule; only a drive can show that a run doing what the rules ask meets it.
+ */
+describe("the tightened verdict is producible, and the model is told it", () => {
+  /** A second read, so a run can have TWO results and cite the wrong one. */
+  const READS_AGAIN = callsTool(
+    "run_read_query",
+    { sql: "SELECT region, COUNT(*) AS orders FROM orders GROUP BY region" },
+    "call_read_2",
+  );
+
+  /** Presents the LATEST result, which is not the one `reportOn` will cite. */
+  const presentsLatest = (turn: Turn): Response => {
+    const ids = correlationIdsIn(turn.transcript);
+    return chatToolCallStream(
+      "present_answer",
+      JSON.stringify({ artifact: ids.at(-1), presentation: { kind: "table" } }),
+      "call_answer",
+    );
+  };
+
+  test("the arc the workflow's rules ask for satisfies it with nothing added", async () => {
+    // Read, present, report — the three-turn arc every other block here drives, and
+    // the whole producibility question is whether it still scores `answered`. It does,
+    // because `reportOn` cites the result it read, which is the result it presented.
+    const run = await open();
+
+    const drive = await run.drive([READS, asChart, reportOn("The north region brought in the most revenue.")]);
+
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-data-analysis.1", unmet: [] });
+    // And the link is real rather than incidental: the claim's evidence names the very
+    // artifact the answer nominated.
+    const answer = drive.events.find((event) => event.kind === "answer-composed");
+    const report = drive.events.find((event) => event.kind === "report-composed");
+    if (answer?.kind !== "answer-composed" || report?.kind !== "report-composed") {
+      throw new Error("expected an answer and a report on the ledger");
+    }
+    expect(report.claims[0]?.evidence).toContainEqual({
+      source: "artifact",
+      correlationId: answer.artifact.correlationId,
+    });
+  });
+
+  test("a run that reports about a DIFFERENT result it read is scored unanswered", async () => {
+    // The adversarial half: a harness that cannot fail on the known defect measures
+    // nothing. This run reads twice, presents the second result and writes its only
+    // claim about the first — every earlier bar met, and the picture and the prose
+    // about different things.
+    const run = await open();
+
+    const drive = await run.drive([
+      READS,
+      READS_AGAIN,
+      presentsLatest,
+      reportOn("The north region brought in the most revenue."),
+    ]);
+
+    expect(drive.kinds).toContain("answer-composed");
+    expect(drive.verdict).toEqual({
+      outcome: "unanswered",
+      verifier: "agent-data-analysis.1",
+      unmet: ["answer-uncited"],
+    });
+  });
+
+  test("the model is told the rule at the start, and told WHICH id to cite when it presents", async () => {
+    // #350's half, at both moments it matters: in the opening rules, where a model that
+    // is not yet confused reads it, and in what `present_answer` says back, where the
+    // id to cite can be named rather than described.
+    const run = await open();
+
+    const drive = await run.drive([READS, asChart, reportOn("The north region brought in the most revenue.")]);
+
+    expect(drive.transcripts[0] ?? "").toContain("At least one of those claims must cite the artifact you presented");
+    const answer = drive.events.find((event) => event.kind === "answer-composed");
+    if (answer?.kind !== "answer-composed") throw new Error("expected an answer on the ledger");
+    expect(drive.transcripts[2] ?? "").toContain(`At least one claim must cite ${answer.artifact.correlationId}`);
   });
 });
 

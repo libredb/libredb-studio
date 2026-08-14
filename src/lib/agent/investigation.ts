@@ -310,6 +310,11 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
     "A chart names columns of THAT result: they are checked against the result's real column names and refused if they do not match.",
     AGENT_ANSWER_CONTRACT,
     "Then call compose_report. The presentation shows the result; the claims are what say what it means.",
+    // The third arm of `agent-data-analysis.1`, in the model's own terms. The verdict
+    // now requires the report to be ABOUT the result presented, and the model holds the
+    // id it needs — it passed that id to `present_answer` one turn earlier and was
+    // answered with it. A rule the model is never told is a rule live runs fail (#350).
+    "At least one of those claims must cite the artifact you presented: a report about other evidence entirely is prose beside a picture, and the run is scored as not having answered.",
   ].join(" "),
 } satisfies Record<AgentRunWorkflowType, string>);
 

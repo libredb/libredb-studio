@@ -22,6 +22,7 @@
 > | §2.6 the checkbox, scoped by workflow and mode | **And by the host**: no `onRunStatement`, no checkbox | The prop is optional, so an embedding host may have no runner. The rail used to offer the promise and fall back to applying the statement, which left the timeline saying it "ran on your connection" about something that did not happen. |
 > | §2.1/§2.6 "run it there — on your connection", with the connection assumed fixed | **And only on the connection the run was opened on**: the rail declines the hand-over when the editor has moved elsewhere, and says so beside the entry | The host runs a statement against its ACTIVE connection. A user who switched databases mid-run got the statement run, unbounded, against a database whose plan was never inspected — and its rows shown as the answer. |
 > | §2.3 one `answer-composed` event, with nothing said about a second | **A run answers once**: a second presentation is refused with `ANSWER_ALREADY_RECORDED` | `present_answer` is non-terminal, so a model could present twice. Two entries mean two statements handed to the editor and, with auto-execute on, two run there — under a checkbox that promised the final answer. |
+> | §4.2 the rule: the baseline, **and** an `answer-composed` entry | **And at least one claim citing the presented artifact**, with the shortfall `answer-uncited` | Nothing linked the report to the answer, so a run could chart artifact A while every claim cited artifact B and still score `answered` — unrelated prose beside a picture. |
 > | §1.6 budget figures | Shipped exactly as approved: 60 / 42 / 900 s / 180 s | No divergence — recorded here because these figures are **still pending the live measurement** the owner's decision made a condition of freezing them. |
 >
 > The `operations` assumption below was written when that workflow was an uncommitted local branch.
@@ -956,6 +957,32 @@ The user-facing sentence, in the vocabulary `SHORTFALL_SENTENCES` uses
 
 > `no-answer` — "The run reported what it found but never produced an answer to show, so there is
 > nothing to put in front of you."
+
+> **Built: with a third arm, because the two above are not connected.** The rule as proposed asks for
+> a cited report and for a presented result and says nothing about their being the same result. So a
+> run could chart artifact A while every claim cited artifact B and score `answered` — unrelated prose
+> beside a picture, and no field on this ledger could tell it from a good run, which is the exact
+> defect class §4 exists for. The shipped rule adds: **at least one claim must cite the artifact the
+> run presented**, with the shortfall `answer-uncited`.
+>
+> Checked against §4.1's two halves before it was written, as this section requires of any rule.
+> **Producible (#356):** the model holds the answer's correlation id at the moment it needs it — it
+> passed that id to `present_answer` one turn earlier and the tool names it back in its reply — and the
+> artifact is a `tool-completed` result of this run, so `composeReportTool` accepts a citation of it.
+> The tool order the workflow's own rules ask for (read → present → report) is the order that makes it
+> satisfiable, and no valid answer is excluded: a chart, a table, one row, one number, a two-window
+> comparison and either setting of the checkbox all present an artifact a claim can cite. **Told
+> (#350):** stated in `WORKFLOW_TOOL_RULES["data-analysis"]`, in `present_answer`'s description, and
+> again in what that tool says back when it records the answer — which is where the id itself can be
+> named rather than described. It asks for ONE claim, not for every claim: a report says more than the
+> picture shows and should.
+>
+> **The id stayed `agent-data-analysis.1`.** A rule change normally mints a new id, because a verdict
+> outlives the rule that produced it and a reader of an old ledger holds this type — which is why
+> `agent-query-optimization.1` is still in the union. That is a fact about a released id, and `.1` here
+> had never left the branch that introduced it: no release carried it and no fixture recorded a verdict
+> under it, so there was no reader to protect and `.2` would have added a dead id standing for a rule
+> nothing was ever judged by. Once this reaches `main` the rule is frozen and the next change is `.2`.
 
 ### 4.3 Checked against #356: is the rule producible?
 

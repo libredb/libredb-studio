@@ -575,9 +575,10 @@ only one that can.
 | The read class (`inspect_schema`, `run_read_query`, `inspect_plan`, `compose_report`), plus `profile_table` and `present_answer` | `compare_plans`, `recommend_change`, `inspect_operations` |
 
 **`present_answer` is the tool that makes it a workflow rather than an investigation with a different
-name.** Its verdict, `agent-data-analysis.1`, is the investigation baseline **and** an `answer-composed`
-entry; a run that reports its findings and produces nothing to show for them has answered a question
-about the data with prose alone.
+name.** Its verdict, `agent-data-analysis.1`, is the investigation baseline, an `answer-composed`
+entry, and a report that cites that same artifact in at least one claim; a run that reports its
+findings and produces nothing to show for them has answered a question about the data with prose
+alone, and a run whose report is about some other result has put prose beside a picture.
 
 **`profile_table` is borrowed from the assessment template rather than duplicated,** and for a reason
 specific to this workflow: the schema carries no row counts, so a 400 M-row fact table and a 12-row
@@ -1090,7 +1091,7 @@ build until somebody decides what "answered" means for it.
 | `agent` (query-optimization) | The baseline above, **and** either a plan comparison on the ledger or an index recommendation citing a plan this run read. `agent-query-optimization.2`. | the above, plus `no-plan-comparison`, `no-plan-evidence` |
 | `agent` (database-assessment) | The baseline above, **and** a table profiled. `agent-database-assessment.1`. | the above, plus `no-table-profile` |
 | `agent` (operations) | A composed report. `agent-operations.1`. **Not** composed on the baseline: an empty reading is an answer, so the emptiness clause is dropped. Its claims already cite a reading — `compose_report` refuses uncited claims and a reading is the only citable artifact this workflow can produce — so that half needs no arm of its own. | `no-report`, `cancelled` |
-| `agent` (data-analysis) | The baseline above, **and** an `answer-composed` entry: which result IS the answer, and how to show it. `agent-data-analysis.1`. | the above, plus `no-answer` |
+| `agent` (data-analysis) | The baseline above, **and** an `answer-composed` entry: which result IS the answer, and how to show it — **and at least one claim citing that same artifact**, so the report is about the result it presented. `agent-data-analysis.1`. | the above, plus `no-answer`, `answer-uncited` |
 
 **Why `agent-data-analysis.1` asks for an artifact rather than for a picture.** Every valid answer
 this workflow can give produces an `answer-composed` entry: a chart of an aggregate, a table for a
@@ -1101,6 +1102,27 @@ on the editor hand-over instead, which would have scored a run `unanswered` for 
 switched off. Both are the #356 shape, and the rule was changed before any of it was written.
 `tests/evals/data-analysis.test.ts` drives the one-row case and the auto-execute-off case directly,
 because a requirement about what a run produces is enforced only by something that runs one.
+
+**And why it also asks the report to be ABOUT that artifact.** A cited report and a presented result
+were two unconnected facts, so a run could chart artifact A while every claim cited artifact B and
+score `answered` — unrelated prose beside a picture, invisible to every other field on the ledger.
+One claim citing the presented artifact is what links them, and `answer-uncited` is the shortfall
+when nothing does. The arm was checked against both halves before it was written: it is **producible**
+because the model holds that correlation id at the moment it needs it — it passed the id to
+`present_answer` one turn earlier, the tool names it back, and the artifact is a `tool-completed`
+result of this run, so `compose_report` accepts a citation of it; and the model is **told**, in the
+workflow's opening rules, in `present_answer`'s description and in what that tool says back, where
+the id itself can be named. One claim, not every claim: a report says more than the picture shows and
+should. `tests/evals/data-analysis.test.ts` drives both directions — the ordinary read/present/report
+arc still scores `answered` with nothing added, and a run that presents its second result while
+reporting about its first scores `answer-uncited`.
+
+The verdict id stayed `agent-data-analysis.1` through that change, which is the one case where
+tightening a rule under its own id is defensible: an id is versioned because verdicts outlive the
+rule, and this one had never left the branch that introduced it — no release carried it and no
+fixture recorded a verdict under it, so there was no reader to protect and a `.2` would have put a
+dead id in the union for a rule nothing was judged by. Once it is on `main` the rule is frozen and
+the next change to it is `.2`, exactly as `agent-query-optimization.1` → `.2` was.
 
 Its stated blind spot: a run that answers purely from the schema snapshot — "which table holds
 sales?" — cites the snapshot, passes the baseline, has no artifact to present, and is scored

@@ -458,6 +458,8 @@ const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
   "no-table-profile": "No table was profiled, so the state of the data was never established.",
   "no-answer":
     "The run reported what it found but never produced an answer to show, so there is nothing to put in front of you.",
+  "answer-uncited":
+    "The run presented one result as the answer and its report rests on other evidence entirely, so the claims and the picture are not about the same thing.",
   cancelled: "The run was stopped before it could finish.",
 };
 

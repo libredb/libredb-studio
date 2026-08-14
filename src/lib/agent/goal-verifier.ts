@@ -60,6 +60,21 @@ export type AgentGoalVerifierId =
   | "agent-query-optimization.2"
   | "agent-database-assessment.1"
   | "agent-operations.1"
+  /**
+   * Tightened under its own id rather than bumped to `.2`, and the reasoning is the
+   * reasoning that keeps `agent-query-optimization.1` above (#373 review).
+   *
+   * An id is versioned because a verdict outlives the rule that produced it: somewhere
+   * there is a ledger recorded under `.1`, and a reader of it holds this type. That is
+   * a fact about `agent-query-optimization.1` — it shipped on `main` and real runs were
+   * measured against it — and it is not yet a fact about this one. `.1` has never left
+   * the unmerged branch that introduces it: no release carries it, no fixture records a
+   * verdict under it, and the only ledgers naming it are the ones the tests in this
+   * same change construct. So there is no reader to protect, and minting `.2` would put
+   * a dead id in this union to stand for a rule nothing was ever judged by — which
+   * makes the union say less, not more. The moment this reaches `main`, the rule is
+   * frozen and the next change to it is `.2`.
+   */
   | "agent-data-analysis.1";
 
 /**
@@ -110,6 +125,16 @@ export type AgentGoalShortfall =
    * question about the data with prose alone.
    */
   | "no-answer"
+  /**
+   * A data-analysis run presented one result and reported about another.
+   *
+   * The link between the template's two halves. The baseline establishes that the
+   * claims rest on something the run read, and `no-answer` establishes that a result
+   * was nominated as the answer; neither says they are the SAME result. A run that
+   * charts artifact A while every claim cites artifact B has produced unrelated prose
+   * beside a picture, and every field this ledger holds would have called it answered.
+   */
+  | "answer-uncited"
   /**
    * The run was stopped before it could conclude. Substituted for the missing
    * output rather than reported alongside it: a user's stop is not a defect of the
@@ -305,11 +330,45 @@ function verifyDatabaseAssessmentGoal(run: VerifiableAgentRun): readonly AgentGo
  * this file. If live users routinely ask schema questions of this workflow, the
  * remedy is to route them to `investigation` — not to widen what counts as evidence
  * here, because every such widening is a step back toward the escape hatch.
+ *
+ * **Three arms, because two of them were not enough (#373 review).** A cited report and
+ * a presented result are two facts about a run, and nothing tied them together: a run
+ * could chart artifact A while every claim cited artifact B and score `answered` —
+ * unrelated prose beside a picture, which is precisely the state no field on this
+ * ledger could see. So at least one claim must cite the artifact the run PRESENTED.
+ *
+ * Checked against both halves of the rule this repository has been burned by twice,
+ * before it was written:
+ *
+ *  - **Producible (#356).** The model holds the answer's correlation id at the moment
+ *    it needs it: it passed that id to `present_answer` itself, one turn before
+ *    `compose_report`, and the tool answers by naming it back. The artifact is a
+ *    `tool-completed` result of this run, so `composeReportTool` accepts a citation of
+ *    it — the tools are called in the one order that makes this satisfiable, and the
+ *    workflow's rules ask for exactly that order. No valid answer is excluded: whatever
+ *    the presentation, whatever the hand-over, and whether the answer is a chart, a
+ *    table, one row or one number, the claim about it can cite it.
+ *  - **Told (#350).** Stated in `WORKFLOW_TOOL_RULES["data-analysis"]`, in
+ *    `present_answer`'s own description, and again in what that tool says back when it
+ *    records the answer — where it can name the very id to cite.
+ *
+ * It asks for ONE claim, not for every claim: a report says more than the chart shows
+ * and should. What it may not do is rest entirely on something else.
  */
 function verifyDataAnalysisGoal(run: VerifiableAgentRun): readonly AgentGoalShortfall[] {
   const baseline = verifyInvestigationGoal(run);
   if (baseline.length > 0) return baseline;
-  return run.events.some((event) => event.kind === "answer-composed") ? [] : ["no-answer"];
+  // Every answer this run presented, though a run may present only one
+  // (`ANSWER_ALREADY_RECORDED`): read as a fold over the ledger rather than as a
+  // lookup of the entry a reader happened to pick, like `composedClaims` above.
+  const answered = run.events.flatMap((event) =>
+    event.kind === "answer-composed" ? [event.artifact.correlationId] : [],
+  );
+  if (answered.length === 0) return ["no-answer"];
+  const linked = composedClaims(run.events).some((claim) =>
+    claim.evidence.some((reference) => reference.source === "artifact" && answered.includes(reference.correlationId)),
+  );
+  return linked ? [] : ["answer-uncited"];
 }
 
 /**

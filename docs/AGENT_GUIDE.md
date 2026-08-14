@@ -342,6 +342,8 @@ whole vocabulary (`SHORTFALL_SENTENCES`, `timeline.ts:335-343`):
 | `no-plan-comparison` | "No before-and-after plan comparison was recorded, and no index was recommended: a query optimization rests on one or the other." |
 | `no-plan-evidence` | "The index was recommended without citing a plan this run read, so nothing the engine said backs it." |
 | `no-table-profile` | "No table was profiled, so the state of the data was never established." |
+| `no-answer` | "The run reported what it found but never produced an answer to show, so there is nothing to put in front of you." |
+| `answer-uncited` | "The run presented one result as the answer and its report rests on other evidence entirely, so the claims and the picture are not about the same thing." |
 | `cancelled` | "The run was stopped before it could finish." |
 
 A run **you** stopped reports `cancelled` rather than the output it was missing: a stop is not a

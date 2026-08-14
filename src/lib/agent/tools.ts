@@ -542,7 +542,7 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
   },
   present_answer: {
     name: "present_answer",
-    description: `Record that one result you have already read IS the answer, and how it should be shown. Pass the artifact id that read reported; the statement behind it comes from this run's own ledger, so you do not supply it. The columns a chart names are checked against that result's real columns and refused if they do not match. ${AGENT_ANSWER_CONTRACT}`,
+    description: `Record that one result you have already read IS the answer, and how it should be shown. Pass the artifact id that read reported; the statement behind it comes from this run's own ledger, so you do not supply it. The columns a chart names are checked against that result's real columns and refused if they do not match. Your report must then cite this same artifact in at least one claim: the presentation shows the result and the claims say what it means, so a report resting on other evidence entirely leaves the run scored as not having answered. ${AGENT_ANSWER_CONTRACT}`,
     inputSchema: presentAnswerSchema,
   },
   compose_report: {
@@ -2391,7 +2391,12 @@ export function presentAnswerTool(
     // shows the result, and the claims are what say what it means — and, when the
     // gate declined, why, so the report it writes next is not written beside a
     // statement the user can see was not run.
-    modelText: `Answer recorded against result ${artifact.correlationId}, shown as a ${presentation.kind}. ${HANDOVER_MODEL_TEXT[handover.handover]}${handover.handoverWarning === undefined ? "" : ` ${handover.handoverWarning}`} Now call compose_report: the presentation shows the result, the claims are the answer.`,
+    //
+    // It also names the id to cite, which is the verdict's third arm said at the one
+    // moment it is free to satisfy (#350). The model is holding that id; being told to
+    // cite it "somewhere" and being handed the characters are different instructions,
+    // and the second is the one a confused model can act on.
+    modelText: `Answer recorded against result ${artifact.correlationId}, shown as a ${presentation.kind}. ${HANDOVER_MODEL_TEXT[handover.handover]}${handover.handoverWarning === undefined ? "" : ` ${handover.handoverWarning}`} Now call compose_report: the presentation shows the result, the claims are the answer. At least one claim must cite ${artifact.correlationId}.`,
   };
 }
 
