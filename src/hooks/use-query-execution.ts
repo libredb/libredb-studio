@@ -502,23 +502,91 @@ export function useQueryExecution({
 
   /**
    * Run a statement an agent run handed to this editor (#329, §2.1/§2.5 of
-   * `docs/AGENT_ANALYST_DESIGN.md`).
+   * `docs/AGENT_ANALYST_DESIGN.md`; reshaped by the #373 review).
    *
-   * Its own entry point rather than a call site passing options, and it accepts none:
-   * the caps are the whole point. An agent run reads its answer under the agent's
-   * ceilings; the editor re-run is the widest thing the setting buys, and it is the
-   * editor's DEFAULT limit — never `unlimited`, whatever the last execution in this
-   * tab was widened to, because a statement the user did not type must not be able to
-   * inherit a ceiling they raised for one they did.
+   * It takes a RUN, not a statement to execute. The statement is named only so this
+   * hook can label the history entry with the text the user is looking at; what is
+   * sent is the run id, and the server reads the statement off that run's ledger.
    *
-   * The statement travels verbatim. Nothing here appends a `LIMIT`: the row bound is
-   * the request's, so the text stays the text the run's ledger holds.
+   * That is the whole of the security fix. This used to call `executeQuery`, which
+   * goes to `POST /api/db/query` — the editor's ordinary, read-WRITE path, guarded
+   * only by `isDangerousQuery`, a check on the statement's text. The agent's own read
+   * is bounded by the ENGINE (`BEGIN READ ONLY`, `PRAGMA query_only`), and a `SELECT`
+   * that calls a VOLATILE function performing an `INSERT` is refused there and
+   * performed here. No inspection of the text can tell those apart, so the replay is
+   * no longer served by a route that lacks the boundary: it goes to
+   * `POST /api/agent/runs/[runId]/handover`, which runs it through `queryReadOnly`
+   * under `AGENT_HANDOVER_PROFILE` at the editor's default row limit and with no
+   * statement timeout — the bounds the checkbox names, enforced by the database.
+   *
+   * The route is named as a literal rather than imported: `src/lib/agent/*` is out of
+   * the published package's module graph by construction
+   * (`tests/unit/agent-package-boundary.test.ts`), and this hook is in it.
+   *
+   * Nothing here appends a `LIMIT`, and nothing refreshes the schema afterwards: the
+   * text stays the text the run's ledger holds, and a read that the engine itself
+   * holds read-only cannot have changed one.
    */
   const executeHandedOverStatement = useCallback(
-    (sql: string) => {
-      void executeQuery(sql, undefined, false, { limit: DEFAULT_QUERY_LIMIT, unlimited: false });
+    async (runId: string, sql: string) => {
+      if (!activeConnection) {
+        toast({ title: "No Connection", description: "Select a connection first.", variant: "destructive" });
+        return;
+      }
+      const targetTabId = activeTabId;
+      const tabToExec = tabs.find((t) => t.id === targetTabId) || currentTab;
+
+      setTabs((prev) => prev.map((t) => (t.id === targetTabId ? { ...t, isExecuting: true } : t)));
+      setBottomPanelMode("results");
+
+      const startTime = Date.now();
+      try {
+        const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/handover`, { method: "POST" });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "The hand-over could not be run");
+        }
+
+        const result = payload.result;
+        storage.addToHistory({
+          id: Math.random().toString(36).substring(7),
+          connectionId: activeConnection.id,
+          connectionName: activeConnection.name,
+          tabName: tabToExec.name,
+          query: sql,
+          executionTime: result.executionTime ?? Date.now() - startTime,
+          status: "success",
+          executedAt: new Date(),
+          rowCount: result.rowCount,
+        });
+        setHistoryKey((prev) => prev + 1);
+
+        setTabs((prev) =>
+          prev.map((t) =>
+            t.id === targetTabId
+              ? { ...t, result, allRows: result.rows, currentOffset: result.rows.length, isExecuting: false }
+              : t,
+          ),
+        );
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        storage.addToHistory({
+          id: Math.random().toString(36).substring(7),
+          connectionId: activeConnection.id,
+          connectionName: activeConnection.name,
+          tabName: tabToExec.name,
+          query: sql,
+          executionTime: Date.now() - startTime,
+          status: "error",
+          executedAt: new Date(),
+          errorMessage,
+        });
+        setHistoryKey((prev) => prev + 1);
+        setTabs((prev) => prev.map((t) => (t.id === targetTabId ? { ...t, isExecuting: false } : t)));
+        toast({ title: "Query Error", description: errorMessage, variant: "destructive" });
+      }
     },
-    [executeQuery],
+    [activeConnection, activeTabId, tabs, currentTab, setTabs, toast],
   );
 
   // Cancel running query

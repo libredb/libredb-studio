@@ -330,12 +330,14 @@ export async function getOrCreateProvider(
 // ============================================================================
 
 /**
- * The execution profiles this factory can vend. Two exist: `agent-read-only` for the
- * paths that send a model-authored statement, `agent-operations` for the curated
- * reading path that sends none. An unknown profile string is refused, never defaulted
- * (fail closed), and what each one means is stated once in `PROFILE_ACQUISITION`.
+ * The execution profiles this factory can vend. Three exist: `agent-read-only` for
+ * the paths that send a model-authored statement, `agent-operations` for the curated
+ * reading path that sends none, and `agent-handover` for the editor replay of an
+ * answer a run already produced. An unknown profile string is refused, never
+ * defaulted (fail closed), and what each one means is stated once in
+ * `PROFILE_ACQUISITION`.
  */
-export type ExecutionProfile = "agent-read-only" | "agent-operations";
+export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-handover";
 
 /**
  * What a profile means at acquisition: the context the provider is opened under,
@@ -348,13 +350,17 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations";
  * `postgres.ts` and `sqlite.ts` implement that. `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
- * the profile never uses.
+ * the profile never uses. `agent-handover` sends a statement too — the one a run
+ * already answered with, replayed in the user's editor — so it takes the same gate as
+ * `agent-read-only`; it is a separate row because it carries a different BUDGET
+ * (`AGENT_HANDOVER_BUDGET`), and a shared row would have made a later change to one
+ * path silently move the other.
  *
- * What both profiles share is everything that makes the acquisition safe: the same
- * `readOnly: true` execution context (on PostgreSQL that still verifies the role is
- * unprivileged at open), the same `agentUser` credential resolution, and the same
- * profiled cache — so an operations run is never handed the editor's writable pool
- * either.
+ * What all three profiles share is everything that makes the acquisition safe: the
+ * same `readOnly: true` execution context (on PostgreSQL that still verifies the role
+ * is unprivileged at open), the same `agentUser` credential resolution, and the same
+ * profiled cache — so neither an operations run nor an editor replay is ever handed
+ * the editor's writable pool.
  */
 interface ProfileAcquisition {
   readonly context: ProviderExecutionContext;
@@ -365,6 +371,7 @@ interface ProfileAcquisition {
 const PROFILE_ACQUISITION: Record<ExecutionProfile, ProfileAcquisition> = {
   "agent-read-only": { context: { readOnly: true }, requiresReadOnlyStatements: true },
   "agent-operations": { context: { readOnly: true }, requiresReadOnlyStatements: false },
+  "agent-handover": { context: { readOnly: true }, requiresReadOnlyStatements: true },
 };
 
 const EXECUTION_PROFILES: ReadonlySet<string> = new Set(Object.keys(PROFILE_ACQUISITION));

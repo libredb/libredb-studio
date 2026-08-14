@@ -2026,7 +2026,16 @@ describe("AgentRail", () => {
       // What the run does INSTEAD when the gate declines, so an unrun statement in
       // the editor reads as the feature working.
       expect(terms).toContain("put in the editor without being run");
-      expect(terms).toContain("Writes and DDL are refused either way");
+      // The sentence about writes, which the #373 review's security finding made
+      // false and the hand-over route made true again. It says WHAT refuses them —
+      // the engine, in the same read-only session the run's own read used — because
+      // "writes are refused" was the claim the old wording made while the replay ran
+      // in a read-write session guarded only by a check on the statement's text.
+      expect(terms).toContain("same database-enforced read-only session either way");
+      expect(terms).toContain("writes and DDL are refused by the engine rather than by reading the statement");
+      // And the connection it names is the run's, not "yours": the server resolves it
+      // from the run's own record, so the replay cannot reach another database.
+      expect(terms).toContain("on the connection the run was opened on");
     });
 
     test("a SQLite connection is told what a long read there costs; another engine is not", () => {
@@ -2092,8 +2101,10 @@ describe("AgentRail", () => {
       await waitFor(() => {
         expect(onRunStatement).toHaveBeenCalledTimes(1);
       });
-      // Byte for byte what the ledger holds: no injected LIMIT, no rewriting.
-      expect(onRunStatement).toHaveBeenCalledWith(ANSWER_SQL);
+      // Byte for byte what the ledger holds: no injected LIMIT, no rewriting. And the
+      // RUN goes with it (#373 review): the host does not execute this text, it names
+      // the run whose ledger the server reads the statement from.
+      expect(onRunStatement).toHaveBeenCalledWith(ANSWER_SQL, "arun_1");
       // Running it IS placing it — the host does both, so the rail does not ask twice.
       expect(onApplyStatement).not.toHaveBeenCalled();
     });
@@ -2264,7 +2275,7 @@ describe("AgentRail", () => {
         });
 
         await waitFor(() => {
-          expect(onRunStatement).toHaveBeenCalledWith(ANSWER_SQL);
+          expect(onRunStatement).toHaveBeenCalledWith(ANSWER_SQL, "arun_1");
         });
         expect(view.queryByTestId("agent-handover-declined")).toBeNull();
       });

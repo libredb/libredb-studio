@@ -1498,17 +1498,19 @@ describe("Studio", () => {
    * into the editor AND is run there — through the hook's own capped entry point,
    * which is what keeps the run's answer off the tab's widened execution options.
    */
-  test("a statement the run handed over is placed in the editor and run under the editor's own cap", async () => {
+  test("a statement the run handed over is shown in the editor and run through the run's own route", async () => {
     mockAgentConfig(true);
     const { findByTestId } = render(<Studio />);
     await findByTestId("agent-rail");
 
-    act(() => (capturedAgentRailProps.onRunStatement as (sql: string) => void)("SELECT 1"));
+    act(() => (capturedAgentRailProps.onRunStatement as (sql: string, runId: string) => void)("SELECT 1", "arun_1"));
 
     expect(mockUpdateCurrentTab).toHaveBeenCalledWith({ query: "SELECT 1" });
-    expect(mockExecuteHandedOverStatement).toHaveBeenCalledWith("SELECT 1");
-    // Never the general entry point: that one takes options, and this statement is
-    // not one the user typed.
+    // The RUN is what is executed against, not the text (#373 review): the text is
+    // put in the editor so the user can read what is running.
+    expect(mockExecuteHandedOverStatement).toHaveBeenCalledWith("arun_1", "SELECT 1");
+    // Never the general entry point: that one posts to the editor's read-WRITE route,
+    // which is the boundary this hand-over exists to keep.
     expect(mockExecuteQuery).not.toHaveBeenCalled();
   });
 

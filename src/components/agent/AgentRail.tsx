@@ -6,6 +6,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
 import { describeAgentCapability } from "@/lib/agent/capability-labels";
 import {
+  AGENT_HANDOVER_BUDGET,
   AGENT_MAX_OBJECTIVE_LENGTH,
   AGENT_REPORT_RESERVE_MS,
   AGENT_REPORT_RESERVE_TURNS,
@@ -18,7 +19,6 @@ import {
   type AgentRunStatus,
   type AgentRunWorkflowType,
 } from "@/lib/agent/types";
-import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { DatabaseType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { type AgentBudgetGauge, type AgentTimelineTone, describeFailureReason } from "./timeline";
@@ -88,8 +88,14 @@ export interface AgentRailProps {
    * the timeline entry said it had run on the user's connection, which is the one
    * thing this surface may not do (#373). Nothing is lost by the narrowing: every
    * answer entry still offers its statement through `applySql`.
+   *
+   * It takes the RUN as well as the statement, and the run is the operative argument
+   * (#373 review). The host does not execute the text it is handed: it asks
+   * `POST /api/agent/runs/[runId]/handover`, which reads the statement off that run's
+   * ledger and runs it under the engine's own read-only session. The `sql` is for the
+   * editor to SHOW — it is what the user reads while the answer arrives.
    */
-  readonly onRunStatement?: (sql: string) => void;
+  readonly onRunStatement?: (sql: string, runId: string) => void;
   /**
    * Asks the host to show a result the run stored. The rail hands over identifiers
    * and nothing else: the rows are fetched and rendered by the surface that already
@@ -292,7 +298,7 @@ export function AgentRail({
     touching the copy. This is the sentence a user consents to, so it is written and
     rendered as written.
   */
-  const autoExecuteTerms = `The run always produces its answer on its own read-only path, bounded to ${selectedBudget.policy.budgets.maxResultRows} rows and ${selectedBudget.policy.budgets.statementTimeoutMs / 1000} seconds. Tick this and it will also put that statement in your editor and run it there — on your connection, at the editor's ${DEFAULT_QUERY_LIMIT}-row limit and with no time limit. Statements whose plan reads as expensive, or which the run measured as slow, are put in the editor without being run. Writes and DDL are refused either way.`;
+  const autoExecuteTerms = `The run always produces its answer on its own read-only path, bounded to ${selectedBudget.policy.budgets.maxResultRows} rows and ${selectedBudget.policy.budgets.statementTimeoutMs / 1000} seconds. Tick this and it will also put that statement in your editor and run it there — on the connection the run was opened on, at the editor's ${AGENT_HANDOVER_BUDGET.maxResultRows}-row limit and with no time limit. It is the same database-enforced read-only session either way, so writes and DDL are refused by the engine rather than by reading the statement. Statements whose plan reads as expensive, or which the run measured as slow, are put in the editor without being run.`;
 
   /*
     The sheet is a mobile presentation, and the breakpoint has to be read rather than
@@ -472,34 +478,42 @@ export function AgentRail({
       if (item.handover === undefined || handedOver.current.has(item.id)) continue;
       handedOver.current.add(item.id);
       /*
-        A hand-over runs on the connection the EDITOR is on, and the run read its rows
-        from the connection it was opened on (#373 review). Those are the same database
-        until the user selects another one mid-run, and then they are not: the host
-        resolves every execution from its active connection
-        (`use-query-execution.ts`), so the statement would run — without a timeout,
-        with no plan of it ever inspected on that engine and no elapsed time ever
-        measured there — against a database this run never read, and the rows on screen
-        would be another database's answer to the question.
+        A hand-over is still declined when the editor has moved, and the REASON is
+        narrower than it was (#373 review, second round).
 
-        So it is declined, and said. There is no way from here to reach the run's own
-        connection, and inventing one would execute a statement against a database the
-        user is not looking at; the honest act is to perform nothing and contradict the
-        entry that says otherwise. The statement is not lost — the entry carries
-        `applySql`, and taking it is the user's own action, on the connection they
-        chose.
+        It used to be that the host resolved the execution from its own active
+        connection, so a user who switched databases mid-run got the approved
+        statement run — unbounded — against a database the run never read. That is no
+        longer possible: the replay is served by
+        `POST /api/agent/runs/[runId]/handover`, which resolves the run's OWN
+        persisted connection server-side, so the statement can only ever reach the
+        database that approved it.
+
+        What remains is a question about what the user is shown. The result lands in
+        the editor tab, and the tab belongs to whatever connection the user is on now;
+        delivering another database's rows into it would present them as this
+        connection's answer. So it is declined, and said, beside the entry that claims
+        otherwise. The statement is not lost — the entry carries `applySql`, and
+        taking it is the user's own action, on the connection they chose.
       */
       if (item.handover.kind === "auto-executed" && connectionId !== openedOn.current?.id) {
         setDeclinedHandovers((declined) => [...declined, { id: item.id, openedOn: openedOn.current?.name ?? null }]);
         continue;
       }
-      // An `auto-executed` entry says the statement RAN on the user's connection, so
-      // it is delivered to the runner or to nothing: applying it silently instead
-      // would leave that sentence on the timeline about something that did not happen.
-      // This rail no longer opens such a run without a runner (`canHandOver`), and the
-      // statement is never lost either way — the entry carries `applySql`, so the
-      // control beside it still offers it as the user's own action.
-      const deliver = item.handover.kind === "auto-executed" ? onRunStatement : onApplyStatement;
-      deliver?.(item.handover.sql);
+      // An `auto-executed` entry says the statement RAN, so it is delivered to the
+      // runner or to nothing: applying it silently instead would leave that sentence
+      // on the timeline about something that did not happen. This rail no longer
+      // opens such a run without a runner (`canHandOver`), and the statement is never
+      // lost either way — the entry carries `applySql`, so the control beside it
+      // still offers it as the user's own action.
+      //
+      // The run id goes with it because the host does not execute the text: it names
+      // the run, and the server reads the statement off that run's ledger. A timeline
+      // item carrying a hand-over exists only on a run this rail is following, so the
+      // narrowing below never falls through — it is the type system's question, not a
+      // second condition.
+      if (item.handover.kind !== "auto-executed") onApplyStatement?.(item.handover.sql);
+      else if (run.runId !== null) onRunStatement?.(item.handover.sql, run.runId);
     }
   }, [run.runId, run.timeline.items, onApplyStatement, onRunStatement, connectionId]);
 
@@ -694,10 +708,18 @@ export function AgentRail({
           the statement sitting unrun has to be able to read that as the feature
           working rather than as the feature failing.
 
-          Every figure is read from the same constants the enforcement reads —
-          the workflow's own policy for the run's side, `DEFAULT_QUERY_LIMIT` for the
-          editor's — so a ceiling changed in one place cannot leave a promise here
+          Every figure is read from the same constants the enforcement reads — the
+          workflow's own policy for the run's side, `AGENT_HANDOVER_BUDGET` for the
+          replay's — so a ceiling changed in one place cannot leave a promise here
           that nothing keeps.
+
+          The sentence about writes was the #373 review's security finding and is now
+          a statement about the engine rather than about a text check: the replay is
+          served by `POST /api/agent/runs/[runId]/handover`, which runs it through
+          `queryReadOnly` under the same `readOnly: true` open the run itself used. It
+          used to reach the ordinary editor route, where a `SELECT` calling a VOLATILE
+          function that writes would have succeeded — so "writes and DDL are refused
+          either way" was not true of the half this checkbox buys.
         */}
         {/*
           Offered ONLY where the run could hand something over, and where this host
@@ -978,9 +1000,9 @@ export function AgentRail({
                     className="mt-0.5 pl-3.5 text-xs text-amber-400/80"
                   >
                     It was not run: this run was opened on {declined.openedOn ?? "another connection"} and your editor
-                    has moved to a different one since. Running it here would have read a database this run never saw,
-                    so nothing was executed. The statement is below — take it yourself if you want it on the connection
-                    you are on now.
+                    has moved to a different one since. The answer would have arrived in a tab that is connected
+                    somewhere else, so nothing was executed. The statement is below — take it yourself if you want it on
+                    the connection you are on now.
                   </p>
                 ))}
               {/*

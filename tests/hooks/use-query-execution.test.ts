@@ -4,7 +4,7 @@ import "../helpers/mock-navigation";
 
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { mockGlobalFetch, restoreGlobalFetch } from "../helpers/mock-fetch";
+import { mockGlobalFetch, restoreGlobalFetch, type MockFetchResponse } from "../helpers/mock-fetch";
 import { storage } from "@/lib/storage";
 
 // ── Mock QuerySafetyDialog ──────────────────────────────────────────────────
@@ -1929,66 +1929,142 @@ describe("useQueryExecution", () => {
 
   /**
    * A statement an agent run handed to the editor (§2.1, §2.5 of
-   * `docs/AGENT_ANALYST_DESIGN.md`).
+   * `docs/AGENT_ANALYST_DESIGN.md`, as reshaped by the #373 review).
    *
-   * The caps ARE the feature here. A run that composes an answer has read it under
-   * the agent's own ceilings; what the editor re-run buys is the editor's 500-row
-   * limit, and nothing wider. So this entry point takes no execution options at all
-   * and states both bounds itself, which is what keeps a widened execution in this
-   * hook from reaching a statement the user did not type.
+   * The BOUNDARY is the feature here, and the caps ride on it. This path used to call
+   * `executeQuery`, which posts to `/api/db/query` — the editor's ordinary read-WRITE
+   * route, guarded only by a check on the statement's text. It now names the RUN and
+   * nothing else: the server reads the statement off that run's ledger and executes
+   * it through the engine's own read-only session. So what these tests pin is where
+   * the request goes, what it carries, and — above all — where it does NOT go.
    */
   describe("a statement handed over by an agent run", () => {
-    /**
-     * The request that carries a statement, told apart from the background EXPLAIN
-     * the hook fires beside it: the plan request sends the statement under a prefix
-     * and no options at all, so matching on the exact text is what finds the run.
-     */
-    const bodyFor = (fetchMock: ReturnType<typeof mockGlobalFetch>, sql: string) =>
-      fetchMock.mock.calls
-        .filter((call) => String(call[0]).includes("/api/db/query"))
-        .map((call) => JSON.parse(call[1]!.body as string))
-        .find((body) => body.sql === sql);
+    const HANDOVER_SQL = "SELECT region, SUM(net_total) AS net_total FROM orders GROUP BY region";
 
-    test("runs at the editor's default limit, and not in unlimited mode even after an unlimited run", async () => {
-      const fetchMock = mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
-      const params = createDefaultParams();
+    const handoverResult = {
+      runId: "arun_1",
+      sql: HANDOVER_SQL,
+      result: { rows: [{ region: "north", net_total: 120 }], fields: ["region", "net_total"], rowCount: 1 },
+    };
 
-      const { result } = renderHook(() => useQueryExecution(params));
-
-      // The defect this exists to prevent: the previous execution in this hook was
-      // widened to unlimited, and a handed-over statement that inherited it would
-      // ask the server for up to MAX_UNLIMITED_ROWS rows of the run's own answer.
-      act(() => {
-        result.current.setPendingUnlimitedQuery({ query: "SELECT * FROM big_table", tabId: "tab-1" });
-      });
-      await act(async () => {
-        result.current.handleUnlimitedQuery();
-      });
-      expect(bodyFor(fetchMock, "SELECT * FROM big_table").options.unlimited).toBe(true);
-
-      await act(async () => {
-        result.current.executeHandedOverStatement("SELECT region, SUM(net_total) FROM orders GROUP BY region");
-      });
-
-      const handedOver = bodyFor(fetchMock, "SELECT region, SUM(net_total) FROM orders GROUP BY region");
-      // Asserted as the forced figure rather than as "whatever the last run used":
-      // the point is the number, not the continuity.
-      expect(handedOver.sql).toBe("SELECT region, SUM(net_total) FROM orders GROUP BY region");
-      expect(handedOver.options).toEqual({ limit: 500, offset: 0, unlimited: false });
+    const handoverRoutes = (response: MockFetchResponse = { ok: true, json: handoverResult }) => ({
+      "/api/agent/runs": response,
+      "/api/db/query": { ok: true, json: mockQueryResult },
     });
 
-    test("hands the statement over byte for byte, adding no LIMIT of its own", async () => {
-      const fetchMock = mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
-      const params = createDefaultParams();
-      const sql = "SELECT region,\n       SUM(net_total) AS net_total\nFROM orders\nGROUP BY region";
+    const callsTo = (fetchMock: ReturnType<typeof mockGlobalFetch>, fragment: string) =>
+      fetchMock.mock.calls.filter((call) => String(call[0]).includes(fragment));
 
+    test("asks the run's own hand-over route, and never the editor's query route", async () => {
+      // The finding, as an assertion: `/api/db/query` runs in a read-write session, so
+      // a `SELECT` calling a VOLATILE function that writes succeeds there and is
+      // refused by the engine on the route below. One request, to the safe one.
+      const fetchMock = mockGlobalFetch(handoverRoutes());
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+      await act(async () => {
+        await result.current.executeHandedOverStatement("arun_1", HANDOVER_SQL);
+      });
+
+      expect(callsTo(fetchMock, "/api/db/query")).toHaveLength(0);
+      const handover = callsTo(fetchMock, "/api/agent/runs");
+      expect(handover).toHaveLength(1);
+      expect(String(handover[0][0])).toBe("/api/agent/runs/arun_1/handover");
+      expect(handover[0][1]?.method).toBe("POST");
+    });
+
+    test("it sends no statement at all: the server reads it off the ledger", async () => {
+      // A body carrying SQL would make this a general "run this read-only" endpoint,
+      // and a statement the user typed could then reach the profile.
+      const fetchMock = mockGlobalFetch(handoverRoutes());
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+      await act(async () => {
+        await result.current.executeHandedOverStatement("arun_1", HANDOVER_SQL);
+      });
+
+      expect(callsTo(fetchMock, "/api/agent/runs")[0][1]?.body).toBeUndefined();
+    });
+
+    test("a run id is escaped into the path rather than concatenated into it", async () => {
+      const fetchMock = mockGlobalFetch(handoverRoutes());
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+      await act(async () => {
+        await result.current.executeHandedOverStatement("../../db/query", HANDOVER_SQL);
+      });
+
+      expect(String(callsTo(fetchMock, "/api/agent/runs")[0][0])).toBe("/api/agent/runs/..%2F..%2Fdb%2Fquery/handover");
+    });
+
+    test("the rows land in the active tab, and in history under the statement's own text", async () => {
+      const fetchMock = mockGlobalFetch(handoverRoutes());
+      const historySpy = spyOn(storage, "addToHistory");
+      const params = createDefaultParams();
       const { result } = renderHook(() => useQueryExecution(params));
 
       await act(async () => {
-        result.current.executeHandedOverStatement(sql);
+        await result.current.executeHandedOverStatement("arun_1", HANDOVER_SQL);
       });
 
-      expect(bodyFor(fetchMock, sql)).toBeDefined();
+      expect(params.setTabs).toHaveBeenCalled();
+      expect(historySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ query: HANDOVER_SQL, status: "success", rowCount: 1 }),
+      );
+      expect(callsTo(fetchMock, "/api/agent/runs")).toHaveLength(1);
+      historySpy.mockRestore();
+    });
+
+    test("only the tab the user is on is touched", async () => {
+      // The hand-over arrives while the user may have several tabs open, and the run's
+      // answer belongs in the one they are looking at. A sibling tab keeps its own
+      // result untouched — asserted by identity, so a rebuilt-but-equal object fails.
+      mockGlobalFetch(handoverRoutes());
+      const active = createTab();
+      const other = createTab({ id: "tab-2", name: "Query 2", query: "SELECT 2" });
+      let updated: QueryTab[] = [];
+      const setTabs = mock((fn: unknown) => {
+        if (typeof fn === "function") updated = (fn as (tabs: QueryTab[]) => QueryTab[])([active, other]);
+      });
+      const { result } = renderHook(() =>
+        useQueryExecution({ ...createDefaultParams(), tabs: [active, other], setTabs }),
+      );
+
+      await act(async () => {
+        await result.current.executeHandedOverStatement("arun_1", HANDOVER_SQL);
+      });
+
+      expect(updated.find((tab) => tab.id === "tab-2")).toBe(other);
+      expect(updated.find((tab) => tab.id === "tab-1")?.result).toEqual(handoverResult.result);
+    });
+
+    test("a refusal from the route reaches the user as an error, not as an empty result", async () => {
+      // The engine refusing a smuggled write (SQLSTATE 25006) arrives this way, and a
+      // silent empty grid would read as "the answer is nothing".
+      mockGlobalFetch(
+        handoverRoutes({ ok: false, status: 500, json: { error: "cannot execute INSERT in a read-only transaction" } }),
+      );
+      const historySpy = spyOn(storage, "addToHistory");
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+      await act(async () => {
+        await result.current.executeHandedOverStatement("arun_1", HANDOVER_SQL);
+      });
+
+      expect(mockToastError).toHaveBeenCalled();
+      expect(historySpy).toHaveBeenCalledWith(expect.objectContaining({ status: "error" }));
+      historySpy.mockRestore();
+    });
+
+    test("with no connection selected it runs nothing", async () => {
+      const fetchMock = mockGlobalFetch(handoverRoutes());
+      const { result } = renderHook(() => useQueryExecution({ ...createDefaultParams(), activeConnection: null }));
+
+      await act(async () => {
+        await result.current.executeHandedOverStatement("arun_1", HANDOVER_SQL);
+      });
+
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 });

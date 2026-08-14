@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   AGENT_EXECUTION_PROFILE,
+  AGENT_HANDOVER_BUDGET,
+  AGENT_HANDOVER_PROFILE,
   AGENT_MAX_REPAIR_ATTEMPTS,
   AGENT_MINIMUM_CALL_MS,
   AGENT_MODEL_TURN_TIMEOUT_MS,
@@ -10,6 +12,8 @@ import {
 } from "@/lib/agent/execution-policy";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import type { ExecutionActor, ExecutionPolicy, OperationRequest } from "@/lib/db/operations/policy";
 import { createTargetScope, evaluateOperation } from "@/lib/db/operations/policy";
@@ -284,6 +288,53 @@ describe("the run-level constants the tool layer and the run service share", () 
 
   test("the repair budget is the three attempts the milestone pinned", () => {
     expect(AGENT_MAX_REPAIR_ATTEMPTS).toBe(3);
+  });
+});
+
+/**
+ * The editor hand-over's own budget (#373 review).
+ *
+ * The replay is what the auto-execute checkbox buys, and until this review it ran on
+ * the editor's read-WRITE route with no engine boundary at all. It now runs through
+ * `queryReadOnly` under its own profile, and this budget is what the checkbox's copy
+ * promises: the editor's row limit, and no statement timeout.
+ */
+describe("the budget the editor hand-over is replayed under", () => {
+  test("it is a distinct profile, and the agent's own is not widened to serve it", () => {
+    // The two bound different things — what a MODEL may spend on a run, and what a
+    // USER's replay may spend — so a shared row would have made a change to one move
+    // the other. Asserted as the pair, because the point is that they differ.
+    expect(AGENT_HANDOVER_PROFILE).toBe("agent-handover");
+    expect(AGENT_HANDOVER_PROFILE).not.toBe(AGENT_EXECUTION_PROFILE);
+    for (const workflow of workflowTypes) {
+      expect(AGENT_WORKFLOW_BUDGETS[workflow].policy.budgets.statementTimeoutMs, workflow).toBe(10_000);
+      expect(AGENT_WORKFLOW_BUDGETS[workflow].policy.budgets.maxResultRows, workflow).toBe(200);
+    }
+  });
+
+  test("the row limit is the editor's own default, so the copy and the enforcement are one number", () => {
+    expect(AGENT_HANDOVER_BUDGET.maxResultRows).toBe(DEFAULT_QUERY_LIMIT);
+  });
+
+  test('"no time limit" is the largest value the read-only check admits, and not one more', () => {
+    // The plumbing cannot express an absent timeout: PostgreSQL interpolates it into
+    // `SET LOCAL statement_timeout = N`, so `assertReadOnlyBudget` demands a positive
+    // integer. This pins that the constant is that ceiling by PROBING the check rather
+    // than by restating its number, so the two cannot drift apart.
+    expect(() => assertReadOnlyBudget(AGENT_HANDOVER_BUDGET, "postgres")).not.toThrow();
+    expect(() =>
+      assertReadOnlyBudget(
+        { ...AGENT_HANDOVER_BUDGET, statementTimeoutMs: AGENT_HANDOVER_BUDGET.statementTimeoutMs + 1 },
+        "postgres",
+      ),
+    ).toThrow();
+  });
+
+  test("every field is one the providers will accept, so the replay cannot be refused before it runs", () => {
+    // Both engines validate the whole budget before the statement leaves, and refuse
+    // the call outright on any field that is not a positive integer.
+    expect(() => assertReadOnlyBudget(AGENT_HANDOVER_BUDGET, "sqlite")).not.toThrow();
+    expect(Object.isFrozen(AGENT_HANDOVER_BUDGET)).toBe(true);
   });
 });
 

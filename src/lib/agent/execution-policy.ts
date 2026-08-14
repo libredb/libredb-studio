@@ -36,6 +36,8 @@
 import type { ExecutionProfile } from "@/lib/db/factory";
 import type { ExecutionBudget } from "@/lib/db/operations/budgets";
 import type { ExecutionPolicy } from "@/lib/db/operations/policy";
+import type { ReadOnlyStatementBudget } from "@/lib/db/types";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { AgentRunWorkflowType } from "./types";
 
 /**
@@ -57,6 +59,75 @@ export const AGENT_EXECUTION_PROFILE: ExecutionProfile = "agent-read-only";
  * MongoDB and Redis, and it is expressed once, in `factory.ts`'s profile table.
  */
 export const AGENT_OPERATIONS_PROFILE: ExecutionProfile = "agent-operations";
+
+/**
+ * The profile the EDITOR HAND-OVER is served under (#373 review).
+ *
+ * The hand-over replays the answer's statement where the user works, and it used to
+ * do that through the ordinary editor route — a plain read-write session whose only
+ * protection was `isDangerousQuery`, a syntactic check. That is not the boundary the
+ * checkbox promises. A `SELECT` may call a VOLATILE function that performs an
+ * `INSERT`: inside the agent's own `BEGIN READ ONLY` the engine raises SQLSTATE
+ * 25006, and in a read-write session it succeeds. So the same statement text was
+ * harmless where the run proved it and harmful where it was replayed, and no
+ * inspection of the text could tell the two apart.
+ *
+ * A THIRD profile rather than a widened first one. `AGENT_EXECUTION_PROFILE` keeps
+ * its 10 s statement timeout and 200-row cap unchanged — those bound what a MODEL may
+ * spend on a run, and the hand-over is not that. What the two share is the whole of
+ * the boundary: `PROFILE_ACQUISITION` gives both the same `readOnly: true` open, the
+ * same optional `agentUser` credential, the same profiled cache (never the editor's
+ * writable pool), and the same demand that the provider expose a database-native
+ * read-only statement path — which is what makes `BEGIN READ ONLY` and
+ * `PRAGMA query_only` apply to a replayed statement exactly as they do to the run's
+ * own. They differ in one thing, the budget below, and they are separate names so
+ * that a later change to one cannot silently move the other.
+ */
+export const AGENT_HANDOVER_PROFILE: ExecutionProfile = "agent-handover";
+
+/**
+ * The largest `statementTimeoutMs` the read-only path admits, which is how "no time
+ * limit" is spelled.
+ *
+ * The checkbox promises a replay with no statement timeout, and the plumbing cannot
+ * express an absent one: `assertReadOnlyBudget` requires every field to be a positive
+ * integer, and it must, because PostgreSQL interpolates this value into
+ * `SET LOCAL statement_timeout = N` (SET takes no bind parameters), so anything that
+ * is not an integer would be text reaching a statement. Weakening that check to admit
+ * `undefined` or `0` would trade a real guard for a cosmetic one.
+ *
+ * So the timeout is an explicit ceiling instead: 2 147 483 647 ms — PostgreSQL's own
+ * 32-bit limit for the setting, and the same figure the check tops out at — which is
+ * a little over 24 days. Nothing a user waits for reaches it, so the promise holds in
+ * practice; what does not hold is the word "no", and that is stated here rather than
+ * implied. On SQLite the field is a post-execution reading rather than a preemption
+ * (`sqlite.ts` has no interrupt to call), so at this value it never refuses either.
+ */
+const HANDOVER_STATEMENT_TIMEOUT_MS = 2_147_483_647;
+
+/**
+ * What ONE replayed statement may spend.
+ *
+ * - **Rows: the editor's own default**, imported rather than restated, because the
+ *   number the checkbox names and the number the server enforces have to be one
+ *   value. It refuses rather than truncates, like every other read on this path
+ *   (§2.5 of `docs/AGENT_ANALYST_DESIGN.md` argues at length against injecting a
+ *   `LIMIT`, and a server-side truncation would be the same lie with a different
+ *   author). Condition 1 of the gate has already established that this statement
+ *   returned 200 rows or fewer on the agent's own path, so the headroom to 500 is
+ *   real rather than nominal.
+ * - **Time: no limit, spelled as the ceiling above.**
+ * - **Bytes: 64 MiB.** The editor route imposes no byte cap at all, so a cap that
+ *   bound anything a user would otherwise have seen would make the replay refuse
+ *   where the editor succeeds — a bound the checkbox never mentioned. This one is far
+ *   above what 500 rows of a rendered result weigh and still finite, so a single
+ *   pathological value cannot be serialized into a JSON response unbounded.
+ */
+export const AGENT_HANDOVER_BUDGET: ReadOnlyStatementBudget = Object.freeze({
+  statementTimeoutMs: HANDOVER_STATEMENT_TIMEOUT_MS,
+  maxResultRows: DEFAULT_QUERY_LIMIT,
+  maxResultBytes: 67_108_864,
+});
 
 /**
  * Everything one workflow's run is bounded by, in one reviewable row.

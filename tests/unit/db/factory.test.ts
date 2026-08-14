@@ -864,6 +864,28 @@ describe("acquireExecutionProfileProvider", () => {
     expect(getExecutionProfileCacheStats().size).toBe(1);
   });
 
+  test("the hand-over profile takes the same engine gate, and caches apart from the run's own", async () => {
+    // #373 review. `agent-handover` serves the editor replay of a statement a run
+    // already answered with, so it SENDS a statement and must be refused wherever the
+    // engine cannot bound one — the same rule as `agent-read-only`, from the same
+    // table. Its own key in the profiled cache is the other half: two profiles are two
+    // entries, so a later change to one path's lifecycle cannot reach the other, and
+    // neither is ever the editor's writable pool.
+    const refused: unknown = await acquireExecutionProfileProvider(
+      makeConnection("redis", { id: "redis-handover" }),
+      "agent-handover",
+    ).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(ExecutionProfileError);
+    expect((refused as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
+
+    const agent = await acquireExecutionProfileProvider(pgConn(), "agent-read-only");
+    const handover = await acquireExecutionProfileProvider(pgConn(), "agent-handover");
+
+    expect(typeof handover.queryReadOnly).toBe("function");
+    expect(handover).not.toBe(agent);
+    expect(getExecutionProfileCacheStats().size).toBe(2);
+  });
+
   test("refuses to vend a PostgreSQL profile whose role is too privileged, and caches nothing", async () => {
     // The provider verifies the role at open (a read-only transaction does not
     // stop COPY TO PROGRAM or pg_read_file), and the refusal has to reach the

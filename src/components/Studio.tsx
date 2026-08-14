@@ -696,15 +696,22 @@ export default function Studio() {
                 onApplyStatement={(sql) => tabMgr.updateCurrentTab({ query: sql })}
                 /*
                   The handover a run's answer can record (§2.1): the statement goes
-                  into the editor AND is run there. Through the hook's own capped
-                  entry point rather than `executeQuery`, because that one takes
-                  execution options and this statement is not one the user typed —
-                  it runs at the editor's default row limit and never in unlimited
-                  mode, whatever this tab's last execution asked for.
+                  into the editor AND is run there. Through the hook's own entry point
+                  rather than `executeQuery`, and the difference is the boundary
+                  (#373 review): `executeQuery` goes to the editor's read-WRITE route,
+                  where a `SELECT` calling a VOLATILE function that writes would
+                  succeed. `executeHandedOverStatement` asks the run's own hand-over
+                  route instead, which runs the ledger's statement under the engine's
+                  read-only session at the editor's default row limit and with no
+                  statement timeout.
+
+                  The statement is put in the editor first so the user reads what is
+                  running while it runs; the RUN is what is sent, because the text the
+                  server executes is the ledger's, not this component's copy of it.
                 */
-                onRunStatement={(sql) => {
+                onRunStatement={(sql, runId) => {
                   tabMgr.updateCurrentTab({ query: sql });
-                  queryExec.executeHandedOverStatement(sql);
+                  void queryExec.executeHandedOverStatement(runId, sql);
                 }}
                 onShowArtifact={agentArtifact.show}
               />
