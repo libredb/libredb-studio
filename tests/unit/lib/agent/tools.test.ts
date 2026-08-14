@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import {
-  AGENT_EXECUTION_POLICY,
+  AGENT_WORKFLOW_BUDGETS,
   AGENT_EXECUTION_PROFILE,
   AGENT_OPERATIONS_PROFILE,
 } from "@/lib/agent/execution-policy";
@@ -110,12 +110,16 @@ function harness(
   const acquireProvider = mock(async () => provider);
   const tracker = new ExecutionBudgetTracker();
   const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });
-  const deadline = new AgentRunDeadline(AGENT_EXECUTION_POLICY.budgets.maxTotalRunMs * 2, frozenClock);
+  const deadline = new AgentRunDeadline(
+    AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxTotalRunMs * 2,
+    frozenClock,
+  );
   const repairs = new AgentRepairLedger();
 
   const context: AgentToolContext = {
     runId: "run-1",
     mode: "agent",
+    workflowType: "investigation",
     actor: { sessionId: "session-1", role: "user" },
     connection,
     capabilities,
@@ -492,9 +496,11 @@ describe("runReadQueryTool — the allowed path", () => {
 
     const budget = h.queryReadOnly.mock.calls[0][1];
     expect(budget.statementTimeoutMs).toBe(3_000);
-    expect(budget.statementTimeoutMs).toBeLessThan(AGENT_EXECUTION_POLICY.budgets.statementTimeoutMs);
-    expect(budget.maxResultRows).toBe(AGENT_EXECUTION_POLICY.budgets.maxResultRows);
-    expect(budget.maxResultBytes).toBe(AGENT_EXECUTION_POLICY.budgets.maxResultBytes);
+    expect(budget.statementTimeoutMs).toBeLessThan(
+      AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.statementTimeoutMs,
+    );
+    expect(budget.maxResultRows).toBe(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultRows);
+    expect(budget.maxResultBytes).toBe(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultBytes);
   });
 
   test("returns an artifact reference summarising the result, never the rows", async () => {
@@ -617,7 +623,7 @@ describe("runReadQueryTool — a policy denial is not a syntax error", () => {
     const target = await inspectSchemaTool(targetH.context, { schema: "secrets" });
 
     const absoluteH = harness();
-    for (let i = 0; i < AGENT_EXECUTION_POLICY.budgets.maxStatementsPerRun; i++) {
+    for (let i = 0; i < AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxStatementsPerRun; i++) {
       absoluteH.tracker.beginExecution("run-1");
       absoluteH.tracker.endExecution("run-1", { statements: 1, elapsedMs: 1 });
     }
@@ -668,7 +674,7 @@ describe("runReadQueryTool — a policy denial is not a syntax error", () => {
 
   test("a run over its statement budget is denied without reaching the provider", async () => {
     const h = harness();
-    for (let i = 0; i < AGENT_EXECUTION_POLICY.budgets.maxStatementsPerRun; i++) {
+    for (let i = 0; i < AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxStatementsPerRun; i++) {
       h.tracker.beginExecution("run-1");
       h.tracker.endExecution("run-1", { statements: 1, elapsedMs: 1 });
     }
@@ -680,6 +686,57 @@ describe("runReadQueryTool — a policy denial is not a syntax error", () => {
     expect(h.queryReadOnly).not.toHaveBeenCalled();
     expect(h.acquireProvider).not.toHaveBeenCalled();
   });
+
+  /**
+   * The budget the layer enforces is the RUN'S, chosen by its persisted workflow.
+   * Spending exactly an investigation's ceiling denies an investigation and leaves a
+   * database-assessment run — whose ceiling is higher — free to read: one tracker,
+   * one usage, two answers, so the deciding number can only have come from the
+   * workflow.
+   */
+  test("the statement ceiling enforced is the run's own workflow's, not one constant", async () => {
+    const investigationCeiling = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxStatementsPerRun;
+    expect(AGENT_WORKFLOW_BUDGETS["database-assessment"].policy.budgets.maxStatementsPerRun).toBeGreaterThan(
+      investigationCeiling,
+    );
+
+    const spend = (h: Harness) => {
+      for (let i = 0; i < investigationCeiling; i++) {
+        h.tracker.beginExecution("run-1");
+        h.tracker.endExecution("run-1", { statements: 1, elapsedMs: 1 });
+      }
+    };
+
+    const investigation = harness();
+    spend(investigation);
+    const denied = await runReadQueryTool(investigation.context, { sql: "SELECT 1" });
+
+    const assessment = harness({ workflowType: "database-assessment" });
+    spend(assessment);
+    const allowed = await runReadQueryTool(assessment.context, { sql: "SELECT 1" });
+
+    if (denied.kind !== "refused") throw new Error("expected the investigation to be refused");
+    expect(denied.refusal).toEqual({ class: "policy-denied", reasonCode: "STATEMENT_BUDGET_EXCEEDED" });
+    expect(allowed.kind).toBe("completed");
+  });
+
+  /**
+   * The version in a denial is what an operator traces the decision back to, so it
+   * has to name the row that DECIDED. One shared string would make every recorded
+   * denial point at a ceiling three workflows out of four never had.
+   */
+  test.each(["investigation", "database-assessment", "operations"] as const)(
+    "a %s run's denial names that workflow's policy version",
+    async (workflowType) => {
+      const h = harness({ workflowType });
+
+      const outcome = await runReadQueryTool(h.context, { sql: "DELETE FROM a" });
+
+      if (outcome.kind !== "refused") throw new Error("expected refused");
+      expect(outcome.modelText).toContain(AGENT_WORKFLOW_BUDGETS[workflowType].policy.version);
+      expect(outcome.modelText).toContain(workflowType);
+    },
+  );
 });
 
 describe("executeAgentOperation — the approval gate", () => {
@@ -2056,13 +2113,17 @@ function curatedHarness(
   const acquireProvider = mock(async () => provider);
   const tracker = new ExecutionBudgetTracker();
   const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });
-  const deadline = new AgentRunDeadline(AGENT_EXECUTION_POLICY.budgets.maxTotalRunMs * 2, frozenClock);
+  const deadline = new AgentRunDeadline(
+    AGENT_WORKFLOW_BUDGETS.operations.policy.budgets.maxTotalRunMs * 2,
+    frozenClock,
+  );
   const repairs = new AgentRepairLedger();
 
   let tick = 1_000;
   const context: AgentToolContext = {
     runId: "run-1",
     mode: "agent",
+    workflowType: "operations",
     actor: { sessionId: "session-1", role: "user" },
     // A connection type with no read-only statement path at all, which is the whole
     // point: this is the engine the other tools are refused on.
@@ -2231,11 +2292,14 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
   test("a reading larger than the run may carry is refused rather than truncated", async () => {
     // The same promise the read path makes: a delivered result is a COMPLETE one, so
     // an overflow is an answer to correct rather than rows to quietly drop.
-    const overflowing = Array.from({ length: AGENT_EXECUTION_POLICY.budgets.maxResultRows + 1 }, (_, index) => ({
-      name: `store-${index}`,
-      size: "1 MB",
-      sizeBytes: 1_000_000,
-    }));
+    const overflowing = Array.from(
+      { length: AGENT_WORKFLOW_BUDGETS.operations.policy.budgets.maxResultRows + 1 },
+      (_, index) => ({
+        name: `store-${index}`,
+        size: "1 MB",
+        sizeBytes: 1_000_000,
+      }),
+    );
     const h = curatedHarness({}, { getStorageStats: mock(async () => overflowing) });
 
     const outcome = await inspectOperationsTool(h.context, { kind: "storage" });
@@ -2251,7 +2315,7 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     await inspectOperationsTool(h.context, { kind: "sessions", limit: 200 });
 
     expect(h.curated.getActiveSessions).toHaveBeenCalledWith({
-      limit: AGENT_EXECUTION_POLICY.budgets.maxResultRows,
+      limit: AGENT_WORKFLOW_BUDGETS.operations.policy.budgets.maxResultRows,
     });
   });
 

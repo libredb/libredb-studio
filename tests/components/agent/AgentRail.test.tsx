@@ -6,6 +6,8 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render, fireEvent, waitFor, act } from "@testing-library/react";
 import { AgentRail } from "@/components/agent/AgentRail";
+import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
+import type { AgentRunWorkflowType } from "@/lib/agent/types";
 
 /**
  * The standalone agent rail (#329 T10a): the gated surface, its two modes and the
@@ -52,6 +54,19 @@ const OPENED_LINE = `${JSON.stringify({
   connectionId: "seed:sales",
   objective: "why is checkout slow",
 })}\n`;
+
+/** A header for a run opened FOR a named workflow, which is where the meter reads it. */
+const openedFor = (workflowType: AgentRunWorkflowType): string =>
+  `${JSON.stringify({
+    kind: "run-opened",
+    atMs: 1_000,
+    runId: "arun_1",
+    mode: "agent",
+    workflowType,
+    actor: { sessionId: "ada", role: "user" },
+    connectionId: "seed:sales",
+    objective: "why is checkout slow",
+  })}\n`;
 
 const STARTED_LINE = `${JSON.stringify({ kind: "event", event: { kind: "run-started", atMs: 1_001, mode: "planning" } })}\n`;
 
@@ -1452,11 +1467,16 @@ describe("AgentRail", () => {
    * every consumption is read off the run's durable ledger.
    */
   describe("budget meter", () => {
+    // With no run open there is no header to read, so the meter shows the default
+    // workflow's ceilings — the same reading the fold takes for a headerless ledger.
     test("an untouched meter shows the ceilings this server enforces", () => {
       const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+      const budgets = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
 
-      expect(getByTestId("agent-budget-statements").textContent).toContain("0 / 20");
-      expect(getByTestId("agent-budget-database-time").textContent).toContain("0.0 / 60.0 s");
+      expect(getByTestId("agent-budget-statements").textContent).toContain(`0 / ${budgets.maxStatementsPerRun}`);
+      expect(getByTestId("agent-budget-database-time").textContent).toContain(
+        `0.0 / ${(budgets.maxTotalRunMs / 1_000).toFixed(1)} s`,
+      );
       expect(getByTestId("agent-budget-repairs").textContent).toContain("0 / 3");
     });
 
@@ -1468,8 +1488,8 @@ describe("AgentRail", () => {
         fireEvent.click(getByTestId("agent-start"));
       });
 
-      await findByText("1 / 20");
-      expect(getByTestId("agent-budget-database-time").textContent).toContain("1.5 / 60.0 s");
+      await findByText(`1 / ${AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxStatementsPerRun}`);
+      expect(getByTestId("agent-budget-database-time").textContent).toContain("1.5 / 90.0 s");
     });
 
     /**
@@ -1500,7 +1520,7 @@ describe("AgentRail", () => {
         fireEvent.click(getByTestId("agent-start"));
       });
 
-      await findByText("90.0 / 60.0 s");
+      await findByText("90.0 / 90.0 s");
       expect((getByTestId("agent-budget-database-time-bar") as HTMLElement).style.width).toBe("100%");
     });
 
@@ -1527,11 +1547,69 @@ describe("AgentRail", () => {
     test("the meter states the limits it cannot measure, and that they are per drive", () => {
       const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
 
+      // The approved investigation figures, written out rather than read back from
+      // the constant: a test that renders the constant into its own expectation
+      // proves the two agree with each other and nothing about what a user is shown.
       const limits = getByTestId("agent-budget-limits").textContent ?? "";
       expect(limits).toContain("10.0 s");
-      expect(limits).toContain("5.0 min");
-      expect(limits).toContain("16");
+      expect(limits).toContain("7.5 min");
+      expect(limits).toContain("36 model turns");
       expect(getByTestId("agent-budget-caveats").textContent).toContain("per drive");
+    });
+
+    /**
+     * The ceilings are per workflow, and the meter's whole promise is that it states
+     * what the SERVER enforces for THIS run. Every figure on the line and on the two
+     * measurable gauges is therefore asserted against the constant the enforcement
+     * layer reads, workflow by workflow — a hard-coded expectation here would pass
+     * while the two drifted.
+     */
+    test.each(["investigation", "query-optimization", "database-assessment", "operations"] as const)(
+      "a %s run's meter states that workflow's own ceilings, and they are the server's",
+      async (workflowType) => {
+        mockAgentFetch([openedFor(workflowType), STARTED_LINE]);
+        const { getByTestId, findByText } = render(<AgentRail {...DEFAULT_PROPS} />);
+        fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+        await act(async () => {
+          fireEvent.click(getByTestId("agent-start"));
+        });
+
+        const budget = AGENT_WORKFLOW_BUDGETS[workflowType];
+        await findByText(`0 / ${budget.policy.budgets.maxStatementsPerRun}`);
+        expect(getByTestId("agent-budget-database-time").textContent).toContain(
+          `/ ${(budget.policy.budgets.maxTotalRunMs / 1_000).toFixed(1)} s`,
+        );
+
+        const limits = getByTestId("agent-budget-limits").textContent ?? "";
+        expect(limits).toContain(`${(budget.policy.budgets.statementTimeoutMs / 1_000).toFixed(1)} s`);
+        expect(limits).toContain(`${(budget.runDeadlineMs / 60_000).toFixed(1)} min`);
+        expect(limits).toContain(`${budget.maxModelTurns} model turns`);
+      },
+    );
+
+    /**
+     * Once a run is open it is the run's OWN workflow that binds, not whatever the
+     * picker says now: the picker stays live during a run, and a user who clicks
+     * another workflow mid-run must not be shown ceilings nothing is enforcing.
+     */
+    test("an open run's meter follows the run's header, not the picker", async () => {
+      mockAgentFetch([openedFor("database-assessment"), STARTED_LINE]);
+      const { getByTestId, findByText } = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      const budget = AGENT_WORKFLOW_BUDGETS["database-assessment"];
+      await findByText(`0 / ${budget.policy.budgets.maxStatementsPerRun}`);
+      fireEvent.click(getByTestId("agent-workflow-operations"));
+
+      const limits = getByTestId("agent-budget-limits").textContent ?? "";
+      expect(limits).toContain(`${(budget.runDeadlineMs / 60_000).toFixed(1)} min`);
+      expect(limits).toContain(`${budget.maxModelTurns} model turns`);
+      expect(getByTestId("agent-budget-statements").textContent).toContain(
+        `/ ${budget.policy.budgets.maxStatementsPerRun}`,
+      );
     });
   });
 

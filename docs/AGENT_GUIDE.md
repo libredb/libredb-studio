@@ -294,14 +294,33 @@ enforces and the ledger actually records** (`AgentRail.tsx:650-678`, gauges buil
 
 | Gauge | Reads | The limit, and where it comes from |
 | --- | --- | --- |
-| **Statements** | `used / 20` | `maxStatementsPerRun`. Every statement the pipeline allowed and invoked — catalog reads, drafts and repairs alike (`execution-policy.ts:46-56`) |
-| **Database time** | `used / 60.0 s` | `maxTotalRunMs`. **Database time only** — the elapsed time completed reads reported, not the wall clock |
+| **Statements** | `used / 30` on an investigation | `maxStatementsPerRun`. Every statement the pipeline allowed and invoked — catalog reads, drafts and repairs alike |
+| **Database time** | `used / 90.0 s` on an investigation | `maxTotalRunMs`. **Database time only** — the elapsed time completed reads reported, not the wall clock |
 | **Repair attempts** | `used / 3` | `AGENT_MAX_REPAIR_ATTEMPTS`. Only statements that failed **at the database** consume one; a policy denial does not |
 
 Under them, one line states the three ceilings that nothing durable counts against, so they are
-given as ceilings rather than as gauges: *"Each statement gets 10.0 s, each drive 5.0 min and at
-most 16 model turns."* (`AgentRail.tsx:666-669`, values from `statementTimeoutMs`,
-`AGENT_RUN_DEADLINE_MS` and `AGENT_MAX_MODEL_TURNS`).
+given as ceilings rather than as gauges: *"Each statement gets 10.0 s, each drive 7.5 min and at
+most 36 model turns."*
+
+**Every number on the meter is the one the server is enforcing on THIS run**, because the ceilings
+differ per workflow and both halves of the meter read the workflow off the run's own header. So the
+meter changes with the run, not with the buttons: pick another workflow while a run is in flight and
+the figures stay the run's.
+
+| Workflow | Model turns | Statements | Each drive | Database time |
+| --- | --- | --- | --- | --- |
+| **Investigate** | 36 | 30 | 7.5 min | 90 s |
+| **Optimize** | 36 | 30 | 7.5 min | 90 s |
+| **Assess** | 48 | 45 | 10.5 min | 135 s |
+| **Operations** | 20 | 12 | 5.0 min | 60 s |
+
+**These figures are approved and pending live measurement.** They are the starting point a
+measurement confirms or corrects, not numbers read off measured runs. Operations is the small row on
+purpose: it sends no SQL, so it never spends a statement drafting one and never repairs one, and its
+readings come from a closed set of six kinds.
+
+Before any run is open there is no header to read, and the meter shows the investigation figures —
+the same reading the server takes for a ledger that names no workflow.
 
 **There is no token gauge, and its absence is deliberate**: this build enforces no token budget, so
 a figure would mean nothing (`docs/BACKLOG.md` B10).

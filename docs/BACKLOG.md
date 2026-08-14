@@ -1089,10 +1089,10 @@ The three things that bound what a run may spend — `ExecutionBudgetTracker` (`
 drives a run and live only in its memory. `runInvestigation` (`src/lib/agent/investigation.ts`) takes
 them as injected resources, so a run resumed after a process death is handed a fresh set and starts
 each ceiling again. A run that dies and resumes ten times may therefore perform ten times
-`maxStatementsPerRun` statements and spend ten times `AGENT_RUN_DEADLINE_MS` of wall clock, even though
-each individual drive stayed honestly inside its bounds.
+`maxStatementsPerRun` statements and spend ten times its workflow's `runDeadlineMs` of wall clock, even
+though each individual drive stayed honestly inside its bounds.
 
-Nothing currently claims otherwise — `AGENT_MAX_MODEL_TURNS`'s docblock in
+Nothing currently claims otherwise — `AGENT_WORKFLOW_BUDGETS`'s docblock in
 `src/lib/agent/execution-policy.ts` states the per-drive scope explicitly rather than implying a
 per-run one, which is why this is a recorded limitation and not a defect. It matters for two later
 tasks: T10b's budget meter must not present a per-drive figure as a run total, and any retry policy
@@ -1206,8 +1206,8 @@ while that happens, and B6's per-drive cost ceilings are accounted for across th
 
 Opened by #329 T10b. The task's bar names tokens among the figures the meter should report, and the
 meter deliberately does not show one: nothing in this repository bounds an agent run's token spend.
-`AGENT_EXECUTION_POLICY`'s budgets are statement-shaped (`src/lib/agent/execution-policy.ts`),
-`AGENT_MAX_MODEL_TURNS` bounds model TURNS rather than their size, and the run loop never reads the
+`AGENT_WORKFLOW_BUDGETS`'s budgets are statement-shaped (`src/lib/agent/execution-policy.ts`), its
+`maxModelTurns` bounds model TURNS rather than their size, and the run loop never reads the
 SDK's `usage` at all (`src/lib/agent/investigation.ts` consumes `fullStream` parts and the assistant
 messages, nothing else). A token figure would therefore be a number the server does not enforce,
 shown next to four that it does — which is the one thing that bar forbids, so the meter states the

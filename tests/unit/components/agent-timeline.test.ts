@@ -15,8 +15,9 @@
 
 import { describe, test, expect } from "bun:test";
 import { foldLedgerEntries, parseLedgerLine } from "@/components/agent/timeline";
-import { AGENT_EXECUTION_POLICY, AGENT_MAX_REPAIR_ATTEMPTS } from "@/lib/agent/execution-policy";
+import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
+import { DEFAULT_AGENT_WORKFLOW_TYPE } from "@/lib/agent/types";
 
 const OPENED: AgentLedgerEntry = {
   kind: "run-opened",
@@ -546,12 +547,38 @@ describe("foldLedgerEntries — the budget meter", () => {
       },
     });
 
-  test("the ceilings are the constants the server enforces, not a second copy", () => {
-    const view = foldLedgerEntries([]);
+  /**
+   * The ceilings differ per workflow, so a meter that read one row would state a
+   * number the server is not enforcing for three runs out of four. The workflow is
+   * taken off the run's own header — the only entry that carries it.
+   */
+  test.each(["investigation", "query-optimization", "database-assessment", "operations"] as const)(
+    "a %s run's gauges are that workflow's own ceilings",
+    (workflowType) => {
+      const view = foldLedgerEntries([{ ...OPENED, workflowType }]);
+      const budgets = AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets;
 
-    expect(gauge(view, "statements").limit).toBe(AGENT_EXECUTION_POLICY.budgets.maxStatementsPerRun);
-    expect(gauge(view, "database-time").limit).toBe(AGENT_EXECUTION_POLICY.budgets.maxTotalRunMs);
-    expect(gauge(view, "repairs").limit).toBe(AGENT_MAX_REPAIR_ATTEMPTS);
+      expect(view.workflowType).toBe(workflowType);
+      expect(gauge(view, "statements").limit).toBe(budgets.maxStatementsPerRun);
+      expect(gauge(view, "database-time").limit).toBe(budgets.maxTotalRunMs);
+      expect(gauge(view, "repairs").limit).toBe(AGENT_MAX_REPAIR_ATTEMPTS);
+    },
+  );
+
+  /**
+   * Two ledgers fold to the default, and for the same reason `run-store.ts` reads one
+   * that way: a header written before the field can only have been an investigation,
+   * and a stream joined after its header has gone past has nothing else to read.
+   */
+  test("a header with no workflow, and a ledger with no header, both fold to the default", () => {
+    const budgets = AGENT_WORKFLOW_BUDGETS[DEFAULT_AGENT_WORKFLOW_TYPE].policy.budgets;
+
+    for (const entries of [[OPENED], []]) {
+      const view = foldLedgerEntries(entries);
+      expect(view.workflowType).toBe(DEFAULT_AGENT_WORKFLOW_TYPE);
+      expect(gauge(view, "statements").limit).toBe(budgets.maxStatementsPerRun);
+      expect(gauge(view, "database-time").limit).toBe(budgets.maxTotalRunMs);
+    }
   });
 
   test("a run that has done nothing has consumed nothing", () => {

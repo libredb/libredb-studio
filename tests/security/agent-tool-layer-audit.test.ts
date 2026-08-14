@@ -72,6 +72,7 @@ function context(
   return {
     runId: "run-1",
     mode: "agent",
+    workflowType: "investigation",
     actor: { sessionId: SESSION_SENTINEL, role: "user" },
     connection,
     capabilities,

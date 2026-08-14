@@ -37,7 +37,7 @@ import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
-import { AGENT_RUN_DEADLINE_MS } from "@/lib/agent/execution-policy";
+import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { type AgentGoalVerdict, verifyRunGoal } from "@/lib/agent/goal-verifier";
 import { type AgentToolResources, runInvestigation } from "@/lib/agent/investigation";
 import type { AgentModel } from "@/lib/agent/model-adapter";
@@ -389,7 +389,7 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
       scope: createTargetScope(engine.connection.id),
       tracker,
       artifacts,
-      deadline: new AgentRunDeadline(AGENT_RUN_DEADLINE_MS, clock),
+      deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs, clock),
       repairs: new AgentRepairLedger(),
       acquireProvider: async () => {
         const failure = options.acquireFails?.();

@@ -47,7 +47,7 @@ import { createHash } from "node:crypto";
 import { type ModelMessage, type ToolSet, streamText, tool } from "ai";
 import { captureContextSnapshot, packContextForTask, reusableSnapshot } from "./context-snapshot";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
-import { AGENT_MAX_MODEL_TURNS, AGENT_MODEL_TURN_TIMEOUT_MS } from "./execution-policy";
+import { AGENT_MODEL_TURN_TIMEOUT_MS, AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
 import { type AgentModel, mapAgentModelError } from "./model-adapter";
 import {
   type AgentRunInvocation,
@@ -86,13 +86,13 @@ import type {
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END, fenceUntrustedContent } from "./untrusted-content";
 
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
-export type AgentToolResources = Omit<AgentToolContext, "runId" | "mode" | "actor">;
+export type AgentToolResources = Omit<AgentToolContext, "runId" | "mode" | "workflowType" | "actor">;
 
 export interface AgentInvestigationOptions {
   readonly service: AgentRunService;
   readonly model: AgentModel;
   readonly resources: AgentToolResources;
-  /** Backstop on model turns; defaults to `AGENT_MAX_MODEL_TURNS`. */
+  /** Backstop on model turns; defaults to the run's own workflow row in `AGENT_WORKFLOW_BUDGETS`. */
   readonly maxTurns?: number;
   /** Ceiling on ONE model call; defaults to `AGENT_MODEL_TURN_TIMEOUT_MS`. */
   readonly turnTimeoutMs?: number;
@@ -698,7 +698,6 @@ export async function runInvestigation(
   options: AgentInvestigationOptions,
 ): Promise<AgentInvestigationResult> {
   const { service, model, resources } = options;
-  const maxTurns = options.maxTurns ?? AGENT_MAX_MODEL_TURNS;
   const turnTimeoutMs = options.turnTimeoutMs ?? AGENT_MODEL_TURN_TIMEOUT_MS;
 
   // Refuses a run that has ended, and tells us what the previous process left
@@ -726,7 +725,18 @@ export async function runInvestigation(
 
   const record = resumed.record.status === "queued" ? await service.markRunning(runId) : resumed.record;
 
-  const context: AgentToolContext = { ...resources, runId: record.runId, mode: record.mode, actor: record.actor };
+  // Read from the record and not from a module constant: the turn ceiling is one of
+  // the four figures the decision table varies per workflow, and a drive that used
+  // another workflow's ceiling would end runs for a reason nothing enforced.
+  const maxTurns = options.maxTurns ?? AGENT_WORKFLOW_BUDGETS[record.workflowType].maxModelTurns;
+
+  const context: AgentToolContext = {
+    ...resources,
+    runId: record.runId,
+    mode: record.mode,
+    workflowType: record.workflowType,
+    actor: record.actor,
+  };
   const tools = declaredTools(record);
   const instructions = systemPrompt(record);
   const messages: ModelMessage[] = [{ role: "user", content: record.objective }];

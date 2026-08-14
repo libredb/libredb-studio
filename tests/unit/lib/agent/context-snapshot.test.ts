@@ -6,7 +6,7 @@ import {
   reusableSnapshot,
 } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
-import { AGENT_EXECUTION_POLICY } from "@/lib/agent/execution-policy";
+import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { assertPersistableState } from "@/lib/agent/state-guard";
 import type { AgentToolContext } from "@/lib/agent/tools";
@@ -150,6 +150,7 @@ function harness(type: DatabaseType, answer?: (sql: string) => Promise<QueryResu
     context: {
       runId: "run-1",
       mode: "agent",
+      workflowType: "investigation",
       actor: { sessionId: "session-1", role: "user" },
       connection: connectionOf(type),
       capabilities,
@@ -157,7 +158,10 @@ function harness(type: DatabaseType, answer?: (sql: string) => Promise<QueryResu
       scope: createTargetScope("conn-1"),
       tracker: new ExecutionBudgetTracker(),
       artifacts,
-      deadline: new AgentRunDeadline(AGENT_EXECUTION_POLICY.budgets.maxTotalRunMs * 2, frozenClock),
+      deadline: new AgentRunDeadline(
+        AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxTotalRunMs * 2,
+        frozenClock,
+      ),
       repairs: new AgentRepairLedger(),
       acquireProvider: mock(async () => provider),
       clock: frozenClock,

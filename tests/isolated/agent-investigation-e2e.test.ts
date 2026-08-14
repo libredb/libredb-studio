@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
-import { AGENT_RUN_DEADLINE_MS } from "@/lib/agent/execution-policy";
+import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { type AgentToolResources, runInvestigation } from "@/lib/agent/investigation";
 import type { AgentModel } from "@/lib/agent/model-adapter";
 import { resolveAgentProviderAdapter } from "@/lib/agent/provider-registry";
@@ -397,7 +397,7 @@ async function driveArc(fixture: Fixture): Promise<Arc> {
     scope: createTargetScope(fixture.connection.id),
     tracker,
     artifacts,
-    deadline: new AgentRunDeadline(AGENT_RUN_DEADLINE_MS, Date.now),
+    deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs, Date.now),
     repairs: new AgentRepairLedger(),
     // The production seam, not a stand-in: this is what opens the provider under the
     // read-only profile, so the run really is bounded by the profile's own controls.

@@ -5,12 +5,7 @@ import { Bot, Loader2, PencilLine, Play, Square, TableProperties } from "lucide-
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
 import { describeAgentCapability } from "@/lib/agent/capability-labels";
-import {
-  AGENT_EXECUTION_POLICY,
-  AGENT_MAX_MODEL_TURNS,
-  AGENT_MAX_OBJECTIVE_LENGTH,
-  AGENT_RUN_DEADLINE_MS,
-} from "@/lib/agent/execution-policy";
+import { AGENT_MAX_OBJECTIVE_LENGTH, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentRunMode, AgentRunStatus, AgentRunWorkflowType } from "@/lib/agent/types";
 import { cn } from "@/lib/utils";
 import { type AgentBudgetGauge, type AgentTimelineTone, describeFailureReason } from "./timeline";
@@ -215,6 +210,17 @@ export function AgentRail({
   /** An ask that arrived while the user was typing, waiting for them to take it. */
   const [offeredObjective, setOfferedObjective] = useState<string | null>(null);
   const run = useAgentRun();
+
+  /*
+    Which ceilings the meter states: the ones the server is enforcing on the run the
+    meter is reporting, folded out of that run's own header. NOT the workflow the
+    buttons above show — the picker stays live while a run is in flight, and a user
+    who clicks another workflow mid-run must not be shown figures nothing is
+    enforcing. It is also the same source the gauges beside this line are built from,
+    so the two halves of the meter cannot disagree; before any run exists both read
+    the default the fold takes for a ledger with no header.
+  */
+  const meterBudget = AGENT_WORKFLOW_BUDGETS[run.timeline.workflowType];
 
   /*
     The sheet is a mobile presentation, and the breakpoint has to be read rather than
@@ -665,8 +671,8 @@ export function AgentRail({
           </div>
         ))}
         <p data-testid="agent-budget-limits" className="pt-0.5 text-[0.625rem] text-zinc-600">
-          Each statement gets {seconds(AGENT_EXECUTION_POLICY.budgets.statementTimeoutMs)} s, each drive{" "}
-          {(AGENT_RUN_DEADLINE_MS / 60_000).toFixed(1)} min and at most {AGENT_MAX_MODEL_TURNS} model turns.
+          Each statement gets {seconds(meterBudget.policy.budgets.statementTimeoutMs)} s, each drive{" "}
+          {(meterBudget.runDeadlineMs / 60_000).toFixed(1)} min and at most {meterBudget.maxModelTurns} model turns.
         </p>
         <p data-testid="agent-budget-caveats" className="text-[0.625rem] text-zinc-600">
           Every ceiling is per drive, so a run resumed after a restart starts each of them again and these totals can

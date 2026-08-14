@@ -72,10 +72,10 @@ import {
 } from "./composed-sql";
 import type { AgentDeadlineDenyCode, AgentRunDeadline } from "./deadline";
 import {
-  AGENT_EXECUTION_POLICY,
   AGENT_EXECUTION_PROFILE,
   AGENT_MINIMUM_CALL_MS,
   AGENT_OPERATIONS_PROFILE,
+  AGENT_WORKFLOW_BUDGETS,
 } from "./execution-policy";
 import type { AgentRepairDenyCode, AgentRepairLedger } from "./repair-ledger";
 import { fingerprintStatement } from "./repair-ledger";
@@ -161,6 +161,17 @@ export interface AgentToolContext {
   readonly runId: string;
   /** The run's PERSISTED mode. The only thing that decides which tools exist. */
   readonly mode: AgentRunMode;
+  /**
+   * The run's PERSISTED workflow. It decides which tools exist and, through
+   * `AGENT_WORKFLOW_BUDGETS`, what this run may spend.
+   *
+   * Here rather than read from a module-level constant because the ceilings differ
+   * per workflow: a layer that enforced one constant while the meter stated another
+   * would be stating a number the server does not enforce. Like `mode`, it can only
+   * have come from the run record — there is no parameter through which a request
+   * body could contribute one.
+   */
+  readonly workflowType: AgentRunWorkflowType;
   /** The persisted actor — the sole authority for authorizing this call. */
   readonly actor: AgentRunActor;
   readonly connection: DatabaseConnection;
@@ -629,10 +640,14 @@ const DENIAL_ADVICE_TEXT: Record<DenialAdvice, string> = {
 /**
  * The text a policy denial produces. It names the reason code, says a boundary
  * decided this, and never describes the statement as ill-formed.
+ *
+ * The version is the one that DECIDED — the run's own workflow policy — rather than a
+ * module-level constant, so what the model is told and what an operator can trace the
+ * denial back to are the same string.
  */
-function denialText(reasonCode: PolicyDenyCode): string {
+function denialText(reasonCode: PolicyDenyCode, policyVersion: string): string {
   return [
-    `The database operation layer refused this call: ${reasonCode} (policy ${AGENT_EXECUTION_POLICY.version}).`,
+    `The database operation layer refused this call: ${reasonCode} (policy ${policyVersion}).`,
     DENIAL_ADVICE_TEXT[DENIAL_ADVICE[reasonCode]],
     "Choose a different approach that stays inside a bounded read-only inspection.",
   ].join(" ");
@@ -940,8 +955,13 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
 
   const actor: ExecutionActor = { sessionId: context.actor.sessionId, role: context.actor.role, mode: "agent" };
 
+  // The ceilings this run is bounded by, chosen by its OWN persisted workflow. Read
+  // once here so that the deadline admission, the clamp and the denial text a model
+  // reads can never come from three different rows.
+  const workflowPolicy = AGENT_WORKFLOW_BUDGETS[context.workflowType].policy;
+
   const admission = context.deadline.admit({
-    statementTimeoutMs: AGENT_EXECUTION_POLICY.budgets.statementTimeoutMs,
+    statementTimeoutMs: workflowPolicy.budgets.statementTimeoutMs,
     minimumMs: AGENT_MINIMUM_CALL_MS,
   });
   if (!admission.admitted) {
@@ -952,8 +972,8 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
   // The clamp: the pipeline's own `effectiveBudget` becomes the clamped one, so the
   // execution profile cannot be handed a timeout larger than the run has left.
   const policy: ExecutionPolicy = {
-    ...AGENT_EXECUTION_POLICY,
-    budgets: { ...AGENT_EXECUTION_POLICY.budgets, statementTimeoutMs: admission.statementTimeoutMs },
+    ...workflowPolicy,
+    budgets: { ...workflowPolicy.budgets, statementTimeoutMs: admission.statementTimeoutMs },
   };
 
   // Which phase the invoke callback reached, read only on the failure path. A plain
@@ -1015,7 +1035,7 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
       return {
         kind: "refused",
         refusal: { class: "policy-denied", reasonCode: decision.reasonCode },
-        modelText: denialText(decision.reasonCode),
+        modelText: denialText(decision.reasonCode, policy.version),
       };
     }
     context.repairs.recordFailure(fingerprint, "approval-required");

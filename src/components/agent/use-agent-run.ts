@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAgentModelCapability } from "@/lib/agent/capability-labels";
 // Type-only, so nothing of the probe — or of the AI SDK it runs — reaches this bundle.
 import type { AgentModelCapability } from "@/lib/agent/capability-probe";
@@ -300,5 +300,16 @@ export function useAgentRun(): AgentRunFollower {
     }
   }, [runId]);
 
-  return { runId, isBusy, isStopping, timeline: foldLedgerEntries(entries), error, refusal, start, cancel };
+  /*
+    Memoised on the entries alone, which is the whole of the fold's input. Without
+    it the fold re-walked the entire accumulated ledger on every render of the rail
+    rather than on every new event — a multiplier that cost nothing while a run was
+    sixteen turns and is worth removing now that a drive may take forty-eight and
+    spend forty-five statements. What it does not remove is the fold's O(n) work per
+    new entry, which is O(n squared) over a run's life; that is measured as fine at
+    these sizes and is not optimised on a list nobody has seen be slow.
+  */
+  const timeline = useMemo(() => foldLedgerEntries(entries), [entries]);
+
+  return { runId, isBusy, isStopping, timeline, error, refusal, start, cancel };
 }

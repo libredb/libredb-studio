@@ -591,25 +591,46 @@ count of edges is not a bound on a prompt.
 
 ## What bounds a run
 
-The frozen execution policy (`src/lib/agent/execution-policy.ts`, version `agent-read-only.1`) is
-data the pipeline enforces, and the tool layer reads it directly rather than accepting one from a
-caller — an injectable policy would be a seam through which a route or a resumed run could widen the
-agent's privileges.
+The frozen execution policies (`AGENT_WORKFLOW_BUDGETS` in `src/lib/agent/execution-policy.ts`) are
+data the pipeline enforces. There is one row per workflow, and the tool layer picks the row for the
+run's own persisted workflow rather than accepting a policy from a caller — an injectable policy
+would be a seam through which a route or a resumed run could widen the agent's privileges, while a
+workflow type is decided once when the run opens and read from the ledger thereafter.
+
+**The four figures that differ per workflow:**
+
+| Workflow | Model turns | Statements | Run deadline | Database time | Policy version |
+| --- | --- | --- | --- | --- | --- |
+| `investigation` | 36 | 30 | 450 s | 90 s | `agent-read-only.investigation.1` |
+| `query-optimization` | 36 | 30 | 450 s | 90 s | `agent-read-only.query-optimization.1` |
+| `database-assessment` | 48 | 45 | 630 s | 135 s | `agent-read-only.database-assessment.1` |
+| `operations` | 20 | 12 | 300 s | 60 s | `agent-read-only.operations.1` |
+
+**These figures are approved and pending live measurement.** They were approved on 2026-08-14 as the
+starting point a measurement then confirms or corrects; no run has been measured against them yet.
+`operations` is lower than the analytical rows on purpose: it sends no SQL, so it never drafts a
+statement, never repairs one and never iterates towards an aggregate that came out wrong — and its
+reads come from a closed set of six curated kinds, so twelve statements is every kind twice.
+
+**What every row shares:**
 
 | Bound | Value | Counts |
 | --- | --- | --- |
-| `maxStatementsPerRun` | 20 | Every statement, including catalog reads and repairs. |
-| `maxTotalRunMs` | 60 s | **Database time only.** |
 | `statementTimeoutMs` | 10 s | Per statement, clamped further by the run deadline. |
 | `maxResultRows` / `maxResultBytes` | 200 / 256 KiB | Compared after the driver has materialised the rows, so an oversized read is refused but still paid for at the database. |
 | `maxConcurrentExecutions` | 1 | The loop is sequential; a run cannot fan out. |
-| Run deadline | 300 s | **Wall clock**, including model latency. |
-| One model call | 90 s | Whichever of this and the run's remaining time is smaller applies. |
+| One model call | 90 s | Whichever of this and the run's remaining time is smaller applies. Not per workflow: how long one request may hang is a property of the transport, not of the question. |
 | Repair attempts | 3 | Statements that failed **at the database**. |
-| Model turns per drive | 16 | A backstop for a loop that never reaches the database. |
+
+The statement budget, the database time and the wall clock are enforced through the policy the run's
+workflow names, and the version carries the workflow so a recorded deny code traces back to the
+number that produced it. The turn ceiling is the backstop for a loop that never reaches the database
+at all, and it moves with the wall clock rather than alone: at a deadline that cannot pay for the
+turns, a larger turn ceiling only changes which word the ledger records.
 
 **The per-call ceiling exists because the run deadline used to be the only bound on a single
-request.** A measured run ended at exactly 300.0 s with a two-event ledger: one call never answered
+request.** A measured run ended at exactly 300.0 s — the whole run deadline of the day — with a
+two-event ledger: one call never answered
 and spent a budget meant to cover a whole investigation, while the rail showed nothing moving for
 five minutes. Turns on this workload land in seconds, so a call that reaches 90 s is not coming back.
 The two bounds stay distinct in what they report — `model-timeout` says a request never returned and
@@ -970,6 +991,26 @@ run that executes a lot cannot make "Show result" 404 on a quieter run that is s
 is per process, which is consistent with the zero-config backend below being single-instance.
 
 ## Deployment
+
+**An agent-capable deployment needs a reverse-proxy read timeout of at least 15 minutes, and the
+chart does not set one for you.** The rail follows a run through a single long-lived streaming
+response, so the run and the HTTP response have the same lifetime. The longest drive any workflow may
+take today is `database-assessment`'s 630 s wall clock, and 900 s is what the ceilings are provisioned
+to — so a response can legitimately stay open far longer than the 60 s that is nginx's
+default `proxy_read_timeout`, and longer than the comparable defaults of the ingress controllers,
+load balancers and PaaS routers Studio is deployed behind. Raise it to **900 s** where the traffic
+enters (`proxy_read_timeout 900s;` for nginx, `nginx.ingress.kubernetes.io/proxy-read-timeout: "900"`
+for the ingress-nginx annotation, the equivalent idle timeout elsewhere). Nothing in this repository
+can do it for you: the timeout belongs to the proxy, not to the container.
+
+**A keep-alive would not be a substitute, and the reason is worth knowing.** The stream emits one
+line per ledger event, so an active run keeps the socket warm by itself — but a run spends most of a
+turn *inside one model call*, writing nothing, and one model call may take up to 90 s. A proxy whose
+idle timeout is under that will cut a perfectly healthy run mid-turn, and what the user sees is the
+rail losing its stream rather than a run that failed. The run itself survives — it is durable and
+resumable — but nothing today re-attaches the rail to it (`docs/BACKLOG.md` B9), so in practice the
+user watches a run disappear. Emitting a periodic keep-alive on the stream is the alternative fix and
+is not implemented; the required timeout is documented instead.
 
 **The zero-config backend is single-instance.** `local` keeps run state in a directory on local disk
 and takes file locks, so more than one replica pointed at it is a misconfiguration. Running the agent

@@ -4,14 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
-import { AGENT_RUN_DEADLINE_MS } from "@/lib/agent/execution-policy";
+import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { type AgentToolResources, runInvestigation } from "@/lib/agent/investigation";
 import type { AgentModel } from "@/lib/agent/model-adapter";
 import { resolveAgentProviderAdapter } from "@/lib/agent/provider-registry";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService, AgentRunServiceError } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
-import type { AgentRunActor, AgentRunEvent, AgentRunRecord } from "@/lib/agent/types";
+import type { AgentRunActor, AgentRunEvent, AgentRunRecord, AgentRunWorkflowType } from "@/lib/agent/types";
 import { UNTRUSTED_CONTENT_BEGIN } from "@/lib/agent/untrusted-content";
 import { QueryError } from "@/lib/db/errors";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
@@ -158,7 +158,7 @@ function boot(dataDir: string, options: BootOptions = {}): Boot {
       scope: createTargetScope("conn_1"),
       tracker,
       artifacts,
-      deadline: new AgentRunDeadline(AGENT_RUN_DEADLINE_MS, deadlineClock),
+      deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs, deadlineClock),
       repairs: new AgentRepairLedger(),
       acquireProvider,
     },
@@ -216,8 +216,18 @@ function invocationsOf(events: readonly AgentRunEvent[]): string[] {
   return events.filter((event) => event.kind === "tool-invoked").map((event) => event.stepId);
 }
 
-async function startRun(boot: Boot, mode: "agent" | "planning" = "agent"): Promise<AgentRunRecord> {
-  return boot.service.start({ mode, actor: ACTOR, connectionId: "conn_1", objective: OBJECTIVE });
+async function startRun(
+  boot: Boot,
+  mode: "agent" | "planning" = "agent",
+  workflowType?: AgentRunWorkflowType,
+): Promise<AgentRunRecord> {
+  return boot.service.start({
+    mode,
+    actor: ACTOR,
+    connectionId: "conn_1",
+    objective: OBJECTIVE,
+    ...(workflowType === undefined ? {} : { workflowType }),
+  });
 }
 
 let consoleSpy: ReturnType<typeof spyOn<Console, "log">>;
@@ -1023,11 +1033,39 @@ describe("the run loop is bounded", () => {
     expect(result.turns).toBe(2);
   });
 
+  /**
+   * With no ceiling passed in, the one that binds is the RUN'S OWN — read from its
+   * persisted workflow, not from a module-level constant. Driven on `operations`
+   * because it is the cheapest row to script to exhaustion; what is being asserted is
+   * the source of the number, and the source is the same for every row.
+   */
+  test("the turn ceiling a caller does not pass comes from the run's own workflow", async () => {
+    const ceiling = AGENT_WORKFLOW_BUDGETS.operations.maxModelTurns;
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent", "operations");
+    // One more turn than the ceiling allows, so a loop that read a larger ceiling
+    // would run past it rather than dying on an exhausted script.
+    const script = scriptedModel(
+      ...Array.from({ length: ceiling + 1 }, (_unused, index) =>
+        callsTool("inspect_operations", { kind: "health" }, `call_${index}`),
+      ),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(result.stopReason).toBe("turn-limit");
+    expect(result.turns).toBe(ceiling);
+  });
+
   /*
     A model call that never answers used to cost the whole run.
 
     Measured, not assumed: one planning run on 2026-08-12 ended at 300.0s — exactly
-    `AGENT_RUN_DEADLINE_MS` — with a two-event ledger. The deadline did its job
+    the whole run deadline of the day — with a two-event ledger. The deadline did its job
     perfectly; the problem is that it was the ONLY bound on a single call, so one
     unanswered request spent a five-minute budget that was meant to cover a whole
     investigation, and the user watched a spinner for all of it.
@@ -1053,7 +1091,7 @@ describe("the run loop is bounded", () => {
     expect(result.status).toBe("failed");
     expect(result.stopReason).toBe("model-timeout");
     // The run deadline is five minutes; this cost a fifth of a second.
-    expect(Date.now() - started).toBeLessThan(AGENT_RUN_DEADLINE_MS);
+    expect(Date.now() - started).toBeLessThan(AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs);
 
     const finished = (await eventsOf(b.store, run.runId)).find((event) => event.kind === "run-finished");
     expect(finished).toMatchObject({ status: "failed", stopReason: "model-timeout" });
@@ -1062,7 +1100,7 @@ describe("the run loop is bounded", () => {
   test("a run that runs out of time is still reported as out of time, not as a slow call", async () => {
     // The turn ceiling must not relabel the run deadline: when less time remains than
     // a turn is allowed, the shorter bound is the run's own, and the reason follows it.
-    const b = boot(freshDataDir(), { spentMs: AGENT_RUN_DEADLINE_MS - 100 });
+    const b = boot(freshDataDir(), { spentMs: AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs - 100 });
     const run = await startRun(b, "planning");
     const script = scriptedModel(unansweredCall);
 
@@ -1078,7 +1116,7 @@ describe("the run loop is bounded", () => {
   });
 
   test("a spent deadline ends the run without asking the model anything", async () => {
-    const b = boot(freshDataDir(), { spentMs: AGENT_RUN_DEADLINE_MS + 1_000 });
+    const b = boot(freshDataDir(), { spentMs: AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs + 1_000 });
     const run = await startRun(b);
     const script = scriptedModel();
 
@@ -1152,7 +1190,7 @@ describe("a failure the loop cannot decide leaves the run resumable", () => {
     // 40ms of run left, and a response body that never completes: the only way
     // this call can end is the deadline-derived abort signal, which the fixture
     // honours the way a real transport does.
-    const b = boot(freshDataDir(), { spentMs: AGENT_RUN_DEADLINE_MS - 40 });
+    const b = boot(freshDataDir(), { spentMs: AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs - 40 });
     const run = await startRun(b);
     const script = scriptedModel((turn) => chatNeverAnswers(turn.signal));
 

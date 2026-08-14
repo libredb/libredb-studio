@@ -38,7 +38,7 @@ import { logger } from "@/lib/logger";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import type { QueryResult } from "@/lib/types";
 import { AgentRunDeadline } from "./deadline";
-import { AGENT_RUN_DEADLINE_MS } from "./execution-policy";
+import { AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
 import { type AgentInvestigationResult, runInvestigation } from "./investigation";
 import { createAgentModel } from "./model-adapter";
 import { AgentRepairLedger } from "./repair-ledger";
@@ -47,12 +47,19 @@ import { AgentRunStore, resolveAgentLedgerWorld } from "./run-store";
 import type { AgentRunFailureReason } from "./types";
 
 /**
- * How long a run's results stay readable, and how many it may hold at once. Sized
- * against the run deadline rather than independently: an artifact that expired while
- * its own run was still allowed to cite it would turn a verified claim into a dead
- * reference, so the TTL is a comfortable multiple of the longest a run may live.
+ * How long a run's results stay readable. Sized against the run deadline rather than
+ * independently: an artifact that expired while its own run was still allowed to cite
+ * it would turn a verified claim into a dead reference, so the TTL is a comfortable
+ * multiple of the longest a run may live.
+ *
+ * The LONGEST deadline any workflow may take, not one workflow's — the store is
+ * process-wide and holds artifacts from every workflow at once, so a TTL derived from
+ * a shorter row would expire a `database-assessment` run's earliest evidence while
+ * that run was still going. A workflow with a shorter deadline simply gets more
+ * headroom than the multiple promises.
  */
-const AGENT_ARTIFACT_TTL_MS = AGENT_RUN_DEADLINE_MS * 4;
+const AGENT_ARTIFACT_TTL_MS =
+  Math.max(...Object.values(AGENT_WORKFLOW_BUDGETS).map((budget) => budget.runDeadlineMs)) * 4;
 
 /**
  * The entry cap of the process-wide artifact store, computed rather than picked:
@@ -159,7 +166,10 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
         scope: createTargetScope(connectionId),
         tracker: runResources().tracker,
         artifacts: runResources().artifacts,
-        deadline: new AgentRunDeadline(AGENT_RUN_DEADLINE_MS),
+        // The run's own workflow decides its wall clock, the same way it decides its
+        // statement budget and its turn ceiling. Read from the record the ledger
+        // returned, so a resumed drive is bounded by what the run was opened as.
+        deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[report.record.workflowType].runDeadlineMs),
         repairs: new AgentRepairLedger(),
         acquireProvider: acquireExecutionProfileProvider,
       },

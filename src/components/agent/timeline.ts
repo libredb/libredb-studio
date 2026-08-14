@@ -1,17 +1,18 @@
-import { AGENT_EXECUTION_POLICY, AGENT_MAX_REPAIR_ATTEMPTS } from "@/lib/agent/execution-policy";
+import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentGoalShortfall } from "@/lib/agent/goal-verifier";
 import type { AgentPlanAccess, AgentPlanSummary } from "@/lib/agent/plan-summary";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
-import type {
-  AgentEvidenceReference,
-  AgentReportClaim,
-  AgentRunEvent,
-  AgentRunFailureReason,
-  AgentRunMode,
-  AgentRunStatus,
-  AgentRunStopReason,
-  AgentRunWorkflowType,
-  AgentToolRefusal,
+import {
+  type AgentEvidenceReference,
+  type AgentReportClaim,
+  type AgentRunEvent,
+  type AgentRunFailureReason,
+  type AgentRunMode,
+  type AgentRunStatus,
+  type AgentRunStopReason,
+  type AgentRunWorkflowType,
+  type AgentToolRefusal,
+  DEFAULT_AGENT_WORKFLOW_TYPE,
 } from "@/lib/agent/types";
 
 /**
@@ -35,11 +36,14 @@ import type {
  *    A database error is the only variant with a message, and that message is
  *    `quoted`, not narrated.
  *
- * The one VALUE import from the runtime modules is `execution-policy.ts`, and it
- * is deliberate (#329 T10b): it is frozen constants with no runtime imports of its
- * own, and the budget meter's ceilings have to be the numbers the server actually
- * enforces rather than a second copy that can drift from them. Nothing else here
- * imports a value from `src/lib/agent`.
+ * TWO value imports from the runtime modules, and both are deliberate (#329 T10b,
+ * and the per-workflow ceilings): `execution-policy.ts`, because the budget meter's
+ * ceilings have to be the numbers the server actually enforces rather than a second
+ * copy that can drift from them, and `DEFAULT_AGENT_WORKFLOW_TYPE` from `types.ts`,
+ * because a header written before the workflow field must fold to the same workflow
+ * the server reads it as. Both modules are frozen constants and type declarations
+ * with no runtime imports of their own; nothing else here imports a value from
+ * `src/lib/agent`.
  */
 
 export type AgentTimelineTone = "neutral" | "progress" | "refused" | "done";
@@ -136,6 +140,13 @@ export interface AgentRunTimeline {
    */
   readonly failureReason: AgentRunFailureReason | null;
   readonly budget: readonly AgentBudgetGauge[];
+  /**
+   * What the run was opened FOR, folded from its header — and therefore which row of
+   * `AGENT_WORKFLOW_BUDGETS` the server is enforcing on it. The gauges above are
+   * built from that row, and the rail states the ceilings nothing counts from the
+   * same one, so meter and server cannot disagree.
+   */
+  readonly workflowType: AgentRunWorkflowType;
   /** The run's composed report, or null while it has composed none. */
   readonly report: AgentRunReport | null;
 }
@@ -711,9 +722,25 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
   */
   let mode: AgentRunMode = "agent";
 
+  /*
+    What the run may SPEND depends on this, so the gauges below cannot be built from
+    a module-level constant: the server enforces the run's own workflow row, and a
+    meter stating another row's numbers would be stating a ceiling nothing enforces.
+
+    It is read from the header alone, unlike `mode`, because the header is the only
+    entry that carries it — `run-started` names the mode and not the workflow. A
+    ledger whose beginning the rail has not read therefore shows the default, which
+    is the same reading `run-store.ts` takes: an investigation is the only thing the
+    runtime could do when a header without the field was written.
+  */
+  let workflowType: AgentRunWorkflowType = DEFAULT_AGENT_WORKFLOW_TYPE;
+
   entries.forEach((entry, index) => {
     if (entry.kind === "cancellation-requested") stopRequested = true;
-    if (entry.kind === "run-opened") mode = entry.mode;
+    if (entry.kind === "run-opened") {
+      mode = entry.mode;
+      workflowType = entry.workflowType ?? DEFAULT_AGENT_WORKFLOW_TYPE;
+    }
     if (entry.kind === "event") {
       const { event } = entry;
       if (event.kind === "run-started") {
@@ -743,12 +770,13 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
     items.push({ id: `entry-${index}`, ...describeEntry(entry, mode, stopRequested) });
   });
 
-  const budgets = AGENT_EXECUTION_POLICY.budgets;
+  const budgets = AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets;
   return {
     items,
     status,
     stopRequested,
     failureReason,
+    workflowType,
     budget: [
       { id: "statements", label: "Statements", used: statements, limit: budgets.maxStatementsPerRun, unit: "count" },
       { id: "database-time", label: "Database time", used: databaseMs, limit: budgets.maxTotalRunMs, unit: "ms" },
