@@ -353,7 +353,7 @@ The frozen execution policies are the ceiling on one run's egress, one row per w
 | `AGENT_CONTEXT_PACK_MAX_CHARS` | 6000 | The fenced schema inventory |
 | `MAX_ER_CHARS` | 2000 | The fenced relations block |
 | `AGENT_MAX_OBJECTIVE_LENGTH` | 4000 | Your objective |
-| `maxModelTurns` | 20-48, by workflow | Model calls per drive |
+| `maxModelTurns` | 20-60, by workflow | Model calls per drive |
 
 An oversized read is **refused, not truncated**, so a result that reached the model is a complete
 one. Note the honest edge: the comparison happens after the driver has materialised the rows, so an

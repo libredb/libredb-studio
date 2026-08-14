@@ -30,6 +30,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { operatorCopyViolations } from "../../scripts/sync-chart-version.mjs";
+import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -141,6 +142,33 @@ describe("the two companion pages exist and are reachable", () => {
 
   test("README.md links the user guide, which is where a reader starts", () => {
     expect(read("README.md")).toContain("docs/AGENT_GUIDE.md");
+  });
+});
+
+/**
+ * The egress table states ranges over the frozen decision table, and a range is the
+ * kind of figure that goes stale silently (#373 review): `maxModelTurns` still said
+ * "20-48" after `data-analysis` landed at 60, so the page that answers "how much can
+ * leave" understated a ceiling by a fifth of a run.
+ *
+ * Derived from `AGENT_WORKFLOW_BUDGETS` rather than listed here, so the row that fails
+ * is the row a workflow moved — the same shape as the route scan above.
+ */
+describe("docs/AGENT_DATA_FLOW.md states the frozen ceilings as they are", () => {
+  const DATA_FLOW = read("docs/AGENT_DATA_FLOW.md");
+  const rows = Object.values(AGENT_WORKFLOW_BUDGETS);
+
+  const range = (values: readonly number[]): string => `${Math.min(...values)}-${Math.max(...values)}`;
+
+  test.each([
+    ["maxModelTurns", range(rows.map((row) => row.maxModelTurns))],
+    ["maxStatementsPerRun", range(rows.map((row) => row.policy.budgets.maxStatementsPerRun))],
+  ])("the %s row states %s, by workflow", (bound, expected) => {
+    // The bound's own row, not the document: two rows could otherwise cover for each
+    // other while both were wrong.
+    const row = DATA_FLOW.split("\n").find((line) => line.includes(`\`${bound}\``));
+    expect(row).toBeDefined();
+    expect(row).toContain(`${expected}, by workflow`);
   });
 });
 
