@@ -158,4 +158,14 @@ Health check endpoint: `GET /api/db/health` · Container HTTP port: `3000`.
 - **DeepWiki docs:** <https://deepwiki.com/libredb/libredb-studio>
 - **License:** MIT
 
+---
+
+## Star the project
+
+LibreDB Studio is open source under the MIT license and free to use, with no paid tier gating any feature on this page. If it is useful to you, a star on GitHub is the clearest signal that the work is worth continuing.
+
+<a href="https://github.com/libredb/libredb-studio"><img src="https://img.shields.io/github/stars/libredb/libredb-studio?style=social" alt="GitHub stars"></a>
+
+Repository: <https://github.com/libredb/libredb-studio>
+
 <sub>This page mirrors <a href="https://github.com/libredb/libredb-studio/blob/main/DOCKERHUB.md">DOCKERHUB.md</a> in the GitHub repository.</sub>
