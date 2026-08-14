@@ -371,6 +371,32 @@ feature's documentation and the same PR's chart version bump is already spoken f
 lines use `--set-string` — and ideally when the README's `--set` bracket arguments are single-quoted,
 since unquoted `extraEnv[0]` is a glob pattern in zsh.
 
+### X3. Four channel listings still advertise NL2SQL, which the product no longer has
+
+#331 T2 removed the NL2SQL and Autopilot panels, and #331 T6 rewrote the READMEs, `DOCKERHUB.md` and
+`docs/FEATURES.md` around the agent. The **external channel listings were deliberately left out of
+that PR**: each is a submission to somebody else's marketplace with its own review cycle, so they
+change on their own schedule and not in a documentation PR. They are recorded here so the launch copy
+is one list rather than four separate discoveries later.
+
+Four files, with the exact strings that are now false:
+
+| File | Line | The string |
+| --- | --- | --- |
+| `deploy/railway/TEMPLATE_OVERVIEW.md` | 3 | "with AI-powered query assistance (natural-language-to-SQL, explain, and fix)" |
+| `deploy/digitalocean/assets/description-long.md` | 10 | "**AI-assisted SQL** — turn natural language into queries (NL2SQL)" |
+| `deploy/rancher/CATALOG_LISTING.md` | 52-53 | "An optional AI assistant (bring your own key: Gemini, OpenAI, or a local model) writes and explains SQL from natural language and" |
+| `deploy/azure/listing/listing-fields.md` | 76 | "2. `nl2sql` — \"Turn a plain-English question into SQL with AI assistance.\"" |
+
+"Explain" survives the removal and "writes SQL from natural language" does not, so three of the four
+need a rewrite rather than a deletion — the honest replacement is the read-only agent, which is what
+the product now has. They are four separate submissions rather than one edit: the Azure entry is a
+numbered item in that listing's own field contract, and each of the others is published by its
+marketplace from the file above.
+
+Done when each listing has been resubmitted through its own channel with copy that matches the
+shipped product, and the entry is deleted then and not before.
+
 ---
 
 ## Security Phase 1 deferrals
@@ -1300,19 +1326,6 @@ tool is added to the read-class set. Done, for monitoring, only after a decision
 operation set grows a fourth descriptor for non-SQL metadata reads — which drags the verification
 marker, the provider triad and the security matrix with it, and is a human product call.
 
-### B19. The agent endpoints are absent from docs/API_DOCS.md
-
-`docs/API_DOCS.md` documents every other route family (auth, database, AI, storage, connections,
-admin) request-by-request, and contains no mention of `/api/agent/*`. The behaviour document
-`docs/AGENT.md` describes the six paths and what each one refuses, which is why this is a
-completeness gap rather than an undocumented surface, but a reader who goes to the API reference for
-the request and response shapes will not find them and has no pointer telling them where to look.
-
-Nothing enforces that file's route list — no test compares it against `src/app/api/` — so the omission
-is invisible to the gates. Done when the agent family is documented there in the same shape as the
-others (or reduced to a pointer at `docs/AGENT.md` in the same place a reader looks), and ideally when
-a test derives the documented families from the route tree so the next family cannot be forgotten.
-
 ### B20. A Gemini deployment behind a proxy is not configurable, on either surface
 
 `resolveApiUrl` (`src/lib/llm/utils/config.ts`) returns `LLM_API_URL` for every provider kind, so the
@@ -1548,3 +1561,24 @@ bounded, cached connection attempt under its own reason code — `LEDGER_UNREACH
 `LEDGER_UNAVAILABLE`, which names a directory — with a timeout short enough for a page load and a memo
 long enough that a page-load probe cannot become a connection per request. B16 gates any of this being
 testable in a shipped artifact: the Postgres world is not in the container image or the npx payload.
+
+### B32. The route-documentation guard covers the agent family and nothing else
+
+`docs/API_DOCS.md` now documents `/api/agent/*` request-by-request, and
+`tests/unit/agent-documentation.test.ts` derives the six agent paths from `src/app/api/agent/**` and
+fails if one of them is missing from that file — which is what closed the gap the agent family had
+(#331 T6). The guard is deliberately scoped to that one family, so **every other route family is
+still documented by hand with nothing comparing it against the route tree.** A new `/api/db/*` or
+`/api/storage/*` route can ship undocumented exactly as `/api/agent/*` did, and no gate notices.
+
+The narrow scope was a choice rather than an oversight: widening the derivation to `src/app/api/**`
+turns up routes the reference documents in prose rather than under a literal path heading (the
+schema family reaches two paths through one shared handler, and several `/api/db/*` routes are
+described in a single table row), so the assertion would fail on documentation that is not actually
+missing. Making it total means first deciding what "documented" means for a route the reference
+covers collectively — a documentation-shape decision, not a test.
+
+Done when the guard derives every family from `src/app/api/**` under one stated rule for what counts
+as documented, and the reference is reshaped where that rule does not currently hold. It is also
+worth noting what the guard does NOT check even for the agent: that a documented request or response
+shape still matches the handler. Only presence is asserted.

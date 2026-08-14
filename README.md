@@ -86,7 +86,7 @@ And nothing is held back. Single sign-on, ER diagrams, the AI features and the N
 - **Deploys next to the data**: container, Helm chart, OpenShift operator, one-click PaaS template, or embedded via npm.
 - **Ten engines, one interface**: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Druid.
 - **Runs where you are**: browser, phone, Windows, Linux desktop.
-- **AI with your own model**: EXPLAIN in plain English, query-safety checks and schema docs against Gemini, OpenAI, or a local LLM.
+- **A read-only agent, with your own model**: state a question, and the run drafts SQL, reads the results and writes a report whose claims cite them. Gemini, OpenAI, or a local Ollama.
 - **Nothing behind a wall**: RBAC, OIDC single sign-on, query audit trail and ER diagrams all ship under MIT.
 
 <p align="center">
@@ -116,12 +116,45 @@ And nothing is held back. Single sign-on, ER diagrams, the AI features and the N
   <br/><em>Visual schema explorer with interactive ER diagrams powered by ReactFlow.</em>
 </p>
 
-### Multi-Model AI Copilot
-- **Universal LLM Support**: Defaults to Gemini 2.5 Flash, but ready for OpenAI, Claude, or **Local LLMs** (Ollama/LM Studio).
+### The Database Agent
+
+Studio's main AI surface is an **agent rail** beside the editor — the model-backed helpers listed
+below it are the others. You state an objective — *"which department has the most employees?"*, *"why
+is this query slow?"* — and press Start. The run drafts SQL against the connected database, reads
+what comes back, and finishes by composing a report whose every claim cites the result it came from.
+
+- **Read-only, enforced by the database rather than by a parser.** Every statement goes through the
+  same operation pipeline the rest of the application uses, under a read-only execution profile: a
+  read-only transaction on PostgreSQL, `PRAGMA query_only` re-asserted per statement on SQLite.
+  Writes and DDL are refused before the database is reached, and `EXPLAIN ANALYZE` is default-denied
+  because it would run the statement.
+- **Three workflows**: **Investigate** (answer a question), **Optimize** (compare estimated plans,
+  propose an index or a rewrite), **Assess** (profile tables — counts only, never values).
+- **Nothing runs itself.** The agent never starts a run for you, never writes to the editor, and
+  never executes what it recommends. Applying a statement is your click.
+- **Evidence or nothing.** A claim with no citation cannot be composed, and the run states its own
+  verdict — *"Run answered"* or *"Run did not answer"* — beside how it ended.
+- **Bounded, and the meter is on screen**: 20 statements, 60 s of database time, 200 rows per read,
+  a 5-minute run deadline.
+- **Your own model.** Gemini (the default), OpenAI, Ollama, or any OpenAI-compatible endpoint. On
+  Ollama the model must be one that can call tools — a live probe, not the vendor's page, is what
+  establishes that, and the guide says how to run one.
+- **No model configured, no AI.** With no `LLM_*` settings at all the rail does not render and
+  nothing leaves your network. Note that a key is not the switch: Ollama and a custom endpoint count
+  as a configured model without one, and then the AI is on. What the agent sends is
+  [`docs/AGENT_DATA_FLOW.md`](docs/AGENT_DATA_FLOW.md).
+
+Standalone application only: the embedded `@libredb/studio` package carries no agent surface.
+**Guide:** [`docs/AGENT_GUIDE.md`](docs/AGENT_GUIDE.md) · **What leaves the machine:**
+[`docs/AGENT_DATA_FLOW.md`](docs/AGENT_DATA_FLOW.md) · **Behaviour and limits:**
+[`docs/AGENT.md`](docs/AGENT.md)
+
+### Model-backed helpers
+- **Universal LLM Support**: Defaults to Gemini 2.5 Flash, and serves OpenAI, Ollama and any OpenAI-compatible endpoint (LM Studio, LiteLLM, vLLM).
 - **Query Safety Analysis**: AI-powered pre-execution risk assessment for destructive queries (DELETE, DROP, TRUNCATE).
 - **AI Query Explainer**: EXPLAIN plans translated into plain language with optimization suggestions.
-- **Schema Awareness**: AI understands your specific database structure for pinpoint accuracy.
-- **Plug & Play**: Works out of the box with zero complex configuration.
+- **Schema Awareness**: the connected database's schema is sent as context, so an explanation names your own tables and columns.
+- **Data Profiler summary**: the profiler's per-column statistics written up in prose. That context carries each column's `min` and `max`, which are real values out of your data — see [Agent Data Flow](docs/AGENT_DATA_FLOW.md).
 
 ### Pro Data Management
 - **Universal Data Grid**: Virtualized rendering (TanStack) for millions of rows.
@@ -777,6 +810,9 @@ extraEnvFrom:
 | [DeepWiki](https://deepwiki.com/libredb/libredb-studio) | AI-powered documentation — always up-to-date with the codebase |
 | [SonarCloud](https://sonarcloud.io/project/overview?id=libredb_libredb-studio) | Code quality, security analysis, and technical debt tracking |
 | [API Docs](docs/API_DOCS.md) | Complete REST API reference |
+| [Agent Guide](docs/AGENT_GUIDE.md) | Using the agent: a run, the three workflows, what "answered" means, the budget meter, and the Ollama path |
+| [Agent Data Flow](docs/AGENT_DATA_FLOW.md) | What leaves the machine, when, and to which model provider — written from call sites |
+| [Agent Runtime](docs/AGENT.md) | Agent behaviour, bounds, deployment and known limitations |
 | [OIDC SSO](docs/OIDC.md) | SSO setup (Auth0, Keycloak, Okta, Azure AD, Zitadel, Google) + subsystem internals & security model |
 | [Theming Guide](docs/ui/theming.md) | CSS theming, dark mode, and styling customization |
 | [Login Page](docs/ui/login-page.md) | Login page layout, OIDC/local modes, and design system |

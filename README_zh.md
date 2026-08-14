@@ -104,13 +104,41 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
   <img src="public/screenshots/erd-diagram.png" alt="ER 图" width="100%" />
 </p>
 
-### AI 功能（可选，用你自己的模型）
+### 数据库 Agent（只读）
 
-- **不绑定厂商**：默认 Gemini 2.5 Flash，同样支持 OpenAI、Claude，或 **本地模型**（Ollama / LM Studio）。
+编辑器旁边的 Agent 面板是 Studio 最主要的 AI 界面（此外还有下面列出的模型辅助功能）。
+你写下一个目标（“哪个部门人最多？”“这条查询为什么慢？”）并按下 Start，这次运行就会针对已连接的数据库
+起草 SQL、读取结果，最后写出一份报告——其中每一条结论都引用它所依据的那次读取。
+
+- **只读，而且由数据库本身来保证**：所有语句都走应用其余部分同一条操作管线，使用只读执行档案
+  （PostgreSQL 上是只读事务，SQLite 上每条语句都重新声明 `PRAGMA query_only`）。写入和 DDL 在到达数据库
+  之前就被拒绝，`EXPLAIN ANALYZE` 因为会真正执行语句而默认禁止。
+- **三种工作流**：**Investigate**（回答问题）、**Optimize**（比较预估执行计划，提出索引或改写）、
+  **Assess**（做表画像——只有计数，永远不含具体值）。
+- **不会自己动手**：Agent 不会替你开始运行，不会写入编辑器，也不会执行它建议的语句。是否采用由你点击决定。
+- **有证据才有结论**：没有引用的结论无法被记录；运行结束时会明确给出 “Run answered” 或
+  “Run did not answer”。
+- **有上限，而且界面上就能看到**：每次运行 20 条语句、60 秒数据库时间、单次读取 200 行、整轮 5 分钟。
+- **用你自己的模型**：Gemini（默认）、OpenAI、Ollama，或任何兼容 OpenAI 的端点。在 Ollama 上必须选择
+  真正支持工具调用的模型——这要靠一次真实探测来确认，而不是照抄厂商文档。
+- **不配置模型就没有 AI**：完全没有 `LLM_*` 配置时，面板根本不会出现，也不会有任何数据离开你的网络。
+  注意开关不是密钥：Ollama 和自定义端点无需密钥也算配置了模型，此时 AI 就是启用的。具体外发内容见
+  [`docs/AGENT_DATA_FLOW.md`](docs/AGENT_DATA_FLOW.md)。
+
+仅限独立部署：嵌入式 `@libredb/studio` 包不包含任何 Agent 界面。
+指南：[`docs/AGENT_GUIDE.md`](docs/AGENT_GUIDE.md) ·
+数据出网说明：[`docs/AGENT_DATA_FLOW.md`](docs/AGENT_DATA_FLOW.md) ·
+行为与限制：[`docs/AGENT.md`](docs/AGENT.md)
+
+### 其他 AI 功能（可选，用你自己的模型）
+
+- **不绑定厂商**：默认 Gemini 2.5 Flash，同样支持 OpenAI，或 **本地 / 兼容 OpenAI 的端点**（Ollama、LM Studio、LiteLLM）。
 - **查询安全分析**：执行前对 DELETE、DROP、TRUNCATE 这类破坏性语句做风险评估。
 - **执行计划翻译**：把 EXPLAIN 翻成人话，并给出优化建议。
+- **数据画像摘要**：把逐列统计写成文字说明。该上下文包含每列的 `min` / `max`，也就是你数据里的真实值，
+  详见[`docs/AGENT_DATA_FLOW.md`](docs/AGENT_DATA_FLOW.md)。
 
-**不配置密钥，AI 就不会发起任何调用**，默认不会有任何数据离开你的网络。
+**不配置模型，AI 就不会发起任何调用**：在没有任何 `LLM_*` 配置的默认状态下，不会有任何数据离开你的网络。
 
 ### 数据处理
 

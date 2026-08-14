@@ -123,6 +123,15 @@
 *   **Search & Filter:** Locate tables by name, with compact and detailed view modes.
 *   **Export:** Save diagrams as SVG or PNG for documentation.
 
+### 18. The Database Agent (read-only investigation runs)
+*   **A run, not a chat:** you state an objective and press Start; the run drafts SQL against the connected database, reads the results, and composes a report whose every claim cites the result it came from. An uncited claim is refused, so it cannot be composed at all.
+*   **Read-only, enforced by the database:** every statement goes through the same operation pipeline as the rest of the application, under a read-only execution profile — a read-only transaction on PostgreSQL, `PRAGMA query_only` re-asserted per statement on SQLite. Writes and DDL are refused before the database is reached, and `EXPLAIN ANALYZE` is default-denied because it would execute the statement.
+*   **Two independent axes:** the **mode** (Plan, which is toolless and performs zero database operations, or Agent) and the **workflow** (Investigate, Optimize, Assess). Both are fixed when the run opens and read from the run's own record thereafter.
+*   **Counts, never values:** the Assess workflow's table profiling composes aggregates only — row counts, present counts, distinct counts, and shape matches computed inside the database. There is deliberately no `min`/`max`, because on a text column those return real values.
+*   **Bounded and visible:** 20 statements, 60 s of database time, 200 rows per read, a 5-minute run deadline, 3 repair attempts — with the meter on screen, and stated as a floor rather than an exact spend.
+*   **A verdict beside the status:** a run that ended `succeeded` may still have answered nothing, so the rail says "Run answered" or "Run did not answer" and names what was missing.
+*   **Your own model, standalone only:** Gemini, OpenAI, Ollama or any OpenAI-compatible endpoint through the existing `LLM_*` settings; the embedded `@libredb/studio` package carries no agent surface. See [Agent Guide](AGENT_GUIDE.md), [Agent Data Flow](AGENT_DATA_FLOW.md) and [Agent Runtime](AGENT.md).
+
 ## Roadmap
 
 Upcoming phases are tracked in the [Roadmap section of the README](../README.md#roadmap).

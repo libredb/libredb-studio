@@ -119,6 +119,66 @@ describe("the milestone's deferral record is complete in both directions", () =>
   });
 });
 
+describe("the two companion pages exist and are reachable", () => {
+  /**
+   * `docs/AGENT.md` is the behaviour document, and #331 T6 split two audiences out of
+   * it: the user guide and the data-flow page. A page nobody links is a page nobody
+   * reads — the same reason the architecture link above is asserted — and the data-flow
+   * page in particular is what `docs/SECURITY.md` now points at for egress, so it
+   * cannot quietly stop existing.
+   */
+  const COMPANIONS = ["docs/AGENT_GUIDE.md", "docs/AGENT_DATA_FLOW.md"];
+
+  test.each(COMPANIONS)("%s exists", (page) => {
+    expect(existsSync(path.join(ROOT, page))).toBe(true);
+  });
+
+  test.each(COMPANIONS)("%s is linked from docs/AGENT.md", (page) => {
+    expect(AGENT_DOC).toContain(`(./${path.basename(page)})`);
+  });
+
+  test("README.md links the user guide, which is where a reader starts", () => {
+    expect(read("README.md")).toContain("docs/AGENT_GUIDE.md");
+  });
+});
+
+describe("the agent's HTTP surface is documented where a reader looks for a route", () => {
+  /**
+   * B19's own "done" text asked for this: nothing compared `docs/API_DOCS.md` against
+   * `src/app/api/`, so a route family could be absent from the API reference and every
+   * gate stayed green. The paths are DERIVED from the route tree rather than listed
+   * here, so a seventh agent path added tomorrow fails this test instead of being
+   * silently undocumented.
+   *
+   * Dynamic segments are compared in the reference's own notation (`{runId}`), which is
+   * what the rest of that document already uses for a path parameter.
+   */
+  const API_DOCS = read("docs/API_DOCS.md");
+
+  const routePaths = [...new Bun.Glob("src/app/api/agent/**/route.ts").scanSync(ROOT)]
+    .map((file) =>
+      file
+        .replace(/^src\/app/, "")
+        .replace(/\/route\.ts$/, "")
+        .replace(/\[(\w+)\]/g, "{$1}"),
+    )
+    .sort();
+
+  test("the scan found the agent route tree (an empty scan would pass everything below)", () => {
+    expect(routePaths).toContain("/api/agent/config");
+    expect(routePaths).toContain("/api/agent/drive");
+    expect(routePaths.length).toBeGreaterThanOrEqual(6);
+  });
+
+  test.each(routePaths)("%s appears in docs/API_DOCS.md", (routePath) => {
+    expect(API_DOCS).toContain(routePath);
+  });
+
+  test("the family is reachable from the table of contents", () => {
+    expect(API_DOCS).toContain("#agent-api");
+  });
+});
+
 describe("the container image carries the ledger default a plain `docker run` cannot pass", () => {
   /**
    * The ratified T5 proposal says a plain `docker run` must carry the same ledger

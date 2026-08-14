@@ -30,6 +30,16 @@ This document describes what the runtime *does*. The security matrix rows that c
 everything the runtime does **not** do yet is listed under
 [Known limitations](#known-limitations) with the backlog entry that owns it.
 
+Two companion pages carry what this one deliberately does not:
+
+- [`docs/AGENT_GUIDE.md`](./AGENT_GUIDE.md) — **the user guide.** What a run is, the three
+  workflows, what "answered" means, what the budget meter's numbers are, and how to run the agent on
+  a local Ollama model. It describes the surface in the application's own words; this document
+  describes the machinery under it.
+- [`docs/AGENT_DATA_FLOW.md`](./AGENT_DATA_FLOW.md) — **what leaves the machine**, written from call
+  sites: which message carries what, to which provider, where the fence applies and where it does
+  not.
+
 ## Table of Contents
 
 - [Turning it on](#turning-it-on)
@@ -702,7 +712,9 @@ limit is reported as a rate limit rather than counted as a failed case.
 
 ## HTTP surface
 
-Six paths under `src/app/api/agent/`, seven handlers. Each verifies authorization in its own handler
+Six paths under `src/app/api/agent/`, seven handlers — documented request-by-request in
+[`docs/API_DOCS.md`](./API_DOCS.md#agent-api), in the shape every other route family there uses.
+Each verifies authorization in its own handler
 (middleware is an optimisation, not the authorization boundary) rather than trusting the request. The
 five run-reaching handlers verify a **session** and answer **404** when the agent is unavailable —
 after the session check, so an unauthenticated caller cannot learn whether an agent surface exists —
@@ -761,7 +773,8 @@ values — are in the standalone bundle either way; what availability governs is
 runs, not what was bundled.
 
 The rail shows the run's semantic timeline, a stop control, evidence citations, and a budget meter.
-Two rules govern it:
+What each of those says to a user, in the words it actually renders, is
+[`docs/AGENT_GUIDE.md`](./AGENT_GUIDE.md). Two rules govern it:
 
 - **A control the service cannot honour is not rendered at all.** There is no disabled-looking button
   standing in for a capability, which is why the rail stops a run but does not offer pause/resume
@@ -951,8 +964,6 @@ declared-target allowlist, the statement guard and the role's own grants are the
 - **B16** — the opt-in `@workflow/world-postgres` backend is not present in the standalone payload,
   so it cannot load in the container image or the npx payload.
 - **B17** — table profiling and monitoring tools are deferred; the M2 tool set is the four above.
-- **B19** — the agent endpoints are described here but are absent from
-  [`docs/API_DOCS.md`](./API_DOCS.md).
 - **B20** — a Gemini deployment behind a proxy is not configurable: `LLM_API_URL` is unread for that
   kind, in the chat surface as much as in the agent.
 - **B21** — the published package's `BottomPanel` carries the agent-provenance branch as dormant
@@ -967,9 +978,18 @@ declared-target allowlist, the statement guard and the role's own grants are the
   unreachable `WORKFLOW_POSTGRES_URL` still renders a rail whose first Start fails. Reported as a
   carve-out (`ledgerVerified: false`) rather than fixed; a real check is a connection attempt per page
   load.
+- **B32** — the route family above is documented in [`docs/API_DOCS.md`](./API_DOCS.md) and guarded
+  against drift, but that guard derives only the agent paths: every other family is still hand-kept,
+  and even here only a path's presence is asserted, never that a documented shape still matches its
+  handler.
 
 ## Related documentation
 
+- [`docs/AGENT_GUIDE.md`](./AGENT_GUIDE.md) — the user guide: the rail's own vocabulary, the three
+  workflows, what "answered" means, the meter's numbers, and the Ollama path.
+- [`docs/AGENT_DATA_FLOW.md`](./AGENT_DATA_FLOW.md) — what leaves the machine, when, and to which
+  provider, written from call sites.
+- [`docs/API_DOCS.md`](./API_DOCS.md#agent-api) — the seven handlers as a documented route family.
 - [`docs/SECURITY.md`](./SECURITY.md) — controls 3.4 and 3.5, and the reasons they read as they do.
 - [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) — where this sits in the application.
 - [`docs/BACKLOG.md`](./BACKLOG.md) — the deferrals above, in full.

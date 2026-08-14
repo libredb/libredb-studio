@@ -42,7 +42,7 @@ Open <http://localhost:3000> and log in with the `ADMIN_EMAIL` / `ADMIN_PASSWORD
 
 > **None of these auth variables are mandatory.** With the local provider, `ADMIN_PASSWORD` and `JWT_SECRET` are required only when you opt into strict mode (`AUTH_BOOTSTRAP=off`); otherwise both are generated on first start and the admin password is printed once to the container log. `USER_EMAIL` / `USER_PASSWORD` are always optional — omit them to run admin-only, since no default user password is ever assumed. None of them are used when `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
 
-> **Enable AI:** add `-e LLM_PROVIDER=gemini -e LLM_API_KEY=your_key -e LLM_MODEL=gemini-2.5-flash`.
+> **Enable AI:** add `-e LLM_PROVIDER=gemini -e LLM_API_KEY=your_key -e LLM_MODEL=gemini-2.5-flash`. That also brings the read-only agent, whose availability is derived from having a model configured; add `-v libredb-data:/app/data` if its run history should survive a container recreate, or `-e LIBREDB_AGENT_ENABLED=false` to keep the AI features and decline the agent.
 
 ### Docker Compose
 
@@ -104,7 +104,8 @@ A ready-to-use, fully-commented compose file is in the repo: [`docker-compose.ex
 - **Professional SQL IDE** — Monaco editor (VS Code engine), schema-aware autocomplete, multi-tab workspace, Visual EXPLAIN.
 - **Interactive ER diagrams** — real FK edges, cardinality, auto-layout (ELK.js), PNG/SVG export.
 - **Schema diff & migration** — compare snapshots/connections and auto-generate migration SQL.
-- **Multi-model AI copilot** — query safety analysis, EXPLAIN-in-plain-English, AI-generated schema docs. Gemini / OpenAI / Ollama / custom.
+- **Read-only database agent** — state an objective, and the run drafts SQL, reads the results and composes a report whose claims cite them. Three workflows (investigate / optimize / assess), a visible statement-and-time budget, and writes refused before the database is reached. Standalone image only. [Guide](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_GUIDE.md) · [What leaves the machine](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_DATA_FLOW.md).
+- **Model-backed helpers** — query safety analysis, EXPLAIN-in-plain-English, AI-generated schema docs, data-profile summaries. Gemini / OpenAI / Ollama / custom; with no model configured — no `LLM_*` variables at all — no AI call is made. A key is required for Gemini and OpenAI only: Ollama and a custom endpoint count as a configured model without one, which enables the AI features — and the agent too, once its ledger path is writable.
 - **Pro data grid** — virtualized millions of rows, inline editing, per-column filters, pivot table, CSV/JSON export.
 - **Data visualization** — 8 chart types with aggregation and saved-chart dashboards.
 - **Data privacy & masking** — automatic sensitive-column detection, RBAC-enforced masking, export protection.

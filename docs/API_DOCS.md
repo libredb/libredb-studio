@@ -1,6 +1,6 @@
 # LibreDB Studio API Documentation
 
-> **Version:** 0.9.41
+> **Version:** 0.11.0
 > **Base URL:** `https://your-domain.com` or `http://localhost:3000`
 > **Content-Type:** `application/json`
 
@@ -12,6 +12,7 @@
   - [Auth API](#auth-api)
   - [Database API](#database-api)
   - [AI API](#ai-api)
+  - [Agent API](#agent-api)
   - [Storage API](#storage-api)
   - [Connections API](#connections-api)
   - [Admin API](#admin-api)
@@ -78,13 +79,15 @@ LibreDB Studio uses JWT (JSON Web Tokens) for authentication. Tokens are stored 
 
 ### Public Endpoints (No Auth Required)
 
-Authentication is enforced centrally by the middleware (`src/proxy.ts`), not by individual route handlers: every route requires a valid `auth-token` cookie **except** the routes below. (This is why handlers like `/api/ai/*` don't call `getSession()` themselves — the middleware has already gated them.)
+The middleware (`src/proxy.ts`) gates every route: all of them require a valid `auth-token` cookie **except** the routes below. It is an optimisation rather than the authorization boundary, though — every handler that reaches a database or a model provider verifies the session again itself, through `guardRoute` (`src/lib/api/require-session.ts`), which is also where the rate-limit bucket and the audit line come from.
 
 - `/api/auth/*` — login, logout, me, and OIDC login/callback
 - `/api/db/health` — excluded from the middleware for **both** methods; `GET` is fully public, while `POST` performs its own session check and returns JSON `401` if unauthenticated
 - `GET /api/storage/config` — storage-mode discovery (returns `{ provider, serverMode }`, no user data)
 
 Unauthenticated requests to any other (middleware-gated) route are redirected to `/login`. A few allowlisted handlers self-check instead and return JSON — e.g. `POST /api/db/health` (`401`) and `GET /api/auth/me` (`{ "authenticated": false }`).
+
+**One route is session-less without being public: `POST /api/agent/drive`.** It is deliberately *not* on the list above — a path-shaped exemption would admit anything that can reach the port. It carries a server-minted, single-purpose credential instead, verified by the middleware and again by the handler (see the [Agent API](#agent-api) below).
 
 ---
 
@@ -739,6 +742,156 @@ LLM_API_URL=http://localhost:11434/v1  # For ollama/custom
 
 ---
 
+### Agent API
+
+Six paths, seven handlers, under `src/app/api/agent/`. They drive the read-only agent runtime — full
+behaviour in [`docs/AGENT.md`](AGENT.md), the surface in [`docs/AGENT_GUIDE.md`](AGENT_GUIDE.md), and
+what a run sends to a model provider in [`docs/AGENT_DATA_FLOW.md`](AGENT_DATA_FLOW.md).
+
+Three properties hold across the whole family and are not repeated per route:
+
+- **Every handler verifies its own caller.** Middleware is an optimisation, not the authorization
+  boundary.
+- **A run belongs to the session that opened it.** Ownership is decided against the actor persisted
+  in the run's ledger, and an admin is not exempt. Somebody else's run, a run that does not exist and
+  a malformed run id all answer the same `404 { "error": "No such agent run" }` — a `403` would
+  confirm the id.
+- **When the server runs no agents, the five run-reaching handlers answer `404`** — after the session
+  check, so an unauthenticated caller cannot learn whether an agent surface exists. `GET
+  /api/agent/config` is the deliberate exception: `{"enabled": false, …}` *is* its answer.
+
+#### GET /api/agent/config
+
+Whether this server runs agents. **Authentication:** required (`401 { "error": "Authentication
+required" }` without a session). Never `500`, and never names a key's value.
+
+```json
+// 200 — available
+{ "enabled": true, "ledgerVerified": true }
+
+// 200 — not available
+{ "enabled": false, "reason": "NO_MODEL_CONFIGURED", "detail": "…" }
+```
+
+| Field | Meaning |
+|-------|---------|
+| `enabled` | A literal boolean. The rail compares `=== true` |
+| `ledgerVerified` | `true` when the durable ledger's writable-path probe passed; `false` for the Postgres backend, which is accepted without being contacted |
+| `reason` | One code per operator action: `OPERATOR_DISABLED`, `NO_MODEL_CONFIGURED`, `LEDGER_UNAVAILABLE`, `UNSANCTIONED_WORLD_TARGET`, `IMPLICIT_HOSTED_WORLD`. Sent to every session |
+| `detail` | The underlying message. **Admin sessions only** — `LEDGER_UNAVAILABLE`'s carries an absolute server path and an OS error string. Every other session gets one stable sentence instead |
+
+This route is **not** metered out of the `ai` bucket: a visibility probe must not spend a run's
+budget. Its ledger half is memoised for a few seconds instead.
+
+---
+
+#### POST /api/agent/runs
+
+Opens a run and returns immediately; the drive happens in the background.
+
+**Authentication:** Required.
+
+**Request:**
+
+```json
+{
+  "mode": "agent",
+  "workflowType": "investigation",
+  "objective": "Which department has the most employees?",
+  "connectionId": "seed:sample"
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `mode` | string | Yes | `"planning"` (toolless — performs zero database operations) or `"agent"` |
+| `workflowType` | string | No | `"investigation"` (the default), `"query-optimization"` or `"database-assessment"`. An unrecognised value is **refused, not defaulted** |
+| `objective` | string | Yes | Non-empty, at most 4000 characters |
+| `connectionId` | string | Yes | Must resolve **server-side**. An inline `connection` object in the body is refused |
+
+**Response (202 Accepted):**
+
+```json
+{ "runId": "arun_…", "status": "queued", "mode": "agent", "workflowType": "investigation" }
+```
+
+The mode and workflow type echoed back are the **persisted** ones, so a caller that omitted the
+workflow learns which one its run actually opened as. Both are fixed for the life of the run: no
+other route accepts either field.
+
+**Refusals:**
+
+```json
+// 400 Bad Request — one message per rule, e.g.
+{ "error": "mode must be \"planning\" or \"agent\"" }
+{ "error": "An agent run needs a server-resolvable connectionId; an inline connection cannot be resumed" }
+
+// 404 Not Found — this server runs no agents
+{ "error": "The agent runtime is not enabled on this server" }
+
+// 422 Unprocessable Entity — the configured model was ESTABLISHED as unable to drive an agent run
+{
+  "error": "The model \"gemma3:270m\" (ollama) cannot drive an agent run: …",
+  "missing": ["toolCalling", "structuredOutput", "streaming"],
+  "disproved": []
+}
+```
+
+> `422` rather than `400`: the request is well-formed and it is the server's configuration that
+> cannot honour it. Only a **positively established** incapability refuses this way — a bad key, a
+> quota or a 5xx start the run and are reported by the drive instead. `missing` is what this run
+> needed and did not get; `disproved` is the subset the probe watched fail. A `planning` run is never
+> probed at all.
+
+---
+
+#### GET /api/agent/runs/{runId}
+
+The run record, folded from its ledger: status, mode, workflow type, actor, events. `404` unless the
+run exists and belongs to the calling session.
+
+#### DELETE /api/agent/runs/{runId}
+
+Requests a stop, and returns the run's status report. Cancellation is enforced by the run loop's own
+persisted state rather than by a driver cancel propagating — so this means *asked to stop*, not *has
+stopped*.
+
+#### GET /api/agent/runs/{runId}/stream
+
+The ledger as NDJSON — `content-type: application/x-ndjson; charset=utf-8`, one entry per line, in
+order. This is what the rail folds into its timeline.
+
+#### GET /api/agent/runs/{runId}/artifacts/{correlationId}
+
+One stored result of that run, for hydration into the results grid.
+
+```json
+{ "runId": "arun_…", "correlationId": "…", "operationId": "sql.query.read", "result": { } }
+```
+
+`404 { "error": "No such artifact" }` when the run's ledger records no completed step with that
+correlation id. `410` when it does but the rows are gone:
+
+```json
+{ "error": "This result is no longer held: a run's results are released when it ends.", "reason": "released" }
+```
+
+#### POST /api/agent/drive
+
+The machine-facing resume seam. **It carries no session.** The caller presents a short-lived
+(60-second), single-purpose credential this server minted, in the `x-libredb-agent-drive` header;
+it names one run, authorizes one thing — driving it — and its signing key is *derived* from
+`JWT_SECRET` rather than being it, so a drive token cannot be presented as a session cookie. Without
+one: `401 { "error": "A valid agent drive credential is required" }`, audited as a
+`permission_denied` event. `404` for an unknown run, `409` for a run that has already ended (the
+message is not retryable, so a queue should stop delivering it).
+
+Nothing in the product produces a drive delivery yet, so this route's callers today are its tests.
+
+---
+
 ### Storage API
 
 The write-through storage sync layer (see [`docs/STORAGE.md`](STORAGE.md)). Data is per-user, keyed by the session username.
@@ -1228,7 +1381,10 @@ async function streamAIExplanation(query: string, explainPlan: string) {
 | `LLM_PROVIDER` | No | AI provider: gemini, openai, ollama, custom |
 | `LLM_API_KEY` | No | AI provider API key |
 | `LLM_MODEL` | No | AI model name |
-| `LLM_API_URL` | No | Custom AI endpoint URL |
+| `LLM_API_URL` | No | Custom AI endpoint URL. Read for the `openai`, `ollama` and `custom` kinds, on the chat surface and in the agent alike; **unread for `gemini`** ([`docs/BACKLOG.md`](BACKLOG.md) B20) |
+| `LIBREDB_AGENT_ENABLED` | No | The agent's explicit **off**-switch. Availability is otherwise derived from the AI configuration and a writable ledger — see [`docs/AGENT.md`](AGENT.md) |
+| `WORKFLOW_TARGET_WORLD` | No | Durable backend for agent run state: `local` (default, single instance) or `@workflow/world-postgres` |
+| `WORKFLOW_LOCAL_DATA_DIR` | No | Where the `local` backend keeps run state (`/app/data/workflow` in the container image) |
 
 ---
 
@@ -1240,4 +1396,4 @@ per-version changelog instead of a manually maintained copy here.
 
 ---
 
-**Last Updated:** 2026-07-04
+**Last Updated:** 2026-08-14
