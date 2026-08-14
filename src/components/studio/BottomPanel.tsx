@@ -163,11 +163,12 @@ export function BottomPanel({
   const explainInput = useMemo(() => resolveExplainPlan(currentTab.explainPlan), [currentTab.explainPlan]);
 
   /*
-    An agent artifact is shown in ONE surface — the one its operation produced — and
-    the tab's own state is never overwritten to do it. So the grid and the explain
-    view each ask whether this artifact is theirs, every other view keeps showing the
-    tab's own result (chart hydration is deferred; see `docs/BACKLOG.md`), and
-    dismissing the artifact restores the tab with nothing to undo.
+    An agent artifact is shown in ONE surface — the one the RUN's own record names,
+    which is its operation for a read or a plan and its composed answer for a chart —
+    and the tab's own state is never overwritten to do it. So the grid, the explain
+    view and the charts view each ask whether this artifact is theirs, every other
+    view keeps showing the tab's own result, and dismissing the artifact restores the
+    tab with nothing to undo.
 
     While one is shown the view is read-only: inline editing writes rows back through
     the tab's connection and pagination continues the tab's own query, so neither
@@ -179,9 +180,20 @@ export function BottomPanel({
     () => (agentArtifact?.surface === "explain" ? resolveExplainPlan(agentArtifact.explainPlan) : null),
     [agentArtifact],
   );
+  /*
+    The run's own rows, drawn as the run said to draw them. `DataCharts` validates the
+    specification against the result it was actually given and falls back to its own
+    inference if it cannot be drawn, so a chart here is never a confident picture of
+    columns these rows do not have.
+  */
+  const hydratedChart = agentArtifact?.surface === "charts" ? agentArtifact.result : null;
+  /** Null unless the run's own rows are what the charts view is showing. */
+  const hydratedChartSpec = hydratedChart === null ? null : (agentArtifact?.chartSpec ?? null);
   const hydratedHere =
     agentArtifact !== null &&
-    ((mode === "results" && hydratedResult !== null) || (mode === "explain" && hydratedPlan !== null));
+    ((mode === "results" && hydratedResult !== null) ||
+      (mode === "explain" && hydratedPlan !== null) ||
+      (mode === "charts" && hydratedChart !== null));
   const displayedResult = hydratedResult ?? currentTab.result;
 
   const tabs: { key: BottomPanelMode; label: string; icon: React.ReactNode; activeClass: string }[] = [
@@ -357,7 +369,7 @@ export function BottomPanel({
             }}
           />
         ) : mode === "charts" ? (
-          <DataCharts result={currentTab.result} />
+          <DataCharts result={hydratedChart ?? currentTab.result} spec={hydratedChartSpec} />
         ) : mode === "schemadiff" ? (
           <SchemaDiff schema={schema} connection={activeConnection} />
         ) : mode === "dashboard" ? (

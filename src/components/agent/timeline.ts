@@ -3,6 +3,7 @@ import type { AgentGoalShortfall } from "@/lib/agent/goal-verifier";
 import type { AgentPlanAccess, AgentPlanSummary } from "@/lib/agent/plan-summary";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
 import {
+  type AgentChartSpec,
   type AgentEvidenceReference,
   type AgentReportClaim,
   type AgentRunEvent,
@@ -71,6 +72,14 @@ export interface AgentTimelineItem {
    * itself renders no grid.
    */
   readonly artifactId?: string;
+  /**
+   * How the run said to DRAW the artifact above, when this entry is an answer composed
+   * as a chart. Carried here so the surface a shown result opens in comes from what
+   * the run RECORDED rather than from what its rows happen to look like — the same
+   * rule the explain surface follows. Absent on a table answer and on every other
+   * entry, because neither recorded a chart.
+   */
+  readonly chartSpec?: AgentChartSpec;
 }
 
 /**
@@ -545,8 +554,11 @@ function describeEvent(
         headline: "Answer composed",
         detail: `Shown as a ${event.presentation.kind === "chart" ? `${event.presentation.spec.type} chart` : "table"}, from ${event.artifact.summary.rowCount} row(s). ${HANDOVER_SENTENCES[event.handover]}`,
         // The model's own prose about what the chart shows, quoted as model prose. A
-        // table answer has no caption, so there is nothing to quote.
-        ...(event.presentation.kind === "chart" ? { quoted: event.presentation.spec.caption } : {}),
+        // table answer has no caption, so there is nothing to quote — and it carries
+        // no spec either, so showing it opens the surface a table belongs in.
+        ...(event.presentation.kind === "chart"
+          ? { quoted: event.presentation.spec.caption, chartSpec: event.presentation.spec }
+          : {}),
         // The statement the answer rests on, offered to the editor. A user action is
         // still what applies it, and the run itself sent it nowhere.
         applySql: event.sql,

@@ -205,6 +205,7 @@ yet. A run's steps appear here as they are recorded."*
 | `Plans compared` / `Index recommended` / `Rewrite recommended` | Optimize only |
 | `Profiled <table>` | Assess only: counts and findings |
 | `Result stored` … *"A moment, not a history"* | Operate only: an operational reading, with the caveat that it describes an instant already past |
+| `Answer composed` | The run named one stored result as its answer and said how to show it — as a table, or as a chart of a named type. A chart's caption is the model's own prose and is shown quoted; the columns never appear in the application's own sentence, because they are engine text |
 | `Report composed` | How many claims, each citing evidence |
 | `Closing statement` | The model's closing prose. It cites nothing and claims nothing — a Plan run's whole output, an Agent run's aside |
 | `Stop requested` | You pressed Stop; *"the run takes no further database step; work already in hand, such as a report, still finishes"* |
@@ -216,7 +217,11 @@ quoted block, because database content is untrusted input (`timeline.ts:25-36`).
 Two controls appear under an entry only when there is something to act on **and** the shell can act:
 
 - **Apply to editor** — puts a drafted statement into the editor. Always your click, never automatic.
-- **Show result** — hydrates the stored rows into the ordinary results grid, with a read-only
+- **Show result** — hydrates the stored rows into the ordinary bottom-panel surface: the results
+  grid, the explain view for a plan, or the charts view for an answer the run composed as a chart —
+  drawn as the run said to draw it, and with the ordinary chart controls still yours to change. Which
+  surface opens is what the run recorded, not a guess from the data: a result whose answer said table
+  is shown as a table however chartable it looks. Every one of them carries a read-only
   provenance badge naming the run. It is offered only **while the run is live**: a run's stored rows
   are released when it ends, and the rail says so where the results are listed — *"A run's stored
   rows are released when the run ends, so a result can be shown only while its run is still
@@ -460,8 +465,9 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   that the ending now says it: *"A stop was requested before this ending: the run took no further
   database step, and finished what it already had in hand."*
 - **A run's stored rows do not outlive it**, so a report can outlive the rows its citations point at
-  (`docs/BACKLOG.md` B15). An artifact hydrates the grid and the explain view, not the chart or
-  export surfaces (B14).
+  (`docs/BACKLOG.md` B15). A result opens in the grid, the explain view or the charts view — whichever
+  the run's own record names — and cannot be exported from any of them, because Export writes the
+  tab's own rows (B34).
 - **An interrupted run is resumable but is not resumed on its own** — nothing enqueues a drive yet
   (`docs/BACKLOG.md` B9).
 - **It reads what your connection's role can read.** The declared-target allowlist, the statement

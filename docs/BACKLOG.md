@@ -1283,23 +1283,6 @@ finished run would report zero — which is why the ledger fold was chosen and i
 than papered over. Done when a run that has captured its schema shows the catalog reads it paid for,
 with a test that fails on the current under-count.
 
-### B14. An agent artifact hydrates the grid and the explain view, but not the chart or export surfaces
-
-Deferred by #329 T11, which is the task's own recorded narrowing rather than something discovered
-afterwards. A hydrated artifact reaches the two surfaces its operations produce — the results grid for
-`sql.query.read`, the explain view for `sql.explain.estimate` — and the charts, pivot and dashboard
-views keep rendering the tab's own result while one is shown. Charting a run's rows is a real want and
-a bigger change than it looks: `DataCharts` and `PivotTable` are configured against the columns of the
-result they were opened on, so hydrating them means deciding what happens to a chart configuration
-when the underlying result is replaced and then taken away again.
-
-Export is absent for a different reason, and it is a gap rather than a decision that closes anything:
-`exportResults` in `src/components/Studio.tsx` serializes `currentTab.result`, so offering the Export
-menu over a hydrated view would export the tab's rows while the user is looking at the run's. The
-menu is therefore hidden while an artifact is shown. Done when either surface can take an explicitly
-hydrated result — with the provenance badge still naming the run, since an exported file that came
-from an agent run and is indistinguishable from one the user ran is the thing to avoid.
-
 ### B15. A run's stored results are gone once the run ends, so a report's citations can outlive its rows
 
 Surfaced by #329 T11 rather than introduced by it: `ExecutionArtifactStore` holds results in process
@@ -1612,3 +1595,21 @@ waiting on it.
 
 Done when the event model has settled and somebody is running Studio beside a stack that wants agent
 runs in it. The decisions above are the starting point; #332 holds the full scope.
+
+### B34. A hydrated agent result cannot be exported, because Export serializes the tab's own rows
+
+The half of the old B14 that did not land with the chart surface, restated on its own because the two
+halves were never the same problem. A run's rows now reach the results grid, the explain view and the
+charts view, each with the provenance badge naming the run — but `exportResults` in
+`src/components/Studio.tsx` serializes `currentTab.result`, so offering the Export menu over a
+hydrated view would write the tab's rows to a file while the user is looking at the run's. The menu is
+therefore hidden while an artifact is shown, which is correct and is not the same thing as being able
+to export what is on screen.
+
+The pivot and dashboard views are unhydrated for a related reason and are not part of this: both are
+configured against the columns of the result they were opened on, and neither has a recorded decision
+behind it the way a composed answer has.
+
+Done when the export path can take an explicitly hydrated result — with the file still attributable to
+the run, since an exported file that came from an agent run and is indistinguishable from one the user
+ran is the thing to avoid.

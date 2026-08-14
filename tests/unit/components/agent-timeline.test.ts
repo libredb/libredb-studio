@@ -1481,6 +1481,23 @@ describe("an answer reads as the app's decision, with the model's caption quoted
     expect(view.items[1]?.applySql).toBe(ANSWER_SQL);
   });
 
+  test("a chart answer carries its spec, so the surface is chosen from the record", () => {
+    // The spec travels with the entry rather than being asked of the rows later:
+    // this is what makes the app's chart the one the RUN composed, and it is the
+    // same rule the explain surface follows.
+    const spec = { type: "bar", x: "region", y: ["net_total"], caption: "Net total by region." } as const;
+    const view = foldLedgerEntries([OPENED, answer({ kind: "chart", spec })]);
+
+    expect(view.items[1]?.chartSpec).toEqual(spec);
+  });
+
+  test("a table answer carries no spec, and neither does any other entry", () => {
+    const view = foldLedgerEntries([OPENED, answer({ kind: "table" })]);
+
+    expect(view.items[1]?.chartSpec).toBeUndefined();
+    expect(view.items[0]?.chartSpec).toBeUndefined();
+  });
+
   test("the entry says what did NOT happen: nothing was sent anywhere to be run", () => {
     // `handover` records the outcome, and today it has one value. The sentence is
     // keyed on it as a total record, so the wording cannot outlive its truth.

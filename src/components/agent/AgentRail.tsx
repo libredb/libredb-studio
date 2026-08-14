@@ -11,7 +11,7 @@ import {
   AGENT_REPORT_RESERVE_TURNS,
   AGENT_WORKFLOW_BUDGETS,
 } from "@/lib/agent/execution-policy";
-import type { AgentRunMode, AgentRunStatus, AgentRunWorkflowType } from "@/lib/agent/types";
+import type { AgentChartSpec, AgentRunMode, AgentRunStatus, AgentRunWorkflowType } from "@/lib/agent/types";
 import { cn } from "@/lib/utils";
 import { type AgentBudgetGauge, type AgentTimelineTone, describeFailureReason } from "./timeline";
 import type { AgentPrefillRequest } from "./use-agent-prefill";
@@ -66,8 +66,17 @@ export interface AgentRailProps {
    * Asks the host to show a result the run stored. The rail hands over identifiers
    * and nothing else: the rows are fetched and rendered by the surface that already
    * renders rows, so this component instantiates no grid of its own.
+   *
+   * `chartSpec` rides along for the one entry that has one — an answer the run
+   * composed as a chart — so the host opens the surface the RUN named. It is the
+   * ledger's own record, carried rather than derived: the rail holds no rows and
+   * infers nothing from them.
    */
-  readonly onShowArtifact?: (reference: { readonly runId: string; readonly correlationId: string }) => void;
+  readonly onShowArtifact?: (reference: {
+    readonly runId: string;
+    readonly correlationId: string;
+    readonly chartSpec?: AgentChartSpec;
+  }) => void;
 }
 
 const TONE_CLASSES: Readonly<Record<AgentTimelineTone, string>> = {
@@ -158,15 +167,18 @@ function refusalActionText(planModeOffered: boolean, streamingDisproved: boolean
 function HydrationControls({
   sql,
   artifactId,
+  chartSpec,
   testIdPrefix,
   onApply,
   onShow,
 }: {
   readonly sql: string | undefined;
   readonly artifactId: string | undefined;
+  /** Set only on an answer the run composed as a chart; undefined everywhere else. */
+  readonly chartSpec: AgentChartSpec | undefined;
   readonly testIdPrefix: string;
   readonly onApply: ((sql: string) => void) | undefined;
-  readonly onShow: ((correlationId: string) => void) | undefined;
+  readonly onShow: ((correlationId: string, chartSpec: AgentChartSpec | undefined) => void) | undefined;
 }) {
   const canApply = sql !== undefined && onApply !== undefined;
   const canShow = artifactId !== undefined && onShow !== undefined;
@@ -189,7 +201,7 @@ function HydrationControls({
         <button
           type="button"
           data-testid={`${testIdPrefix}show-result`}
-          onClick={() => onShow(artifactId)}
+          onClick={() => onShow(artifactId, chartSpec)}
           className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] text-zinc-400 hover:bg-white/5 hover:text-zinc-200 transition-colors"
         >
           <TableProperties strokeWidth={1.5} className="w-3 h-3" />
@@ -398,7 +410,11 @@ export function AgentRail({
   const showArtifact =
     onShowArtifact === undefined || activeRunId === null || !LIVE_STATUSES.has(run.timeline.status)
       ? undefined
-      : (correlationId: string) => onShowArtifact({ runId: activeRunId, correlationId });
+      : (correlationId: string, chartSpec: AgentChartSpec | undefined) =>
+          // The key is absent rather than undefined when there is no chart: the
+          // reference is read as a record of what the run said, and a present key
+          // holding nothing is not the same statement as no key at all.
+          onShowArtifact({ runId: activeRunId, correlationId, ...(chartSpec === undefined ? {} : { chartSpec }) });
 
   const content = (
     <div className="flex flex-col h-full min-h-0 bg-[#0a0a0a] text-zinc-100">
@@ -728,6 +744,7 @@ export function AgentRail({
                 <HydrationControls
                   sql={item.applySql}
                   artifactId={item.artifactId}
+                  chartSpec={item.chartSpec}
                   testIdPrefix="agent-"
                   onApply={onApplyStatement}
                   onShow={showArtifact}
@@ -791,6 +808,10 @@ export function AgentRail({
                       <HydrationControls
                         sql={citation.quoted}
                         artifactId={citation.artifactId}
+                        /* A citation is evidence, not a presentation: the decision to
+                           draw a chart belongs to the answer entry, and repeating it
+                           here would offer the same artifact under two accounts. */
+                        chartSpec={undefined}
                         testIdPrefix="agent-citation-"
                         onApply={onApplyStatement}
                         onShow={showArtifact}

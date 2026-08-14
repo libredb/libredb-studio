@@ -1053,12 +1053,22 @@ What each of those says to a user, in the words it actually renders, is
   overrunning statement is cut short. It reports no token budget because none is enforced (B10), and
   two of its figures are honest undercounts (B12, B13).
 
-Results the agent stored **hydrate the existing surfaces**: the results grid and the explain view in
-the bottom panel, carrying a read-only provenance badge that names the run. There is deliberately no
-second editor and no second grid inside the rail, and applying a statement to the editor happens only
-on an explicit user action. Chart and export hydration are not wired (B14), and a run's stored
-results are released when the run ends, so a report can outlive the rows its citations point at
-(B15).
+Results the agent stored **hydrate the existing surfaces**: the results grid, the explain view and the
+charts view in the bottom panel, carrying a read-only provenance badge that names the run. There is
+deliberately no second editor, no second grid and no second chart component inside the rail, and
+applying a statement to the editor happens only on an explicit user action.
+
+**Which surface a result opens in comes from what the run RECORDED, never from what its rows look
+like.** A plan opens the explain view because `sql.explain.estimate` produced it; a chart opens the
+charts view because the run composed its answer as a chart and said in `answer-composed` how to draw
+it. A result whose answer said table is shown as a table however chartable its columns are. The
+specification the model emitted is validated against the artifact's columns before it is recorded, and
+validated again in the browser against the rows actually delivered — two guards, because
+`DataCharts` turns a column it cannot read into `0` rather than into an error, and a chart of the
+wrong column draws a confident flat line rather than failing. A specification that does not survive the
+second check is dropped and the view's own inference draws the chart instead. Exporting a hydrated
+result is not wired (B34), and a run's stored results are released when the run ends, so a report can
+outlive the rows its citations point at (B15).
 
 **Those results live in process memory, and the store that holds them is bounded.** It keeps 180
 entries at once — the largest statement ceiling any workflow may be given (45) times the four
@@ -1262,7 +1272,6 @@ declared-target allowlist, the statement guard and the role's own grants are the
 - **B12** — a statement that failed at the database records no duration, so the meter's database time
   counts completed reads only.
 - **B13** — three spends the ledger never records, so the meter reads low.
-- **B14** — an artifact hydrates the grid and the explain view, but not the chart or export surfaces.
 - **B15** — a run's stored results are released when it ends, so a report's citations can outlive its
   rows.
 - **B16** — the opt-in `@workflow/world-postgres` backend is not present in the standalone payload,
@@ -1288,6 +1297,8 @@ declared-target allowlist, the statement guard and the role's own grants are the
 - **B33** — a run is observable only from its own ledger. There is no OpenTelemetry export and no
   metrics: the record described above is complete, and getting it into a stack the operator already
   runs is designed (#332) and deliberately unbuilt.
+- **B34** — a hydrated result cannot be exported: the Export menu serializes the tab's own rows, so it
+  is hidden while a run's result is shown.
 
 ## Related documentation
 

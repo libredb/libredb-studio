@@ -1700,6 +1700,31 @@ describe("Studio", () => {
     expect(mockSetBottomPanelMode).toHaveBeenCalledWith("results");
   });
 
+  test("an answer composed as a chart opens the charts surface, carrying the run's own chart", async () => {
+    // The rail hands over the presentation the run RECORDED, and the shell switches
+    // to the surface the hydration named. Nothing in this path looks at the rows to
+    // decide that a chart would suit them.
+    const spec = { type: "bar", x: "id", y: ["total"], caption: "Total by id." };
+    mockAgentArtifactFetch(200, ARTIFACT_BODY);
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    await act(async () => {
+      await (
+        capturedAgentRailProps.onShowArtifact as (ref: {
+          runId: string;
+          correlationId: string;
+          chartSpec: unknown;
+        }) => Promise<void>
+      )({ runId: "arun_1", correlationId: "corr_9", chartSpec: spec });
+    });
+
+    expect(mockSetBottomPanelMode).toHaveBeenCalledWith("charts");
+    const hydrated = capturedBottomPanelProps.agentArtifact as { surface: string; chartSpec: unknown };
+    expect(hydrated.surface).toBe("charts");
+    expect(hydrated.chartSpec).toEqual(spec);
+  });
+
   test("a released result is reported to the user rather than hydrated as empty", async () => {
     mockAgentArtifactFetch(410, { error: "This result is no longer held.", reason: "released" });
     const { findByTestId } = render(<Studio />);

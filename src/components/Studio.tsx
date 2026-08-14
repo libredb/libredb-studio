@@ -187,7 +187,10 @@ export default function Studio() {
   // Artifact hydration (#329 T11). The rail cites what a run stored; showing it puts
   // the rows into the bottom panel that already renders rows, and applying a drafted
   // statement puts it into the editor that already holds statements. There is no
-  // second grid and no second editor, and neither happens without a user action.
+  // second grid, no second chart component and no second editor, and none of it
+  // happens without a user action. Which surface opens is the hydration's answer, and
+  // it comes from what the run recorded — the operation for a read or a plan, the
+  // composed answer for a chart — never from the shape of the rows.
   const agentArtifact = useAgentArtifact({
     explainFormat: metadata?.capabilities.explainFormat,
     onShown: (surface) => queryExec.setBottomPanelMode(surface),

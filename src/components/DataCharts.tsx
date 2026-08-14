@@ -22,7 +22,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { toast } from "sonner";
-import { QueryResult } from "@/lib/types";
+import { type AgentChartSpec, QueryResult } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   BarChart3,
@@ -89,6 +89,39 @@ export interface DataAnalysis {
 
 interface DataChartsProps {
   result: QueryResult | null;
+  /**
+   * A chart somebody else chose — today, the one an agent run composed as its answer.
+   *
+   * Optional, and absent for every ordinary caller: a user who ran a query gets the
+   * inferred chart they always got. When it is present the TYPE and the AXES come
+   * from it rather than from `analyzeData`, because the specification's author knows
+   * what was asked and the inference only knows what the data looks like. The
+   * controls stay live: this seeds the view, it does not lock it.
+   */
+  spec?: AgentChartSpec | null;
+}
+
+/**
+ * Whether a specification can be drawn over the result that actually arrived.
+ *
+ * The server refused a specification whose columns the artifact did not have, and
+ * this asks the same question again of the delivered rows — two guards, because they
+ * are checking two different things and the failure mode is silent: `Number(value) || 0`
+ * below turns an absent or non-numeric column into a confident flat line of zeros
+ * rather than into an error. A specification that does not survive this is dropped,
+ * and the inference draws the chart instead.
+ *
+ * `series` is refused outright: this component has no series split — several series
+ * are several y columns — so honouring the rest of a spec that asked for one would
+ * draw a different picture from the one that was specified.
+ */
+function specApplies(spec: AgentChartSpec, analysis: DataAnalysis): boolean {
+  if (spec.series !== undefined) return false;
+  if (!analysis.fields.some((field) => field.name === spec.x)) return false;
+  if (!spec.y.every((column) => analysis.numericFields.includes(column))) return false;
+  // Scatter reads both axes as numbers, so a categorical x is the same failure.
+  if (spec.type === "scatter" && !analysis.numericFields.includes(spec.x)) return false;
+  return true;
 }
 
 export function analyzeField(name: string, values: unknown[]): FieldAnalysis {
@@ -326,9 +359,11 @@ export function groupByDate(dateStr: string, grouping: DateGrouping): string {
   }
 }
 
-export function DataCharts({ result }: DataChartsProps) {
+export function DataCharts({ result, spec = null }: DataChartsProps) {
   const chartRef = useRef<HTMLDivElement>(null);
   const analysis = useMemo(() => analyzeData(result), [result]);
+  /** The supplied specification, or null when there is none this result can carry. */
+  const appliedSpec = useMemo(() => (spec !== null && specApplies(spec, analysis) ? spec : null), [spec, analysis]);
 
   const [chartType, setChartType] = useState<ChartType>(analysis.suggestedChartType);
   const [xAxis, setXAxis] = useState<string>("");
@@ -374,6 +409,20 @@ export function DataCharts({ result }: DataChartsProps) {
   // Initialize axis selections when analysis changes
   React.useEffect(() => {
     if (analysis.isVisualizable) {
+      /*
+        A specification that survived validation seeds the view instead of the
+        inference: the type is the one its author chose, and the axes are the columns
+        it named. The controls are untouched, so the user can still take the chart
+        somewhere else from here.
+      */
+      if (appliedSpec !== null) {
+        setChartType(appliedSpec.type);
+        setXAxis(appliedSpec.x);
+        setYAxis([...appliedSpec.y]);
+        // Scatter draws x against ONE other column, held separately from `yAxis`.
+        if (appliedSpec.type === "scatter") setScatterY(appliedSpec.y[0]);
+        return;
+      }
       setChartType(analysis.suggestedChartType);
 
       const defaultX = analysis.categoricalFields[0] || analysis.dateFields[0] || analysis.fields[0]?.name || "";
@@ -386,7 +435,7 @@ export function DataCharts({ result }: DataChartsProps) {
         setScatterY(analysis.numericFields[1]);
       }
     }
-  }, [analysis]);
+  }, [analysis, appliedSpec]);
 
   const chartData = useMemo(() => {
     if (!result?.rows) return [];

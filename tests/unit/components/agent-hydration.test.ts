@@ -85,6 +85,45 @@ describe("hydrateAgentArtifact", () => {
     expect(hydrated?.explainPlan).toBeNull();
   });
 
+  /**
+   * The chart surface is chosen the same way the explain surface is: from what the
+   * RUN recorded, never from what the rows look like. The run's `answer-composed`
+   * event says how its answer is to be drawn, and the timeline carries that decision
+   * to this function; a result nobody said to chart is a table however chartable it
+   * looks.
+   */
+  describe("the chart surface comes from the answer's presentation", () => {
+    const SPEC = { type: "bar", x: "id", y: ["total"], caption: "Total by id." } as const;
+
+    test("an answer recorded as a chart hydrates the charts surface, carrying its spec", () => {
+      const hydrated = hydrateAgentArtifact(payload(), "postgres-json", SPEC);
+
+      expect(hydrated?.surface).toBe("charts");
+      expect(hydrated?.chartSpec).toEqual(SPEC);
+      // A chart is drawn from rows, not from a plan, so nothing is sent to the
+      // explain view alongside it.
+      expect(hydrated?.explainPlan).toBeNull();
+    });
+
+    test("a chart-shaped result whose answer said table renders as a table", () => {
+      // The rows below are exactly what the inference in `DataCharts` would happily
+      // chart. The run said table, so the app shows a table: this is the rule that
+      // stops the surface being guessed from the data's shape.
+      const hydrated = hydrateAgentArtifact(payload(), "postgres-json");
+
+      expect(hydrated?.surface).toBe("results");
+      expect(hydrated?.chartSpec).toBeNull();
+    });
+
+    test("an artifact shown without any answer behind it is unaffected", () => {
+      // Every existing caller passes no spec, and asks for what it always got.
+      const hydrated = hydrateAgentArtifact(payload({ operationId: "sql.explain.estimate" }), undefined);
+
+      expect(hydrated?.surface).toBe("results");
+      expect(hydrated?.chartSpec).toBeNull();
+    });
+  });
+
   test("a payload without a readable result is refused rather than rendered empty", () => {
     expect(hydrateAgentArtifact(payload({ result: null }), "postgres-json")).toBeNull();
     expect(hydrateAgentArtifact(payload({ result: { rows: "nope", fields: [] } }), "postgres-json")).toBeNull();

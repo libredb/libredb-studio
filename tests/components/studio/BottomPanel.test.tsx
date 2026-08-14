@@ -86,10 +86,16 @@ mock.module("@/components/SavedQueries", () => ({
   },
 }));
 
+// Captured for the same reason the grid's props are: the charts view can be handed
+// the tab's own result or a run's, with or without the chart the run composed, and
+// only the props say which.
+let capturedDataChartsProps: Record<string, unknown> = {};
+
 mock.module("@/components/DataCharts", () => ({
-  DataCharts: () => {
+  DataCharts: (props: Record<string, unknown>) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
+    capturedDataChartsProps = props;
     return React.createElement("div", { "data-testid": "datacharts" }, "DataCharts");
   },
 }));
@@ -661,14 +667,39 @@ describe("BottomPanel", () => {
       expect(capturedVisualExplainProps.query).toBe("SELECT 1");
     });
 
+    test("an answer composed as a chart is drawn from the run's rows, as the run said to draw it", () => {
+      const spec = { type: "bar", x: "id", y: ["total"], caption: "Total by id." };
+      const props = hydratedProps({
+        mode: "charts",
+        agentArtifact: {
+          runId: "arun_1",
+          correlationId: "corr_answer",
+          operationId: "sql.query.read",
+          surface: "charts",
+          result: ARTIFACT_RESULT,
+          explainPlan: null,
+          chartSpec: spec,
+        },
+      });
+      const { getByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      // The same provenance the grid carries: these rows came from a run, not from
+      // the statement in the editor above them.
+      expect(getByTestId("agent-provenance").textContent).toContain("arun_1");
+      expect(capturedDataChartsProps.result).toEqual(ARTIFACT_RESULT);
+      expect(capturedDataChartsProps.spec).toEqual(spec);
+    });
+
     test("a hydrated result reaches only the surface it was hydrated into", () => {
-      // Chart hydration is deferred (`docs/BACKLOG.md`), so the charts view keeps
-      // showing the tab's own result rather than silently charting the run's.
+      // A result hydrated into the grid is not charted behind the user's back: the
+      // charts view keeps showing the tab's own result, with no specification.
       const props = hydratedProps({ mode: "charts" });
       const { queryByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
 
       expect(queryByTestId("agent-provenance")).toBeNull();
       expect(queryByTestId("datacharts")).toBeTruthy();
+      expect(capturedDataChartsProps.result).toEqual(TAB_RESULT);
+      expect(capturedDataChartsProps.spec).toBeNull();
     });
 
     test("without an artifact nothing about the panel changes", () => {

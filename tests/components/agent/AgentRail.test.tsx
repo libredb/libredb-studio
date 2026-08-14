@@ -1711,6 +1711,37 @@ describe("AgentRail", () => {
       expect(onShowArtifact).toHaveBeenCalledWith({ runId: "arun_1", correlationId: "corr_9" });
     });
 
+    test("an answer composed as a chart offers its result WITH the chart the run composed", async () => {
+      // The host opens the surface the run named, so the decision travels with the
+      // ask. Nothing here reads the rows: the rail has none.
+      const spec = { type: "bar", x: "region", y: ["net_total"], caption: "Net total by region." };
+      mockAgentFetch([
+        OPENED_LINE,
+        STARTED_LINE,
+        `${JSON.stringify({
+          kind: "event",
+          event: {
+            kind: "answer-composed",
+            atMs: 1_003,
+            sql: "SELECT region, SUM(net_total) AS net_total FROM orders GROUP BY region",
+            artifact: {
+              correlationId: "corr_9",
+              runId: "arun_1",
+              operationId: "sql.query.read",
+              summary: { rowCount: 4, columnNames: ["region", "net_total"], elapsedMs: 12 },
+            },
+            presentation: { kind: "chart", spec },
+            handover: "none",
+          },
+        })}\n`,
+      ]);
+      const onShowArtifact = mock(() => {});
+      const { findAllByTestId } = await runWith({ onShowArtifact });
+
+      fireEvent.click((await findAllByTestId("agent-show-result"))[0]);
+      expect(onShowArtifact).toHaveBeenCalledWith({ runId: "arun_1", correlationId: "corr_9", chartSpec: spec });
+    });
+
     test("a drafted statement offers to be applied, and applies nothing until the user asks", async () => {
       mockAgentFetch([OPENED_LINE, STARTED_LINE, DRAFTED_LINE]);
       const onApplyStatement = mock(() => {});

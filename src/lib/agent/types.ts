@@ -43,7 +43,7 @@
 
 import type { Role } from "@/lib/auth";
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
-import type { TableSchema } from "@/lib/types";
+import type { AgentChartSpec, TableSchema } from "@/lib/types";
 import type { AgentGoalShortfall, AgentGoalVerifierId } from "./goal-verifier";
 import type { AgentPlanSummary } from "./plan-summary";
 import type { AgentTableProfile } from "./table-profile";
@@ -221,38 +221,15 @@ export interface AgentReportClaim {
 }
 
 /**
- * How one result is to be DRAWN. A specification, never a picture.
+ * How one result is to be DRAWN — declared in `src/lib/types.ts`, and re-exported
+ * here under the name the run's own contract uses.
  *
- * Every column it names is checked against the artifact's real columns before the
- * event carrying it is written, because the component that renders it does not fail
- * on a column holding no numbers: `Number(value) || 0` (`src/components/DataCharts.tsx`)
- * turns one into a confident flat line of zeros. A refused spec costs one turn; an
- * unvalidated one puts this application's frame around a wrong picture.
- *
- * What is absent is as load-bearing as what is here:
- *
- * - **`histogram` is excluded**, though `DataCharts` offers it. It bins raw values
- *   in the browser, so the picture would show something the artifact does not
- *   contain. A histogram wanted is a bucketing the SQL should do — and then it is a
- *   bar chart of an aggregate the run can cite.
- * - **No aggregation field.** `DataCharts` can aggregate; doing it here would be a
- *   second aggregation nobody recorded and nothing can check. Aggregation belongs in
- *   the statement, where it is on the ledger.
- * - **No colours, no titles, no sizes.** Presentation belongs to the app. `caption`
- *   is the model's own prose and is rendered as quoted model prose, never as a
- *   sentence the app is saying.
+ * It is declared OUTSIDE the agent tree for a mechanical reason: the component that
+ * draws it (`DataCharts`) ships in the published package, and no agent module may be
+ * reachable from that package's declarations (`tests/unit/agent-package-boundary.test.ts`).
+ * One declaration two trees can name beats two declarations that can disagree.
  */
-export interface AgentChartSpec {
-  readonly type: "bar" | "line" | "area" | "pie" | "scatter" | "stacked-bar";
-  /** One column of the artifact, by the name the result actually carries. */
-  readonly x: string;
-  /** One or more columns of the artifact. Numeric in the delivered rows, or refused. */
-  readonly y: readonly [string, ...string[]];
-  /** Optional series split — one column, for the stacked and multi-line shapes. */
-  readonly series?: string;
-  /** The model's own words about what the chart shows. Rendered quoted. */
-  readonly caption: string;
-}
+export type { AgentChartSpec } from "@/lib/types";
 
 /**
  * The schema inventory a run reasons over, plus the fingerprint that decides
