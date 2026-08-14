@@ -996,8 +996,8 @@ describe("foldLedgerEntries — what a timeline item offers to hydrate", () => {
 
 describe("a plan comparison reads as a comparison, and says what those plans are", () => {
   const comparison = (
-    before: { access: string; estimatedRows?: number; estimatedCost?: number },
-    after: { access: string; estimatedRows?: number; estimatedCost?: number },
+    before: { access: string; estimatedRows?: number; estimatedCost?: number; uninterpretedStep?: boolean },
+    after: { access: string; estimatedRows?: number; estimatedCost?: number; uninterpretedStep?: boolean },
   ): AgentLedgerEntry =>
     event({
       kind: "event",
@@ -1032,6 +1032,21 @@ describe("a plan comparison reads as a comparison, and says what those plans are
 
     expect(view.items[1]?.detail).toContain("Estimates only");
     expect(view.items[1]?.detail).toContain("EXPLAIN ANALYZE is policy-denied");
+  });
+
+  test("a partly-read plan is described exactly as a fully-read one of the same access", () => {
+    // `uninterpretedStep` was added for the auto-execute gate (#373) and this is the
+    // constraint that came with it: a comparison is about how two statements differ in
+    // the access they were read to have, and whether one of them also sorted is not a
+    // difference this reading measured. So the sentence is the one it was before the
+    // field existed, and the field is read by the gate alone.
+    const flagged = foldLedgerEntries([
+      OPENED,
+      comparison({ access: "full-scan", uninterpretedStep: true }, { access: "index", uninterpretedStep: true }),
+    ]);
+    const plain = foldLedgerEntries([OPENED, comparison({ access: "full-scan" }, { access: "index" })]);
+
+    expect(flagged.items[1]?.detail).toBe(plain.items[1]?.detail ?? "");
   });
 
   test("an engine that reports no estimates gets no parenthetical, rather than a zero", () => {

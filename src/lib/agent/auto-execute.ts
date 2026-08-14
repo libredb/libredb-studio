@@ -22,7 +22,9 @@
  *     close to free and it removes most of the risk class on its own, because the
  *     agent path REFUSES rather than truncates: an artifact exists only for a
  *     statement that provably came back inside the row, byte and time ceilings.
- *  2. **The plan reads as safe**, per engine, with unknown resolving to risky.
+ *  2. **The plan reads as safe**, per engine, with unknown resolving to risky — and
+ *     so does a plan the server could only PARTLY read, which is the same rule applied
+ *     one step down (`uninterpretedStep`, #373).
  *  3. **The run measured that execution as quick** — `artifact.summary.elapsedMs`,
  *     which is already on the ledger and costs nothing to read.
  *
@@ -105,6 +107,22 @@ export type AgentAutoExecuteDecision =
  * interpret says nothing about how the statement reaches its rows, and "said
  * nothing" must not read as "said it was cheap".
  *
+ * That guarantee used to hold only when NO step was recognised, which is the narrower
+ * thing (#373 review). A plan can be PARTLY read — `SEARCH t USING INDEX ix` beside a
+ * step this build has never seen — and `access` then describes the recognised steps
+ * while saying nothing at all about the rest. `summarisePlan` now carries that as
+ * `uninterpretedStep`, and it is refused HERE, before either engine's rule, because
+ * the sentence above is about a reading rather than about a dialect.
+ *
+ * Only the SQLite reading sets the flag; PostgreSQL's does not, and that asymmetry is
+ * argued in `plan-summary.ts` rather than assumed. The short of it: PostgreSQL reports
+ * a numeric `Total Cost` for the whole plan that condition 2 already weighs, and it
+ * preempts a statement that overruns, so a node this server did not recognise is
+ * bounded by something other than the reading. On SQLite the reading is the only
+ * evidence there is. The check below is written over the summary rather than inside
+ * the SQLite branch so that a reading which later starts reporting the flag for another
+ * engine is refused by default rather than admitted by omission.
+ *
  * SQLite is stricter than PostgreSQL and deliberately so. PostgreSQL reports a cost
  * that can be weighed and preempts a statement that overruns; SQLite reports no cost
  * and no row estimate at all, does not preempt, and a read that runs long blocks
@@ -114,6 +132,7 @@ export type AgentAutoExecuteDecision =
  */
 function planIsSafe(plan: AgentAutoExecutePlan | undefined): boolean {
   if (plan === undefined) return false;
+  if (plan.summary.uninterpretedStep === true) return false;
   if (plan.format === "postgres-json") {
     if (plan.summary.access !== "index" && plan.summary.access !== "mixed") return false;
     return plan.summary.estimatedCost !== undefined && plan.summary.estimatedCost <= AGENT_AUTO_EXECUTE_MAX_PLAN_COST;
@@ -131,7 +150,7 @@ const CONDITION_WARNINGS: Readonly<Record<Exclude<AgentAutoExecuteCondition, "me
     "not-executed":
       "Not run for you: this run never executed this exact statement itself, so this one is yours to run.",
     "plan-risky":
-      "Not run for you: the plan for this statement reads as a full table read, or the engine gave this server no plan it could weigh, so this one is yours to run.",
+      "Not run for you: the plan for this statement reads as a full table read, or the engine gave this server no plan it could weigh, or the plan carried a step this server could not read, so this one is yours to run.",
   },
 );
 

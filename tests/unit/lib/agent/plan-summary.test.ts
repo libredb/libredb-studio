@@ -134,6 +134,68 @@ describe("SQLite query plans", () => {
   });
 });
 
+/**
+ * The step this reading did not weigh has to survive into the summary.
+ *
+ * Found by review on #373. `access` is a reading of the steps that WERE recognised, so
+ * a plan of `SEARCH …` plus a step nothing here interprets reported `index` — an
+ * unqualified "every relation is reached through an index" about a plan half of which
+ * had not been read. The auto-execute gate takes `index` on SQLite as its entire
+ * condition 2, so that plan was handed to the user's editor to run with no timeout on
+ * the strength of a reading that had skipped a step.
+ *
+ * The signal is carried separately from `access` rather than folded into `unknown`,
+ * because the two say different things and one consumer needs each: a comparison still
+ * wants to know that the recognised steps were indexed, and only the gate refuses on
+ * the part that was not read.
+ */
+describe("a SQLite step this reading cannot interpret is preserved, never silently dropped", () => {
+  const step = (detail: string) => ({ id: 2, parent: 0, notused: 0, detail });
+
+  test("a plan whose every step was read carries no uninterpreted signal at all", () => {
+    expect(summarisePlan("sqlite-queryplan", [step("SEARCH t USING INDEX ix (a=?)")])).toEqual({ access: "index" });
+    expect(summarisePlan("sqlite-queryplan", [step("SCAN employee")])).toEqual({ access: "full-scan" });
+  });
+
+  test("a sort beside an indexed seek is still an indexed access, and is flagged as not fully read", () => {
+    const summary = summarisePlan("sqlite-queryplan", [
+      step("SEARCH t USING INDEX ix (a=?)"),
+      step("USE TEMP B-TREE FOR ORDER BY"),
+    ]);
+
+    expect(summary.access).toBe("index");
+    expect(summary.uninterpretedStep).toBe(true);
+  });
+
+  test("a row carrying no detail at all is a step that was not read", () => {
+    const summary = summarisePlan("sqlite-queryplan", [step("SCAN employee"), { id: 4, parent: 0, notused: 0 }]);
+
+    expect(summary.access).toBe("full-scan");
+    expect(summary.uninterpretedStep).toBe(true);
+  });
+
+  test("a plan of nothing but uninterpreted steps is unknown AND flagged", () => {
+    const summary = summarisePlan("sqlite-queryplan", [step("USE TEMP B-TREE FOR ORDER BY")]);
+
+    expect(summary).toEqual({ access: "unknown", uninterpretedStep: true });
+  });
+
+  test("PostgreSQL sets no such signal: its cost is weighed and its engine preempts", () => {
+    // Deliberate, and argued in `auto-execute.ts` rather than assumed here. A PG plan
+    // is full of nodes this reading does not tally — `Sort`, `Hash Join`, `Aggregate` —
+    // none of which is a relation access, and flagging them would close the gate on
+    // every plan the engine can produce while removing no hazard the numeric `Total
+    // Cost` ceiling and the engine's own statement timeout do not already bound.
+    const summary = summarisePlan(
+      "postgres-json",
+      pgPlan({ "Node Type": "Sort", "Total Cost": 12, Plans: [{ "Node Type": "Index Scan" }] }),
+    );
+
+    expect(summary.access).toBe("index");
+    expect(summary.uninterpretedStep).toBeUndefined();
+  });
+});
+
 describe("an engine with no verified reading", () => {
   test("is unknown rather than read by a rule nobody checked against it", () => {
     // Phase 1 is PostgreSQL and SQLite. A third engine's plan grammar has not been

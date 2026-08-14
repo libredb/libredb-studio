@@ -137,6 +137,47 @@ describe("condition 2: the plan gate, per engine, with unknown resolving to risk
     }
   });
 
+  test("SQLite: an indexed plan carrying a step the server could not interpret is risky", () => {
+    // The fail-closed rule, at the level the reading actually failed at. `index` here
+    // is a true statement about the steps that WERE read, and the plan also contained
+    // one that was not — a sort, a temporary structure, something this build has never
+    // seen. "Said nothing about that step" must not read as "said it was cheap", which
+    // is the same sentence `unknown` is refused under one line above.
+    const decision = evaluateAutoExecute({
+      ...passing(),
+      plan: { format: "sqlite-queryplan", summary: { access: "index", uninterpretedStep: true } },
+    });
+
+    expect(decision).toMatchObject({ condition: "plan-risky" });
+  });
+
+  test("SQLite: the same plan without that step is the one that passes", () => {
+    // The pair matters: without this the test above would also pass against a gate
+    // that had simply stopped auto-executing on SQLite entirely.
+    const decision = evaluateAutoExecute({
+      ...passing(),
+      plan: { format: "sqlite-queryplan", summary: { access: "index" } },
+    });
+
+    expect(decision).toEqual({ handover: "auto-executed" });
+  });
+
+  test("PostgreSQL: the same flag would refuse there too, though nothing sets it", () => {
+    // The gate reads the signal before it reaches either engine's rule, so a reading
+    // that starts reporting it for PostgreSQL is refused rather than newly admitted.
+    // `summarisePlan` does not set it for that engine today, and `plan-summary.ts`
+    // pins that with the reasoning.
+    const decision = evaluateAutoExecute({
+      ...passing(),
+      plan: {
+        format: "postgres-json",
+        summary: { access: "index", estimatedCost: 10, uninterpretedStep: true },
+      },
+    });
+
+    expect(decision).toMatchObject({ condition: "plan-risky" });
+  });
+
   test("a dialect no one has verified is risky rather than read by another engine's rule", () => {
     const decision = evaluateAutoExecute({
       ...passing(),
