@@ -413,6 +413,22 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
       return startedAtMs + (driveOptions.spentMs ?? 0);
     };
 
+    /*
+      The workflow this run was OPENED as, read back off the ledger — which is what
+      `driveAgentRun` does (`src/lib/agent/runtime.ts`) and the reason this is a read
+      rather than a closure over `record`: a drive is a fresh process's view of a
+      durable run, so the budget it enforces has to come from the same place that
+      process would find it.
+
+      It was `AGENT_WORKFLOW_BUDGETS.investigation` for every drive, whatever the run
+      was for (#373 review), so a `data-analysis` eval ran against 450 s where
+      production gives it 900 s. Nothing failed; the scenarios were simply measured
+      against a bound no run of that workflow has.
+    */
+    const persisted = await service.status(record.runId);
+    if (persisted === null) throw new Error(`run ${record.runId} vanished between opening and driving it`);
+    const budget = AGENT_WORKFLOW_BUDGETS[persisted.record.workflowType];
+
     const resources: AgentToolResources = {
       connection: engine.connection,
       capabilities: engine.capabilities,
@@ -420,7 +436,7 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
       scope: createTargetScope(engine.connection.id),
       tracker,
       artifacts,
-      deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs, clock),
+      deadline: new AgentRunDeadline(budget.runDeadlineMs, clock),
       repairs: new AgentRepairLedger(),
       acquireProvider: async () => {
         const failure = options.acquireFails?.();

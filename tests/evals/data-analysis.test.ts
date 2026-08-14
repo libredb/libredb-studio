@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
 import { type Turn, callsTool, correlationIdIn, reportOn } from "../isolated/fixtures/agent-scripted-model";
 import { chatToolCallStream } from "../isolated/fixtures/agent-transport";
+import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 
 /**
  * The `data-analysis` template, driven end to end (§4.4 of
@@ -229,5 +230,43 @@ describe("§4.4 case 3: auto-execute unticked", () => {
 
     expect(without.verdict).toEqual(with_.verdict);
     expect(with_.verdict.outcome).toBe("answered");
+  });
+});
+
+/**
+ * The harness has to bound a run the way the SERVER bounds it (#373 review).
+ *
+ * `driveAgentRun` reads the workflow off the persisted record and hands
+ * `AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs` to the deadline. The harness
+ * opened workflow-specific runs and then gave every drive the INVESTIGATION deadline,
+ * so a `data-analysis` eval ran against 450 s where production gives it 900 s — a
+ * third of this workflow's wall clock missing from every scenario measured here, and
+ * the deadline arriving in evals at a spend no real run would have died at.
+ */
+describe("a drive is bounded by its own workflow's wall clock, as production bounds it", () => {
+  /** Past `investigation`'s deadline, comfortably inside `data-analysis`'s. */
+  const BETWEEN =
+    (AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs + AGENT_WORKFLOW_BUDGETS["data-analysis"].runDeadlineMs) / 2;
+
+  test("an analysis run still has time at a spend that would have ended an investigation", async () => {
+    const run = await open();
+
+    const drive = await run.drive([READS, asChart, reportOn("The north region brought in the most revenue.")], {
+      spentMs: BETWEEN,
+    });
+
+    expect(drive.stopReason).toBe("report-composed");
+    expect(drive.verdict.outcome).toBe("answered");
+  });
+
+  test("and the same spend does end an investigation, so the deadline is real", async () => {
+    // The pair is what makes the assertion above about the WORKFLOW rather than about
+    // the clock never advancing.
+    const run = await openEvalRun({ engine: "postgres", objective: "Which department has the most employees?" });
+    runs.push(run);
+
+    const drive = await run.drive([READS, reportOn("Engineering has the most employees.")], { spentMs: BETWEEN });
+
+    expect(drive.stopReason).toBe("deadline-exceeded");
   });
 });
