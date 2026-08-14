@@ -558,7 +558,8 @@ run for an answer arrives separately, and the tool is ready for it.
 | `artifact` | The model names the artifact id. Checked against this run's own ledger the way a citation is. |
 | `sql` | **The ledger**, never the model: `tool-completed` says which step produced the result and `statement-drafted` says what that step asked. |
 | `presentation` | The model: `{"kind":"table"}` or `{"kind":"chart","spec":{…}}`. |
-| `handover` | The run. One value today — `none` — because nothing in this runtime sends a statement anywhere. |
+| `handover` | The run, from its own record and the gate below: `none`, `applied` or `auto-executed`. |
+| `handoverWarning` | The gate, when it declined. Present exactly when `handover` is `applied`. |
 
 **A chart spec is a specification, never a picture**: a type from a closed list
 (`bar`, `line`, `area`, `pie`, `scatter`, `stacked-bar`), an `x`, a non-empty `y`, an optional
@@ -597,6 +598,71 @@ refusals say so in their own text, and a table answer is accepted with no chart 
 **And a chart is never a substitute for a claim.** The presentation shows an artifact, the artifact is
 the evidence, and the claim is the answer — a run that drew a picture and reported nothing has drawn a
 picture. The tool's own reply says so and points at `compose_report`.
+
+### Handing the answer to the editor (auto-execute)
+
+**Auto-execute never produces the answer.** The answer is always an artifact the run already read,
+under the read-only profile, inside the statement ceiling, counted against the run's budget and
+written to its ledger. What the setting adds is one further thing: the same statement is also placed
+in the user's editor **and run there** — on the user's own connection, at the editor's 500-row limit
+and with no statement timeout, no policy evaluation and no audit event, because that route is not one
+this runtime owns.
+
+**The setting lives on the run record** (`AgentRunRecord.autoExecute`), beside `mode` and
+`workflowType`, and for the same two reasons: a resumed drive must behave like the drive that died,
+and no later request may widen a run once it is open. `POST /api/agent/runs` is the only place it is
+decided — absent means `false`, and a value that is not a boolean is refused rather than coerced.
+
+**The gate is three conditions, all of which must hold** (`src/lib/agent/auto-execute.ts`, a pure
+function enumerated over all eight combinations by its test):
+
+1. **The run executed this exact statement itself.** A final statement wider than anything the run
+   ran is never auto-executed. This is close to free and it excludes row explosion outright, because
+   the agent path refuses rather than truncates: an artifact exists only for a statement that
+   provably came back inside the row, byte and time ceilings. A statement the run only *explained* is
+   not a statement it executed.
+2. **The plan reads as safe**, per engine, with unknown resolving to risky. **PostgreSQL:** the
+   access path is `index` or `mixed` — never `full-scan`, never `unknown` — and the reported
+   `estimatedCost` is at most 50 000. **SQLite:** every step a `SEARCH`; any `SCAN`, a mixed plan or
+   an unreadable one is risky. SQLite is stricter on purpose: `EXPLAIN QUERY PLAN` reports no cost
+   and no row estimate to weigh, the engine does not preempt a read that overruns, and a runaway read
+   blocks writers and this application until it finishes. Any other dialect is risky, the same
+   fail-closed posture `summarisePlan` takes.
+3. **The measured elapsed time**, `artifact.summary.elapsedMs` for that very result, at most 2 000 ms.
+   Already on the ledger, so it costs nothing to read.
+
+The plan comes from an `inspect_plan` **this run performed** on the answer's own statement, joined to
+it through the ledger the way `compare_plans` joins its two sides. Where the run holds none the gate
+reads risky, so a run opened with the setting is told in its opening rules to inspect the plan of the
+statement that IS the answer before presenting it — one statement out of the workflow's budget, which
+is the price §2.4.0 names. The server does not take that plan on the run's behalf: a statement
+executed there would carry no `tool-invoked` and no `tool-completed`, and the ledger invariant is that
+everything a run did is in its ledger.
+
+**Both thresholds are approved and pending live measurement.** 2 000 ms and 50 000 were approved on
+2026-08-14 as the starting point a measurement then confirms or corrects; no run has been measured
+against either reference engine yet. The reasoning behind them: the run's own statement ceiling is
+10 s, so a 2 s reading leaves roughly a 5x margin inside a ceiling the editor does not have; and
+50 000 planner units at the default `seq_page_cost = 1.0` is roughly 400 MB of sequential reading,
+seconds rather than minutes. Neither is a time — a planner cost is in arbitrary units calibrated by
+`seq_page_cost` / `random_page_cost` and by how recently `ANALYZE` ran — which is exactly why it is
+not the only condition.
+
+**Any single condition failing records `handover: "applied"` with a warning naming it** — never a
+silent skip. A user who ticked the box and finds the statement sitting unrun has to be told that was
+the feature working, so the warning is in the timeline entry, in the run's own register: *"Not run for
+you: … so this one is yours to run."*
+
+**No `LIMIT` is ever injected.** The statement is handed over verbatim. The agent's caps refuse rather
+than truncate, which is what lets a delivered result be trusted as complete; an injected `LIMIT` would
+break that invisibly, because a bar chart of 200 of 4 000 regions looks like a complete bar chart and
+no number on it is wrong. A model-written `ORDER BY … LIMIT 10` is honest, because the model can then
+say "the top ten" in its claim.
+
+**`auto-executed` records that the run handed the statement over, and nothing more.** The editor's own
+execution produces no ledger event and cannot: it happens in the browser against a route the agent
+does not own. The timeline entry says so in as many words — what the editor did is visible in the
+editor.
 
 ### What the fence is proved to hold against
 

@@ -159,6 +159,28 @@ describe("AgentRunStore — opening a run", () => {
     expect(error.message).toContain(record.runId);
   });
 
+  test("opens with auto-execute off when nothing asked for it", async () => {
+    const { store } = storeAt();
+
+    const record = await store.openRun(OPEN_INPUT);
+
+    // Absent means off, which is the only safe reading: the setting gives away the
+    // editor's time limit, and a caller that said nothing has asked for nothing.
+    expect(record.autoExecute).toBe(false);
+  });
+
+  test("records the auto-execute setting on the run, where nothing later can widen it", async () => {
+    const dataDir = freshDataDir();
+    const { store } = storeAt(dataDir);
+
+    const record = await store.openRun({ ...OPEN_INPUT, autoExecute: true });
+
+    expect(record.autoExecute).toBe(true);
+    // Re-read through a second store over the same files: a resumed drive reads the
+    // value the drive that died was opened with, like `mode` and `workflowType`.
+    expect((await storeAt(dataDir).store.read(record.runId))?.record.autoExecute).toBe(true);
+  });
+
   test("reads back nothing for a run that was never opened", async () => {
     const { store } = storeAt();
     expect(await store.read("arun_00000000000000000000000000000000")).toBeNull();

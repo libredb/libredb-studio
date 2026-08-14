@@ -73,7 +73,12 @@ export type AgentRunMode = "planning" | "agent";
  * later request cannot widen a run after it opens — not because a filter rejects one,
  * but because there is no parameter through which a workflow could arrive twice.
  */
-export type AgentRunWorkflowType = "investigation" | "query-optimization" | "database-assessment" | "operations";
+export type AgentRunWorkflowType =
+  | "investigation"
+  | "query-optimization"
+  | "database-assessment"
+  | "operations"
+  | "data-analysis";
 
 /**
  * What a run is for when nothing said.
@@ -431,16 +436,25 @@ export type AgentRunEvent =
        */
       readonly presentation: { readonly kind: "table" } | { readonly kind: "chart"; readonly spec: AgentChartSpec };
       /**
-       * Whether the run also sent the statement somewhere to be run.
+       * Whether the run also sent the statement to the editor, and how far.
        *
-       * ONE value today, and that is the whole truth rather than a placeholder:
-       * nothing in this runtime hands a statement to anything, so `none` is the only
-       * outcome that can be recorded and the field states it rather than implying a
-       * choice was made. The union widens with the gate that produces the other
-       * outcomes, and every reader keyed on it as a total record is then made to
-       * decide what they mean.
+       * The OUTCOME of the setting, not the setting: a run opened with auto-execute
+       * whose gate declined records `applied`, so a reader can see both that the
+       * setting was on and that the gate said no — which is exactly what someone
+       * asking "why didn't it run" needs. `none` is a run that was never opened with
+       * it at all.
+       *
+       * `auto-executed` records that the run HANDED THE STATEMENT OVER. What the
+       * editor then did with it is the editor's own business, against a route this
+       * runtime does not own, and it produces no ledger event because it cannot.
        */
-      readonly handover: "none";
+      readonly handover: "none" | "applied" | "auto-executed";
+      /**
+       * Why the gate declined, in the run's own words. Present exactly when
+       * `handover` is `applied`: a refusal that says nothing is indistinguishable
+       * from the feature being broken.
+       */
+      readonly handoverWarning?: string;
     })
   | (AgentRunEventBase & {
       readonly kind: "run-finished";
@@ -505,6 +519,20 @@ export interface AgentRunRecord {
    * value, and no reader has to know which generation of writer produced its run.
    */
   readonly workflowType: AgentRunWorkflowType;
+  /**
+   * Whether this run may hand its answer's statement to the editor to be RUN there,
+   * subject to the gate in `auto-execute.ts`.
+   *
+   * On the RECORD, beside `mode` and `workflowType`, for the two reasons those are:
+   * a resumed drive must behave the same as the drive that died, and no later
+   * request may widen a run after it has opened. The route is the only place it is
+   * decided, and there is no route that changes it.
+   *
+   * Required here and optional on the ledger header, the same compatibility story
+   * `workflowType` has: a header written before the field existed folds to `false`,
+   * which is what was true of every run written then.
+   */
+  readonly autoExecute: boolean;
   readonly status: AgentRunStatus;
   readonly actor: AgentRunActor;
   /** The single connection this run may reach; the server builds the scope from it. */

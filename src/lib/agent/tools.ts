@@ -79,6 +79,7 @@ import {
 } from "./execution-policy";
 import type { AgentRepairDenyCode, AgentRepairLedger } from "./repair-ledger";
 import { fingerprintStatement } from "./repair-ledger";
+import { evaluateAutoExecute } from "./auto-execute";
 import { summarisePlan } from "./plan-summary";
 import {
   MAX_PROFILE_COLUMNS,
@@ -469,12 +470,13 @@ const showAs = (presentation: AgentAnswerPresentation): string => JSON.stringify
  * the loop from the other side — it lifts every literal object out of the description
  * and parses it through this tool's own `inputSchema`.
  *
- * Module-private, unlike the evidence contract, and only because nothing outside this
- * file says it yet: the two places that will — a workflow's opening rules and its
- * goal verdict — arrive with the workflow. It is exported the moment a second file
- * states it, never copied into one.
+ * Exported, and it was module-private until the `data-analysis` workflow arrived:
+ * that workflow's opening rules state the contract too, and the whole point of one
+ * string is that the description and the rules cannot tell a model two different
+ * bars for one tool. It is stated in a second file by importing this, never by
+ * copying it.
  */
-const AGENT_ANSWER_CONTRACT = [
+export const AGENT_ANSWER_CONTRACT = [
   `"presentation" is ONE object: ${showAs({ kind: "table" })} for a table,`,
   `or ${showAs({
     kind: "chart",
@@ -625,11 +627,34 @@ const OPERATIONS_TOOLS: readonly AgentToolDefinition[] = Object.freeze([
   AGENT_TOOL_DEFINITIONS.compose_report,
 ]);
 
+/**
+ * The analysis template's two tools, on top of the read-class four.
+ *
+ * `present_answer` is the one this workflow's verdict requires, and it is offered
+ * HERE and nowhere else for exactly that reason: a tool a run's bar never asks for is
+ * a tool that can only distract it.
+ *
+ * `profile_table` is borrowed from the assessment template rather than duplicated,
+ * and it is borrowed at the design's cheapest recommendation (§5.4). The schema
+ * carries no row counts, so a 400 M-row fact table and a 12-row lookup table are
+ * indistinguishable in the inventory, and a `shipped_at` that is 80% null and a
+ * `placed_at` that is fully populated say which date column the business actually
+ * fills. Basic depth answers both, costs one statement per table, and reads no value
+ * out of any column — which is what makes pointing it at a table of personal data
+ * acceptable at all.
+ */
+const DATA_ANALYSIS_TOOLS: readonly AgentToolDefinition[] = Object.freeze([
+  ...AGENT_MODE_TOOLS,
+  AGENT_TOOL_DEFINITIONS.profile_table,
+  AGENT_TOOL_DEFINITIONS.present_answer,
+]);
+
 const WORKFLOW_TOOLS: Readonly<Record<AgentRunWorkflowType, readonly AgentToolDefinition[]>> = Object.freeze({
   investigation: AGENT_MODE_TOOLS,
   "query-optimization": QUERY_OPTIMIZATION_TOOLS,
   "database-assessment": DATABASE_ASSESSMENT_TOOLS,
   operations: OPERATIONS_TOOLS,
+  "data-analysis": DATA_ANALYSIS_TOOLS,
 } satisfies Record<AgentRunWorkflowType, readonly AgentToolDefinition[]>);
 
 /**
@@ -2084,6 +2109,92 @@ function refuseChartSpec(
 }
 
 /**
+ * The statements this run EXECUTED on its own bounded path, verbatim.
+ *
+ * Read-class results only, which is the whole of condition 1's content here: an
+ * `inspect_plan` step carries a drafted statement too, and that statement was
+ * described rather than run. Handing one over as though the run had measured it
+ * would be auto-executing a statement whose row count, size and duration nobody has
+ * ever seen — the exact case the condition exists for.
+ *
+ * A profile's statement is composed by the server from the run's own inventory and
+ * is not the model's text, so it is not offered here either.
+ */
+function executedStatements(events: readonly AgentRunEvent[]): readonly string[] {
+  const sqlByStep = new Map<string, string>();
+  for (const event of events) {
+    if (event.kind === "statement-drafted") sqlByStep.set(event.stepId, event.sql);
+  }
+  const executed: string[] = [];
+  for (const event of events) {
+    if (event.kind !== "tool-completed" || event.artifact.operationId !== "sql.query.read") continue;
+    const sql = sqlByStep.get(event.stepId);
+    if (sql !== undefined) executed.push(sql);
+  }
+  return executed;
+}
+
+/**
+ * The estimating plan this run holds for that exact statement, or nothing.
+ *
+ * The join is the ledger's, never the model's, exactly as `compare_plans` makes it:
+ * `statement-drafted` says what a step asked and `tool-completed` says what it
+ * produced. A plan of some other statement says nothing about this one.
+ *
+ * Where the run holds no plan — it never inspected one, or the store has released
+ * its rows — the answer is nothing, and the gate reads nothing as risky. The run
+ * can obtain one at the cost of one statement out of its budget by calling
+ * `inspect_plan` before it answers, which is what the workflow's rules tell it to do
+ * when the setting is on; a plan obtained HERE would be a statement executed with no
+ * `tool-invoked` and no `tool-completed` behind it, and the ledger invariant is that
+ * everything a run did is in its ledger.
+ */
+function heldPlanFor(context: AgentToolContext, events: readonly AgentRunEvent[], sql: string): AgentPlanSide | null {
+  const plans = estimatedPlansOf(events);
+  for (const [correlationId, plan] of plans) {
+    if (plan.sql !== sql) continue;
+    const side = readPlanSide(context, plans, correlationId);
+    if (typeof side !== "string") return side;
+  }
+  return null;
+}
+
+/** What the model is told about where its statement went. Total, so a new outcome cannot go unsaid. */
+const HANDOVER_MODEL_TEXT: Readonly<Record<AgentComposedAnswer["handover"], string>> = Object.freeze({
+  none: "Nothing was executed and nothing was sent to the editor.",
+  applied: "The statement was placed in the user's editor and NOT run there.",
+  "auto-executed": "The statement was placed in the user's editor and handed over to be run there.",
+});
+
+/**
+ * Whether this answer's statement is also handed to the editor to be RUN.
+ *
+ * The setting comes from the RUN RECORD, decided by the request that opened the run
+ * and unwidenable afterwards; the three conditions come from `auto-execute.ts`,
+ * which is pure and enumerable. All this does is gather what that gate weighs: the
+ * statements the run executed, the plan it holds for this one, and the elapsed time
+ * the ledger recorded for this very result.
+ */
+function decideHandover(
+  context: AgentToolContext,
+  run: Pick<AgentRunRecord, "events" | "autoExecute">,
+  sql: string,
+  artifact: AgentArtifactReference,
+): Pick<AgentComposedAnswer, "handover" | "handoverWarning"> {
+  if (!run.autoExecute) return { handover: "none" };
+  const plan = heldPlanFor(context, run.events, sql);
+  const decision = evaluateAutoExecute({
+    sql,
+    executedStatements: executedStatements(run.events),
+    elapsedMs: artifact.summary.elapsedMs,
+    ...(plan === null ? {} : { plan: { format: context.capabilities.explainFormat, summary: plan.summary } }),
+  });
+  return decision.handover === "auto-executed"
+    ? { handover: "auto-executed" }
+    : { handover: "applied", handoverWarning: decision.warning };
+}
+
+/**
  * Which result IS the answer, and how it should be shown.
  *
  * Reaches no database: the read already happened and is on the ledger. What this adds
@@ -2100,7 +2211,7 @@ function refuseChartSpec(
  */
 export function presentAnswerTool(
   context: AgentToolContext,
-  run: Pick<AgentRunRecord, "runId" | "events">,
+  run: Pick<AgentRunRecord, "runId" | "events" | "autoExecute">,
   input: unknown,
 ): AgentAnswerOutcome {
   if (context.mode !== "agent") return unavailable("MODE_HAS_NO_TOOLS");
@@ -2142,15 +2253,16 @@ export function presentAnswerTool(
     presentation = { kind: "chart", spec };
   }
 
+  const handover = decideHandover(context, run, sql, artifact);
   return {
     kind: "answered",
-    // `handover` is the only value it can be: nothing in this runtime hands a
-    // statement anywhere.
-    answer: { sql, artifact, presentation, handover: "none" },
+    answer: { sql, artifact, presentation, ...handover },
     // The caption is the model's prose and the columns are the engine's text, so
     // neither is echoed here. What the model is told is what happens next: the chart
-    // shows the result, and the claims are what say what it means.
-    modelText: `Answer recorded against result ${artifact.correlationId}, shown as a ${presentation.kind}. Nothing was executed and nothing was sent to the editor. Now call compose_report: the presentation shows the result, the claims are the answer.`,
+    // shows the result, and the claims are what say what it means — and, when the
+    // gate declined, why, so the report it writes next is not written beside a
+    // statement the user can see was not run.
+    modelText: `Answer recorded against result ${artifact.correlationId}, shown as a ${presentation.kind}. ${HANDOVER_MODEL_TEXT[handover.handover]}${handover.handoverWarning === undefined ? "" : ` ${handover.handoverWarning}`} Now call compose_report: the presentation shows the result, the claims are the answer.`,
   };
 }
 

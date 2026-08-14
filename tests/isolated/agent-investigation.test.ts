@@ -225,6 +225,7 @@ async function startRun(
   boot: Boot,
   mode: "agent" | "planning" = "agent",
   workflowType?: AgentRunWorkflowType,
+  autoExecute?: boolean,
 ): Promise<AgentRunRecord> {
   return boot.service.start({
     mode,
@@ -232,6 +233,7 @@ async function startRun(
     connectionId: "conn_1",
     objective: OBJECTIVE,
     ...(workflowType === undefined ? {} : { workflowType }),
+    ...(autoExecute === undefined ? {} : { autoExecute }),
   });
 }
 
@@ -1797,5 +1799,99 @@ describe("the run reads its schema context through the catalog tool", () => {
     // No half-inventory is recorded, and the model is told to read the schema itself.
     expect(kindsOf(await eventsOf(b.store, run.runId))).not.toContain("context-captured");
     expect(script.turns[0]?.transcript).toContain("inspect_schema");
+  });
+});
+
+/*
+  The gate the model has to satisfy, told to the model. #350 and #356 are the same
+  failure twice: a rule stated only in the server is a rule live runs fail. The
+  auto-execute gate needs a plan of the answer's own statement, and nothing obtains
+  one on the model's behalf — so a run never told to ask for one could never pass a
+  gate the user had ticked, and every gate here would stay green while it happened.
+*/
+describe("a run opened with auto-execute is told what the gate needs", () => {
+  const rulesOf = (turn: Turn): string => {
+    const messages = (turn.body.messages ?? []) as { role?: string; content?: unknown }[];
+    const system = messages.find((message) => message.role === "system");
+    return typeof system?.content === "string" ? system.content : "";
+  };
+
+  test("the rule names the plan the gate reads, and the bound the editor does not have", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent", "data-analysis", true);
+    const script = scriptedModel(answersProse("ok"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const rules = rulesOf(script.turns[0] as Turn);
+    expect(rules).toContain("AUTO-EXECUTE IS ON");
+    expect(rules).toContain("call inspect_plan on the statement that IS the answer");
+    expect(rules).toContain("without the time limit");
+  });
+
+  test("a run opened without it is told nothing: a rule about what cannot happen is noise", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent", "data-analysis");
+    const script = scriptedModel(answersProse("ok"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(rulesOf(script.turns[0] as Turn)).not.toContain("AUTO-EXECUTE IS ON");
+  });
+});
+
+describe("the handover an answer records comes from the run's own setting", () => {
+  /** Presents whatever result this run has already read, as a table. */
+  const presentsTheRead =
+    (callId = "call_answer") =>
+    (turn: Turn): Response =>
+      chatToolCallStream(
+        "present_answer",
+        JSON.stringify({ artifact: correlationIdIn(turn.transcript), presentation: { kind: "table" } }),
+        callId,
+      );
+
+  async function answerOf(autoExecute: boolean) {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent", "data-analysis", autoExecute);
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT id FROM orders", rationale: "the question, in SQL" }),
+      presentsTheRead(),
+      answersProse("done"),
+    );
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const composed = (await eventsOf(b.store, run.runId)).find((event) => event.kind === "answer-composed");
+    if (composed?.kind !== "answer-composed") throw new Error("this drive composed no answer");
+    return composed;
+  }
+
+  test("a run opened without it hands nothing anywhere, and says so", async () => {
+    const composed = await answerOf(false);
+
+    expect(composed.handover).toBe("none");
+    expect(composed.handoverWarning).toBeUndefined();
+  });
+
+  test("a run opened with it, whose gate declined, records the refusal rather than a silent skip", async () => {
+    // This drive inspected no plan, so condition 2 cannot hold — which is the point:
+    // the setting reached the tool from the RUN RECORD, and the gate still refused.
+    const composed = await answerOf(true);
+
+    expect(composed.handover).toBe("applied");
+    expect(composed.handoverWarning).toContain("Not run for you");
   });
 });

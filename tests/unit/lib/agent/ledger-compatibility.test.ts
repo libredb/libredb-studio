@@ -101,6 +101,17 @@ process.on("exit", () => {
   for (const dir of dataDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
+describe("a ledger written before autoExecute existed", () => {
+  test("reads as auto-execute off, because no run written then handed a statement anywhere", async () => {
+    // The same reading `workflowType` gets, and for a stronger reason: the setting
+    // gives away the editor's time limit, so a header that does not carry it must
+    // fold to the answer that gives nothing away.
+    const view = await foldFixture();
+
+    expect(view?.record.autoExecute).toBe(false);
+  });
+});
+
 describe("a ledger written before goalVerdict existed", () => {
   test("still folds, and its ending still reads as the ending it always was", async () => {
     // B24's field is additive for the same reason `workflowType` was: an older

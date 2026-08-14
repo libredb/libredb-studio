@@ -235,16 +235,22 @@ const NOT_APPLIED_CAVEAT = "Not applied: nothing here runs this statement.";
 /**
  * What an answer's `handover` means, in the app's own words.
  *
- * A total record over the field rather than a sentence written beside it: the field
- * has one value today because nothing in this runtime hands a statement anywhere, and
- * keying on it is what stops "Nothing was sent to the editor" outliving its truth —
- * a widened union stops this file compiling until somebody words the new outcome.
- * And when a run does hand a statement over, what the EDITOR then did with it is the
- * editor's business and visible there; this entry records only that the run offered.
+ * A total record over the field rather than a sentence written beside it: a widened
+ * union stops this file compiling until somebody words the new outcome, which is
+ * what stops a sentence outliving its truth.
+ *
+ * The `auto-executed` wording is the distinction §2.3 says must be stated rather
+ * than glossed. The run handed the statement over; the editor ran it on the user's
+ * own connection, against a route this runtime does not own, so there is no ledger
+ * entry for what happened next and this entry does not pretend to one. What the
+ * editor did is visible in the editor.
  */
 const HANDOVER_SENTENCES: Readonly<Record<Extract<AgentRunEvent, { kind: "answer-composed" }>["handover"], string>> =
   Object.freeze({
     none: "Nothing was sent to the editor; applying the statement is the user's own action.",
+    applied: "The statement is in your editor and was not run there.",
+    "auto-executed":
+      "This run handed the statement to your editor to run: it ran on your connection, under the editor's own limits, and what it did with it is visible there rather than here.",
   });
 
 /**
@@ -292,6 +298,7 @@ const WORKFLOW_WORDS: Readonly<Record<AgentRunWorkflowType, string>> = {
   "query-optimization": "query optimization",
   "database-assessment": "a database assessment",
   operations: "an operations reading",
+  "data-analysis": "a data analysis",
 };
 
 /**
@@ -432,6 +439,8 @@ const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
   "no-table-profile": "No table was profiled, so the state of the data was never established.",
   "no-operations-reading":
     "The report cites no operational reading, so it rests on something other than what the engine reported about itself.",
+  "no-answer":
+    "The run reported what it found but never produced an answer to show, so there is nothing to put in front of you.",
   cancelled: "The run was stopped before it could finish.",
 };
 
@@ -552,7 +561,10 @@ function describeEvent(
         // this repository's own vocabulary, so it may be spoken here; the columns
         // are the engine's text and may not, which is why none of them appear.
         headline: "Answer composed",
-        detail: `Shown as a ${event.presentation.kind === "chart" ? `${event.presentation.spec.type} chart` : "table"}, from ${event.artifact.summary.rowCount} row(s). ${HANDOVER_SENTENCES[event.handover]}`,
+        // The gate's warning is the SERVER's own sentence, not model prose and not
+        // engine text, so it is spoken in this line rather than quoted. A refusal
+        // that says nothing is indistinguishable from the feature being broken.
+        detail: `Shown as a ${event.presentation.kind === "chart" ? `${event.presentation.spec.type} chart` : "table"}, from ${event.artifact.summary.rowCount} row(s). ${HANDOVER_SENTENCES[event.handover]}${event.handoverWarning === undefined ? "" : ` ${event.handoverWarning}`}`,
         // The model's own prose about what the chart shows, quoted as model prose. A
         // table answer has no caption, so there is nothing to quote — and it carries
         // no spec either, so showing it opens the surface a table belongs in.

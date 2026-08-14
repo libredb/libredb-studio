@@ -103,6 +103,7 @@ describe("foldLedgerEntries", () => {
       ["query-optimization", "query optimization"],
       ["database-assessment", "a database assessment"],
       ["operations", "an operations reading"],
+      ["data-analysis", "a data analysis"],
     ] as const) {
       const view = foldLedgerEntries([{ ...OPENED, workflowType }]);
       expect(view.items[0].headline, workflowType).toBe(`Run opened in agent mode for ${words}`);
@@ -549,10 +550,10 @@ describe("foldLedgerEntries — the budget meter", () => {
 
   /**
    * The ceilings differ per workflow, so a meter that read one row would state a
-   * number the server is not enforcing for three runs out of four. The workflow is
+   * number the server is not enforcing for four runs out of five. The workflow is
    * taken off the run's own header — the only entry that carries it.
    */
-  test.each(["investigation", "query-optimization", "database-assessment", "operations"] as const)(
+  test.each(["investigation", "query-optimization", "database-assessment", "operations", "data-analysis"] as const)(
     "a %s run's gauges are that workflow's own ceilings",
     (workflowType) => {
       const view = foldLedgerEntries([{ ...OPENED, workflowType }]);
@@ -1178,6 +1179,7 @@ describe("an ending says whether the run ANSWERED, not only how it stopped (B24)
       "no-plan-evidence",
       "no-table-profile",
       "no-operations-reading",
+      "no-answer",
       "cancelled",
     ]) {
       const view = foldLedgerEntries([
@@ -1449,6 +1451,26 @@ describe("an answer reads as the app's decision, with the model's caption quoted
       },
     } as AgentLedgerEntry & { kind: "event" });
 
+  /** The same answer, with the handover the gate decided. */
+  const handedOver = (handover: string, handoverWarning?: string): AgentLedgerEntry =>
+    event({
+      kind: "event",
+      event: {
+        kind: "answer-composed",
+        atMs: 9,
+        sql: ANSWER_SQL,
+        artifact: {
+          correlationId: "corr-answer",
+          runId: "run-1",
+          operationId: "sql.query.read",
+          summary: { rowCount: 4, columnNames: ["region", "net_total"], elapsedMs: 11 },
+        },
+        presentation: { kind: "table" },
+        handover,
+        ...(handoverWarning === undefined ? {} : { handoverWarning }),
+      },
+    } as AgentLedgerEntry & { kind: "event" });
+
   test("a chart answer names the type in the app's own words and quotes the caption", () => {
     const view = foldLedgerEntries([
       OPENED,
@@ -1499,11 +1521,41 @@ describe("an answer reads as the app's decision, with the model's caption quoted
   });
 
   test("the entry says what did NOT happen: nothing was sent anywhere to be run", () => {
-    // `handover` records the outcome, and today it has one value. The sentence is
-    // keyed on it as a total record, so the wording cannot outlive its truth.
+    // `handover` records the outcome. The sentence is keyed on it as a total record,
+    // so the wording cannot outlive its truth.
     const view = foldLedgerEntries([OPENED, answer({ kind: "table" })]);
 
     expect(view.items[1]?.detail).toContain("Nothing was sent to the editor");
+  });
+
+  test("a handed-over statement is stated as a handover, and what the editor did is the editor's own", () => {
+    // §2.3: the editor's re-run produces no ledger event and cannot — it happens in
+    // the browser, against a route this runtime does not own. So the entry records
+    // that the run HANDED OVER, and says the rest is visible in the editor rather
+    // than claiming a result it never saw.
+    const view = foldLedgerEntries([OPENED, handedOver("auto-executed")]);
+
+    expect(view.items[1]?.detail).toContain("handed the statement to your editor to run");
+    expect(view.items[1]?.detail).toContain("what it did with it is visible there");
+  });
+
+  test("a gate that declined says so, in the run's own words, and never silently", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      handedOver("applied", "Not run for you: the plan reads as a full table read, so this one is yours to run."),
+    ]);
+
+    expect(view.items[1]?.detail).toContain("The statement is in your editor and was not run");
+    expect(view.items[1]?.detail).toContain("Not run for you: the plan reads as a full table read");
+  });
+
+  test("an applied answer with no recorded warning still reads as a refusal, not as a run", () => {
+    // A ledger is read long after it is written, and an entry missing a field must
+    // not fall through to the sentence describing the outcome that DID run.
+    const view = foldLedgerEntries([OPENED, handedOver("applied")]);
+
+    expect(view.items[1]?.detail).toContain("The statement is in your editor and was not run");
+    expect(view.items[1]?.detail).not.toContain("handed the statement");
   });
 
   test("the columns the chart names never reach the app's own sentence", () => {

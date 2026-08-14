@@ -91,6 +91,9 @@ export type AgentRunNarrativeEvent = Extract<
       | "plan-comparison"
       | "recommendation"
       | "table-profiled"
+      // Which result IS the answer: a decision about a read already on the ledger,
+      // reaching nothing and settling no step, like the three above it.
+      | "answer-composed"
       | "closing-statement";
   }
 >;
@@ -119,6 +122,8 @@ export interface AgentRunStartInput {
   readonly mode: AgentRunMode;
   /** What the run is FOR. Defaults to `DEFAULT_AGENT_WORKFLOW_TYPE`. */
   readonly workflowType?: AgentRunWorkflowType;
+  /** Whether the run may hand its answer to the editor to run. Defaults to `false`. */
+  readonly autoExecute?: boolean;
   readonly actor: AgentRunActor;
   readonly connectionId: string;
   readonly objective: string;

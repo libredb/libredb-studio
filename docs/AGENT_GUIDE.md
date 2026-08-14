@@ -216,7 +216,9 @@ quoted block, because database content is untrusted input (`timeline.ts:25-36`).
 
 Two controls appear under an entry only when there is something to act on **and** the shell can act:
 
-- **Apply to editor** — puts a drafted statement into the editor. Always your click, never automatic.
+- **Apply to editor** — puts a drafted statement into the editor. Always your click, never automatic,
+  unless the run was opened with **auto-execute** (below), which is the one thing that can put an
+  answer's statement into your editor and run it there.
 - **Show result** — hydrates the stored rows into the ordinary bottom-panel surface: the results
   grid, the explain view for a plan, or the charts view for an answer the run composed as a chart —
   drawn as the run said to draw it, and with the ordinary chart controls still yours to change. Which
@@ -232,6 +234,44 @@ prose with its citations under it — `Artifact <id>` with the row count and the
 produced it, or `Schema snapshot <fingerprint>` with the table count. A citation the rail cannot
 resolve in what it has read says so in amber rather than looking checked
 (`UNRESOLVED_DETAIL`, `timeline.ts:556`).
+
+---
+
+## Auto-execute: when the run runs the answer in your editor
+
+A run can be opened with **auto-execute**. It changes one thing and it is worth being exact about
+which: the run's own answer is produced the same way either way — from a result it read on its own
+bounded path, at 200 rows and a 10-second ceiling, with a ledger entry behind it. What the setting
+adds is that the answer's statement is also placed in your editor **and run there**, on your
+connection, at the editor's 500-row limit and with **no time limit**. Writes and DDL are refused
+either way.
+
+It is decided when the run is opened and cannot be changed afterwards — the request that opens the
+run is the only place it is set, and it is recorded on the run itself. The rail does not offer the
+control yet; today the field is accepted by `POST /api/agent/runs` (`autoExecute`, absent means off).
+
+**A statement is only run for you when all three of these hold:**
+
+1. This run executed that exact statement itself. A final statement wider than anything the run ran
+   is never run for you — and one it only *explained* was never executed.
+2. The engine's plan for it reads as cheap: on PostgreSQL an indexed access path and an estimated
+   cost of at most 50 000; on SQLite every step a `SEARCH`. Anything unknown or unreadable counts as
+   risky, and on SQLite that is deliberate — a read there is not interrupted when it runs long, it
+   blocks other writers and this application until it finishes.
+3. The run measured its own execution of it at 2 000 ms or less.
+
+**When any of them fails the statement is put in your editor and left unrun, and the run says which
+one failed** — *"Not run for you: … so this one is yours to run."* A statement sitting there unrun is
+the feature working, not the feature failing.
+
+**Nothing is added to the statement.** No `LIMIT` is injected: a chart of 200 of 4 000 regions would
+look like a complete chart, and every number on it would be right, which is worse than an obvious
+error.
+
+**What the editor then does is the editor's own business.** It runs on the route the rest of the
+application uses, which is not the agent's audited pipeline, so there is no ledger entry for it. The
+timeline records that the run handed the statement over, and says that what happened next is visible
+in the editor.
 
 ---
 
@@ -455,7 +495,9 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded
   connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode is unaffected:
   it is toolless and reaches no database, so it works on every connection.
-- **It never executes a recommendation**, and never applies one to your editor by itself.
+- **It never executes a recommendation**, and never applies one to your editor by itself. The single
+  exception anywhere in the rail is auto-execute, which is off unless the run was opened with it, and
+  which covers only the answer's own statement under the three conditions above.
 - **It cannot be paused or resumed from the rail.** There is a Stop control and nothing standing in
   for a capability this build does not have (`docs/BACKLOG.md` B11).
 - **A stopped run stops at its next checkpoint**, not instantly: cancellation is enforced by the run

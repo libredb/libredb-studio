@@ -62,6 +62,7 @@ import {
 } from "./run-service";
 import type { AgentSettledStepEvent } from "./run-store";
 import {
+  AGENT_ANSWER_CONTRACT,
   AGENT_EVIDENCE_CONTRACT,
   AGENT_TOOL_DEFINITIONS,
   type AgentToolContext,
@@ -74,6 +75,7 @@ import {
   inspectOperationsTool,
   inspectPlanTool,
   planTableProfile,
+  presentAnswerTool,
   profileTableTool,
   recommendChangeTool,
   inspectSchemaTool,
@@ -136,13 +138,6 @@ type DatabaseToolName = Exclude<AgentToolName, LedgerOnlyToolName>;
 
 /**
  * Tools that do NOT go through `invokeDatabaseTool`.
- *
- * `present_answer` is on this list and `handleCall` has no branch for it, which is
- * the honest state rather than an omission: no workflow offers the tool yet, so the
- * dispatch is unreachable, and a branch for it would be a line no test could cover.
- * It is named here because the exclusion above is where a tool's side is DECIDED —
- * leaving it out would put it in the database class, where the fall-through would
- * route an answer to `inspectPlanTool` the moment a workflow offered it.
  *
  * Four of them reach nothing at all. `profile_table` DOES reach a database and DOES
  * go through `service.runStep` — it is here only because its statement is composed
@@ -267,6 +262,8 @@ const WORKFLOW_OBJECTIVES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
     "Your objective is the state of this database itself: where its data is incomplete, inconsistent or surprising.",
   operations:
     "Your objective is how this database is RUNNING right now: what is connected to it, what it is spending its time on, what is blocked, and where its space and its indexes are going.",
+  "data-analysis":
+    "Your objective is a question about the data in this database. Establish the answer from the data and produce something to show for it.",
 } satisfies Record<AgentRunWorkflowType, string>);
 
 /**
@@ -299,6 +296,20 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
     "EVERY READING IS A MOMENT. A session list is who was connected as you looked; a slow-query list is what the engine has accumulated, not what it did today. Say what you saw and when, and never imply you measured a trend or watched something change.",
     "recommend_change offers the user one index or one rewrite, and nothing else: an operational action — killing a session, vacuuming a table, dropping an index — has no card here, so state it as a claim in your report rather than filing it as a recommendation.",
   ].join(" "),
+  // The model's half of `agent-data-analysis.1`. The verdict requires an
+  // `answer-composed` event on top of the baseline, so the sentence naming
+  // `present_answer` is what makes that bar reachable — #350's lesson, applied at the
+  // moment the rule is written rather than after a live run fails it. The contract
+  // itself is IMPORTED from the tool layer rather than paraphrased here: two wordings
+  // of one contract is how #350 happened.
+  "data-analysis": [
+    "Answer from data you have READ. The schema tells you where to look; only a result you ran can be the answer.",
+    "profile_table at basic depth is how you tell a fact table from a lookup one, and a date column the business fills from an audit column nobody does: it returns row counts and how many rows have a value, and reads no value out of any column. Go deeper only if a basic profile leaves a question.",
+    "When you have the answer, call present_answer with the artifact id of the read that IS the answer.",
+    "A chart names columns of THAT result: they are checked against the result's real column names and refused if they do not match.",
+    AGENT_ANSWER_CONTRACT,
+    "Then call compose_report. The presentation shows the result; the claims are what say what it means.",
+  ].join(" "),
 } satisfies Record<AgentRunWorkflowType, string>);
 
 /**
@@ -312,9 +323,33 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
  * the axis argument this repository had just written down. Toollessness bears on
  * which TOOLS a run is offered, not on what the run is about.
  */
+/**
+ * The auto-execute gate, stated to the model that has to satisfy it.
+ *
+ * #350's lesson at the moment the rule is written: the gate's second condition is a
+ * plan of the answer's own statement, and no tool obtains one on the model's behalf.
+ * A run that never calls `inspect_plan` therefore cannot pass a gate it was never
+ * told about — the setting would look broken while every gate stayed green.
+ *
+ * The plan costs one statement out of the workflow's budget, which is the price
+ * §2.4.0 names for the condition. It is asked of the model rather than taken by the
+ * server because a statement the server ran here would have no `tool-invoked` and no
+ * `tool-completed` behind it, and the ledger invariant is that everything a run did
+ * is in its ledger.
+ */
+const AUTO_EXECUTE_RULE = [
+  "AUTO-EXECUTE IS ON for this run: the answer's statement is also placed in the user's editor and run there, on their connection and without the time limit your own reads have.",
+  "It is only run when three things hold: this run executed that exact statement itself, this run holds an inspect_plan of that same statement and the plan reads as cheap, and the run measured that execution as quick.",
+  "So call inspect_plan on the statement that IS the answer before you present it. Without one, the statement is placed in the editor unrun and the run says why.",
+].join(" ");
+
 function systemPrompt(record: AgentRunRecord): string {
   const rules = record.mode === "agent" ? `${AGENT_RULES} ${WORKFLOW_TOOL_RULES[record.workflowType]}` : PLANNING_RULES;
-  return `You are the LibreDB Studio database investigator. ${rules} ${WORKFLOW_OBJECTIVES[record.workflowType]} ${SHARED_RULES}`;
+  // Said only where it can happen. A planning run has no tools and a run opened
+  // without the setting hands nothing anywhere, so telling either would be a rule
+  // about something that cannot occur.
+  const handover = record.mode === "agent" && record.autoExecute ? ` ${AUTO_EXECUTE_RULE}` : "";
+  return `You are the LibreDB Studio database investigator. ${rules}${handover} ${WORKFLOW_OBJECTIVES[record.workflowType]} ${SHARED_RULES}`;
 }
 
 // ============================================================================
@@ -968,6 +1003,7 @@ async function handleCall(input: {
   if (call.toolName === "compose_report") return composeReport(service, context, call.input);
   if (call.toolName === "compare_plans") return comparePlans(service, context, call.input);
   if (call.toolName === "recommend_change") return recommendChange(service, context, call.input);
+  if (call.toolName === "present_answer") return presentAnswer(service, context, call.input);
   // Profiling DOES reach a database, but its statement is composed from the run's
   // own inventory rather than from the model's arguments, so its step identity is
   // the table and depth it names. Handled here, where the run record is in hand.
@@ -1149,6 +1185,27 @@ async function recommendChange(
   if (outcome.kind === "unavailable") return { kind: "answered", text: outcome.modelText };
 
   await service.recordEvent(context.runId, { kind: "recommendation", ...outcome.recommendation });
+  return { kind: "answered", text: outcome.modelText };
+}
+
+/**
+ * Which result IS the answer, recorded and NOT terminal.
+ *
+ * A finding rather than a conclusion, exactly like a plan comparison: the run goes on
+ * to cite the same artifact in its report, and a run that presented a result and
+ * reported nothing has drawn a picture rather than answered a question. That is why
+ * this returns `answered` and only `compose_report` returns `reported`.
+ *
+ * The record is re-read for the reason the report re-reads it: the artifact an answer
+ * may name is one of the entries added while this loop was running, and the chart
+ * spec is checked against that artifact's real columns.
+ */
+async function presentAnswer(service: AgentRunService, context: AgentToolContext, input: unknown): Promise<CallResult> {
+  const { record } = await service.resume(context.runId);
+  const outcome = presentAnswerTool(context, record, input);
+  if (outcome.kind === "unavailable") return { kind: "answered", text: outcome.modelText };
+
+  await service.recordEvent(context.runId, { kind: "answer-composed", ...outcome.answer });
   return { kind: "answered", text: outcome.modelText };
 }
 
