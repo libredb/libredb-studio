@@ -1702,3 +1702,31 @@ behind it the way a composed answer has.
 Done when the export path can take an explicitly hydrated result — with the file still attributable to
 the run, since an exported file that came from an agent run and is indistinguishable from one the user
 ran is the thing to avoid.
+
+### B35. A resumed run can evict its own still-cited results, because the artifact cap is sized per drive
+
+`AGENT_MAX_ARTIFACTS` (`src/lib/agent/runtime.ts`) is `45 × 4 = 180`: the largest per-workflow
+statement ceiling times the four concurrent runs one agent process is sized for. Its justification
+used to be that "a run cannot produce more artifacts than it is allowed statements", which is true of
+a DRIVE and not of a run — every ceiling in `AGENT_WORKFLOW_BUDGETS` is per drive (B6), while a
+resumed run keeps its `runId` and its artifacts are keyed by it. A run driven three times may
+therefore hold up to three times its statement ceiling in the store, and one long-lived run can pass
+180 on its own without any concurrency at all.
+
+`ExecutionArtifactStore.put` spends the cap run-fairly: a store at the cap evicts the oldest artifact
+of the run that is STORING, which is what stops a busy run making "Show result" fail on a quieter one.
+Applied to a run past the cap, the same rule means the run evicts its own earliest evidence — the
+results its first drive read, which its report may still cite. Nothing about the ledger is wrong
+afterwards: a claim and its citation are durable, and the artifact route already answers "the rows are
+not here" for the run-ended and TTL-expired cases (B15). This is a third way to reach that answer, and
+the only one that can happen while the run is still live and the rail is still offering the control.
+
+Not closed with an artifact-only bound, deliberately. A ceiling that holds ACROSS drives is exactly
+the mechanism B6 describes as missing, and the run record already carries what it needs
+(`createdAtMs`, and a ledger holding every settled step), so a second answer invented for artifacts
+alone would have to be unpicked when B6 lands. It also cannot be closed by raising the number: a run
+resumed often enough passes any constant.
+
+Done when a drive's artifact allowance is derived from the run's own history rather than from a
+per-drive constant — most likely as part of B6 — with a test that drives one run twice past the cap
+and shows the first drive's cited results still readable, or the surface stating that they are not.

@@ -1305,11 +1305,19 @@ outlive the rows its citations point at (B15).
 **Those results live in process memory, and the store that holds them is bounded.** It keeps 180
 entries at once — the largest statement ceiling any workflow may be given (45) times the four
 concurrent runs one agent process is sized for — and each entry is at most what the execution
-profile's byte cap admitted. A run cannot produce more artifacts than it is allowed statements, so at
-the budgets in force above, a single run never reaches that bound on its own. When the bound is
-reached, the run that is storing gives up **its own** oldest artifact rather than the store's, so a
-run that executes a lot cannot make "Show result" 404 on a quieter run that is still live. The store
-is per process, which is consistent with the zero-config backend below being single-instance.
+profile's byte cap admitted. When the bound is reached, the run that is storing gives up **its own**
+oldest artifact rather than the store's, so a run that executes a lot cannot make "Show result" fail
+on a quieter run that is still live. The store is per process, which is consistent with the
+zero-config backend below being single-instance.
+
+**What that product bounds is four *drives*, not four runs.** Every ceiling in the decision table is
+per drive (B6), while a resumed run keeps its `runId` and its artifacts are keyed by it — so a run
+driven three times may hold up to three times its statement ceiling here, and a long-lived run can
+pass 180 on its own. Run-fair eviction then takes that run's *own* earliest results, which its report
+may still cite: a third way to reach the "the rows are not here" answer B15 describes, this time while
+the run is still live. The ledger is unaffected — the claim and its citation are durable — and the
+gap is recorded as **B35** rather than closed with an artifact-only bound, because a ceiling that
+holds across drives is the mechanism B6 already names.
 
 ## Deployment
 

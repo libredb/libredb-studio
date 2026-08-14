@@ -64,18 +64,34 @@ const AGENT_ARTIFACT_TTL_MS =
 /**
  * The entry cap of the process-wide artifact store, computed rather than picked:
  * `45 statements × 4 runs = 180`. 45 is the largest per-workflow statement
- * ceiling the frozen decision table admits (`database-assessment`) and a run
- * cannot produce more artifacts than it is allowed statements; 4 is the number
- * of runs this single agent process is assumed to carry at once. Below that
- * product a run at its own ceiling would evict its own earliest result while it
- * was still being offered on the rail as "Show result". It is sized for the
- * ceiling, not for what a policy enforces at any one moment, so a statement
- * budget lower than 45 leaves the cap correct and merely slack.
+ * ceiling the frozen decision table admits (`database-assessment`); 4 is the
+ * number of runs this single agent process is assumed to carry at once.
  *
- * The cap is spent run-fairly (`ExecutionArtifactStore.put`), so this is a bound
- * on the whole process rather than a share handed to each run: four runs together
- * cannot exceed it, and one run below the assumed concurrency may use more of it
- * than its own quarter.
+ * What that product bounds is FOUR DRIVES, not four runs, and the distinction was
+ * stated wrongly here until #373: this comment said "a run cannot produce more
+ * artifacts than it is allowed statements", which is not true of a run. Every
+ * ceiling in `AGENT_WORKFLOW_BUDGETS` is per drive (`docs/BACKLOG.md` B6) — the
+ * budget tracker is built by the process that drives a run — while a resumed run
+ * keeps its `runId` and its artifacts are keyed by it. So a run that is driven
+ * three times may hold up to three times its statement ceiling in this store,
+ * and one long-lived run can pass 180 on its own.
+ *
+ * The behaviour when it does is worth knowing rather than guessing at. The cap is
+ * spent run-fairly (`ExecutionArtifactStore.put`): a store at the cap evicts the
+ * OLDEST ARTIFACT OF THE RUN THAT IS STORING, so a busy run cannot make "Show
+ * result" fail on a quieter one. Applied to a resumed run at the cap, that same
+ * rule means the run evicts its OWN earliest evidence — the results its first
+ * drive read, which its report may still cite. Nothing about the ledger is wrong
+ * afterwards: the claim and its citation are durable, and the artifact route
+ * already answers "the rows are not here" for the run-ended and TTL-expired cases
+ * (`docs/BACKLOG.md` B15). This just adds a third way to reach that answer while
+ * the run is still live. Recorded as `docs/BACKLOG.md` B35 rather than fixed
+ * here: a bound that holds ACROSS drives is the same missing mechanism B6 names,
+ * and inventing a second one for artifacts alone would be a second answer to one
+ * question.
+ *
+ * Sized for the ceiling rather than for what a policy enforces at any one moment,
+ * so a statement budget lower than 45 leaves the cap correct and merely slack.
  */
 export const AGENT_MAX_ARTIFACTS = 180;
 
