@@ -56,6 +56,7 @@ Two companion pages carry what this one deliberately does not:
 - [What bounds a run](#what-bounds-a-run)
 - [The model side](#the-model-side)
 - [Whether the run answered](#whether-the-run-answered)
+- [What the removed AI panels did that a run does not](#what-the-removed-ai-panels-did-that-a-run-does-not)
 - [HTTP surface](#http-surface)
 - [The surface in the app](#the-surface-in-the-app)
 - [Deployment](#deployment)
@@ -706,6 +707,20 @@ behaviour can only be enforced by something that exercises model behaviour.
 - **The database is scripted**, on both reference engines. These scenarios measure model
   strategy; a real engine would make the same scenario answer differently on two machines.
   `tests/isolated/agent-investigation-e2e.test.ts` is where real engines are driven.
+- **A scripted engine's answers must agree with the inventory that same run handed out, and
+  with each other.** A world that contradicts itself measures the contradiction: three
+  real-model cases answered every question with the same three department rows against an
+  eight-table inventory, and all three spent every turn they had disbelieving it — 16 turns,
+  no report, on 2026-08-14. A scripted model never notices, because it does not read the
+  inventory; that is precisely why the rule has to be written down rather than discovered.
+- **A case may add a bar the ledger cannot express, and then it says what that bar can see.**
+  `empty-result` is the one: a COUNT of missing rows comes back as one row saying zero, which
+  is what an engine returns, so `empty-evidence` — every cited result empty — cannot fire on
+  a run that reports `0` as its finding. The case judges what its claims RESTED on and
+  reports `zero-as-finding`. Like the verifier, it reads no prose, so it cannot tell a hedged
+  sentence from a blunt one and does not claim to. `tests/evals/empty-result-detection.test.ts`
+  drives that case's own world with scripted models, so what it can catch is asserted without
+  spending a model call.
 
 The defect corpus in `tests/evals/strategy-defects.test.ts` is every strategy failure #341
 observed, and each one was made to fail before it was made to pass — a harness that cannot
@@ -716,6 +731,45 @@ fail on a known defect is not measuring anything.
 of the code under review, a fork PR cannot see the credential, and the reference model's
 free tier is 15 requests per minute — a morning of manual testing exhausted it. A rate
 limit is reported as a rate limit rather than counted as a failed case.
+
+## What the removed AI panels did that a run does not
+
+M4 removed the NL2SQL panel, the AI Autopilot panel and the in-editor AI chat (#331 T2 and T3) on the
+argument that the agent covers what they did. Half of that argument is now a measurement:
+[`tests/evals/legacy-surface-coverage.test.ts`](../tests/evals/legacy-surface-coverage.test.ts) drives
+both panels' happy paths through the run loop and asserts them against the ledger. A plain-English
+question becomes a drafted statement with its reason recorded, one executed read, and a claim citing
+the artifact that read produced; "tell me what is wrong with this database" becomes a
+`database-assessment` run whose findings are the server's own — a null ratio counted inside the
+database, and an unindexed foreign key read off the inventory the run captured.
+
+The other half is this list, and it is here rather than in a pull request comment: an uncovered
+scenario is the reason somebody kept a surface, so it is a finding rather than a footnote. Each row is
+a capability a user had before M4 and does not have now.
+
+**The first two rows are the largest losses, and they are the two that bound every row under them.**
+Both facts are stated elsewhere in this document — the agent is standalone-only, and a model that
+cannot call tools is refused — but a section whose stated purpose is to list what a user lost was
+listing neither, and they are exactly the reasons somebody would have kept a surface. Where a row
+below says what a run does instead, read it as what a run does instead **for a standalone user whose
+model passed the capability probe**; for anybody else the answer is that there is no run.
+
+| What the panel did | What a run does instead | Where that is established |
+| --- | --- | --- |
+| **Any AI at all, for an EMBEDDED user.** `NL2SQLPanel` was exported from `@libredb/studio/components`, and the embedded shell rendered both tabs regardless of `features.ai` — so a libredb-platform user had a working NL2SQL panel and a working Autopilot panel. | Nothing. The rail lives in the standalone shell only; the package carries no agent surface, `WorkspaceFeatures` deliberately gained no agent field, and no package entry point transitively imports `src/lib/agent`. For an embedded user every "what a run does instead" cell below is false, because there is no run. | The removal itself (`5bbea51`, which deletes the export and both render arms); `src/workspace/StudioWorkspace.tsx`; `tests/unit/agent-package-boundary.test.ts`; [The surface in the app](#the-surface-in-the-app). |
+| **A TOOLLESS model drove both panels.** Each posted a prompt and rendered what came back, so any configured model produced an answer — including one that cannot call a tool, which is what a small local `ollama` model usually is. | An agent run is refused before it opens: the start path probes the model, and an established incapability is a `422` naming what could not be established. What such a model can still drive is planning mode, which is toolless by contract and therefore reaches no database at all. | `src/lib/agent/capability-gate.ts`; `tests/isolated/agent-capability-gate.test.ts`; [What a refused model looks like in the app](#what-a-refused-model-looks-like-in-the-app). |
+| **One click that RAN the model's SQL.** NL2SQL's Run and Autopilot's Execute pushed model-authored SQL — including DDL — straight into the studio's execution path. | The rail hands a statement to the **editor** and never runs it: an explicit "Apply to editor" on a drafted statement or a recommendation. Nothing in the runtime executes a proposed statement. | `src/components/agent/timeline.ts` — the `statement-drafted` and `recommendation` entries carry `applySql`; `tests/evals/query-optimization.test.ts` — the recommendation is recorded and no `CREATE INDEX` reaches the database. |
+| **Proposed a statement the run never sent.** NL2SQL's product was a statement, whatever the model wrote. | Only `recommend_change` proposes an unexecuted statement; it accepts `index` or `rewrite`, the statement must match the card it is filed under, and it belongs to the `query-optimization` workflow. An investigation — what a plain-English question opens — cannot propose anything. | `src/lib/agent/tools.ts` (`recommendationSchema`, `matchesCard`, `QUERY_OPTIMIZATION_TOOLS`); `tests/evals/legacy-surface-coverage.test.ts`. |
+| **Read live monitoring.** Autopilot's whole input came from `/api/db/monitoring`: slow queries, index usage, table statistics, cache and connection metrics. | No tool reaches any of it. `AgentToolName` has seven members and the closest, `profile_table`, composes counts over one table. **B17**, **B27**. | `src/lib/agent/tools.ts`; `tests/evals/legacy-surface-coverage.test.ts` — the seven members and the three operations they may name are asserted as a set, so a monitoring tool under ANY name fails it; a model that asks for one anyway is told there is no such tool and sends no statement of its own. |
+| **A free-form markdown report**, opening with a performance score out of 100 and closing with configuration advice. | A report is claims, each citing an artifact this run read or the snapshot it captured, verified against the run's own ledger before it is recorded. A number cited to nothing cannot be reported — the citation is what is checked, never the claim's text, so a fabricated score citing a real artifact would be accepted. | `src/lib/agent/tools.ts` (`composeReportTool`); `tests/evals/legacy-surface-coverage.test.ts` — an invented correlation id is refused and the run ends `unanswered (no-report)`. |
+| **Maintenance tasks** — `VACUUM`, `ANALYZE`, reindexing — in the same report. | Nothing proposes them: the `change` card has two members and neither is maintenance. It stays where it was before the panels — the monitoring surface, and the user's own editor. | `src/lib/agent/tools.ts` (`recommendationSchema`). |
+| **Multi-turn conversation.** NL2SQL replayed the whole exchange on every request, so "and how many in the second one?" was answerable. | A run's objective is fixed when it starts and no ledger event records a later question. A follow-up is a NEW run: it re-reads the catalog and knows nothing the first one established. | `src/app/api/agent/runs/route.ts`; `src/lib/agent/types.ts` (`AgentRunEvent`); `tests/evals/legacy-surface-coverage.test.ts`. |
+| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent serves **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is refused rather than guessed at. Nothing refuses the run at its start, so a run opened on another engine begins, captures no schema, and is told no schema inventory can be read for that connection type. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`); `tests/unit/lib/agent/context-snapshot.test.ts` — a `mysql` connection reaches no database; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`. |
+
+Two of these are tracked as deferrals with what it would take to close them (B17, B27), and the first
+row is Phase 1's own boundary rather than a defect (B21 is its one residual). The rest are consequences
+of the removal rather than work in progress: they are what the product decided not to do, and that
+decision is only honest while they are written down where a maintainer will find them.
 
 ## HTTP surface
 
@@ -970,7 +1024,8 @@ declared-target allowlist, the statement guard and the role's own grants are the
   rows.
 - **B16** — the opt-in `@workflow/world-postgres` backend is not present in the standalone payload,
   so it cannot load in the container image or the npx payload.
-- **B17** — table profiling and monitoring tools are deferred; the M2 tool set is the four above.
+- **B17** — monitoring tools are deferred, so nothing reads slow queries, index usage or engine
+  metrics; table profiling landed with #330 T3 and closed the other half of that entry.
 - **B20** — a Gemini deployment behind a proxy is not configurable: `LLM_API_URL` is unread for that
   kind, in the chat surface as much as in the agent.
 - **B21** — the published package's `BottomPanel` carries the agent-provenance branch as dormant

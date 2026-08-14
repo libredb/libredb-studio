@@ -179,6 +179,42 @@ describe("the agent's HTTP surface is documented where a reader looks for a rout
   });
 });
 
+describe("the removal's coverage map cites a measurement that exists (#331 T7)", () => {
+  /**
+   * `docs/AGENT.md` claims the removed NL2SQL and Autopilot panels' happy paths are
+   * measured as agent runs, and names the file that does it. A claim about a test file
+   * is worth exactly what the file's existence is worth: if the evals are renamed or
+   * deleted, the section stops being evidence and starts being a story about one.
+   */
+  const SECTION = "## What the removed AI panels did that a run does not";
+  const COVERAGE_EVAL = "tests/evals/legacy-surface-coverage.test.ts";
+
+  test("the section exists and names the eval that measures it", () => {
+    expect(AGENT_DOC).toContain(SECTION);
+    // Bounded at the next heading, so a mention somewhere else in the document
+    // cannot stand in for this section carrying its own evidence.
+    const section = AGENT_DOC.split(SECTION)[1]?.split(/^## /m)[0] ?? "";
+    expect(section).toContain(COVERAGE_EVAL);
+  });
+
+  test("the eval file it names is in the repository", () => {
+    expect(existsSync(path.join(ROOT, COVERAGE_EVAL))).toBe(true);
+  });
+
+  test("the two largest losses are IN the list, not only elsewhere in the document", () => {
+    // Review found the section flattering: it listed six losses and omitted the two
+    // biggest ones, both in our favour. The agent is standalone-only, so for an
+    // embedded user every "what a run does instead" cell is false; and a toolless
+    // model, which drove both panels, is refused outright. Both facts were stated in
+    // other sections, which made the record incomplete rather than concealed — and a
+    // section whose purpose is to say what a user lost has to carry them itself.
+    const section = AGENT_DOC.split(SECTION)[1]?.split(/^## /m)[0] ?? "";
+
+    expect(section).toContain("tests/unit/agent-package-boundary.test.ts");
+    expect(section).toContain("src/lib/agent/capability-gate.ts");
+  });
+});
+
 describe("the container image carries the ledger default a plain `docker run` cannot pass", () => {
   /**
    * The ratified T5 proposal says a plain `docker run` must carry the same ledger
