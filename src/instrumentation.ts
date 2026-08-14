@@ -45,6 +45,14 @@ export async function register(): Promise<void> {
   // server keeps running and the sample is silently absent.
   const { isSqliteSampleEnabled, resolveSqliteSamplePath, seedSqliteSampleFile, setSqliteSampleSeedState } =
     await import("@/lib/seed/sqlite-sample");
+
+  // Boot banner: version, URL, and the invitation to star the repo. Printed
+  // before the early return below so a deployment with the sqlite sample
+  // disabled still gets it, and after the preflight above so a server that
+  // refuses to boot never prints a welcome. Never throws.
+  const { printStartupBanner } = await import("@/lib/startup-banner");
+  printStartupBanner();
+
   if (!isSqliteSampleEnabled()) return;
 
   // "seeding" is set BEFORE the IIFE so no request can observe "idle" while a

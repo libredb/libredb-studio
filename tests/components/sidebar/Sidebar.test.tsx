@@ -114,8 +114,18 @@ function createDefaultProps(overrides: Record<string, unknown> = {}) {
 }
 
 describe("Sidebar", () => {
+  // The version tests mutate a process-wide value. The file happens to run alone
+  // in its group today, but that isolation is incidental - restore it explicitly
+  // so a later regrouping cannot turn this into an order-dependent flake.
+  const originalAppVersion = process.env.NEXT_PUBLIC_APP_VERSION;
+
   afterEach(() => {
     cleanup();
+    if (originalAppVersion === undefined) {
+      delete process.env.NEXT_PUBLIC_APP_VERSION;
+    } else {
+      process.env.NEXT_PUBLIC_APP_VERSION = originalAppVersion;
+    }
   });
 
   test("renders LibreDB Studio header", () => {
@@ -176,11 +186,51 @@ describe("Sidebar", () => {
     expect(connList.getAttribute("data-active-connection")).toBe(mockPostgresConnection.id);
   });
 
-  test("footer shows version info", () => {
+  /**
+   * The footer used to print a hardcoded "v1.2.5" while the package had long
+   * moved on, so the sidebar told users a version the build never was. It now
+   * reads the same injected value as the two studio headers and the login form.
+   */
+  test("footer shows the build's version, not a hardcoded one", () => {
+    process.env.NEXT_PUBLIC_APP_VERSION = "9.8.7";
     const props = createDefaultProps();
     const { queryByText } = render(<Sidebar {...props} />);
 
-    expect(queryByText("v1.2.5")).not.toBeNull();
+    expect(queryByText("v9.8.7")).not.toBeNull();
+    expect(queryByText("v1.2.5")).toBeNull();
+  });
+
+  /**
+   * The embedded case, and the reason this footer cannot simply interpolate the
+   * env var: the tsup library build declares no `define`, so inside the npm
+   * package the lookup resolves against the HOST's environment, where the
+   * variable is absent. Rendering "vundefined" in a paid product is worse than
+   * rendering nothing at all.
+   */
+  test("footer renders no version token when nothing injected one", () => {
+    delete process.env.NEXT_PUBLIC_APP_VERSION;
+    const props = createDefaultProps();
+    const { container, queryByText } = render(<Sidebar {...props} />);
+
+    expect(queryByText("vundefined")).toBeNull();
+    expect(container.textContent).not.toContain("undefined");
+    // The footer itself is still there - only the token is dropped.
+    expect(queryByText("Connected")).not.toBeNull();
+  });
+
+  /**
+   * The sidebar is the only chrome BOTH modes render: the embedded workspace
+   * supplies its own header, so a link mounted only in the studio headers would
+   * never reach a platform tenant.
+   */
+  test("footer links to the repository, in both standalone and embedded chrome", () => {
+    const props = createDefaultProps();
+    const { container } = render(<Sidebar {...props} />);
+    const link = container.querySelector('a[aria-label="LibreDB Studio on GitHub"]');
+
+    expect(link).not.toBeNull();
+    expect(link!.getAttribute("href")).toBe("https://github.com/libredb/libredb-studio");
+    expect(link!.getAttribute("rel")).toBe("noopener noreferrer");
   });
 
   test("footer shows connected status", () => {

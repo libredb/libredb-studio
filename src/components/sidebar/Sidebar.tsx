@@ -7,6 +7,8 @@ import { Plus, Zap, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SchemaExplorer } from "@/components/schema-explorer";
+import { GitHubRepoLink } from "@/components/github-repo-link";
+import { getAppVersion } from "@/lib/app-version";
 import { ConnectionsList } from "./ConnectionsList";
 
 interface SidebarProps {
@@ -52,6 +54,8 @@ export function Sidebar({
   onGenerateCode,
   onGenerateTestData,
 }: SidebarProps) {
+  const appVersion = getAppVersion();
+
   return (
     <div className="flex w-full h-full border-r border-border flex-col bg-background select-none">
       <div className="h-14 px-4 flex items-center justify-between border-b border-border">
@@ -118,7 +122,16 @@ export function Sidebar({
             <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
             <span className="text-xs font-medium text-muted-foreground">Connected</span>
           </div>
-          <span className="text-xs font-mono text-muted-foreground/70">v1.2.5</span>
+          <div className="flex items-center gap-2">
+            {/*
+              The sidebar is the one piece of chrome BOTH modes render - the
+              standalone app and the embedded workspace, which supplies its own
+              header - so the invitation to the repository lives here to reach
+              every user rather than only the standalone ones.
+            */}
+            <GitHubRepoLink className="text-muted-foreground/70 hover:text-foreground" />
+            {appVersion && <span className="text-xs font-mono text-muted-foreground/70">v{appVersion}</span>}
+          </div>
         </div>
       </div>
     </div>

@@ -17,6 +17,7 @@ const ENV_KEYS = [
   "JWT_SECRET",
   "ADMIN_PASSWORD",
   "AUTH_BOOTSTRAP",
+  "LIBREDB_NO_BANNER",
 ] as const;
 
 /** The sqlite sample seeds fire-and-forget; poll for its observable effects. */
@@ -40,6 +41,9 @@ describe("instrumentation register()", () => {
     }
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "instrumentation-"));
     process.env.STORAGE_SQLITE_PATH = path.join(tmpDir, "libredb-storage.db");
+    // Keep the boot banner out of the test output; the banner tests below opt
+    // back in explicitly.
+    process.env.LIBREDB_NO_BANNER = "1";
     setSqliteSampleSeedState("idle");
   });
 
@@ -183,6 +187,52 @@ describe("instrumentation register()", () => {
       warn.mockRestore();
     }
     expect(fs.existsSync(path.join(tmpDir, "sample-employees.db"))).toBe(false);
+  });
+
+  test("prints the boot banner even when the sqlite sample is disabled", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    delete process.env.LIBREDB_NO_BANNER;
+
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    let output = "";
+    try {
+      await register();
+      // Read the recorded calls before mockRestore(): bun clears them on restore.
+      output = log.mock.calls.flat().join("\n");
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(output).toContain("LibreDB Studio");
+    expect(output).toContain("https://github.com/libredb/libredb-studio");
+  });
+
+  test("prints no banner when the server refuses to boot (#227)", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.JWT_SECRET = "x".repeat(24);
+    process.env.ADMIN_PASSWORD = "set-so-bootstrap-has-nothing-to-do";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    delete process.env.LIBREDB_NO_BANNER;
+
+    const originalExit = process.exit;
+    process.exit = (() => {}) as unknown as typeof process.exit;
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    let output = "";
+    try {
+      await register();
+      output = log.mock.calls.flat().join("\n");
+    } finally {
+      process.exit = originalExit;
+      log.mockRestore();
+      errorSpy.mockRestore();
+    }
+
+    expect(output).not.toContain("Star the project");
   });
 
   test("logs a warning and keeps boot alive when seeding fails", async () => {

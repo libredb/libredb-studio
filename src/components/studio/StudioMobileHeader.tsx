@@ -35,6 +35,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { GitHubRepoLink } from "@/components/github-repo-link";
 
 interface StudioMobileHeaderProps {
   connections: DatabaseConnection[];
@@ -170,6 +171,8 @@ export function StudioMobileHeader({
           >
             <Gauge strokeWidth={1.5} className="w-3.5 h-3.5" />
           </Button>
+          {/* Sized as the icon buttons beside it (h-8 w-8), not as the desktop's inline icon. */}
+          <GitHubRepoLink className="h-8 w-8 shrink-0 text-zinc-400 hover:text-white" />
           {connectionPulse && (
             <div
               className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5"

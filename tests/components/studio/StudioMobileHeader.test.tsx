@@ -308,6 +308,29 @@ describe("StudioMobileHeader", () => {
     expect((writeText.mock.calls as unknown[][])[0][0]).toBe("SELECT 2");
   });
 
+  test("renders a repository link in the header actions", () => {
+    const { container } = render(<StudioMobileHeader {...defaults} />);
+    const link = container.querySelector('a[aria-label="LibreDB Studio on GitHub"]');
+
+    expect(link).not.toBeNull();
+    expect(link!.getAttribute("href")).toBe("https://github.com/libredb/libredb-studio");
+    expect(link!.getAttribute("target")).toBe("_blank");
+    expect(link!.getAttribute("rel")).toBe("noopener noreferrer");
+  });
+
+  // Asserted through the observable effect rather than `not.toThrow()`: the
+  // handler swallows every storage error, so a throw assertion could not fail.
+  test("following the repository link marks the star prompt handled", () => {
+    localStorage.removeItem("libredb_star_prompt_handled");
+    const { container } = render(<StudioMobileHeader {...defaults} />);
+    const link = container.querySelector('a[aria-label="LibreDB Studio on GitHub"]')!;
+
+    fireEvent.click(link);
+
+    expect(localStorage.getItem("libredb_star_prompt_handled")).not.toBeNull();
+    localStorage.removeItem("libredb_star_prompt_handled");
+  });
+
   test("transactionActive=true shows TXN badge", () => {
     const { queryByText } = render(<StudioMobileHeader {...defaults} transactionActive />);
     expect(queryByText("TXN")).not.toBeNull();

@@ -12,6 +12,7 @@ import { shouldRefreshSchema } from "@/lib/query-generators";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { logger } from "@/lib/logger";
 import { getExplainStrategy } from "@/lib/explain";
+import { maybeInviteToStar } from "@/lib/community/star-prompt-toast";
 import { buildConnectionPayload } from "./use-connection-payload";
 
 export interface QueryExecutionOptions {
@@ -419,6 +420,16 @@ export function useQueryExecution({
           if (shouldRefreshSchema(queryToExecute, metadata.capabilities.schemaRefreshPattern)) {
             fetchSchema(activeConnection);
           }
+        }
+
+        // A genuine success - not an error, not a cancellation, not a pagination
+        // fetch or a background EXPLAIN - may earn the one-shot star invitation
+        // (once per browser, ever). LAST in the try block on purpose: the result
+        // is already in the tab and the playground rollback has already run, so
+        // nothing downstream depends on this line. `maybeInviteToStar` cannot
+        // throw either, which keeps the catch below about queries only.
+        if (!isExplain && !isLoadMore && !resultData.hasError) {
+          maybeInviteToStar();
         }
       } catch (error) {
         // Playground mode: rollback on error too

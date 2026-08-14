@@ -1,5 +1,5 @@
 import "../setup-dom";
-import { mockToastSuccess, mockToastError } from "../helpers/mock-sonner";
+import { mockToastSuccess, mockToastError, mockToastDefault } from "../helpers/mock-sonner";
 import "../helpers/mock-navigation";
 
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
@@ -1824,5 +1824,106 @@ describe("useQueryExecution", () => {
     expect(mockToastSuccess).toHaveBeenCalled();
 
     globalThis.fetch = originalFetch;
+  });
+
+  // ── One-shot star prompt (#331 community nudge) ───────────────────────────
+
+  describe("star prompt", () => {
+    const COUNT_KEY = "libredb_star_prompt_query_count";
+    const HANDLED_KEY = "libredb_star_prompt_handled";
+
+    beforeEach(() => {
+      mockToastDefault.mockClear();
+      localStorage.removeItem(COUNT_KEY);
+      localStorage.removeItem(HANDLED_KEY);
+    });
+
+    test("invites a star on the tenth successful query", async () => {
+      localStorage.setItem(COUNT_KEY, "9");
+      mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+      const params = createDefaultParams();
+
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT * FROM users");
+      });
+
+      expect(mockToastDefault).toHaveBeenCalled();
+    });
+
+    test("stays quiet on earlier successful queries", async () => {
+      mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+      const params = createDefaultParams();
+
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT * FROM users");
+      });
+
+      expect(mockToastDefault).not.toHaveBeenCalled();
+      expect(localStorage.getItem(COUNT_KEY)).toBe("1");
+    });
+
+    test("does not count a failed statement in a multi-statement run", async () => {
+      localStorage.setItem(COUNT_KEY, "9");
+      mockGlobalFetch({
+        "/api/db/query": {
+          ok: true,
+          json: {
+            ...mockQueryResult,
+            hasError: true,
+            statements: [{ status: "error", index: 0, error: "boom" }],
+          },
+        },
+      });
+      const params = createDefaultParams();
+
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT * FROM users");
+      });
+
+      expect(mockToastDefault).not.toHaveBeenCalled();
+      expect(localStorage.getItem(COUNT_KEY)).toBe("9");
+    });
+
+    /**
+     * The once-per-browser invitation is spent the moment it fires, so it must
+     * fire on a query the user ran - not on a scroll. Both assertions matter:
+     * the count staying at "9" is what proves the guard short-circuits BEFORE
+     * `recordQuerySuccess`, rather than merely suppressing the toast.
+     */
+    test("a load-more page is not a query the user ran", async () => {
+      localStorage.setItem(COUNT_KEY, "9");
+      mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+      const params = createDefaultParams();
+
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT * FROM users", "tab-1", false, { limit: 500, offset: 2 });
+      });
+
+      expect(mockToastDefault).not.toHaveBeenCalled();
+      expect(localStorage.getItem(COUNT_KEY)).toBe("9");
+    });
+
+    test("an explain run is not counted either", async () => {
+      localStorage.setItem(COUNT_KEY, "9");
+      mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+      const params = createDefaultParams();
+
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT * FROM users", undefined, true);
+      });
+
+      expect(mockToastDefault).not.toHaveBeenCalled();
+      expect(localStorage.getItem(COUNT_KEY)).toBe("9");
+    });
   });
 });

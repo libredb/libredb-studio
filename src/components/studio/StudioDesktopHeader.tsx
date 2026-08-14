@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { GitHubRepoLink } from "@/components/github-repo-link";
 
 interface StudioDesktopHeaderProps {
   activeConnection: DatabaseConnection | null;
@@ -115,6 +116,7 @@ export function StudioDesktopHeader({
           strokeWidth={1.5}
           className="w-3.5 h-3.5 text-zinc-400 cursor-pointer hover:text-white transition-colors mx-2"
         />
+        <GitHubRepoLink className="text-zinc-400 hover:text-white mr-2" />
         <span className="text-xs text-zinc-500 font-mono">v{process.env.NEXT_PUBLIC_APP_VERSION}</span>
       </div>
     </header>

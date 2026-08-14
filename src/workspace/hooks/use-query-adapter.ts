@@ -6,6 +6,7 @@ import type { WorkspaceQueryResult, WorkspaceFeatures } from "@/workspace/types"
 import type { BottomPanelMode } from "@/components/studio/BottomPanel";
 import { useToast } from "@/hooks/use-toast";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
+import { maybeInviteToStar } from "@/lib/community/star-prompt-toast";
 
 /**
  * The channels a host result carries beyond rows and counts (#285).
@@ -157,6 +158,12 @@ export function useQueryAdapter({
         );
 
         setHistoryKey((prev) => prev + 1);
+
+        // The embedded workspace runs its queries here rather than through
+        // `useQueryExecution`, so the one-shot star invitation has to be offered
+        // from both paths or it would exist for standalone users only. Last in
+        // the block and unable to throw: the result is already in the tab.
+        maybeInviteToStar();
       } catch (error) {
         // Skip updates if cancelled
         if (cancelledRef.current) return;
@@ -240,6 +247,7 @@ export function useQueryAdapter({
           );
 
           setHistoryKey((prev) => prev + 1);
+          maybeInviteToStar();
         })
         .catch((error) => {
           if (cancelledRef.current) return;
@@ -397,6 +405,7 @@ export function useQueryAdapter({
         );
 
         setHistoryKey((prev) => prev + 1);
+        maybeInviteToStar();
       })
       .catch((error) => {
         if (cancelledRef.current) return;

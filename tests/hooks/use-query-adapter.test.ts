@@ -7,7 +7,7 @@ import { renderHook, act } from "@testing-library/react";
 import { useQueryAdapter } from "@/workspace/hooks/use-query-adapter";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { WorkspaceQueryResult, WorkspaceFeatures } from "@/workspace/types";
-import { mockToastSuccess, mockToastError } from "../helpers/mock-sonner";
+import { mockToastSuccess, mockToastError, mockToastDefault } from "../helpers/mock-sonner";
 
 // ── Test Data ───────────────────────────────────────────────────────────────
 
@@ -910,5 +910,117 @@ describe("useQueryAdapter", () => {
     expect(tabs[1].result).toBeNull();
     expect(mockToastError).toHaveBeenCalled();
     expect(result.current.pendingUnlimitedQuery).toBeNull();
+  });
+
+  // ── The one-shot star invitation exists in the embedded mode too ───────────
+  //
+  // The embedded workspace does NOT run `useQueryExecution`; it runs this
+  // adapter. Wiring the nudge only into the standalone hook would have made it
+  // structurally unreachable for every platform tenant - and because the prompt
+  // fires on the single run that reaches the threshold, a path that counts
+  // without being able to display would be worse than one that never counts.
+
+  describe("star prompt", () => {
+    const COUNT_KEY = "libredb_star_prompt_query_count";
+    const HANDLED_KEY = "libredb_star_prompt_handled";
+
+    beforeEach(() => {
+      mockToastDefault.mockClear();
+      localStorage.removeItem(COUNT_KEY);
+      localStorage.removeItem(HANDLED_KEY);
+    });
+
+    test("executeQuery invites a star on the tenth successful query", async () => {
+      localStorage.setItem(COUNT_KEY, "9");
+      const params = makeHookParams();
+      const { result } = renderHook(() => useQueryAdapter(params as never));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT 1");
+      });
+
+      expect(mockToastDefault).toHaveBeenCalled();
+    });
+
+    test("executeQuery counts quietly before the threshold", async () => {
+      const params = makeHookParams();
+      const { result } = renderHook(() => useQueryAdapter(params as never));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT 1");
+      });
+
+      expect(mockToastDefault).not.toHaveBeenCalled();
+      expect(localStorage.getItem(COUNT_KEY)).toBe("1");
+    });
+
+    test("a failed query is not a success", async () => {
+      localStorage.setItem(COUNT_KEY, "9");
+      const params = makeHookParams({ onQueryExecute: mock(() => Promise.reject(new Error("boom"))) });
+      const { result } = renderHook(() => useQueryAdapter(params as never));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT 1");
+      });
+
+      expect(mockToastDefault).not.toHaveBeenCalled();
+      expect(localStorage.getItem(COUNT_KEY)).toBe("9");
+    });
+
+    test("forceExecuteQuery counts the query the safety dialog confirmed", async () => {
+      const params = makeHookParams();
+      const { result } = renderHook(() => useQueryAdapter(params as never));
+
+      await act(async () => {
+        result.current.forceExecuteQuery("DELETE FROM users");
+        await new Promise((r) => setTimeout(r, 10));
+      });
+
+      expect(localStorage.getItem(COUNT_KEY)).toBe("1");
+    });
+
+    test("handleUnlimitedQuery counts the confirmed unlimited run", async () => {
+      const targetTab = makeTab();
+      const { tabs, setTabs } = createMutableTabs([targetTab]);
+      const params = makeHookParams({ tabs, setTabs, currentTab: targetTab });
+      const { result } = renderHook(() => useQueryAdapter(params as never));
+
+      act(() => {
+        result.current.setPendingUnlimitedQuery({ query: "SELECT * FROM big", tabId: "tab-1" });
+      });
+
+      await act(async () => {
+        result.current.handleUnlimitedQuery();
+        await new Promise((r) => setTimeout(r, 10));
+      });
+
+      expect(localStorage.getItem(COUNT_KEY)).toBe("1");
+    });
+
+    test("a load-more page is not a query the user ran", async () => {
+      localStorage.setItem(COUNT_KEY, "9");
+      const tabWithResults = makeTab({
+        result: {
+          rows: [{ id: 1, name: "Alice" }],
+          fields: ["id", "name"],
+          rowCount: 1,
+          executionTime: 1,
+          pagination: { limit: 500, offset: 0, hasMore: true, totalReturned: 1, wasLimited: true },
+        },
+        allRows: [{ id: 1, name: "Alice" }],
+        currentOffset: 1,
+      });
+      const { tabs, setTabs } = createMutableTabs([tabWithResults]);
+      const params = makeHookParams({ tabs, setTabs, currentTab: tabWithResults });
+      const { result } = renderHook(() => useQueryAdapter(params as never));
+
+      await act(async () => {
+        result.current.handleLoadMore();
+        await new Promise((r) => setTimeout(r, 10));
+      });
+
+      expect(mockToastDefault).not.toHaveBeenCalled();
+      expect(localStorage.getItem(COUNT_KEY)).toBe("9");
+    });
   });
 });
