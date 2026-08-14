@@ -49,7 +49,15 @@ import type { AgentReportClaim, AgentRunEvent, AgentRunMode, AgentRunRecord, Age
 export type AgentGoalVerifierId =
   | "agent-planning.1"
   | "agent-investigation.1"
+  /**
+   * Retired by #356 and kept in the union anyway: verdicts recorded under it are on
+   * ledgers that outlive the rule, and this is the type a reader of one holds. What
+   * a versioned id must never do is mean something else later, so `.1` still means
+   * what it meant — a run judged to need a before/after comparison whatever it
+   * recommended.
+   */
   | "agent-query-optimization.1"
+  | "agent-query-optimization.2"
   | "agent-database-assessment.1";
 
 /**
@@ -66,13 +74,23 @@ export type AgentGoalShortfall =
   /** A planning run left no prose at all — the mute run of #341 F1. */
   | "no-plan"
   /**
-   * A query-optimization run never compared two plans.
+   * A query-optimization run never compared two plans, and recommended no index
+   * either.
    *
    * The template's own artifact. A run that recommends a rewrite without having
    * looked at what the engine does differently has recommended it on the strength
    * of its own opinion, and that is precisely what this workflow exists not to do.
    */
   | "no-plan-comparison"
+  /**
+   * A query-optimization run recommended an index and cited no plan it had read.
+   *
+   * The index arm of the same requirement (#356). What the comparison establishes
+   * for a rewrite — that the recommendation rests on what the engine actually does
+   * — the diagnosed plan establishes for an index, and this is a run that produced
+   * neither.
+   */
+  | "no-plan-evidence"
   /**
    * A database-assessment run never profiled a table.
    *
@@ -181,19 +199,58 @@ type GoalRule = (run: VerifiableAgentRun) => readonly AgentGoalShortfall[];
  * two halves of one decision, and the half that drifted would be the one a reader
  * could not interpret.
  */
+/** The operation an inspected plan is read under. */
+const PLAN_OPERATION = "sql.explain.estimate";
+
+/** Every plan THIS run read from the engine, by the id a citation would name. */
+function planArtifacts(events: readonly AgentRunEvent[]): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const event of events) {
+    if (event.kind === "tool-completed" && event.artifact.operationId === PLAN_OPERATION) {
+      ids.add(event.artifact.correlationId);
+    }
+  }
+  return ids;
+}
+
 /**
- * The optimization bar: everything an investigation must meet, and then its own
- * artifact.
+ * The optimization bar: everything an investigation must meet, and then evidence
+ * that the change it proposes rests on what the engine actually does.
  *
  * Composed rather than replaced. A run that answered nothing has not become
  * acceptable by comparing two plans, so the baseline is checked first and its
- * shortfall dominates — reporting `no-plan-comparison` about a run that never
+ * shortfall dominates — reporting a missing comparison about a run that never
  * composed a report at all would name the smaller of two problems.
+ *
+ * **Two arms, because the two changes this workflow can propose are not equally
+ * checkable (#356).** A rewrite's "after" plan is readable without changing
+ * anything, so a rewrite is still held to the comparison. An index's is not: the
+ * second plan requires the index to EXIST, and the run is read-only by contract —
+ * a live run on 2026-08-12 diagnosed the scan, recommended the right index, tried
+ * `CREATE INDEX ...; SELECT ...`, was refused as it should be, and was then told by
+ * this rule that it had not answered. The requirement was never wrong; it was
+ * stated in terms of the one artifact only one of the two answers can produce.
+ *
+ * So an index answers on the plan it DIAGNOSED, cited by the recommendation itself.
+ * Not merely "a plan is somewhere on the ledger": the citation is what ties this
+ * recommendation to that plan, and without it the run is proposing an index beside
+ * a plan rather than because of one.
  */
 function verifyQueryOptimizationGoal(run: VerifiableAgentRun): readonly AgentGoalShortfall[] {
   const baseline = verifyInvestigationGoal(run);
   if (baseline.length > 0) return baseline;
-  return run.events.some((event) => event.kind === "plan-comparison") ? [] : ["no-plan-comparison"];
+  if (run.events.some((event) => event.kind === "plan-comparison")) return [];
+
+  const indexes = run.events.flatMap((event) =>
+    event.kind === "recommendation" && event.change === "index" ? [event] : [],
+  );
+  if (indexes.length === 0) return ["no-plan-comparison"];
+
+  const plans = planArtifacts(run.events);
+  const grounded = indexes.some((event) =>
+    event.evidence.some((reference) => reference.source === "artifact" && plans.has(reference.correlationId)),
+  );
+  return grounded ? [] : ["no-plan-evidence"];
 }
 
 /**
@@ -223,7 +280,7 @@ function verifyDatabaseAssessmentGoal(run: VerifiableAgentRun): readonly AgentGo
  */
 export const AGENT_WORKFLOW_GOALS: Readonly<Record<AgentRunWorkflowType, AgentWorkflowGoal>> = Object.freeze({
   investigation: { verifier: "agent-investigation.1", verify: verifyInvestigationGoal },
-  "query-optimization": { verifier: "agent-query-optimization.1", verify: verifyQueryOptimizationGoal },
+  "query-optimization": { verifier: "agent-query-optimization.2", verify: verifyQueryOptimizationGoal },
   "database-assessment": { verifier: "agent-database-assessment.1", verify: verifyDatabaseAssessmentGoal },
 } satisfies Record<AgentRunWorkflowType, AgentWorkflowGoal>);
 

@@ -197,6 +197,11 @@ const PLANNING_RULES = [
  * `PRAGMA index_list('a'); PRAGMA index_list('b')` — multi-statement text, refused
  * by the statement guard before the database — because the obvious route to an
  * index inventory is closed and nothing had said which one is open.
+ *
+ * It also says what to do about an index INSTEAD of comparing plans, and that
+ * sentence is the model's half of #356. The verifier now accepts a cited plan in
+ * place of a comparison for an index; a rule the model is not told about is a rule
+ * live runs fail, which is exactly how the evidence contract failed in #350.
  */
 /** What the run is FOR. Said in BOTH modes — a plan for an optimization is still about one. */
 const WORKFLOW_OBJECTIVES: Readonly<Record<AgentRunWorkflowType, string>> = Object.freeze({
@@ -216,6 +221,7 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
   "query-optimization": [
     'Read the existing indexes with inspect_schema and kind="indexes" — a multi-statement PRAGMA or SHOW is refused before the database.',
     "Inspect the plan of the current statement, then of your rewrite, and call compare_plans with the two artifact ids. They must name two different plans.",
+    "An index cannot be compared that way: its second plan would need the index to already exist, and this run creates nothing. Recommend it instead, citing the inspect_plan artifact whose access path the index is meant to change.",
     "Every plan you can obtain is an ESTIMATE: nothing is executed, and there are no timings. Say so rather than implying a measurement.",
     "Propose changes with recommend_change. They are offered to the user and never applied by this run.",
   ].join(" "),

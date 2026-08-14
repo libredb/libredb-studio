@@ -132,8 +132,10 @@ Two things this workflow will not do, and it says so rather than implying otherw
   is an **Apply to editor** button, which puts the text in your editor and runs nothing
   (`HydrationControls`, `AgentRail.tsx:176-186`).
 
-**Answered when** the Investigate bar is met **and** a plan comparison is on the ledger
-(`verifyQueryOptimizationGoal`, `goal-verifier.ts:196`).
+**Answered when** the Investigate bar is met **and** the change it proposes rests on a plan it read:
+a before/after comparison for a rewrite, or — for an index, whose "after" plan would need the index
+to already exist — the recommendation citing the plan it diagnosed (`verifyQueryOptimizationGoal`,
+`goal-verifier.ts`).
 
 ### Assess
 
@@ -172,7 +174,7 @@ yet. A run's steps appear here as they are recorded."*
 | `Profiled <table>` | Assess only: counts and findings |
 | `Report composed` | How many claims, each citing evidence |
 | `Closing statement` | The model's closing prose. It cites nothing and claims nothing — a Plan run's whole output, an Agent run's aside |
-| `Stop requested` | You pressed Stop; *"the run ends at its next checkpoint"* |
+| `Stop requested` | You pressed Stop; *"the run takes no further database step; work already in hand, such as a report, still finishes"* |
 
 **Wording the application chose and text that came from elsewhere never share a line.** Headlines
 and details are the application's words; anything from the model, the engine or you is rendered as a
@@ -218,7 +220,8 @@ whole vocabulary (`SHORTFALL_SENTENCES`, `timeline.ts:335-343`):
 | `no-report` | "The run finished without composing a cited report, so nothing it found was written down." |
 | `empty-evidence` | "Every result the report cited came back empty, so the answer rests on nothing." |
 | `no-plan` | "The run produced no plan at all." |
-| `no-plan-comparison` | "No before-and-after plan comparison was recorded, which is what a query optimization rests on." |
+| `no-plan-comparison` | "No before-and-after plan comparison was recorded, and no index was recommended: a query optimization rests on one or the other." |
+| `no-plan-evidence` | "The index was recommended without citing a plan this run read, so nothing the engine said backs it." |
 | `no-table-profile` | "No table was profiled, so the state of the data was never established." |
 | `cancelled` | "The run was stopped before it could finish." |
 
@@ -390,7 +393,11 @@ Stated plainly, because a surface that hides its edges is the one that surprises
 - **It cannot be paused or resumed from the rail.** There is a Stop control and nothing standing in
   for a capability this build does not have (`docs/BACKLOG.md` B11).
 - **A stopped run stops at its next checkpoint**, not instantly: cancellation is enforced by the run
-  loop's own persisted state.
+  loop's own persisted state, and the checkpoint sits in the step that reaches a database. A run that
+  was already composing its report therefore finishes it and answers — twice on 2026-08-12 it did,
+  2.4 seconds after the Stop. That is the contract rather than a defect, so what changed in #356 is
+  that the ending now says it: *"A stop was requested before this ending: the run took no further
+  database step, and finished what it already had in hand."*
 - **A run's stored rows do not outlive it**, so a report can outlive the rows its citations point at
   (`docs/BACKLOG.md` B15). An artifact hydrates the grid and the explain view, not the chart or
   export surfaces (B14).

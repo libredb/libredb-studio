@@ -438,7 +438,13 @@ describe("foldLedgerEntries", () => {
 
     expect(view.status).toBe("running");
     expect(view.items.at(-1)?.headline).toBe("Stop requested");
-    expect(view.items.at(-1)?.detail).toBe("the run ends at its next checkpoint");
+    // #356: what the checkpoint IS, rather than that there is one. "Ends at its next
+    // checkpoint" was read as a promise the run ends, and twice the run then composed
+    // a report and answered — composing one reaches no database, and the checkpoint
+    // is in the step that does.
+    expect(view.items.at(-1)?.detail).toBe(
+      "the run takes no further database step; work already in hand, such as a report, still finishes",
+    );
   });
 
   test("items are keyed uniquely even when two entries share a timestamp", () => {
@@ -1115,6 +1121,7 @@ describe("an ending says whether the run ANSWERED, not only how it stopped (B24)
       "empty-evidence",
       "no-plan",
       "no-plan-comparison",
+      "no-plan-evidence",
       "no-table-profile",
       "cancelled",
     ]) {
@@ -1150,6 +1157,69 @@ describe("an ending says whether the run ANSWERED, not only how it stopped (B24)
 
     expect(view.items[1]?.headline).toBe("Run succeeded");
     expect(view.items[1]?.detail).toContain("stopped without composing a cited report");
+  });
+
+  /**
+   * #356 finding 2, observed twice on 2026-08-12: Stop was pressed, the request was
+   * recorded, and the run composed its report 2.4s later and ended
+   * `succeeded / answered`. Correct by contract, and the rail said "Run answered"
+   * and never mentioned the stop again.
+   */
+  describe("a run that was asked to stop and finished anyway says so", () => {
+    const stop: AgentLedgerEntry = { kind: "cancellation-requested", atMs: 13, bySessionId: "ada" };
+
+    test("the ending accounts for the stop it outran", () => {
+      const view = foldLedgerEntries([
+        OPENED,
+        stop,
+        finished("succeeded", { outcome: "answered", verifier: "agent-investigation.1" }, "report-composed"),
+      ]);
+
+      // The verdict is unchanged: the run answered, and who asked for what is a
+      // different fact from what the run produced.
+      expect(view.items.at(-1)?.headline).toBe("Run answered");
+      expect(view.items.at(-1)?.detail).toBe(
+        "A stop was requested before this ending: the run took no further database step, and finished what it already had in hand.",
+      );
+    });
+
+    test("a shortfall still leads, and the stop is added after it", () => {
+      const view = foldLedgerEntries([
+        OPENED,
+        stop,
+        finished(
+          "failed",
+          { outcome: "unanswered", verifier: "agent-investigation.1", unmet: ["no-report"] },
+          "turn-limit",
+        ),
+      ]);
+
+      expect(view.items.at(-1)?.detail).toContain("without composing a cited report");
+      expect(view.items.at(-1)?.detail).toContain("A stop was requested before this ending");
+    });
+
+    test("a run that ended cancelled is not told about its own cancellation twice", () => {
+      const view = foldLedgerEntries([
+        OPENED,
+        stop,
+        finished(
+          "cancelled",
+          { outcome: "unanswered", verifier: "agent-investigation.1", unmet: ["cancelled"] },
+          "cancelled",
+        ),
+      ]);
+
+      expect(view.items.at(-1)?.detail).toBe("The run was stopped before it could finish.");
+    });
+
+    test("an ending nobody asked for says nothing about a stop", () => {
+      const view = foldLedgerEntries([
+        OPENED,
+        finished("succeeded", { outcome: "answered", verifier: "agent-investigation.1" }, "report-composed"),
+      ]);
+
+      expect(view.items.at(-1)?.detail).toBeUndefined();
+    });
   });
 });
 

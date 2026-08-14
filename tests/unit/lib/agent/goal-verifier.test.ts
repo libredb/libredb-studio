@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { AGENT_PLANNING_VERIFIER, AGENT_WORKFLOW_GOALS, verifyRunGoal } from "@/lib/agent/goal-verifier";
 import type {
   AgentArtifactReference,
+  AgentEvidenceReference,
   AgentRunEvent,
   AgentRunMode,
   AgentRunRecord,
@@ -25,6 +26,8 @@ const CORRELATION = {
   full: "4f2c9a10-0000-4000-8000-000000000001",
   empty: "4f2c9a10-0000-4000-8000-000000000002",
   alsoEmpty: "4f2c9a10-0000-4000-8000-000000000003",
+  /** A plan this run asked the engine for, under `sql.explain.estimate`. */
+  plan: "4f2c9a10-0000-4000-8000-000000000004",
 } as const;
 
 const SNAPSHOT_FINGERPRINT = "ctx_2f0a";
@@ -238,7 +241,7 @@ describe("a query-optimization run is judged by its own artifact as well as the 
       ),
     );
 
-    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.1", unmet: [] });
+    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
   });
 
   test("THE GATE: a perfect report with no plan comparison does not answer this workflow's question", () => {
@@ -250,7 +253,7 @@ describe("a query-optimization run is judged by its own artifact as well as the 
     expect(verifyRunGoal(run("agent", "succeeded", events, "investigation")).outcome).toBe("answered");
     expect(verifyRunGoal(run("agent", "succeeded", events, "query-optimization"))).toEqual({
       outcome: "unanswered",
-      verifier: "agent-query-optimization.1",
+      verifier: "agent-query-optimization.2",
       unmet: ["no-plan-comparison"],
     });
   });
@@ -288,6 +291,118 @@ describe("a query-optimization run is judged by its own artifact as well as the 
     );
 
     expect(verdict.outcome).toBe("answered");
+  });
+
+  /**
+   * #356 finding 1: the live run that did everything right and was told it had not
+   * answered. It diagnosed the scan, recommended the index that addresses it, and
+   * could not compare plans because the "after" plan needs the index to exist —
+   * which a read-only run cannot create. It tried, and was refused as it should be.
+   */
+  describe("an index answers on the plan it diagnosed, because its second plan cannot exist", () => {
+    const planRead: AgentRunEvent = {
+      kind: "tool-completed",
+      atMs: 20,
+      stepId: "step_plan",
+      artifact: {
+        correlationId: CORRELATION.plan,
+        runId: "arun_1",
+        operationId: "sql.explain.estimate",
+        summary: { rowCount: 3, columnNames: ["detail"], elapsedMs: 4 },
+      },
+    };
+
+    const recommends = (
+      change: "index" | "rewrite",
+      ...references: readonly { source: "artifact" | "context-snapshot"; id: string }[]
+    ): AgentRunEvent => ({
+      kind: "recommendation",
+      atMs: 28,
+      change,
+      statement: change === "index" ? "CREATE INDEX salary_amount ON salary (amount)" : "SELECT emp_no FROM salary",
+      rationale: "The engine scans salary whole to satisfy the filter.",
+      evidence: references.map((reference) =>
+        reference.source === "artifact"
+          ? ({ source: "artifact", correlationId: reference.id } as const)
+          : ({ source: "context-snapshot", fingerprint: reference.id } as const),
+      ) as [AgentEvidenceReference, ...AgentEvidenceReference[]],
+    });
+
+    const optimization = (events: readonly AgentRunEvent[]) =>
+      verifyRunGoal(run("agent", "succeeded", events, "query-optimization"));
+
+    test("a cited report and an index recommendation citing the plan is an answer", () => {
+      const verdict = optimization([
+        contextCaptured,
+        planRead,
+        completed(CORRELATION.full, 8),
+        recommends("index", ARTIFACT(CORRELATION.plan)),
+        reportCiting(ARTIFACT(CORRELATION.full)),
+      ]);
+
+      expect(verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
+    });
+
+    test("an index citing a read rather than a plan is not grounded in what the engine does", () => {
+      // The plan is on the ledger; this recommendation does not rest on it. Naming
+      // the plan is what ties this index to that access path.
+      const verdict = optimization([
+        contextCaptured,
+        planRead,
+        completed(CORRELATION.full, 8),
+        recommends("index", ARTIFACT(CORRELATION.full)),
+        reportCiting(ARTIFACT(CORRELATION.full)),
+      ]);
+
+      expect(verdict.unmet).toEqual(["no-plan-evidence"]);
+    });
+
+    test("an index citing only the schema snapshot is an index proposed from the shape of the table", () => {
+      const verdict = optimization([
+        contextCaptured,
+        completed(CORRELATION.full, 8),
+        recommends("index", SNAPSHOT),
+        reportCiting(ARTIFACT(CORRELATION.full)),
+      ]);
+
+      expect(verdict.unmet).toEqual(["no-plan-evidence"]);
+    });
+
+    test("a rewrite is still held to the comparison, because both of ITS plans are readable", () => {
+      const verdict = optimization([
+        contextCaptured,
+        planRead,
+        completed(CORRELATION.full, 8),
+        recommends("rewrite", ARTIFACT(CORRELATION.plan)),
+        reportCiting(ARTIFACT(CORRELATION.full)),
+      ]);
+
+      expect(verdict.unmet).toEqual(["no-plan-comparison"]);
+    });
+
+    test("one grounded index among several answers, and the rest do not have to be", () => {
+      const verdict = optimization([
+        contextCaptured,
+        planRead,
+        completed(CORRELATION.full, 8),
+        recommends("index", SNAPSHOT),
+        recommends("index", ARTIFACT(CORRELATION.plan)),
+        reportCiting(ARTIFACT(CORRELATION.full)),
+      ]);
+
+      expect(verdict.outcome).toBe("answered");
+    });
+
+    test("a comparison still answers on its own, with no recommendation at all", () => {
+      const verdict = optimization([
+        contextCaptured,
+        completed(CORRELATION.full, 8),
+        planComparison,
+        reportCiting(ARTIFACT(CORRELATION.full)),
+      ]);
+
+      expect(verdict.outcome).toBe("answered");
+    });
   });
 
   test("each template is held to its OWN bar, and not to the other's", () => {

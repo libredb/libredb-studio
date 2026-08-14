@@ -292,7 +292,7 @@ const STOP_SENTENCES: Readonly<Record<AgentRunMode, Record<AgentRunStopReason, s
  * The verdict's shortfall still wins over the stop reason in BOTH modes, so a
  * planning run that produced no plan is told that rather than told it stopped.
  */
-function describeEnding(
+function endingSentence(
   reason: AgentRunFailureReason | undefined,
   stopReason: AgentRunStopReason | undefined,
   verdict: AgentGoalVerdictRecord | undefined,
@@ -313,6 +313,43 @@ function describeEnding(
   // down mid-read.
   const sentence = STOP_SENTENCES[mode]?.[stopReason];
   return sentence === null || sentence === undefined ? {} : { detail: sentence };
+}
+
+/**
+ * What a run that was asked to stop and ended anyway owes the reader (#356).
+ *
+ * Twice on 2026-08-12 a Stop was pressed, the request was recorded, and 2.4 seconds
+ * later the run composed its report and ended `succeeded / answered`. That is
+ * correct by contract — cancellation is enforced at the run's own checkpoint, and
+ * the checkpoint is in the step that reaches a database, so a report already being
+ * composed is not abandoned — but the rail said "Run answered" and the ending said
+ * nothing about the stop. The user pressed a button that promises the run stops,
+ * and read a screen that never mentioned it again.
+ *
+ * So the ending accounts for it. Not by calling an answered run cancelled: it
+ * answered, and the verdict is about the run's output rather than about who asked
+ * for what. What was missing is the fact, and the fact is on the ledger.
+ */
+const STOP_ARRIVED_LATE =
+  "A stop was requested before this ending: the run took no further database step, and finished what it already had in hand.";
+
+/**
+ * The ending's sentence, plus the stop that did not change it.
+ *
+ * `stopUnhonoured` is false for a run that ended `cancelled`, where the stop IS the
+ * ending and `STOP_SENTENCES` already says so — repeating it there would tell a
+ * reader twice about one event.
+ */
+function describeEnding(
+  reason: AgentRunFailureReason | undefined,
+  stopReason: AgentRunStopReason | undefined,
+  verdict: AgentGoalVerdictRecord | undefined,
+  mode: AgentRunMode,
+  stopUnhonoured: boolean,
+): { detail?: string } {
+  const ending = endingSentence(reason, stopReason, verdict, mode);
+  if (!stopUnhonoured) return ending;
+  return { detail: ending.detail === undefined ? STOP_ARRIVED_LATE : `${ending.detail} ${STOP_ARRIVED_LATE}` };
 }
 
 /** The verdict as the ledger carries it. Optional everywhere, like the fields beside it. */
@@ -337,7 +374,9 @@ const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
   "empty-evidence": "Every result the report cited came back empty, so the answer rests on nothing.",
   "no-plan": "The run produced no plan at all.",
   "no-plan-comparison":
-    "No before-and-after plan comparison was recorded, which is what a query optimization rests on.",
+    "No before-and-after plan comparison was recorded, and no index was recommended: a query optimization rests on one or the other.",
+  "no-plan-evidence":
+    "The index was recommended without citing a plan this run read, so nothing the engine said backs it.",
   "no-table-profile": "No table was profiled, so the state of the data was never established.",
   cancelled: "The run was stopped before it could finish.",
 };
@@ -365,7 +404,16 @@ function describeRefusal(refusal: AgentToolRefusal): Omit<AgentTimelineItem, "id
   }
 }
 
-function describeEvent(event: AgentRunEvent, mode: AgentRunMode): Omit<AgentTimelineItem, "id" | "atMs"> {
+/**
+ * `stopRequested` is the fold's state at THIS entry, not the run's final state, and
+ * it can only be true for an entry that follows the request — which is the only
+ * ordering that makes the sentence it produces true.
+ */
+function describeEvent(
+  event: AgentRunEvent,
+  mode: AgentRunMode,
+  stopRequested: boolean,
+): Omit<AgentTimelineItem, "id" | "atMs"> {
   switch (event.kind) {
     case "run-started":
       return { tone: "neutral", headline: `Run started in ${event.mode} mode` };
@@ -463,12 +511,22 @@ function describeEvent(event: AgentRunEvent, mode: AgentRunMode): Omit<AgentTime
         // would be this component inventing a cause for every ending that had none.
         // `reason` wins when both are present: a drive that died outside the loop is
         // a more specific account of the ending than the loop's own exit.
-        ...describeEnding(event.reason, event.stopReason, event.goalVerdict, mode),
+        ...describeEnding(
+          event.reason,
+          event.stopReason,
+          event.goalVerdict,
+          mode,
+          stopRequested && event.status !== "cancelled",
+        ),
       };
   }
 }
 
-function describeEntry(entry: AgentLedgerEntry, mode: AgentRunMode): Omit<AgentTimelineItem, "id"> {
+function describeEntry(
+  entry: AgentLedgerEntry,
+  mode: AgentRunMode,
+  stopRequested: boolean,
+): Omit<AgentTimelineItem, "id"> {
   switch (entry.kind) {
     case "run-opened":
       return {
@@ -484,7 +542,7 @@ function describeEntry(entry: AgentLedgerEntry, mode: AgentRunMode): Omit<AgentT
         quoted: entry.objective,
       };
     case "event":
-      return { atMs: entry.event.atMs, ...describeEvent(entry.event, mode) };
+      return { atMs: entry.event.atMs, ...describeEvent(entry.event, mode, stopRequested) };
     default:
       return {
         atMs: entry.atMs,
@@ -492,7 +550,12 @@ function describeEntry(entry: AgentLedgerEntry, mode: AgentRunMode): Omit<AgentT
         headline: "Stop requested",
         // Deliberately not "cancelled": the run holds its budget and whatever it has
         // in flight until its own loop reaches a checkpoint (T7a).
-        detail: "the run ends at its next checkpoint",
+        //
+        // What the checkpoint IS, rather than that there is one (#356). "The run
+        // ends at its next checkpoint" was read as a promise the run ends, and twice
+        // it then composed a report and answered — because the checkpoint sits in
+        // the step that reaches a database, and composing a report reaches none.
+        detail: "the run takes no further database step; work already in hand, such as a report, still finishes",
       };
   }
 }
@@ -656,7 +719,7 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
     }
     // Indexed, because two entries can legitimately be identical in content and
     // timestamp (a resumed run replaying a step), and React needs distinct keys.
-    items.push({ id: `entry-${index}`, ...describeEntry(entry, mode) });
+    items.push({ id: `entry-${index}`, ...describeEntry(entry, mode, stopRequested) });
   });
 
   const budgets = AGENT_EXECUTION_POLICY.budgets;

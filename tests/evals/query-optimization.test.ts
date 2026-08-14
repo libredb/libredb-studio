@@ -118,7 +118,7 @@ describe("the optimization arc, on both reference engines", () => {
         "run-finished",
       ]);
       expect(drive.status).toBe("succeeded");
-      expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.1", unmet: [] });
+      expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
     });
 
     test(`${engine}: the comparison records what the engine's own plan said`, async () => {
@@ -166,9 +166,18 @@ describe("the optimization arc, on both reference engines", () => {
   });
 });
 
-describe("THE GATE: the verifier fails the run when the template's own artifact is absent", () => {
+/**
+ * The arc a live run actually takes when the answer is an index (#356).
+ *
+ * On 2026-08-12 a run against the SQLite sample diagnosed the scan, recommended
+ * `CREATE INDEX idx_salary_amount_emp`, composed an accurate report — and was
+ * scored `unanswered`, because the rule asked for a comparison whose second plan
+ * would need the index to exist. It tried that too, and was refused as it should
+ * be. This block is that run, both ways round.
+ */
+describe("an index answers on the plan it diagnosed", () => {
   for (const engine of ["postgres", "sqlite"] as const) {
-    test(`${engine}: a competent, fully cited report with no plan comparison does not answer`, async () => {
+    test(`${engine}: one plan, an index citing it, and a cited report is an answer`, async () => {
       const run = await open(engine);
 
       const drive = await run.drive([
@@ -179,9 +188,46 @@ describe("THE GATE: the verifier fails the run when the template's own artifact 
 
       expect(drive.status).toBe("succeeded");
       expect(drive.stopReason).toBe("report-composed");
+      expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
+      // And it stays read-only: the DDL it proposed reached no database.
+      for (const statement of drive.modelStatements) expect(statement).not.toContain("CREATE INDEX");
+    });
+
+    test(`${engine}: an index citing a read rather than a plan does not answer`, async () => {
+      // The relaxation is about which artifact grounds the index, not about whether
+      // one has to. Nothing here asked the engine how it reaches its rows.
+      const run = await open(engine);
+
+      const drive = await run.drive([
+        callsTool("run_read_query", { sql: FAST }, "call_read"),
+        recommends(),
+        reportOn("The listing reads the whole table."),
+      ]);
+
       expect(drive.verdict).toEqual({
         outcome: "unanswered",
-        verifier: "agent-query-optimization.1",
+        verifier: "agent-query-optimization.2",
+        unmet: ["no-plan-evidence"],
+      });
+    });
+  }
+});
+
+describe("THE GATE: the verifier fails the run when the template's own artifact is absent", () => {
+  for (const engine of ["postgres", "sqlite"] as const) {
+    test(`${engine}: a competent, fully cited report that proposes nothing does not answer`, async () => {
+      const run = await open(engine);
+
+      const drive = await run.drive([
+        callsTool("inspect_plan", { sql: SLOW }, "call_plan_before"),
+        reportOn("The listing reads the whole table."),
+      ]);
+
+      expect(drive.status).toBe("succeeded");
+      expect(drive.stopReason).toBe("report-composed");
+      expect(drive.verdict).toEqual({
+        outcome: "unanswered",
+        verifier: "agent-query-optimization.2",
         unmet: ["no-plan-comparison"],
       });
     });
@@ -233,6 +279,6 @@ describe("a drive that dies after recording a comparison does not make it twice"
     expect(firstTurn).toContain("must not be made again");
     expect(firstTurn).toContain("was already recommended");
     // And the run still answers: the comparison it needs is on its own ledger.
-    expect(resumed.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.1", unmet: [] });
+    expect(resumed.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
   });
 });

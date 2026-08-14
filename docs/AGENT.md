@@ -369,9 +369,19 @@ something that is not an estimating plan of this run, while `PLAN_RESULT_RELEASE
 was honest and the rows have expired — telling a model the first when the second happened would send
 it looking for a mistake it did not make.
 
-Its goal verifier is `agent-query-optimization.1`: the investigation baseline, **and** a plan
-comparison on the ledger. The baseline dominates, so a run that never reported is told that rather
-than that it skipped a comparison.
+Its goal verifier is `agent-query-optimization.2`: the investigation baseline, **and** evidence that
+the change it proposes rests on what the engine actually does. The baseline dominates, so a run that
+never reported is told that rather than that it skipped a comparison.
+
+**That evidence has two shapes, because the two changes are not equally checkable (#356).** A
+rewrite is held to the plan comparison: both of its plans are readable without changing anything. An
+index's second plan is not readable at all — it would require the index to exist, and the run is
+read-only by contract. A live run on 2026-08-12 diagnosed the scan, recommended the right index,
+attempted `CREATE INDEX ...; SELECT ...`, was refused as it should be, and was then scored
+`unanswered` by a rule asking for the one artifact that answer cannot produce. So an index answers on
+the plan it **diagnosed**, cited by the recommendation itself: `no-plan-evidence` is an index
+recommendation that names no plan this run read. Not merely a plan somewhere on the ledger — the
+citation is what ties the index to the access path it changes.
 
 ### The database-assessment template
 
@@ -656,7 +666,7 @@ build until somebody decides what "answered" means for it.
 | --- | --- | --- |
 | `planning` | The run left non-empty closing prose. That mode is toolless and can never cite evidence, so judging it by the investigation rule would fail every planning run that did its job. | `no-plan` |
 | `agent` (investigation) | The run composed at least one claim, **and** the claims do not rest entirely on empty results. | `no-report`, `empty-evidence` |
-| `agent` (query-optimization) | The baseline above, **and** a plan comparison on the ledger. `agent-query-optimization.1`. | the above, plus `no-plan-comparison` |
+| `agent` (query-optimization) | The baseline above, **and** either a plan comparison on the ledger or an index recommendation citing a plan this run read. `agent-query-optimization.2`. | the above, plus `no-plan-comparison`, `no-plan-evidence` |
 | `agent` (database-assessment) | The baseline above, **and** a table profiled. `agent-database-assessment.1`. | the above, plus `no-table-profile` |
 
 A run stopped by its user reports `cancelled` instead of the missing output: a stop is not
