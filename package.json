@@ -181,7 +181,7 @@
     "ioredis": "^5.11.1",
     "jose": "^6.2.8",
     "lucide-react": "^0.562.0",
-    "monaco-editor": "^0.55.1",
+    "monaco-editor": "^0.56.0",
     "mongodb": "^7.5.0",
     "mssql": "^12.7.0",
     "mysql2": "^3.23.3",
