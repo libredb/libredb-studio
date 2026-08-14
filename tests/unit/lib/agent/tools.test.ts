@@ -2619,6 +2619,8 @@ describe("present_answer records which result IS the answer, and how to show it"
       readonly columnNames?: string[];
       readonly rowCount?: number;
       readonly stored?: boolean;
+      /** The statement the run drafted for the answer, where the test is about it. */
+      readonly sql?: string;
     } = {},
   ): AgentRunEvent[] {
     const rows = overrides.rows ?? [
@@ -2645,7 +2647,13 @@ describe("present_answer records which result IS the answer, and how to show it"
       );
     }
     return [
-      { kind: "statement-drafted", atMs: 1, stepId: "step-1", sql: ANSWER_SQL, rationale: "the question, in SQL" },
+      {
+        kind: "statement-drafted",
+        atMs: 1,
+        stepId: "step-1",
+        sql: overrides.sql ?? ANSWER_SQL,
+        rationale: "the question, in SQL",
+      },
       { kind: "tool-completed", atMs: 2, stepId: "step-1", artifact },
     ];
   }
@@ -2891,6 +2899,76 @@ describe("present_answer records which result IS the answer, and how to show it"
       if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
       expect(outcome.answer.handover).toBe("applied");
       expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+    });
+
+    /**
+     * The one comment that is not trivia (#373 review).
+     *
+     * `fingerprintStatement` normalises comments away, which is right for the repair
+     * ledger it belongs to and wrong here: under `pg_hint_plan` a hint block is
+     * an optimizer DIRECTIVE, so the cheap indexed plan taken for the unhinted text
+     * says nothing about a statement whose hint forces a sequential scan. A statement
+     * carrying one therefore takes no part in this join, on either side.
+     */
+    const HINTED_SQL = `/*+ SeqScan(orders) */ ${ANSWER_SQL}`;
+
+    test("a plan whose statement carries an optimizer hint does not license an unhinted answer", () => {
+      const h = harness();
+      withCheapPlan(h);
+      const events = [...answered(h), ...planEvents(HINTED_SQL)];
+
+      const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } }, true);
+
+      if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+      expect(outcome.answer.handover).toBe("applied");
+      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+    });
+
+    test("an answer that carries an optimizer hint is not licensed by the unhinted plan", () => {
+      // The direction that was the defect: the run inspects the plain statement, gets
+      // a cheap indexed plan, and then answers with a hinted one that forces a
+      // sequential scan. Both fingerprint alike.
+      const h = harness();
+      withCheapPlan(h);
+      const events = [...answered(h, { sql: HINTED_SQL }), ...planEvents(ANSWER_SQL)];
+
+      const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } }, true);
+
+      if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+      expect(outcome.answer.handover).toBe("applied");
+      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+    });
+
+    test("a hinted answer is not licensed by the plan of the identically hinted statement either", () => {
+      // Fail closed rather than join on the hint text. Joining would assert that the
+      // plan the run holds IS the hinted plan, and the run obtains that plan by
+      // sending the statement under an `EXPLAIN` prefix — whether `pg_hint_plan`
+      // still reads a hint there is a property of an extension this repository does
+      // not ship, does not test against, and cannot verify from here. A gate whose
+      // failure mode is a stalled production database does not rest on that.
+      const h = harness();
+      withCheapPlan(h);
+      const events = [...answered(h, { sql: HINTED_SQL }), ...planEvents(HINTED_SQL)];
+
+      const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } }, true);
+
+      if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+      expect(outcome.answer.handover).toBe("applied");
+      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+    });
+
+    test("an ordinary comment is still trivia, so the join still absorbs one", () => {
+      // The narrowness of the fix, pinned: what changed is that a DIRECTIVE stops the
+      // join, not that comments do. A model that annotates its aggregate has still
+      // written the same statement.
+      const h = harness();
+      withCheapPlan(h);
+      const events = [...answered(h), ...planEvents(`/* the monthly rollup */ ${PLAN_SQL}`)];
+
+      const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } }, true);
+
+      if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+      expect(outcome.answer.handover).toBe("auto-executed");
     });
   });
 

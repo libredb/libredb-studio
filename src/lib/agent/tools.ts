@@ -63,6 +63,7 @@ import { inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
+import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
 import type { ColumnSchema, DatabaseConnection, QueryResult, TableSchema } from "@/lib/types";
 import {
   type AgentCatalogKind,
@@ -2281,6 +2282,35 @@ function executedStatements(events: readonly AgentRunEvent[]): readonly string[]
  */
 function heldPlanFor(context: AgentToolContext, events: readonly AgentRunEvent[], sql: string): AgentPlanSide | null {
   const plans = estimatedPlansOf(events);
+  /*
+    The one comment that is not trivia (#373 review).
+
+    A statement carrying an optimizer directive takes no part in this join, on either
+    side. Under `pg_hint_plan` a `+`-marked comment block is not a note about the
+    statement, it is an instruction to the planner: the cheap indexed plan taken for
+    the unhinted text says nothing about a statement whose hint forces a sequential
+    scan, and the canonical form below normalises the difference away. So the gate
+    would have passed condition 2 with a plan that is not the plan of the statement
+    the editor will run — which is the whole of what condition 2 promises.
+
+    Fixed HERE and deliberately not in `fingerprintStatement`. That function is the
+    repair ledger's canonical identity and is consulted before EVERY statement, where
+    treating a comment as trivia is not a bug but a bound: a model that re-sent a
+    statement the ledger had already refused, with a comment added, would otherwise
+    fingerprint differently and be admitted again. Making a directive significant
+    there would widen "the same statement" for repair accounting in the one direction
+    that layer exists to close. The join is the only place the distinction matters,
+    so the distinction lives at the join.
+
+    Refused rather than joined on the hint text. Joining would assert that the plan
+    the run holds IS the hinted plan, and `inspect_plan` obtains that plan by sending
+    the statement under an `EXPLAIN` prefix — whether `pg_hint_plan` still reads a
+    hint from behind one is a property of an extension this repository does not ship,
+    does not test against and cannot verify. The cost of refusing is that a hinted
+    answer is placed in the editor unrun with the gate's own warning, which is what
+    every other unweighable statement already gets.
+  */
+  if (hasOptimizerHint(sql)) return null;
   // Joined on the canonical form, not on the exact characters. The two statements
   // being compared were drafted INDEPENDENTLY — one as `run_read_query`'s argument
   // and one as `inspect_plan`'s — so a model that formats its aggregate over four
@@ -2296,6 +2326,7 @@ function heldPlanFor(context: AgentToolContext, events: readonly AgentRunEvent[]
   // `WHERE id = 1` to an answer of `WHERE id = 2`.
   const wanted = fingerprintStatement(sql);
   for (const [correlationId, plan] of plans) {
+    if (hasOptimizerHint(plan.sql)) continue;
     if (fingerprintStatement(plan.sql) !== wanted) continue;
     const side = readPlanSide(context, plans, correlationId);
     if (typeof side !== "string") return side;
