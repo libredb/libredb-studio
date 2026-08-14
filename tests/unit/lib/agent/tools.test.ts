@@ -2724,6 +2724,69 @@ describe("present_answer records which result IS the answer, and how to show it"
     expect(outcome.modelText).toContain("compose_report");
   });
 
+  /**
+   * One answer per run, decided from the run's own events (#373 review).
+   *
+   * The tool is NON-terminal on purpose — the run goes on to cite the same artifact in
+   * its report — so nothing in the loop stopped a model calling it twice. Two calls
+   * wrote two `answer-composed` entries, and on an auto-execute run the rail then
+   * delivered BOTH statements to the editor and ran both, without a timeout, under a
+   * checkbox that promised the final answer. The run's own ledger is what settles it,
+   * the way every other "did this run already do that" question here is settled.
+   */
+  describe("an answer already on the ledger is not composed a second time", () => {
+    /** The `answer-composed` entry a first, successful presentation leaves behind. */
+    const alreadyAnswered = (h: Harness): AgentRunEvent[] => {
+      const events = answered(h);
+      const first = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } });
+      if (first.kind !== "answered") throw new Error(`expected the first answer to be recorded, got ${first.kind}`);
+      return [...events, { kind: "answer-composed", atMs: 3, ...first.answer }];
+    };
+
+    test("a second presentation is refused, and the refusal names what to do next", () => {
+      const h = harness();
+
+      const second = present(h, alreadyAnswered(h), {
+        artifact: ANSWER_CORRELATION,
+        presentation: { kind: "table" },
+      });
+
+      if (second.kind !== "unavailable") throw new Error("expected the second answer to be refused");
+      expect(second.reasonCode).toBe("ANSWER_ALREADY_RECORDED");
+      // The way out, which is the only thing left for this run to do.
+      expect(second.modelText).toContain("compose_report");
+    });
+
+    test("a differently shaped second answer is refused too: it is the run that already answered", () => {
+      // Not a duplicate check. The refusal is about the run having answered, so a
+      // second answer over a different presentation — or a different artifact — is the
+      // same thing to it: a run that answers twice has answered nothing.
+      const h = harness();
+
+      const second = present(h, alreadyAnswered(h), { artifact: ANSWER_CORRELATION, presentation: CHART });
+
+      expect(second).toMatchObject({ kind: "unavailable", reasonCode: "ANSWER_ALREADY_RECORDED" });
+    });
+
+    test("the refusal is decided before the arguments are read, so bad ones cannot mask it", () => {
+      // Order matters: an `INVALID_TOOL_INPUT` here would invite the model to correct
+      // its arguments and call again, which is precisely what must not happen.
+      const h = harness();
+
+      const second = present(h, alreadyAnswered(h), { artifact: 42 });
+
+      expect(second).toMatchObject({ kind: "unavailable", reasonCode: "ANSWER_ALREADY_RECORDED" });
+    });
+
+    test("the first answer of a run is unaffected", () => {
+      const h = harness();
+
+      const first = present(h, answered(h), { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } });
+
+      expect(first.kind).toBe("answered");
+    });
+  });
+
   test("a spec asking for a series split is refused at the parser, because nothing draws one", () => {
     // The contract does not invite `series` and the schema is strict, so a model that
     // asks for one is told at the door rather than being told nothing. The defect

@@ -223,6 +223,8 @@ export type AgentToolUnavailableCode =
   | "RECOMMENDATION_SHAPE_MISMATCH"
   /** The plan was this run's, and its rows are no longer held to be read. */
   | "PLAN_RESULT_RELEASED"
+  /** This run has already recorded an answer, and a run answers once. */
+  | "ANSWER_ALREADY_RECORDED"
   /** The answer names an artifact this run never produced. */
   | "ANSWER_ARTIFACT_UNKNOWN"
   /** The answer's result exists, and no statement this run drafted produced it. */
@@ -693,10 +695,16 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
     "That statement is not the kind of change the card claims. An index recommendation must be one CREATE INDEX statement; a rewrite must be one bounded read.",
   PLAN_RESULT_RELEASED:
     "That plan was this run's, but its rows are no longer held and cannot be read again. Inspect the plan once more if the comparison still matters.",
-  // The six answer refusals each restate the half of the contract they enforce, and
-  // each one names the way out. A description is read by a model that is not yet
-  // confused; these are read by one that demonstrably is, and a table is almost
-  // always a correct answer it can give instead.
+  // The answer refusals each restate the half of the contract they enforce, and each
+  // one names the way out. A description is read by a model that is not yet confused;
+  // these are read by one that demonstrably is, and a table is almost always a correct
+  // answer it can give instead.
+  //
+  // This first one is the exception to that shape: nothing about the arguments was
+  // wrong, so there is no contract half to restate and no second attempt to invite.
+  // The only thing left for the run to do is say what the answer MEANS.
+  ANSWER_ALREADY_RECORDED:
+    "This run has already recorded its answer, and a run answers once: nothing was changed and no second answer was composed. If that answer was the wrong one, say so in your claims. Now call compose_report — the presentation shows the result, the claims are the answer.",
   ANSWER_ARTIFACT_UNKNOWN:
     "That is not the id of a result this run read, so there is nothing to present. Pass the artifact id a completed read reported in this run, or read the data first.",
   ANSWER_STATEMENT_UNKNOWN:
@@ -2314,6 +2322,34 @@ export function presentAnswerTool(
   // stayed invisible.
   if (run.runId !== context.runId) {
     throw new Error("agent tool layer: the answer's run record does not belong to this run");
+  }
+
+  /*
+    ONE answer per run, decided from the run's own ledger (#373 review).
+
+    The tool is non-terminal — only `compose_report` ends the loop — so nothing stopped
+    a model calling it twice, and the second call was as successful as the first: two
+    `answer-composed` entries, two statements the rail delivered to the editor, and on
+    an auto-execute run BOTH of them run there without a timeout, under a checkbox that
+    promised the final answer. The verdict reads the same ledger and is satisfied by
+    one entry, so the second was never buying anything either.
+
+    Refused BEFORE the arguments are parsed, and that order is the point: an
+    `INVALID_TOOL_INPUT` would invite the model to correct its arguments and call
+    again, which is the loop this refusal exists to end. Nothing about the arguments is
+    wrong here — the run is.
+
+    It costs no repair attempt, because this tool reaches neither the repair ledger nor
+    a database: `runAuditedAgentCall` is where an attempt is spent, and no path from
+    here enters it. The run loop settles this as an ordinary `answered` outcome, the
+    same way it settles every other refusal a ledger-only tool gives.
+
+    The consequence across a resumed drive is deliberate rather than incidental: the
+    entry is durable, so a run resumed after answering is told it has answered rather
+    than being allowed to answer again for a second hand-over.
+  */
+  if (run.events.some((event) => event.kind === "answer-composed")) {
+    return unavailable("ANSWER_ALREADY_RECORDED");
   }
 
   const parsed = parseToolInput(presentAnswerSchema, input);

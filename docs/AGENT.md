@@ -667,6 +667,16 @@ is process memory released when the run ends, and `answer-composed` is written d
 instant later the rows are gone, and the honest answer then is `ANSWER_RESULT_RELEASED` rather than a
 spec that passed because nothing was left to check it against.
 
+**A run answers once, and the ledger is what says so.** `present_answer` is non-terminal — only
+`compose_report` ends a drive — so nothing in the loop stops a model calling it a second time, and a
+second successful presentation would write a second `answer-composed` entry. On an auto-execute run
+the rail carries out every entry it is given, so that is two statements delivered to the editor and
+two run there without a timeout, under a checkbox that promised the final answer. So the tool refuses
+a second presentation with `ANSWER_ALREADY_RECORDED`, decided from the run's own events **before the
+arguments are parsed** (an argument refusal would invite the model to correct them and call again) and
+costing no repair attempt, because this tool reaches neither the repair ledger nor a database. The
+entry is durable, so a resumed drive is told the same thing.
+
 **A table is a first-class outcome, not a fallback.** A single scalar, a one-row result and a result
 with no numeric column are all answers, and every one of them would render an empty chart. The
 refusals say so in their own text, and a table answer is accepted with no chart validation at all.

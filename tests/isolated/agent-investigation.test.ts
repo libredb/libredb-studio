@@ -1917,4 +1917,37 @@ describe("the handover an answer records comes from the run's own setting", () =
     expect(composed.handover).toBe("applied");
     expect(composed.handoverWarning).toContain("Not run for you");
   });
+
+  test("a model that presents twice leaves ONE answer on the ledger, and is told why", async () => {
+    /*
+      The tool is non-terminal, so the loop lets the model keep going after an answer —
+      and before #373 the second call succeeded exactly like the first. Two
+      `answer-composed` entries mean two statements the rail delivers to the editor and,
+      on an auto-execute run, two it RUNS there with no timeout, under a checkbox that
+      promised the final answer. The guard is server-side and reads the run's own events,
+      so it holds however the second call is worded.
+    */
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent", "data-analysis", true);
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT id FROM orders", rationale: "the question, in SQL" }),
+      presentsTheRead("call_answer_1"),
+      presentsTheRead("call_answer_2"),
+      answersProse("done"),
+    );
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const composed = (await eventsOf(b.store, run.runId)).filter((event) => event.kind === "answer-composed");
+    expect(composed).toHaveLength(1);
+    // And the refusal reached the model rather than the run simply dying: the turn
+    // AFTER the second presentation carries the tool result it was answered with.
+    const transcript = (script.turns.at(-1) as Turn).transcript;
+    expect(transcript).toContain("This run has already recorded its answer");
+    expect(transcript).toContain("compose_report");
+  });
 });
