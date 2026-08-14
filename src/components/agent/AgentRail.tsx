@@ -12,6 +12,8 @@ import {
   AGENT_WORKFLOW_BUDGETS,
 } from "@/lib/agent/execution-policy";
 import type { AgentChartSpec, AgentRunMode, AgentRunStatus, AgentRunWorkflowType } from "@/lib/agent/types";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import type { DatabaseType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { type AgentBudgetGauge, type AgentTimelineTone, describeFailureReason } from "./timeline";
 import type { AgentPrefillRequest } from "./use-agent-prefill";
@@ -63,6 +65,20 @@ export interface AgentRailProps {
    */
   readonly onApplyStatement?: (sql: string) => void;
   /**
+   * The engine this run's connection speaks, or null when nothing is selected. Read
+   * for one sentence only: what a long read costs is not the same fact on every
+   * engine, and SQLite's is the one a user consents to when they tick auto-execute.
+   */
+  readonly connectionType?: DatabaseType | null;
+  /**
+   * Puts a statement the RUN handed over into the host's editor and runs it there,
+   * at the editor's own default row limit (§2.1). Distinct from `onApplyStatement`
+   * because the two are different acts: that one is the user taking a statement, this
+   * one is the run delivering the answer it was told to deliver. A host with no way
+   * to run one omits it, and the statement is then placed unrun rather than lost.
+   */
+  readonly onRunStatement?: (sql: string) => void;
+  /**
    * Asks the host to show a result the run stored. The rail hands over identifiers
    * and nothing else: the rows are fetched and rendered by the surface that already
    * renders rows, so this component instantiates no grid of its own.
@@ -105,6 +121,7 @@ const WORKFLOW_LABELS: Readonly<Record<AgentRunWorkflowType, string>> = {
   "query-optimization": "Optimize",
   "database-assessment": "Assess",
   operations: "Operate",
+  "data-analysis": "Analyze",
 };
 
 /** A run that is over cannot be asked for anything, so nothing is offered for it. */
@@ -215,15 +232,24 @@ function HydrationControls({
 export function AgentRail({
   connectionId,
   connectionName,
+  connectionType = null,
   sheetOpen = false,
   onSheetOpenChange,
   onApplyStatement,
+  onRunStatement,
   onShowArtifact,
   prefill = null,
 }: AgentRailProps) {
   const [mode, setMode] = useState<AgentRunMode>("planning");
   const [workflowType, setWorkflowType] = useState<AgentRunWorkflowType>("investigation");
   const [objective, setObjective] = useState("");
+  /**
+   * Whether the run may also run its answer in the editor. Sent at start and never
+   * afterwards: the server decides it from the request that OPENS the run and no
+   * later request may widen it, so a control that moved mid-run would be offering a
+   * change nothing would honour.
+   */
+  const [autoExecute, setAutoExecute] = useState(false);
   /** An ask that arrived while the user was typing, waiting for them to take it. */
   const [offeredObjective, setOfferedObjective] = useState<string | null>(null);
   const run = useAgentRun();
@@ -238,6 +264,23 @@ export function AgentRail({
     the default the fold takes for a ledger with no header.
   */
   const meterBudget = AGENT_WORKFLOW_BUDGETS[run.timeline.workflowType];
+
+  /*
+    The ceilings a run STARTED NOW would carry, which is what the auto-execute copy
+    is about — the workflow the buttons show, not the one a finished run had. The
+    meter above reads the other one for the opposite reason, and the two are kept
+    apart here rather than shared.
+  */
+  const selectedBudget = AGENT_WORKFLOW_BUDGETS[workflowType];
+
+  /*
+    The terms of the checkbox below, as ONE sentence-run rather than as JSX prose:
+    the figures are interpolated and a formatter is free to reflow JSX text around
+    them, which is how "500-row limit" becomes "500 -row limit" without anyone
+    touching the copy. This is the sentence a user consents to, so it is written and
+    rendered as written.
+  */
+  const autoExecuteTerms = `The run always produces its answer on its own read-only path, bounded to ${selectedBudget.policy.budgets.maxResultRows} rows and ${selectedBudget.policy.budgets.statementTimeoutMs / 1000} seconds. Tick this and it will also put that statement in your editor and run it there — on your connection, at the editor's ${DEFAULT_QUERY_LIMIT}-row limit and with no time limit. Statements whose plan reads as expensive, or which the run measured as slow, are put in the editor without being run. Writes and DDL are refused either way.`;
 
   /*
     The sheet is a mobile presentation, and the breakpoint has to be read rather than
@@ -332,8 +375,46 @@ export function AgentRail({
     // Both axes, always. They are independent (#325): a planning run of a query
     // optimization is an ordinary thing to ask for, and sending the workflow only in
     // agent mode made the rail unable to express one.
-    void run.start({ mode, workflowType, objective: objective.trim(), connectionId });
+    void run.start({ mode, workflowType, autoExecute, objective: objective.trim(), connectionId });
   };
+
+  /**
+   * A run this rail is still following. The setting above is frozen for exactly as
+   * long as this holds — the same window the stop control is offered in, because both
+   * are asking about a run the server still has open.
+   */
+  const runOpen = run.runId !== null && LIVE_STATUSES.has(run.timeline.status);
+
+  /*
+    Carrying out what the RUN decided (§2.1, §2.3).
+
+    The three-condition gate is the server's and its outcome is on the ledger, so
+    nothing here weighs a statement again: the browser reads `handover` and does what
+    it says. Once per entry, tracked by entry id — a fold runs on every appended line
+    and re-delivering the same answer would run the user's database once per line
+    after it.
+
+    The ids are positional within one run (`entry-0`, `entry-1`, …), so they are
+    reused by the NEXT run and the record is cleared when the run id changes. Without
+    that, a second run's answer would be recognised as the first one's and silently
+    dropped.
+  */
+  const handedOverRunId = useRef<string | null>(null);
+  const handedOver = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (handedOverRunId.current !== run.runId) {
+      handedOverRunId.current = run.runId;
+      handedOver.current.clear();
+    }
+    for (const item of run.timeline.items) {
+      if (item.handover === undefined || handedOver.current.has(item.id)) continue;
+      handedOver.current.add(item.id);
+      // A host with no runner still gets the statement, unrun: the run's answer
+      // reaching the editor is the part that does not depend on the gate.
+      const deliver = item.handover.kind === "auto-executed" ? (onRunStatement ?? onApplyStatement) : onApplyStatement;
+      deliver?.(item.handover.sql);
+    }
+  }, [run.runId, run.timeline.items, onApplyStatement, onRunStatement]);
 
   /*
     Stopping is the only control offered, and the two that are absent are absent
@@ -516,6 +597,58 @@ export function AgentRail({
             </button>
           </p>
         )}
+
+        {/*
+          Auto-execute (§2.6). The copy is the control: "auto-mode" transfers no
+          responsibility because it names no bound, so this one names all three —
+          the bound the run keeps for its own read, the bound the editor keeps (500
+          rows), and the bound being given up (the statement timeout). It also says
+          what the run does INSTEAD when its gate declines, because a user who finds
+          the statement sitting unrun has to be able to read that as the feature
+          working rather than as the feature failing.
+
+          Every figure is read from the same constants the enforcement reads —
+          the workflow's own policy for the run's side, `DEFAULT_QUERY_LIMIT` for the
+          editor's — so a ceiling changed in one place cannot leave a promise here
+          that nothing keeps.
+        */}
+        <div className="mt-2">
+          <label htmlFor="agent-auto-execute" className="flex items-start gap-2 cursor-pointer">
+            <input
+              id="agent-auto-execute"
+              data-testid="agent-auto-execute"
+              type="checkbox"
+              checked={autoExecute}
+              disabled={runOpen}
+              onChange={(e) => setAutoExecute(e.target.checked)}
+              className="mt-0.5 rounded border-white/20 bg-zinc-900/50 disabled:opacity-40"
+            />
+            <span data-testid="agent-auto-execute-label" className="text-xs text-zinc-300">
+              Also run the final answer in my editor
+            </span>
+          </label>
+          <p data-testid="agent-auto-execute-terms" className="mt-1 text-[0.625rem] text-zinc-500">
+            {autoExecuteTerms}
+          </p>
+          {/*
+            One more sentence where the engine changes what a long read costs, in the
+            words the budget meter already uses for the same fact: SQLite does not
+            preempt a statement over its timeout, so the editor's missing time limit
+            is a different promise there than it is on PostgreSQL.
+          */}
+          {connectionType === "sqlite" && (
+            <p data-testid="agent-auto-execute-sqlite" className="mt-1 text-[0.625rem] text-amber-400/70">
+              On SQLite a read is not interrupted when it runs long: it blocks other writers and this application until
+              it finishes.
+            </p>
+          )}
+          {runOpen && (
+            <p data-testid="agent-auto-execute-frozen" className="mt-1 text-[0.625rem] text-zinc-600">
+              This is decided when the run is opened and stays what it was: a later request cannot widen a run the
+              server already holds.
+            </p>
+          )}
+        </div>
 
         {connectionId === null && (
           <p data-testid="agent-unresolvable-connection" className="mt-2 text-xs text-amber-400/80">

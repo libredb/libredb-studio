@@ -664,6 +664,15 @@ execution produces no ledger event and cannot: it happens in the browser against
 does not own. The timeline entry says so in as many words — what the editor did is visible in the
 editor.
 
+**The browser carries the outcome out; it does not weigh the gate again.** The rail reads `handover`
+off the ledger and delivers the statement once per entry: `auto-executed` places it in the editor and
+runs it, `applied` places it unrun beside the run's own reason, `none` hands over nothing. The re-run
+goes through `useQueryExecution.executeHandedOverStatement`, which takes no execution options at all
+and forces `DEFAULT_QUERY_LIMIT` with `unlimited: false` — a tab a user widened for a statement they
+wrote must not widen one the run handed over (§2.1). The setting itself is offered as a checkbox in
+the rail that states those bounds, sent with the start request and frozen for as long as the run is
+open, which is the browser side of the server's own rule.
+
 ### What the fence is proved to hold against
 
 `untrusted-content.ts` fences database content; `tests/evals/injection.test.ts` is what proves the

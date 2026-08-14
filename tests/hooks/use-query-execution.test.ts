@@ -1926,4 +1926,69 @@ describe("useQueryExecution", () => {
       expect(localStorage.getItem(COUNT_KEY)).toBe("9");
     });
   });
+
+  /**
+   * A statement an agent run handed to the editor (§2.1, §2.5 of
+   * `docs/AGENT_ANALYST_DESIGN.md`).
+   *
+   * The caps ARE the feature here. A run that composes an answer has read it under
+   * the agent's own ceilings; what the editor re-run buys is the editor's 500-row
+   * limit, and nothing wider. So this entry point takes no execution options at all
+   * and states both bounds itself, which is what keeps a widened execution in this
+   * hook from reaching a statement the user did not type.
+   */
+  describe("a statement handed over by an agent run", () => {
+    /**
+     * The request that carries a statement, told apart from the background EXPLAIN
+     * the hook fires beside it: the plan request sends the statement under a prefix
+     * and no options at all, so matching on the exact text is what finds the run.
+     */
+    const bodyFor = (fetchMock: ReturnType<typeof mockGlobalFetch>, sql: string) =>
+      fetchMock.mock.calls
+        .filter((call) => String(call[0]).includes("/api/db/query"))
+        .map((call) => JSON.parse(call[1]!.body as string))
+        .find((body) => body.sql === sql);
+
+    test("runs at the editor's default limit, and not in unlimited mode even after an unlimited run", async () => {
+      const fetchMock = mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+      const params = createDefaultParams();
+
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      // The defect this exists to prevent: the previous execution in this hook was
+      // widened to unlimited, and a handed-over statement that inherited it would
+      // ask the server for up to MAX_UNLIMITED_ROWS rows of the run's own answer.
+      act(() => {
+        result.current.setPendingUnlimitedQuery({ query: "SELECT * FROM big_table", tabId: "tab-1" });
+      });
+      await act(async () => {
+        result.current.handleUnlimitedQuery();
+      });
+      expect(bodyFor(fetchMock, "SELECT * FROM big_table").options.unlimited).toBe(true);
+
+      await act(async () => {
+        result.current.executeHandedOverStatement("SELECT region, SUM(net_total) FROM orders GROUP BY region");
+      });
+
+      const handedOver = bodyFor(fetchMock, "SELECT region, SUM(net_total) FROM orders GROUP BY region");
+      // Asserted as the forced figure rather than as "whatever the last run used":
+      // the point is the number, not the continuity.
+      expect(handedOver.sql).toBe("SELECT region, SUM(net_total) FROM orders GROUP BY region");
+      expect(handedOver.options).toEqual({ limit: 500, offset: 0, unlimited: false });
+    });
+
+    test("hands the statement over byte for byte, adding no LIMIT of its own", async () => {
+      const fetchMock = mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+      const params = createDefaultParams();
+      const sql = "SELECT region,\n       SUM(net_total) AS net_total\nFROM orders\nGROUP BY region";
+
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      await act(async () => {
+        result.current.executeHandedOverStatement(sql);
+      });
+
+      expect(bodyFor(fetchMock, sql)).toBeDefined();
+    });
+  });
 });

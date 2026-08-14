@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
 import { isMultiStatement } from "@/lib/sql/statement-splitter";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { shouldRefreshSchema } from "@/lib/query-generators";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { logger } from "@/lib/logger";
@@ -134,7 +135,7 @@ export function useQueryExecution({
       }
 
       // Options extraction
-      const { limit = 500, offset = 0, unlimited = false, params } = executionOptions || {};
+      const { limit = DEFAULT_QUERY_LIMIT, offset = 0, unlimited = false, params } = executionOptions || {};
 
       // isLoadingMore flag
       const isLoadMore = offset > 0;
@@ -499,6 +500,27 @@ export function useQueryExecution({
     [executeQuery],
   );
 
+  /**
+   * Run a statement an agent run handed to this editor (#329, §2.1/§2.5 of
+   * `docs/AGENT_ANALYST_DESIGN.md`).
+   *
+   * Its own entry point rather than a call site passing options, and it accepts none:
+   * the caps are the whole point. An agent run reads its answer under the agent's
+   * ceilings; the editor re-run is the widest thing the setting buys, and it is the
+   * editor's DEFAULT limit — never `unlimited`, whatever the last execution in this
+   * tab was widened to, because a statement the user did not type must not be able to
+   * inherit a ceiling they raised for one they did.
+   *
+   * The statement travels verbatim. Nothing here appends a `LIMIT`: the row bound is
+   * the request's, so the text stays the text the run's ledger holds.
+   */
+  const executeHandedOverStatement = useCallback(
+    (sql: string) => {
+      void executeQuery(sql, undefined, false, { limit: DEFAULT_QUERY_LIMIT, unlimited: false });
+    },
+    [executeQuery],
+  );
+
   // Cancel running query
   const cancelQuery = useCallback(async () => {
     // Abort the fetch request
@@ -559,6 +581,7 @@ export function useQueryExecution({
   return {
     executeQuery,
     forceExecuteQuery,
+    executeHandedOverStatement,
     cancelQuery,
     handleLoadMore,
     handleUnlimitedQuery,

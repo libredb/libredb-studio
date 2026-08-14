@@ -246,9 +246,22 @@ adds is that the answer's statement is also placed in your editor **and run ther
 connection, at the editor's 500-row limit and with **no time limit**. Writes and DDL are refused
 either way.
 
+**The control is the checkbox above Start**, *"Also run the final answer in my editor"*, with the
+terms under it in the words above: what the run keeps for its own read (200 rows, 10 seconds), what
+the editor keeps (the 500-row limit), what is given up (the time limit), and what happens instead
+when the run declines to run it for you. On a SQLite connection one more line appears, because there
+the missing time limit means something different: *"On SQLite a read is not interrupted when it runs
+long: it blocks other writers and this application until it finishes."*
+
 It is decided when the run is opened and cannot be changed afterwards — the request that opens the
-run is the only place it is set, and it is recorded on the run itself. The rail does not offer the
-control yet; today the field is accepted by `POST /api/agent/runs` (`autoExecute`, absent means off).
+run is the only place it is set, and it is recorded on the run itself. So the checkbox stops
+responding while a run is open and says why; tick it before you press Start, and start a new run to
+change your mind. (The same field is accepted by `POST /api/agent/runs` as `autoExecute`, absent
+meaning off.)
+
+**The re-run is at the editor's default 500 rows even if you had widened this tab.** "Show unlimited
+rows" is a choice you made about a statement you wrote; a statement the run hands over does not
+inherit it, and it is run at the default limit whatever the tab was last set to.
 
 **A statement is only run for you when all three of these hold:**
 

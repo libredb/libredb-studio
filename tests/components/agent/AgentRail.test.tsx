@@ -254,6 +254,7 @@ describe("AgentRail", () => {
     expect(JSON.parse(String(startInit?.body))).toEqual({
       mode: "agent",
       workflowType: "investigation",
+      autoExecute: false,
       objective: "why is checkout slow",
       connectionId: "seed:sales",
     });
@@ -300,7 +301,38 @@ describe("AgentRail", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
       mode: "agent",
       workflowType: "operations",
+      autoExecute: false,
       objective: "what is blocked right now",
+      connectionId: "seed:sales",
+    });
+  });
+
+  test("the Analyze workflow is offered, and starting it asks the server for it", async () => {
+    // Same assertion as Operate's, for the same reason: the button row is generated
+    // from the label record, so this is what makes the workflow reachable by a user
+    // rather than merely present in a type.
+    const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+    const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    const analyze = getByTestId("agent-workflow-data-analysis");
+    expect(analyze.getAttribute("aria-pressed")).toBe("false");
+    expect(analyze.textContent).toBe("Analyze");
+
+    fireEvent.click(getByTestId("agent-mode-agent"));
+    fireEvent.click(analyze);
+    expect(getByTestId("agent-workflow-data-analysis").getAttribute("aria-pressed")).toBe("true");
+    expect(getByTestId("agent-workflow-investigation").getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.change(getByTestId("agent-objective"), { target: { value: "sales by region today" } });
+    await act(async () => {
+      fireEvent.click(getByTestId("agent-start"));
+    });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      mode: "agent",
+      workflowType: "data-analysis",
+      autoExecute: false,
+      objective: "sales by region today",
       connectionId: "seed:sales",
     });
   });
@@ -328,6 +360,7 @@ describe("AgentRail", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
       mode: "agent",
       workflowType: "query-optimization",
+      autoExecute: false,
       objective: "why is checkout slow",
       connectionId: "seed:sales",
     });
@@ -346,6 +379,7 @@ describe("AgentRail", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
       mode: "planning",
       workflowType: "query-optimization",
+      autoExecute: false,
       objective: "why is checkout slow",
       connectionId: "seed:sales",
     });
@@ -1581,7 +1615,7 @@ describe("AgentRail", () => {
      * layer reads, workflow by workflow — a hard-coded expectation here would pass
      * while the two drifted.
      */
-    test.each(["investigation", "query-optimization", "database-assessment", "operations"] as const)(
+    test.each(["investigation", "query-optimization", "database-assessment", "operations", "data-analysis"] as const)(
       "a %s run's meter states that workflow's own ceilings, and they are the server's",
       async (workflowType) => {
         mockAgentFetch([openedFor(workflowType), STARTED_LINE]);
@@ -1867,6 +1901,182 @@ describe("AgentRail", () => {
 
       await findAllByTestId("agent-report-citation");
       expect(queryByTestId("agent-citation-show-result")).toBeNull();
+    });
+  });
+
+  /**
+   * Auto-execute (§2.1, §2.5, §2.6 of `docs/AGENT_ANALYST_DESIGN.md`).
+   *
+   * The control names the bound it gives up and the one it keeps, because "auto-mode"
+   * transfers no responsibility: a checkbox that names no bound cannot be consented
+   * to. And the RUN's own record is what the rail acts on — the three-condition gate
+   * lives on the server (`auto-execute.ts`), so the browser carries out what the
+   * ledger says happened and decides nothing again.
+   */
+  describe("auto-execute", () => {
+    /** The statement the answer rests on. Multi-line on purpose: it is handed over verbatim. */
+    const ANSWER_SQL = "SELECT region,\n       SUM(net_total) AS net_total\nFROM orders\nGROUP BY region";
+
+    const answerLine = (handover: string, handoverWarning?: string): string =>
+      `${JSON.stringify({
+        kind: "event",
+        event: {
+          kind: "answer-composed",
+          atMs: 1_003,
+          sql: ANSWER_SQL,
+          artifact: {
+            correlationId: "corr_9",
+            runId: "arun_1",
+            operationId: "sql.query.read",
+            summary: { rowCount: 4, columnNames: ["region", "net_total"], elapsedMs: 12 },
+          },
+          presentation: { kind: "table" },
+          handover,
+          ...(handoverWarning === undefined ? {} : { handoverWarning }),
+        },
+      })}\n`;
+
+    async function runWith(props: Record<string, unknown>) {
+      const view = render(<AgentRail {...DEFAULT_PROPS} {...props} />);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      return view;
+    }
+
+    test("the control names the bound it gives up, the one it keeps, and what happens instead", () => {
+      const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      expect(getByTestId("agent-auto-execute-label").textContent).toBe("Also run the final answer in my editor");
+      const terms = getByTestId("agent-auto-execute-terms").textContent ?? "";
+      // The run's own bounds, read off the same policy the meter reads.
+      expect(terms).toContain("200 rows");
+      expect(terms).toContain("10 seconds");
+      // The bound that remains, and the one being given up.
+      expect(terms).toContain("500-row limit");
+      expect(terms).toContain("no time limit");
+      // What the run does INSTEAD when the gate declines, so an unrun statement in
+      // the editor reads as the feature working.
+      expect(terms).toContain("put in the editor without being run");
+      expect(terms).toContain("Writes and DDL are refused either way");
+    });
+
+    test("a SQLite connection is told what a long read there costs; another engine is not", () => {
+      const sqlite = render(<AgentRail {...DEFAULT_PROPS} connectionType="sqlite" />);
+      expect(sqlite.getByTestId("agent-auto-execute-sqlite").textContent).toBe(
+        "On SQLite a read is not interrupted when it runs long: it blocks other writers and this application until it finishes.",
+      );
+      cleanup();
+
+      const postgres = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" />);
+      expect(postgres.queryByTestId("agent-auto-execute-sqlite")).toBeNull();
+    });
+
+    test("the setting is sent at start, and off is sent as off", async () => {
+      const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+      const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "sales by region" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+      expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).autoExecute).toBe(false);
+
+      cleanup();
+      const ticked = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+      const second = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.click(second.getByTestId("agent-auto-execute"));
+      fireEvent.change(second.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+      await act(async () => {
+        fireEvent.click(second.getByTestId("agent-start"));
+      });
+      expect(JSON.parse(String(ticked.mock.calls[0][1]?.body)).autoExecute).toBe(true);
+    });
+
+    // The server's own rule: the setting is decided by the request that opens the run
+    // and no later request may widen it. A control that still moved would be offering
+    // a change nothing would honour.
+    test("the setting cannot be changed while a run is open, and is offered again once it is over", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+      const { getByTestId } = await runWith({});
+
+      await waitFor(() => {
+        expect((getByTestId("agent-auto-execute") as HTMLInputElement).disabled).toBe(true);
+      });
+      expect(getByTestId("agent-auto-execute-frozen").textContent).toContain("decided when the run is opened");
+
+      cleanup();
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
+      const over = await runWith({});
+      await over.findByTestId("agent-run-status");
+      await waitFor(() => {
+        expect((over.getByTestId("agent-auto-execute") as HTMLInputElement).disabled).toBe(false);
+      });
+    });
+
+    test("an auto-executed answer is placed in the editor AND run there, once, verbatim", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("auto-executed")]);
+      const onRunStatement = mock(() => {});
+      const onApplyStatement = mock(() => {});
+      const { findAllByTestId } = await runWith({ onRunStatement, onApplyStatement });
+
+      await findAllByTestId("agent-apply-statement");
+      await waitFor(() => {
+        expect(onRunStatement).toHaveBeenCalledTimes(1);
+      });
+      // Byte for byte what the ledger holds: no injected LIMIT, no rewriting.
+      expect(onRunStatement).toHaveBeenCalledWith(ANSWER_SQL);
+      // Running it IS placing it — the host does both, so the rail does not ask twice.
+      expect(onApplyStatement).not.toHaveBeenCalled();
+    });
+
+    test("a host that cannot run a statement is still given the one the run handed over", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("auto-executed")]);
+      const onApplyStatement = mock(() => {});
+      const { findAllByTestId } = await runWith({ onApplyStatement });
+
+      await findAllByTestId("agent-apply-statement");
+      await waitFor(() => {
+        expect(onApplyStatement).toHaveBeenCalledWith(ANSWER_SQL);
+      });
+    });
+
+    test("a declined answer is placed unrun, and the run's own reason is beside it", async () => {
+      const warning = "Not run for you: the engine reported a full table read, so this one is yours to run.";
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("applied", warning)]);
+      const onRunStatement = mock(() => {});
+      const onApplyStatement = mock(() => {});
+      const { findAllByTestId } = await runWith({ onRunStatement, onApplyStatement });
+
+      const items = await findAllByTestId("agent-timeline-item");
+      await waitFor(() => {
+        expect(onApplyStatement).toHaveBeenCalledWith(ANSWER_SQL);
+      });
+      expect(onRunStatement).not.toHaveBeenCalled();
+      // Without this sentence an unrun statement is indistinguishable from a broken
+      // feature, which is the whole reason the gate states its refusal.
+      expect(items.at(-1)?.textContent).toContain(warning);
+    });
+
+    test("an answer the run handed nowhere is handed nowhere here either", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("none")]);
+      const onRunStatement = mock(() => {});
+      const onApplyStatement = mock(() => {});
+      const { findAllByTestId } = await runWith({ onRunStatement, onApplyStatement });
+
+      // The control is still offered: taking the statement is the user's own action.
+      expect(await findAllByTestId("agent-apply-statement")).toHaveLength(1);
+      expect(onRunStatement).not.toHaveBeenCalled();
+      expect(onApplyStatement).not.toHaveBeenCalled();
+    });
+
+    test("a host that offers neither callback survives a handover rather than throwing", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("auto-executed")]);
+      const { findAllByTestId, queryAllByTestId } = await runWith({});
+
+      await findAllByTestId("agent-timeline-item");
+      expect(queryAllByTestId("agent-apply-statement")).toHaveLength(0);
     });
   });
 

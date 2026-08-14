@@ -80,6 +80,24 @@ export interface AgentTimelineItem {
    * entry, because neither recorded a chart.
    */
   readonly chartSpec?: AgentChartSpec;
+  /**
+   * What the RUN already did with this entry's statement, when the entry is an
+   * answer the run handed to the editor (§2.3 of `docs/AGENT_ANALYST_DESIGN.md`).
+   *
+   * Present only for a handover that happened: `none` is the setting being off, and
+   * carrying it here would ask the rail to act on a decision to do nothing. The
+   * statement rides along rather than being read off `applySql`, so the text the host
+   * receives is the one THIS decision was recorded with and the field is total —
+   * there is no handover here without the statement it handed over.
+   *
+   * `applySql` stays beside it and means what it always meant: the user may take the
+   * statement themselves. This field is the run's own action, and the rail performs
+   * it once per entry rather than offering it.
+   */
+  readonly handover?: {
+    readonly kind: Exclude<Extract<AgentRunEvent, { kind: "answer-composed" }>["handover"], "none">;
+    readonly sql: string;
+  };
 }
 
 /**
@@ -575,6 +593,10 @@ function describeEvent(
         // still what applies it, and the run itself sent it nowhere.
         applySql: event.sql,
         artifactId: event.artifact.correlationId,
+        // What the run itself did with the statement, for the host to carry out. The
+        // gate's outcome is the ledger's, so the rail acts on what was RECORDED
+        // rather than deciding again in the browser what may be run.
+        ...(event.handover === "none" ? {} : { handover: { kind: event.handover, sql: event.sql } }),
       };
     case "closing-statement":
       return {

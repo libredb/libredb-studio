@@ -683,7 +683,20 @@ export default function Studio() {
                 sheetOpen={isAgentSheetOpen}
                 onSheetOpenChange={setIsAgentSheetOpen}
                 prefill={agentPrefill.request}
+                connectionType={conn.activeConnection?.type ?? null}
                 onApplyStatement={(sql) => tabMgr.updateCurrentTab({ query: sql })}
+                /*
+                  The handover a run's answer can record (§2.1): the statement goes
+                  into the editor AND is run there. Through the hook's own capped
+                  entry point rather than `executeQuery`, because that one takes
+                  execution options and this statement is not one the user typed —
+                  it runs at the editor's default row limit and never in unlimited
+                  mode, whatever this tab's last execution asked for.
+                */
+                onRunStatement={(sql) => {
+                  tabMgr.updateCurrentTab({ query: sql });
+                  queryExec.executeHandedOverStatement(sql);
+                }}
                 onShowArtifact={agentArtifact.show}
               />
             </ResizablePanel>

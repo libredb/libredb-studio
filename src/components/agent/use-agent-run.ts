@@ -37,6 +37,12 @@ export interface AgentRunStartInput {
    * request rather than a setting — nothing the browser sends later can change it.
    */
   readonly workflowType?: AgentRunWorkflowType;
+  /**
+   * Whether the run may also run its answer in the caller's editor. A request, like
+   * the two above: the server PERSISTS it on the run record, and nothing sent later
+   * can widen a run that is already open.
+   */
+  readonly autoExecute?: boolean;
   readonly objective: string;
   readonly connectionId: string;
 }

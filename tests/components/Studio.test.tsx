@@ -51,6 +51,7 @@ const mockSetPlaygroundMode = mock(() => {});
 // Query Execution
 const mockExecuteQuery = mock(() => {});
 const mockForceExecuteQuery = mock(() => {});
+const mockExecuteHandedOverStatement = mock(() => {});
 const mockCancelQuery = mock(() => {});
 const mockSetSafetyCheckQuery = mock(() => {});
 const mockSetBottomPanelMode = mock(() => {});
@@ -177,6 +178,7 @@ mock.module("@/hooks/use-query-execution", () => ({
     executeQuery: mockExecuteQuery,
     cancelQuery: mockCancelQuery,
     forceExecuteQuery: mockForceExecuteQuery,
+    executeHandedOverStatement: mockExecuteHandedOverStatement,
     safetyCheckQuery: null,
     setSafetyCheckQuery: mockSetSafetyCheckQuery,
     unlimitedWarningOpen: false,
@@ -536,6 +538,7 @@ describe("Studio", () => {
     mockSetPlaygroundMode.mockClear();
     mockExecuteQuery.mockClear();
     mockForceExecuteQuery.mockClear();
+    mockExecuteHandedOverStatement.mockClear();
     mockCancelQuery.mockClear();
     mockSetSafetyCheckQuery.mockClear();
     mockSetBottomPanelMode.mockClear();
@@ -1466,6 +1469,58 @@ describe("Studio", () => {
 
     expect(capturedAgentRailProps.connectionId).toBeNull();
     expect(capturedAgentRailProps.connectionName).toBeNull();
+  });
+
+  // What a long read costs is not the same fact on every engine, and the rail says
+  // SQLite's where a user consents to auto-execute — so the shell has to tell it
+  // which engine this connection speaks.
+  test("the rail is told which engine the connection speaks", async () => {
+    mockAgentConfig(true);
+    connMgrOverride = { activeConnection: managedConn, connections: [managedConn] };
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    expect(capturedAgentRailProps.connectionType).toBe("postgres");
+  });
+
+  test("with no connection selected the rail is told there is no engine either", async () => {
+    mockAgentConfig(true);
+    connMgrOverride = { activeConnection: null, connections: [] };
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    expect(capturedAgentRailProps.connectionType).toBeNull();
+  });
+
+  /**
+   * The handover the answer's `auto-executed` outcome names (§2.1 of
+   * `docs/AGENT_ANALYST_DESIGN.md`). The shell does both halves — the statement goes
+   * into the editor AND is run there — through the hook's own capped entry point,
+   * which is what keeps the run's answer off the tab's widened execution options.
+   */
+  test("a statement the run handed over is placed in the editor and run under the editor's own cap", async () => {
+    mockAgentConfig(true);
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    act(() => (capturedAgentRailProps.onRunStatement as (sql: string) => void)("SELECT 1"));
+
+    expect(mockUpdateCurrentTab).toHaveBeenCalledWith({ query: "SELECT 1" });
+    expect(mockExecuteHandedOverStatement).toHaveBeenCalledWith("SELECT 1");
+    // Never the general entry point: that one takes options, and this statement is
+    // not one the user typed.
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+  });
+
+  test("a statement the user applies is placed and not run", async () => {
+    mockAgentConfig(true);
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    act(() => (capturedAgentRailProps.onApplyStatement as (sql: string) => void)("SELECT 2"));
+
+    expect(mockUpdateCurrentTab).toHaveBeenCalledWith({ query: "SELECT 2" });
+    expect(mockExecuteHandedOverStatement).not.toHaveBeenCalled();
   });
 
   test("below md the mobile nav opens the rail as a sheet", async () => {
