@@ -175,7 +175,7 @@
     "date-fns": "^4.4.0",
     "elkjs": "^0.11.1",
     "embla-carousel-react": "^8.6.0",
-    "framer-motion": "^12.43.0",
+    "framer-motion": "^13.1.0",
     "geist": "^1.7.2",
     "input-otp": "^1.4.2",
     "ioredis": "^5.11.1",
