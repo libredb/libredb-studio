@@ -1944,7 +1944,14 @@ describe("useQueryExecution", () => {
     const handoverResult = {
       runId: "arun_1",
       sql: HANDOVER_SQL,
-      result: { rows: [{ region: "north", net_total: 120 }], fields: ["region", "net_total"], rowCount: 1 },
+      // A whole `QueryResult`, `executionTime` included: it is what the route returns
+      // (the provider measures the replay), and it is what the history entry records.
+      result: {
+        rows: [{ region: "north", net_total: 120 }],
+        fields: ["region", "net_total"],
+        rowCount: 1,
+        executionTime: 21,
+      },
     };
 
     const handoverRoutes = (response: MockFetchResponse = { ok: true, json: handoverResult }) => ({
