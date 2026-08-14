@@ -10,9 +10,10 @@ import { QueryError } from "@/lib/db/errors";
  * The invariant asserted hardest here is not the arc but the reason the workflow
  * exists: **it reaches a database that offers no read-only statement path, and it
  * sends no statement to get there.** Both halves are checked against what the run
- * actually did, not against what its tools intend — the MySQL preset answers no
- * statement at all, so a run that sent one fails here rather than passing on
- * PostgreSQL's fixtures.
+ * actually did, not against what its tools intend — and the MySQL preset carries no
+ * `queryReadOnly` at all, exactly as the real provider does not, so a run that sent a
+ * statement dies on the fixture rather than being quietly answered by PostgreSQL's
+ * default row.
  */
 
 const runs: EvalRun[] = [];
@@ -146,6 +147,50 @@ describe("an engine that cannot serve a reading", () => {
     // Nothing was cited, so the run is honestly recorded as not having answered —
     // the workflow's bar is a cited reading, and it took none.
     expect(drive.verdict.unmet).toEqual(["no-report"]);
+  });
+
+  test("a DRIVER-native error is refused too, not just a mapped DatabaseError", async () => {
+    // The engine-specific half of the same promise, and the one a `QueryError`
+    // fixture cannot show. MongoDB's `getTableStats` calls `listCollections()`
+    // outside any try/catch, so a `MongoServerError` reaches the tool layer raw —
+    // and an unrouted throw there ends the whole run `failed`/`internal` with no
+    // report, on exactly the engines this workflow exists to reach.
+    class MongoServerError extends Error {}
+    const run = await open("mysql", {
+      getTableStats: async () => {
+        throw new MongoServerError("not authorized on company to execute command listCollections");
+      },
+    });
+
+    const drive = await run.drive([
+      reads("table-stats"),
+      (turn: Turn) => {
+        expect(turn.transcript).toContain("not authorized on company");
+        return reads("sessions")(turn);
+      },
+      reportOn("One session has been blocked on a lock for over four minutes."),
+    ]);
+
+    expect(drive.status).toBe("succeeded");
+    expect(drive.kinds).toContain("tool-refused");
+    expect(drive.verdict.outcome).toBe("answered");
+  });
+
+  test("a RESUMED run is told the reading was taken and not delivered, not that nothing happened", async () => {
+    // The ledger-honesty arm. A refused reading is a settlement, so a run resumed
+    // after one is told what actually happened: the call reached the database, spent
+    // a statement of the run's budget, and its answer was not delivered. A run-loop
+    // outcome would have left the step unsettled and the resumed run would be told
+    // its outcome cannot be known — about a call the audit stream records.
+    const run = await open("mysql", { getStorageStats: undefined });
+
+    await expect(run.drive([reads("storage")])).rejects.toThrow(/died before turn/);
+
+    const resumed = await run.drive([answersProse("This engine reports no storage figures.")]);
+
+    const firstTurn = resumed.transcripts[0] ?? "";
+    expect(firstTurn).toContain("reached the database and its reading was not delivered");
+    expect(firstTurn).toContain("KIND_UNSUPPORTED_BY_PROVIDER");
   });
 
   test("an unavailable reading leaves the run able to try a different kind", async () => {

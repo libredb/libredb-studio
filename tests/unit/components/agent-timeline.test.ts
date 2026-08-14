@@ -419,6 +419,42 @@ describe("foldLedgerEntries", () => {
     expect(view.items[0].quoted).toBe('relation "custmers" does not exist');
   });
 
+  test("a refused reading is its own outcome, and quotes nothing, because no engine wrote it", () => {
+    // The two reading refusals are the server's own decision about a curated reading
+    // it will not deliver, so the item names what happened rather than fencing text.
+    const unsupported = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-refused",
+          atMs: 10,
+          stepId: "s1",
+          refusal: { class: "reading-refused", reasonCode: "KIND_UNSUPPORTED_BY_PROVIDER" },
+        },
+      }),
+    ]);
+    const oversized = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-refused",
+          atMs: 10,
+          stepId: "s1",
+          refusal: { class: "reading-refused", reasonCode: "READING_OVER_BUDGET" },
+        },
+      }),
+    ]);
+
+    expect(unsupported.items[0].headline).toBe("This engine serves no reading of that kind");
+    expect(unsupported.items[0].detail).toBe("KIND_UNSUPPORTED_BY_PROVIDER");
+    expect(unsupported.items[0].quoted).toBeUndefined();
+    expect(oversized.items[0].headline).toBe("The reading was larger than the run may carry");
+    // The call WAS made and charged, so it counts against the statement budget — and
+    // it is not a repair, because no rewording of the request would change it.
+    expect(unsupported.budget.find((meter) => meter.id === "statements")?.used).toBe(1);
+    expect(unsupported.budget.find((meter) => meter.id === "repairs")?.used).toBe(0);
+  });
+
   test("a composed report reports how many claims it carries", () => {
     const view = foldLedgerEntries([
       event({
@@ -1178,7 +1214,6 @@ describe("an ending says whether the run ANSWERED, not only how it stopped (B24)
       "no-plan-comparison",
       "no-plan-evidence",
       "no-table-profile",
-      "no-operations-reading",
       "no-answer",
       "cancelled",
     ]) {

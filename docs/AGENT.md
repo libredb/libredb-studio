@@ -493,30 +493,51 @@ Four properties carry the template:
 - **The reach is the point.** Every provider declares these six methods, so this workflow runs on
   MySQL, Oracle, SQL Server, MongoDB and Redis as well as the two Phase 1 engines. That is asserted
   against what a run actually did, not against its tool set:
-  `tests/evals/operations.test.ts` drives the arc on a MySQL preset that answers **no statement at
-  all**, and asserts the run sent none.
+  `tests/evals/operations.test.ts` drives the arc on a MySQL preset that carries no `queryReadOnly`
+  at all — as the real provider does not — so it can answer **no statement whatsoever**, and the
+  eval asserts the run sent none.
 - **A reading is an ordinary artifact.** It settles a step through `runStep` like `profile_table`,
   produces a `QueryResult` (rows and declared fields, projected by the server from the typed provider
   result), and is stored under its own operation id — so citations, `verifiedAgainst`, the artifact
   route and the rail's "Show result" all work unchanged. The columns are **declared per kind**, not
   derived from the first row, so an empty reading still says what it would have contained.
-- **A provider that cannot serve a kind is refused, not crashed.** A missing method answers
-  `KIND_UNSUPPORTED_BY_PROVIDER`; a method that throws becomes an ordinary repairable
-  `database-error` refusal with the engine's own words fenced; a reading larger than the run may
-  carry is refused as `READING_OVER_BUDGET` rather than truncated, because a partial operational
-  reading is a misleading one.
+- **A provider that cannot serve a kind is refused, not crashed.** Three shapes, all typed. A
+  missing method and an over-large reading are `reading-refused` refusals carrying
+  `KIND_UNSUPPORTED_BY_PROVIDER` and `READING_OVER_BUDGET` — refusals rather than run-loop outcomes
+  because by then the pipeline has allowed the call, a statement of the run's budget is spent and an
+  execution is on the audit stream, so a step that settled as "never attempted" would contradict the
+  ledger. A method that **throws** becomes an ordinary repairable `database-error` refusal with the
+  engine's own words fenced, and that holds for a driver-native error too: the curated methods do not
+  map their errors uniformly the way `queryReadOnly` does (`mongodb.getTableStats` calls
+  `listCollections().toArray()` outside any try/catch), so anything that is not already a
+  `DatabaseError` is wrapped at the seam rather than allowed to propagate and end the run `internal`.
+  An over-large reading is refused rather than truncated, because a partial operational reading is a
+  misleading one.
+- **`limit` and `schema` are applied by the server, not merely passed on.** Only
+  `getActiveSessions` and `getSlowQueries` take a limit at all, and four of the curated methods take
+  no options whatsoever (`oracle.getTableStats`, `mssql.getTableStats`, `mssql.getIndexStats`,
+  `mongodb.getTableStats`), so a selector honoured only in the arguments would be silently dropped on
+  those engines — and the over-budget refusal would be advising a retry with a smaller limit that
+  does nothing. The projection therefore narrows by schema and then bounds by limit itself.
 - **Every reading is a moment.** The tool description says so, the run's opening rules say so, and
   the timeline says so on the entry itself — *"A moment, not a history: this reading says what the
   engine reported as it was taken."* A session list is who was connected as the run looked, and
   nothing here measures a trend.
 
-Its goal verifier is `agent-operations.1`: a report that cites at least one reading this run took.
-**It deliberately does not compose on the investigation baseline**, which is the #356 lesson applied
-rather than repeated: the baseline ends a run `empty-evidence` when every cited result returned zero
-rows, and for an operational reading that is backwards. "No session is blocked", "no slow query is
-recorded", "no index is unused" are answers, and they are the answers a healthy server gives. A run
-that composed nothing is still `no-report`; a run whose report rests on something other than a
-reading is `no-operations-reading`.
+Its goal verifier is `agent-operations.1`: a composed report, resting on what the engine said about
+itself. **It deliberately does not compose on the investigation baseline**, which is the #356 lesson
+applied rather than repeated: the baseline ends a run `empty-evidence` when every cited result
+returned zero rows, and for an operational reading that is backwards. "No session is blocked", "no
+slow query is recorded", "no index is unused" are answers, and they are the answers a healthy server
+gives. A run that composed nothing is `no-report`, and a cancelled one says so instead.
+
+The citation half of the rule — *your report must cite a reading you took* — is told to the model in
+`WORKFLOW_TOOL_RULES` and enforced where it can actually fail: at composition. `composeReportTool`
+refuses any claim whose evidence does not name something this run produced, and the only citable
+thing an operations run can produce IS a reading (it is offered no other tool that settles a step and
+captures no schema snapshot). A verifier arm for "cited no reading" would therefore be a verdict
+advertised to users that no run could ever show, which is the same dead-arm objection that kept the
+other templates honest.
 
 Two limits stated rather than glossed:
 
@@ -1019,7 +1040,7 @@ build until somebody decides what "answered" means for it.
 | `agent` (investigation) | The run composed at least one claim, **and** the claims do not rest entirely on empty results. | `no-report`, `empty-evidence` |
 | `agent` (query-optimization) | The baseline above, **and** either a plan comparison on the ledger or an index recommendation citing a plan this run read. `agent-query-optimization.2`. | the above, plus `no-plan-comparison`, `no-plan-evidence` |
 | `agent` (database-assessment) | The baseline above, **and** a table profiled. `agent-database-assessment.1`. | the above, plus `no-table-profile` |
-| `agent` (operations) | A report citing at least one operational reading this run took. `agent-operations.1`. **Not** composed on the baseline: an empty reading is an answer, so the emptiness clause is dropped. | `no-report`, `no-operations-reading`, `cancelled` |
+| `agent` (operations) | A composed report. `agent-operations.1`. **Not** composed on the baseline: an empty reading is an answer, so the emptiness clause is dropped. Its claims already cite a reading — `compose_report` refuses uncited claims and a reading is the only citable artifact this workflow can produce — so that half needs no arm of its own. | `no-report`, `cancelled` |
 | `agent` (data-analysis) | The baseline above, **and** an `answer-composed` entry: which result IS the answer, and how to show it. `agent-data-analysis.1`. | the above, plus `no-answer` |
 
 **Why `agent-data-analysis.1` asks for an artifact rather than for a picture.** Every valid answer

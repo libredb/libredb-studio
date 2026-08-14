@@ -2323,28 +2323,55 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
 
     const outcome = await inspectOperationsTool(h.context, { kind: "storage" });
 
-    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
-    expect(outcome.reasonCode).toBe("KIND_UNSUPPORTED_BY_PROVIDER");
+    if (outcome.kind !== "refused") throw new Error("expected refused");
+    expect(outcome.refusal).toEqual({ class: "reading-refused", reasonCode: "KIND_UNSUPPORTED_BY_PROVIDER" });
     expect(outcome.modelText).toContain("serves no reading of that kind");
+  });
+
+  test("a refused reading SETTLES the step, because the call was made and charged", async () => {
+    // The honesty this class exists for. By the time either refusal is raised the
+    // pipeline has allowed the call, one statement of the run's budget is spent and
+    // an execution is on the audit stream — so the outcome may not be one the run
+    // loop records as never attempted.
+    const h = curatedHarness({}, { getStorageStats: undefined });
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "storage" });
+
+    expect(outcome.kind).toBe("refused");
+    expect(h.tracker.usage(h.context.runId).executedStatements).toBe(1);
+  });
+
+  test("a refused reading is not asked for twice, and costs no repair attempt", async () => {
+    // A repair attempt is for a statement the model could rewrite. Nothing about a
+    // reading this engine does not serve is rewritable, so the ledger marks it
+    // unrepeatable without spending one of the run's three repairs.
+    const h = curatedHarness({}, { getStorageStats: undefined });
+
+    const first = await inspectOperationsTool(h.context, { kind: "storage" });
+    const second = await inspectOperationsTool(h.context, { kind: "storage" });
+
+    expect(first.kind).toBe("refused");
+    if (second.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(second.reasonCode).toBe("STATEMENT_ALREADY_FAILED");
+    expect(h.repairs.attemptsUsed).toBe(0);
   });
 
   test("a reading larger than the run may carry is refused rather than truncated", async () => {
     // The same promise the read path makes: a delivered result is a COMPLETE one, so
-    // an overflow is an answer to correct rather than rows to quietly drop.
-    const overflowing = Array.from(
-      { length: AGENT_WORKFLOW_BUDGETS.operations.policy.budgets.maxResultRows + 1 },
-      (_, index) => ({
-        name: `store-${index}`,
-        size: "1 MB",
-        sizeBytes: 1_000_000,
-      }),
-    );
-    const h = curatedHarness({}, { getStorageStats: mock(async () => overflowing) });
+    // an overflow is an answer to correct rather than rows to quietly drop. The cap
+    // that can still be breached is the BYTE one — the row cap is applied by the
+    // projection, which is what makes "ask again with a smaller limit" actionable.
+    // Read off the `operations` row, because this branch split the single execution
+    // policy into one frozen budget per workflow and `inspect_operations` is that
+    // workflow's tool. Taking the ceiling from the row the tool actually enforces is
+    // what keeps this test honest if the rows ever diverge on bytes.
+    const wide = "x".repeat(AGENT_WORKFLOW_BUDGETS.operations.policy.budgets.maxResultBytes);
+    const h = curatedHarness({}, { getStorageStats: mock(async () => [{ name: wide, size: "1 MB", sizeBytes: 1 }]) });
 
     const outcome = await inspectOperationsTool(h.context, { kind: "storage" });
 
-    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
-    expect(outcome.reasonCode).toBe("READING_OVER_BUDGET");
+    if (outcome.kind !== "refused") throw new Error("expected refused");
+    expect(outcome.refusal).toEqual({ class: "reading-refused", reasonCode: "READING_OVER_BUDGET" });
     expect(outcome.modelText).toContain("smaller limit");
   });
 
@@ -2356,6 +2383,68 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     expect(h.curated.getActiveSessions).toHaveBeenCalledWith({
       limit: AGENT_WORKFLOW_BUDGETS.operations.policy.budgets.maxResultRows,
     });
+  });
+
+  test("limit bounds the FOUR readings whose provider method takes no limit at all", async () => {
+    // `getStorageStats`, `getTableStats`, `getIndexStats` and `getHealth` take no
+    // limit, so a bound honoured only in the arguments would be a promise the tool
+    // description makes and the tool does not keep — and the over-budget refusal
+    // would be telling the model to retry with a smaller limit that does nothing.
+    const many = Array.from({ length: 40 }, (_, index) => ({ name: `store-${index}`, size: "1 MB", sizeBytes: 1 }));
+    const h = curatedHarness({}, { getStorageStats: mock(async () => many) });
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "storage", limit: 3 });
+
+    if (outcome.kind !== "completed") throw new Error("expected completed");
+    expect(outcome.artifact.summary.rowCount).toBe(3);
+    expect(h.artifacts.get(outcome.artifact.correlationId, 1_000)?.value.rows).toHaveLength(3);
+  });
+
+  test("schema narrows the rows even when the engine ignored the argument", async () => {
+    // Four curated methods take no options whatsoever (`oracle.getTableStats`,
+    // `mssql.getTableStats`, `mssql.getIndexStats`, `mongodb.getTableStats`), so a
+    // provider that answers every schema is the ordinary case rather than a broken
+    // one — and a run that reported another schema's tables as the one it asked for
+    // would be wrong in the report, not merely wide.
+    const h = curatedHarness(
+      {},
+      {
+        getTableStats: mock(async () => [
+          {
+            schemaName: "hr",
+            tableName: "employee",
+            rowCount: 3,
+            tableSize: "1 MB",
+            tableSizeBytes: 1,
+            totalSizeBytes: 1,
+          },
+          {
+            schemaName: "sales",
+            tableName: "invoice",
+            rowCount: 9,
+            tableSize: "1 MB",
+            tableSizeBytes: 1,
+            totalSizeBytes: 1,
+          },
+        ]),
+      },
+    );
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "table-stats", schema: "hr" });
+
+    if (outcome.kind !== "completed") throw new Error("expected completed");
+    const rows = h.artifacts.get(outcome.artifact.correlationId, 1_000)?.value.rows;
+    expect(rows).toHaveLength(1);
+    expect(rows?.[0]).toMatchObject({ schemaName: "hr", tableName: "employee" });
+  });
+
+  test("a reading with no schema dimension is not filtered by a schema it never carried", async () => {
+    const h = curatedHarness();
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "sessions", schema: "hr" });
+
+    if (outcome.kind !== "completed") throw new Error("expected completed");
+    expect(outcome.artifact.summary.rowCount).toBe(1);
   });
 
   test("an engine failure is a repairable refusal, and the same reading is not sent twice", async () => {
@@ -2377,6 +2466,52 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     expect(first.modelText).toContain(UNTRUSTED_CONTENT_BEGIN);
     if (second.kind !== "unavailable") throw new Error("expected unavailable");
     expect(second.reasonCode).toBe("STATEMENT_ALREADY_FAILED");
+  });
+
+  test("a DRIVER-native error is a refusal too, and does not kill the run", async () => {
+    // The arm the `QueryError` case above does NOT exercise, and the one that decides
+    // whether the pinned promise holds on the engines this workflow exists to reach.
+    // The curated methods do not map their errors uniformly the way `queryReadOnly`
+    // does — `mongodb.getTableStats` calls `listCollections().toArray()` outside any
+    // try/catch — so a `MongoServerError` arrives here raw. Untreated it is not a
+    // `DatabaseError`, so it would propagate and end the whole run `internal`.
+    class MongoServerError extends Error {}
+    const h = curatedHarness(
+      {},
+      {
+        getTableStats: mock(async () => {
+          throw new MongoServerError("not authorized on company to execute command listCollections");
+        }),
+      },
+    );
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "table-stats" });
+
+    if (outcome.kind !== "refused") throw new Error("expected refused");
+    expect(outcome.refusal.class).toBe("database-error");
+    // The driver's own words, carried through and fenced like any engine's.
+    expect(outcome.modelText).toContain("not authorized on company");
+    expect(outcome.modelText).toContain(UNTRUSTED_CONTENT_BEGIN);
+  });
+
+  test("a thrown value that is not an Error at all is still a refusal", async () => {
+    // A driver that rejects with a string is not hypothetical politeness: the tool
+    // layer's promise is that no curated reading ends the run, and `instanceof Error`
+    // is not a guarantee anything outside this repository makes.
+    const h = curatedHarness(
+      {},
+      {
+        getIndexStats: mock(async () => {
+          throw "ORA-00942: table or view does not exist";
+        }),
+      },
+    );
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "index-stats" });
+
+    if (outcome.kind !== "refused") throw new Error("expected refused");
+    expect(outcome.refusal.class).toBe("database-error");
+    expect(outcome.modelText).toContain("ORA-00942");
   });
 
   test("an environment failure propagates, exactly as it does on the statement path", async () => {

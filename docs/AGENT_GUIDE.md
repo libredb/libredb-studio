@@ -189,10 +189,13 @@ Two things this workflow will not do, and it says so rather than implying otherw
   nothing else, so "kill this session" or "vacuum this table" is stated as a claim in the report
   rather than filed as a recommendation you could apply with one click.
 
-**Answered when** the report cites at least one reading the run took (`verifyOperationsGoal`,
-`goal-verifier.ts`). Note what is deliberately **not** required: a reading that came back **empty**
-still counts. No blocked session and no slow query is what a healthy server looks like, and treating
-that as an absence of evidence would mark an accurate report as unanswered.
+**Answered when** the run composed a report (`verifyOperationsGoal`, `goal-verifier.ts`). Every
+claim in it already cites a reading the run took — `compose_report` refuses a claim whose evidence
+names nothing this run produced, and a reading is the only thing this workflow can produce to cite —
+so the citation is enforced as you write, not judged afterwards. Note what is deliberately **not**
+required: a reading that came back **empty** still counts. No blocked session and no slow query is
+what a healthy server looks like, and treating that as an absence of evidence would mark an accurate
+report as unanswered.
 
 ---
 
@@ -332,7 +335,6 @@ whole vocabulary (`SHORTFALL_SENTENCES`, `timeline.ts:335-343`):
 | `no-plan-comparison` | "No before-and-after plan comparison was recorded, and no index was recommended: a query optimization rests on one or the other." |
 | `no-plan-evidence` | "The index was recommended without citing a plan this run read, so nothing the engine said backs it." |
 | `no-table-profile` | "No table was profiled, so the state of the data was never established." |
-| `no-operations-reading` | "The report cites no operational reading, so it rests on something other than what the engine reported about itself." |
 | `cancelled` | "The run was stopped before it could finish." |
 
 A run **you** stopped reports `cancelled` rather than the output it was missing: a stop is not a

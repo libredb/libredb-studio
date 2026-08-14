@@ -78,6 +78,16 @@ export interface EvalEnginePreset {
   readonly catalogReads: readonly string[];
   /** What the scripted engine answers a catalog read with, so a snapshot can be built. */
   readonly catalogAnswer: (sql: string) => QueryResult | null;
+  /**
+   * Whether the stub provider carries `queryReadOnly` at all.
+   *
+   * The engine property that decides which workflows may run: only PostgreSQL and
+   * SQLite implement it, and `acquireExecutionProfileProvider` refuses the
+   * `agent-read-only` profile without it. A preset that does not serve it therefore
+   * cannot answer a statement AT ALL — which is what makes "this run sent none" a
+   * property the fixture enforces rather than one the assertions merely observe.
+   */
+  readonly servesReadOnlyStatements: boolean;
 }
 
 const POSTGRES_CAPABILITIES: ProviderCapabilities = {
@@ -141,6 +151,7 @@ export const EVAL_ENGINES: Readonly<Record<EvalEngine, EvalEnginePreset>> = Obje
       if (sql.includes("pg_index")) return result([], ["tablename"]);
       return null;
     },
+    servesReadOnlyStatements: true,
   },
   sqlite: {
     connection: { id: "conn_eval", name: "Company (SQLite)", type: "sqlite", createdAt: new Date(0) },
@@ -153,21 +164,27 @@ export const EVAL_ENGINES: Readonly<Record<EvalEngine, EvalEnginePreset>> = Obje
         ? result([], ["name", "tbl_name", "sql"])
         : result(SQLITE_DDL_ROWS, ["name", "type", "sql"]);
     },
+    servesReadOnlyStatements: true,
   },
   /**
    * A THIRD engine, and the only one here that is not a Phase 1 engine.
    *
    * It exists to make the operations workflow's whole claim observable: that
    * workflow is offered on engines with no database-native read-only statement path,
-   * and until this preset the harness could not express one. It answers no catalog
-   * and no statement, so a run that sent one here fails visibly instead of quietly
-   * passing on PostgreSQL's fixtures.
+   * and until this preset the harness could not express one.
+   *
+   * It carries NO `queryReadOnly`, exactly as the real MySQL provider does not, so it
+   * can answer neither a catalog read nor a statement: a run that sent one dies
+   * visibly here instead of being quietly answered by PostgreSQL's default fixture
+   * row. That is the difference between a fixture that observes the workflow's
+   * central property and one that enforces it.
    */
   mysql: {
     connection: { id: "conn_eval", name: "Company (MySQL)", type: "mysql", createdAt: new Date(0) },
     capabilities: { ...POSTGRES_CAPABILITIES, explainFormat: "mysql-json", defaultPort: 3306 },
     catalogReads: [],
     catalogAnswer: () => null,
+    servesReadOnlyStatements: false,
   },
 } satisfies Record<EvalEngine, EvalEnginePreset>);
 
@@ -372,10 +389,16 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
       statements.push(sql);
       return options.catalogAnswer?.(sql) ?? engine.catalogAnswer(sql) ?? (await answer(sql));
     };
-    // The curated readings sit BESIDE `queryReadOnly` rather than replacing it: a
-    // provider carrying both is what lets one fixture assert that an operations run
-    // reached the reporting methods and sent no statement at all.
-    const provider = { queryReadOnly, ...DEFAULT_CURATED, ...options.curated } as unknown as DatabaseProvider;
+    // The curated readings sit on EVERY preset, because every provider declares them;
+    // `queryReadOnly` sits only on the presets whose real engine implements it. A
+    // preset without it can answer nothing but a curated reading, so an operations
+    // eval that sent a statement fails on the fixture rather than on an assertion
+    // somebody might later delete as redundant.
+    const provider = {
+      ...(engine.servesReadOnlyStatements ? { queryReadOnly } : {}),
+      ...DEFAULT_CURATED,
+      ...options.curated,
+    } as unknown as DatabaseProvider;
 
     // The deadline's clock reads its start, and every later reading is that start
     // plus `spentMs`. At the default of zero it never advances, so the deadline is

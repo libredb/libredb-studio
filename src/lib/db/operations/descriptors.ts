@@ -153,7 +153,7 @@ export type CuratedOperationKind = (typeof CURATED_OPERATION_KINDS)[number];
  */
 export const agentCuratedReadInput = z.strictObject({
   kind: z.enum(CURATED_OPERATION_KINDS),
-  /** How many rows to ask the engine for, where the reading takes a limit. */
+  /** How many rows the reading may return. Passed to the engine where its method takes one, and applied to the rows either way. */
   limit: z.number().int().min(1).max(200).optional(),
   /** Narrows the table and index readings; ignored by the readings that have no schema dimension. */
   schema: z.string().min(1).optional(),
