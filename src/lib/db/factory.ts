@@ -330,8 +330,10 @@ export async function getOrCreateProvider(
 // ============================================================================
 
 /**
- * The execution profiles this factory can vend. Exactly one exists today; an
- * unknown profile string is refused, never defaulted (fail closed).
+ * The execution profiles this factory can vend. Two exist: `agent-read-only` for the
+ * paths that send a model-authored statement, `agent-operations` for the curated
+ * reading path that sends none. An unknown profile string is refused, never defaulted
+ * (fail closed), and what each one means is stated once in `PROFILE_ACQUISITION`.
  */
 export type ExecutionProfile = "agent-read-only" | "agent-operations";
 
@@ -412,8 +414,13 @@ function resolveAgentCredential(connection: DatabaseConnection): { user: string;
  * the shared writable cache in either direction: the profiled provider has
  * its own keyed lifecycle, so an agent execution can never be handed the
  * editor's fully-privileged pool, and an editor request can never be handed a
- * read-only one. Providers whose type has no database-native read-only
- * wrapper are refused rather than silently served `query()` (fail closed).
+ * read-only one.
+ *
+ * Whether a provider without a database-native read-only wrapper is refused is the
+ * PROFILE's decision, not this function's: under `agent-read-only` it is refused
+ * rather than silently served `query()` (fail closed), and under `agent-operations`
+ * it is served, because that profile sends no statement for a read-only wrapper to
+ * bound. See `PROFILE_ACQUISITION` for the whole of that argument.
  */
 export async function acquireExecutionProfileProvider(
   connection: DatabaseConnection,

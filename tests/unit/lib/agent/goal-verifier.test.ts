@@ -452,15 +452,15 @@ describe("an operations run answers on what the ENGINE said about itself", () =>
     expect(verdict).toEqual({ outcome: "answered", verifier: "agent-operations.1", unmet: [] });
   });
 
-  test("a report resting on something other than a reading is short of the bar", () => {
-    const verdict = operations([
-      readingAttempted,
-      reading(READING, 6),
-      completed(CORRELATION.full, 8),
-      reportCiting(ARTIFACT(CORRELATION.full)),
-    ]);
-
-    expect(verdict.unmet).toEqual(["no-operations-reading"]);
+  test("the citation half of the rule is enforced where it can fail: at composition", () => {
+    // Why this workflow's verifier has no "cited no reading" arm. `composeReportTool`
+    // refuses a claim whose evidence names nothing this run produced, and the only
+    // citable thing an operations run CAN produce is a reading — it is offered no
+    // other tool that settles a step and captures no schema snapshot. So a composed
+    // report already is a report citing a reading, and an arm for the opposite would
+    // be a verdict advertised to users that no run could ever show.
+    expect(AGENT_WORKFLOW_GOALS.operations.verifier).toBe("agent-operations.1");
+    expect(operations([readingAttempted, reading(READING, 6), reportCiting(ARTIFACT(READING))]).unmet).toEqual([]);
   });
 
   test("an EMPTY reading is an answer, not an absence of evidence — the #356 arm", () => {

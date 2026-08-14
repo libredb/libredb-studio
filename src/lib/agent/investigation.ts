@@ -349,6 +349,13 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string): string
   if (refusal.class === "approval-required") {
     return `Step ${event.stepId} (${toolName}) needs a human approval that this run does not have: operation ${refusal.operationId}.`;
   }
+  if (refusal.class === "reading-refused") {
+    // The reading was TAKEN — the run spent a statement on it — and the server
+    // declined to deliver it. A resumed run is told that, rather than being told the
+    // step was never attempted, which is what it would hear if this settled as a
+    // run-loop outcome instead of a refusal.
+    return `Step ${event.stepId} (${toolName}) reached the database and its reading was not delivered: ${refusal.reasonCode}. Ask for a different reading rather than repeating this one.`;
+  }
   // The engine's own words: untrusted, so fenced rather than quoted into the
   // server's voice. The fingerprint stands in for a correlation id, which a
   // statement that failed never produced.

@@ -71,10 +71,12 @@ import { AGENT_MAX_REPAIR_ATTEMPTS } from "./execution-policy";
 export type AgentRepairDenyCode = "STATEMENT_ALREADY_FAILED" | "REPAIR_BUDGET_EXHAUSTED";
 
 /**
- * How a statement failed. Only `database-error` consumes a repair attempt — see
- * the module doc for why a boundary decision does not.
+ * How a call failed. Only `database-error` consumes a repair attempt — see the
+ * module doc for why a boundary decision does not, and note that `reading-refused`
+ * is on that side of the line too: the server declined to deliver a curated reading,
+ * which no rewording of the request would change.
  */
-export type AgentRepairFailureClass = "database-error" | "policy-denied" | "approval-required";
+export type AgentRepairFailureClass = "database-error" | "policy-denied" | "approval-required" | "reading-refused";
 
 export type AgentRepairAdmission =
   | { readonly admitted: true }

@@ -43,6 +43,7 @@ if it only lists the good news.
 | Surface | What it sends | Fenced? |
 | --- | --- | --- |
 | An **agent run** | Your objective; the schema inventory (table, column, index identifiers and column types); the relations graph (identifiers only); the rows of each read the model performed, up to 200 per read; engine error text; server-written refusals; server-minted ids | Everything derived from the database is wrapped in an untrusted-content fence before it reaches a prompt |
+| An **agent run opened as Operate** | Your objective; **no schema inventory and no relations graph** (a server note replaces them); and the rows of each curated reading — which, for the `sessions` and `slow-queries` kinds, include **other database users' in-flight statement text and their database usernames**. See [the operations workflow](#5a-the-operations-workflow-what-a-curated-reading-sends) | Same fence: every reading's rows are database content and are fenced |
 | `POST /api/ai/explain` | Your statement, the EXPLAIN plan, the schema context the browser holds, the engine type | No |
 | `POST /api/ai/query-safety` | Your statement, a filtered schema context, the engine type | No |
 | `POST /api/ai/describe-schema` | A schema context. From the **Data Profiler** that context includes a per-column `min=` and `max=`, which are **real column values** | No |
@@ -129,7 +130,12 @@ The first user message is the text you typed, unmodified apart from the trim the
 
 ### 3. The schema inventory — identifiers and types, fenced
 
-Captured once per run by reading the catalog, then packed for the task
+**Not on an Operate run.** A run whose workflow is `operations` captures no inventory at all and is
+sent a server-written note in its place (`OPERATIONS_CONTEXT_NOTE`, `investigation.ts`), so sections
+3 and 4 below do not happen and no catalog is read. That is a decision rather than a gap: the
+workflow is offered no tool that reads a catalog, and most of the engines it runs on cannot serve one.
+
+On every other workflow, captured once per run by reading the catalog, then packed for the task
 (`packContextForTask`, `src/lib/agent/context-snapshot.ts:466-505`). Per table it renders
 (`renderTable`, `context-snapshot.ts:428-441`):
 
@@ -168,8 +174,33 @@ rendered characters — a bound in characters, because a count of edges is not a
 | A policy denial | Server text only: the deny code, the policy version, and advice that a boundary decided this. There is no engine text because a denial produced none | `denialText`, `tools.ts:568-574` |
 | An approval requirement | Server text naming the operation id | `approvalText`, `tools.ts:576-581` |
 | A table profile (Assess) | Counts, the number of findings, the covered column range — plus the **table name** and the **finding lines** (each `column: code — detail`), both fenced. No value from any column | `tools.ts:1325-1345`, `describeFindings` at `tools.ts:1143-1150` |
+| A curated operational reading (Operate) | A server sentence naming the artifact id, then the **projected rows**, fenced like any other result. What those rows contain is the point: for `sessions` and `slow-queries` they carry **statement text other users are running or have run**, and for `sessions` the **database username, client address and application name of each connected session**. See below | `tools.ts`, `CURATED_READINGS` |
 | A plan comparison (Optimize) | The two statements the run drafted and the server's structural reading of each plan (`full-scan` / `index` / `mixed` / `unknown`, plus whatever estimates the engine reported) | `plan-summary.ts`, restated at `investigation.ts:367-369` |
 | A catalog read that could not be performed | Fixed server advice, and one of two things before it. When no catalog plan exists for the engine, or when the rows the read produced are already gone, it is a **server sentence** that may name the connection's **engine type** ("a mongodb connection") or the catalog kind (`context-snapshot.ts:301-305,315-318`). When the catalog read was itself refused, the sentence forwarded is `inspectSchemaTool`'s **own `modelText`** (`context-snapshot.ts:312`) — which for a policy denial is server text, and for a **database-error refusal is the engine's own message, fenced** (`tools.ts:872-882`). Either way it is wrapped by `unavailable` (`context-snapshot.ts:243-245`) and pushed as a user message (`investigation.ts:743`) |
+
+### 5a. The operations workflow: what a curated reading sends
+
+This is the one class of content no other agent path exposes, and it is stated here rather than left
+to be inferred from the fence. The `operations` workflow's single database tool calls the provider's
+own reporting methods, and two of its six kinds return **text somebody else wrote**:
+
+- `sessions` (`getActiveSessions`) projects, per connected session: `query` — the statement that
+  session is running, literals and all — plus `user` (the database username), `clientAddr`,
+  `applicationName`, `database`, state and wait information.
+- `slow-queries` (`getSlowQueries`) projects `query` for each statement the engine reports as
+  costly, with its call counts and timings.
+
+Those rows go into a prompt like any other result: fenced, bounded by the run's row and byte caps,
+and never re-delivered on a resume. But a fence is a defence against injection, not a defence
+against disclosure — so if a model provider outside your machine is configured, **an Operate run can
+send your colleagues' running SQL and their database usernames to it.** Three things follow, all of
+them yours to decide:
+
+- It only happens on a run **you** opened as Operate. No other workflow is offered the tool.
+- The reading has its own operation id (`db.operations.read`), so an operator can deny exactly this
+  one in the audit stream without denying any other agent read.
+- The other four kinds (`table-stats`, `index-stats`, `storage`, `health`) carry identifiers,
+  counts, sizes and timestamps — no statement text and no usernames.
 
 ### 6. On a resumed run, what the ledger already holds
 
@@ -351,6 +382,11 @@ Every one of these is **per drive**. A run resumed after a restart starts each o
   redirect that key to another host (`:134-146`). "No credentials leave" would be the wrong claim
   here — the accurate one is that **no database credential** reaches the model, while the model
   provider's own key reaches the model provider and nothing else.
+- **Cell values from a table's own columns.** No agent path reads a row out of a user table and
+  puts it in a prompt except a read the model performed and you can see in the timeline. Note the
+  boundary this does NOT cover: an Operate run's `sessions` and `slow-queries` readings carry
+  statement text and usernames from the engine's own operational views, which is a different thing
+  from a table's contents and is documented as its own exposure above.
 - **Cell values from a profile.** The Assess workflow's profile is aggregates only: counts of rows,
   present values, distinct values, and shape matches computed with `count(CASE WHEN … LIKE …)`
   *inside* the database. There is deliberately no `min`/`max`, because on a text column those return
