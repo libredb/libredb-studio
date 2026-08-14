@@ -706,6 +706,14 @@ rather than normalising it to `false`, and `investigation.ts` states `AUTO_EXECU
 only when the same record says the run can present an answer. All four read
 `AGENT_WORKFLOW_PRESENTS_ANSWER`.
 
+**And only to a host that can actually run a statement.** `onRunStatement` is an optional prop of
+`AgentRail`, so an embedding host may have no runner at all; the rail then renders no checkbox and
+sends `autoExecute: false` however the control was left. It used to offer the promise regardless and
+fall back to `onApplyStatement`, which placed the statement unrun while the timeline entry told the
+user it had run on their connection — a surface claiming an execution that did not happen. A
+capability the host lacks is not offered, which is the rule the stop control and the hydration
+affordances already follow.
+
 This is worth stating because the first version got it wrong in an instructive way: the checkbox
 rendered for every workflow in both modes. Ticking it on an Investigate run promised a user that the
 final statement would be placed and run in their editor — a hand-over that workflow has no tool to
@@ -781,8 +789,11 @@ does not own. The timeline entry says so in as many words — what the editor di
 editor.
 
 **The browser carries the outcome out; it does not weigh the gate again.** The rail reads `handover`
-off the ledger and delivers the statement once per entry: `auto-executed` places it in the editor and
-runs it, `applied` places it unrun beside the run's own reason, `none` hands over nothing. The re-run
+off the ledger and delivers the statement once per entry: `auto-executed` goes to the runner and
+nowhere else — a host without one delivers nothing rather than applying it silently, since the entry
+says the statement ran — `applied` places it unrun beside the run's own reason, `none` hands over
+nothing. The statement is never lost either way: every answer entry carries `applySql`, so the
+control beside it still offers the statement as the user's own action. The re-run
 goes through `useQueryExecution.executeHandedOverStatement`, which takes no execution options at all
 and forces `DEFAULT_QUERY_LIMIT` with `unlimited: false` — a tab a user widened for a statement they
 wrote must not widen one the run handed over (§2.1). The setting itself is offered as a checkbox in

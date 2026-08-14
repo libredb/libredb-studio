@@ -80,8 +80,14 @@ export interface AgentRailProps {
    * Puts a statement the RUN handed over into the host's editor and runs it there,
    * at the editor's own default row limit (§2.1). Distinct from `onApplyStatement`
    * because the two are different acts: that one is the user taking a statement, this
-   * one is the run delivering the answer it was told to deliver. A host with no way
-   * to run one omits it, and the statement is then placed unrun rather than lost.
+   * one is the run delivering the answer it was told to deliver.
+   *
+   * A host that omits it is not offered the auto-execute checkbox at all, and a run
+   * this rail opens can then never record a hand-over. The alternative — offering the
+   * promise and falling back to `onApplyStatement` — placed the statement unrun while
+   * the timeline entry said it had run on the user's connection, which is the one
+   * thing this surface may not do (#373). Nothing is lost by the narrowing: every
+   * answer entry still offers its statement through `applySql`.
    */
   readonly onRunStatement?: (sql: string) => void;
   /**
@@ -376,6 +382,24 @@ export function AgentRail({
 
   const canStart = connectionId !== null && objective.trim().length > 0 && !run.isBusy;
 
+  /*
+    Whether a hand-over is a thing this rail may promise at all — three conditions, and
+    the checkbox, the start request and the delivery below all read this one value.
+
+    Agent mode and a workflow that is offered `present_answer` are the server's own
+    rule: a run with no such tool has nothing to hand over, and the route refuses the
+    setting outright.
+
+    `onRunStatement` is the HOST's half, and it was missing (#373 review). It is an
+    optional public prop, so an embedding host may have no way to run a statement at
+    all — and the rail used to offer the checkbox anyway and fall back to
+    `onApplyStatement`, which placed the statement unrun while the timeline entry told
+    the user it had run on their connection. A control that promises what this host
+    cannot perform is not offered, which is the rule the stop control and the hydration
+    affordances already follow.
+  */
+  const canHandOver = mode === "agent" && AGENT_WORKFLOW_PRESENTS_ANSWER[workflowType] && onRunStatement !== undefined;
+
   const handleStart = () => {
     if (connectionId === null || !canStart) return;
     // Both axes, always. They are independent (#325): a planning run of a query
@@ -385,9 +409,10 @@ export function AgentRail({
     // state is not the authority: a user who ticks it on Analyze and then switches to
     // Investigate would otherwise send `true` on a run that cannot present an answer,
     // which the route now refuses outright — a rejected start rather than the silent
-    // no-op the hidden control implies. Resolved from the same record the control is
-    // rendered from, so what is offered and what is sent are one decision.
-    const handsOver = mode === "agent" && autoExecute && AGENT_WORKFLOW_PRESENTS_ANSWER[workflowType];
+    // no-op the hidden control implies. The same applies to a host that loses its
+    // runner between the tick and the start. Resolved from the same value the control
+    // is rendered from, so what is offered and what is sent are one decision.
+    const handsOver = canHandOver && autoExecute;
     void run.start({ mode, workflowType, autoExecute: handsOver, objective: objective.trim(), connectionId });
   };
 
@@ -422,9 +447,13 @@ export function AgentRail({
     for (const item of run.timeline.items) {
       if (item.handover === undefined || handedOver.current.has(item.id)) continue;
       handedOver.current.add(item.id);
-      // A host with no runner still gets the statement, unrun: the run's answer
-      // reaching the editor is the part that does not depend on the gate.
-      const deliver = item.handover.kind === "auto-executed" ? (onRunStatement ?? onApplyStatement) : onApplyStatement;
+      // An `auto-executed` entry says the statement RAN on the user's connection, so
+      // it is delivered to the runner or to nothing: applying it silently instead
+      // would leave that sentence on the timeline about something that did not happen.
+      // This rail no longer opens such a run without a runner (`canHandOver`), and the
+      // statement is never lost either way — the entry carries `applySql`, so the
+      // control beside it still offers it as the user's own action.
+      const deliver = item.handover.kind === "auto-executed" ? onRunStatement : onApplyStatement;
       deliver?.(item.handover.sql);
     }
   }, [run.runId, run.timeline.items, onApplyStatement, onRunStatement]);
@@ -626,15 +655,14 @@ export function AgentRail({
           that nothing keeps.
         */}
         {/*
-          Offered ONLY where the run could hand something over: agent mode, and a
-          workflow that is offered `present_answer`. It used to render for all five
-          workflows in both modes, which promised a hand-over four of them have no
-          tool to perform and had the server tell those models to inspect the plan of
-          an answer they could not present. `AGENT_WORKFLOW_PRESENTS_ANSWER` is the
-          same record the route validates against and `investigation.ts` states the
-          rule from, so the control, the request and the prompt cannot disagree.
+          Offered ONLY where the run could hand something over, and where this host
+          could carry the hand-over out — `canHandOver`, which is also what the start
+          request reads, so the control, the request and the prompt cannot disagree.
+          It used to render for all five workflows in both modes, which promised a
+          hand-over four of them have no tool to perform and had the server tell those
+          models to inspect the plan of an answer they could not present.
         */}
-        {mode === "agent" && AGENT_WORKFLOW_PRESENTS_ANSWER[workflowType] && (
+        {canHandOver && (
           <div className="mt-2">
             <label htmlFor="agent-auto-execute" className="flex items-start gap-2 cursor-pointer">
               <input

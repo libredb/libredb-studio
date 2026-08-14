@@ -1946,7 +1946,11 @@ describe("AgentRail", () => {
      * defect this scoping removes.
      */
     function analyze(props: Record<string, unknown> = {}) {
-      const view = render(<AgentRail {...DEFAULT_PROPS} {...props} />);
+      // A runner by default, because the control is offered only to a host that has
+      // one: what the checkbox promises is a run in the user's editor, and a host with
+      // no way to run one cannot keep that promise. Tests about a host without a runner
+      // pass `onRunStatement: undefined` explicitly.
+      const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} {...props} />);
       // Both axes, because the rail opens in PLANNING mode on Investigate and the
       // control belongs to neither. That the block used to reach the checkbox without
       // either click is precisely the defect: it rendered in a toolless mode, on a
@@ -1973,7 +1977,7 @@ describe("AgentRail", () => {
       // and had the server tell the model to inspect the plan of an answer it could
       // not present. That is the #350/#356 shape, and this is the test that keeps it
       // from returning.
-      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+      const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
       fireEvent.click(view.getByTestId("agent-mode-agent"));
       for (const workflow of ["investigation", "query-optimization", "database-assessment", "operations"]) {
         fireEvent.click(view.getByTestId(`agent-workflow-${workflow}`));
@@ -2094,14 +2098,66 @@ describe("AgentRail", () => {
       expect(onApplyStatement).not.toHaveBeenCalled();
     });
 
-    test("a host that cannot run a statement is still given the one the run handed over", async () => {
-      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("auto-executed")]);
-      const onApplyStatement = mock(() => {});
-      const { findAllByTestId } = await runWith({ onApplyStatement });
+    /**
+     * A capability the host lacks is not offered — the rule the stop control and the
+     * hydration affordances already follow, applied to the one control that promises
+     * something the host has to perform (#373 review).
+     *
+     * The rail used to offer the checkbox to any host and fall back to
+     * `onApplyStatement` when no runner existed, so the statement was placed and not
+     * run while the timeline entry told the user it "ran on your connection". A
+     * surface may not claim an execution that did not happen, and the cheapest way not
+     * to claim it is not to promise it: `onRunStatement` is an optional public prop,
+     * so any embedding host can be in this state.
+     */
+    describe("a host with no runner is not offered the promise", () => {
+      test("the checkbox is absent, terms and all, on the workflow that otherwise has it", () => {
+        const view = analyze({ onRunStatement: undefined });
 
-      await findAllByTestId("agent-apply-statement");
-      await waitFor(() => {
-        expect(onApplyStatement).toHaveBeenCalledWith(ANSWER_SQL);
+        expect(view.queryByTestId("agent-auto-execute")).toBeNull();
+        expect(view.queryByTestId("agent-auto-execute-terms")).toBeNull();
+      });
+
+      test("a setting ticked while a runner existed is not sent after the host loses it", async () => {
+        // The checkbox's own state is not the authority, exactly as it is not the
+        // authority across a workflow switch: hiding the control leaves the ticked
+        // state behind it, and `true` on a run this host cannot carry out would open a
+        // run whose hand-over nothing here could perform.
+        const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+        const view = analyze();
+        fireEvent.click(view.getByTestId("agent-auto-execute"));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+
+        view.rerender(<AgentRail {...DEFAULT_PROPS} />);
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+
+        expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).autoExecute).toBe(false);
+      });
+
+      test("an auto-executed hand-over is never delivered through the apply path instead", async () => {
+        // The ledger entry says the statement ran on the user's connection. Applying it
+        // silently would make that entry false; the statement is still there to be
+        // taken, as the user's own action, through the control beside it.
+        mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("auto-executed")]);
+        const onApplyStatement = mock(() => {});
+        const { findAllByTestId } = await runWith({ onApplyStatement, onRunStatement: undefined });
+
+        expect(await findAllByTestId("agent-apply-statement")).toHaveLength(1);
+        expect(onApplyStatement).not.toHaveBeenCalled();
+      });
+
+      test("an answer the run did NOT hand over is still applied there, as it always was", async () => {
+        // The narrowing is about the hand-over alone: a declined answer is placed in
+        // the editor unrun, which is a claim this host can keep.
+        mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("applied", "Not run for you: yours to run.")]);
+        const onApplyStatement = mock(() => {});
+        await runWith({ onApplyStatement, onRunStatement: undefined });
+
+        await waitFor(() => {
+          expect(onApplyStatement).toHaveBeenCalledWith(ANSWER_SQL);
+        });
       });
     });
 
@@ -2136,7 +2192,7 @@ describe("AgentRail", () => {
 
     test("a host that offers neither callback survives a handover rather than throwing", async () => {
       mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("auto-executed")]);
-      const { findAllByTestId, queryAllByTestId } = await runWith({});
+      const { findAllByTestId, queryAllByTestId } = await runWith({ onRunStatement: undefined });
 
       await findAllByTestId("agent-timeline-item");
       expect(queryAllByTestId("agent-apply-statement")).toHaveLength(0);
