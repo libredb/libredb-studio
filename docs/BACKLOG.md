@@ -708,16 +708,26 @@ the operator image has a different lifecycle and a different consumer (OpenShift
 OperatorHub, which does its own scanning). Done when a certification requirement
 asks for one.
 
-### C5. Dependabot has alerts but no version-update configuration
+### C5. Dependabot raises version updates but cannot raise security ones
 
-The repository has Dependabot alerts and secret scanning enabled, but there is no
-`.github/dependabot.yml`, so nothing opens a pull request for a bump. The
-dependency gate therefore reports advisories that a human has to act on by hand.
-Adding version updates is cheap and the reason it was not done here is scope, not
-disagreement - it also interacts with the 100 percent coverage gate and the
-required checks in ways worth thinking about once (a bot pull request must pass
-the same six gates). Done when `dependabot.yml` lands with a grouping strategy
-that does not produce one pull request per transitive package.
+`.github/dependabot.yml` now groups weekly version updates across npm/bun, GitHub
+Actions and both Dockerfiles, which is what the original entry asked for. What it
+cannot do is the other half: Dependabot's Bun support covers **version updates
+only** - security updates are not implemented upstream for this ecosystem. So an
+advisory against a package Bun resolves still reaches nobody automatically; Trivy
+and `bun audit` remain the only things that see it, and acting on one is still a
+human step.
+
+That is also why several dependencies are deliberately excluded from the bot, each
+with its reason recorded in the config: database driver majors (mocked in tests, so
+a wire-behaviour change goes green - ioredis 6's RESP3 default is the live case),
+the exact-pinned agent runtime (a bump fails
+`tests/unit/agent-dependency-boundary.test.ts` by design), `@zumer/snapdom` (pinned
+for ER-diagram export fidelity), and the `oven/bun` base image (its version is
+maintained in two places Dependabot sees as one).
+
+Done when Bun security updates land upstream and the exclusion list can be
+re-read against whatever they cover.
 
 ### C6. `bun audit` cannot answer "is there a fix"
 
