@@ -18,6 +18,9 @@
 > | §3.3 validation includes `series` in the column check | The check covers `x` and every `y` | Follows from the above. |
 > | §2.6 the checkbox, with no workflow scope stated | Offered on **`data-analysis` in agent mode only**, and `POST /api/agent/runs` refuses `autoExecute: true` anywhere else | Auto-execute hands over `present_answer`'s answer, and that tool is offered to this workflow alone. Rendering it elsewhere promised a hand-over four workflows cannot perform. |
 > | §2.4.0 condition 2 joins the plan to the answer's statement | Joined on `fingerprintStatement`, the repair ledger's canonical form | Exact string equality between two independently drafted statements missed on whitespace, case or a trailing semicolon, which made the gate inert far more often than §2.4.0 implies. |
+> | §2.4.0 condition 2 on SQLite reads `access === "index"` | **And no `uninterpretedStep`**: a plan the server could only PARTLY read is risky too | `summariseSqlite` recognises `SEARCH` and `SCAN`, so `SEARCH …` beside an uninterpreted step summarised as a flat `index` and passed the gate. `unknown` resolving to risky only held when NO step had been recognised. |
+> | §2.6 the checkbox, scoped by workflow and mode | **And by the host**: no `onRunStatement`, no checkbox | The prop is optional, so an embedding host may have no runner. The rail used to offer the promise and fall back to applying the statement, which left the timeline saying it "ran on your connection" about something that did not happen. |
+> | §2.3 one `answer-composed` event, with nothing said about a second | **A run answers once**: a second presentation is refused with `ANSWER_ALREADY_RECORDED` | `present_answer` is non-terminal, so a model could present twice. Two entries mean two statements handed to the editor and, with auto-execute on, two run there — under a checkbox that promised the final answer. |
 > | §1.6 budget figures | Shipped exactly as approved: 60 / 42 / 900 s / 180 s | No divergence — recorded here because these figures are **still pending the live measurement** the owner's decision made a condition of freezing them. |
 >
 > The `operations` assumption below was written when that workflow was an uncommitted local branch.
@@ -524,6 +527,20 @@ Three notes on the shape:
   the same as the drive that died, and a later request must not be able to widen a run after it
   opens.
 
+> **Built: and a run may write exactly one of these.** This section describes the event in the
+> singular throughout and never says what a SECOND one would mean, which is how the first
+> implementation came to allow it: `present_answer` is non-terminal — only `compose_report` ends a
+> drive — so a model could present twice, and the second call succeeded exactly like the first. Two
+> `answer-composed` entries are two statements the rail delivers to the editor and, on an auto-execute
+> run, two it runs there with no timeout, under a checkbox that promised the final answer. The verdict
+> in §4 is satisfied by one entry, so the second was never buying anything either.
+>
+> `presentAnswerTool` now refuses a second presentation with `ANSWER_ALREADY_RECORDED`, decided from
+> the run's own events **before the arguments are parsed** — an argument refusal would invite the model
+> to correct them and call again — and costing no repair attempt, because the tool reaches neither the
+> repair ledger nor a database. The entry is durable, so a resumed drive is told the same thing rather
+> than being allowed a second hand-over.
+
 The editor re-run itself produces no ledger event and cannot, because it happens in the browser
 against a route the agent does not own. `handover: "auto-executed"` is the run's record that it
 *handed over*; what the editor then did is the editor's business and is visible in the editor. That
@@ -582,6 +599,22 @@ run's budget for the `EXPLAIN`, which the per-workflow ceiling in §1.6 must acc
 > `WHERE id = 1` still cannot license the hand-over of `WHERE id = 2`. Condition 1 is unchanged and
 > stays exact equality, correctly: both of its statements come from the same ledger, so there is no
 > independent drafting to absorb.
+
+> **Built: and a plan the server could only PARTLY read is risky too.** This section's SQLite rule is
+> `access === "index"`, and `access` is a reading of the steps the summary RECOGNISED —
+> `summariseSqlite` matches `SEARCH` and `SCAN` and used to drop every other row on the floor. So a
+> plan of `SEARCH t USING INDEX ix` beside `USE TEMP B-TREE FOR ORDER BY` reported a flat `index`,
+> and the gate handed the statement to the editor to run with no timeout on the strength of a reading
+> that had skipped a step. "Unknown resolves to risky" held only when NO step had been recognised,
+> which is the narrower promise.
+>
+> The summary now carries `uninterpretedStep` beside `access` and the gate refuses on it before either
+> engine's rule. It rides beside `access` rather than collapsing it to `unknown` because what the
+> recognised steps said is still true, and `compare_plans` is described exactly as it was before.
+> PostgreSQL sets no such flag: its plans are mostly nodes this reading does not tally, none of them a
+> relation access, and the engine both reports a whole-plan `Total Cost` the gate already weighs and
+> preempts a statement that overruns — the asymmetry §2.4.1 spends its length on, applied one level
+> down.
 
 #### 2.4.1 Why the analysis preferred the measurement
 
@@ -702,6 +735,15 @@ feature working.
 > the tool and the flag agree. `POST /api/agent/runs` **refuses** `autoExecute: true` elsewhere rather
 > than normalising it to `false`, because a silent downgrade is how a user comes to believe a feature
 > ran.
+>
+> **And a third condition this section could not have stated: the HOST has to be able to run one.**
+> `onRunStatement` is an optional prop of `AgentRail`, so an embedding host may have no runner at all.
+> The rail offered the checkbox regardless and fell back to `onApplyStatement`, so the statement was
+> placed unrun while the timeline entry told the user it had run on their connection — the same silent
+> downgrade one paragraph up, this time on the surface rather than at the route. The checkbox, the
+> start request and the delivery effect now read one value, and an `auto-executed` entry goes to the
+> runner or nowhere. The statement is never lost: every answer entry still offers it through
+> `applySql`, as the user's own action.
 
 ---
 
