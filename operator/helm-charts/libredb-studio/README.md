@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.34 \
+  --version 0.1.35 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -442,6 +442,18 @@ helm uninstall libredb
 | `service.type` | Service type | `ClusterIP` |
 | `service.port` | Service port | `80` |
 | `ingress.enabled` | Enable Ingress | `false` |
+| `route.main.enabled` | bool | `false` | Enables or disables the route |
+| `route.main.additionalRules` | list | `[]` |  |
+| `route.main.annotations` | object | `{}` |  |
+| `route.main.apiVersion` | string | `"gateway.networking.k8s.io/v1"` | Set the route apiVersion, e.g. gateway.networking.k8s.io/v1 or gateway.networking.k8s.io/v1alpha2 |
+| `route.main.filters`| list | `[]` |  |
+| `route.main.hostnames` | list | `[]` |  |
+| `route.main.httpsRedirect` | bool | `false` |  |
+| `route.main.kind` | string | `"HTTPRoute"` | Set the route kind |
+| `route.main.labels` | object | `{}` |  |
+| `route.main.matches[0].path.type` | string | `"PathPrefix"` |  |
+| `route.main.matches[0].path.value` | string | `"/"` |  |
+| `route.main.parentRefs` | list | `[]` |  |
 | `autoscaling.enabled` | Enable HPA (ignored with SQLite storage: single-writer) | `false` |
 | `autoscaling.minReplicas` | Min replicas | `2` |
 | `autoscaling.maxReplicas` | Max replicas | `10` |
