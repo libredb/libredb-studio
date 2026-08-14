@@ -148,9 +148,14 @@ export class ExecutionArtifactStore<T = unknown> {
    * Map iteration is insertion order and executions are stored as they finish,
    * so keys arrive oldest-first and the first match is the run's oldest.
    * Deleting the entry the loop is currently on is well-defined for a Map
-   * iterator. Only a run holding nothing takes the second loop, and the map is
-   * never empty there: this runs only when the size has reached a cap of at
-   * least one.
+   * iterator.
+   *
+   * A run holding nothing gives up the store's own oldest instead, and that one
+   * is read from the iterator directly rather than through a loop that returns
+   * on its first pass — which is what it is, and which a static analyser reads
+   * as a loop that cannot iterate. The map is never empty here: this runs only
+   * once the size has reached a cap of at least one, so the guard is a type
+   * narrowing rather than a case that occurs.
    */
   private evictOldestOf(runId: string): void {
     for (const [correlationId, held] of this.artifacts) {
@@ -159,10 +164,8 @@ export class ExecutionArtifactStore<T = unknown> {
         return;
       }
     }
-    for (const oldest of this.artifacts.keys()) {
-      this.artifacts.delete(oldest);
-      return;
-    }
+    const oldest = this.artifacts.keys().next().value;
+    if (oldest !== undefined) this.artifacts.delete(oldest);
   }
 
   private hasExpired(artifact: ExecutionArtifact<T>, nowMs: number): boolean {
