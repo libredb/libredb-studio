@@ -259,9 +259,14 @@ An **Analyze** run in **Agent** mode can be opened with **auto-execute**. It cha
 is worth being exact about
 which: the run's own answer is produced the same way either way — from a result it read on its own
 bounded path, at 200 rows and a 10-second ceiling, with a ledger entry behind it. What the setting
-adds is that the answer's statement is also placed in your editor **and run there**, on your
-connection, at the editor's 500-row limit and with **no time limit**. Writes and DDL are refused
-either way.
+adds is that the answer's statement is also placed in your editor **and run there**, on the
+connection the run was opened on, at the editor's 500-row limit and with **no time limit**.
+
+**It is the same read-only session either way.** The re-run is not an ordinary editor execution: it
+is sent to the database inside the engine's own read-only transaction — the same one the run used to
+produce the answer — so a write or a DDL statement is refused **by the database**, not by reading the
+statement and judging it. That distinction is the whole of it: a `SELECT` can call a function that
+writes, and no amount of reading the statement would tell you so.
 
 **It is offered on Analyze alone, and only in Agent mode.** Auto-execute hands over *the answer*, and
 Analyze is the only workflow that produces one — an Investigate, Optimize, Assess or Operate run
@@ -306,17 +311,18 @@ the feature working, not the feature failing.
 look like a complete chart, and every number on it would be right, which is worse than an obvious
 error.
 
-**And it is only ever run on the connection you started the run on.** If you switch the editor to a
-different connection while a run is going, the statement is **not** run: it would have run against a
-database this run never read, and you would have been shown that database's rows as the answer. The
-timeline says so beside the answer — the run recorded that it handed the statement over, and this is
-the app telling you it did not carry that out. The statement is still there: take it with the control
-beside the entry and run it yourself, on whichever connection you are on now.
+**And it is only ever run on the connection you started the run on.** The statement itself cannot
+reach anywhere else — the server runs it on the connection recorded on the run, not on whatever the
+editor is pointed at. But if you switch the editor to a different connection while a run is going,
+the statement is **not** run at all: the rows would have landed in a tab connected somewhere else and
+been read as that database's answer. The timeline says so beside the answer — the run recorded that it
+handed the statement over, and this is the app telling you it did not carry that out. The statement is
+still there: take it with the control beside the entry and run it yourself, on whichever connection
+you are on now.
 
-**What the editor then does is the editor's own business.** It runs on the route the rest of the
-application uses, which is not the agent's audited pipeline, so there is no ledger entry for it. The
-timeline records that the run handed the statement over, and says that what happened next is visible
-in the editor.
+**There is no ledger entry for the re-run.** The run may already have finished by the time it happens,
+and a finished run's record does not take additions. The timeline records that the run handed the
+statement over, and says that what happened next is visible in the editor.
 
 ---
 

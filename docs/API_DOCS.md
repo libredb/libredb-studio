@@ -878,6 +878,29 @@ correlation id. `410` when it does but the rows are gone:
 { "error": "This result is no longer held: a run's results are released when it ends.", "reason": "released" }
 ```
 
+#### POST /api/agent/runs/{runId}/handover
+
+Runs the statement that run answered with, in the user's editor, under the **engine's own read-only
+boundary** — `BEGIN READ ONLY` on PostgreSQL, `PRAGMA query_only` on SQLite — at the editor's default
+500-row limit and with no statement timeout. It exists because the alternative is the ordinary
+`POST /api/db/query`, a read-write session where a `SELECT` calling a VOLATILE function that writes
+succeeds; no inspection of the statement's text can tell the two apart.
+
+**The request carries no body.** The statement is read from the run's own `answer-composed` event and
+the connection from the run's persisted `connectionId`, resolved under the run's persisted actor — so
+this is not an endpoint that will run SQL it is handed, and nothing a user types can reach the
+profile it runs under.
+
+```json
+{ "runId": "arun_…", "sql": "SELECT …", "result": { "rows": [], "fields": [], "rowCount": 0 } }
+```
+
+`404 { "error": "This run composed no answer" }` when the run never presented one. `409` when it did
+and the auto-execute gate declined it (`handover` is `applied` or `none`), with the gate's own
+warning in the message — the statement belongs in the editor unrun, and this route will not do what
+the run decided against. A row or byte budget overrun **refuses** rather than truncating, exactly as
+the agent's own read path does.
+
 #### POST /api/agent/drive
 
 The machine-facing resume seam. **It carries no session.** The caller presents a short-lived

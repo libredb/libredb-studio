@@ -32,13 +32,14 @@ Three properties frame everything below, and each of them is load-bearing rather
   `PROFILE_UNSUPPORTED_BY_PROVIDER` and the run ends `engine-unsupported`
   (`src/lib/agent/runtime.ts:199`). The restriction is a property of the **execution profile**, not
   of the factory: `agent-read-only` sends model-authored statements and is served only where the
-  engine can bound one, while `agent-operations` sends no statement at all — it calls the curated
-  reporting methods every provider implements — and its acquisition therefore does not require
-  `queryReadOnly` (`src/lib/db/factory.ts`, `PROFILE_ACQUISITION`). Everything else about the two
-  acquisitions is identical: the same `readOnly: true` open, the same optional least-privilege
-  `agentUser`, and the same profiled cache, so an operations run is never handed the editor's
-  writable pool either. Plan mode is toolless and reaches no database, so no engine restriction
-  applies to it.
+  engine can bound one, `agent-handover` sends the statement a run already answered with and takes
+  the same gate for the same reason, while `agent-operations` sends no statement at all — it calls
+  the curated reporting methods every provider implements — and its acquisition therefore does not
+  require `queryReadOnly` (`src/lib/db/factory.ts`, `PROFILE_ACQUISITION`). Everything else about
+  the three acquisitions is identical: the same `readOnly: true` open, the same optional
+  least-privilege `agentUser`, and the same profiled cache, so neither an operations run nor an
+  editor replay is ever handed the editor's writable pool. Plan mode is toolless and reaches no
+  database, so no engine restriction applies to it.
 
 This document describes what the runtime *does*. The security matrix rows that cover it are 3.4 and
 3.5 in [`docs/SECURITY.md`](./SECURITY.md) — both marked **Partial**, with the reasons stated there;
@@ -709,9 +710,50 @@ picture. The tool's own reply says so and points at `compose_report`.
 **Auto-execute never produces the answer.** The answer is always an artifact the run already read,
 under the read-only profile, inside the statement ceiling, counted against the run's budget and
 written to its ledger. What the setting adds is one further thing: the same statement is also placed
-in the user's editor **and run there** — on the user's own connection, at the editor's 500-row limit
-and with no statement timeout, no policy evaluation and no audit event, because that route is not one
-this runtime owns.
+in the user's editor **and run there**, at the editor's 500-row limit and with no statement timeout.
+
+**The replay is served under the engine's own read-only boundary, on its own profile.** This is the
+one thing about auto-execute that is a security property rather than a convenience, and the first
+implementation did not have it: the replay went to `POST /api/db/query`, the editor's ordinary
+read-WRITE route, whose only protection is `isDangerousQuery` — a check on the statement's TEXT. The
+agent's own read is not merely called read-only, the database enforces it (`BEGIN READ ONLY` on
+PostgreSQL, `PRAGMA query_only` on SQLite), and text is not where the difference lives: a `SELECT`
+may invoke a VOLATILE function that performs an `INSERT`, which the agent's transaction refuses
+(SQLSTATE 25006) and a read-write session performs. The identical statement was therefore harmless
+where the run proved it and harmful where it was replayed, under a checkbox promising that writes and
+DDL are refused either way.
+
+It now goes to `POST /api/agent/runs/{runId}/handover`, which runs it through `provider.queryReadOnly`
+under a **third execution profile**, `agent-handover`:
+
+| | `agent-read-only` (the run's own read) | `agent-handover` (the editor replay) |
+| --- | --- | --- |
+| Opened with | `readOnly: true`, `agentUser` credential, profiled cache | identical |
+| Requires a database-native read-only statement path | yes | yes |
+| Rows | 200, refused not truncated | 500 (`DEFAULT_QUERY_LIMIT`), refused not truncated |
+| Statement timeout | 10 s | none — spelled as 2 147 483 647 ms |
+| Bytes | 256 KiB | 64 MiB |
+
+The agent's own profile is unchanged: what a MODEL may spend on a run and what a USER's replay may
+spend are different questions, and a shared row would have made a later change to one move the other.
+"No timeout" is an explicit ceiling rather than an absent field because `assertReadOnlyBudget` requires
+every field to be a positive integer — PostgreSQL interpolates the value into
+`SET LOCAL statement_timeout = N`, which takes no bind parameter — so admitting `undefined` would
+trade a real guard for a cosmetic one. 2 147 483 647 ms is PostgreSQL's own 32-bit limit for the
+setting, a little over 24 days; nothing a user waits for reaches it, and the word that does not hold
+is "no".
+
+**The route will not run SQL it is handed.** The request carries no body at all: the statement is read
+from the run's own `answer-composed` event, and the connection from the run's persisted
+`connectionId`, resolved server-side under the run's persisted actor. So nothing a user types reaches
+this profile, and the route is not a general "run this without a timeout" endpoint. It also honours
+the gate rather than re-deciding it — only `handover: "auto-executed"` is replayed; `applied` and
+`none` are refused with `409` and the gate's own warning. A run answers once, so "the answer" is
+unambiguous and needs no id in the path.
+
+It writes **no ledger event**, and cannot honestly: the run may already have finished, a finished
+ledger does not accept appends, and the ledger's claim is that everything the RUN did is in it. The
+replay is logged instead.
 
 **The setting lives on the run record** (`AgentRunRecord.autoExecute`), beside `mode` and
 `workflowType`, and for the same two reasons: a resumed drive must behave like the drive that died,
@@ -782,6 +824,30 @@ is the price §2.4.0 names. The server does not take that plan on the run's beha
 executed there would carry no `tool-invoked` and no `tool-completed`, and the ledger invariant is that
 everything a run did is in its ledger.
 
+**The join is on `fingerprintStatement`, the repair ledger's canonical form** — the two statements are
+drafted independently, one as `run_read_query`'s argument and one as `inspect_plan`'s, so exact string
+equality made the gate resolve `plan-risky` whenever a model reformatted its own aggregate. Whitespace,
+comments, unquoted case and a trailing terminator normalise away; literals and quoted names keep their
+exact spelling, so a cheap plan of `WHERE id = 1` cannot license `WHERE id = 2`.
+
+**Except for the one comment that is not trivia.** A statement carrying an optimizer directive — a
+`+`-marked comment block, Oracle's `--+` line form, or MySQL's executable comment — takes no part in
+this join, on either side (`hasOptimizerHint`, `src/lib/sql/optimizer-hints.ts`). Under `pg_hint_plan`
+such a comment is an instruction to the planner, so the cheap indexed plan taken for the unhinted text
+says nothing about a statement whose hint forces a sequential scan, and the canonical form normalises
+the difference away — condition 2 would have passed with a plan that is not the plan of the statement
+the editor runs. It fails closed rather than joining on the hint text, because joining would assert
+that the plan the run holds IS the hinted plan, and `inspect_plan` obtains it by sending the statement
+under an `EXPLAIN` prefix; whether `pg_hint_plan` still reads a hint from behind one is a property of
+an extension this repository does not ship and cannot verify. A hinted answer is therefore placed in
+the editor unrun with the gate's own warning, like every other statement the gate cannot weigh.
+
+**`fingerprintStatement` itself is unchanged, deliberately.** It is the repair ledger's canonical
+identity and is consulted before every statement, and there a comment being trivia is a bound rather
+than a bug: a model re-sending a statement the ledger already refused, with a comment added, would
+otherwise fingerprint differently and be admitted again. The distinction matters only at the plan
+join, so it lives at the plan join.
+
 **Both thresholds are approved and pending live measurement.** 2 000 ms and 50 000 were approved on
 2026-08-14 as the starting point a measurement then confirms or corrects; no run has been measured
 against either reference engine yet. The reasoning behind them: the run's own statement ceiling is
@@ -802,10 +868,9 @@ break that invisibly, because a bar chart of 200 of 4 000 regions looks like a c
 no number on it is wrong. A model-written `ORDER BY … LIMIT 10` is honest, because the model can then
 say "the top ten" in its claim.
 
-**`auto-executed` records that the run handed the statement over, and nothing more.** The editor's own
-execution produces no ledger event and cannot: it happens in the browser against a route the agent
-does not own. The timeline entry says so in as many words — what the editor did is visible in the
-editor.
+**`auto-executed` records that the run handed the statement over, and nothing more.** The replay
+produces no ledger event: the run may have ended before it happens, and a finished ledger takes no
+appends. The timeline entry says so in as many words — what the editor did is visible in the editor.
 
 **The browser carries the outcome out; it does not weigh the gate again.** The rail reads `handover`
 off the ledger and delivers the statement once per entry: `auto-executed` goes to the runner and
@@ -814,25 +879,25 @@ says the statement ran — `applied` places it unrun beside the run's own reason
 nothing. The statement is never lost either way: every answer entry carries `applySql`, so the
 control beside it still offers the statement as the user's own action.
 
-**And it delivers only on the connection the run was opened on.** The host runs a statement against
-whatever connection it is on NOW; the run read its rows from the connection persisted on its record.
-Those are the same database until the user selects another one mid-run, and then the hand-over would
-run — unbounded, on an engine whose plan for it was never inspected and whose elapsed time was never
-measured there — against a database the run never read, and put that database's rows on screen as the
+**And it delivers only while the editor is still on the connection the run was opened on.** The
+statement itself can no longer reach the wrong database — the route resolves the run's own persisted
+connection server-side — but the RESULT would land in the editor tab, and the tab belongs to whatever
+connection the user is on now, so another database's rows would be presented as this connection's
 answer. `AgentRail` remembers the connection it opened the run on and declines when the two no longer
 match, saying so beside the entry that claims the execution: that entry is folded from the ledger and
-still says the statement ran, so the contradiction belongs where the sentence is. It declines rather
-than redirecting, because nothing on the surface can reach the run's own connection and executing
-against a database the user is not looking at is the defect rather than the remedy. The narrowing is
-about the hand-over that RUNS: an `applied` entry claims no execution, so a connection change does
-not change what it means. It is enforced in the rail rather than in the host's callback, because that
+still says the statement ran, so the contradiction belongs where the sentence is. The narrowing is
+about the hand-over that RUNS: an `applied` entry claims no execution, so a connection change does not
+change what it means. It is enforced in the rail rather than in the host's callback, because that
 callback is an optional public prop and a guard written in one host is one the next host does not
-inherit. The re-run
-goes through `useQueryExecution.executeHandedOverStatement`, which takes no execution options at all
-and forces `DEFAULT_QUERY_LIMIT` with `unlimited: false` — a tab a user widened for a statement they
-wrote must not widen one the run handed over (§2.1). The setting itself is offered as a checkbox in
-the rail that states those bounds, sent with the start request and frozen for as long as the run is
-open, which is the browser side of the server's own rule.
+inherit.
+
+The re-run goes through `useQueryExecution.executeHandedOverStatement`, which takes the RUN and not a
+statement to execute: what it sends is the run id, and the statement it is also given is the text the
+editor SHOWS while the answer arrives. The row limit is the server's, not a request option, which is
+what keeps a tab a user widened for a statement they wrote from widening one the run handed over
+(§2.1). The setting itself is offered as a checkbox in the rail that states those bounds, sent with
+the start request and frozen for as long as the run is open, which is the browser side of the
+server's own rule.
 
 ### What the fence is proved to hold against
 

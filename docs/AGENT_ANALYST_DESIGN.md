@@ -24,6 +24,8 @@
 > | §2.3 one `answer-composed` event, with nothing said about a second | **A run answers once**: a second presentation is refused with `ANSWER_ALREADY_RECORDED` | `present_answer` is non-terminal, so a model could present twice. Two entries mean two statements handed to the editor and, with auto-execute on, two run there — under a checkbox that promised the final answer. |
 > | §4.2 the rule: the baseline, **and** an `answer-composed` entry | **And at least one claim citing the presented artifact**, with the shortfall `answer-uncited` | Nothing linked the report to the answer, so a run could chart artifact A while every claim cited artifact B and still score `answered` — unrelated prose beside a picture. |
 > | §3.3 the answer's artifact is checked the way a citation is | **And narrowed**: only a `sql.query.read` result may be PRESENTED, refused as `ANSWER_NOT_A_DATA_READ` | A citation may legitimately name a plan; an answer may not. A plan step carries a drafted statement, so a run could present the engine's description of a statement and meet the verdict without reading any data. |
+> | §2.1/§2.5/§2.6 "run it there", assumed to mean the editor's ordinary execution | **A third execution profile, `agent-handover`, and a route of its own**: the replay runs through `provider.queryReadOnly` under the engine's read-only session at `DEFAULT_QUERY_LIMIT` rows and no statement timeout | The editor route is a read-WRITE session guarded only by `isDangerousQuery`, a syntactic check. A `SELECT` calling a VOLATILE function that performs an `INSERT` is refused inside `BEGIN READ ONLY` and succeeds there — so "writes and DDL are refused either way" was false of the half the checkbox buys, and no reading of the statement could have made it true. |
+> | §2.4.0 condition 2 joins on `fingerprintStatement`, whose canonical form drops comments | **And a statement carrying an optimizer directive takes no part in the join, on either side** | Under `pg_hint_plan` a hint block is an instruction to the planner, not trivia. A cheap indexed plan taken for the unhinted text licensed an answer whose hint forces a sequential scan: condition 2 passed with a plan that is not the plan of the statement the editor runs. |
 > | §1.6 budget figures | Shipped exactly as approved: 60 / 42 / 900 s / 180 s | No divergence — recorded here because these figures are **still pending the live measurement** the owner's decision made a condition of freezing them. |
 >
 > The `operations` assumption below was written when that workflow was an uncommitted local branch.
@@ -603,6 +605,30 @@ run's budget for the `EXPLAIN`, which the per-workflow ceiling in §1.6 must acc
 > stays exact equality, correctly: both of its statements come from the same ledger, so there is no
 > independent drafting to absorb.
 
+> **Built: and one comment is not trivia.** "Comments normalise away" is right for the repair ledger
+> and wrong for this join. Under `pg_hint_plan` a `+`-marked comment block is an optimizer DIRECTIVE
+> — as are Oracle's `--+` line form and MySQL's executable comment — so a cheap indexed plan taken for
+> the unhinted text licensed an answer statement whose hint forces a sequential scan. The two
+> fingerprint alike, and condition 2 passed with a plan that is not the plan of the statement the
+> editor will run, which is precisely the promise condition 2 makes.
+>
+> A statement carrying one now takes **no part in the join, on either side**
+> (`hasOptimizerHint`, `src/lib/sql/optimizer-hints.ts`, which reads spans so a marker inside a
+> literal is not one). It fails closed rather than joining on the hint text: joining would assert
+> that the plan the run holds IS the hinted plan, and `inspect_plan` obtains it by sending the
+> statement under an `EXPLAIN` prefix — whether `pg_hint_plan` still reads a hint from behind one is
+> a property of an extension this repository does not ship, does not test against and cannot verify,
+> and a gate whose failure mode is a stalled production database does not rest on that. A hinted
+> answer is placed in the editor unrun with the gate's own warning, like every other statement the
+> gate cannot weigh.
+>
+> **`fingerprintStatement` itself is unchanged, and that is the decision rather than an omission.**
+> It is the repair ledger's canonical identity, consulted before every statement, and there a comment
+> being trivia is a bound: a model re-sending a statement the ledger already refused, with a comment
+> added, would otherwise fingerprint differently and be admitted again. Widening "the same statement"
+> for repair accounting to fix a plan join would trade a bound for a bound. The distinction matters
+> only at the join, so it lives at the join.
+
 > **Built: and a plan the server could only PARTLY read is risky too.** This section's SQLite rule is
 > `access === "index"`, and `access` is a reading of the steps the summary RECOGNISED —
 > `summariseSqlite` matches `SEARCH` and `SCAN` and used to drop every other row on the floor. So a
@@ -683,6 +709,46 @@ yours to run."*
 The agent's own execution is already capped at 200 rows, 256 KiB and 10 s
 (`execution-policy.ts:52-55`). The editor re-run should be forced to the editor's default 500-row
 limit and must **not** inherit a tab's `unlimited` flag (§2.1). Beyond that, nothing new is needed.
+
+> **Built: something else WAS needed, and it is the boundary rather than the caps.** This section
+> treats the re-run as an ordinary editor execution with a forced row limit, and §2.6 then tells the
+> user "writes and DDL are refused either way". Those two sentences cannot both be true of the
+> implementation they describe. The editor's execution goes to `POST /api/db/query`, a plain
+> read-WRITE session whose only protection is `isDangerousQuery` — a check on the statement's TEXT —
+> while the agent's own read is enforced by the ENGINE (`BEGIN READ ONLY` at `postgres.ts:889`,
+> `PRAGMA query_only` at `sqlite.ts:410`). Text is not where the difference lives: a `SELECT` may
+> invoke a VOLATILE function that performs an `INSERT`, which the read-only transaction refuses
+> (SQLSTATE 25006) and the read-write session performs. The same statement was therefore harmless
+> where the run proved it and harmful where it was replayed — and this repository already treats
+> database content as able to influence the model, so "the model would not write one" is not an
+> argument available here.
+>
+> What shipped is a **third execution profile and a route of its own**:
+>
+> - `AGENT_HANDOVER_PROFILE` (`agent-handover`) in `factory.ts`'s `PROFILE_ACQUISITION` — the same
+>   `readOnly: true` open, the same `agentUser` credential, the same profiled cache and the same
+>   demand for a database-native read-only statement path as `agent-read-only`. The agent's own
+>   profile is untouched: it keeps its 10 s timeout and 200-row cap, because what a MODEL may spend
+>   and what a USER's replay may spend are different questions.
+> - `AGENT_HANDOVER_BUDGET` — `DEFAULT_QUERY_LIMIT` rows, 64 MiB, and a statement timeout of
+>   2 147 483 647 ms. "No timeout" has no representation the plumbing can carry: `assertReadOnlyBudget`
+>   requires a positive integer because PostgreSQL interpolates the value into
+>   `SET LOCAL statement_timeout = N`, which takes no bind parameter, so admitting `undefined` would
+>   weaken a real guard to express a cosmetic one. The figure is PostgreSQL's own 32-bit ceiling for
+>   the setting — a little over 24 days — so the promise holds in practice; the word that does not
+>   hold is "no", and it is stated rather than implied. The byte cap is far above what 500 rows of a
+>   rendered result weigh, because the editor route imposes none and a replay refusing where the
+>   editor succeeds would be a bound the checkbox never mentioned.
+> - `POST /api/agent/runs/{runId}/handover`, which **carries no SQL**. The statement is read from the
+>   run's own `answer-composed` event and the connection from its persisted `connectionId`, resolved
+>   under the run's persisted actor. So nothing a user types reaches this profile and the route is
+>   not a general "run this without a timeout" endpoint; it also honours the gate rather than
+>   re-deciding it (only `auto-executed` is replayed, `applied` and `none` are `409`).
+>
+> This section's own rule survives intact and is now enforced server-side: the row bound is the
+> server's rather than a request option, so a tab widened to `unlimited` cannot reach it at all, and
+> the bound **refuses** rather than truncating — which is the same argument the next paragraph makes
+> about injecting a `LIMIT`, applied to the replay.
 
 **No injected `LIMIT`, and the reasoning is about truth rather than cost.** The agent path already
 refuses rather than truncates, and `execution-policy.ts:26-31` states why: "the caps refuse rather
@@ -765,6 +831,25 @@ feature working.
 > what it means. The check lives in the rail rather than in `Studio.tsx`'s callback because the
 > callback is an optional public prop: a guard written in one host is a guard the next host does not
 > inherit.
+>
+> **The reason narrowed once the replay moved onto its own route** (see §2.5's note). The statement
+> can no longer reach the wrong database at all — the route resolves the run's own persisted
+> connection server-side, so "it would have read a database this run never saw" stopped being true.
+> What remains is about what the user is SHOWN: the result lands in the editor tab, the tab belongs
+> to whatever connection the user is on now, and delivering another database's rows into it would
+> present them as this connection's answer. The rail still declines, and the notice beside the entry
+> now says that instead.
+
+> **Built: and the copy's last sentence had to earn itself.** The proposed wording ends "Writes and
+> DDL are refused either way", which was the strongest claim on the control and the one that was not
+> true: the replay ran in the editor's read-write session, where a `SELECT` calling a VOLATILE
+> function that writes succeeds. The shipped sentence says what refuses them and where — *"It is the
+> same database-enforced read-only session either way, so writes and DDL are refused by the engine
+> rather than by reading the statement"* — because the difference between those two mechanisms is
+> exactly the difference the old wording papered over. The connection clause moved with it: *"on the
+> connection the run was opened on"* rather than *"on your connection"*, since the server now
+> resolves it from the run's own record. Both figures are still interpolated from the constants the
+> enforcement reads, `AGENT_HANDOVER_BUDGET` now standing in for `DEFAULT_QUERY_LIMIT`.
 
 ---
 
