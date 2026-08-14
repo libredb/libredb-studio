@@ -35,6 +35,14 @@ updates:
       prefix: "chore(deps)"
       prefix-development: "chore(deps-dev)"
 
+    # Both groups batch minor and patch only, which means a major that is not
+    # ignored below arrives as its own pull request. That is deliberate, not an
+    # oversight: batching majors with routine updates makes one pull request that
+    # cannot be merged as a unit - refusing recharts 3 would also hold back the
+    # `next` patch riding along with it - and majors are individually a decision
+    # rather than a bump. The fan-out is bounded: nine majors are outstanding as
+    # of 2026-08-15 across ~1170 installed packages, and open-pull-requests-limit
+    # caps how many wait at once.
     groups:
       # What ships. Kept separate from tooling because a reviewer weighs these
       # against "does the editor still work in a browser", not "does lint pass".

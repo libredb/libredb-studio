@@ -723,8 +723,9 @@ with its reason recorded in the config: database driver majors (mocked in tests,
 a wire-behaviour change goes green - ioredis 6's RESP3 default is the live case),
 the exact-pinned agent runtime (a bump fails
 `tests/unit/agent-dependency-boundary.test.ts` by design), `@zumer/snapdom` (pinned
-for ER-diagram export fidelity), and the `oven/bun` base image (its version is
-maintained in two places Dependabot sees as one).
+for ER-diagram export fidelity), and the `oven/bun` base image (its version lives
+in two places - the Dockerfile tag and the workflows' `bun-version` input - that
+Dependabot cannot see as one, so it must move by hand in both).
 
 Done when Bun security updates land upstream and the exclusion list can be
 re-read against whatever they cover.
