@@ -1,8 +1,18 @@
 # What leaves the machine
 
-LibreDB Studio deploys next to the data, and the only part of it that talks to anything outside your
-network is the model. This page says exactly what that traffic contains: **what leaves, when, to
-which provider, and where the labelling boundary applies.**
+LibreDB Studio deploys next to the data, and the model is the only thing it talks to that **you did
+not name**. This page is about that traffic and only that traffic: **what leaves for a model
+provider, when, to which provider, and where the labelling boundary applies.**
+
+**It is not the whole egress boundary, and does not claim to be.** Three other things leave this
+host, and an operator writing a firewall rule needs all four:
+
+| What | To where | Call site |
+| --- | --- | --- |
+| **Model traffic** | The provider you configured through `LLM_*` | The rest of this page |
+| **Database traffic** | Every database host in your connections — the product's entire purpose | `src/lib/db/providers/` |
+| **OIDC** | Your issuer, when `NEXT_PUBLIC_AUTH_PROVIDER=oidc`: discovery, token and JWKS requests | `src/lib/oidc.ts` |
+| **The `npx` launcher** | `github.com` — a **hard-coded** URL, the one outbound host in this repo that you did not choose. `npx @libredb/studio` downloads the release tarball and its `SHA256SUMS` from `https://github.com/libredb/libredb-studio/releases/download/...` before any server starts. It runs once per version and caches under `~/.libredb-studio/`; the Docker, Helm and standalone paths never reach it | `bin/lib/launcher-utils.mjs:87`, called from `bin/studio.js:218-219` |
 
 **It is written from call sites, not from intent.** Every claim below names the file and the lines
 that make it true, so you can check any sentence against the code rather than believing this page.
@@ -36,7 +46,8 @@ if it only lists the good news.
 | `POST /api/ai/explain` | Your statement, the EXPLAIN plan, the schema context the browser holds, the engine type | No |
 | `POST /api/ai/query-safety` | Your statement, a filtered schema context, the engine type | No |
 | `POST /api/ai/describe-schema` | A schema context. From the **Data Profiler** that context includes a per-column `min=` and `max=`, which are **real column values** | No |
-| Everything else in the product | Nothing to a third party of our choosing: no `fetch` in `src/` or `bin/` names an absolute URL, so every outbound connection goes to a host **you** configured — your databases, your OIDC issuer when `NEXT_PUBLIC_AUTH_PROVIDER=oidc` (`src/lib/oidc.ts`), and the model provider above | — |
+| Everything else in the **running server** | Every outbound connection goes to a host **you** configured — your databases, your OIDC issuer when `NEXT_PUBLIC_AUTH_PROVIDER=oidc` (`src/lib/oidc.ts`), and the model provider above. The one host `src/` names itself is OpenAI's default base URL, reached only if you set `LLM_PROVIDER=openai` (`src/lib/llm/utils/config.ts:23`) | — |
+| The **`npx` launcher**, before the server exists | The release tarball and `SHA256SUMS` from a hard-coded `github.com` URL (`bin/lib/launcher-utils.mjs:87`, from `bin/studio.js:218-219`). Once per version, cached in `~/.libredb-studio/`; no other install path uses it | — |
 
 ---
 
@@ -185,7 +196,7 @@ own assistant messages (`investigation.ts:625-631`).
 | --- | --- | --- |
 | **Its assistant messages** — its prose and the tool calls it made, together | **Nothing.** They are appended to the transcript verbatim (`investigation.ts:792`), because rewriting an assistant turn would desynchronise `tool_call_id`, so they are **not fenced** and are resent on every later turn. This is the mechanism of B29 below | Not displayed as such. Only the parts below reach the rail |
 | **A tool call's arguments** | Parsed against that tool's own schema first (`parseToolInput`, `tools.ts:987`). A shape the schema rejects is answered with server text and reaches no database | — |
-| **The SQL of a read** (`run_read_query`) | After the schema, it goes to the database: the same operation pipeline the rest of the application uses, under the read-only execution profile (`runReadQueryTool`, `tools.ts:1051-1058` → `executeAgentOperation`, `tools.ts:809`). It is recorded verbatim as a `statement-drafted` entry with the model's `rationale` (`investigation.ts:859`) | The rail: the SQL as a quoted block, the rationale as the entry's detail (`timeline.ts:378-385`, rendered at `AgentRail.tsx:693,699-703`). **Apply to editor** puts the text in your editor and runs nothing (`AgentRail.tsx:176-186`) |
+| **The SQL of a read** (`run_read_query`) | After the schema, it goes to the database through the agent's own audited pipeline, under the read-only execution profile (`runReadQueryTool`, `tools.ts:1051-1058` → `executeAgentOperation`, `tools.ts:809`). It is recorded verbatim as a `statement-drafted` entry with the model's `rationale` (`investigation.ts:859`) | The rail: the SQL as a quoted block, the rationale as the entry's detail (`timeline.ts:378-385`, rendered at `AgentRail.tsx:693,699-703`). **Apply to editor** puts the text in your editor and runs nothing (`AgentRail.tsx:176-186`) |
 | **A recommended statement and rationale** (`recommend_change`) | The statement is checked against the change it claims to be, and every citation against this run's own ledger; either failing refuses it (`tools.ts:1402-1407`). **Nothing executes it** — the tool reaches no database | The rail: statement quoted, rationale as detail, with the application's own *"Not applied: nothing here runs this statement."* appended to it (`timeline.ts:421-430`) |
 | **Report claims** (`compose_report`) | Every citation is verified against this run's own event log, and one that resolves to nothing refuses the whole report (`composeReportTool`, `tools.ts:1488-1489`). The claim prose is **not echoed back** to the model: the tool's reply is a count (`tools.ts:1503-1505`) | Recorded (`investigation.ts:1040`) and rendered in the **Report** section, each claim a quoted block with its citations under it; a citation the rail cannot resolve reads amber rather than looking checked (`AgentRail.tsx:745-758`, `timeline.ts:556`) |
 | **Its closing prose** | Accumulated from the stream's text deltas (`investigation.ts:601`, taken at `:788`) and recorded only when non-empty, so an empty entry cannot record that the model spoke (`:773`) | The rail, under the application's own headline *Closing statement* (`timeline.ts:444-451`) |
@@ -324,11 +335,22 @@ Every one of these is **per drive**. A run resumed after a restart starts each o
 
 ## What never leaves
 
-- **Credentials.** A run persists a connection id and no credential, and the state guard refuses to
-  persist anything credential-shaped, a client, a pool or a raw result set
+- **Database credentials.** A run persists a connection id and no credential, and the state guard
+  refuses to persist anything credential-shaped, a client, a pool or a raw result set
   (`src/lib/agent/state-guard.ts`). No message assembled in `investigation.ts` carries a host, a
   port, a user or a password — the message array is built only from the sources listed above
   (`investigation.ts:698-700,736-737,743,753-754,792,801`).
+
+  **One credential does leave, necessarily: your `LLM_API_KEY`.** It is not in a prompt — it is in
+  the request's authentication metadata, because that is how the provider authenticates you. The
+  OpenAI-compatible kinds send it as the `Authorization` header
+  (`src/lib/agent/provider-registry.ts:106,123-126`) and Gemini passes it to the Google provider
+  (`:141`). Two consequences worth stating: a keyless Ollama gets a placeholder token and a keyless
+  custom endpoint gets no `Authorization` header at all (`:107,110`), so neither invents a
+  credential; and Gemini is deliberately given no `baseURL`, so a stale `LLM_API_URL` cannot
+  redirect that key to another host (`:134-146`). "No credentials leave" would be the wrong claim
+  here — the accurate one is that **no database credential** reaches the model, while the model
+  provider's own key reaches the model provider and nothing else.
 - **Cell values from a profile.** The Assess workflow's profile is aggregates only: counts of rows,
   present values, distinct values, and shape matches computed with `count(CASE WHEN … LIKE …)`
   *inside* the database. There is deliberately no `min`/`max`, because on a text column those return
@@ -392,8 +414,12 @@ grep -rn "fenceUntrustedContent(" src/lib/agent/
 # Every request that leaves for a model provider
 grep -rn "streamText(" src/lib/agent/
 
-# No outbound request in the application names a host we chose
-grep -rn "fetch(\"https\|fetch('https" src/ bin/
+# Every absolute URL in the server and the launcher. Read the hits: most are
+# hrefs and comments. Exactly two are hosts a request can go to without you
+# naming them - the OpenAI default base URL, reached only if you set
+# LLM_PROVIDER=openai (src/lib/llm/utils/config.ts:23), and the release
+# download in the npx launcher (bin/lib/launcher-utils.mjs:87).
+grep -rn "https://" src/ bin/
 ```
 
 Related: [`docs/AGENT.md`](./AGENT.md) for behaviour, [`docs/AGENT_GUIDE.md`](./AGENT_GUIDE.md) for

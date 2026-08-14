@@ -123,11 +123,19 @@ below it are the others. You state an objective — *"which department has the m
 is this query slow?"* — and press Start. The run drafts SQL against the connected database, reads
 what comes back, and finishes by composing a report whose every claim cites the result it came from.
 
-- **Read-only, enforced by the database rather than by a parser.** Every statement goes through the
-  same operation pipeline the rest of the application uses, under a read-only execution profile: a
-  read-only transaction on PostgreSQL, `PRAGMA query_only` re-asserted per statement on SQLite.
-  Writes and DDL are refused before the database is reached, and `EXPLAIN ANALYZE` is default-denied
-  because it would run the statement.
+- **Read-only, enforced by the database rather than by a parser.** Every statement the agent runs
+  goes through the agent's own audited pipeline — a policy decision, an audit event and budget
+  accounting before the driver is touched (`executeAuditedOperation`, `src/lib/db/operations/execution.ts:129`)
+  — under a read-only execution profile: a read-only transaction on PostgreSQL, `PRAGMA query_only`
+  re-asserted per statement on SQLite. Writes and DDL are refused before the database is reached,
+  and `EXPLAIN ANALYZE` is default-denied because it would run the statement. This pipeline is the
+  agent's alone: statements you run yourself in the editor call the provider directly
+  (`src/app/api/db/query/route.ts:44`) and are neither policy-checked nor audited this way.
+- **Agent mode reads PostgreSQL and SQLite only.** The read-only profile is database-native, so it
+  exists only where a provider implements it — `queryReadOnly` on `postgres.ts:870` and
+  `sqlite.ts:397`, and nowhere else. On any other engine an Agent-mode run ends `engine-unsupported`
+  (`src/lib/agent/runtime.ts:199`). **Plan** mode is toolless, reaches no database at all, and works
+  on every connection.
 - **Three workflows**: **Investigate** (answer a question), **Optimize** (compare estimated plans,
   propose an index or a rewrite), **Assess** (profile tables — counts only, never values).
 - **Nothing runs itself.** The agent never starts a run for you, never writes to the editor, and
@@ -136,9 +144,11 @@ what comes back, and finishes by composing a report whose every claim cites the 
   verdict — *"Run answered"* or *"Run did not answer"* — beside how it ended.
 - **Bounded, and the meter is on screen**: 20 statements, 60 s of database time, 200 rows per read,
   a 5-minute run deadline.
-- **Your own model.** Gemini (the default), OpenAI, Ollama, or any OpenAI-compatible endpoint. On
-  Ollama the model must be one that can call tools — a live probe, not the vendor's page, is what
-  establishes that, and the guide says how to run one.
+- **Your own model.** Gemini (the default), OpenAI, Ollama, or any OpenAI-compatible endpoint.
+  **Agent** mode needs a model that can call tools — on Ollama a live probe, not the vendor's page,
+  is what establishes that, and the guide says how to run one. **Plan** mode needs no tools and is
+  never probed (`src/lib/agent/capability-gate.ts:74`), so a model refused for Agent mode can still
+  be used in Plan mode, which is what the rail offers you.
 - **No model configured, no AI.** With no `LLM_*` settings at all the rail does not render and
   nothing leaves your network. Note that a key is not the switch: Ollama and a custom endpoint count
   as a configured model without one, and then the AI is on. What the agent sends is

@@ -110,17 +110,26 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 你写下一个目标（“哪个部门人最多？”“这条查询为什么慢？”）并按下 Start，这次运行就会针对已连接的数据库
 起草 SQL、读取结果，最后写出一份报告——其中每一条结论都引用它所依据的那次读取。
 
-- **只读，而且由数据库本身来保证**：所有语句都走应用其余部分同一条操作管线，使用只读执行档案
-  （PostgreSQL 上是只读事务，SQLite 上每条语句都重新声明 `PRAGMA query_only`）。写入和 DDL 在到达数据库
-  之前就被拒绝，`EXPLAIN ANALYZE` 因为会真正执行语句而默认禁止。
+- **只读，而且由数据库本身来保证**：Agent 执行的每条语句都走 **Agent 自己的受审计管线**——在碰到驱动
+  之前先做策略判定、写审计事件、记账预算（`executeAuditedOperation`，
+  `src/lib/db/operations/execution.ts:129`）——并使用只读执行档案（PostgreSQL 上是只读事务，SQLite 上
+  每条语句都重新声明 `PRAGMA query_only`）。写入和 DDL 在到达数据库之前就被拒绝，`EXPLAIN ANALYZE`
+  因为会真正执行语句而默认禁止。这条管线只属于 Agent：你自己在编辑器里执行的语句是直接调用 provider 的
+  （`src/app/api/db/query/route.ts:44`），不会经过这里的策略判定，也不会产生这类审计记录。
+- **Agent 模式只支持 PostgreSQL 和 SQLite**：只读档案由数据库原生保证，因此只在实现了它的 provider 上
+  存在——只有 `postgres.ts:870` 和 `sqlite.ts:397` 上的 `queryReadOnly`，别无其他。在其他引擎上，
+  Agent 模式的运行会以 `engine-unsupported` 结束（`src/lib/agent/runtime.ts:199`）。**Plan** 模式不使用
+  任何工具，完全不访问数据库，因此对所有连接都可用。
 - **三种工作流**：**Investigate**（回答问题）、**Optimize**（比较预估执行计划，提出索引或改写）、
   **Assess**（做表画像——只有计数，永远不含具体值）。
 - **不会自己动手**：Agent 不会替你开始运行，不会写入编辑器，也不会执行它建议的语句。是否采用由你点击决定。
 - **有证据才有结论**：没有引用的结论无法被记录；运行结束时会明确给出 “Run answered” 或
   “Run did not answer”。
 - **有上限，而且界面上就能看到**：每次运行 20 条语句、60 秒数据库时间、单次读取 200 行、整轮 5 分钟。
-- **用你自己的模型**：Gemini（默认）、OpenAI、Ollama，或任何兼容 OpenAI 的端点。在 Ollama 上必须选择
-  真正支持工具调用的模型——这要靠一次真实探测来确认，而不是照抄厂商文档。
+- **用你自己的模型**：Gemini（默认）、OpenAI、Ollama，或任何兼容 OpenAI 的端点。**Agent** 模式需要一个
+  真正支持工具调用的模型——在 Ollama 上这要靠一次真实探测来确认，而不是照抄厂商文档。**Plan** 模式不需要
+  工具，也从不做探测（`src/lib/agent/capability-gate.ts:74`），所以被 Agent 模式拒绝的模型仍然可以用在
+  Plan 模式里，这也正是面板会向你提议的做法。
 - **不配置模型就没有 AI**：完全没有 `LLM_*` 配置时，面板根本不会出现，也不会有任何数据离开你的网络。
   注意开关不是密钥：Ollama 和自定义端点无需密钥也算配置了模型，此时 AI 就是启用的。具体外发内容见
   [`docs/AGENT_DATA_FLOW.md`](docs/AGENT_DATA_FLOW.md)。

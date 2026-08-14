@@ -363,11 +363,29 @@ of the probe existing.
 
 Stated plainly, because a surface that hides its edges is the one that surprises you:
 
-- **It cannot write.** Every database reach goes through the same operation pipeline the rest of the
-  application uses, under a read-only execution profile, and the boundary is database-native rather
-  than a parser: a read-only transaction on PostgreSQL, `PRAGMA query_only` re-asserted per statement
-  on SQLite. Writes and DDL are refused before the database is reached. See
-  [`docs/SECURITY.md`](./SECURITY.md) row 3.4.
+- **It cannot write.** Every database reach the agent makes goes through the agent's own audited
+  pipeline — the policy decision, the audit event and the budget accounting that
+  `executeAuditedOperation` performs before the driver is touched
+  (`src/lib/db/operations/execution.ts:129`, reached only from `src/lib/agent/tools.ts:844`) — under
+  a read-only execution profile whose boundary is database-native rather than a parser: a read-only
+  transaction on PostgreSQL, `PRAGMA query_only` re-asserted per statement on SQLite. Writes and DDL
+  are refused before the database is reached. See [`docs/SECURITY.md`](./SECURITY.md) row 3.4.
+- **That pipeline is the agent's, not the application's.** It is worth saying plainly, because the
+  wording used to imply otherwise: a statement you run yourself in the editor does not pass through
+  it. `/api/db/query` calls the provider directly (`src/app/api/db/query/route.ts:44`), so an editor
+  query is neither policy-checked nor written to the agent audit trail. The controls above describe
+  what the agent is held to, not a guarantee the whole product enforces.
+- **Agent mode runs on PostgreSQL and SQLite only.** The read-only profile has to be implemented by
+  the provider, and only two do: `queryReadOnly` exists on `postgres.ts:870` and `sqlite.ts:397`.
+  Acquiring a profiled provider for any other engine raises `PROFILE_UNSUPPORTED_BY_PROVIDER`
+  (`src/lib/db/factory.ts:437`), which the runtime reports as `engine-unsupported`
+  (`src/lib/agent/runtime.ts:199`) — the rail says so in as many words
+  (`src/components/agent/timeline.ts:195`). So on MySQL, Oracle, SQL Server, MongoDB, Redis,
+  ClickHouse, Druid and Couchbase an Agent-mode run cannot read anything. It also covers the bundled
+  **LibreDB sample** connection, whose provider implements no `queryReadOnly`
+  (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded
+  connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode is unaffected:
+  it is toolless and reaches no database, so it works on every connection.
 - **It never executes a recommendation**, and never applies one to your editor by itself.
 - **It cannot be paused or resumed from the rail.** There is a Stop control and nothing standing in
   for a capability this build does not have (`docs/BACKLOG.md` B11).

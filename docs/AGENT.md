@@ -20,10 +20,17 @@ Three properties frame everything below, and each of them is load-bearing rather
 - **It is standalone-only.** The embedded `@libredb/studio` package carries no agent surface, no
   agent type and none of the runtime's dependencies. See
   [Package boundary](#package-boundary).
-- **It can only read.** Every database reach goes through the same operation pipeline
-  (`src/lib/db/operations/`) that the rest of the application uses, under a read-only execution
-  profile, with the agent's own frozen execution policy. The agent cannot exceed what that policy
-  already allows, and it has no second path to a driver.
+- **It can only read.** Every database reach goes through the agent's own audited operation pipeline
+  (`executeAuditedOperation`, `src/lib/db/operations/execution.ts:129`), under a read-only execution
+  profile and the agent's own frozen execution policy. The agent cannot exceed what that policy
+  already allows, and it has no second path to a driver. The pipeline is **not** shared with the
+  rest of the application: `src/lib/agent/tools.ts:844` is its only production call site, and the
+  editor's `/api/db/query` reaches the provider directly (`src/app/api/db/query/route.ts:44`).
+- **Agent mode requires PostgreSQL or SQLite.** They are the only providers implementing
+  `queryReadOnly` (`postgres.ts:870`, `sqlite.ts:397`); any other engine fails profiled acquisition
+  with `PROFILE_UNSUPPORTED_BY_PROVIDER` (`src/lib/db/factory.ts:437`) and the run ends
+  `engine-unsupported` (`src/lib/agent/runtime.ts:199`). Plan mode is toolless and reaches no
+  database, so no engine restriction applies to it.
 
 This document describes what the runtime *does*. The security matrix rows that cover it are 3.4 and
 3.5 in [`docs/SECURITY.md`](./SECURITY.md) — both marked **Partial**, with the reasons stated there;
