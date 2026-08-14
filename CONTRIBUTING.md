@@ -185,6 +185,44 @@ pull requests. If you hit one, take the fix and commit `bun.lock`. Suppressing i
 in `.trivyignore.yaml` is the last resort and requires a justification and an
 expiry date.
 
+### Helm Chart Changes
+
+Touching anything packaged under `charts/libredb-studio/` pulls in two invariants
+that CI enforces and that nothing in the chart itself hints at. Both are checked
+by one command, and running it locally is faster than reading a CI log:
+
+```bash
+bun run chart:check
+```
+
+**The operator carries a verbatim copy.** `operator/helm-charts/libredb-studio/`
+is a byte-for-byte mirror of the source chart, because the OLM operator embeds
+the chart rather than fetching it. Never hand-edit the copy — change the source
+chart and regenerate:
+
+```bash
+bun run chart:bump
+```
+
+**An already-released chart version cannot be re-published.** Chart releases are
+immutable: re-publishing a version that already has a `libredb-studio-<version>`
+tag would mutate the released index entry and the OCI digest that existing users
+resolve (#167). So when the current `version:` in `Chart.yaml` is already tagged,
+raise it by hand — both `version:` in `Chart.yaml` and the `--version` example in
+`charts/libredb-studio/README.md`.
+
+`chart:bump` deliberately will *not* raise `version:` for you while `appVersion`
+is already in sync with `package.json`, so this step is easy to miss; `chart:check`
+is what catches it. `appVersion` tracks the app's `package.json` version and is
+the one field `chart:bump` does maintain.
+
+Finally, the chart should lint clean:
+
+```bash
+helm dependency build charts/libredb-studio
+helm lint charts/libredb-studio --strict
+```
+
 ## Coding Guidelines
 
 ### TypeScript
