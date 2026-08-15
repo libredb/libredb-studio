@@ -179,6 +179,43 @@ describe("AuditTab", () => {
     });
   });
 
+  /**
+   * The query-activity chart's tooltip is inline-styled by recharts, so it cannot
+   * read the CSS tokens. Left hardcoded it stayed a black card on a white page —
+   * which is exactly how it shipped until it was reported.
+   */
+  async function statsTooltipUnder(theme: "dark" | "light") {
+    document.documentElement.classList.remove("dark", "light");
+    document.documentElement.classList.add(theme);
+
+    const user = userEvent.setup();
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<AuditTab />);
+    });
+    const { container } = renderResult!;
+
+    const statsTab = Array.from(container.querySelectorAll('[role="tab"]')).find((t) =>
+      t.textContent?.includes("Stats"),
+    ) as HTMLElement;
+    await user.click(statsTab);
+
+    const tooltip = await waitFor(() => {
+      const el = container.querySelector("[data-testid='mock-tooltip']");
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    return { bg: tooltip.getAttribute("data-bg"), color: tooltip.getAttribute("data-color") };
+  }
+
+  test("the stats chart tooltip keeps its dark card in the dark theme", async () => {
+    expect(await statsTooltipUnder("dark")).toEqual({ bg: "#18181b", color: "#a1a1aa" });
+  });
+
+  test("and turns into a white card in the light theme", async () => {
+    expect(await statsTooltipUnder("light")).toEqual({ bg: "#ffffff", color: "#3f3f46" });
+  });
+
   test("search filter works in operations tab", async () => {
     const user = userEvent.setup();
     let renderResult: ReturnType<typeof render>;

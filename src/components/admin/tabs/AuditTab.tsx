@@ -24,29 +24,31 @@ import { storage } from "@/lib/storage";
 import type { QueryHistoryItem } from "@/lib/types";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { format, subDays, startOfDay } from "date-fns";
+import { useEffectiveTheme } from "@/hooks/use-effective-theme";
+import { chartTooltipStyle } from "@/lib/charts/palette";
 
 export function AuditTab() {
   return (
     <div className="space-y-6">
       <Tabs defaultValue="operations">
-        <TabsList className="bg-transparent border-b border-white/5 rounded-none p-0 h-10 w-full justify-start">
+        <TabsList className="bg-transparent border-b border-hairline rounded-none p-0 h-10 w-full justify-start">
           <TabsTrigger
             value="operations"
-            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-zinc-500 text-xs px-4"
+            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-fg-muted text-xs px-4"
           >
             <Wrench className="h-3.5 w-3.5" />
             Operations
           </TabsTrigger>
           <TabsTrigger
             value="queries"
-            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-zinc-500 text-xs px-4"
+            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-fg-muted text-xs px-4"
           >
             <SearchIcon className="h-3.5 w-3.5" />
             Queries
           </TabsTrigger>
           <TabsTrigger
             value="stats"
-            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-zinc-500 text-xs px-4"
+            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-fg-muted text-xs px-4"
           >
             <BarChart3 className="h-3.5 w-3.5" />
             Stats
@@ -111,7 +113,7 @@ function OperationsAudit() {
       {/* Filter Bar */}
       <div className="flex items-center gap-2 flex-wrap">
         <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-[140px] h-8 text-xs bg-zinc-900/50 border-white/10">
+          <SelectTrigger className="w-[140px] h-8 text-xs bg-panel border-hairline-strong">
             <SelectValue placeholder="Type" />
           </SelectTrigger>
           <SelectContent>
@@ -131,12 +133,12 @@ function OperationsAudit() {
           placeholder="Search..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-[180px] h-8 text-xs bg-zinc-900/50 border-white/10"
+          className="w-[180px] h-8 text-xs bg-panel border-hairline-strong"
         />
         <Button
           variant="ghost"
           size="sm"
-          className="h-8 text-zinc-500 hover:text-zinc-300 ml-auto"
+          className="h-8 text-fg-muted hover:text-fg-secondary ml-auto"
           onClick={fetchEvents}
           disabled={loading}
         >
@@ -146,9 +148,9 @@ function OperationsAudit() {
       </div>
 
       {/* Stats Summary */}
-      <div className="flex items-center gap-4 text-xs text-zinc-500">
+      <div className="flex items-center gap-4 text-xs text-fg-muted">
         <span>
-          Total: <span className="font-bold text-zinc-300">{events.length}</span> ops
+          Total: <span className="font-bold text-fg-secondary">{events.length}</span> ops
         </span>
         <span>
           Success: <span className="font-bold text-emerald-400">{successRate}%</span>
@@ -156,37 +158,37 @@ function OperationsAudit() {
       </div>
 
       {/* Events Table */}
-      <div className="rounded-xl border border-white/5 bg-zinc-900/50 overflow-hidden">
+      <div className="rounded-xl border border-hairline bg-panel overflow-hidden">
         {loading && events.length === 0 ? (
           <div className="p-4 space-y-2">
             {[...Array(5)].map((_, i) => (
-              <Skeleton key={i} className="h-10 w-full bg-zinc-800" />
+              <Skeleton key={i} className="h-10 w-full bg-overlay" />
             ))}
           </div>
         ) : filteredEvents.length === 0 ? (
-          <div className="p-8 text-center text-zinc-600 text-sm">
+          <div className="p-8 text-center text-fg-subtle text-sm">
             <Wrench className="h-8 w-8 mx-auto mb-2 opacity-30" />
             <p>No audit events found.</p>
-            <p className="text-xs mt-1 text-zinc-700">Operations will appear here when maintenance tasks are run.</p>
+            <p className="text-xs mt-1 text-fg-faint">Operations will appear here when maintenance tasks are run.</p>
           </div>
         ) : (
           <Table>
             <TableHeader>
-              <TableRow className="border-white/5 hover:bg-transparent">
-                <TableHead className="text-xs text-zinc-500 font-bold uppercase w-[30px]" />
-                <TableHead className="text-xs text-zinc-500 font-bold uppercase">Time</TableHead>
-                <TableHead className="text-xs text-zinc-500 font-bold uppercase">Action</TableHead>
-                <TableHead className="text-xs text-zinc-500 font-bold uppercase">Target</TableHead>
-                <TableHead className="text-xs text-zinc-500 font-bold uppercase hidden md:table-cell">
+              <TableRow className="border-hairline hover:bg-transparent">
+                <TableHead className="text-xs text-fg-muted font-bold uppercase w-[30px]" />
+                <TableHead className="text-xs text-fg-muted font-bold uppercase">Time</TableHead>
+                <TableHead className="text-xs text-fg-muted font-bold uppercase">Action</TableHead>
+                <TableHead className="text-xs text-fg-muted font-bold uppercase">Target</TableHead>
+                <TableHead className="text-xs text-fg-muted font-bold uppercase hidden md:table-cell">
                   Connection
                 </TableHead>
-                <TableHead className="text-xs text-zinc-500 font-bold uppercase hidden lg:table-cell">User</TableHead>
-                <TableHead className="text-right text-xs text-zinc-500 font-bold uppercase">Duration</TableHead>
+                <TableHead className="text-xs text-fg-muted font-bold uppercase hidden lg:table-cell">User</TableHead>
+                <TableHead className="text-right text-xs text-fg-muted font-bold uppercase">Duration</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredEvents.map((event) => (
-                <TableRow key={event.id} className="border-white/5 hover:bg-white/[0.03]">
+                <TableRow key={event.id} className="border-hairline hover:bg-fill">
                   <TableCell className="py-2">
                     {event.result === "success" ? (
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
@@ -194,7 +196,7 @@ function OperationsAudit() {
                       <XCircle className="w-3.5 h-3.5 text-red-500" />
                     )}
                   </TableCell>
-                  <TableCell className="py-2 font-mono text-xs text-zinc-500">
+                  <TableCell className="py-2 font-mono text-xs text-fg-muted">
                     {new Date(event.timestamp).toLocaleString([], {
                       month: "short",
                       day: "numeric",
@@ -203,18 +205,18 @@ function OperationsAudit() {
                     })}
                   </TableCell>
                   <TableCell className="py-2">
-                    <Badge variant="outline" className="text-[0.625rem] font-bold border-white/10">
+                    <Badge variant="outline" className="text-[0.625rem] font-bold border-hairline-strong">
                       {event.action}
                     </Badge>
                   </TableCell>
-                  <TableCell className="py-2 font-mono text-xs text-zinc-400 truncate max-w-[120px]">
+                  <TableCell className="py-2 font-mono text-xs text-fg-tertiary truncate max-w-[120px]">
                     {event.target}
                   </TableCell>
-                  <TableCell className="py-2 text-xs text-zinc-500 hidden md:table-cell truncate max-w-[100px]">
+                  <TableCell className="py-2 text-xs text-fg-muted hidden md:table-cell truncate max-w-[100px]">
                     {event.connectionName || "-"}
                   </TableCell>
-                  <TableCell className="py-2 text-xs text-zinc-500 hidden lg:table-cell">{event.user}</TableCell>
-                  <TableCell className="py-2 text-right font-mono text-xs text-zinc-500">
+                  <TableCell className="py-2 text-xs text-fg-muted hidden lg:table-cell">{event.user}</TableCell>
+                  <TableCell className="py-2 text-right font-mono text-xs text-fg-muted">
                     {event.duration ? `${event.duration}ms` : "-"}
                   </TableCell>
                 </TableRow>
@@ -258,7 +260,7 @@ function QueryAudit() {
       {/* Filter Bar */}
       <div className="flex items-center gap-2 flex-wrap">
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[120px] h-8 text-xs bg-zinc-900/50 border-white/10">
+          <SelectTrigger className="w-[120px] h-8 text-xs bg-panel border-hairline-strong">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
@@ -271,41 +273,41 @@ function QueryAudit() {
           placeholder="Search query..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-[200px] h-8 text-xs bg-zinc-900/50 border-white/10"
+          className="w-[200px] h-8 text-xs bg-panel border-hairline-strong"
         />
-        <div className="text-xs text-zinc-500 ml-auto">
-          <span className="font-bold text-zinc-300">{history.length}</span> queries
+        <div className="text-xs text-fg-muted ml-auto">
+          <span className="font-bold text-fg-secondary">{history.length}</span> queries
           <span className="mx-2">&middot;</span>
           <span className="text-emerald-400 font-bold">{successRate}%</span> success
         </div>
       </div>
 
       {/* Query History Table */}
-      <div className="rounded-xl border border-white/5 bg-zinc-900/50 overflow-hidden">
+      <div className="rounded-xl border border-hairline bg-panel overflow-hidden">
         {filteredHistory.length === 0 ? (
-          <div className="p-8 text-center text-zinc-600 text-sm">
+          <div className="p-8 text-center text-fg-subtle text-sm">
             <SearchIcon className="h-8 w-8 mx-auto mb-2 opacity-30" />
             <p>No query history found.</p>
           </div>
         ) : (
           <Table>
             <TableHeader>
-              <TableRow className="border-white/5 hover:bg-transparent">
-                <TableHead className="text-xs text-zinc-500 font-bold uppercase w-[30px]" />
-                <TableHead className="text-xs text-zinc-500 font-bold uppercase">Time</TableHead>
-                <TableHead className="text-xs text-zinc-500 font-bold uppercase">Query</TableHead>
-                <TableHead className="text-xs text-zinc-500 font-bold uppercase hidden md:table-cell">
+              <TableRow className="border-hairline hover:bg-transparent">
+                <TableHead className="text-xs text-fg-muted font-bold uppercase w-[30px]" />
+                <TableHead className="text-xs text-fg-muted font-bold uppercase">Time</TableHead>
+                <TableHead className="text-xs text-fg-muted font-bold uppercase">Query</TableHead>
+                <TableHead className="text-xs text-fg-muted font-bold uppercase hidden md:table-cell">
                   Connection
                 </TableHead>
-                <TableHead className="text-right text-xs text-zinc-500 font-bold uppercase">Duration</TableHead>
-                <TableHead className="text-right text-xs text-zinc-500 font-bold uppercase hidden sm:table-cell">
+                <TableHead className="text-right text-xs text-fg-muted font-bold uppercase">Duration</TableHead>
+                <TableHead className="text-right text-xs text-fg-muted font-bold uppercase hidden sm:table-cell">
                   Rows
                 </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredHistory.map((item, idx) => (
-                <TableRow key={idx} className="border-white/5 hover:bg-white/[0.03]">
+                <TableRow key={idx} className="border-hairline hover:bg-fill">
                   <TableCell className="py-2">
                     {item.status === "success" ? (
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
@@ -313,7 +315,7 @@ function QueryAudit() {
                       <XCircle className="w-3.5 h-3.5 text-red-500" />
                     )}
                   </TableCell>
-                  <TableCell className="py-2 font-mono text-xs text-zinc-500 whitespace-nowrap">
+                  <TableCell className="py-2 font-mono text-xs text-fg-muted whitespace-nowrap">
                     {new Date(item.executedAt).toLocaleString([], {
                       month: "short",
                       day: "numeric",
@@ -322,17 +324,17 @@ function QueryAudit() {
                     })}
                   </TableCell>
                   <TableCell className="py-2">
-                    <div className="font-mono text-xs text-zinc-400 truncate max-w-[250px] lg:max-w-[400px]">
+                    <div className="font-mono text-xs text-fg-tertiary truncate max-w-[250px] lg:max-w-[400px]">
                       {item.query}
                     </div>
                   </TableCell>
-                  <TableCell className="py-2 text-xs text-zinc-500 hidden md:table-cell truncate max-w-[100px]">
+                  <TableCell className="py-2 text-xs text-fg-muted hidden md:table-cell truncate max-w-[100px]">
                     {item.connectionName || "-"}
                   </TableCell>
-                  <TableCell className="py-2 text-right font-mono text-xs text-zinc-500">
+                  <TableCell className="py-2 text-right font-mono text-xs text-fg-muted">
                     {item.executionTime}ms
                   </TableCell>
-                  <TableCell className="py-2 text-right font-mono text-xs text-zinc-500 hidden sm:table-cell">
+                  <TableCell className="py-2 text-right font-mono text-xs text-fg-muted hidden sm:table-cell">
                     {item.rowCount ?? "-"}
                   </TableCell>
                 </TableRow>
@@ -347,6 +349,7 @@ function QueryAudit() {
 
 function AuditStats() {
   const [history, setHistory] = useState<QueryHistoryItem[]>([]);
+  const tooltipStyle = chartTooltipStyle(useEffectiveTheme());
 
   useEffect(() => {
     setHistory(storage.getHistory());
@@ -390,37 +393,37 @@ function AuditStats() {
     <div className="space-y-6">
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-4">
-          <div className="text-xs text-zinc-500 mb-1">Total Queries</div>
-          <div className="text-2xl font-bold text-zinc-100 tabular-nums">{stats.total}</div>
+        <div className="rounded-xl border border-hairline bg-panel p-4">
+          <div className="text-xs text-fg-muted mb-1">Total Queries</div>
+          <div className="text-2xl font-bold text-fg tabular-nums">{stats.total}</div>
         </div>
-        <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-4">
-          <div className="text-xs text-zinc-500 mb-1">Success Rate</div>
+        <div className="rounded-xl border border-hairline bg-panel p-4">
+          <div className="text-xs text-fg-muted mb-1">Success Rate</div>
           <div className="text-2xl font-bold text-emerald-400 tabular-nums">{stats.successRate}%</div>
           <Progress value={stats.successRate} className="h-1 mt-2" />
         </div>
-        <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-4">
-          <div className="text-xs text-zinc-500 mb-1">Avg Duration</div>
-          <div className="text-2xl font-bold text-zinc-100 tabular-nums">
+        <div className="rounded-xl border border-hairline bg-panel p-4">
+          <div className="text-xs text-fg-muted mb-1">Avg Duration</div>
+          <div className="text-2xl font-bold text-fg tabular-nums">
             {stats.avgTime}
-            <span className="text-sm text-zinc-500 ml-1">ms</span>
+            <span className="text-sm text-fg-muted ml-1">ms</span>
           </div>
         </div>
-        <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-4">
-          <div className="text-xs text-zinc-500 mb-1">Failed</div>
+        <div className="rounded-xl border border-hairline bg-panel p-4">
+          <div className="text-xs text-fg-muted mb-1">Failed</div>
           <div className="text-2xl font-bold text-red-400 tabular-nums">{stats.total - stats.successful}</div>
         </div>
       </div>
 
       {/* Query Activity Chart */}
       <div className="grid gap-6 md:grid-cols-2">
-        <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-5">
-          <h3 className="text-sm font-bold text-zinc-300 mb-4 flex items-center gap-2">
+        <div className="rounded-xl border border-hairline bg-panel p-5">
+          <h3 className="text-sm font-bold text-fg-secondary mb-4 flex items-center gap-2">
             <Activity className="h-4 w-4 text-blue-400" />
             Query Activity (7 days)
           </h3>
           {stats.total === 0 ? (
-            <div className="flex items-center justify-center py-8 text-sm text-zinc-600">No query history yet.</div>
+            <div className="flex items-center justify-center py-8 text-sm text-fg-subtle">No query history yet.</div>
           ) : (
             <div className="h-[200px]">
               <ResponsiveContainer width="100%" height="100%">
@@ -433,15 +436,7 @@ function AuditStats() {
                     tickLine={false}
                     width={30}
                   />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "#18181b",
-                      border: "1px solid rgba(255,255,255,0.1)",
-                      borderRadius: "8px",
-                      fontSize: 12,
-                      color: "#a1a1aa",
-                    }}
-                  />
+                  <Tooltip contentStyle={tooltipStyle} />
                   <Bar dataKey="count" name="Queries" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -450,13 +445,13 @@ function AuditStats() {
         </div>
 
         {/* Most Active Connections */}
-        <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-5">
-          <h3 className="text-sm font-bold text-zinc-300 mb-4 flex items-center gap-2">
+        <div className="rounded-xl border border-hairline bg-panel p-5">
+          <h3 className="text-sm font-bold text-fg-secondary mb-4 flex items-center gap-2">
             <Clock className="h-4 w-4 text-blue-400" />
             Most Active Connections
           </h3>
           {stats.topConnections.length === 0 ? (
-            <div className="flex items-center justify-center py-8 text-sm text-zinc-600">No data yet.</div>
+            <div className="flex items-center justify-center py-8 text-sm text-fg-subtle">No data yet.</div>
           ) : (
             <div className="space-y-3">
               {stats.topConnections.map((tc) => {
@@ -464,8 +459,8 @@ function AuditStats() {
                 return (
                   <div key={tc.name} className="space-y-1">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="truncate max-w-[160px] text-zinc-400">{tc.name}</span>
-                      <span className="text-zinc-500">
+                      <span className="truncate max-w-[160px] text-fg-tertiary">{tc.name}</span>
+                      <span className="text-fg-muted">
                         {tc.count} ({pct}%)
                       </span>
                     </div>

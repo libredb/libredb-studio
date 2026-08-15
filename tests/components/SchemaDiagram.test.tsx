@@ -1060,7 +1060,7 @@ describe("SchemaDiagram", () => {
       const productsInner = productsNode.querySelector(".border-blue-500\\/60");
       expect(productsInner).toBeNull();
       // Products should have default border
-      const productsDefault = productsNode.querySelector(".border-white\\/10");
+      const productsDefault = productsNode.querySelector(".border-hairline-strong");
       expect(productsDefault).not.toBeNull();
     });
   });

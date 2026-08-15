@@ -162,7 +162,7 @@ mock.module("@/components/ui/select", () => ({
 // ── Imports AFTER mocks ─────────────────────────────────────────────────────
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { render, cleanup, fireEvent, waitFor } from "@testing-library/react";
-import { DataCharts } from "@/components/DataCharts";
+import { DataCharts, PieSliceLabel } from "@/components/DataCharts";
 import { mockToastError } from "../helpers/mock-sonner";
 import type { QueryResult } from "@/lib/types";
 
@@ -693,7 +693,66 @@ describe("DataCharts", () => {
   // Export
   // -----------------------------------------------------------------------
 
-  test("exports chart as PNG via snapdom", async () => {
+  // -----------------------------------------------------------------------
+  // Pie slice label
+  // -----------------------------------------------------------------------
+
+  /**
+   * The rule this component exists to keep: text wears ink, never the series
+   * colour. Recharts paints a string label in the SLICE's fill, and three of the
+   * light-mode slots sit near 2:1 against the surface — fine as a wedge, illegible
+   * as a word. Rendering an explicit <text fill=ink> is what overrides that.
+   */
+  test("the pie label is written in ink, not in the slice colour", () => {
+    const { container } = render(
+      React.createElement(PieSliceLabel, {
+        ink: "#27272a",
+        x: 10,
+        y: 20,
+        textAnchor: "middle" as const,
+        name: "Engineer",
+        percent: 0.25,
+      }),
+    );
+    const text = container.querySelector("text");
+    expect(text).not.toBeNull();
+    expect(text!.getAttribute("fill")).toBe("#27272a");
+    expect(text!.textContent).toBe("Engineer (25%)");
+  });
+
+  test("the label carries the geometry recharts injected", () => {
+    const { container } = render(
+      React.createElement(PieSliceLabel, {
+        ink: "#d4d4d8",
+        x: 42,
+        y: 84,
+        textAnchor: "end" as const,
+        name: "Staff",
+        percent: 0.5,
+      }),
+    );
+    const text = container.querySelector("text")!;
+    expect(text.getAttribute("x")).toBe("42");
+    expect(text.getAttribute("y")).toBe("84");
+    expect(text.getAttribute("text-anchor")).toBe("end");
+  });
+
+  /**
+   * Recharts clones the element to inject props, so a first render happens with
+   * none of them present. That must produce a label, not a crash or "undefined".
+   */
+  test("survives the render that happens before recharts injects anything", () => {
+    const { container } = render(React.createElement(PieSliceLabel, { ink: "#27272a" }));
+    expect(container.querySelector("text")!.textContent).toBe(" (0%)");
+  });
+
+  /**
+   * A PNG carries no page behind it, so the export has to paint its own ground —
+   * and it has to be the ground of the theme the chart was captured in. Exporting
+   * a light chart onto near-black (what a hardcoded value did) leaves dark axis
+   * labels on a dark field.
+   */
+  async function exportPngOptions(): Promise<Record<string, unknown>> {
     mockSnapdom.mockClear();
     const linkClick = mock(() => {});
     const originalClick = HTMLAnchorElement.prototype.click;
@@ -706,12 +765,26 @@ describe("DataCharts", () => {
       expect(linkClick).toHaveBeenCalled();
     });
     expect(mockSnapdom).toHaveBeenCalledTimes(1);
-    const options = mockSnapdom.mock.calls[0][1] as unknown as Record<string, unknown>;
-    expect(options.backgroundColor).toBe("#080808");
-    expect(options.scale).toBe(2);
-    expect(options.embedFonts).toBe(false);
 
     HTMLAnchorElement.prototype.click = originalClick;
+    return mockSnapdom.mock.calls[0][1] as unknown as Record<string, unknown>;
+  }
+
+  test("exports chart as PNG via snapdom, on the dark ground when dark is in force", async () => {
+    document.documentElement.classList.add("dark");
+    try {
+      const options = await exportPngOptions();
+      expect(options.backgroundColor).toBe("#080808");
+      expect(options.scale).toBe(2);
+      expect(options.embedFonts).toBe(false);
+    } finally {
+      document.documentElement.classList.remove("dark");
+    }
+  });
+
+  test("exports onto the light ground when light is in force", async () => {
+    const options = await exportPngOptions();
+    expect(options.backgroundColor).toBe("#fafafa");
   });
 
   test("failed PNG export surfaces an error toast", async () => {
