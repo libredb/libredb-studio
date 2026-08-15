@@ -58,8 +58,17 @@ const HEADING_LINE = /^(#{1,6})\s+(.*)$/;
 /** A bullet: a dash or asterisk followed by a space, which `**bold**` cannot be. */
 const BULLET_LINE = /^\s*[-*]\s+(.*)$/;
 
-/** A fence line: three backticks, and whatever the model called the block. */
-const FENCE_LINE = /^\s*```(.*)$/;
+/**
+ * A fence line: three backticks, and whatever the model called the block.
+ *
+ * The info string may hold no backtick, and that restriction is doing real work rather
+ * than following the spec for its own sake. CommonMark forbids it so that a whole fence
+ * written on ONE line — ```` ```sql SELECT 1``` ```` — is not read as an opener; without
+ * the rule, that single line opens a block nothing closes and the entire rest of the
+ * plan is swallowed into it. One malformed line would take the whole output with it, so
+ * such a line is left as the ordinary prose it renders as today.
+ */
+const FENCE_LINE = /^\s*```([^`]*)$/;
 
 /**
  * The fence tags this surface will hand to a query editor.

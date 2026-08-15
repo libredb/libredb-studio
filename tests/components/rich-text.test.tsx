@@ -83,6 +83,20 @@ describe("renderProse fenced blocks", () => {
     expect(container.querySelector("pre")?.textContent).toBe(payload);
   });
 
+  test("does not let a one-line fence swallow the rest of the plan", () => {
+    // ```` ```sql SELECT 1``` ```` on one line. Read as an opener it would open a block
+    // nothing closes, and everything after it — the whole remainder of the plan — would
+    // render as code. CommonMark forbids a backtick in the info string for exactly this
+    // reason, so the line stays the prose it was.
+    const { container } = render(
+      <div>{renderProse(`${FENCE}sql SELECT 1${FENCE}\n\n### Step 2\n\nA real paragraph.`)}</div>,
+    );
+
+    expect(container.querySelector("pre")).toBeNull();
+    expect(container.querySelector("h4")?.textContent).toBe("Step 2");
+    expect(container.textContent).toContain("A real paragraph.");
+  });
+
   test("offers every fenced block to the clipboard", () => {
     const { getAllByTestId } = render(<div>{renderProse(`${FENCE}sql\nSELECT 1;\n${FENCE}`)}</div>);
 
