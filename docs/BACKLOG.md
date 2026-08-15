@@ -710,9 +710,12 @@ asks for one.
 
 ### C5. Dependabot raises version updates but cannot raise security ones
 
-`.github/dependabot.yml` now groups weekly version updates across npm/bun, GitHub
-Actions and both Dockerfiles, which is what the original entry asked for. What it
-cannot do is the other half: Dependabot's Bun support covers **version updates
+`.github/dependabot.yml` now groups weekly version updates across Bun, GitHub
+Actions and both Dockerfiles, which is what the original entry asked for. Bun is
+its own `package-ecosystem`, not part of `npm` - the config shipped in #375 said
+`npm`, whose updater cannot see `bun.lock`, so five bot pull requests bumped
+`package.json` alone and died on `--frozen-lockfile`. What Dependabot still
+cannot do is the other half: its Bun support covers **version updates
 only** - security updates are not implemented upstream for this ecosystem. So an
 advisory against a package Bun resolves still reaches nobody automatically; Trivy
 and `bun audit` remain the only things that see it, and acting on one is still a
