@@ -414,9 +414,12 @@ export default function Studio() {
 
   return (
     <div className="flex h-screen w-full bg-[#050505] text-zinc-100 overflow-hidden font-sans select-none">
-      <ResizablePanelGroup id="studio-main" direction="horizontal" className="h-full">
-        {/* `order` is required once a sibling panel is conditional (the agent rail). */}
-        <ResizablePanel order={1} defaultSize={22} minSize={15} maxSize={35} className="hidden md:block">
+      <ResizablePanelGroup id="studio-main" orientation="horizontal" className="h-full">
+        {/* A stable `id` is what keeps the layout attached to the right panel once
+            a sibling is conditional (the agent rail); it replaces v3's `order`,
+            since v4 keys its layout by panel id. Sizes are strings on purpose:
+            v4 reads a bare number as pixels and a unitless string as a percentage. */}
+        <ResizablePanel id="studio-sidebar" defaultSize="22" minSize="15" maxSize="35" className="hidden md:block">
           <Sidebar
             connections={conn.connections}
             activeConnection={conn.activeConnection}
@@ -443,7 +446,7 @@ export default function Studio() {
           />
         </ResizablePanel>
         <ResizableHandle className="hidden md:flex w-1 bg-transparent hover:bg-blue-500/30 transition-colors" />
-        <ResizablePanel order={2} defaultSize={agentEnabled ? 54 : 78}>
+        <ResizablePanel id="studio-body" defaultSize={agentEnabled ? "54" : "78"}>
           <div className="flex-1 flex flex-col min-w-0 h-full bg-[#0a0a0a] pb-16 md:pb-0">
             <StudioMobileHeader
               connections={conn.connections}
@@ -570,8 +573,8 @@ export default function Studio() {
               {/* Desktop & Mobile Editor Tab */}
               <div className={cn("h-full", activeMobileTab !== "editor" && "hidden md:block")}>
                 <div className="h-full">
-                  <ResizablePanelGroup id="studio-editor" direction="vertical">
-                    <ResizablePanel defaultSize={40} minSize={20}>
+                  <ResizablePanelGroup id="studio-editor" orientation="vertical">
+                    <ResizablePanel id="studio-editor-top" defaultSize="40" minSize="20">
                       <div className="h-full flex flex-col">
                         <QueryToolbar
                           activeConnection={conn.activeConnection}
@@ -615,7 +618,7 @@ export default function Studio() {
                       </div>
                     </ResizablePanel>
                     <ResizableHandle className="h-1 bg-white/5 hover:bg-blue-500/20" />
-                    <ResizablePanel defaultSize={60} minSize={20}>
+                    <ResizablePanel id="studio-editor-bottom" defaultSize="60" minSize="20">
                       <BottomPanel
                         mode={queryExec.bottomPanelMode}
                         onSetMode={queryExec.setBottomPanelMode}
@@ -685,7 +688,7 @@ export default function Studio() {
         {agentEnabled && (
           <>
             <ResizableHandle className="hidden md:flex w-1 bg-transparent hover:bg-blue-500/30 transition-colors" />
-            <ResizablePanel order={3} defaultSize={24} minSize={18} maxSize={45} className="hidden md:block">
+            <ResizablePanel id="studio-agent" defaultSize="24" minSize="18" maxSize="45" className="hidden md:block">
               <AgentRail
                 connectionId={agentConnectionId}
                 connectionName={conn.activeConnection?.name ?? null}
