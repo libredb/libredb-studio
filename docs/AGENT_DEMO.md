@@ -1,6 +1,6 @@
 # Agent demo script
 
-Twenty-three cases, ordered easy to hard, for showing LibreDB Studio's agent to someone who has
+Twenty-four cases, ordered easy to hard, for showing LibreDB Studio's agent to someone who has
 not seen it. Every case here was **driven live** against a real model and a real database before it
 was written down, and each one records what actually came back — including the ones that refuse.
 Nothing in this file is aspirational.
@@ -241,11 +241,16 @@ This is the case to dwell on. A demo that only shows case 16 is showing a party 
 ## Act 6 — "it is safe to point at production" (4 minutes)
 
 ### 18. Plan mode: it knows your schema and still never touches the database
-Switch to **Plan** and ask: `How would you assess this database before a production release?`
+Switch to **Plan**, select **Investigate**, and ask: `How would you assess this database before a production release?`
 
 A structured plan comes back — phases, what to inspect, what each step would establish, and what it
 does *not* reach — rendered as headings and bullets. Point at the meter while it is on screen:
 **`Statements 0 / 30`, `Database time 0.0 s`.** Nothing was sent.
+
+Select the workflow deliberately here rather than leaving whatever the last case selected: the
+statement ceiling is per workflow, so the same untouched meter reads `0 / 30` under Investigate,
+`0 / 42` under Analyze and `0 / 45` under Assess. The zero is the point; the denominator is whichever
+workflow is selected.
 
 Then look at what the plan names. Against dvdrental it works through `public.staff`, `public.rental`,
 `public.payment`, `public.inventory`, `public.film_actor`, the reporting views — and in one run it
@@ -294,19 +299,27 @@ role rather than trusting the transaction. *(The message a user sees today names
 than the role; the server log carries the exact reason. Recorded in `docs/BACKLOG.md`.)*
 
 ### 23. Every claim is checkable
-Open any report and look at a claim. Each one cites an artifact this run actually read, with its
-correlation id and row count, and the statement behind it. A claim citing evidence the run never
-produced is refused when the report is composed — the model cannot assert something and leave you to
-trust it.
+Open any report and look at a claim. Each one cites something **this run** produced, and the citation
+is shown rather than described: a result it read, with the correlation id, the row count and the
+statement behind it — or the schema inventory it captured, named by its `ctx_…` fingerprint, for a
+claim that rests on structure rather than on rows (case 1 is full of those).
+
+A claim citing evidence the run never produced is refused when the report is composed. The model
+cannot assert something and leave you to trust it.
 
 ---
 
 ## What to say when someone asks the hard question
 
-**"Can it damage my database?"** Writes and DDL are refused by the engine, not by parsing the SQL.
-The run's own path is a database-enforced read-only session with a statement timeout, a row cap and a
-byte cap, and it refuses rather than truncating. The editor replay in cases 15-17 uses the same
-read-only session; what it gives up is the timeout, and the checkbox says so.
+**"Can it damage my database?"** Writes and DDL are refused twice over, and the second refusal is the
+one that matters. Before a provider is even acquired, the statement is inspected and anything that is
+not a single read is rejected. Then the read runs inside a **database-enforced** read-only session
+with a statement timeout, a row cap and a byte cap, refusing rather than truncating.
+
+Lead with the second one when you answer. A parser can be fooled — a `SELECT` may call a function
+that writes, and no amount of reading the text reveals that — which is exactly why the boundary is
+the engine's own read-only transaction rather than the guard in front of it. The editor replay in
+cases 15-17 runs in that same session; what it gives up is the timeout, and the checkbox says so.
 
 **"What if the model hallucinates?"** It can, and the product is built on the assumption that it
 will. A claim must cite something the run read or it is refused. A chart must name columns that exist
