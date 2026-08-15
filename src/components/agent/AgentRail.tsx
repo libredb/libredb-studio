@@ -445,6 +445,31 @@ export function AgentRail({
     void run.start({ mode, workflowType, autoExecute: handsOver, objective: objective.trim(), connectionId });
   };
 
+  /*
+    Emptying the box for the next question (#379).
+
+    Measured: after a run completed the objective still held the previous question, so
+    asking a second one meant selecting the old text and deleting it first.
+
+    It is cleared when the SERVER HAS OPENED the run — the moment a run id exists —
+    rather than on the click. A start can be refused (a model the capability gate
+    turned down, a connection that no longer resolves, a request that never arrived),
+    and a surface that ate the user's sentence on the way to a refusal would make them
+    type it again to retry. `run.runId` is null until the server answered, so a start
+    that did not happen costs nothing.
+
+    Nothing is lost by one that did, either: the objective is on the run's own header
+    and the timeline's first entry quotes it, so the question stays readable beside the
+    run answering it.
+
+    The dependency is the run id alone, which is what makes this fire once per run:
+    `start` sets it to null and then to the id the server named, so even a server that
+    reused an id still moves the value.
+  */
+  useEffect(() => {
+    if (run.runId !== null) setObjective("");
+  }, [run.runId]);
+
   /**
    * A run this rail is still following. The setting above is frozen for exactly as
    * long as this holds — the same window the stop control is offered in, because both

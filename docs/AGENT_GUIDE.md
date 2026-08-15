@@ -96,7 +96,10 @@ other four workflows have no answer to present.
 
 **3. The objective** — the box labelled *"What should the run investigate?"*, placeholder *"Why is
 checkout slow?"*, bounded to 4000 characters (`AGENT_MAX_OBJECTIVE_LENGTH` in
-`src/lib/agent/execution-policy.ts:157`).
+`src/lib/agent/execution-policy.ts:157`). It is **emptied once the server has opened the run**, so
+the next question needs no deleting; the question itself is not lost, since the run's header carries
+it and the timeline's first entry quotes it. A start that was *refused* leaves what you typed exactly
+where it was, so retrying is one click rather than one retyping.
 
 Both axes are **fixed when the run opens** and are read from the run's own record for the rest of
 its life (`src/app/api/agent/runs/route.ts:79-88`), so nothing can widen a Plan run into an Agent

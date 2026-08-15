@@ -385,6 +385,51 @@ describe("AgentRail", () => {
     });
   });
 
+  /**
+   * The box is emptied for the next question (#379).
+   *
+   * Measured: after a run completed, `agent-objective` still held the previous
+   * question, so asking a second one meant selecting the old text and deleting it.
+   *
+   * Cleared when the SERVER HAS OPENED the run rather than on the click, which is the
+   * half the second test pins: a start that was refused must not eat what the user
+   * typed, or retrying means typing it again.
+   */
+  describe("the objective", () => {
+    test("is cleared once the run has opened, and is still readable in the timeline", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
+      const { getByTestId, findAllByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      await waitFor(() => {
+        expect((getByTestId("agent-objective") as HTMLTextAreaElement).value).toBe("");
+      });
+      // Not lost, only moved: the question is on the run's own header, quoted under
+      // the first entry, beside the run that is answering it.
+      const items = await findAllByTestId("agent-timeline-item");
+      expect(items[0].textContent).toContain("why is checkout slow");
+    });
+
+    test("survives a start the server refused, so retrying needs no retyping", async () => {
+      globalThis.fetch = mock(async () =>
+        jsonResponse({ error: "connection seed:sales no longer resolves" }, 400),
+      ) as unknown as typeof fetch;
+      const { getByTestId, findByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      expect((await findByTestId("agent-error")).textContent).toContain("no longer resolves");
+      expect((getByTestId("agent-objective") as HTMLTextAreaElement).value).toBe("why is checkout slow");
+    });
+  });
+
   test("a connection the server cannot resolve is refused here, with the reason", () => {
     const fetchMock = mock(async () => jsonResponse({}, 202));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
