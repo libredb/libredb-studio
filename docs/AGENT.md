@@ -1742,6 +1742,12 @@ way any of them could have been found: every one of them passes every gate.
   development build needs it, so the login page never hydrates. Production is unaffected.
 - **B41** — `defaults` in a seed config does not merge `roles`, though the documentation says the
   block is merged into every connection.
+- **B43** — every copy control outside the agent rail reaches `navigator.clipboard` unguarded, and it
+  is a secure-context API: on the plain-HTTP channels this product ships, four of them flip a label
+  to "Copied!" in the same statement that starts a write nobody observed.
+- **B44** — a plan's SQL is read out of a markdown fence rather than recorded as a statement, because
+  planning is toolless and writes no `statement-drafted` event. The alternative widens the mode's
+  contract, so the fence is what the "Apply to editor" control there depends on.
 
 ## Related documentation
 

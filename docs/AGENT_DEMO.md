@@ -1,6 +1,6 @@
 # Agent demo script
 
-Twenty-four cases, ordered easy to hard, for showing LibreDB Studio's agent to someone who has
+Twenty-five cases, ordered easy to hard, for showing LibreDB Studio's agent to someone who has
 not seen it. Every case here was **driven live** against a real model and a real database before it
 was written down, and each one records what actually came back — including the ones that refuse.
 Nothing in this file is aspirational.
@@ -295,6 +295,27 @@ than inventing tables.
 
 Still a plan, still zero statements — but framed by the optimization workflow, so it is about access
 paths rather than generic health. Plan/Agent and the workflow are two separate choices.
+
+### 19b. A plan you can actually take with you
+Ask the same Plan run for something concrete — **Plan · Optimize ·** `Which indexes would you check first, and what statement would show me their usage?` — and look at what comes back.
+
+The SQL arrives as a code block, not as a paragraph, and it carries two controls: **Apply to editor**
+puts the statement in the editor unrun, and **Copy** puts it on the clipboard. **Copy all** at the
+foot of the plan takes the whole thing as the markdown the model wrote — the version that pastes into
+a ticket with its headings intact.
+
+Driven live against dvdrental, the plan came back with two blocks — a `pg_stat_user_indexes` read
+ordered by `idx_scan`, and the `sys.dm_db_index_usage_stats` equivalent it offered for SQL Server —
+each with its own pair of controls. Click Apply on the first and it lands in the editor with its
+indentation intact, ready to run. Meter: **`Statements 0 / 30`.**
+
+Worth saying out loud if a DBA in the room asks how a toolless mode produced a statement: it did not
+run one and it did not record one. The statement is text inside the plan, and both controls hand it
+to a human. Nothing in plan mode reaches a database, including these.
+
+*Where the editor button is withheld:* a block the model tagged as something other than a query
+language — `bash`, `json` — is copyable and is not offered to the SQL editor, because the model said
+what it is.
 
 ### 20. Stop means stop
 Start a long run — **Agent · Assess ·** `Profile every table at pattern depth and grade completeness, uniqueness, consistency and validity for each one` — and press **Stop** while it is working.

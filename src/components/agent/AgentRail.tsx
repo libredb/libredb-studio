@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { Bot, Loader2, PencilLine, Play, Square, TableProperties } from "lucide-react";
+import { CopyButton } from "@/components/copy-button";
 import { renderProse } from "@/components/rich-text";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
@@ -198,6 +199,50 @@ function refusalActionText(planModeOffered: boolean, streamingDisproved: boolean
     return "This endpoint answered without streaming, and plan mode reads the same stream, so it would produce nothing here either. A different model, or an endpoint that streams, is what gets an answer.";
   }
   return "A different model, one that passes the probe, is what gets a run that reads the database.";
+}
+
+/**
+ * Verbatim content, and the one thing every reader wants to do with it (#389).
+ *
+ * The block itself is unchanged and deliberately so: quoting is a security property
+ * here, not a style — a drafted statement, an engine's own message and the user's
+ * objective are shown exactly as they arrived, so a reader can see where the
+ * application stopped speaking. What was missing was any way to get the text OUT.
+ * Selecting it by hand is what a user was left with, inside a narrow panel that
+ * scrolls in both directions, and a statement wrapped across lines does not survive
+ * the drag.
+ *
+ * Used at every verbatim block in this rail rather than at a chosen few, because
+ * "which of these did the product decide I would want" is not a question a user
+ * should have to answer.
+ */
+function QuotedBlock({
+  text,
+  testId,
+  className,
+  /** A report's claim is the thing the report is FOR, and reads a shade brighter. */
+  tone = "quiet",
+}: {
+  readonly text: string;
+  readonly testId: string;
+  readonly className?: string;
+  readonly tone?: "quiet" | "loud";
+}) {
+  return (
+    <div className={className}>
+      <pre
+        className={cn(
+          "overflow-x-auto rounded bg-black/40 p-1.5 font-mono text-[0.625rem] whitespace-pre-wrap",
+          tone === "loud" ? "text-zinc-300" : "text-zinc-400",
+        )}
+      >
+        {text}
+      </pre>
+      <div className="mt-0.5 flex items-center gap-1">
+        <CopyButton text={text} testId={testId} />
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -1150,7 +1195,21 @@ export function AgentRail({
                   data-testid="agent-prose"
                   className="mt-1 ml-3.5 space-y-1 border-l border-white/10 pl-2 text-zinc-400"
                 >
-                  {renderProse(item.prose)}
+                  {/*
+                    The editor is offered to the statements INSIDE the prose (#389).
+                    Plan mode is toolless, so it writes no `statement-drafted` event and
+                    reaches no `applySql` — its SQL exists only as a fenced block in this
+                    text, which is why the hand-off is made here rather than beside the
+                    entry. A host with no editor passes nothing and is offered nothing,
+                    the rule every other affordance in this rail follows.
+                  */}
+                  {renderProse(item.prose, onApplyStatement === undefined ? {} : { onApplySql: onApplyStatement })}
+                  {/*
+                    And the plan as a whole, in the markdown the model wrote rather than
+                    in the rendering above: what a user pastes into a ticket is the text,
+                    and the text is what was recorded.
+                  */}
+                  <CopyButton text={item.prose} testId="agent-prose-copy" label="Copy all" />
                 </div>
               )}
               {/*
@@ -1182,9 +1241,7 @@ export function AgentRail({
               user should be able to see where the app stops speaking.
             */}
               {item.quoted !== undefined && (
-                <pre className="mt-1 ml-3.5 overflow-x-auto rounded bg-black/40 p-1.5 font-mono text-[0.625rem] text-zinc-400 whitespace-pre-wrap">
-                  {item.quoted}
-                </pre>
+                <QuotedBlock text={item.quoted} testId="agent-quoted-copy" className="mt-1 ml-3.5" />
               )}
               <div className="ml-3.5">
                 <HydrationControls
@@ -1233,9 +1290,7 @@ export function AgentRail({
             <h2 className="px-1 text-xs font-medium text-zinc-300">Report</h2>
             {run.timeline.report.claims.map((claim) => (
               <div key={claim.id} data-testid="agent-report-claim" className="rounded p-2 hover:bg-white/5">
-                <pre className="overflow-x-auto rounded bg-black/40 p-1.5 font-mono text-[0.625rem] text-zinc-300 whitespace-pre-wrap">
-                  {claim.quoted}
-                </pre>
+                <QuotedBlock text={claim.quoted} testId="agent-report-claim-copy" tone="loud" />
                 <ul className="mt-1 space-y-1">
                   {claim.citations.map((citation) => (
                     <li key={citation.id} data-testid="agent-report-citation" className="pl-1.5 text-xs">
@@ -1247,9 +1302,7 @@ export function AgentRail({
                         <span className="ml-1 font-mono text-[0.625rem] text-zinc-500">{citation.locator}</span>
                       )}
                       {citation.quoted !== undefined && (
-                        <pre className="mt-0.5 overflow-x-auto rounded bg-black/40 p-1.5 font-mono text-[0.625rem] text-zinc-400 whitespace-pre-wrap">
-                          {citation.quoted}
-                        </pre>
+                        <QuotedBlock text={citation.quoted} testId="agent-citation-quoted-copy" className="mt-0.5" />
                       )}
                       <HydrationControls
                         sql={citation.quoted}

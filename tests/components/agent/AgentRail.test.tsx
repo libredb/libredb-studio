@@ -2207,6 +2207,117 @@ describe("AgentRail", () => {
   });
 
   /**
+   * Taking what a run produced away with you (#389).
+   *
+   * The gap: **plan mode reaches none of the events that carry `applySql`.** Every one
+   * of them — `statement-drafted`, `plan-comparison`, `recommendation`,
+   * `answer-composed` — is written by a tool call, and planning is toolless by
+   * contract. So the mode whose entire deliverable is a written plan was the one mode
+   * that could offer neither the editor nor the clipboard, and its SQL could only be
+   * dragged out of a scrolling panel by hand.
+   *
+   * Both halves are pinned here: the fenced statement inside a plan reaches the editor,
+   * and every verbatim block in the rail can be copied — the quoted content, the plan
+   * as a whole, a report's claims and the statements its citations rest on.
+   */
+  describe("taking a run's output away", () => {
+    const PLAN_WITH_SQL = [
+      "### Step 2: measure it",
+      "",
+      "Run this against `orders`:",
+      "",
+      "```sql",
+      "SELECT count(*) FROM orders WHERE created_at > now() - interval '7 days';",
+      "```",
+      "",
+      "It establishes the recent write rate.",
+    ].join("\n");
+
+    const closingLine = (text: string): string =>
+      `${JSON.stringify({ kind: "event", event: { kind: "closing-statement", atMs: 1_004, text } })}\n`;
+
+    async function planRun(props: Partial<React.ComponentProps<typeof AgentRail>> = {}) {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, closingLine(PLAN_WITH_SQL), FINISHED_LINE]);
+      const view = render(<AgentRail {...DEFAULT_PROPS} {...props} />);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "how would you check this" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      return view;
+    }
+
+    test("a plan's fenced statement reaches the editor, which no plan-mode entry could offer before", async () => {
+      const onApplyStatement = mock((_sql: string) => {});
+      const { findByTestId } = await planRun({ onApplyStatement });
+
+      fireEvent.click(await findByTestId("prose-code-apply"));
+      expect(onApplyStatement).toHaveBeenCalledWith(
+        "SELECT count(*) FROM orders WHERE created_at > now() - interval '7 days';",
+      );
+    });
+
+    test("the fence renders as a block, so the plan's SQL is readable at all", async () => {
+      const { findByTestId } = await planRun();
+
+      const prose = await findByTestId("agent-prose");
+      expect(prose.querySelector("pre")?.textContent).toBe(
+        "SELECT count(*) FROM orders WHERE created_at > now() - interval '7 days';",
+      );
+      expect(prose.textContent).not.toContain("```");
+    });
+
+    test("a host with no editor is offered no editor control, and still offers the clipboard", async () => {
+      const { queryByTestId, findByTestId } = await planRun();
+
+      expect(await findByTestId("prose-code-copy")).not.toBeNull();
+      expect(queryByTestId("prose-code-apply")).toBeNull();
+    });
+
+    test("the plan can be copied whole, in the markdown the model wrote", async () => {
+      const writeText = mock(() => Promise.resolve());
+      Object.defineProperty(globalThis.navigator, "clipboard", { value: { writeText }, configurable: true });
+      const { findByTestId } = await planRun();
+
+      fireEvent.click(await findByTestId("agent-prose-copy"));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith(PLAN_WITH_SQL));
+    });
+
+    test("a quoted block is copyable, which is the whole of what a user could not do", async () => {
+      const writeText = mock(() => Promise.resolve());
+      Object.defineProperty(globalThis.navigator, "clipboard", { value: { writeText }, configurable: true });
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, DRAFTED_LINE, FINISHED_LINE]);
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+
+      const copies = await view.findAllByTestId("agent-quoted-copy");
+      // The objective and the drafted statement: every verbatim block, not a chosen one.
+      expect(copies.length).toBe(2);
+      fireEvent.click(copies[1]);
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith("SELECT count(*) FROM orders"));
+    });
+
+    test("a report's claim and the statement its citation rests on are both copyable", async () => {
+      const writeText = mock(() => Promise.resolve());
+      Object.defineProperty(globalThis.navigator, "clipboard", { value: { writeText }, configurable: true });
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, DRAFTED_LINE, COMPLETED_LINE, REPORT_LINE, FINISHED_LINE]);
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+
+      fireEvent.click(await view.findByTestId("agent-report-claim-copy"));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith("checkout is slow because orders is scanned"));
+
+      fireEvent.click(await view.findByTestId("agent-citation-quoted-copy"));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith("SELECT count(*) FROM orders"));
+    });
+  });
+
+  /**
    * The timeline follows the newest entry (#373 review).
    *
    * Measured on a completed run: the scroll container sat at `scrollTop: 0` with a
