@@ -1430,9 +1430,18 @@ export function AgentRail({
                     data-testid="agent-plan-refusal"
                     className="mt-1 ml-3.5 rounded border border-amber-400/40 bg-amber-500/5 p-1.5"
                   >
+                    {/*
+                      Says only that the run could not draft, never WHY — the two reasons
+                      are different and this card cannot tell them apart. A grounded run
+                      refuses because the inventory it was given does not reach the
+                      question; an ungrounded one (any engine but PostgreSQL and SQLite,
+                      or a catalog that could not be read) refuses because there was no
+                      inventory at all. The earlier wording named "the schema it read",
+                      which on the second path is a reading that never happened.
+                    */}
                     <p className="text-[0.625rem] text-amber-300">
-                      This run drafted no statement: it reports that the schema it read does not answer the question as
-                      asked. What it says is missing, and what it needs from you, are in its own words below.
+                      This run drafted no statement. What it says is missing, and what it needs from you, are in its own
+                      words below.
                     </p>
                     <ProseBlock
                       text={item.prose}

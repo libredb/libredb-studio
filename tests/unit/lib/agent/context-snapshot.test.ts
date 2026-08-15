@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   AGENT_CONTEXT_PACK_MAX_CHARS,
   captureContextSnapshot,
+  connectionIdentity,
   forgetHeldSnapshots,
   heldSnapshotForConnection,
   holdSnapshotForConnection,
@@ -706,18 +707,18 @@ describe("the inventories a process holds", () => {
 
   test("what was held for a connection is what comes back", async () => {
     const snapshot = await captured("postgres");
-    holdSnapshotForConnection(snapshot);
+    holdSnapshotForConnection(snapshot, "identity-1");
 
-    expect(heldSnapshotForConnection("conn-1")).toEqual(snapshot);
+    expect(heldSnapshotForConnection("identity-1")).toEqual(snapshot);
   });
 
   test("a process that has read nothing for a connection holds nothing", async () => {
     const snapshot = await captured("postgres");
-    holdSnapshotForConnection(snapshot);
+    holdSnapshotForConnection(snapshot, "identity-1");
 
     // Not "no inventory anywhere": one is held, for another database entirely, and
     // that is exactly the answer a run on this connection must not be given.
-    expect(heldSnapshotForConnection("conn-other")).toBeNull();
+    expect(heldSnapshotForConnection("identity-other")).toBeNull();
   });
 
   test("an inventory that does not fingerprint as itself is not held", async () => {
@@ -727,17 +728,17 @@ describe("the inventories a process holds", () => {
       tables: snapshot.tables.map((table) => ({ ...table, columns: [] })),
     };
 
-    holdSnapshotForConnection(tampered);
+    holdSnapshotForConnection(tampered, "identity-1");
 
-    expect(heldSnapshotForConnection("conn-1")).toBeNull();
+    expect(heldSnapshotForConnection("identity-1")).toBeNull();
   });
 
   test("the newest reading of a connection replaces the one before it", async () => {
     const snapshot = await captured("postgres");
-    holdSnapshotForConnection(snapshot);
-    holdSnapshotForConnection({ ...snapshot, capturedAtMs: 9_999 });
+    holdSnapshotForConnection(snapshot, "identity-1");
+    holdSnapshotForConnection({ ...snapshot, capturedAtMs: 9_999 }, "identity-1");
 
-    expect(heldSnapshotForConnection("conn-1")?.capturedAtMs).toBe(9_999);
+    expect(heldSnapshotForConnection("identity-1")?.capturedAtMs).toBe(9_999);
   });
 
   /**
@@ -750,10 +751,10 @@ describe("the inventories a process holds", () => {
    */
   test("an older reading never replaces a newer one", async () => {
     const snapshot = await captured("postgres");
-    holdSnapshotForConnection({ ...snapshot, capturedAtMs: 9_999 });
-    holdSnapshotForConnection({ ...snapshot, capturedAtMs: 1 });
+    holdSnapshotForConnection({ ...snapshot, capturedAtMs: 9_999 }, "identity-1");
+    holdSnapshotForConnection({ ...snapshot, capturedAtMs: 1 }, "identity-1");
 
-    expect(heldSnapshotForConnection("conn-1")?.capturedAtMs).toBe(9_999);
+    expect(heldSnapshotForConnection("identity-1")?.capturedAtMs).toBe(9_999);
   });
 
   /**
@@ -765,15 +766,15 @@ describe("the inventories a process holds", () => {
    */
   test("re-holding an older reading still refreshes the connection's place in the bound", async () => {
     const snapshot = await captured("postgres");
-    holdSnapshotForConnection({ ...snapshot, capturedAtMs: 9_999 });
+    holdSnapshotForConnection({ ...snapshot, capturedAtMs: 9_999 }, "identity-kept");
 
     for (let index = 0; index < 17; index += 1) {
-      holdSnapshotForConnection({ ...snapshot, connectionId: `conn-${index}` });
-      holdSnapshotForConnection({ ...snapshot, capturedAtMs: 1 });
+      holdSnapshotForConnection(snapshot, `identity-${index}`);
+      holdSnapshotForConnection({ ...snapshot, capturedAtMs: 1 }, "identity-kept");
     }
 
-    expect(heldSnapshotForConnection("conn-1")?.capturedAtMs).toBe(9_999);
-    expect(heldSnapshotForConnection("conn-0")).toBeNull();
+    expect(heldSnapshotForConnection("identity-kept")?.capturedAtMs).toBe(9_999);
+    expect(heldSnapshotForConnection("identity-0")).toBeNull();
   });
 
   /**
@@ -784,20 +785,92 @@ describe("the inventories a process holds", () => {
   test("holding many connections evicts the least recently held, not the newest", async () => {
     const snapshot = await captured("postgres");
     for (let index = 0; index < 17; index += 1) {
-      holdSnapshotForConnection({ ...snapshot, connectionId: `conn-${index}` });
+      holdSnapshotForConnection(snapshot, `identity-${index}`);
       // Re-held on every pass, so it stays the most recent and outlives 16 others.
-      holdSnapshotForConnection({ ...snapshot, connectionId: "conn-kept" });
+      holdSnapshotForConnection(snapshot, "identity-kept");
     }
 
-    expect(heldSnapshotForConnection("conn-0")).toBeNull();
-    expect(heldSnapshotForConnection("conn-16")).not.toBeNull();
-    expect(heldSnapshotForConnection("conn-kept")).not.toBeNull();
+    expect(heldSnapshotForConnection("identity-0")).toBeNull();
+    expect(heldSnapshotForConnection("identity-16")).not.toBeNull();
+    expect(heldSnapshotForConnection("identity-kept")).not.toBeNull();
   });
 
   test("forgetting empties the hold, which is what a restart does to it", async () => {
-    holdSnapshotForConnection(await captured("postgres"));
+    holdSnapshotForConnection(await captured("postgres"), "identity-1");
     forgetHeldSnapshots();
 
-    expect(heldSnapshotForConnection("conn-1")).toBeNull();
+    expect(heldSnapshotForConnection("identity-1")).toBeNull();
+  });
+});
+
+/**
+ * The identity a held inventory is filed under (`docs/BACKLOG.md` B45).
+ *
+ * The hold was keyed on the connection ID alone, and nothing in an
+ * `AgentContextSnapshot` records WHICH database a reading came from — it carries an id,
+ * a fingerprint, a time and the tables. So a saved connection re-pointed at another
+ * database kept its id and was served the previous database's inventory until the entry
+ * aged out or the process restarted. Editing a connection to aim at staging instead of
+ * production is an ordinary thing to do, and the id does not change when you do it.
+ *
+ * What made it worth fixing here rather than deferring: since the plan-mode grounding
+ * work, what the hold serves is the ground a drafted statement is VALIDATED against. A
+ * statement checked against the wrong catalog comes back with no unknown names, and the
+ * rail reports it as checked — a confident answer about a database nobody looked at.
+ */
+describe("the identity a held inventory is filed under", () => {
+  const CONNECTION: DatabaseConnection = {
+    id: "conn-1",
+    name: "primary",
+    type: "postgres",
+    host: "db.internal",
+    port: 5432,
+    database: "production",
+    createdAt: new Date(0),
+  };
+
+  const repointed = (changes: Partial<DatabaseConnection>): string => connectionIdentity({ ...CONNECTION, ...changes });
+
+  test("the same connection is the same identity", () => {
+    expect(connectionIdentity(CONNECTION)).toBe(connectionIdentity({ ...CONNECTION }));
+  });
+
+  test("a connection re-pointed at another database is a different identity", () => {
+    // The case B45 describes, and the one an id-keyed hold could not see: same record,
+    // same id, different database.
+    expect(repointed({ database: "staging" })).not.toBe(connectionIdentity(CONNECTION));
+  });
+
+  test("a re-pointed host, port or engine is a different identity too", () => {
+    for (const change of [{ host: "other.internal" }, { port: 5433 }, { type: "sqlite" as const }]) {
+      expect(repointed(change)).not.toBe(connectionIdentity(CONNECTION));
+    }
+  });
+
+  test("a different role is a different identity, because it sees a different catalog", () => {
+    // Over-keying is the safe direction: a miss costs one catalog read, and a plan run
+    // captures its own inventory when the hold has nothing. A false hit costs an answer.
+    expect(repointed({ user: "readonly" })).not.toBe(connectionIdentity(CONNECTION));
+    expect(repointed({ agentUser: "agent_ro" })).not.toBe(connectionIdentity(CONNECTION));
+  });
+
+  test("a rotated password is the SAME identity, because it is not which database this is", () => {
+    expect(repointed({ password: "rotated" })).toBe(connectionIdentity(CONNECTION));
+  });
+
+  test("the identity carries no credential, because a process-lifetime key should not", () => {
+    const identity = connectionIdentity({ ...CONNECTION, connectionString: "postgres://u:hunter2@h/db" });
+
+    expect(identity).not.toContain("hunter2");
+    expect(identity).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test("a re-pointed connection is not served the previous reading", async () => {
+    forgetHeldSnapshots();
+    const snapshot = await captured("postgres");
+    holdSnapshotForConnection(snapshot, connectionIdentity(CONNECTION));
+
+    expect(heldSnapshotForConnection(repointed({ database: "staging" }))).toBeNull();
+    expect(heldSnapshotForConnection(connectionIdentity(CONNECTION))).toEqual(snapshot);
   });
 });

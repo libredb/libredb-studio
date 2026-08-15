@@ -47,6 +47,7 @@ import { createHash } from "node:crypto";
 import { type ModelMessage, type ToolSet, streamText, tool } from "ai";
 import {
   captureContextSnapshot,
+  connectionIdentity,
   heldSnapshotForConnection,
   holdSnapshotForConnection,
   packContextForTask,
@@ -1199,7 +1200,7 @@ export async function runInvestigation(
    */
   const establishPlanningContext = async (): Promise<void> => {
     const recorded = reusableSnapshot(record.events, record.connectionId);
-    const held = recorded === null ? heldSnapshotForConnection(record.connectionId) : null;
+    const held = recorded === null ? heldSnapshotForConnection(connectionIdentity(context.connection)) : null;
     let snapshot = recorded ?? held;
     // Only the process-held reading is somebody else's. A recorded one is this run's
     // own earlier drive, and telling the model otherwise would be a false
@@ -1224,7 +1225,7 @@ export async function runInvestigation(
     // what another run may later be handed is an inventory durably part of some run's
     // own history. Re-holding a reading that came from the hold is not a no-op either
     // — it moves the connection back to the newest end of the eviction order.
-    holdSnapshotForConnection(snapshot);
+    holdSnapshotForConnection(snapshot, connectionIdentity(context.connection));
     messages.push({ role: "user", content: packPlanningSnapshotMessage(snapshot, record.objective, readBy) });
     messages.push({ role: "user", content: packRelations(snapshot, record.workflowType) });
 
@@ -1289,7 +1290,7 @@ export async function runInvestigation(
       // Held on the reuse path too, not only on the capture: a resumed drive in a
       // fresh process is exactly where the hold is empty, and this is the reading
       // that refills it from what the ledger already proved.
-      holdSnapshotForConnection(recorded);
+      holdSnapshotForConnection(recorded, connectionIdentity(context.connection));
       messages.push({ role: "user", content: packSnapshotMessage(recorded, record.objective) });
       messages.push({ role: "user", content: packRelations(recorded, record.workflowType) });
       return;
@@ -1310,7 +1311,7 @@ export async function runInvestigation(
     // After the ledger, never before it: what a plan run may later be handed is an
     // inventory that is durably part of some run's own history, not one this process
     // read and failed to write down.
-    holdSnapshotForConnection(snapshot);
+    holdSnapshotForConnection(snapshot, connectionIdentity(context.connection));
     messages.push({ role: "user", content: packSnapshotMessage(snapshot, record.objective) });
     messages.push({ role: "user", content: packRelations(snapshot, record.workflowType) });
   };

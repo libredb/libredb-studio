@@ -287,9 +287,10 @@ What a grounded plan run is given, and where each part comes from:
 
 - **The inventory and its relations**, from the cheapest of three sources, in this order: the run's
   **own ledger** (a resumed drive re-derives the `context-captured` inventory it already recorded and
-  reads nothing); the **process hold** (`context-snapshot.ts`, keyed by connection, accepted only if
-  it fingerprints as itself, newest reading wins by `capturedAtMs`, bounded to the 16 most recently
-  used connections); or a **capture**, which reads the catalog and records `context-captured` on the
+  reads nothing); the **process hold** (`context-snapshot.ts`, keyed by `connectionIdentity` —
+  the engine, host, port, database, service/instance and role, hashed, never the password — accepted
+  only if it fingerprints as itself, newest reading wins by `capturedAtMs`, bounded to the 16 most
+  recently used connections); or a **capture**, which reads the catalog and records `context-captured` on the
   plan run's own ledger — so the next drive of that run takes the first path. Both messages are
   fenced as `UNTRUSTED_CONTENT`, exactly as in agent mode.
 - **A preface saying who read it**, because the two cases are different facts: read by this run
@@ -1840,10 +1841,6 @@ no gate in this repository objects to.
 - **B43** — every copy control outside the agent rail reaches `navigator.clipboard` unguarded, and it
   is a secure-context API: nine call sites across seven components, four of which claim success — by
   a label or a toast — in the same statement that starts a write nobody observed.
-- **B45** — the inventory this process holds for a connection is keyed by the connection id alone, and
-  the snapshot's fingerprint is a function of the inventory rather than of the database it came from.
-  A connection re-pointed at another database while keeping its id is served the previous reading —
-  which is now also the ground a plan run's drafted statement is validated against.
 
 ## Related documentation
 

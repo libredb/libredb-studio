@@ -1908,22 +1908,3 @@ Four of the seven claim a success nobody observed, in the same statement that st
 Done when every copy in the app goes through `CopyButton` (or its `writeToClipboard`), with a test
 per site that the label does not claim success when the write was refused.
 
-### B45. A held inventory is keyed by connection id alone, so it carries no database identity
-
-`heldSnapshots` in `context-snapshot.ts` is keyed on the connection id and nothing else, and the
-snapshot's fingerprint is a function of the inventory alone — deliberately not of the connection, so
-that two identical builds agree. Neither the key nor the identity therefore records WHICH database
-the reading came from. A connection record re-pointed at another database, or at another engine,
-while keeping its id is served the old database's inventory by this process until the entry is
-evicted or the process restarts.
-
-It predates the plan-mode grounding work of 2026-08-15 and was found by it: a fixture opening three
-engine presets on one connection id showed a SQLite plan run PostgreSQL's tables, which is the same
-shape at test scale. It matters more now than it did, because a plan run both fills this hold and
-reads it, and because what the hold serves is now the ground a drafted statement is validated
-against — a statement checked against the wrong database's tables reports no unknown names.
-
-Done when a held entry is accepted only for the database it was read from — the obvious candidate is
-folding the connection's engine and target into the key rather than into the fingerprint, which must
-stay a function of the inventory — with a test that a re-pointed connection is not served the
-previous reading.

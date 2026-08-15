@@ -54,7 +54,14 @@ import { parseSqliteIndexDdl, parseSqliteTableDdl } from "./sqlite-ddl";
 import { type AgentToolContext, readCatalogForGrounding } from "./tools";
 import type { AgentContextSnapshot, AgentRunEvent } from "./types";
 import { fenceUntrustedContent } from "./untrusted-content";
-import type { ColumnSchema, DatabaseType, ForeignKeySchema, IndexSchema, TableSchema } from "@/lib/types";
+import type {
+  ColumnSchema,
+  DatabaseConnection,
+  DatabaseType,
+  ForeignKeySchema,
+  IndexSchema,
+  TableSchema,
+} from "@/lib/types";
 
 /** Why a run has no snapshot. Both are states the run continues from, not failures. */
 export type AgentContextUnavailableCode =
@@ -389,6 +396,51 @@ const HELD_SNAPSHOT_LIMIT = 16;
 const heldSnapshots = new Map<string, AgentContextSnapshot>();
 
 /**
+ * The fields that decide WHICH database a reading came from, and whose view of it.
+ *
+ * The hold used to be keyed on the connection id alone (`docs/BACKLOG.md` B45). Neither
+ * the key nor the snapshot carried any database identity — `AgentContextSnapshot` holds
+ * an id, a fingerprint, a time and the tables — so a connection record re-pointed at
+ * another database while keeping its id was served the old one's inventory until the
+ * entry aged out or the process restarted. Editing a saved connection to aim at staging
+ * instead of production is an ordinary thing to do, and the id does not change when you
+ * do it.
+ *
+ * It mattered before the plan-mode grounding work and it matters more after it: what the
+ * hold serves is now the ground a drafted statement is VALIDATED against, so a statement
+ * checked against another database's tables comes back with no unknown names — the card
+ * reports "checked" for a check performed against the wrong catalog. That is the exact
+ * class of claim this whole design item exists to stop making.
+ *
+ * Over-keying is deliberately the safe direction. A miss costs ONE catalog read, because
+ * a plan run captures its own inventory when the hold has nothing for it; a false hit
+ * costs a confident answer about a database nobody looked at. So the user fields are in
+ * here too — a least-privilege role sees a different catalog — while the password is
+ * not: rotating a credential does not change which database this is.
+ *
+ * Hashed rather than concatenated because `connectionString` can carry a password, and a
+ * process-lifetime map should not hold one as a key.
+ */
+export function connectionIdentity(connection: DatabaseConnection): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        connection.id,
+        connection.type,
+        connection.host ?? "",
+        connection.port ?? "",
+        connection.database ?? "",
+        connection.connectionString ?? "",
+        connection.serviceName ?? "",
+        connection.instanceName ?? "",
+        connection.user ?? "",
+        connection.agentUser ?? "",
+      ]),
+    )
+    .digest("hex");
+}
+
+/**
  * Holds one connection's inventory for later reuse. Bounded, newest reading kept.
  *
  * Two things happen here and they are deliberately not the same thing, because the
@@ -407,23 +459,29 @@ const heldSnapshots = new Map<string, AgentContextSnapshot>();
  *
  * Found by review on #384, which had one `delete`/`set` doing both jobs at once.
  */
-export function holdSnapshotForConnection(snapshot: AgentContextSnapshot): void {
+export function holdSnapshotForConnection(snapshot: AgentContextSnapshot, identity: string): void {
   if (fingerprintTables(snapshot.tables) !== snapshot.fingerprint) return;
-  const held = heldSnapshots.get(snapshot.connectionId);
+  const held = heldSnapshots.get(identity);
   const newest = held !== undefined && held.capturedAtMs > snapshot.capturedAtMs ? held : snapshot;
   // Deleted before it is set, so the connection's place in the eviction order below
   // is refreshed even on the path where the reading it arrived with was the older one.
-  heldSnapshots.delete(snapshot.connectionId);
-  heldSnapshots.set(snapshot.connectionId, newest);
+  heldSnapshots.delete(identity);
+  heldSnapshots.set(identity, newest);
   for (const oldest of heldSnapshots.keys()) {
     if (heldSnapshots.size <= HELD_SNAPSHOT_LIMIT) break;
     heldSnapshots.delete(oldest);
   }
 }
 
-/** The inventory this process holds for a connection, or `null` when it holds none. */
-export function heldSnapshotForConnection(connectionId: string): AgentContextSnapshot | null {
-  return heldSnapshots.get(connectionId) ?? null;
+/**
+ * The inventory this process holds for a connection, or `null` when it holds none.
+ *
+ * Keyed on `connectionIdentity` and not on the connection id: a record re-pointed at
+ * another database keeps its id, and being served the previous database's tables is a
+ * miss this layer cannot detect afterwards (B45).
+ */
+export function heldSnapshotForConnection(identity: string): AgentContextSnapshot | null {
+  return heldSnapshots.get(identity) ?? null;
 }
 
 /**
