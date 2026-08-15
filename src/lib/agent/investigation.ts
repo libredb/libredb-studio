@@ -1371,7 +1371,11 @@ export async function runInvestigation(
    */
   const recordPlanStatement = async (closing: string): Promise<void> => {
     if (record.mode === "agent" || record.workflowType === "operations") return;
-    const draft = readPlanStatement(closing);
+    // The dialect goes IN as well as onto the event (#396 review): the reader needs it
+    // to reject a block the model tagged for another engine, because stamping this
+    // connection's type onto a fence the model labelled `mysql` would file the run as
+    // having drafted for a database it explicitly did not write for.
+    const draft = readPlanStatement(closing, context.connection.type);
     if (draft.kind !== "statement") return;
     await service.recordEvent(runId, {
       kind: "plan-statement-drafted",

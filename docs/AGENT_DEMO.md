@@ -25,9 +25,10 @@ inferred from the code.
 | **LibreDB** (embedded) | Verified | Not established | Refused, verified |
 | MySQL · Oracle · Couchbase · Druid | Expected to work | Expected to work | Refused |
 
-**Read the table this way.** Plan mode has no engine limit — it sends no statements at all — but it
-is only *grounded* (case 18) on PostgreSQL and SQLite, because only those two capture a schema
-inventory. Operate reads what the engine reports about itself, so it needs no SQL and reaches
+**Read the table this way.** Plan mode opens on every engine — it runs no statement of yours on any
+of them — but it is only *grounded* (case 18) on PostgreSQL and SQLite, because only those two
+capture a schema inventory and the engine's own size estimates. Ungrounded, it has nothing to draft
+a statement against and says so instead. Operate reads what the engine reports about itself, so it needs no SQL and reaches
 everything. The other four workflows write SQL and need a database-native read-only statement path,
 which today only PostgreSQL and SQLite provide; everywhere else the run ends with *"The agent cannot
 run on this database engine: it offers no read-only execution profile."*

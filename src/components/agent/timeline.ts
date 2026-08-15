@@ -1,6 +1,7 @@
 import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentGoalShortfall } from "@/lib/agent/goal-verifier";
 import type { AgentPlanAccess, AgentPlanSummary } from "@/lib/agent/plan-summary";
+import { readPlanStatement } from "@/lib/agent/plan-statement";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
 import {
   type AgentChartSpec,
@@ -372,21 +373,26 @@ const HANDOVER_SENTENCES: Readonly<Record<Extract<AgentRunEvent, { kind: "answer
 const PLAN_REFUSAL_MARKER = /^[ \t]*NO STATEMENT:[ \t]*/im;
 
 /**
- * The model's own words with the marker taken off, or `null` when the text carries no
- * marker line at all.
+ * The model's own words with the marker taken off, or `null` when the run did not
+ * refuse.
  *
- * Only the token is removed. Everything else the run wrote — what it says is missing,
- * the question it asks back — is left exactly as it arrived, because that is the whole
- * content of this outcome.
+ * Whether this IS a refusal is asked of `readPlanStatement` — the same fence-aware
+ * reader the server records the ledger with — and not of the regex below (#396 review).
+ * An earlier version decided it here and argued the two could not disagree because this
+ * one is consulted only when the ledger holds no statement. The argument had a hole:
+ * a closing ` ```text ` block containing the marker records no statement either, so the
+ * regex called it a refusal, the browser showed a successful ending, and the verdict
+ * called the same run `no-statement`. One reader cannot disagree with itself.
  *
- * This reading is NARROWER than the server's on purpose, and its caller is what keeps
- * the two from disagreeing: `plan-statement.ts` ignores anything inside a fenced block,
- * this regex cannot see fences, so it is consulted only for a run whose ledger recorded
- * no statement. A run that recorded one has already been read by the fence-aware
- * reader, and the browser does not get to overrule it.
+ * The regex survives for the DISPLAY step only. Once the shared reader has ruled, this
+ * strips the token so the user reads the run's own words rather than a protocol marker;
+ * everything else — what is missing, the question asked back — is left exactly as it
+ * arrived, because that is the whole content of this outcome. In the one case where a
+ * fenced marker precedes a real one it strips the wrong occurrence, which is a cosmetic
+ * slip in text still shown in full, not a run reported as something it was not.
  */
 function readPlanRefusal(prose: string | undefined): string | null {
-  if (prose === undefined || !PLAN_REFUSAL_MARKER.test(prose)) return null;
+  if (prose === undefined || readPlanStatement(prose).kind !== "refusal") return null;
   return prose.replace(PLAN_REFUSAL_MARKER, "");
 }
 

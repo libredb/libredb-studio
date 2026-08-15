@@ -37,10 +37,10 @@
 
 import { type AgentStatementViolation, inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import { DEFAULT_SQL_GRAMMAR } from "@/lib/sql/grammar";
-import { isQueryFenceTag } from "@/lib/sql/fence-tags";
+import { fenceTagEngine, isQueryFenceTag } from "@/lib/sql/fence-tags";
 import { readSqlSpan, type SqlSpanKind } from "@/lib/sql/spans";
 import { readSqlWord } from "@/lib/sql/words";
-import type { TableSchema } from "@/lib/types";
+import type { DatabaseType, TableSchema } from "@/lib/types";
 
 // ============================================================================
 // Reading the draft out of the prose
@@ -100,7 +100,13 @@ export type PlanStatementDraft =
     }
   | {
       readonly kind: "refusal";
-      /** What the run said was missing — the rest of the marker line, possibly empty. */
+      /**
+       * What the run said was missing: the rest of the marker line, never empty.
+       *
+       * A bare marker is read as `absent` rather than as a refusal with nothing in it
+       * (#396 review) — the convention exists so the run says what it lacks, and a
+       * token that says nothing is not the ending the mode is for.
+       */
       readonly detail: string;
     }
   | { readonly kind: "absent" };
@@ -116,9 +122,21 @@ type FencedBlock = { readonly tag: string | undefined; readonly sql: string };
  * model tagged as something other than a query language is a block it told us is not
  * SQL, which the rail believes and so does this.
  */
-function fencedBlock(tag: string | undefined, lines: readonly string[]): FencedBlock | null {
+function fencedBlock(
+  tag: string | undefined,
+  lines: readonly string[],
+  dialect: DatabaseType | undefined,
+): FencedBlock | null {
   const sql = lines.join("\n").trim();
-  return sql.length === 0 || !isQueryFenceTag(tag) ? null : { tag, sql };
+  if (sql.length === 0 || !isQueryFenceTag(tag)) return null;
+  // A block the model tagged for ANOTHER engine is not this run's deliverable (#396
+  // review). `isQueryFenceTag` answers "is this a query", which is yes for `mysql` on
+  // a PostgreSQL connection — and the recorder stamps the event with the CONNECTION's
+  // dialect, so taking it would file the model's MySQL as PostgreSQL and report the
+  // run as answered. An untagged fence and a bare `sql` name no engine and so cannot
+  // contradict one; only an explicit engine can.
+  const named = fenceTagEngine(tag);
+  return named !== null && dialect !== undefined && named !== dialect ? null : { tag, sql };
 }
 
 /**
@@ -151,7 +169,7 @@ function fencedBlock(tag: string | undefined, lines: readonly string[]): FencedB
  * line for line: a run cut off at its turn ceiling or its deadline ends mid-block,
  * and the half it had written is the half the user came for.
  */
-export function readPlanStatement(text: string): PlanStatementDraft {
+export function readPlanStatement(text: string, dialect?: DatabaseType): PlanStatementDraft {
   let open: { readonly tag: string | undefined; readonly lines: string[] } | null = null;
   let block: FencedBlock | null = null;
   let refusal: string | null = null;
@@ -163,7 +181,7 @@ export function readPlanStatement(text: string): PlanStatementDraft {
       // refusal marker — so this branch comes before every other reading of the line.
       if (marker === null) open.lines.push(line);
       else {
-        block = block ?? fencedBlock(open.tag, open.lines);
+        block = block ?? fencedBlock(open.tag, open.lines, dialect);
         open = null;
       }
       continue;
@@ -175,11 +193,19 @@ export function readPlanStatement(text: string): PlanStatementDraft {
     }
     if (refusal === null) {
       // Only the first: a run that states its refusal twice refused once.
+      //
+      // The marker ALONE is not a refusal (#396 review). The whole point of the
+      // convention is that the run says what is missing and asks for it, and a bare
+      // token says neither — accepting it would let the emptiest possible output pass
+      // the very check that exists to stop a run being scored as answered when it
+      // answered nothing. The bar is substantive text and deliberately not a question
+      // mark: "Tell me which column records the rental price." is a proper request and
+      // carries none.
       const refused = REFUSAL_LINE.exec(line);
-      if (refused !== null) refusal = refused[1].trim();
+      if (refused !== null && refused[1].trim().length > 0) refusal = refused[1].trim();
     }
   }
-  if (open !== null) block = block ?? fencedBlock(open.tag, open.lines);
+  if (open !== null) block = block ?? fencedBlock(open.tag, open.lines, dialect);
 
   if (refusal !== null) return { kind: "refusal", detail: refusal };
   if (block !== null) return { kind: "statement", sql: block.sql, tag: block.tag };
@@ -241,7 +267,10 @@ function readNamePart(sql: string, index: number): { readonly text: string; read
     // The delimiters are one character each in every grammar this reader is given,
     // and a doubled delimiter inside is how all of them spell one literal character.
     const inner = sql.slice(index + 1, span.terminated ? span.end - 1 : span.end);
-    return { text: inner.replace(sql[index] + sql[index], sql[index]), end: span.end };
+    // EVERY doubled delimiter, not the first (#396 review): `replace` with a string
+    // pattern rewrites one occurrence, so `"a""b""c"` came back as `a"b""c` and the
+    // name never matched the inventory — a real table reported as unknown.
+    return { text: inner.replaceAll(sql[index] + sql[index], sql[index]), end: span.end };
   }
   const word = readSqlWord(sql, index);
   // Sliced rather than taken from `word.text`, which is upper-cased for keyword
@@ -290,9 +319,17 @@ function nextInList(sql: string, after: number): number | null {
     i = skipTrivia(sql, alias.end);
     // `t AS x, u`: the alias is one word further on than in `t x, u`.
     if (alias.text === "AS") {
-      const named = readSqlWord(sql, i);
+      // Read with the NAME reader and not the word one (#396 review): an alias may be
+      // quoted, `readSqlWord` sees nothing at the quote, and the cursor stopped short
+      // of the comma — so `FROM film AS "f", payments` ended the list at `film` and an
+      // invented `payments` escaped the unknown-table finding entirely.
+      const named = readNamePart(sql, i);
       if (named !== null) i = skipTrivia(sql, named.end);
     }
+  } else {
+    // A bare quoted alias, `t "x", u`: not a word either, and the same walk-off.
+    const quoted = readNamePart(sql, i);
+    if (quoted !== null) i = skipTrivia(sql, quoted.end);
   }
   return sql[i] === "," ? i + 1 : null;
 }

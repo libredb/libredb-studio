@@ -399,6 +399,28 @@ describe("foldLedgerEntries", () => {
       expect(item?.prose).toBe("nothing here has a price.");
     });
 
+    /*
+      The marker INSIDE a fenced block is that block's text, not the run's refusal —
+      the server's reader ignores everything between fences, so a run like this records
+      no statement AND no refusal, and the verdict scores it `no-statement`. The browser
+      used a fence-blind regex and called it a successful refusal, so the same run was
+      reported two different ways by two different readers. It now asks the server's
+      reader (#396 review).
+
+      Note the block is tagged `text`: that is what makes this survive the ledger check
+      above. A query-tagged block would have recorded a statement and never reached the
+      refusal path at all, which is why the earlier "only consulted when no statement
+      was recorded" argument did not close the hole.
+    */
+    test("a marker inside a fenced block is that block's text, not the run's refusal", () => {
+      const item = closing(
+        ["Here is the shape of a refusal:", "", "```text", "NO STATEMENT: example", "```"].join("\n"),
+      );
+
+      expect(item?.planRefusal).toBeUndefined();
+      expect(item?.headline).not.toBe("No statement drafted");
+    });
+
     test("a lower-cased marker still refuses, matching the server's own reading", () => {
       const item = closing("no statement: I cannot see a customers table.");
 

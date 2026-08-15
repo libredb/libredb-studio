@@ -68,6 +68,45 @@ const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The aliases that name ONE engine, and which one.
+ *
+ * `sql` is deliberately absent: it names no engine, and mapping it to the connection's
+ * would turn a generic tag into a claim the model never made.
+ */
+const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.freeze({
+  postgresql: "postgres",
+  pgsql: "postgres",
+  psql: "postgres",
+  plpgsql: "postgres",
+  mariadb: "mysql",
+  sqlite3: "sqlite",
+  plsql: "oracle",
+  tsql: "mssql",
+  sqlserver: "mssql",
+  mongo: "mongodb",
+  n1ql: "couchbase",
+});
+
+/**
+ * The engine a tag NAMES, or `null` when it names none (#396 review).
+ *
+ * The distinction this draws is the one `isQueryFenceTag` cannot: that predicate asks
+ * whether a block holds a query at all, and answers yes for `mysql` on a PostgreSQL
+ * connection. A reader that then records the block under the connection's own dialect
+ * has relabelled the model's MySQL as PostgreSQL — it says the run drafted something
+ * for this database that the run explicitly wrote for another one, which is the
+ * false-self-description defect this repository keeps finding.
+ *
+ * `null` for an untagged fence and for `sql` is not a gap: neither says which engine,
+ * so neither can contradict the connection. Only an explicit engine can.
+ */
+export const fenceTagEngine = (tag: string | undefined): DatabaseType | null => {
+  if (tag === undefined) return null;
+  if (Object.hasOwn(ENGINE_FENCE_TAGS, tag)) return tag as DatabaseType;
+  return Object.hasOwn(ALIAS_ENGINES, tag) ? ALIAS_ENGINES[tag] : null;
+};
+
+/**
  * Whether a fence holds something the editor should be offered.
  *
  * Fail-closed on an unrecognised tag, the same posture the auto-execute gate takes about

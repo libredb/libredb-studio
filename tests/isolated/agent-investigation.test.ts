@@ -1268,7 +1268,14 @@ describe("planning mode runs no statement of the user's", () => {
           })
         : queryResult({ rows: [], fields: [], rowCount: 0 });
 
-    const fenced = (sql: string): string => ["Here is the statement.", "", "```postgres", sql, "```"].join("\n");
+    /*
+      The tag is a parameter because it is a CLAIM: a block tagged for one engine is not
+      a deliverable on a connection of another, and the reader rejects it rather than
+      relabelling it (#396 review). The default matches the default connection; a test
+      on a different engine passes a tag that does not contradict it.
+    */
+    const fenced = (sql: string, tag = "postgres"): string =>
+      ["Here is the statement.", "", `\`\`\`${tag}`, sql, "```"].join("\n");
 
     /** The drafted-statement entry of a run's ledger, or undefined when it wrote none. */
     const draftedIn = (events: readonly AgentRunEvent[]): AgentRunEvent | undefined =>
@@ -1341,9 +1348,22 @@ describe("planning mode runs no statement of the user's", () => {
       defect class keeps claiming.
     */
     test("a run with no inventory records that it checked nothing, not that nothing was wrong", async () => {
-      const drafted = draftedIn(await planWith(fenced("SELECT * FROM anything"), { type: "mongodb" }));
+      // Tagged `sql`, which names no engine: a `postgres` tag here would be the model
+      // writing for one database while connected to another, and is refused as such.
+      const drafted = draftedIn(await planWith(fenced("SELECT * FROM anything", "sql"), { type: "mongodb" }));
 
       expect(drafted).toMatchObject({ dialect: "mongodb", identifiers: { kind: "no-inventory" } });
+    });
+
+    /*
+      The tag is the model saying which engine it wrote for, and the recorder stamps the
+      event with the CONNECTION's engine. Taking a block that names another one would
+      file the model's MySQL as PostgreSQL and report the run as answered (#396 review).
+    */
+    test("a block tagged for another engine is not recorded as this run's statement", async () => {
+      const events = await planWith(fenced("SELECT * FROM film", "mysql"));
+
+      expect(draftedIn(events)).toBeUndefined();
     });
 
     test("an explicit refusal drafts no statement, and is not recorded as one", async () => {

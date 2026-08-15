@@ -155,8 +155,68 @@ describe("the drafted statement is read out of the closing prose", () => {
     expect(draft).toEqual({ kind: "refusal", detail: "the inventory has no table of payments." });
   });
 
-  test("a refusal marker with nothing after it is still a refusal", () => {
-    expect(readPlanStatement("NO STATEMENT:")).toEqual({ kind: "refusal", detail: "" });
+  /*
+    This test previously asserted the opposite — that a bare marker "is still a
+    refusal" — and that is worth recording rather than quietly replacing. The
+    convention exists so a run that cannot draft says WHAT it lacks and asks for it;
+    a token with nothing after it says neither, and accepting it let the emptiest
+    output a model can produce satisfy the one check built to stop a run being scored
+    as answered when it answered nothing (#396 review).
+  */
+  test("a refusal marker with nothing after it is not a refusal", () => {
+    expect(readPlanStatement("NO STATEMENT:")).toEqual({ kind: "absent" });
+    expect(readPlanStatement("NO STATEMENT:   ")).toEqual({ kind: "absent" });
+  });
+
+  test("a bare marker does not suppress a statement written beside it", () => {
+    // The precedence rule is refusal-beats-block, and a bare marker is not a refusal,
+    // so the block is still this run's deliverable rather than being lost to a token.
+    const draft = readPlanStatement(["NO STATEMENT:", "", "```sql", "SELECT 1;", "```"].join("\n"));
+
+    expect(draft).toEqual({ kind: "statement", sql: "SELECT 1;", tag: "sql" });
+  });
+
+  test("the bar is substance and not a question mark", () => {
+    // A refusal phrased as an imperative request is a proper refusal; requiring "?"
+    // would fail it for its grammar.
+    const draft = readPlanStatement("NO STATEMENT: tell me which column records the rental price.");
+
+    expect(draft).toEqual({ kind: "refusal", detail: "tell me which column records the rental price." });
+  });
+
+  /*
+    The fence tag is the model saying which engine it wrote for. A block tagged for a
+    DIFFERENT engine than the connection is not this run's deliverable: the recorder
+    stamps the event with the connection's own dialect, so taking it would file the
+    model's MySQL as PostgreSQL and report the run as answered (#396 review).
+  */
+  test("a block tagged for another engine is not this run's deliverable", () => {
+    const text = ["```mysql", "SELECT 1;", "```"].join("\n");
+
+    expect(readPlanStatement(text, "postgres")).toEqual({ kind: "absent" });
+    expect(readPlanStatement(text, "mysql")).toEqual({ kind: "statement", sql: "SELECT 1;", tag: "mysql" });
+  });
+
+  test("an alias that names the connection's engine is this run's deliverable", () => {
+    const draft = readPlanStatement(["```postgresql", "SELECT 1;", "```"].join("\n"), "postgres");
+
+    expect(draft).toEqual({ kind: "statement", sql: "SELECT 1;", tag: "postgresql" });
+  });
+
+  test("a generic or absent tag names no engine, so it contradicts none", () => {
+    for (const fence of ["```sql", "```"]) {
+      const draft = readPlanStatement([fence, "SELECT 1;", "```"].join("\n"), "postgres");
+      expect(draft.kind).toBe("statement");
+    }
+  });
+
+  test("a conflicting block does not hide the run's real one", () => {
+    const draft = readPlanStatement(
+      ["```mysql", "SELECT 1;", "```", "", "```postgres", "SELECT 2;", "```"].join("\n"),
+      "postgres",
+    );
+
+    expect(draft).toEqual({ kind: "statement", sql: "SELECT 2;", tag: "postgres" });
   });
 
   /*
@@ -200,6 +260,26 @@ describe("the tables a statement names are read from its own code", () => {
 
   test("a comma-separated FROM list names every table in it", () => {
     expect(readStatementTables("SELECT * FROM film f, actor AS a, category")).toEqual(["film", "actor", "category"]);
+  });
+
+  /*
+    A quoted alias is not a word, so the alias step walked off it and never reached the
+    comma — the list ended at the first table and every later name escaped the
+    unknown-table finding entirely. An invented table hidden behind a quoted alias is
+    precisely what this validation exists to catch (#396 review).
+  */
+  test("a quoted alias does not end the list that follows it", () => {
+    expect(readStatementTables('SELECT * FROM film AS "f", payments')).toEqual(["film", "payments"]);
+    expect(readStatementTables('SELECT * FROM film "f", payments')).toEqual(["film", "payments"]);
+  });
+
+  /*
+    `replace` with a string pattern rewrites ONE occurrence, so a name with two doubled
+    delimiters came back still holding one and never matched the inventory — a real
+    table reported as unknown (#396 review).
+  */
+  test("every doubled delimiter in a quoted name is one literal character", () => {
+    expect(readStatementTables('SELECT * FROM "a""b""c"')).toEqual(['a"b"c']);
   });
 
   test("a name a statement merely mentions in a literal or a comment is not a table it reads", () => {
