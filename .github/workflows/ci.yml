@@ -418,7 +418,28 @@ jobs:
   sonarcloud:
     name: SonarCloud Analysis
     needs: [test]
-    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
+    # Runs only where SONAR_TOKEN can actually be read, because the scanner
+    # fails rather than degrades without it ("Not authorized or project not
+    # found", exit 3) and that red is pure noise on a pull request nobody can
+    # fix. Two populations cannot read it:
+    #
+    #   Forks - a fork pull request gets no secrets at all. Already guarded
+    #   below; this is the check that used to hard-block fork contributors.
+    #
+    #   Dependabot - its branches live in this repository, so the fork guard
+    #   says yes, but GitHub serves runs it triggers from the *Dependabot*
+    #   secret store rather than Actions secrets, and SONAR_TOKEN is not in it.
+    #   Every bot pull request therefore carried a red SonarCloud.
+    #
+    # Gated on the actor, not the branch name, and the distinction is load
+    # bearing: push a commit of your own onto a `dependabot/**` branch and the
+    # run is yours, Actions secrets come back, and the analysis is both
+    # possible and wanted. PR #394 is the worked example - red while Dependabot
+    # owned it, green on the very next human push to the same branch.
+    if: >-
+      github.actor != 'dependabot[bot]'
+      && (github.event.pull_request.head.repo.full_name == github.repository
+        || github.event_name == 'push')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
