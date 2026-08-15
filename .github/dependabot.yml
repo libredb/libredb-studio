@@ -8,15 +8,17 @@
 # a reviewer reads them: what ships versus what does not.
 #
 # Bun is its own ecosystem (`package-ecosystem: "bun"`), NOT part of `npm`. The
-# `npm` ecosystem covers npm and pnpm; its updater looks for package-lock.json,
-# yarn.lock or pnpm-lock.yaml and cannot see `bun.lock` at all. Configuring bun
-# under `npm` is what shipped in #375, and the result was five pull requests that
-# bumped `package.json` alone - every CI job then died in its first step on
-# `error: lockfile had changes, but lockfile is frozen`. The compatibility badge
-# in those pull request bodies said `package-manager=npm_and_yarn`, which was the
-# tell. Only version updates work today; Bun security updates are not implemented
-# upstream, which is why the security side still runs through Trivy and
-# `bun audit`.
+# `npm` ecosystem covers npm, pnpm and Yarn - internally Dependabot calls it
+# `npm_and_yarn` - so its updater looks for package-lock.json, pnpm-lock.yaml or
+# yarn.lock, and cannot see `bun.lock` at all. Configuring bun under `npm` is what
+# shipped in #375, and the result was five pull requests that bumped
+# `package.json` alone - every CI job then died in its first step on
+# `error: lockfile had changes, but lockfile is frozen`. That internal name was
+# the tell twice over: the compatibility badge in those pull request bodies said
+# `package-manager=npm_and_yarn`, and the branches were called
+# `dependabot/npm_and_yarn/...`. Only version updates work today; Bun security
+# updates are not implemented upstream, which is why the security side still runs
+# through Trivy and `bun audit`.
 #
 # CI installs with `bun install --frozen-lockfile` (scripts/ci-install.sh), so a
 # pull request whose `bun.lock` does not match its `package.json` fails loudly
