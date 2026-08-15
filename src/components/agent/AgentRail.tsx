@@ -705,6 +705,19 @@ export function AgentRail({
     `scrollHeight - clientHeight` rather than `scrollHeight`: a browser clamps the
     latter to the same value, and writing what is meant is what lets the position be
     asserted rather than inferred.
+
+    An entry arriving is not the only thing that moves the bottom, and driving the
+    merged branch is what proved it. A finished analysis run sat at `scrollTop: 245` of
+    a 1090-pixel column — 637 pixels short — with every entry already delivered. The
+    container had not grown; it had SHRUNK. Showing the run's answer opens the host's
+    result panel, the rail's own viewport goes from 360 pixels to 208, and the bottom
+    moves out from under a position that was correct when it was set. No entry arrives
+    to say so, so an effect keyed on the entries alone has nothing to re-run on.
+
+    Hence the observer: it is the resize, not the append, that this has to survive, and
+    a `ResizeObserver` sees both — the container's own box and the content growing
+    inside it. The entry effect stays because it is the cheaper path for the common
+    case and it is what the eight tests below pin.
   */
   const timelineScroller = useRef<HTMLDivElement | null>(null);
   const followingTimeline = useRef(true);
@@ -714,11 +727,21 @@ export function AgentRail({
     followingTimeline.current =
       scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= TIMELINE_BOTTOM_SLACK_PX;
   };
-  useEffect(() => {
+  const pinToNewest = () => {
     const scroller = timelineScroller.current;
     if (scroller === null || !followingTimeline.current) return;
     scroller.scrollTop = scroller.scrollHeight - scroller.clientHeight;
-  }, [run.timeline.items]);
+  };
+  useEffect(pinToNewest, [run.timeline.items]);
+  useEffect(() => {
+    const scroller = timelineScroller.current;
+    // `ResizeObserver` is absent in some test environments and in no browser this app
+    // supports, so its absence costs the observer and never the rail.
+    if (scroller === null || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(pinToNewest);
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, []);
 
   const content = (
     <div className="flex flex-col h-full min-h-0 bg-[#0a0a0a] text-zinc-100">

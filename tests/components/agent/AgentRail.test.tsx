@@ -2249,6 +2249,34 @@ describe("AgentRail", () => {
       };
     }
 
+    /*
+      A `ResizeObserver` this environment does not ship, kept only so a test can BE the
+      resize. It records what each instance observes, which is what lets `resizeObserved`
+      fire the callback for one element and nothing else — the rail reads the geometry
+      off the node rather than off the entry, so the entry may be empty.
+    */
+    const observed: { element: Element; notify: () => void }[] = [];
+    class TestResizeObserver {
+      constructor(private readonly callback: () => void) {}
+      observe(element: Element) {
+        observed.push({ element, notify: this.callback });
+      }
+      disconnect() {
+        for (let i = observed.length - 1; i >= 0; i -= 1) {
+          if (observed[i].notify === this.callback) observed.splice(i, 1);
+        }
+      }
+      unobserve() {}
+    }
+    const resizeObserved = (element: Element): void => {
+      for (const entry of observed) if (entry.element === element) entry.notify();
+    };
+
+    beforeEach(() => {
+      observed.length = 0;
+      (globalThis as { ResizeObserver?: unknown }).ResizeObserver = TestResizeObserver;
+    });
+
     /** The container, with a layout happy-dom would otherwise report as zero. */
     function measured(element: HTMLElement): HTMLElement {
       Object.defineProperty(element, "scrollHeight", { value: SCROLL_HEIGHT, configurable: true });
@@ -2321,6 +2349,57 @@ describe("AgentRail", () => {
       await waitFor(() => {
         expect(scroller.scrollTop).toBe(BOTTOM);
       });
+    });
+
+    /*
+      The bottom also moves when nothing arrives (#373 review, found by driving the
+      merged branch).
+
+      A finished analysis run sat at `scrollTop: 245` of a 1090-pixel column, 637 short,
+      with every entry already delivered. The column had not grown — the VIEWPORT had
+      shrunk: showing the run's answer opens the host's result panel and the rail's own
+      height fell from 360 to 208. No entry arrives to say so, so following keyed on the
+      entries alone has nothing to re-run on.
+
+      Driven here the way it happens: the last entry lands, the rail is followed to the
+      bottom, and then the container is re-measured shorter and the observer told, with
+      no further ledger line at all.
+    */
+    test("a viewport that shrinks under the timeline is followed too", async () => {
+      const { stream, scroller } = await startRun();
+      await act(async () => {
+        stream.push(OPENED_LINE);
+      });
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(BOTTOM);
+      });
+
+      const SHRUNK = 208;
+      Object.defineProperty(scroller, "clientHeight", { value: SHRUNK, configurable: true });
+      await act(async () => {
+        resizeObserved(scroller);
+      });
+
+      expect(scroller.scrollTop).toBe(SCROLL_HEIGHT - SHRUNK);
+    });
+
+    test("a reader who scrolled away is not pulled back by a resize either", async () => {
+      const { stream, scroller } = await startRun();
+      await act(async () => {
+        stream.push(OPENED_LINE);
+      });
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(BOTTOM);
+      });
+
+      scroller.scrollTop = 0;
+      fireEvent.scroll(scroller);
+      Object.defineProperty(scroller, "clientHeight", { value: 208, configurable: true });
+      await act(async () => {
+        resizeObserved(scroller);
+      });
+
+      expect(scroller.scrollTop).toBe(0);
     });
   });
 
