@@ -230,6 +230,10 @@ yet. A run's steps appear here as they are recorded."*
 and details are the application's words; anything from the model, the engine or you is rendered as a
 quoted block, because database content is untrusted input (`timeline.ts:25-36`).
 
+**The timeline stays at its newest entry** while you are at the bottom of it, so a run's report does
+not arrive below the fold. Scroll up to read an earlier step and it stops following — the next entry
+leaves you where you are — until you scroll back down.
+
 Two controls appear under an entry only when there is something to act on **and** the shell can act:
 
 - **Apply to editor** — puts a drafted statement into the editor. Always your click, never automatic,

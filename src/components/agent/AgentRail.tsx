@@ -145,6 +145,16 @@ const WORKFLOW_LABELS: Readonly<Record<AgentRunWorkflowType, string>> = {
 /** A run that is over cannot be asked for anything, so nothing is offered for it. */
 const LIVE_STATUSES: ReadonlySet<AgentRunStatus> = new Set<AgentRunStatus>(["queued", "running"]);
 
+/**
+ * How near the bottom still counts as the bottom, for the timeline that follows its
+ * newest entry.
+ *
+ * Not zero: a fractional layout and a partly visible last entry both leave a few
+ * pixels, and a user who dragged to the end should not have to land on the exact
+ * pixel to be followed again.
+ */
+const TIMELINE_BOTTOM_SLACK_PX = 24;
+
 const seconds = (ms: number): string => (ms / 1000).toFixed(1);
 
 /** The meter's own reading of one gauge, in the unit that gauge is bounded in. */
@@ -652,6 +662,38 @@ export function AgentRail({
           // holding nothing is not the same statement as no key at all.
           onShowArtifact({ runId: activeRunId, correlationId, ...(chartSpec === undefined ? {} : { chartSpec }) });
 
+  /*
+    Keeping the newest entry in view (#379).
+
+    Measured on a completed run: the container sat at `scrollTop: 0` with a
+    `scrollHeight` of 760 against a `clientHeight` of 360, so the report — the thing
+    the user was waiting for — was 400 pixels below the fold and had to be dragged to.
+    A timeline nobody can see the end of is a timeline that reports nothing.
+
+    Following is a STATE, not something that happens to every append: a user who
+    scrolled up to read an earlier step must not be yanked back down by the next
+    entry. They leave it by scrolling away and return to it by scrolling back, which
+    is what makes it a rule rather than a fight over the scrollbar. It starts true,
+    because a run that has produced nothing yet is already at its own end.
+
+    `scrollHeight - clientHeight` rather than `scrollHeight`: a browser clamps the
+    latter to the same value, and writing what is meant is what lets the position be
+    asserted rather than inferred.
+  */
+  const timelineScroller = useRef<HTMLDivElement | null>(null);
+  const followingTimeline = useRef(true);
+  const readFollowing = () => {
+    const scroller = timelineScroller.current;
+    if (scroller === null) return; // Unreachable while the container is mounted; the event comes from it.
+    followingTimeline.current =
+      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= TIMELINE_BOTTOM_SLACK_PX;
+  };
+  useEffect(() => {
+    const scroller = timelineScroller.current;
+    if (scroller === null || !followingTimeline.current) return;
+    scroller.scrollTop = scroller.scrollHeight - scroller.clientHeight;
+  }, [run.timeline.items]);
+
   const content = (
     <div className="flex flex-col h-full min-h-0 bg-[#0a0a0a] text-zinc-100">
       <div className="flex items-center justify-between gap-2 px-3 h-9 border-b border-white/5 shrink-0">
@@ -1022,7 +1064,12 @@ export function AgentRail({
         </p>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-auto">
+      <div
+        ref={timelineScroller}
+        onScroll={readFollowing}
+        data-testid="agent-timeline-scroll"
+        className="flex-1 min-h-0 overflow-auto"
+      >
         <ol data-testid="agent-timeline" aria-live="polite" className="p-2 space-y-1">
           {run.timeline.items.length === 0 && (
             <li data-testid="agent-timeline-empty" className="p-2 text-xs text-zinc-600">

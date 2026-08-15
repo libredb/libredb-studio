@@ -2060,6 +2060,124 @@ describe("AgentRail", () => {
   });
 
   /**
+   * The timeline follows the newest entry (#379).
+   *
+   * Measured on a completed run: the scroll container sat at `scrollTop: 0` with a
+   * `scrollHeight` of 760 against a `clientHeight` of 360, so the report — the thing
+   * the user was waiting for — was 400 pixels below the fold and had to be dragged to.
+   *
+   * The trap the other half of this pins: a user who scrolled up to read an earlier
+   * step must not be yanked back down by the next entry. Following is therefore a
+   * state the user leaves by scrolling away and returns to by scrolling back, not a
+   * thing that happens to every append.
+   *
+   * happy-dom lays nothing out, so the geometry is defined on the element: the fold's
+   * own numbers are what the effect reads, and `scrollTop` is an ordinary writable
+   * property there.
+   */
+  describe("the timeline follows the newest entry", () => {
+    const SCROLL_HEIGHT = 760;
+    const CLIENT_HEIGHT = 360;
+    const BOTTOM = SCROLL_HEIGHT - CLIENT_HEIGHT;
+
+    /** A stream that stays open, so entries can arrive one at a time. */
+    function mockOpenStream() {
+      let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+      globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (!url.endsWith("/stream")) return jsonResponse({ runId: "arun_1", status: "queued", mode: "agent" }, 202);
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(open) {
+              controller = open;
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/x-ndjson" } },
+        );
+      }) as unknown as typeof fetch;
+      return {
+        push: (line: string) => {
+          controller?.enqueue(encoder.encode(line));
+        },
+      };
+    }
+
+    /** The container, with a layout happy-dom would otherwise report as zero. */
+    function measured(element: HTMLElement): HTMLElement {
+      Object.defineProperty(element, "scrollHeight", { value: SCROLL_HEIGHT, configurable: true });
+      Object.defineProperty(element, "clientHeight", { value: CLIENT_HEIGHT, configurable: true });
+      return element;
+    }
+
+    async function startRun() {
+      const stream = mockOpenStream();
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+      const scroller = measured(view.getByTestId("agent-timeline-scroll"));
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      return { ...view, stream, scroller };
+    }
+
+    test("an entry that arrives brings the timeline with it", async () => {
+      const { stream, scroller } = await startRun();
+      // Put it back at the top WITHOUT a scroll event, which is what a browser's own
+      // clamp does on an empty timeline: nothing has scrolled, so nothing was left.
+      scroller.scrollTop = 0;
+
+      await act(async () => {
+        stream.push(OPENED_LINE);
+      });
+
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(BOTTOM);
+      });
+    });
+
+    test("a user who scrolled up to read an earlier step is left where they are", async () => {
+      const { stream, scroller } = await startRun();
+      await act(async () => {
+        stream.push(OPENED_LINE);
+      });
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(BOTTOM);
+      });
+
+      scroller.scrollTop = 0;
+      fireEvent.scroll(scroller);
+      await act(async () => {
+        stream.push(STARTED_LINE);
+      });
+
+      expect(scroller.scrollTop).toBe(0);
+    });
+
+    test("scrolling back to the bottom starts the following again", async () => {
+      const { stream, scroller } = await startRun();
+      scroller.scrollTop = 0;
+      fireEvent.scroll(scroller);
+      await act(async () => {
+        stream.push(OPENED_LINE);
+      });
+      expect(scroller.scrollTop).toBe(0);
+
+      // Near the bottom counts as the bottom: a fractional layout and a partly visible
+      // last entry both leave a few pixels, and a user who dragged to the end should
+      // not have to land on the exact pixel to be followed again.
+      scroller.scrollTop = BOTTOM - 4;
+      fireEvent.scroll(scroller);
+      await act(async () => {
+        stream.push(STARTED_LINE);
+      });
+
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(BOTTOM);
+      });
+    });
+  });
+
+  /**
    * Auto-execute (§2.1, §2.5, §2.6 of `docs/AGENT_ANALYST_DESIGN.md`).
    *
    * The control names the bound it gives up and the one it keeps, because "auto-mode"
