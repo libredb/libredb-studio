@@ -2921,7 +2921,7 @@ describe("present_answer records which result IS the answer, and how to show it"
 
       if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
       expect(outcome.answer.handover).toBe("applied");
-      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+      expect(outcome.answer.handoverWarning).toContain("holds no plan for that exact statement");
     });
 
     /**
@@ -2944,7 +2944,7 @@ describe("present_answer records which result IS the answer, and how to show it"
 
       if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
       expect(outcome.answer.handover).toBe("applied");
-      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+      expect(outcome.answer.handoverWarning).toContain("holds no plan for that exact statement");
     });
 
     test("an answer that carries an optimizer hint is not licensed by the unhinted plan", () => {
@@ -2959,7 +2959,7 @@ describe("present_answer records which result IS the answer, and how to show it"
 
       if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
       expect(outcome.answer.handover).toBe("applied");
-      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+      expect(outcome.answer.handoverWarning).toContain("holds no plan for that exact statement");
     });
 
     test("a hinted answer is not licensed by the plan of the identically hinted statement either", () => {
@@ -2977,7 +2977,7 @@ describe("present_answer records which result IS the answer, and how to show it"
 
       if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
       expect(outcome.answer.handover).toBe("applied");
-      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+      expect(outcome.answer.handoverWarning).toContain("holds no plan for that exact statement");
     });
 
     test("an ordinary comment is still trivia, so the join still absorbs one", () => {
@@ -3371,7 +3371,9 @@ describe("present_answer records which result IS the answer, and how to show it"
 
     if (outcome.kind !== "answered") throw new Error("expected an answer");
     expect(outcome.answer.handover).toBe("applied");
-    expect(outcome.answer.handoverWarning).toContain("full table read");
+    // The reading that refused, not a list of the readings that might have (#387
+    // review): this plan scans, and that is what the sentence says.
+    expect(outcome.answer.handoverWarning).toContain("reads the whole table");
     // Never a silent skip: the model is told too, because it is what writes the
     // report the user reads next to the statement sitting there unrun.
     expect(outcome.modelText).toContain("Not run for you");

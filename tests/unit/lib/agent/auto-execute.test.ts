@@ -257,6 +257,77 @@ describe("the eight combinations", () => {
     expect(evaluateAutoExecute(inputFor(true, false, true))).toMatchObject({ condition: "plan-risky" });
   });
 
+  /*
+    A refusal names WHICH reading refused it (#387 review, found while re-driving the
+    demo script).
+
+    `plan-risky` covers five distinguishable readings — no plan held, a step the server
+    could not interpret, a full table read, a plan reporting no cost at all, and a cost
+    over the ceiling — and the sentence used to list three of them as alternatives and
+    leave the reader to guess. The gate already knows which one it was; discarding that
+    and offering a menu is the opposite of what this timeline does everywhere else.
+
+    The cost case carries both numbers, because "expensive" is an opinion and
+    "4320000 against a ceiling of 50000" is a reading someone can argue with.
+  */
+  test("a full table read is named as one", () => {
+    const decision = evaluateAutoExecute({
+      ...passing(),
+      plan: { format: "postgres-json", summary: { access: "full-scan", estimatedCost: 1 } },
+    });
+
+    expect(decision).toMatchObject({ condition: "plan-risky" });
+    expect(decision.handover === "applied" && decision.warning).toContain("reads the whole table");
+  });
+
+  test("a cost over the ceiling is named with both numbers", () => {
+    const over = AGENT_AUTO_EXECUTE_MAX_PLAN_COST + 1;
+    const decision = evaluateAutoExecute({
+      ...passing(),
+      plan: { format: "postgres-json", summary: { access: "index", estimatedCost: over } },
+    });
+
+    const warning = decision.handover === "applied" ? decision.warning : "";
+    expect(warning).toContain(String(over));
+    expect(warning).toContain(String(AGENT_AUTO_EXECUTE_MAX_PLAN_COST));
+  });
+
+  test("a plan the run never obtained is not described as an expensive one", () => {
+    const decision = evaluateAutoExecute({ ...passing(), plan: undefined });
+
+    const warning = decision.handover === "applied" ? decision.warning : "";
+    expect(warning).toContain("no plan");
+    expect(warning).not.toContain("whole table");
+  });
+
+  test("a plan carrying a step the server could not read says so", () => {
+    const decision = evaluateAutoExecute({
+      ...passing(),
+      plan: { format: "sqlite-queryplan", summary: { access: "index", uninterpretedStep: true } },
+    });
+
+    const warning = decision.handover === "applied" ? decision.warning : "";
+    expect(warning).toContain("could not read");
+  });
+
+  test("a plan reporting no cost is not the same refusal as one reporting a large one", () => {
+    const noCost = evaluateAutoExecute({
+      ...passing(),
+      plan: { format: "postgres-json", summary: { access: "index" } },
+    });
+    const overCost = evaluateAutoExecute({
+      ...passing(),
+      plan: {
+        format: "postgres-json",
+        summary: { access: "index", estimatedCost: AGENT_AUTO_EXECUTE_MAX_PLAN_COST + 1 },
+      },
+    });
+
+    const first = noCost.handover === "applied" ? noCost.warning : "";
+    const second = overCost.handover === "applied" ? overCost.warning : "";
+    expect(first).not.toBe(second);
+  });
+
   test("every refusal says why, in the register the app speaks in", () => {
     for (const executed of [true, false]) {
       for (const plan of [true, false]) {

@@ -229,9 +229,20 @@ database's own read-only session.
 ### 17. Gate closed: it says why
 **Agent · Analyze ·** `What is the total revenue per film category? Show it as a chart.`
 
-The plan reads as a full table read, so the gate declines. The statement is placed in the editor
-**unrun**, with the reason in plain words — and the chart is still drawn, because the run had already
-read the answer on its own bounded path. Nothing on screen claims an execution that did not happen.
+The gate declines and names the reading that declined it:
+
+> Not run for you: **the plan reads the whole table rather than reaching its rows through an index**,
+> so this one is yours to run.
+
+The statement is placed in the editor **unrun**, and the chart is still drawn, because the run had
+already read the answer on its own bounded path. Nothing on screen claims an execution that did not
+happen.
+
+Read the sentence out. It names one reading, not a list of the readings that might have applied —
+and there are five it could have named: no plan held for that exact statement, a step the server
+could not interpret, a whole-table read, a plan with no cost in it, or a cost over the ceiling. That
+last one arrives with both numbers in it (*"the engine estimates 4320000, against a ceiling of
+50000"*), which is the version someone can argue with.
 
 This is the case to dwell on. A demo that only shows case 16 is showing a party trick; showing 16 and
 17 together is showing a control.
