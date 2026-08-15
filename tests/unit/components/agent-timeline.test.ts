@@ -1553,6 +1553,35 @@ describe("an answer reads as the app's decision, with the model's caption quoted
     expect(view.items[1]?.applySql).toBe(ANSWER_SQL);
   });
 
+  test("the answer entry says it IS the answer, and no other entry does", () => {
+    // The rail shows an answer as it arrives (#379) and shows no other stored result
+    // on its own, so which entry that is has to be a fact the fold states. Inferring
+    // it from the fields beside it does not work: a table answer with no hand-over
+    // carries what a drafted statement and a stored result carry between them.
+    const view = foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-completed",
+          atMs: 8,
+          stepId: "s1",
+          artifact: {
+            correlationId: "corr-read",
+            runId: "run-1",
+            operationId: "sql.query.read",
+            summary: { rowCount: 2, columnNames: ["id"], elapsedMs: 3 },
+          },
+        },
+      } as AgentLedgerEntry & { kind: "event" }),
+      answer({ kind: "table" }),
+    ]);
+
+    expect(view.items[2]?.isAnswer).toBe(true);
+    expect(view.items[1]?.isAnswer).toBeUndefined();
+    expect(view.items[0]?.isAnswer).toBeUndefined();
+  });
+
   test("a chart answer carries its spec, so the surface is chosen from the record", () => {
     // The spec travels with the entry rather than being asked of the rows later:
     // this is what makes the app's chart the one the RUN composed, and it is the

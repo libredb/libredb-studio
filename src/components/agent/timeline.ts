@@ -82,6 +82,17 @@ export interface AgentTimelineItem {
    */
   readonly chartSpec?: AgentChartSpec;
   /**
+   * Set on the ONE entry that is the run's own answer, and on nothing else.
+   *
+   * A read the run took along the way and the answer it composed both carry an
+   * `artifactId`, and the surface that shows the answer as it arrives (`AgentRail`)
+   * must not tell them apart by which optional fields happen to sit beside it: an
+   * answer with a table presentation and no hand-over carries exactly what a
+   * `statement-drafted` plus `tool-completed` pair carries between them. So the fold
+   * names the entry rather than leaving the browser to infer it.
+   */
+  readonly isAnswer?: true;
+  /**
    * What the RUN already did with this entry's statement, when the entry is an
    * answer the run handed to the editor (§2.3 of `docs/AGENT_ANALYST_DESIGN.md`).
    *
@@ -606,6 +617,9 @@ function describeEvent(
         // still what applies it, and the run itself sent it nowhere.
         applySql: event.sql,
         artifactId: event.artifact.correlationId,
+        // This entry IS the answer, said rather than inferred: the rail shows an
+        // answer as it arrives and shows no other stored result on its own.
+        isAnswer: true,
         // What the run itself did with the statement, for the host to carry out. The
         // gate's outcome is the ledger's, so the rail acts on what was RECORDED
         // rather than deciding again in the browser what may be run.

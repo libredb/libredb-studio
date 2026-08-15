@@ -1905,6 +1905,161 @@ describe("AgentRail", () => {
   });
 
   /**
+   * The answer a run composes is SHOWN, rather than described (#379).
+   *
+   * Driven live against Gemini twice on 2026-08-15: both runs reached
+   * `answer-composed` with `presentation.kind === "chart"` and a valid spec, and
+   * neither chart was ever displayed. By the time a user reads the answer the run has
+   * ended, its rows are released, and "Show result" is gone with them — so the only
+   * control left was "Apply to editor" and the run's entire output was unreachable.
+   *
+   * The delivery is keyed to the ENTRY arriving, not to the fold's status, because the
+   * two are not the same moment: a stream chunk carrying `answer-composed` and
+   * `run-finished` together folds to a finished run in the render that first sees the
+   * answer, and a delivery gated on `LIVE_STATUSES` would then never fire — which is
+   * exactly the state the defect was measured in.
+   */
+  describe("the answer a run composes", () => {
+    const ANSWER_SQL = "SELECT region, SUM(net_total) AS net_total FROM orders GROUP BY region";
+    const CHART_SPEC = { type: "bar", x: "region", y: ["net_total"], caption: "Net total by region." };
+
+    const answerLine = (presentation: unknown, correlationId = "corr_answer"): string =>
+      `${JSON.stringify({
+        kind: "event",
+        event: {
+          kind: "answer-composed",
+          atMs: 1_003,
+          sql: ANSWER_SQL,
+          artifact: {
+            correlationId,
+            runId: "arun_1",
+            operationId: "sql.query.read",
+            summary: { rowCount: 4, columnNames: ["region", "net_total"], elapsedMs: 12 },
+          },
+          presentation,
+          handover: "none",
+        },
+      })}\n`;
+
+    async function runWith(props: Record<string, unknown>) {
+      const view = render(<AgentRail {...DEFAULT_PROPS} {...props} />);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      return view;
+    }
+
+    test("a chart answer is shown as it arrives, on a run that has already ended", async () => {
+      const onShowArtifact = mock(() => {});
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine({ kind: "chart", spec: CHART_SPEC }), FINISHED_LINE]);
+      const { findByTestId } = await runWith({ onShowArtifact });
+
+      await findByTestId("agent-run-status");
+      await waitFor(() => {
+        expect(onShowArtifact).toHaveBeenCalledTimes(1);
+      });
+      // The surface the RUN named travels with the ask, exactly as it does when a user
+      // clicks the control: the rail holds no rows and infers nothing from them.
+      expect(onShowArtifact).toHaveBeenCalledWith({
+        runId: "arun_1",
+        correlationId: "corr_answer",
+        chartSpec: CHART_SPEC,
+      });
+    });
+
+    test("a table answer is shown too, with no chart key on the ask", async () => {
+      const onShowArtifact = mock(() => {});
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine({ kind: "table" }), FINISHED_LINE]);
+      await runWith({ onShowArtifact });
+
+      await waitFor(() => {
+        expect(onShowArtifact).toHaveBeenCalledWith({ runId: "arun_1", correlationId: "corr_answer" });
+      });
+    });
+
+    test("an ordinary stored result is not shown on its own: only the answer is", async () => {
+      // The rail still never opens a result by itself for a read the run took along
+      // the way. What is delivered is the thing the run was asked to produce.
+      const onShowArtifact = mock(() => {});
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, COMPLETED_LINE, DRAFTED_LINE, REPORT_LINE, FINISHED_LINE]);
+      const { findByTestId } = await runWith({ onShowArtifact });
+
+      await findByTestId("agent-report");
+      expect(onShowArtifact).not.toHaveBeenCalled();
+    });
+
+    test("it is delivered once, however many entries follow it", async () => {
+      const onShowArtifact = mock(() => {});
+      mockAgentFetch([
+        OPENED_LINE,
+        STARTED_LINE,
+        answerLine({ kind: "chart", spec: CHART_SPEC }),
+        COMPLETED_LINE,
+        REPORT_LINE,
+        FINISHED_LINE,
+      ]);
+      const { findByTestId } = await runWith({ onShowArtifact });
+
+      await findByTestId("agent-report");
+      expect(onShowArtifact).toHaveBeenCalledTimes(1);
+    });
+
+    test("a second run's answer is delivered too, though the entry ids repeat", async () => {
+      // Entry ids are positional within one run, so the NEXT run reuses them: without
+      // clearing the record on the run id, the second answer would be recognised as
+      // the first one's and silently dropped. The same trap the hand-over solves.
+      const onShowArtifact = mock(() => {});
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine({ kind: "table" }), FINISHED_LINE]);
+      const view = await runWith({ onShowArtifact });
+      await waitFor(() => {
+        expect(onShowArtifact).toHaveBeenCalledTimes(1);
+      });
+
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine({ kind: "table" }, "corr_second"), FINISHED_LINE]);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by month" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+
+      await waitFor(() => {
+        expect(onShowArtifact).toHaveBeenCalledTimes(2);
+      });
+      expect(onShowArtifact).toHaveBeenLastCalledWith({ runId: "arun_1", correlationId: "corr_second" });
+    });
+
+    test("a host with no way to show a result is not told a result was shown", async () => {
+      // Nothing breaks, and nothing is recorded as delivered either: a host that gains
+      // the callback later still gets the answer it never received.
+      const onShowArtifact = mock(() => {});
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine({ kind: "chart", spec: CHART_SPEC }), FINISHED_LINE]);
+      const view = await runWith({});
+      await view.findByTestId("agent-run-status");
+
+      view.rerender(<AgentRail {...DEFAULT_PROPS} onShowArtifact={onShowArtifact} />);
+      await waitFor(() => {
+        expect(onShowArtifact).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    /*
+      Automatic delivery does not remove the manual one: a user who dismissed the panel
+      has to be able to ask for the answer again, and while the run is live its rows are
+      still held.
+    */
+    test("the answer entry still offers its result while the run is live", async () => {
+      const onShowArtifact = mock(() => {});
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine({ kind: "chart", spec: CHART_SPEC })]);
+      const { findAllByTestId } = await runWith({ onShowArtifact });
+
+      const controls = await findAllByTestId("agent-show-result");
+      expect(controls).toHaveLength(1);
+      fireEvent.click(controls[0]);
+      expect(onShowArtifact).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  /**
    * Auto-execute (§2.1, §2.5, §2.6 of `docs/AGENT_ANALYST_DESIGN.md`).
    *
    * The control names the bound it gives up and the one it keeps, because "auto-mode"

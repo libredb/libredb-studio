@@ -245,6 +245,14 @@ Two controls appear under an entry only when there is something to act on **and*
   rows are released when the run ends, so a result can be shown only while its run is still
   going."* (`AgentRail.tsx:730-735`).
 
+**The answer itself is shown without being asked for.** When an `Answer composed` entry arrives, the
+rail opens that result immediately — as the chart the run composed, or as a table — because a run
+that answers with a picture and shows you a sentence saying it drew one has not answered. It happens
+once, at the moment the entry arrives, while the rows still exist; nothing is kept any longer than
+before, and while the run is live the entry's own **Show result** still brings the answer back if you
+dismiss the panel. This is not the rail acting on your behalf in the sense the rule above forbids:
+nothing is executed, and the rows are ones the run already read on its own bounded read-only path.
+
 At the bottom, once a report exists, a **Report** section lists each claim as the model's own quoted
 prose with its citations under it — `Artifact <id>` with the row count and the statement that
 produced it, or `Schema snapshot <fingerprint>` with the table count. A citation the rail cannot

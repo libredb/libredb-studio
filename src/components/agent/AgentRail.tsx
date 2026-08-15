@@ -518,6 +518,60 @@ export function AgentRail({
   }, [run.runId, run.timeline.items, onApplyStatement, onRunStatement, connectionId]);
 
   /*
+    Showing the answer the run composed (#379).
+
+    A `data-analysis` run exists to answer with a result, and often that result is a
+    chart. Driven live twice on 2026-08-15, both runs reached `answer-composed` with a
+    valid chart spec and NEITHER chart was ever displayed: by the time a user reads the
+    answer the run has ended, its rows are released with it, and the control that would
+    have opened them is gone. The product composed the answer and showed the user a
+    sentence saying it had.
+
+    So the answer is delivered here, at the moment its entry arrives, while the rows
+    the run read still exist. Once per entry and cleared on the run id, which is the
+    hand-over's own pattern above and for the same two reasons: a fold runs on every
+    appended line, and entry ids are positional within one run, so the next run reuses
+    them.
+
+    **This is not the rail applying something on the user's behalf.** The standing rule
+    beside `HydrationControls` is that a statement the model drafted goes into the
+    editor only by the user's decision — that is about EXECUTING untrusted SQL. Nothing
+    is executed here: the rows are ones this run already read on its own bounded
+    read-only path, and showing them is the run delivering what it was asked for.
+
+    It is keyed to the ENTRY, deliberately not to `showArtifact` above, which is
+    withheld once the run is no longer live. A stream chunk can carry `answer-composed`
+    and `run-finished` together, and the fold then reports a finished run in the very
+    render that first sees the answer — so a delivery gated on the status would never
+    fire in exactly the case that was measured. Nothing about retention changes: the
+    rows are not kept a moment longer, they are shown while they are there.
+
+    A host with no `onShowArtifact` is left alone and nothing is recorded as delivered,
+    so nothing claims a result was shown; a host that gains the callback later still
+    gets the answer.
+  */
+  const shownAnswerRunId = useRef<string | null>(null);
+  const shownAnswers = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (shownAnswerRunId.current !== run.runId) {
+      shownAnswerRunId.current = run.runId;
+      shownAnswers.current.clear();
+    }
+    if (onShowArtifact === undefined || run.runId === null) return;
+    for (const item of run.timeline.items) {
+      if (item.isAnswer !== true || item.artifactId === undefined || shownAnswers.current.has(item.id)) continue;
+      shownAnswers.current.add(item.id);
+      // The chart the RUN recorded rides along, and the key is absent rather than
+      // undefined when there is none — the same record the manual ask carries.
+      onShowArtifact({
+        runId: run.runId,
+        correlationId: item.artifactId,
+        ...(item.chartSpec === undefined ? {} : { chartSpec: item.chartSpec }),
+      });
+    }
+  }, [run.runId, run.timeline.items, onShowArtifact]);
+
+  /*
     Stopping is the only control offered, and the two that are absent are absent
     because the service cannot honour them rather than because they are unfinished:
 
