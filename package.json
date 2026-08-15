@@ -195,7 +195,7 @@
     "react-dom": "^19.2.8",
     "react-hook-form": "^7.85.0",
     "react-resizable-panels": "^3.0.6",
-    "recharts": "^2.15.4",
+    "recharts": "^3.10.1",
     "sonner": "^2.0.8",
     "sql-formatter": "^15.8.2",
     "ssh2": "^1.17.0",
