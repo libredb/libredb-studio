@@ -2,16 +2,25 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { Bot, Loader2, PencilLine, Play, Square, TableProperties } from "lucide-react";
+import { renderProse } from "@/components/rich-text";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
 import { describeAgentCapability } from "@/lib/agent/capability-labels";
 import {
-  AGENT_EXECUTION_POLICY,
-  AGENT_MAX_MODEL_TURNS,
+  AGENT_HANDOVER_BUDGET,
   AGENT_MAX_OBJECTIVE_LENGTH,
-  AGENT_RUN_DEADLINE_MS,
+  AGENT_REPORT_RESERVE_MS,
+  AGENT_REPORT_RESERVE_TURNS,
+  AGENT_WORKFLOW_BUDGETS,
 } from "@/lib/agent/execution-policy";
-import type { AgentRunMode, AgentRunStatus, AgentRunWorkflowType } from "@/lib/agent/types";
+import {
+  AGENT_WORKFLOW_PRESENTS_ANSWER,
+  type AgentChartSpec,
+  type AgentRunMode,
+  type AgentRunStatus,
+  type AgentRunWorkflowType,
+} from "@/lib/agent/types";
+import type { DatabaseType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { type AgentBudgetGauge, type AgentTimelineTone, describeFailureReason } from "./timeline";
 import type { AgentPrefillRequest } from "./use-agent-prefill";
@@ -63,11 +72,46 @@ export interface AgentRailProps {
    */
   readonly onApplyStatement?: (sql: string) => void;
   /**
+   * The engine this run's connection speaks, or null when nothing is selected. Read
+   * for one sentence only: what a long read costs is not the same fact on every
+   * engine, and SQLite's is the one a user consents to when they tick auto-execute.
+   */
+  readonly connectionType?: DatabaseType | null;
+  /**
+   * Puts a statement the RUN handed over into the host's editor and runs it there,
+   * at the editor's own default row limit (§2.1). Distinct from `onApplyStatement`
+   * because the two are different acts: that one is the user taking a statement, this
+   * one is the run delivering the answer it was told to deliver.
+   *
+   * A host that omits it is not offered the auto-execute checkbox at all, and a run
+   * this rail opens can then never record a hand-over. The alternative — offering the
+   * promise and falling back to `onApplyStatement` — placed the statement unrun while
+   * the timeline entry said it had run on the user's connection, which is the one
+   * thing this surface may not do (#373). Nothing is lost by the narrowing: every
+   * answer entry still offers its statement through `applySql`.
+   *
+   * It takes the RUN as well as the statement, and the run is the operative argument
+   * (#373 review). The host does not execute the text it is handed: it asks
+   * `POST /api/agent/runs/[runId]/handover`, which reads the statement off that run's
+   * ledger and runs it under the engine's own read-only session. The `sql` is for the
+   * editor to SHOW — it is what the user reads while the answer arrives.
+   */
+  readonly onRunStatement?: (sql: string, runId: string) => void;
+  /**
    * Asks the host to show a result the run stored. The rail hands over identifiers
    * and nothing else: the rows are fetched and rendered by the surface that already
    * renders rows, so this component instantiates no grid of its own.
+   *
+   * `chartSpec` rides along for the one entry that has one — an answer the run
+   * composed as a chart — so the host opens the surface the RUN named. It is the
+   * ledger's own record, carried rather than derived: the rail holds no rows and
+   * infers nothing from them.
    */
-  readonly onShowArtifact?: (reference: { readonly runId: string; readonly correlationId: string }) => void;
+  readonly onShowArtifact?: (reference: {
+    readonly runId: string;
+    readonly correlationId: string;
+    readonly chartSpec?: AgentChartSpec;
+  }) => void;
 }
 
 const TONE_CLASSES: Readonly<Record<AgentTimelineTone, string>> = {
@@ -96,10 +140,21 @@ const WORKFLOW_LABELS: Readonly<Record<AgentRunWorkflowType, string>> = {
   "query-optimization": "Optimize",
   "database-assessment": "Assess",
   operations: "Operate",
+  "data-analysis": "Analyze",
 };
 
 /** A run that is over cannot be asked for anything, so nothing is offered for it. */
 const LIVE_STATUSES: ReadonlySet<AgentRunStatus> = new Set<AgentRunStatus>(["queued", "running"]);
+
+/**
+ * How near the bottom still counts as the bottom, for the timeline that follows its
+ * newest entry.
+ *
+ * Not zero: a fractional layout and a partly visible last entry both leave a few
+ * pixels, and a user who dragged to the end should not have to land on the exact
+ * pixel to be followed again.
+ */
+const TIMELINE_BOTTOM_SLACK_PX = 24;
 
 const seconds = (ms: number): string => (ms / 1000).toFixed(1);
 
@@ -158,15 +213,18 @@ function refusalActionText(planModeOffered: boolean, streamingDisproved: boolean
 function HydrationControls({
   sql,
   artifactId,
+  chartSpec,
   testIdPrefix,
   onApply,
   onShow,
 }: {
   readonly sql: string | undefined;
   readonly artifactId: string | undefined;
+  /** Set only on an answer the run composed as a chart; undefined everywhere else. */
+  readonly chartSpec: AgentChartSpec | undefined;
   readonly testIdPrefix: string;
   readonly onApply: ((sql: string) => void) | undefined;
-  readonly onShow: ((correlationId: string) => void) | undefined;
+  readonly onShow: ((correlationId: string, chartSpec: AgentChartSpec | undefined) => void) | undefined;
 }) {
   const canApply = sql !== undefined && onApply !== undefined;
   const canShow = artifactId !== undefined && onShow !== undefined;
@@ -189,7 +247,7 @@ function HydrationControls({
         <button
           type="button"
           data-testid={`${testIdPrefix}show-result`}
-          onClick={() => onShow(artifactId)}
+          onClick={() => onShow(artifactId, chartSpec)}
           className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] text-fg-tertiary hover:bg-fill hover:text-fg transition-colors"
         >
           <TableProperties strokeWidth={1.5} className="w-3 h-3" />
@@ -203,18 +261,55 @@ function HydrationControls({
 export function AgentRail({
   connectionId,
   connectionName,
+  connectionType = null,
   sheetOpen = false,
   onSheetOpenChange,
   onApplyStatement,
+  onRunStatement,
   onShowArtifact,
   prefill = null,
 }: AgentRailProps) {
   const [mode, setMode] = useState<AgentRunMode>("planning");
   const [workflowType, setWorkflowType] = useState<AgentRunWorkflowType>("investigation");
   const [objective, setObjective] = useState("");
+  /**
+   * Whether the run may also run its answer in the editor. Sent at start and never
+   * afterwards: the server decides it from the request that OPENS the run and no
+   * later request may widen it, so a control that moved mid-run would be offering a
+   * change nothing would honour.
+   */
+  const [autoExecute, setAutoExecute] = useState(false);
   /** An ask that arrived while the user was typing, waiting for them to take it. */
   const [offeredObjective, setOfferedObjective] = useState<string | null>(null);
   const run = useAgentRun();
+
+  /*
+    Which ceilings the meter states: the ones the server is enforcing on the run the
+    meter is reporting, folded out of that run's own header. NOT the workflow the
+    buttons above show — the picker stays live while a run is in flight, and a user
+    who clicks another workflow mid-run must not be shown figures nothing is
+    enforcing. It is also the same source the gauges beside this line are built from,
+    so the two halves of the meter cannot disagree; before any run exists both read
+    the default the fold takes for a ledger with no header.
+  */
+  const meterBudget = AGENT_WORKFLOW_BUDGETS[run.timeline.workflowType];
+
+  /*
+    The ceilings a run STARTED NOW would carry, which is what the auto-execute copy
+    is about — the workflow the buttons show, not the one a finished run had. The
+    meter above reads the other one for the opposite reason, and the two are kept
+    apart here rather than shared.
+  */
+  const selectedBudget = AGENT_WORKFLOW_BUDGETS[workflowType];
+
+  /*
+    The terms of the checkbox below, as ONE sentence-run rather than as JSX prose:
+    the figures are interpolated and a formatter is free to reflow JSX text around
+    them, which is how "500-row limit" becomes "500 -row limit" without anyone
+    touching the copy. This is the sentence a user consents to, so it is written and
+    rendered as written.
+  */
+  const autoExecuteTerms = `The run always produces its answer on its own read-only path, bounded to ${selectedBudget.policy.budgets.maxResultRows} rows and ${selectedBudget.policy.budgets.statementTimeoutMs / 1000} seconds. Tick this and it will also put that statement in your editor and run it there — on the connection the run was opened on, at the editor's ${AGENT_HANDOVER_BUDGET.maxResultRows}-row limit and with no time limit. It is the same database-enforced read-only session either way, so writes and DDL are refused by the engine rather than by reading the statement. Statements whose plan reads as expensive, or which the run measured as slow, are put in the editor without being run.`;
 
   /*
     The sheet is a mobile presentation, and the breakpoint has to be read rather than
@@ -304,13 +399,213 @@ export function AgentRail({
 
   const canStart = connectionId !== null && objective.trim().length > 0 && !run.isBusy;
 
+  /*
+    Whether a hand-over is a thing this rail may promise at all — three conditions, and
+    the checkbox, the start request and the delivery below all read this one value.
+
+    Agent mode and a workflow that is offered `present_answer` are the server's own
+    rule: a run with no such tool has nothing to hand over, and the route refuses the
+    setting outright.
+
+    `onRunStatement` is the HOST's half, and it was missing (#373 review). It is an
+    optional public prop, so an embedding host may have no way to run a statement at
+    all — and the rail used to offer the checkbox anyway and fall back to
+    `onApplyStatement`, which placed the statement unrun while the timeline entry told
+    the user it had run on their connection. A control that promises what this host
+    cannot perform is not offered, which is the rule the stop control and the hydration
+    affordances already follow.
+  */
+  const canHandOver = mode === "agent" && AGENT_WORKFLOW_PRESENTS_ANSWER[workflowType] && onRunStatement !== undefined;
+
+  /**
+   * The connection this run was opened on, kept for as long as the rail follows it.
+   *
+   * `connectionId` is the connection the HOST is on NOW: it is resolved from the
+   * active connection on every render, so it moves the moment the user selects
+   * another database. The run's own connection does not move — it is persisted on the
+   * run record, and every row the run read came from it. The two are the same value
+   * until a user switches mid-run, and telling them apart is the whole of the check
+   * below.
+   */
+  const openedOn = useRef<{ readonly id: string; readonly name: string | null } | null>(null);
+
   const handleStart = () => {
     if (connectionId === null || !canStart) return;
+    openedOn.current = { id: connectionId, name: connectionName };
     // Both axes, always. They are independent (#325): a planning run of a query
     // optimization is an ordinary thing to ask for, and sending the workflow only in
     // agent mode made the rail unable to express one.
-    void run.start({ mode, workflowType, objective: objective.trim(), connectionId });
+    // The setting is sent only where it can be honoured, and the checkbox's own
+    // state is not the authority: a user who ticks it on Analyze and then switches to
+    // Investigate would otherwise send `true` on a run that cannot present an answer,
+    // which the route now refuses outright — a rejected start rather than the silent
+    // no-op the hidden control implies. The same applies to a host that loses its
+    // runner between the tick and the start. Resolved from the same value the control
+    // is rendered from, so what is offered and what is sent are one decision.
+    const handsOver = canHandOver && autoExecute;
+    void run.start({ mode, workflowType, autoExecute: handsOver, objective: objective.trim(), connectionId });
   };
+
+  /*
+    Emptying the box for the next question (#373 review).
+
+    Measured: after a run completed the objective still held the previous question, so
+    asking a second one meant selecting the old text and deleting it first.
+
+    It is cleared when the SERVER HAS OPENED the run — the moment a run id exists —
+    rather than on the click. A start can be refused (a model the capability gate
+    turned down, a connection that no longer resolves, a request that never arrived),
+    and a surface that ate the user's sentence on the way to a refusal would make them
+    type it again to retry. `run.runId` is null until the server answered, so a start
+    that did not happen costs nothing.
+
+    Nothing is lost by one that did, either: the objective is on the run's own header
+    and the timeline's first entry quotes it, so the question stays readable beside the
+    run answering it.
+
+    The dependency is the run id alone, which is what makes this fire once per run:
+    `start` sets it to null and then to the id the server named, so even a server that
+    reused an id still moves the value.
+  */
+  useEffect(() => {
+    if (run.runId !== null) setObjective("");
+  }, [run.runId]);
+
+  /**
+   * A run this rail is still following. The setting above is frozen for exactly as
+   * long as this holds — the same window the stop control is offered in, because both
+   * are asking about a run the server still has open.
+   */
+  const runOpen = run.runId !== null && LIVE_STATUSES.has(run.timeline.status);
+
+  /*
+    Carrying out what the RUN decided (§2.1, §2.3).
+
+    The three-condition gate is the server's and its outcome is on the ledger, so
+    nothing here weighs a statement again: the browser reads `handover` and does what
+    it says. Once per entry, tracked by entry id — a fold runs on every appended line
+    and re-delivering the same answer would run the user's database once per line
+    after it.
+
+    The ids are positional within one run (`entry-0`, `entry-1`, …), so they are
+    reused by the NEXT run and the record is cleared when the run id changes. Without
+    that, a second run's answer would be recognised as the first one's and silently
+    dropped.
+  */
+  const handedOverRunId = useRef<string | null>(null);
+  const handedOver = useRef<Set<string>>(new Set());
+  /**
+   * The entries whose hand-over this surface refused to perform, so the entry that
+   * claims the execution can be contradicted where it is written.
+   *
+   * Ids rather than a single flag: the fact is about ONE entry, and a notice detached
+   * from it would be a sentence a reader has to match to a line themselves.
+   */
+  const [declinedHandovers, setDeclinedHandovers] = useState<
+    readonly { readonly id: string; readonly openedOn: string | null }[]
+  >([]);
+  useEffect(() => {
+    if (handedOverRunId.current !== run.runId) {
+      handedOverRunId.current = run.runId;
+      handedOver.current.clear();
+      setDeclinedHandovers([]);
+    }
+    for (const item of run.timeline.items) {
+      if (item.handover === undefined || handedOver.current.has(item.id)) continue;
+      handedOver.current.add(item.id);
+      /*
+        A hand-over is still declined when the editor has moved, and the REASON is
+        narrower than it was (#373 review, second round).
+
+        It used to be that the host resolved the execution from its own active
+        connection, so a user who switched databases mid-run got the approved
+        statement run — unbounded — against a database the run never read. That is no
+        longer possible: the replay is served by
+        `POST /api/agent/runs/[runId]/handover`, which resolves the run's OWN
+        persisted connection server-side, so the statement can only ever reach the
+        database that approved it.
+
+        What remains is a question about what the user is shown. The result lands in
+        the editor tab, and the tab belongs to whatever connection the user is on now;
+        delivering another database's rows into it would present them as this
+        connection's answer. So it is declined, and said, beside the entry that claims
+        otherwise. The statement is not lost — the entry carries `applySql`, and
+        taking it is the user's own action, on the connection they chose.
+      */
+      if (item.handover.kind === "auto-executed" && connectionId !== openedOn.current?.id) {
+        setDeclinedHandovers((declined) => [...declined, { id: item.id, openedOn: openedOn.current?.name ?? null }]);
+        continue;
+      }
+      // An `auto-executed` entry says the statement RAN, so it is delivered to the
+      // runner or to nothing: applying it silently instead would leave that sentence
+      // on the timeline about something that did not happen. This rail no longer
+      // opens such a run without a runner (`canHandOver`), and the statement is never
+      // lost either way — the entry carries `applySql`, so the control beside it
+      // still offers it as the user's own action.
+      //
+      // The run id goes with it because the host does not execute the text: it names
+      // the run, and the server reads the statement off that run's ledger. A timeline
+      // item carrying a hand-over exists only on a run this rail is following, so the
+      // narrowing below never falls through — it is the type system's question, not a
+      // second condition.
+      if (item.handover.kind !== "auto-executed") onApplyStatement?.(item.handover.sql);
+      else if (run.runId !== null) onRunStatement?.(item.handover.sql, run.runId);
+    }
+  }, [run.runId, run.timeline.items, onApplyStatement, onRunStatement, connectionId]);
+
+  /*
+    Showing the answer the run composed (#373 review).
+
+    A `data-analysis` run exists to answer with a result, and often that result is a
+    chart. Driven live twice on 2026-08-15, both runs reached `answer-composed` with a
+    valid chart spec and NEITHER chart was ever displayed: by the time a user reads the
+    answer the run has ended, its rows are released with it, and the control that would
+    have opened them is gone. The product composed the answer and showed the user a
+    sentence saying it had.
+
+    So the answer is delivered here, at the moment its entry arrives, while the rows
+    the run read still exist. Once per entry and cleared on the run id, which is the
+    hand-over's own pattern above and for the same two reasons: a fold runs on every
+    appended line, and entry ids are positional within one run, so the next run reuses
+    them.
+
+    **This is not the rail applying something on the user's behalf.** The standing rule
+    beside `HydrationControls` is that a statement the model drafted goes into the
+    editor only by the user's decision — that is about EXECUTING untrusted SQL. Nothing
+    is executed here: the rows are ones this run already read on its own bounded
+    read-only path, and showing them is the run delivering what it was asked for.
+
+    It is keyed to the ENTRY, deliberately not to `showArtifact` above, which is
+    withheld once the run is no longer live. A stream chunk can carry `answer-composed`
+    and `run-finished` together, and the fold then reports a finished run in the very
+    render that first sees the answer — so a delivery gated on the status would never
+    fire in exactly the case that was measured. Nothing about retention changes: the
+    rows are not kept a moment longer, they are shown while they are there.
+
+    A host with no `onShowArtifact` is left alone and nothing is recorded as delivered,
+    so nothing claims a result was shown; a host that gains the callback later still
+    gets the answer.
+  */
+  const shownAnswerRunId = useRef<string | null>(null);
+  const shownAnswers = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (shownAnswerRunId.current !== run.runId) {
+      shownAnswerRunId.current = run.runId;
+      shownAnswers.current.clear();
+    }
+    if (onShowArtifact === undefined || run.runId === null) return;
+    for (const item of run.timeline.items) {
+      if (item.isAnswer !== true || item.artifactId === undefined || shownAnswers.current.has(item.id)) continue;
+      shownAnswers.current.add(item.id);
+      // The chart the RUN recorded rides along, and the key is absent rather than
+      // undefined when there is none — the same record the manual ask carries.
+      onShowArtifact({
+        runId: run.runId,
+        correlationId: item.artifactId,
+        ...(item.chartSpec === undefined ? {} : { chartSpec: item.chartSpec }),
+      });
+    }
+  }, [run.runId, run.timeline.items, onShowArtifact]);
 
   /*
     Stopping is the only control offered, and the two that are absent are absent
@@ -387,7 +682,43 @@ export function AgentRail({
   const showArtifact =
     onShowArtifact === undefined || activeRunId === null || !LIVE_STATUSES.has(run.timeline.status)
       ? undefined
-      : (correlationId: string) => onShowArtifact({ runId: activeRunId, correlationId });
+      : (correlationId: string, chartSpec: AgentChartSpec | undefined) =>
+          // The key is absent rather than undefined when there is no chart: the
+          // reference is read as a record of what the run said, and a present key
+          // holding nothing is not the same statement as no key at all.
+          onShowArtifact({ runId: activeRunId, correlationId, ...(chartSpec === undefined ? {} : { chartSpec }) });
+
+  /*
+    Keeping the newest entry in view (#373 review).
+
+    Measured on a completed run: the container sat at `scrollTop: 0` with a
+    `scrollHeight` of 760 against a `clientHeight` of 360, so the report — the thing
+    the user was waiting for — was 400 pixels below the fold and had to be dragged to.
+    A timeline nobody can see the end of is a timeline that reports nothing.
+
+    Following is a STATE, not something that happens to every append: a user who
+    scrolled up to read an earlier step must not be yanked back down by the next
+    entry. They leave it by scrolling away and return to it by scrolling back, which
+    is what makes it a rule rather than a fight over the scrollbar. It starts true,
+    because a run that has produced nothing yet is already at its own end.
+
+    `scrollHeight - clientHeight` rather than `scrollHeight`: a browser clamps the
+    latter to the same value, and writing what is meant is what lets the position be
+    asserted rather than inferred.
+  */
+  const timelineScroller = useRef<HTMLDivElement | null>(null);
+  const followingTimeline = useRef(true);
+  const readFollowing = () => {
+    const scroller = timelineScroller.current;
+    if (scroller === null) return; // Unreachable while the container is mounted; the event comes from it.
+    followingTimeline.current =
+      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= TIMELINE_BOTTOM_SLACK_PX;
+  };
+  useEffect(() => {
+    const scroller = timelineScroller.current;
+    if (scroller === null || !followingTimeline.current) return;
+    scroller.scrollTop = scroller.scrollHeight - scroller.clientHeight;
+  }, [run.timeline.items]);
 
   const content = (
     <div className="flex flex-col h-full min-h-0 bg-surface text-fg">
@@ -488,6 +819,76 @@ export function AgentRail({
               Replace
             </button>
           </p>
+        )}
+
+        {/*
+          Auto-execute (§2.6). The copy is the control: "auto-mode" transfers no
+          responsibility because it names no bound, so this one names all three —
+          the bound the run keeps for its own read, the bound the editor keeps (500
+          rows), and the bound being given up (the statement timeout). It also says
+          what the run does INSTEAD when its gate declines, because a user who finds
+          the statement sitting unrun has to be able to read that as the feature
+          working rather than as the feature failing.
+
+          Every figure is read from the same constants the enforcement reads — the
+          workflow's own policy for the run's side, `AGENT_HANDOVER_BUDGET` for the
+          replay's — so a ceiling changed in one place cannot leave a promise here
+          that nothing keeps.
+
+          The sentence about writes was the #373 review's security finding and is now
+          a statement about the engine rather than about a text check: the replay is
+          served by `POST /api/agent/runs/[runId]/handover`, which runs it through
+          `queryReadOnly` under the same `readOnly: true` open the run itself used. It
+          used to reach the ordinary editor route, where a `SELECT` calling a VOLATILE
+          function that writes would have succeeded — so "writes and DDL are refused
+          either way" was not true of the half this checkbox buys.
+        */}
+        {/*
+          Offered ONLY where the run could hand something over, and where this host
+          could carry the hand-over out — `canHandOver`, which is also what the start
+          request reads, so the control, the request and the prompt cannot disagree.
+          It used to render for all five workflows in both modes, which promised a
+          hand-over four of them have no tool to perform and had the server tell those
+          models to inspect the plan of an answer they could not present.
+        */}
+        {canHandOver && (
+          <div className="mt-2">
+            <label htmlFor="agent-auto-execute" className="flex items-start gap-2 cursor-pointer">
+              <input
+                id="agent-auto-execute"
+                data-testid="agent-auto-execute"
+                type="checkbox"
+                checked={autoExecute}
+                disabled={runOpen}
+                onChange={(e) => setAutoExecute(e.target.checked)}
+                className="mt-0.5 rounded border-edge bg-panel disabled:opacity-40"
+              />
+              <span data-testid="agent-auto-execute-label" className="text-xs text-fg-secondary">
+                Also run the final answer in my editor
+              </span>
+            </label>
+            <p data-testid="agent-auto-execute-terms" className="mt-1 text-[0.625rem] text-fg-muted">
+              {autoExecuteTerms}
+            </p>
+            {/*
+            One more sentence where the engine changes what a long read costs, in the
+            words the budget meter already uses for the same fact: SQLite does not
+            preempt a statement over its timeout, so the editor's missing time limit
+            is a different promise there than it is on PostgreSQL.
+          */}
+            {connectionType === "sqlite" && (
+              <p data-testid="agent-auto-execute-sqlite" className="mt-1 text-[0.625rem] text-amber-400/70">
+                On SQLite a read is not interrupted when it runs long: it blocks other writers and this application
+                until it finishes.
+              </p>
+            )}
+            {runOpen && (
+              <p data-testid="agent-auto-execute-frozen" className="mt-1 text-[0.625rem] text-fg-subtle">
+                This is decided when the run is opened and stays what it was: a later request cannot widen a run the
+                server already holds.
+              </p>
+            )}
+          </div>
         )}
 
         {connectionId === null && (
@@ -665,8 +1066,19 @@ export function AgentRail({
           </div>
         ))}
         <p data-testid="agent-budget-limits" className="pt-0.5 text-[0.625rem] text-fg-subtle">
-          Each statement gets {seconds(AGENT_EXECUTION_POLICY.budgets.statementTimeoutMs)} s, each drive{" "}
-          {(AGENT_RUN_DEADLINE_MS / 60_000).toFixed(1)} min and at most {AGENT_MAX_MODEL_TURNS} model turns.
+          Each statement gets {seconds(meterBudget.policy.budgets.statementTimeoutMs)} s, each drive{" "}
+          {(meterBudget.runDeadlineMs / 60_000).toFixed(1)} min and at most {meterBudget.maxModelTurns} model turns.
+        </p>
+        {/*
+          The reserve, stated where the ceilings are. Without it a run that ends short
+          of every figure above reads as one that gave up; it was asked to stop, and
+          the report it composed is the point of asking.
+        */}
+        <p data-testid="agent-budget-reserve" className="text-[0.625rem] text-fg-subtle">
+          The last {AGENT_REPORT_RESERVE_TURNS} model turns and the last {seconds(AGENT_REPORT_RESERVE_MS)} s are kept
+          back for the report: whichever it reaches first, the run is asked once to stop and report what it has
+          established. So a run that ends short of these figures was asked to stop rather than having given up, and its
+          claims still cite what it read. A plan run is never asked, having no report to compose.
         </p>
         <p data-testid="agent-budget-caveats" className="text-[0.625rem] text-fg-subtle">
           Every ceiling is per drive, so a run resumed after a restart starts each of them again and these totals can
@@ -678,7 +1090,12 @@ export function AgentRail({
         </p>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-auto">
+      <div
+        ref={timelineScroller}
+        onScroll={readFollowing}
+        data-testid="agent-timeline-scroll"
+        className="flex-1 min-h-0 overflow-auto"
+      >
         <ol data-testid="agent-timeline" aria-live="polite" className="p-2 space-y-1">
           {run.timeline.items.length === 0 && (
             <li data-testid="agent-timeline-empty" className="p-2 text-xs text-fg-subtle">
@@ -693,6 +1110,50 @@ export function AgentRail({
               </div>
               {item.detail !== undefined && <p className="mt-0.5 pl-3.5 text-xs text-fg-muted">{item.detail}</p>}
               {/*
+                Prose the MODEL wrote, rendered with the structure it wrote it in
+                (#373 review). Measured in plan mode against a live model: the closing
+                statement arrived as markdown and reached the user as hash marks and
+                asterisks, and plan mode's whole output is this one block.
+
+                Inside its own bordered block, which is the half that has to survive
+                being readable: `renderProse` builds React nodes and reaches no HTML
+                parser, so nothing here can execute — but a heading a model wrote must
+                still not read as a heading the application wrote, and the rule that
+                the app's words and everyone else's never share a line is what the
+                border keeps true.
+              */}
+              {item.prose !== undefined && (
+                <div
+                  data-testid="agent-prose"
+                  className="mt-1 ml-3.5 space-y-1 border-l border-hairline-strong pl-2 text-fg-tertiary"
+                >
+                  {renderProse(item.prose)}
+                </div>
+              )}
+              {/*
+                The one place this surface contradicts the ledger, and it does so beside
+                the sentence it contradicts. The entry above is folded from what the RUN
+                recorded — that it handed the statement over to be run — and this rail
+                declined to perform it, so a reader who saw only the entry would believe
+                an execution that never happened. Said here rather than in a banner:
+                the fact is about this answer, and a notice elsewhere would be a
+                sentence the reader has to match to a line themselves.
+              */}
+              {declinedHandovers
+                .filter((declined) => declined.id === item.id)
+                .map((declined) => (
+                  <p
+                    key={declined.id}
+                    data-testid="agent-handover-declined"
+                    className="mt-0.5 pl-3.5 text-xs text-amber-400/80"
+                  >
+                    It was not run: this run was opened on {declined.openedOn ?? "another connection"} and your editor
+                    has moved to a different one since. The answer would have arrived in a tab that is connected
+                    somewhere else, so nothing was executed. The statement is below — take it yourself if you want it on
+                    the connection you are on now.
+                  </p>
+                ))}
+              {/*
               Verbatim content from the model, the engine or the user, kept in its own
               block rather than folded into a sentence: it is untrusted input, and the
               user should be able to see where the app stops speaking.
@@ -706,6 +1167,7 @@ export function AgentRail({
                 <HydrationControls
                   sql={item.applySql}
                   artifactId={item.artifactId}
+                  chartSpec={item.chartSpec}
                   testIdPrefix="agent-"
                   onApply={onApplyStatement}
                   onShow={showArtifact}
@@ -769,6 +1231,10 @@ export function AgentRail({
                       <HydrationControls
                         sql={citation.quoted}
                         artifactId={citation.artifactId}
+                        /* A citation is evidence, not a presentation: the decision to
+                           draw a chart belongs to the answer entry, and repeating it
+                           here would offer the same artifact under two accounts. */
+                        chartSpec={undefined}
                         testIdPrefix="agent-citation-"
                         onApply={onApplyStatement}
                         onShow={showArtifact}

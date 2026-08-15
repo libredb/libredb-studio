@@ -42,6 +42,7 @@ interface FakeRun {
   runId: string;
   mode: string;
   workflowType: string;
+  autoExecute: boolean;
   status: string;
   actor: { sessionId: string; role: string };
   connectionId: string;
@@ -56,6 +57,9 @@ function fakeRun(overrides: Partial<FakeRun> = {}): FakeRun {
     // The store's default, so a body naming no workflow still produces a record
     // carrying one — which is what the route echoes back.
     workflowType: "investigation",
+    // The store's default too: absent means off, so a body that asked for nothing
+    // opens a run that hands nothing anywhere.
+    autoExecute: false,
     status: "queued",
     actor: { sessionId: "ada", role: "user" },
     connectionId: "seed:sales",
@@ -71,6 +75,7 @@ const mockStart = mock(
   async (input: {
     mode: string;
     workflowType?: string;
+    autoExecute?: boolean;
     actor: FakeRun["actor"];
     connectionId: string;
     objective: string;
@@ -233,10 +238,22 @@ describe("POST /api/agent/runs", () => {
 
   test("opens a run for the session's own actor and reports it queued", async () => {
     const res = await POST(startRequest(VALID_BODY));
-    const body = await parseResponseJSON<{ runId: string; status: string; mode: string; workflowType: string }>(res);
+    const body = await parseResponseJSON<{
+      runId: string;
+      status: string;
+      mode: string;
+      workflowType: string;
+      autoExecute: boolean;
+    }>(res);
 
     expect(res.status).toBe(202);
-    expect(body).toEqual({ runId: "arun_new", status: "queued", mode: "agent", workflowType: "investigation" });
+    expect(body).toEqual({
+      runId: "arun_new",
+      status: "queued",
+      mode: "agent",
+      workflowType: "investigation",
+      autoExecute: false,
+    });
     // No `workflowType` reaches the service when the body named none: the store's
     // own default is the single place that answer is decided.
     expect(mockStart).toHaveBeenCalledWith({
@@ -263,10 +280,91 @@ describe("POST /api/agent/runs", () => {
   });
 
   test("every workflow type this server serves is accepted", async () => {
-    for (const workflowType of ["investigation", "query-optimization", "database-assessment", "operations"]) {
+    for (const workflowType of [
+      "investigation",
+      "query-optimization",
+      "database-assessment",
+      "operations",
+      "data-analysis",
+    ]) {
       const res = await POST(startRequest({ ...VALID_BODY, workflowType }));
       expect(res.status, workflowType).toBe(202);
     }
+  });
+
+  test("auto-execute is persisted when asked for, and the response echoes what was PERSISTED", async () => {
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "data-analysis", autoExecute: true }));
+    const body = await parseResponseJSON<{ autoExecute: boolean }>(res);
+
+    expect(res.status).toBe(202);
+    expect(body.autoExecute).toBe(true);
+    expect(mockStart).toHaveBeenCalledWith({
+      mode: "agent",
+      workflowType: "data-analysis",
+      autoExecute: true,
+      actor: { sessionId: "ada", role: "user" },
+      connectionId: "seed:sales",
+      objective: "why is checkout slow",
+    });
+  });
+
+  test("auto-execute is refused on every workflow that cannot present an answer", async () => {
+    // The hand-over IS `present_answer`'s, and that tool is offered to `data-analysis`
+    // alone. Accepting the field elsewhere would persist a run record claiming a
+    // hand-over nothing could perform and would have the system prompt tell the model
+    // to inspect the plan of a presentation it has no tool to make — the #350/#356
+    // shape. Refused rather than normalised to `false`, because a silent downgrade is
+    // how a user comes to believe a feature ran.
+    for (const workflowType of ["investigation", "query-optimization", "database-assessment", "operations"]) {
+      const res = await POST(startRequest({ ...VALID_BODY, workflowType, autoExecute: true }));
+      expect(res.status, workflowType).toBe(400);
+      const body = await parseResponseJSON<{ error: string }>(res);
+      expect(body.error, workflowType).toContain("data-analysis");
+    }
+    // Absent workflow means an investigation, which is one of the four above — so the
+    // default must be refused too rather than slipping past the named cases.
+    expect((await POST(startRequest({ ...VALID_BODY, autoExecute: true }))).status).toBe(400);
+  });
+
+  test("auto-execute is refused in planning mode, which is offered no tools at all", async () => {
+    const res = await POST(
+      startRequest({ ...VALID_BODY, mode: "planning", workflowType: "data-analysis", autoExecute: true }),
+    );
+
+    expect(res.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(res)).error).toContain("agent mode");
+  });
+
+  test("auto-execute false is accepted anywhere, because it asks for nothing", async () => {
+    // Only `true` claims a hand-over. An explicit `false` is a client saying the
+    // setting is off, which every workflow can honour.
+    for (const workflowType of ["investigation", "operations", "data-analysis"]) {
+      const res = await POST(startRequest({ ...VALID_BODY, workflowType, autoExecute: false }));
+      expect(res.status, workflowType).toBe(202);
+    }
+  });
+
+  test("a body that names no auto-execute reaches the service without the field at all", async () => {
+    // The store's own default is the single place the answer is decided, exactly as
+    // for `workflowType`: two defaults are two things to keep equal.
+    await POST(startRequest(VALID_BODY));
+
+    expect(mockStart).toHaveBeenCalledWith({
+      mode: "agent",
+      actor: { sessionId: "ada", role: "user" },
+      connectionId: "seed:sales",
+      objective: "why is checkout slow",
+    });
+  });
+
+  test.each([["yes"], [1], [null], [{}]])("an auto-execute of %p is refused rather than defaulted", async (value) => {
+    // Not coerced: a caller whose serialiser turned a tick into "yes" has asked for
+    // something this route will not guess at, and guessing WRONG here gives away the
+    // editor's time limit on a statement nobody agreed to.
+    const res = await POST(startRequest({ ...VALID_BODY, autoExecute: value }));
+
+    expect(res.status).toBe(400);
+    expect(mockStart).not.toHaveBeenCalled();
   });
 
   test("an unknown workflow type is refused rather than defaulted", async () => {

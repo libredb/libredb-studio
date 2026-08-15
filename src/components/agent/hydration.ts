@@ -1,6 +1,6 @@
 import type { ExplainFormat } from "@/lib/db/types";
 import { getExplainStrategy, resolveExplainPlan } from "@/lib/explain";
-import type { QueryResult } from "@/lib/types";
+import type { AgentChartSpec, QueryResult } from "@/lib/types";
 
 /**
  * One agent artifact, read into a surface this app already has (#329 T11).
@@ -13,9 +13,11 @@ import type { QueryResult } from "@/lib/types";
  *
  * Two decisions are deliberate:
  *
- *  - **The surface is chosen from the OPERATION, never from the shape of the rows.**
- *    A plan comes from `sql.explain.estimate` and nothing else, so a read whose rows
- *    happen to look like a plan is still a read.
+ *  - **The surface is chosen from what the RUN RECORDED, never from the shape of the
+ *    rows.** A plan comes from `sql.explain.estimate` and nothing else, so a read
+ *    whose rows happen to look like a plan is still a read; and the charts surface
+ *    comes from an answer the run composed as a chart, so a result nobody said to
+ *    chart is shown as a table however chartable its columns look.
  *  - **A plan this connection cannot parse falls back to the grid.** The rows are
  *    real rows either way; showing them beats an explain view with nothing in it.
  *    That happens when the provider declares no `explainFormat` at all, and when the
@@ -32,10 +34,20 @@ export interface AgentArtifactHydration {
   /** Registry-resolved operation id — the server's word, shown verbatim. */
   readonly operationId: string;
   /** Which existing surface renders it. */
-  readonly surface: "results" | "explain";
+  readonly surface: "results" | "explain" | "charts";
   readonly result: QueryResult;
   /** Shaped exactly like `QueryTab.explainPlan`, so the explain view needs no new case. */
   readonly explainPlan: { readonly format: ExplainFormat; readonly raw: unknown } | null;
+  /**
+   * How the run said to draw this result, when it said to draw one at all.
+   *
+   * Null for every artifact shown from anywhere but an answer, which is what keeps
+   * "the surface came from the record" true: nothing here reads the rows to decide
+   * that a chart would suit them. The component that draws it validates the columns
+   * again before it uses them, because a spec is only as good as the result actually
+   * delivered to the browser.
+   */
+  readonly chartSpec: AgentChartSpec | null;
 }
 
 const PLAN_OPERATION_PREFIX = "sql.explain.";
@@ -49,11 +61,23 @@ function isQueryResult(value: unknown): value is QueryResult {
 export function hydrateAgentArtifact(
   payload: unknown,
   explainFormat: ExplainFormat | undefined,
+  /**
+   * The presentation the run recorded for this artifact, when it recorded one. It
+   * comes from the ledger the rail is already reading, not from this payload: the
+   * decision is the run's, and the route serves rows and their provenance.
+   */
+  chartSpec?: AgentChartSpec,
 ): AgentArtifactHydration | null {
   if (typeof payload !== "object" || payload === null) return null;
   const { runId, correlationId, operationId, result } = payload as Record<string, unknown>;
   if (typeof runId !== "string" || typeof correlationId !== "string" || typeof operationId !== "string") return null;
   if (!isQueryResult(result)) return null;
+
+  // The recorded presentation wins: an answer composed as a chart is a chart of its
+  // rows, and there is no plan to render beside it.
+  if (chartSpec !== undefined) {
+    return { runId, correlationId, operationId, surface: "charts", result, explainPlan: null, chartSpec };
+  }
 
   const strategy = operationId.startsWith(PLAN_OPERATION_PREFIX) ? getExplainStrategy(explainFormat) : null;
   const plan = strategy === null ? null : { format: strategy.format, raw: strategy.extractPlan(result) };
@@ -68,5 +92,6 @@ export function hydrateAgentArtifact(
     surface: renderable ? "explain" : "results",
     result,
     explainPlan: renderable ? plan : null,
+    chartSpec: null,
   };
 }

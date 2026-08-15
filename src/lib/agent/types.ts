@@ -43,7 +43,7 @@
 
 import type { Role } from "@/lib/auth";
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
-import type { TableSchema } from "@/lib/types";
+import type { AgentChartSpec, TableSchema } from "@/lib/types";
 import type { AgentGoalShortfall, AgentGoalVerifierId } from "./goal-verifier";
 import type { AgentPlanSummary } from "./plan-summary";
 import type { AgentTableProfile } from "./table-profile";
@@ -73,7 +73,12 @@ export type AgentRunMode = "planning" | "agent";
  * later request cannot widen a run after it opens — not because a filter rejects one,
  * but because there is no parameter through which a workflow could arrive twice.
  */
-export type AgentRunWorkflowType = "investigation" | "query-optimization" | "database-assessment" | "operations";
+export type AgentRunWorkflowType =
+  | "investigation"
+  | "query-optimization"
+  | "database-assessment"
+  | "operations"
+  | "data-analysis";
 
 /**
  * What a run is for when nothing said.
@@ -84,6 +89,38 @@ export type AgentRunWorkflowType = "investigation" | "query-optimization" | "dat
  * about a run nobody can go back and ask.
  */
 export const DEFAULT_AGENT_WORKFLOW_TYPE: AgentRunWorkflowType = "investigation";
+
+/**
+ * Which workflows can hand a user an answer — and therefore which ones auto-execute
+ * is a meaningful setting for.
+ *
+ * ONE fact, read by four layers that would otherwise each decide for themselves: the
+ * rail decides whether to offer the checkbox, `POST /api/agent/runs` decides whether
+ * to accept the field, `investigation.ts` decides whether to state
+ * `AUTO_EXECUTE_RULE` to the model, and `tools.ts` decides whether to offer
+ * `present_answer` at all. It lives HERE rather than in `tools.ts` because the rail
+ * is a client component and `tools.ts` is the server's database seam; a total record
+ * of booleans is the part both sides can hold.
+ *
+ * The binding to the tool set is not left to prose. `tools.test.ts` asserts, over
+ * every workflow, that `selectAgentTools` offers `present_answer` exactly when this
+ * record says true — so a workflow that gains the tool without gaining the flag, or
+ * the reverse, fails rather than shipping the mismatch.
+ *
+ * The mismatch is worth naming because it shipped once: the checkbox rendered for
+ * every workflow while `present_answer` was offered to one, so ticking it on an
+ * Investigate run promised the user a hand-over that could not happen and told the
+ * model to `inspect_plan` before a presentation it had no tool to make. That is the
+ * #350/#356 shape — a rule stated to a model whose tool set cannot satisfy it — and
+ * a total record is what stops it recurring silently.
+ */
+export const AGENT_WORKFLOW_PRESENTS_ANSWER: Readonly<Record<AgentRunWorkflowType, boolean>> = Object.freeze({
+  investigation: false,
+  "query-optimization": false,
+  "database-assessment": false,
+  operations: false,
+  "data-analysis": true,
+} satisfies Record<AgentRunWorkflowType, boolean>);
 
 /** A run that has stopped, and why. Terminal states are never re-entered. */
 export type AgentRunTerminalStatus = "succeeded" | "failed" | "cancelled";
@@ -219,6 +256,17 @@ export interface AgentReportClaim {
   /** Non-empty by type: at least one reference, or the claim cannot be built. */
   readonly evidence: readonly [AgentEvidenceReference, ...AgentEvidenceReference[]];
 }
+
+/**
+ * How one result is to be DRAWN — declared in `src/lib/types.ts`, and re-exported
+ * here under the name the run's own contract uses.
+ *
+ * It is declared OUTSIDE the agent tree for a mechanical reason: the component that
+ * draws it (`DataCharts`) ships in the published package, and no agent module may be
+ * reachable from that package's declarations (`tests/unit/agent-package-boundary.test.ts`).
+ * One declaration two trees can name beats two declarations that can disagree.
+ */
+export type { AgentChartSpec } from "@/lib/types";
 
 /**
  * The schema inventory a run reasons over, plus the fingerprint that decides
@@ -402,6 +450,60 @@ export type AgentRunEvent =
       readonly profile: AgentTableProfile;
     })
   | (AgentRunEventBase & {
+      /**
+       * This artifact IS the answer, and this is how it should be shown.
+       *
+       * The READ is already on the ledger — `tool-invoked` before it, `tool-completed`
+       * after — but the DECISION is not: "this result is the answer, and it should be
+       * drawn as a bar chart of region against net_total" is a fact about the run that
+       * no other event can express.
+       *
+       * `artifact` is required, not optional. An answer that names no artifact is a
+       * claim, and a claim belongs in the report with its citations attached.
+       *
+       * And a chart is never a substitute for a claim. The presentation SHOWS an
+       * artifact, the artifact is the evidence, and the claim is the answer; a run
+       * that drew a picture and reported nothing has drawn a picture.
+       */
+      readonly kind: "answer-composed";
+      /**
+       * The statement the answer rests on — what "Apply to editor" hands over.
+       *
+       * Read from this run's own ledger, never supplied by the model: a statement the
+       * model described about its own work could name a read that produced something
+       * else, which is the mislabelling `plan-comparison` also refuses to allow.
+       */
+      readonly sql: string;
+      /** The artifact this answer IS. Verified against this run's own ledger. */
+      readonly artifact: AgentArtifactReference;
+      /**
+       * How to render it. A table is a first-class outcome, not a fallback: a single
+       * scalar, a one-row result and a result with no numeric column are all answers,
+       * and a chart of any of them would render an empty state.
+       */
+      readonly presentation: { readonly kind: "table" } | { readonly kind: "chart"; readonly spec: AgentChartSpec };
+      /**
+       * Whether the run also sent the statement to the editor, and how far.
+       *
+       * The OUTCOME of the setting, not the setting: a run opened with auto-execute
+       * whose gate declined records `applied`, so a reader can see both that the
+       * setting was on and that the gate said no — which is exactly what someone
+       * asking "why didn't it run" needs. `none` is a run that was never opened with
+       * it at all.
+       *
+       * `auto-executed` records that the run HANDED THE STATEMENT OVER. What the
+       * editor then did with it is the editor's own business, against a route this
+       * runtime does not own, and it produces no ledger event because it cannot.
+       */
+      readonly handover: "none" | "applied" | "auto-executed";
+      /**
+       * Why the gate declined, in the run's own words. Present exactly when
+       * `handover` is `applied`: a refusal that says nothing is indistinguishable
+       * from the feature being broken.
+       */
+      readonly handoverWarning?: string;
+    })
+  | (AgentRunEventBase & {
       readonly kind: "run-finished";
       readonly status: AgentRunTerminalStatus;
       /**
@@ -464,6 +566,20 @@ export interface AgentRunRecord {
    * value, and no reader has to know which generation of writer produced its run.
    */
   readonly workflowType: AgentRunWorkflowType;
+  /**
+   * Whether this run may hand its answer's statement to the editor to be RUN there,
+   * subject to the gate in `auto-execute.ts`.
+   *
+   * On the RECORD, beside `mode` and `workflowType`, for the two reasons those are:
+   * a resumed drive must behave the same as the drive that died, and no later
+   * request may widen a run after it has opened. The route is the only place it is
+   * decided, and there is no route that changes it.
+   *
+   * Required here and optional on the ledger header, the same compatibility story
+   * `workflowType` has: a header written before the field existed folds to `false`,
+   * which is what was true of every run written then.
+   */
+  readonly autoExecute: boolean;
   readonly status: AgentRunStatus;
   readonly actor: AgentRunActor;
   /** The single connection this run may reach; the server builds the scope from it. */

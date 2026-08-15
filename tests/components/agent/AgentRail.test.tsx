@@ -6,6 +6,8 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render, fireEvent, waitFor, act } from "@testing-library/react";
 import { AgentRail } from "@/components/agent/AgentRail";
+import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
+import type { AgentRunWorkflowType } from "@/lib/agent/types";
 
 /**
  * The standalone agent rail (#329 T10a): the gated surface, its two modes and the
@@ -52,6 +54,19 @@ const OPENED_LINE = `${JSON.stringify({
   connectionId: "seed:sales",
   objective: "why is checkout slow",
 })}\n`;
+
+/** A header for a run opened FOR a named workflow, which is where the meter reads it. */
+const openedFor = (workflowType: AgentRunWorkflowType): string =>
+  `${JSON.stringify({
+    kind: "run-opened",
+    atMs: 1_000,
+    runId: "arun_1",
+    mode: "agent",
+    workflowType,
+    actor: { sessionId: "ada", role: "user" },
+    connectionId: "seed:sales",
+    objective: "why is checkout slow",
+  })}\n`;
 
 const STARTED_LINE = `${JSON.stringify({ kind: "event", event: { kind: "run-started", atMs: 1_001, mode: "planning" } })}\n`;
 
@@ -239,6 +254,7 @@ describe("AgentRail", () => {
     expect(JSON.parse(String(startInit?.body))).toEqual({
       mode: "agent",
       workflowType: "investigation",
+      autoExecute: false,
       objective: "why is checkout slow",
       connectionId: "seed:sales",
     });
@@ -285,7 +301,38 @@ describe("AgentRail", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
       mode: "agent",
       workflowType: "operations",
+      autoExecute: false,
       objective: "what is blocked right now",
+      connectionId: "seed:sales",
+    });
+  });
+
+  test("the Analyze workflow is offered, and starting it asks the server for it", async () => {
+    // Same assertion as Operate's, for the same reason: the button row is generated
+    // from the label record, so this is what makes the workflow reachable by a user
+    // rather than merely present in a type.
+    const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+    const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    const analyze = getByTestId("agent-workflow-data-analysis");
+    expect(analyze.getAttribute("aria-pressed")).toBe("false");
+    expect(analyze.textContent).toBe("Analyze");
+
+    fireEvent.click(getByTestId("agent-mode-agent"));
+    fireEvent.click(analyze);
+    expect(getByTestId("agent-workflow-data-analysis").getAttribute("aria-pressed")).toBe("true");
+    expect(getByTestId("agent-workflow-investigation").getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.change(getByTestId("agent-objective"), { target: { value: "sales by region today" } });
+    await act(async () => {
+      fireEvent.click(getByTestId("agent-start"));
+    });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      mode: "agent",
+      workflowType: "data-analysis",
+      autoExecute: false,
+      objective: "sales by region today",
       connectionId: "seed:sales",
     });
   });
@@ -313,6 +360,7 @@ describe("AgentRail", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
       mode: "agent",
       workflowType: "query-optimization",
+      autoExecute: false,
       objective: "why is checkout slow",
       connectionId: "seed:sales",
     });
@@ -331,8 +379,54 @@ describe("AgentRail", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
       mode: "planning",
       workflowType: "query-optimization",
+      autoExecute: false,
       objective: "why is checkout slow",
       connectionId: "seed:sales",
+    });
+  });
+
+  /**
+   * The box is emptied for the next question (#373 review).
+   *
+   * Measured: after a run completed, `agent-objective` still held the previous
+   * question, so asking a second one meant selecting the old text and deleting it.
+   *
+   * Cleared when the SERVER HAS OPENED the run rather than on the click, which is the
+   * half the second test pins: a start that was refused must not eat what the user
+   * typed, or retrying means typing it again.
+   */
+  describe("the objective", () => {
+    test("is cleared once the run has opened, and is still readable in the timeline", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
+      const { getByTestId, findAllByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      await waitFor(() => {
+        expect((getByTestId("agent-objective") as HTMLTextAreaElement).value).toBe("");
+      });
+      // Not lost, only moved: the question is on the run's own header, quoted under
+      // the first entry, beside the run that is answering it.
+      const items = await findAllByTestId("agent-timeline-item");
+      expect(items[0].textContent).toContain("why is checkout slow");
+    });
+
+    test("survives a start the server refused, so retrying needs no retyping", async () => {
+      globalThis.fetch = mock(async () =>
+        jsonResponse({ error: "connection seed:sales no longer resolves" }, 400),
+      ) as unknown as typeof fetch;
+      const { getByTestId, findByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      expect((await findByTestId("agent-error")).textContent).toContain("no longer resolves");
+      expect((getByTestId("agent-objective") as HTMLTextAreaElement).value).toBe("why is checkout slow");
     });
   });
 
@@ -1458,11 +1552,16 @@ describe("AgentRail", () => {
    * every consumption is read off the run's durable ledger.
    */
   describe("budget meter", () => {
+    // With no run open there is no header to read, so the meter shows the default
+    // workflow's ceilings — the same reading the fold takes for a headerless ledger.
     test("an untouched meter shows the ceilings this server enforces", () => {
       const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+      const budgets = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
 
-      expect(getByTestId("agent-budget-statements").textContent).toContain("0 / 20");
-      expect(getByTestId("agent-budget-database-time").textContent).toContain("0.0 / 60.0 s");
+      expect(getByTestId("agent-budget-statements").textContent).toContain(`0 / ${budgets.maxStatementsPerRun}`);
+      expect(getByTestId("agent-budget-database-time").textContent).toContain(
+        `0.0 / ${(budgets.maxTotalRunMs / 1_000).toFixed(1)} s`,
+      );
       expect(getByTestId("agent-budget-repairs").textContent).toContain("0 / 3");
     });
 
@@ -1474,8 +1573,8 @@ describe("AgentRail", () => {
         fireEvent.click(getByTestId("agent-start"));
       });
 
-      await findByText("1 / 20");
-      expect(getByTestId("agent-budget-database-time").textContent).toContain("1.5 / 60.0 s");
+      await findByText(`1 / ${AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxStatementsPerRun}`);
+      expect(getByTestId("agent-budget-database-time").textContent).toContain("1.5 / 90.0 s");
     });
 
     /**
@@ -1506,7 +1605,7 @@ describe("AgentRail", () => {
         fireEvent.click(getByTestId("agent-start"));
       });
 
-      await findByText("90.0 / 60.0 s");
+      await findByText("90.0 / 90.0 s");
       expect((getByTestId("agent-budget-database-time-bar") as HTMLElement).style.width).toBe("100%");
     });
 
@@ -1533,11 +1632,86 @@ describe("AgentRail", () => {
     test("the meter states the limits it cannot measure, and that they are per drive", () => {
       const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
 
+      // The approved investigation figures, written out rather than read back from
+      // the constant: a test that renders the constant into its own expectation
+      // proves the two agree with each other and nothing about what a user is shown.
       const limits = getByTestId("agent-budget-limits").textContent ?? "";
       expect(limits).toContain("10.0 s");
-      expect(limits).toContain("5.0 min");
-      expect(limits).toContain("16");
+      expect(limits).toContain("7.5 min");
+      expect(limits).toContain("36 model turns");
       expect(getByTestId("agent-budget-caveats").textContent).toContain("per drive");
+    });
+
+    /**
+     * The reserve (the data-analyst design, §1.5). A run near either ceiling is asked
+     * to stop and report what it has established, so a user watching a run end short
+     * of its ceilings is reading a run that was asked to stop rather than one that
+     * gave up. The meter is where that is said, because it is where the ceilings are.
+     */
+    test("the meter says the last turns are kept back for the report", () => {
+      const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      // Written out rather than read back from the constants, for the same reason
+      // the ceilings above are: a rendered constant proves nothing about the reading.
+      const reserve = getByTestId("agent-budget-reserve").textContent ?? "";
+      expect(reserve).toContain("2 model turns");
+      expect(reserve).toContain("20.0 s");
+      expect(reserve).toContain("asked to stop");
+    });
+
+    /**
+     * The ceilings are per workflow, and the meter's whole promise is that it states
+     * what the SERVER enforces for THIS run. Every figure on the line and on the two
+     * measurable gauges is therefore asserted against the constant the enforcement
+     * layer reads, workflow by workflow — a hard-coded expectation here would pass
+     * while the two drifted.
+     */
+    test.each(["investigation", "query-optimization", "database-assessment", "operations", "data-analysis"] as const)(
+      "a %s run's meter states that workflow's own ceilings, and they are the server's",
+      async (workflowType) => {
+        mockAgentFetch([openedFor(workflowType), STARTED_LINE]);
+        const { getByTestId, findByText } = render(<AgentRail {...DEFAULT_PROPS} />);
+        fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+        await act(async () => {
+          fireEvent.click(getByTestId("agent-start"));
+        });
+
+        const budget = AGENT_WORKFLOW_BUDGETS[workflowType];
+        await findByText(`0 / ${budget.policy.budgets.maxStatementsPerRun}`);
+        expect(getByTestId("agent-budget-database-time").textContent).toContain(
+          `/ ${(budget.policy.budgets.maxTotalRunMs / 1_000).toFixed(1)} s`,
+        );
+
+        const limits = getByTestId("agent-budget-limits").textContent ?? "";
+        expect(limits).toContain(`${(budget.policy.budgets.statementTimeoutMs / 1_000).toFixed(1)} s`);
+        expect(limits).toContain(`${(budget.runDeadlineMs / 60_000).toFixed(1)} min`);
+        expect(limits).toContain(`${budget.maxModelTurns} model turns`);
+      },
+    );
+
+    /**
+     * Once a run is open it is the run's OWN workflow that binds, not whatever the
+     * picker says now: the picker stays live during a run, and a user who clicks
+     * another workflow mid-run must not be shown ceilings nothing is enforcing.
+     */
+    test("an open run's meter follows the run's header, not the picker", async () => {
+      mockAgentFetch([openedFor("database-assessment"), STARTED_LINE]);
+      const { getByTestId, findByText } = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      const budget = AGENT_WORKFLOW_BUDGETS["database-assessment"];
+      await findByText(`0 / ${budget.policy.budgets.maxStatementsPerRun}`);
+      fireEvent.click(getByTestId("agent-workflow-operations"));
+
+      const limits = getByTestId("agent-budget-limits").textContent ?? "";
+      expect(limits).toContain(`${(budget.runDeadlineMs / 60_000).toFixed(1)} min`);
+      expect(limits).toContain(`${budget.maxModelTurns} model turns`);
+      expect(getByTestId("agent-budget-statements").textContent).toContain(
+        `/ ${budget.policy.budgets.maxStatementsPerRun}`,
+      );
     });
   });
 
@@ -1620,6 +1794,37 @@ describe("AgentRail", () => {
 
       fireEvent.click(controls[0]);
       expect(onShowArtifact).toHaveBeenCalledWith({ runId: "arun_1", correlationId: "corr_9" });
+    });
+
+    test("an answer composed as a chart offers its result WITH the chart the run composed", async () => {
+      // The host opens the surface the run named, so the decision travels with the
+      // ask. Nothing here reads the rows: the rail has none.
+      const spec = { type: "bar", x: "region", y: ["net_total"], caption: "Net total by region." };
+      mockAgentFetch([
+        OPENED_LINE,
+        STARTED_LINE,
+        `${JSON.stringify({
+          kind: "event",
+          event: {
+            kind: "answer-composed",
+            atMs: 1_003,
+            sql: "SELECT region, SUM(net_total) AS net_total FROM orders GROUP BY region",
+            artifact: {
+              correlationId: "corr_9",
+              runId: "arun_1",
+              operationId: "sql.query.read",
+              summary: { rowCount: 4, columnNames: ["region", "net_total"], elapsedMs: 12 },
+            },
+            presentation: { kind: "chart", spec },
+            handover: "none",
+          },
+        })}\n`,
+      ]);
+      const onShowArtifact = mock(() => {});
+      const { findAllByTestId } = await runWith({ onShowArtifact });
+
+      fireEvent.click((await findAllByTestId("agent-show-result"))[0]);
+      expect(onShowArtifact).toHaveBeenCalledWith({ runId: "arun_1", correlationId: "corr_9", chartSpec: spec });
     });
 
     test("a drafted statement offers to be applied, and applies nothing until the user asks", async () => {
@@ -1747,6 +1952,828 @@ describe("AgentRail", () => {
 
       await findAllByTestId("agent-report-citation");
       expect(queryByTestId("agent-citation-show-result")).toBeNull();
+    });
+  });
+
+  /**
+   * The answer a run composes is SHOWN, rather than described (#373 review).
+   *
+   * Driven live against Gemini twice on 2026-08-15: both runs reached
+   * `answer-composed` with `presentation.kind === "chart"` and a valid spec, and
+   * neither chart was ever displayed. By the time a user reads the answer the run has
+   * ended, its rows are released, and "Show result" is gone with them — so the only
+   * control left was "Apply to editor" and the run's entire output was unreachable.
+   *
+   * The delivery is keyed to the ENTRY arriving, not to the fold's status, because the
+   * two are not the same moment: a stream chunk carrying `answer-composed` and
+   * `run-finished` together folds to a finished run in the render that first sees the
+   * answer, and a delivery gated on `LIVE_STATUSES` would then never fire — which is
+   * exactly the state the defect was measured in.
+   */
+  describe("the answer a run composes", () => {
+    const ANSWER_SQL = "SELECT region, SUM(net_total) AS net_total FROM orders GROUP BY region";
+    const CHART_SPEC = { type: "bar", x: "region", y: ["net_total"], caption: "Net total by region." };
+
+    const answerLine = (presentation: unknown, correlationId = "corr_answer"): string =>
+      `${JSON.stringify({
+        kind: "event",
+        event: {
+          kind: "answer-composed",
+          atMs: 1_003,
+          sql: ANSWER_SQL,
+          artifact: {
+            correlationId,
+            runId: "arun_1",
+            operationId: "sql.query.read",
+            summary: { rowCount: 4, columnNames: ["region", "net_total"], elapsedMs: 12 },
+          },
+          presentation,
+          handover: "none",
+        },
+      })}\n`;
+
+    async function runWith(props: Record<string, unknown>) {
+      const view = render(<AgentRail {...DEFAULT_PROPS} {...props} />);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      return view;
+    }
+
+    test("a chart answer is shown as it arrives, on a run that has already ended", async () => {
+      const onShowArtifact = mock(() => {});
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine({ kind: "chart", spec: CHART_SPEC }), FINISHED_LINE]);
+      const { findByTestId } = await runWith({ onShowArtifact });
+
+      await findByTestId("agent-run-status");
+      await waitFor(() => {
+        expect(onShowArtifact).toHaveBeenCalledTimes(1);
+      });
+      // The surface the RUN named travels with the ask, exactly as it does when a user
+      // clicks the control: the rail holds no rows and infers nothing from them.
+      expect(onShowArtifact).toHaveBeenCalledWith({
+        runId: "arun_1",
+        correlationId: "corr_answer",
+        chartSpec: CHART_SPEC,
+      });
+    });
+
+    test("a table answer is shown too, with no chart key on the ask", async () => {
+      const onShowArtifact = mock(() => {});
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine({ kind: "table" }), FINISHED_LINE]);
+      await runWith({ onShowArtifact });
+
+      await waitFor(() => {
+        expect(onShowArtifact).toHaveBeenCalledWith({ runId: "arun_1", correlationId: "corr_answer" });
+      });
+    });
+
+    test("an ordinary stored result is not shown on its own: only the answer is", async () => {
+      // The rail still never opens a result by itself for a read the run took along
+      // the way. What is delivered is the thing the run was asked to produce.
+      const onShowArtifact = mock(() => {});
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, COMPLETED_LINE, DRAFTED_LINE, REPORT_LINE, FINISHED_LINE]);
+      const { findByTestId } = await runWith({ onShowArtifact });
+
+      await findByTestId("agent-report");
+      expect(onShowArtifact).not.toHaveBeenCalled();
+    });
+
+    test("it is delivered once, however many entries follow it", async () => {
+      const onShowArtifact = mock(() => {});
+      mockAgentFetch([
+        OPENED_LINE,
+        STARTED_LINE,
+        answerLine({ kind: "chart", spec: CHART_SPEC }),
+        COMPLETED_LINE,
+        REPORT_LINE,
+        FINISHED_LINE,
+      ]);
+      const { findByTestId } = await runWith({ onShowArtifact });
+
+      await findByTestId("agent-report");
+      expect(onShowArtifact).toHaveBeenCalledTimes(1);
+    });
+
+    test("a second run's answer is delivered too, though the entry ids repeat", async () => {
+      // Entry ids are positional within one run, so the NEXT run reuses them: without
+      // clearing the record on the run id, the second answer would be recognised as
+      // the first one's and silently dropped. The same trap the hand-over solves.
+      const onShowArtifact = mock(() => {});
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine({ kind: "table" }), FINISHED_LINE]);
+      const view = await runWith({ onShowArtifact });
+      await waitFor(() => {
+        expect(onShowArtifact).toHaveBeenCalledTimes(1);
+      });
+
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine({ kind: "table" }, "corr_second"), FINISHED_LINE]);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by month" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+
+      await waitFor(() => {
+        expect(onShowArtifact).toHaveBeenCalledTimes(2);
+      });
+      expect(onShowArtifact).toHaveBeenLastCalledWith({ runId: "arun_1", correlationId: "corr_second" });
+    });
+
+    test("a host with no way to show a result is not told a result was shown", async () => {
+      // Nothing breaks, and nothing is recorded as delivered either: a host that gains
+      // the callback later still gets the answer it never received.
+      const onShowArtifact = mock(() => {});
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine({ kind: "chart", spec: CHART_SPEC }), FINISHED_LINE]);
+      const view = await runWith({});
+      await view.findByTestId("agent-run-status");
+
+      view.rerender(<AgentRail {...DEFAULT_PROPS} onShowArtifact={onShowArtifact} />);
+      await waitFor(() => {
+        expect(onShowArtifact).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    /*
+      Automatic delivery does not remove the manual one: a user who dismissed the panel
+      has to be able to ask for the answer again, and while the run is live its rows are
+      still held.
+    */
+    test("the answer entry still offers its result while the run is live", async () => {
+      const onShowArtifact = mock(() => {});
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine({ kind: "chart", spec: CHART_SPEC })]);
+      const { findAllByTestId } = await runWith({ onShowArtifact });
+
+      const controls = await findAllByTestId("agent-show-result");
+      expect(controls).toHaveLength(1);
+      fireEvent.click(controls[0]);
+      expect(onShowArtifact).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  /**
+   * The model's prose reads as prose (#373 review).
+   *
+   * Measured in plan mode, live: the closing statement came back as markdown —
+   * `### Step 1: Schema Integrity and Consistency Check`, `* **What to inspect:** …` —
+   * and the rail rendered it into a single paragraph as literal characters. Plan mode's
+   * whole output is one such block, so the mode read as broken.
+   *
+   * What is NOT changed here is the quoted blocks. Verbatim is what quoting means, and
+   * the boundary between what the application says and what came from elsewhere is a
+   * security property rather than a style: the objective, the engine's own message, a
+   * drafted statement and a report's claims are all shown exactly as they arrived.
+   */
+  describe("model prose", () => {
+    const CLOSING = [
+      "### Step 1: Schema Integrity",
+      "",
+      "* **What to inspect:** the `orders` table",
+      "* Whether every order has a customer",
+      "",
+      "Nothing here has been run.",
+    ].join("\n");
+
+    const closingLine = (text: string): string =>
+      `${JSON.stringify({ kind: "event", event: { kind: "closing-statement", atMs: 1_004, text } })}\n`;
+
+    async function runWith(lines: readonly string[]) {
+      mockAgentFetch(lines);
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "how would you check this" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      return view;
+    }
+
+    test("a closing statement written as markdown is rendered as markdown, not as characters", async () => {
+      const { findByTestId } = await runWith([OPENED_LINE, STARTED_LINE, closingLine(CLOSING), FINISHED_LINE]);
+
+      const prose = await findByTestId("agent-prose");
+      expect(prose.querySelector("h4")?.textContent).toBe("Step 1: Schema Integrity");
+      expect(prose.querySelectorAll("ul").length).toBe(1);
+      expect(prose.querySelectorAll("li").length).toBe(2);
+      expect(prose.querySelector("li strong")?.textContent).toBe("What to inspect:");
+      expect(prose.querySelector("li code")?.textContent).toBe("orders");
+      expect(prose.querySelectorAll("p")[0]?.textContent).toBe("Nothing here has been run.");
+      // The markers the user was reading before.
+      expect(prose.textContent).not.toContain("###");
+      expect(prose.textContent).not.toContain("**");
+    });
+
+    test("it is still the model speaking: nothing of it reaches the app's own line", async () => {
+      const { findByTestId, findAllByTestId } = await runWith([
+        OPENED_LINE,
+        STARTED_LINE,
+        closingLine(CLOSING),
+        FINISHED_LINE,
+      ]);
+
+      const prose = await findByTestId("agent-prose");
+      const items = await findAllByTestId("agent-timeline-item");
+      const entry = items.find((item) => item.textContent?.includes("Closing statement"));
+      // The headline is the app's; the prose is the model's, and it is inside its own
+      // block rather than spliced into the sentence beside it.
+      expect(entry?.contains(prose)).toBe(true);
+      expect(prose.textContent).not.toContain("Closing statement");
+    });
+
+    test("an HTML payload a model wrote is still text after all of it", async () => {
+      const { findByTestId } = await runWith([
+        OPENED_LINE,
+        STARTED_LINE,
+        closingLine('### <img src=x onerror="steal()">'),
+        FINISHED_LINE,
+      ]);
+
+      const prose = await findByTestId("agent-prose");
+      expect(prose.querySelector("img")).toBeNull();
+      expect(prose.querySelector("h4")?.textContent).toBe('<img src=x onerror="steal()">');
+    });
+
+    test("a quoted block stays verbatim, markers and all", async () => {
+      // The objective is quoted content, and quoted content is what the user reads to
+      // see where the application stops speaking. It is shown as it arrived.
+      const objective = "why is **checkout** slow";
+      const opened = `${JSON.stringify({
+        kind: "run-opened",
+        atMs: 1_000,
+        runId: "arun_1",
+        mode: "planning",
+        actor: { sessionId: "ada", role: "user" },
+        connectionId: "seed:sales",
+        objective,
+      })}\n`;
+      const { findAllByTestId } = await runWith([opened, STARTED_LINE]);
+
+      const items = await findAllByTestId("agent-timeline-item");
+      expect(items[0].querySelector("pre")?.textContent).toBe(objective);
+      expect(items[0].querySelector("strong")).toBeNull();
+    });
+  });
+
+  /**
+   * The timeline follows the newest entry (#373 review).
+   *
+   * Measured on a completed run: the scroll container sat at `scrollTop: 0` with a
+   * `scrollHeight` of 760 against a `clientHeight` of 360, so the report — the thing
+   * the user was waiting for — was 400 pixels below the fold and had to be dragged to.
+   *
+   * The trap the other half of this pins: a user who scrolled up to read an earlier
+   * step must not be yanked back down by the next entry. Following is therefore a
+   * state the user leaves by scrolling away and returns to by scrolling back, not a
+   * thing that happens to every append.
+   *
+   * happy-dom lays nothing out, so the geometry is defined on the element: the fold's
+   * own numbers are what the effect reads, and `scrollTop` is an ordinary writable
+   * property there.
+   */
+  describe("the timeline follows the newest entry", () => {
+    const SCROLL_HEIGHT = 760;
+    const CLIENT_HEIGHT = 360;
+    const BOTTOM = SCROLL_HEIGHT - CLIENT_HEIGHT;
+
+    /** A stream that stays open, so entries can arrive one at a time. */
+    function mockOpenStream() {
+      let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+      globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (!url.endsWith("/stream")) return jsonResponse({ runId: "arun_1", status: "queued", mode: "agent" }, 202);
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(open) {
+              controller = open;
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/x-ndjson" } },
+        );
+      }) as unknown as typeof fetch;
+      return {
+        push: (line: string) => {
+          controller?.enqueue(encoder.encode(line));
+        },
+      };
+    }
+
+    /** The container, with a layout happy-dom would otherwise report as zero. */
+    function measured(element: HTMLElement): HTMLElement {
+      Object.defineProperty(element, "scrollHeight", { value: SCROLL_HEIGHT, configurable: true });
+      Object.defineProperty(element, "clientHeight", { value: CLIENT_HEIGHT, configurable: true });
+      return element;
+    }
+
+    async function startRun() {
+      const stream = mockOpenStream();
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+      const scroller = measured(view.getByTestId("agent-timeline-scroll"));
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      return { ...view, stream, scroller };
+    }
+
+    test("an entry that arrives brings the timeline with it", async () => {
+      const { stream, scroller } = await startRun();
+      // Put it back at the top WITHOUT a scroll event, which is what a browser's own
+      // clamp does on an empty timeline: nothing has scrolled, so nothing was left.
+      scroller.scrollTop = 0;
+
+      await act(async () => {
+        stream.push(OPENED_LINE);
+      });
+
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(BOTTOM);
+      });
+    });
+
+    test("a user who scrolled up to read an earlier step is left where they are", async () => {
+      const { stream, scroller } = await startRun();
+      await act(async () => {
+        stream.push(OPENED_LINE);
+      });
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(BOTTOM);
+      });
+
+      scroller.scrollTop = 0;
+      fireEvent.scroll(scroller);
+      await act(async () => {
+        stream.push(STARTED_LINE);
+      });
+
+      expect(scroller.scrollTop).toBe(0);
+    });
+
+    test("scrolling back to the bottom starts the following again", async () => {
+      const { stream, scroller } = await startRun();
+      scroller.scrollTop = 0;
+      fireEvent.scroll(scroller);
+      await act(async () => {
+        stream.push(OPENED_LINE);
+      });
+      expect(scroller.scrollTop).toBe(0);
+
+      // Near the bottom counts as the bottom: a fractional layout and a partly visible
+      // last entry both leave a few pixels, and a user who dragged to the end should
+      // not have to land on the exact pixel to be followed again.
+      scroller.scrollTop = BOTTOM - 4;
+      fireEvent.scroll(scroller);
+      await act(async () => {
+        stream.push(STARTED_LINE);
+      });
+
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(BOTTOM);
+      });
+    });
+  });
+
+  /**
+   * Auto-execute (§2.1, §2.5, §2.6 of `docs/AGENT_ANALYST_DESIGN.md`).
+   *
+   * The control names the bound it gives up and the one it keeps, because "auto-mode"
+   * transfers no responsibility: a checkbox that names no bound cannot be consented
+   * to. And the RUN's own record is what the rail acts on — the three-condition gate
+   * lives on the server (`auto-execute.ts`), so the browser carries out what the
+   * ledger says happened and decides nothing again.
+   */
+  describe("auto-execute", () => {
+    /** The statement the answer rests on. Multi-line on purpose: it is handed over verbatim. */
+    const ANSWER_SQL = "SELECT region,\n       SUM(net_total) AS net_total\nFROM orders\nGROUP BY region";
+
+    const answerLine = (handover: string, handoverWarning?: string): string =>
+      `${JSON.stringify({
+        kind: "event",
+        event: {
+          kind: "answer-composed",
+          atMs: 1_003,
+          sql: ANSWER_SQL,
+          artifact: {
+            correlationId: "corr_9",
+            runId: "arun_1",
+            operationId: "sql.query.read",
+            summary: { rowCount: 4, columnNames: ["region", "net_total"], elapsedMs: 12 },
+          },
+          presentation: { kind: "table" },
+          handover,
+          ...(handoverWarning === undefined ? {} : { handoverWarning }),
+        },
+      })}\n`;
+
+    /**
+     * The rail with Analyze selected — the only workflow this control is offered on.
+     *
+     * Every test below goes through this rather than through the default
+     * (Investigate) rail, because the control is scoped now: auto-execute is
+     * `present_answer`'s hand-over, and `present_answer` is offered to `data-analysis`
+     * alone. A test that still rendered the default rail would be asserting the
+     * defect this scoping removes.
+     */
+    function analyze(props: Record<string, unknown> = {}) {
+      // A runner by default, because the control is offered only to a host that has
+      // one: what the checkbox promises is a run in the user's editor, and a host with
+      // no way to run one cannot keep that promise. Tests about a host without a runner
+      // pass `onRunStatement: undefined` explicitly.
+      const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} {...props} />);
+      // Both axes, because the rail opens in PLANNING mode on Investigate and the
+      // control belongs to neither. That the block used to reach the checkbox without
+      // either click is precisely the defect: it rendered in a toolless mode, on a
+      // workflow with no `present_answer`, and offered to run an answer that could
+      // not be composed.
+      fireEvent.click(view.getByTestId("agent-mode-agent"));
+      fireEvent.click(view.getByTestId("agent-workflow-data-analysis"));
+      return view;
+    }
+
+    async function runWith(props: Record<string, unknown>) {
+      const view = analyze(props);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      return view;
+    }
+
+    test("the control is offered on Analyze alone, and in agent mode alone", () => {
+      // The scoping, asserted over EVERY workflow rather than on a sample: the
+      // checkbox used to render for all five in both modes, so ticking it on an
+      // Investigate run promised a hand-over that workflow has no tool to perform
+      // and had the server tell the model to inspect the plan of an answer it could
+      // not present. That is the #350/#356 shape, and this is the test that keeps it
+      // from returning.
+      const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
+      fireEvent.click(view.getByTestId("agent-mode-agent"));
+      for (const workflow of ["investigation", "query-optimization", "database-assessment", "operations"]) {
+        fireEvent.click(view.getByTestId(`agent-workflow-${workflow}`));
+        expect(view.queryByTestId("agent-auto-execute"), workflow).toBeNull();
+      }
+      fireEvent.click(view.getByTestId("agent-workflow-data-analysis"));
+      expect(view.queryByTestId("agent-auto-execute")).not.toBeNull();
+
+      // Planning is toolless whatever the run is for, so there is no `present_answer`
+      // in its empty tool set either.
+      fireEvent.click(view.getByTestId("agent-mode-planning"));
+      expect(view.queryByTestId("agent-auto-execute")).toBeNull();
+    });
+
+    test("a setting ticked on Analyze is not sent after a switch to a workflow that cannot honour it", async () => {
+      // The checkbox's own state is not the authority. Hiding the control leaves the
+      // ticked state behind it, and sending that `true` would now be REFUSED by the
+      // route — a failed start rather than the silent no-op the hidden control
+      // implies. Resolved from the same record the control is rendered from.
+      const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+      const view = analyze();
+      fireEvent.click(view.getByTestId("agent-auto-execute"));
+      fireEvent.click(view.getByTestId("agent-workflow-investigation"));
+      expect(view.queryByTestId("agent-auto-execute")).toBeNull();
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+
+      const sent = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      expect(sent.workflowType).toBe("investigation");
+      expect(sent.autoExecute).toBe(false);
+    });
+
+    test("the control names the bound it gives up, the one it keeps, and what happens instead", () => {
+      const { getByTestId } = analyze();
+
+      expect(getByTestId("agent-auto-execute-label").textContent).toBe("Also run the final answer in my editor");
+      const terms = getByTestId("agent-auto-execute-terms").textContent ?? "";
+      // The run's own bounds, read off the same policy the meter reads.
+      expect(terms).toContain("200 rows");
+      expect(terms).toContain("10 seconds");
+      // The bound that remains, and the one being given up.
+      expect(terms).toContain("500-row limit");
+      expect(terms).toContain("no time limit");
+      // What the run does INSTEAD when the gate declines, so an unrun statement in
+      // the editor reads as the feature working.
+      expect(terms).toContain("put in the editor without being run");
+      // The sentence about writes, which the #373 review's security finding made
+      // false and the hand-over route made true again. It says WHAT refuses them —
+      // the engine, in the same read-only session the run's own read used — because
+      // "writes are refused" was the claim the old wording made while the replay ran
+      // in a read-write session guarded only by a check on the statement's text.
+      expect(terms).toContain("same database-enforced read-only session either way");
+      expect(terms).toContain("writes and DDL are refused by the engine rather than by reading the statement");
+      // And the connection it names is the run's, not "yours": the server resolves it
+      // from the run's own record, so the replay cannot reach another database.
+      expect(terms).toContain("on the connection the run was opened on");
+    });
+
+    test("a SQLite connection is told what a long read there costs; another engine is not", () => {
+      const sqlite = analyze({ connectionType: "sqlite" });
+      expect(sqlite.getByTestId("agent-auto-execute-sqlite").textContent).toBe(
+        "On SQLite a read is not interrupted when it runs long: it blocks other writers and this application until it finishes.",
+      );
+      cleanup();
+
+      const postgres = analyze({ connectionType: "postgres" });
+      expect(postgres.queryByTestId("agent-auto-execute-sqlite")).toBeNull();
+    });
+
+    test("the setting is sent at start, and off is sent as off", async () => {
+      const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+      const { getByTestId } = analyze();
+
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "sales by region" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+      expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).autoExecute).toBe(false);
+
+      cleanup();
+      const ticked = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+      const second = analyze();
+      fireEvent.click(second.getByTestId("agent-auto-execute"));
+      fireEvent.change(second.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+      await act(async () => {
+        fireEvent.click(second.getByTestId("agent-start"));
+      });
+      expect(JSON.parse(String(ticked.mock.calls[0][1]?.body)).autoExecute).toBe(true);
+    });
+
+    // The server's own rule: the setting is decided by the request that opens the run
+    // and no later request may widen it. A control that still moved would be offering
+    // a change nothing would honour.
+    test("the setting cannot be changed while a run is open, and is offered again once it is over", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+      const { getByTestId } = await runWith({});
+
+      await waitFor(() => {
+        expect((getByTestId("agent-auto-execute") as HTMLInputElement).disabled).toBe(true);
+      });
+      expect(getByTestId("agent-auto-execute-frozen").textContent).toContain("decided when the run is opened");
+
+      cleanup();
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
+      const over = await runWith({});
+      await over.findByTestId("agent-run-status");
+      await waitFor(() => {
+        expect((over.getByTestId("agent-auto-execute") as HTMLInputElement).disabled).toBe(false);
+      });
+    });
+
+    test("an auto-executed answer is placed in the editor AND run there, once, verbatim", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("auto-executed")]);
+      const onRunStatement = mock(() => {});
+      const onApplyStatement = mock(() => {});
+      const { findAllByTestId } = await runWith({ onRunStatement, onApplyStatement });
+
+      await findAllByTestId("agent-apply-statement");
+      await waitFor(() => {
+        expect(onRunStatement).toHaveBeenCalledTimes(1);
+      });
+      // Byte for byte what the ledger holds: no injected LIMIT, no rewriting. And the
+      // RUN goes with it (#373 review): the host does not execute this text, it names
+      // the run whose ledger the server reads the statement from.
+      expect(onRunStatement).toHaveBeenCalledWith(ANSWER_SQL, "arun_1");
+      // Running it IS placing it — the host does both, so the rail does not ask twice.
+      expect(onApplyStatement).not.toHaveBeenCalled();
+    });
+
+    /**
+     * A capability the host lacks is not offered — the rule the stop control and the
+     * hydration affordances already follow, applied to the one control that promises
+     * something the host has to perform (#373 review).
+     *
+     * The rail used to offer the checkbox to any host and fall back to
+     * `onApplyStatement` when no runner existed, so the statement was placed and not
+     * run while the timeline entry told the user it "ran on your connection". A
+     * surface may not claim an execution that did not happen, and the cheapest way not
+     * to claim it is not to promise it: `onRunStatement` is an optional public prop,
+     * so any embedding host can be in this state.
+     */
+    describe("a host with no runner is not offered the promise", () => {
+      test("the checkbox is absent, terms and all, on the workflow that otherwise has it", () => {
+        const view = analyze({ onRunStatement: undefined });
+
+        expect(view.queryByTestId("agent-auto-execute")).toBeNull();
+        expect(view.queryByTestId("agent-auto-execute-terms")).toBeNull();
+      });
+
+      test("a setting ticked while a runner existed is not sent after the host loses it", async () => {
+        // The checkbox's own state is not the authority, exactly as it is not the
+        // authority across a workflow switch: hiding the control leaves the ticked
+        // state behind it, and `true` on a run this host cannot carry out would open a
+        // run whose hand-over nothing here could perform.
+        const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+        const view = analyze();
+        fireEvent.click(view.getByTestId("agent-auto-execute"));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+
+        view.rerender(<AgentRail {...DEFAULT_PROPS} />);
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+
+        expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).autoExecute).toBe(false);
+      });
+
+      test("an auto-executed hand-over is never delivered through the apply path instead", async () => {
+        // The ledger entry says the statement ran on the user's connection. Applying it
+        // silently would make that entry false; the statement is still there to be
+        // taken, as the user's own action, through the control beside it.
+        mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("auto-executed")]);
+        const onApplyStatement = mock(() => {});
+        const { findAllByTestId } = await runWith({ onApplyStatement, onRunStatement: undefined });
+
+        expect(await findAllByTestId("agent-apply-statement")).toHaveLength(1);
+        expect(onApplyStatement).not.toHaveBeenCalled();
+      });
+
+      test("an answer the run did NOT hand over is still applied there, as it always was", async () => {
+        // The narrowing is about the hand-over alone: a declined answer is placed in
+        // the editor unrun, which is a claim this host can keep.
+        mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("applied", "Not run for you: yours to run.")]);
+        const onApplyStatement = mock(() => {});
+        await runWith({ onApplyStatement, onRunStatement: undefined });
+
+        await waitFor(() => {
+          expect(onApplyStatement).toHaveBeenCalledWith(ANSWER_SQL);
+        });
+      });
+    });
+
+    /**
+     * A hand-over may only run on the connection the run was opened on (#373 review).
+     *
+     * `onRunStatement` runs the statement against whatever the HOST's editor is
+     * pointed at now — `use-query-execution.ts` resolves every execution from
+     * `activeConnection` — while the run read its rows from the connection it was
+     * opened on. A user who switches connection while a run is going would otherwise
+     * have the approved statement run, without a timeout, against a database whose plan
+     * was never inspected and whose elapsed time was never measured, and be shown that
+     * other database's rows as "the answer".
+     *
+     * The check lives HERE rather than in the host's callback because the callback is
+     * an optional public prop: a second host wiring it differently would not inherit a
+     * guard written in Studio. Declining is the whole remedy — there is no way to reach
+     * the run's connection from here, and inventing one would run a statement somewhere
+     * the user is not looking.
+     */
+    describe("a hand-over is declined when the editor has moved to another connection", () => {
+      /**
+       * A stream that stays OPEN, so the answer can arrive after the connection has
+       * changed. Every other test here streams its whole ledger before the first
+       * assertion, which is the one ordering this defect cannot happen in.
+       */
+      function mockOpenAgentFetch() {
+        let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+        const fetchMock = mock(async (input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+          if (!url.endsWith("/stream")) {
+            return jsonResponse({ runId: "arun_1", status: "queued", mode: "agent" }, 202);
+          }
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(open) {
+                controller = open;
+                open.enqueue(encoder.encode(OPENED_LINE));
+                open.enqueue(encoder.encode(STARTED_LINE));
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/x-ndjson" } },
+          );
+        });
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        return {
+          push: (line: string) => {
+            controller?.enqueue(encoder.encode(line));
+          },
+        };
+      }
+
+      test("the statement is not run, and the entry that claims it ran is contradicted", async () => {
+        const stream = mockOpenAgentFetch();
+        const onRunStatement = mock(() => {});
+        const onApplyStatement = mock(() => {});
+        const view = analyze({ onRunStatement, onApplyStatement });
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+
+        // The user switches the editor to another database while the run is going.
+        view.rerender(
+          <AgentRail
+            {...DEFAULT_PROPS}
+            connectionId="seed:analytics"
+            connectionName="Analytics"
+            onRunStatement={onRunStatement}
+            onApplyStatement={onApplyStatement}
+          />,
+        );
+        await act(async () => {
+          stream.push(answerLine("auto-executed"));
+        });
+
+        const declined = await view.findByTestId("agent-handover-declined");
+        // Nothing ran anywhere: not on the run's connection, which this surface cannot
+        // reach, and not on the one the editor moved to.
+        expect(onRunStatement).not.toHaveBeenCalled();
+        // And not quietly placed either: the entry says the statement RAN, and placing
+        // it unrun beside that sentence is the claim the previous round removed.
+        expect(onApplyStatement).not.toHaveBeenCalled();
+        // Said beside the entry that claims the execution, because that is where the
+        // sentence a user would otherwise believe is written.
+        expect(declined.textContent).toContain("was not run");
+        expect(declined.textContent).toContain("Sales");
+      });
+
+      test("an answer on the run's own connection is still run, so the check is about the change", async () => {
+        // The pair: the same arc with the connection left alone hands the statement
+        // over exactly as before. Without it the test above would pass on a rail that
+        // never hands anything over at all.
+        const stream = mockOpenAgentFetch();
+        const onRunStatement = mock(() => {});
+        const view = analyze({ onRunStatement });
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+
+        await act(async () => {
+          stream.push(answerLine("auto-executed"));
+        });
+
+        await waitFor(() => {
+          expect(onRunStatement).toHaveBeenCalledWith(ANSWER_SQL, "arun_1");
+        });
+        expect(view.queryByTestId("agent-handover-declined")).toBeNull();
+      });
+
+      test("an APPLIED answer is unaffected, because placing a statement claims no execution", async () => {
+        // The narrowing is about the hand-over that RUNS. Putting a statement in the
+        // editor is the user's own next action either way, and the entry beside it says
+        // exactly that.
+        const stream = mockOpenAgentFetch();
+        const onRunStatement = mock(() => {});
+        const onApplyStatement = mock(() => {});
+        const view = analyze({ onRunStatement, onApplyStatement });
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+
+        view.rerender(
+          <AgentRail
+            {...DEFAULT_PROPS}
+            connectionId="seed:analytics"
+            connectionName="Analytics"
+            onRunStatement={onRunStatement}
+            onApplyStatement={onApplyStatement}
+          />,
+        );
+        await act(async () => {
+          stream.push(answerLine("applied", "Not run for you: yours to run."));
+        });
+
+        await waitFor(() => {
+          expect(onApplyStatement).toHaveBeenCalledWith(ANSWER_SQL);
+        });
+        expect(view.queryByTestId("agent-handover-declined")).toBeNull();
+      });
+    });
+
+    test("a declined answer is placed unrun, and the run's own reason is beside it", async () => {
+      const warning = "Not run for you: the engine reported a full table read, so this one is yours to run.";
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("applied", warning)]);
+      const onRunStatement = mock(() => {});
+      const onApplyStatement = mock(() => {});
+      const { findAllByTestId } = await runWith({ onRunStatement, onApplyStatement });
+
+      const items = await findAllByTestId("agent-timeline-item");
+      await waitFor(() => {
+        expect(onApplyStatement).toHaveBeenCalledWith(ANSWER_SQL);
+      });
+      expect(onRunStatement).not.toHaveBeenCalled();
+      // Without this sentence an unrun statement is indistinguishable from a broken
+      // feature, which is the whole reason the gate states its refusal.
+      expect(items.at(-1)?.textContent).toContain(warning);
+    });
+
+    test("an answer the run handed nowhere is handed nowhere here either", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("none")]);
+      const onRunStatement = mock(() => {});
+      const onApplyStatement = mock(() => {});
+      const { findAllByTestId } = await runWith({ onRunStatement, onApplyStatement });
+
+      // The control is still offered: taking the statement is the user's own action.
+      expect(await findAllByTestId("agent-apply-statement")).toHaveLength(1);
+      expect(onRunStatement).not.toHaveBeenCalled();
+      expect(onApplyStatement).not.toHaveBeenCalled();
+    });
+
+    test("a host that offers neither callback survives a handover rather than throwing", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE, answerLine("auto-executed")]);
+      const { findAllByTestId, queryAllByTestId } = await runWith({ onRunStatement: undefined });
+
+      await findAllByTestId("agent-timeline-item");
+      expect(queryAllByTestId("agent-apply-statement")).toHaveLength(0);
     });
   });
 

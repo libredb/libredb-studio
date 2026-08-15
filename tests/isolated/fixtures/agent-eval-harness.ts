@@ -37,7 +37,7 @@ import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
-import { AGENT_RUN_DEADLINE_MS } from "@/lib/agent/execution-policy";
+import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { type AgentGoalVerdict, verifyRunGoal } from "@/lib/agent/goal-verifier";
 import { type AgentToolResources, runInvestigation } from "@/lib/agent/investigation";
 import type { AgentModel } from "@/lib/agent/model-adapter";
@@ -284,6 +284,13 @@ export interface EvalRunOptions {
   readonly workflowType?: AgentRunWorkflowType;
   readonly objective?: string;
   readonly actor?: AgentRunActor;
+  /**
+   * Whether the run may also hand its answer to the editor. Defaults to off, as the
+   * store does — which is the setting §4.4's third case is about: a run with this
+   * unticked must still score `answered`, because the verdict asks what the run
+   * PRODUCED and the hand-over is only where that answer was delivered.
+   */
+  readonly autoExecute?: boolean;
   /** What the scripted engine answers a MODEL statement with. Catalog reads are served by the preset. */
   readonly answer?: (sql: string) => Promise<QueryResult>;
   /**
@@ -364,6 +371,7 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
   const record = await opened.service.start({
     mode,
     ...(options.workflowType === undefined ? {} : { workflowType: options.workflowType }),
+    ...(options.autoExecute === undefined ? {} : { autoExecute: options.autoExecute }),
     actor,
     connectionId: engine.connection.id,
     objective,
@@ -405,6 +413,22 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
       return startedAtMs + (driveOptions.spentMs ?? 0);
     };
 
+    /*
+      The workflow this run was OPENED as, read back off the ledger — which is what
+      `driveAgentRun` does (`src/lib/agent/runtime.ts`) and the reason this is a read
+      rather than a closure over `record`: a drive is a fresh process's view of a
+      durable run, so the budget it enforces has to come from the same place that
+      process would find it.
+
+      It was `AGENT_WORKFLOW_BUDGETS.investigation` for every drive, whatever the run
+      was for (#373 review), so a `data-analysis` eval ran against 450 s where
+      production gives it 900 s. Nothing failed; the scenarios were simply measured
+      against a bound no run of that workflow has.
+    */
+    const persisted = await service.status(record.runId);
+    if (persisted === null) throw new Error(`run ${record.runId} vanished between opening and driving it`);
+    const budget = AGENT_WORKFLOW_BUDGETS[persisted.record.workflowType];
+
     const resources: AgentToolResources = {
       connection: engine.connection,
       capabilities: engine.capabilities,
@@ -412,7 +436,7 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
       scope: createTargetScope(engine.connection.id),
       tracker,
       artifacts,
-      deadline: new AgentRunDeadline(AGENT_RUN_DEADLINE_MS, clock),
+      deadline: new AgentRunDeadline(budget.runDeadlineMs, clock),
       repairs: new AgentRepairLedger(),
       acquireProvider: async () => {
         const failure = options.acquireFails?.();

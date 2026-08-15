@@ -205,6 +205,7 @@ run_group "Group 10/12: PoolTab" \
 # Group 11: Smoke tests (isolated - mock globalThis.fetch + MonitoringEmbed)
 run_group "Group 11/12: Smoke tests" \
   tests/components/agent/AgentRail.test.tsx \
+  tests/components/agent/use-agent-run.test.tsx \
   tests/components/admin/MonitoringEmbed.test.tsx \
   tests/components/VisualExplain.test.tsx \
   tests/components/DatabaseDocs.test.tsx \

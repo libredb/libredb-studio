@@ -144,6 +144,51 @@ export interface QueryWarning {
   code?: number | string;
 }
 
+/**
+ * How one result is to be DRAWN. A specification, never a picture.
+ *
+ * Emitted by an agent run as its answer's presentation and re-exported from
+ * `src/lib/agent/types.ts` under this name, but declared HERE: `DataCharts` draws it
+ * and ships in the published package, and no agent module may be reachable from that
+ * package's declarations (`tests/unit/agent-package-boundary.test.ts`). One
+ * declaration both trees name beats two that can disagree.
+ *
+ * Every column it names is checked against the artifact's real columns before the
+ * event carrying it is written, and against the delivered rows again before it is
+ * drawn, because the component that renders it does not fail on a column holding no
+ * numbers: `Number(value) || 0` turns one into a confident flat line of zeros. A
+ * refused spec costs one turn; an unvalidated one puts this application's frame
+ * around a wrong picture.
+ *
+ * What is absent is as load-bearing as what is here:
+ *
+ * - **`histogram` is excluded**, though `DataCharts` offers it. It bins raw values
+ *   in the browser, so the picture would show something the artifact does not
+ *   contain. A histogram wanted is a bucketing the SQL should do — and then it is a
+ *   bar chart of an aggregate the run can cite.
+ * - **No aggregation field.** `DataCharts` can aggregate; doing it here would be a
+ *   second aggregation nobody recorded and nothing can check. Aggregation belongs in
+ *   the statement, where it is on the ledger.
+ * - **No colours, no titles, no sizes.** Presentation belongs to the app. `caption`
+ *   is the model's own prose and is rendered as quoted model prose, never as a
+ *   sentence the app is saying.
+ */
+export interface AgentChartSpec {
+  readonly type: "bar" | "line" | "area" | "pie" | "scatter" | "stacked-bar";
+  /** One column of the artifact, by the name the result actually carries. */
+  readonly x: string;
+  /** One or more columns of the artifact. Numeric in the delivered rows, or refused. */
+  readonly y: readonly [string, ...string[]];
+  /**
+   * No series split. `DataCharts` has none — several series ARE several `y` columns
+   * there — so a `series` field would be a field the contract invites, the server
+   * validates and the ledger records, and the renderer then silently discards. The
+   * multi-series shapes are reachable by naming several `y` columns instead.
+   */
+  /** The model's own words about what the chart shows. Rendered quoted. */
+  readonly caption: string;
+}
+
 export interface QueryResult {
   rows: Record<string, unknown>[];
   fields: string[];

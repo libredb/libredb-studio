@@ -8,7 +8,7 @@ import { AgentRunStore } from "@/lib/agent/run-store";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import type { QueryResult } from "@/lib/types";
-import { AGENT_EXECUTION_POLICY } from "@/lib/agent/execution-policy";
+import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
 import { AGENT_TOOL_DEFINITIONS, selectAgentTools } from "@/lib/agent/tools";
 import type { AgentRunEvent, AgentRunRecord, AgentRunWorkflowType } from "@/lib/agent/types";
@@ -39,6 +39,7 @@ const WORKFLOWS: readonly AgentRunWorkflowType[] = [
   "query-optimization",
   "database-assessment",
   "operations",
+  "data-analysis",
 ];
 
 // ─── Gate 1: planning performs zero database operations ─────────────────────
@@ -72,7 +73,7 @@ describe("GATE — no operation above risk class 1 can execute", () => {
   });
 
   test("the agent's own ceiling admits nothing above R1", () => {
-    expect(AGENT_EXECUTION_POLICY.maxRiskClass).toBe(1);
+    for (const budget of Object.values(AGENT_WORKFLOW_BUDGETS)) expect(budget.policy.maxRiskClass).toBe(1);
   });
 
   test("an R2 descriptor cannot even be registered — the class has no representation", () => {

@@ -32,13 +32,14 @@ Three properties frame everything below, and each of them is load-bearing rather
   `PROFILE_UNSUPPORTED_BY_PROVIDER` and the run ends `engine-unsupported`
   (`src/lib/agent/runtime.ts:199`). The restriction is a property of the **execution profile**, not
   of the factory: `agent-read-only` sends model-authored statements and is served only where the
-  engine can bound one, while `agent-operations` sends no statement at all — it calls the curated
-  reporting methods every provider implements — and its acquisition therefore does not require
-  `queryReadOnly` (`src/lib/db/factory.ts`, `PROFILE_ACQUISITION`). Everything else about the two
-  acquisitions is identical: the same `readOnly: true` open, the same optional least-privilege
-  `agentUser`, and the same profiled cache, so an operations run is never handed the editor's
-  writable pool either. Plan mode is toolless and reaches no database, so no engine restriction
-  applies to it.
+  engine can bound one, `agent-handover` sends the statement a run already answered with and takes
+  the same gate for the same reason, while `agent-operations` sends no statement at all — it calls
+  the curated reporting methods every provider implements — and its acquisition therefore does not
+  require `queryReadOnly` (`src/lib/db/factory.ts`, `PROFILE_ACQUISITION`). Everything else about
+  the three acquisitions is identical: the same `readOnly: true` open, the same optional
+  least-privilege `agentUser`, and the same profiled cache, so neither an operations run nor an
+  editor replay is ever handed the editor's writable pool. Plan mode is toolless and reaches no
+  database, so no engine restriction applies to it.
 
 This document describes what the runtime *does*. The security matrix rows that cover it are 3.4 and
 3.5 in [`docs/SECURITY.md`](./SECURITY.md) — both marked **Partial**, with the reasons stated there;
@@ -155,7 +156,7 @@ tool-selection function is re-checked at the execution seam, so a caller holding
 still cannot execute a tool the selector would never have offered.
 
 The **workflow type** is WHAT the run is for — `investigation` (the default),
-`query-optimization`, `database-assessment` or `operations` — and it is fixed at start for the same reason and by
+`query-optimization`, `database-assessment`, `operations` or `data-analysis` — and it is fixed at start for the same reason and by
 the same mechanism. Both `selectAgentTools` and `verifyRunGoal` are functions of the run's own
 persisted value, so there is no parameter through which a workflow could arrive twice, and no other
 route accepts one. It is **optional in the request body**: omitting it opens an investigation, which
@@ -209,7 +210,9 @@ database would investigate the seed and report on it as though it were the one o
 
 A run emits a closed set of **semantic events**, and they are the whole of what the UI renders:
 `run-started`, `context-captured`, `statement-drafted`, `tool-invoked`, `tool-completed`,
-`tool-refused`, `report-composed`, `closing-statement`, `run-finished`.
+`tool-refused`, `report-composed`, `closing-statement`, `run-finished`, plus the four a single
+workflow's own tool writes — `plan-comparison`, `recommendation`, `table-profiled` and
+`answer-composed`.
 
 **`closing-statement` is the model's closing prose, and it is deliberately not a report.** It carries
 no citations and claims none, which is why it has its own kind rather than a lenient
@@ -560,6 +563,342 @@ scalars — no `sql` key exists on it at all. The honest edge: `SlowQueryStats.q
 redacted without answering a different question, so it is declared here — and an operator who does not
 want it can deny this one operation id in the audit stream without denying any other agent read.
 
+### The data-analysis template
+
+A run opened as `data-analysis` answers a **question about the data itself** — "which region brought
+in the most revenue last quarter", "how many orders have shipped but never been invoiced", "did
+signups fall after the pricing change" — rather than a question about the database's shape or its
+health. It is the only workflow whose bar asks the run to say *which result is the answer*, and the
+only one that can.
+
+| Offered | Not offered |
+| --- | --- |
+| The read class (`inspect_schema`, `run_read_query`, `inspect_plan`, `compose_report`), plus `profile_table` and `present_answer` | `compare_plans`, `recommend_change`, `inspect_operations` |
+
+**`present_answer` is the tool that makes it a workflow rather than an investigation with a different
+name.** Its verdict, `agent-data-analysis.1`, is the investigation baseline, an `answer-composed`
+entry, and a report that cites that same artifact in at least one claim; a run that reports its
+findings and produces nothing to show for them has answered a question about the data with prose
+alone, and a run whose report is about some other result has put prose beside a picture.
+
+**`profile_table` is borrowed from the assessment template rather than duplicated,** and for a reason
+specific to this workflow: the schema carries no row counts, so a 400 M-row fact table and a 12-row
+lookup table are indistinguishable in the inventory, and a `shipped_at` that is 80% null next to a
+`placed_at` that is fully populated says which date column the business actually fills. Basic depth
+answers both, costs one statement per table, and reads no value out of any column — which is what
+makes pointing it at a table of personal data acceptable at all.
+
+**It gets `medium` ER detail** — the columns that join, not every key's indexes. Joining a fact table
+to the dimension a question groups by is a question about *which* columns join, which is the
+optimization's need; how each key is indexed is what an assessment asks and an analysis never does.
+
+**It carries the largest budget row** (60 turns, 42 statements, 900 s, 180 s of database time) because
+its shape is iterative rather than repetitive: a handful of exploratory reads to find the fact table,
+several attempts at getting one aggregate right, then a comparison window or two. See
+[What bounds a run](#what-bounds-a-run) for what each figure buys, and
+[Deployment](#deployment) for the reverse-proxy timeout its 900 s deadline requires.
+
+Auto-execute (below) is offered on this workflow alone.
+
+### Presenting an answer
+
+`present_answer` records the one thing a ledger otherwise cannot express: **which result IS the
+answer, and how it should be shown.** The read itself is already on the ledger — `tool-invoked`
+before it, `tool-completed` after — but "this result is the answer, and it should be drawn as a bar
+chart of region against net_total" is a decision, and it gets its own event, `answer-composed`.
+
+**One workflow is offered it: `data-analysis`.** `DATA_ANALYSIS_TOOLS` names it and no other
+`WORKFLOW_TOOLS` set does, so an investigation or an assessment that calls it is told there is no
+such tool. That is the axis made load-bearing rather than an omission: `data-analysis` is the only
+workflow whose verdict (`agent-data-analysis.1`) requires an answer, so it is the only one that can
+produce one, and offering the tool to a run whose bar never asks for it would only distract it.
+
+The same record decides three other things, so they cannot disagree with the tool set:
+`AGENT_WORKFLOW_PRESENTS_ANSWER` (`src/lib/agent/types.ts`) is what the rail reads to decide whether
+to offer the auto-execute checkbox, what `POST /api/agent/runs` reads to decide whether to accept an
+`autoExecute` field at all, and what `investigation.ts` reads to decide whether to state
+`AUTO_EXECUTE_RULE` to the model. `tests/unit/lib/agent/tools.test.ts` asserts over every workflow
+that `selectAgentTools` offers `present_answer` exactly when that record says true — because a
+workflow with the flag and no tool would promise a hand-over it cannot perform, and one with the tool
+and no flag would take the setting and silently never offer it.
+
+**What may be PRESENTED is narrower than what may be CITED.** A claim may rest on a plan the run
+read — `recommend_change` is built on exactly that — so the citation check asks only "did this run
+produce it". An answer is a different act: it nominates one result as what the question asked for,
+hands that result's statement to the rail, and is what the verdict counts. So only a `sql.query.read`
+result may be presented. Without that, a run could name an `sql.explain.estimate` artifact — the
+engine's *description* of a statement, with nothing executed and `QUERY PLAN` text for rows — and
+satisfy `agent-data-analysis.1` without having read the data it was opened to analyse. A profile is
+excluded on the same line and deliberately: it is a real reading, but it returns counts the server
+composed about a table rather than rows the model asked for, its statement is the server's so there is
+nothing of the model's to hand over, and its single aggregate row fails every chart check — so
+admitting it would only change which refusal it gets. The check runs **before** the statement is
+resolved, because a plan step does carry a drafted statement; a check after it would have accepted the
+plan. One consequence, recorded rather than left to be found: the gate's first condition can no longer
+fail from this layer, since a read's own statement is by construction among the statements the run
+executed. It stays enforced in `auto-execute.ts`, which is pure and enumerated over every combination
+in its own suite.
+
+| Field | Where it comes from |
+| --- | --- |
+| `artifact` | The model names the artifact id. Checked against this run's own ledger the way a citation is, and then narrowed: only a data read may be the answer. |
+| `sql` | **The ledger**, never the model: `tool-completed` says which step produced the result and `statement-drafted` says what that step asked. |
+| `presentation` | The model: `{"kind":"table"}` or `{"kind":"chart","spec":{…}}`. |
+| `handover` | The run, from its own record and the gate below: `none`, `applied` or `auto-executed`. |
+| `handoverWarning` | The gate, when it declined. Present exactly when `handover` is `applied`. |
+
+**A chart spec is a specification, never a picture**: a type from a closed list
+(`bar`, `line`, `area`, `pie`, `scatter`, `stacked-bar`), an `x`, a non-empty `y`,
+and a `caption` that is the model's own prose and is rendered quoted. No colours, no title,
+no size, no aggregation — presentation belongs to the app, and an aggregation here would be a second
+aggregation nothing recorded. `histogram` is deliberately absent although `DataCharts` offers it: it
+bins raw values in the browser, so the picture would show something the artifact does not contain. A
+bucketing wanted is a bucketing the SQL should do, and then it is a bar chart of an aggregate the run
+can cite.
+
+**There is no `series` field, and its absence has a history worth keeping.** One was invited by the
+contract, accepted by `chartSpecSchema`, checked against the artifact's columns, written to the
+durable ledger and narrated by the rail — and then discarded by `DataCharts`, which has no series
+split and never had one (several series ARE several `y` columns there). So the picture on screen was
+not the picture the ledger recorded, and nothing said so. The field is gone from all four layers
+rather than implemented in the renderer, and the contract now redirects a model that wants several
+series to name several `y` columns. Inviting only what the renderer can draw is the same rule as
+never stating a rule a model's tool set cannot satisfy, one level down.
+
+**Why the spec is validated rather than trusted:** `DataCharts` renders a value it cannot parse as
+`Number(value) || 0`. A chart over the wrong column does not fail and does not render blank — it
+renders a confident flat line of zeros, inside this application's own frame. So every spec is checked
+before the event is written, and each check has its own refusal that restates the half of the contract
+it enforces, because a refusal is read by a model that is demonstrably confused:
+
+| Refusal | What it means |
+| --- | --- |
+| `ANSWER_ARTIFACT_UNKNOWN` | The answer names a result this run never produced. |
+| `ANSWER_NOT_A_DATA_READ` | The result is this run's and is not a reading of the data — a plan, or a profile. It may still be cited as evidence. |
+| `ANSWER_STATEMENT_UNKNOWN` | The result is this run's own data read and no statement the model drafted produced it (a catalog read), so there is no statement to hand over. |
+| `ANSWER_RESULT_RELEASED` | The rows are no longer held, so a chart cannot be checked against them. |
+| `CHART_COLUMN_NOT_IN_RESULT` | A column named is not a column of that result. The refusal **lists the real column names, fenced** — they are engine-supplied text like any other. |
+| `CHART_COLUMN_NOT_NUMERIC` | A `y` column does not hold numbers, by the same >80 %-of-non-null rule `DataCharts` applies. |
+| `CHART_TOO_FEW_ROWS` | Fewer than two rows; the component renders an empty state below two. |
+| `CHART_SHAPE_MISMATCH` | A pie with more than one `y`, or a scatter whose `x` is not numeric. |
+
+The numeric check reads the **live** artifact store, which is why it can read rows at all: that store
+is process memory released when the run ends, and `answer-composed` is written during the run. One
+instant later the rows are gone, and the honest answer then is `ANSWER_RESULT_RELEASED` rather than a
+spec that passed because nothing was left to check it against.
+
+**A run answers once, and the ledger is what says so.** `present_answer` is non-terminal — only
+`compose_report` ends a drive — so nothing in the loop stops a model calling it a second time, and a
+second successful presentation would write a second `answer-composed` entry. On an auto-execute run
+the rail carries out every entry it is given, so that is two statements delivered to the editor and
+two run there without a timeout, under a checkbox that promised the final answer. So the tool refuses
+a second presentation with `ANSWER_ALREADY_RECORDED`, decided from the run's own events **before the
+arguments are parsed** (an argument refusal would invite the model to correct them and call again) and
+costing no repair attempt, because this tool reaches neither the repair ledger nor a database. The
+entry is durable, so a resumed drive is told the same thing.
+
+**A table is a first-class outcome, not a fallback.** A single scalar, a one-row result and a result
+with no numeric column are all answers, and every one of them would render an empty chart. The
+refusals say so in their own text, and a table answer is accepted with no chart validation at all.
+
+**And a chart is never a substitute for a claim.** The presentation shows an artifact, the artifact is
+the evidence, and the claim is the answer — a run that drew a picture and reported nothing has drawn a
+picture. The tool's own reply says so and points at `compose_report`.
+
+### Handing the answer to the editor (auto-execute)
+
+**Auto-execute never produces the answer.** The answer is always an artifact the run already read,
+under the read-only profile, inside the statement ceiling, counted against the run's budget and
+written to its ledger. What the setting adds is one further thing: the same statement is also placed
+in the user's editor **and run there**, at the editor's 500-row limit and with no statement timeout.
+
+**The replay is served under the engine's own read-only boundary, on its own profile.** This is the
+one thing about auto-execute that is a security property rather than a convenience, and the first
+implementation did not have it: the replay went to `POST /api/db/query`, the editor's ordinary
+read-WRITE route, whose only protection is `isDangerousQuery` — a check on the statement's TEXT. The
+agent's own read is not merely called read-only, the database enforces it (`BEGIN READ ONLY` on
+PostgreSQL, `PRAGMA query_only` on SQLite), and text is not where the difference lives: a `SELECT`
+may invoke a VOLATILE function that performs an `INSERT`, which the agent's transaction refuses
+(SQLSTATE 25006) and a read-write session performs. The identical statement was therefore harmless
+where the run proved it and harmful where it was replayed, under a checkbox promising that writes and
+DDL are refused either way.
+
+It now goes to `POST /api/agent/runs/{runId}/handover`, which runs it through `provider.queryReadOnly`
+under a **third execution profile**, `agent-handover`:
+
+| | `agent-read-only` (the run's own read) | `agent-handover` (the editor replay) |
+| --- | --- | --- |
+| Opened with | `readOnly: true`, `agentUser` credential, profiled cache | identical |
+| Requires a database-native read-only statement path | yes | yes |
+| Rows | 200, refused not truncated | 500 (`DEFAULT_QUERY_LIMIT`), refused not truncated |
+| Statement timeout | 10 s | none — spelled as 2 147 483 647 ms |
+| Bytes | 256 KiB | 64 MiB |
+
+The agent's own profile is unchanged: what a MODEL may spend on a run and what a USER's replay may
+spend are different questions, and a shared row would have made a later change to one move the other.
+"No timeout" is an explicit ceiling rather than an absent field because `assertReadOnlyBudget` requires
+every field to be a positive integer — PostgreSQL interpolates the value into
+`SET LOCAL statement_timeout = N`, which takes no bind parameter — so admitting `undefined` would
+trade a real guard for a cosmetic one. 2 147 483 647 ms is PostgreSQL's own 32-bit limit for the
+setting, a little over 24 days; nothing a user waits for reaches it, and the word that does not hold
+is "no".
+
+**The route will not run SQL it is handed.** The request carries no body at all: the statement is read
+from the run's own `answer-composed` event, and the connection from the run's persisted
+`connectionId`, resolved server-side under the run's persisted actor. So nothing a user types reaches
+this profile, and the route is not a general "run this without a timeout" endpoint. It also honours
+the gate rather than re-deciding it — only `handover: "auto-executed"` is replayed; `applied` and
+`none` are refused with `409` and the gate's own warning. A run answers once, so "the answer" is
+unambiguous and needs no id in the path.
+
+It writes **no ledger event**, and cannot honestly: the run may already have finished, a finished
+ledger does not accept appends, and the ledger's claim is that everything the RUN did is in it. The
+replay is logged instead.
+
+**The setting lives on the run record** (`AgentRunRecord.autoExecute`), beside `mode` and
+`workflowType`, and for the same two reasons: a resumed drive must behave like the drive that died,
+and no later request may widen a run once it is open. `POST /api/agent/runs` is the only place it is
+decided — absent means `false`, and a value that is not a boolean is refused rather than coerced.
+
+**It is offered on `data-analysis` in agent mode and nowhere else,** because the hand-over is
+`present_answer`'s and that tool is offered to that workflow alone. The rail renders the checkbox
+only there, the route **refuses** `autoExecute: true` on any other workflow or in planning mode
+rather than normalising it to `false`, and `investigation.ts` states `AUTO_EXECUTE_RULE` to the model
+only when the same record says the run can present an answer. All four read
+`AGENT_WORKFLOW_PRESENTS_ANSWER`.
+
+**And only to a host that can actually run a statement.** `onRunStatement` is an optional prop of
+`AgentRail`, so an embedding host may have no runner at all; the rail then renders no checkbox and
+sends `autoExecute: false` however the control was left. It used to offer the promise regardless and
+fall back to `onApplyStatement`, which placed the statement unrun while the timeline entry told the
+user it had run on their connection — a surface claiming an execution that did not happen. A
+capability the host lacks is not offered, which is the rule the stop control and the hydration
+affordances already follow.
+
+This is worth stating because the first version got it wrong in an instructive way: the checkbox
+rendered for every workflow in both modes. Ticking it on an Investigate run promised a user that the
+final statement would be placed and run in their editor — a hand-over that workflow has no tool to
+perform — while the system prompt told the model to "call `inspect_plan` on the statement that IS the
+answer before you present it", a presentation it had no tool to make, and on `operations` a tool the
+run is not even offered. That is the #350/#356 shape exactly: a rule stated to a model whose tool set
+cannot satisfy it. A refusal rather than a silent downgrade is the second half of the fix — a caller
+that asked for a hand-over and got a run that will not do it should be told, because a silent
+downgrade is how a user comes to believe a feature ran.
+
+**The gate is three conditions, all of which must hold** (`src/lib/agent/auto-execute.ts`, a pure
+function enumerated over all eight combinations by its test):
+
+1. **The run executed this exact statement itself.** A final statement wider than anything the run
+   ran is never auto-executed. This is close to free and it excludes row explosion outright, because
+   the agent path refuses rather than truncates: an artifact exists only for a statement that
+   provably came back inside the row, byte and time ceilings. A statement the run only *explained* is
+   not a statement it executed.
+2. **The plan reads as safe**, per engine, with unknown resolving to risky. **PostgreSQL:** the
+   access path is `index` or `mixed` — never `full-scan`, never `unknown` — and the reported
+   `estimatedCost` is at most 50 000. **SQLite:** every step a `SEARCH`; any `SCAN`, a mixed plan or
+   an unreadable one is risky. SQLite is stricter on purpose: `EXPLAIN QUERY PLAN` reports no cost
+   and no row estimate to weigh, the engine does not preempt a read that overruns, and a runaway read
+   blocks writers and this application until it finishes. Any other dialect is risky, the same
+   fail-closed posture `summarisePlan` takes.
+
+   **A plan the server could only PARTLY read is risky too**, which is the same rule one level down.
+   `summariseSqlite` recognises `SEARCH` and `SCAN`, so a plan holding either of those beside a step
+   it does not interpret — `USE TEMP B-TREE FOR ORDER BY`, or anything a later SQLite emits —
+   summarised as a flat `index` and passed the gate: "said nothing about that step" read as "said it
+   was cheap". The summary now carries `uninterpretedStep` beside `access`, and the gate refuses on
+   it before either engine's rule. The flag sits beside `access` rather than collapsing it to
+   `unknown`, because what the recognised steps said is still true and `compare_plans` still wants
+   it — the comparison is described exactly as it was before the field existed. **PostgreSQL sets no
+   such flag,** deliberately: a PG plan is mostly nodes this reading does not tally (`Sort`,
+   `Hash Join`, `Aggregate`), none of them a relation access, and the engine both reports a whole-plan
+   `Total Cost` this gate already weighs and preempts a statement that overruns. On SQLite the access
+   reading is the gate's entire evidence, and a reading that skipped a step is not evidence.
+3. **The measured elapsed time**, `artifact.summary.elapsedMs` for that very result, at most 2 000 ms.
+   Already on the ledger, so it costs nothing to read.
+
+The plan comes from an `inspect_plan` **this run performed** on the answer's own statement, joined to
+it through the ledger the way `compare_plans` joins its two sides. Where the run holds none the gate
+reads risky, so a run opened with the setting is told in its opening rules to inspect the plan of the
+statement that IS the answer before presenting it — one statement out of the workflow's budget, which
+is the price §2.4.0 names. The server does not take that plan on the run's behalf: a statement
+executed there would carry no `tool-invoked` and no `tool-completed`, and the ledger invariant is that
+everything a run did is in its ledger.
+
+**The join is on `fingerprintStatement`, the repair ledger's canonical form** — the two statements are
+drafted independently, one as `run_read_query`'s argument and one as `inspect_plan`'s, so exact string
+equality made the gate resolve `plan-risky` whenever a model reformatted its own aggregate. Whitespace,
+comments, unquoted case and a trailing terminator normalise away; literals and quoted names keep their
+exact spelling, so a cheap plan of `WHERE id = 1` cannot license `WHERE id = 2`.
+
+**Except for the one comment that is not trivia.** A statement carrying an optimizer directive — a
+`+`-marked comment block, Oracle's `--+` line form, or MySQL's executable comment — takes no part in
+this join, on either side (`hasOptimizerHint`, `src/lib/sql/optimizer-hints.ts`). Under `pg_hint_plan`
+such a comment is an instruction to the planner, so the cheap indexed plan taken for the unhinted text
+says nothing about a statement whose hint forces a sequential scan, and the canonical form normalises
+the difference away — condition 2 would have passed with a plan that is not the plan of the statement
+the editor runs. It fails closed rather than joining on the hint text, because joining would assert
+that the plan the run holds IS the hinted plan, and `inspect_plan` obtains it by sending the statement
+under an `EXPLAIN` prefix; whether `pg_hint_plan` still reads a hint from behind one is a property of
+an extension this repository does not ship and cannot verify. A hinted answer is therefore placed in
+the editor unrun with the gate's own warning, like every other statement the gate cannot weigh.
+
+**`fingerprintStatement` itself is unchanged, deliberately.** It is the repair ledger's canonical
+identity and is consulted before every statement, and there a comment being trivia is a bound rather
+than a bug: a model re-sending a statement the ledger already refused, with a comment added, would
+otherwise fingerprint differently and be admitted again. The distinction matters only at the plan
+join, so it lives at the plan join.
+
+**Both thresholds are approved and pending live measurement.** 2 000 ms and 50 000 were approved on
+2026-08-14 as the starting point a measurement then confirms or corrects; no run has been measured
+against either reference engine yet. The reasoning behind them: the run's own statement ceiling is
+10 s, so a 2 s reading leaves roughly a 5x margin inside a ceiling the editor does not have; and
+50 000 planner units at the default `seq_page_cost = 1.0` is roughly 400 MB of sequential reading,
+seconds rather than minutes. Neither is a time — a planner cost is in arbitrary units calibrated by
+`seq_page_cost` / `random_page_cost` and by how recently `ANALYZE` ran — which is exactly why it is
+not the only condition.
+
+**Any single condition failing records `handover: "applied"` with a warning naming it** — never a
+silent skip. A user who ticked the box and finds the statement sitting unrun has to be told that was
+the feature working, so the warning is in the timeline entry, in the run's own register: *"Not run for
+you: … so this one is yours to run."*
+
+**No `LIMIT` is ever injected.** The statement is handed over verbatim. The agent's caps refuse rather
+than truncate, which is what lets a delivered result be trusted as complete; an injected `LIMIT` would
+break that invisibly, because a bar chart of 200 of 4 000 regions looks like a complete bar chart and
+no number on it is wrong. A model-written `ORDER BY … LIMIT 10` is honest, because the model can then
+say "the top ten" in its claim.
+
+**`auto-executed` records that the run handed the statement over, and nothing more.** The replay
+produces no ledger event: the run may have ended before it happens, and a finished ledger takes no
+appends. The timeline entry says so in as many words — what the editor did is visible in the editor.
+
+**The browser carries the outcome out; it does not weigh the gate again.** The rail reads `handover`
+off the ledger and delivers the statement once per entry: `auto-executed` goes to the runner and
+nowhere else — a host without one delivers nothing rather than applying it silently, since the entry
+says the statement ran — `applied` places it unrun beside the run's own reason, `none` hands over
+nothing. The statement is never lost either way: every answer entry carries `applySql`, so the
+control beside it still offers the statement as the user's own action.
+
+**And it delivers only while the editor is still on the connection the run was opened on.** The
+statement itself can no longer reach the wrong database — the route resolves the run's own persisted
+connection server-side — but the RESULT would land in the editor tab, and the tab belongs to whatever
+connection the user is on now, so another database's rows would be presented as this connection's
+answer. `AgentRail` remembers the connection it opened the run on and declines when the two no longer
+match, saying so beside the entry that claims the execution: that entry is folded from the ledger and
+still says the statement ran, so the contradiction belongs where the sentence is. The narrowing is
+about the hand-over that RUNS: an `applied` entry claims no execution, so a connection change does not
+change what it means. It is enforced in the rail rather than in the host's callback, because that
+callback is an optional public prop and a guard written in one host is one the next host does not
+inherit.
+
+The re-run goes through `useQueryExecution.executeHandedOverStatement`, which takes the RUN and not a
+statement to execute: what it sends is the run id, and the statement it is also given is the text the
+editor SHOWS while the answer arrives. The row limit is the server's, not a request option, which is
+what keeps a tab a user widened for a statement they wrote from widening one the run handed over
+(§2.1). The setting itself is offered as a checkbox in the rail that states those bounds, sent with
+the start request and frozen for as long as the run is open, which is the browser side of the
+server's own rule.
+
 ### What the fence is proved to hold against
 
 `untrusted-content.ts` fences database content; `tests/evals/injection.test.ts` is what proves the
@@ -612,25 +951,79 @@ count of edges is not a bound on a prompt.
 
 ## What bounds a run
 
-The frozen execution policy (`src/lib/agent/execution-policy.ts`, version `agent-read-only.1`) is
-data the pipeline enforces, and the tool layer reads it directly rather than accepting one from a
-caller — an injectable policy would be a seam through which a route or a resumed run could widen the
-agent's privileges.
+The frozen execution policies (`AGENT_WORKFLOW_BUDGETS` in `src/lib/agent/execution-policy.ts`) are
+data the pipeline enforces. There is one row per workflow, and the tool layer picks the row for the
+run's own persisted workflow rather than accepting a policy from a caller — an injectable policy
+would be a seam through which a route or a resumed run could widen the agent's privileges, while a
+workflow type is decided once when the run opens and read from the ledger thereafter.
+
+**The four figures that differ per workflow:**
+
+| Workflow | Model turns | Statements | Run deadline | Database time | Policy version |
+| --- | --- | --- | --- | --- | --- |
+| `investigation` | 36 | 30 | 450 s | 90 s | `agent-read-only.investigation.1` |
+| `query-optimization` | 36 | 30 | 450 s | 90 s | `agent-read-only.query-optimization.1` |
+| `database-assessment` | 48 | 45 | 630 s | 135 s | `agent-read-only.database-assessment.1` |
+| `operations` | 20 | 12 | 300 s | 60 s | `agent-read-only.operations.1` |
+| `data-analysis` | 60 | 42 | 900 s | 180 s | `agent-read-only.data-analysis.1` |
+
+**These figures are approved and pending live measurement.** They were approved on 2026-08-14 as the
+starting point a measurement then confirms or corrects; no run has been measured against them yet.
+`operations` is lower than the analytical rows on purpose: it sends no SQL, so it never drafts a
+statement, never repairs one and never iterates towards an aggregate that came out wrong — and its
+reads come from a closed set of six curated kinds, so twelve statements is every kind twice.
+
+`data-analysis` is the largest row, and every one of its four figures is bought rather than
+inherited. An analytical run's shape is a handful of exploratory reads to find the fact table,
+several attempts at getting one aggregate right — which is where the repair budget goes — and then
+one or two comparison windows: it needs room to ITERATE where an assessment needs room to repeat.
+Its database time is the ceiling most likely to bind first, because a `GROUP BY` over a fact table is
+not a catalog read, and 900 s is what makes 60 turns reachable rather than decorative (900 s − 180 s
+of database time is 720 s of model time, which is 60 turns at the slow end of this workload's
+latency). **A 900 s run outlives the default idle timeout of most reverse proxies** — nginx's
+`proxy_read_timeout` is 60 s — so a deployment in front of a container must raise its own timeout to
+at least the longest deadline it wants to serve, and there is no re-attach path for a stream cut
+mid-run (B9).
+
+**What every row shares:**
 
 | Bound | Value | Counts |
 | --- | --- | --- |
-| `maxStatementsPerRun` | 20 | Every statement, including catalog reads and repairs. |
-| `maxTotalRunMs` | 60 s | **Database time only.** |
 | `statementTimeoutMs` | 10 s | Per statement, clamped further by the run deadline. |
 | `maxResultRows` / `maxResultBytes` | 200 / 256 KiB | Compared after the driver has materialised the rows, so an oversized read is refused but still paid for at the database. |
 | `maxConcurrentExecutions` | 1 | The loop is sequential; a run cannot fan out. |
-| Run deadline | 300 s | **Wall clock**, including model latency. |
-| One model call | 90 s | Whichever of this and the run's remaining time is smaller applies. |
+| One model call | 90 s | Whichever of this and the run's remaining time is smaller applies. Not per workflow: how long one request may hang is a property of the transport, not of the question. |
 | Repair attempts | 3 | Statements that failed **at the database**. |
-| Model turns per drive | 16 | A backstop for a loop that never reaches the database. |
+
+The statement budget, the database time and the wall clock are enforced through the policy the run's
+workflow names, and the version carries the workflow so a recorded deny code traces back to the
+number that produced it. The turn ceiling is the backstop for a loop that never reaches the database
+at all, and it moves with the wall clock rather than alone: at a deadline that cannot pay for the
+turns, a larger turn ceiling only changes which word the ledger records.
+
+**A run keeps its last turns back for its report.** Within `AGENT_REPORT_RESERVE_TURNS` (2) model
+turns of its turn ceiling, or `AGENT_REPORT_RESERVE_MS` (20 s) of its run deadline — whichever it
+reaches first — the loop pushes one server-authored user message before the next turn: this is your
+last turn, call `compose_report` now with what you have established, and a claim still has to cite an
+artifact this run read. Without it a run that reaches a ceiling ends `failed` / `turn-limit` with no
+`report-composed` entry and a verdict of `unanswered`, and the whole spend buys nothing.
+
+Four properties make that a message rather than a weakening, and each is asserted rather than
+claimed: it **costs nothing to reach** (`compose_report` reaches no database, so the notice spends no
+statement, takes no deadline admission and consumes no turn of its own — it rides on the turn that
+was about to be taken); it **does not lower the bar**, because `composeReportTool` still checks every
+citation against the run's own event log, so a forced report is a cited report or it is no report;
+it **is not a rule change**, so it touches neither the policy version nor the goal verifier, and a
+run that ignores it still ends `turn-limit` or `deadline-exceeded` exactly as before; and it is
+**said once per drive**, in planning mode never — that mode has no `compose_report` to call, and
+telling a model to use a tool it does not have is the #350 failure. The wording repeats the citation
+sentence the run's own rules carry (`AGENT_CITATION_RULE`) rather than a second phrasing of it, for
+the same reason. The rail states the reserve beside the ceilings, so a run that ends short of every
+figure reads as one that was asked to stop rather than one that gave up.
 
 **The per-call ceiling exists because the run deadline used to be the only bound on a single
-request.** A measured run ended at exactly 300.0 s with a two-event ledger: one call never answered
+request.** A measured run ended at exactly 300.0 s — the whole run deadline of the day — with a
+two-event ledger: one call never answered
 and spent a budget meant to cover a whole investigation, while the rail showed nothing moving for
 five minutes. Turns on this workload land in seconds, so a call that reaches 90 s is not coming back.
 The two bounds stay distinct in what they report — `model-timeout` says a request never returned and
@@ -781,6 +1174,44 @@ build until somebody decides what "answered" means for it.
 | `agent` (query-optimization) | The baseline above, **and** either a plan comparison on the ledger or an index recommendation citing a plan this run read. `agent-query-optimization.2`. | the above, plus `no-plan-comparison`, `no-plan-evidence` |
 | `agent` (database-assessment) | The baseline above, **and** a table profiled. `agent-database-assessment.1`. | the above, plus `no-table-profile` |
 | `agent` (operations) | A composed report. `agent-operations.1`. **Not** composed on the baseline: an empty reading is an answer, so the emptiness clause is dropped. Its claims already cite a reading — `compose_report` refuses uncited claims and a reading is the only citable artifact this workflow can produce — so that half needs no arm of its own. | `no-report`, `cancelled` |
+| `agent` (data-analysis) | The baseline above, **and** an `answer-composed` entry: which result IS the answer, and how to show it — **and at least one claim citing that same artifact**, so the report is about the result it presented. `agent-data-analysis.1`. | the above, plus `no-answer`, `answer-uncited` |
+
+**Why `agent-data-analysis.1` asks for an artifact rather than for a picture.** Every valid answer
+this workflow can give produces an `answer-composed` entry: a chart of an aggregate, a table for a
+one-row or non-numeric result, a single number as a one-row table, and a two-window comparison are
+all one artifact presented one way. A rule that required a *chart* would have been stated in terms of
+an artifact only some of the valid answers can produce — and an earlier draft made the verdict depend
+on the editor hand-over instead, which would have scored a run `unanswered` for having a checkbox
+switched off. Both are the #356 shape, and the rule was changed before any of it was written.
+`tests/evals/data-analysis.test.ts` drives the one-row case and the auto-execute-off case directly,
+because a requirement about what a run produces is enforced only by something that runs one.
+
+**And why it also asks the report to be ABOUT that artifact.** A cited report and a presented result
+were two unconnected facts, so a run could chart artifact A while every claim cited artifact B and
+score `answered` — unrelated prose beside a picture, invisible to every other field on the ledger.
+One claim citing the presented artifact is what links them, and `answer-uncited` is the shortfall
+when nothing does. The arm was checked against both halves before it was written: it is **producible**
+because the model holds that correlation id at the moment it needs it — it passed the id to
+`present_answer` one turn earlier, the tool names it back, and the artifact is a `tool-completed`
+result of this run, so `compose_report` accepts a citation of it; and the model is **told**, in the
+workflow's opening rules, in `present_answer`'s description and in what that tool says back, where
+the id itself can be named. One claim, not every claim: a report says more than the picture shows and
+should. `tests/evals/data-analysis.test.ts` drives both directions — the ordinary read/present/report
+arc still scores `answered` with nothing added, and a run that presents its second result while
+reporting about its first scores `answer-uncited`.
+
+The verdict id stayed `agent-data-analysis.1` through that change, which is the one case where
+tightening a rule under its own id is defensible: an id is versioned because verdicts outlive the
+rule, and this one had never left the branch that introduced it — no release carried it and no
+fixture recorded a verdict under it, so there was no reader to protect and a `.2` would have put a
+dead id in the union for a rule nothing was judged by. Once it is on `main` the rule is frozen and
+the next change to it is `.2`, exactly as `agent-query-optimization.1` → `.2` was.
+
+Its stated blind spot: a run that answers purely from the schema snapshot — "which table holds
+sales?" — cites the snapshot, passes the baseline, has no artifact to present, and is scored
+`unanswered`. That is deliberate. This workflow's objective is a question about the DATA, and an
+analysis that read none is not an analysis; the remedy for a schema question is to route it to
+`investigation`, not to widen what counts as evidence here.
 
 A run stopped by its user reports `cancelled` instead of the missing output: a stop is not
 a defect of the run, and counting it as one would make every cancellation read as a model
@@ -974,14 +1405,68 @@ What each of those says to a user, in the words it actually renders, is
   overrunning statement is cut short. It reports no token budget because none is enforced (B10), and
   two of its figures are honest undercounts (B12, B13).
 
-Results the agent stored **hydrate the existing surfaces**: the results grid and the explain view in
-the bottom panel, carrying a read-only provenance badge that names the run. There is deliberately no
-second editor and no second grid inside the rail, and applying a statement to the editor happens only
-on an explicit user action. Chart and export hydration are not wired (B14), and a run's stored
-results are released when the run ends, so a report can outlive the rows its citations point at
-(B15).
+Results the agent stored **hydrate the existing surfaces**: the results grid, the explain view and the
+charts view in the bottom panel, carrying a read-only provenance badge that names the run. There is
+deliberately no second editor, no second grid and no second chart component inside the rail, and
+applying a statement to the editor happens only on an explicit user action.
+
+**Which surface a result opens in comes from what the run RECORDED, never from what its rows look
+like.** A plan opens the explain view because `sql.explain.estimate` produced it; a chart opens the
+charts view because the run composed its answer as a chart and said in `answer-composed` how to draw
+it. A result whose answer said table is shown as a table however chartable its columns are. The
+specification the model emitted is validated against the artifact's columns before it is recorded, and
+validated again in the browser against the rows actually delivered — two guards, because
+`DataCharts` turns a column it cannot read into `0` rather than into an error, and a chart of the
+wrong column draws a confident flat line rather than failing. A specification that does not survive the
+second check is dropped and the view's own inference draws the chart instead. Exporting a hydrated
+result is not wired (B34), and a run's stored results are released when the run ends, so a report can
+outlive the rows its citations point at (B15).
+
+**Those results live in process memory, and the store that holds them is bounded.** It keeps 180
+entries at once — the largest statement ceiling any workflow may be given (45) times the four
+concurrent runs one agent process is sized for — and each entry is at most what the execution
+profile's byte cap admitted. When the bound is reached, the run that is storing gives up **its own**
+oldest artifact rather than the store's, so a run that executes a lot cannot make "Show result" fail
+on a quieter run that is still live. The store is per process, which is consistent with the
+zero-config backend below being single-instance.
+
+**What that product bounds is four *drives*, not four runs.** Every ceiling in the decision table is
+per drive (B6), while a resumed run keeps its `runId` and its artifacts are keyed by it — so a run
+driven three times may hold up to three times its statement ceiling here, and a long-lived run can
+pass 180 on its own. Run-fair eviction then takes that run's *own* earliest results, which its report
+may still cite: a third way to reach the "the rows are not here" answer B15 describes, this time while
+the run is still live. The ledger is unaffected — the claim and its citation are durable — and the
+gap is recorded as **B35** rather than closed with an artifact-only bound, because a ceiling that
+holds across drives is the mechanism B6 already names.
 
 ## Deployment
+
+**An agent-capable deployment needs a reverse-proxy read timeout of at least 16 minutes, and the
+chart does not set one for you.** The rail follows a run through a single long-lived streaming
+response, so the run and the HTTP response have the same lifetime. The longest drive any workflow may
+take today is `data-analysis`'s **900 s** wall clock — so a response can legitimately stay open far
+longer than the 60 s that is nginx's
+default `proxy_read_timeout`, and longer than the comparable defaults of the ingress controllers,
+load balancers and PaaS routers Studio is deployed behind. Raise it to **960 s** where the traffic
+enters (`proxy_read_timeout 960s;` for nginx, `nginx.ingress.kubernetes.io/proxy-read-timeout: "960"`
+for the ingress-nginx annotation, the equivalent idle timeout elsewhere). Nothing in this repository
+can do it for you: the timeout belongs to the proxy, not to the container.
+
+The figure is 960 rather than 900 deliberately: a timeout set to exactly the longest deadline has no
+headroom, and would cut the run at the very moment it was entitled to be finishing. This number is a
+ceiling to survive, not a duration to wait for — a run that ends sooner closes its own stream, and
+raising the timeout does not make any run longer. It was 900 s while `database-assessment`'s 630 s
+was the longest drive; the `data-analysis` row moved the thing it is derived from, which is why it is
+stated here as a function of the budget table rather than as a constant.
+
+**A keep-alive would not be a substitute, and the reason is worth knowing.** The stream emits one
+line per ledger event, so an active run keeps the socket warm by itself — but a run spends most of a
+turn *inside one model call*, writing nothing, and one model call may take up to 90 s. A proxy whose
+idle timeout is under that will cut a perfectly healthy run mid-turn, and what the user sees is the
+rail losing its stream rather than a run that failed. The run itself survives — it is durable and
+resumable — but nothing today re-attaches the rail to it (`docs/BACKLOG.md` B9), so in practice the
+user watches a run disappear. Emitting a periodic keep-alive on the stream is the alternative fix and
+is not implemented; the required timeout is documented instead.
 
 **The zero-config backend is single-instance.** `local` keeps run state in a directory on local disk
 and takes file locks, so more than one replica pointed at it is a misconfiguration. Running the agent
@@ -1154,7 +1639,6 @@ declared-target allowlist, the statement guard and the role's own grants are the
 - **B12** — a statement that failed at the database records no duration, so the meter's database time
   counts completed reads only.
 - **B13** — three spends the ledger never records, so the meter reads low.
-- **B14** — an artifact hydrates the grid and the explain view, but not the chart or export surfaces.
 - **B15** — a run's stored results are released when it ends, so a report's citations can outlive its
   rows.
 - **B16** — the opt-in `@workflow/world-postgres` backend is not present in the standalone payload,
@@ -1180,6 +1664,28 @@ declared-target allowlist, the statement guard and the role's own grants are the
 - **B33** — a run is observable only from its own ledger. There is no OpenTelemetry export and no
   metrics: the record described above is complete, and getting it into a stack the operator already
   runs is designed (#332) and deliberately unbuilt.
+- **B34** — a hydrated result cannot be exported: the Export menu serializes the tab's own rows, so it
+  is hidden while a run's result is shown.
+
+The next six were found by driving the product against a live model in a browser, which is the only
+way any of them could have been found: every one of them passes every gate.
+
+- **B36** — a follow-up question is answered as if it were the first. Runs carry no memory of each
+  other, and neither the surface nor the model says so — the model picks a plausible referent and
+  answers a question nobody asked, with the citations a correct answer carries.
+- **B37** — a seed config the server cannot read disables the agent on every connection, and the rail
+  blames the connection: "its settings live in this browser", said of a connection this application
+  seeds itself. The browser cannot tell an empty seed list from a failed one.
+- **B38** — an engine with no read-only execution path is offered a run anyway, and refuses only after
+  the run has opened and spent a model turn. The rail withholds every other capability the host
+  cannot serve; this is the one it does not.
+- **B39** — a data-analysis run has no honest way to conclude that the question is not about this
+  database. Its only route to `answered` is a reading of the data, so a run that establishes the
+  question is unanswerable fabricates one — the #356 shape again, in a new place.
+- **B40** — `bun dev` cannot log in: the CSP omits `unsafe-eval` in every environment and React's
+  development build needs it, so the login page never hydrates. Production is unaffected.
+- **B41** — `defaults` in a seed config does not merge `roles`, though the documentation says the
+  block is merged into every connection.
 
 ## Related documentation
 

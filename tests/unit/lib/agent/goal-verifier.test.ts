@@ -494,9 +494,133 @@ describe("an operations run answers on what the ENGINE said about itself", () =>
   });
 });
 
+describe("a data-analysis run answers when it also produced something to show", () => {
+  const ANSWER = "4f2c9a10-0000-4000-8000-000000000006";
+
+  const answerComposed: AgentRunEvent = {
+    kind: "answer-composed",
+    atMs: 25,
+    sql: "SELECT region, sum(net_total) AS net_total FROM orders GROUP BY region",
+    artifact: artifact(ANSWER, 4),
+    presentation: { kind: "table" },
+    handover: "none",
+  };
+
+  const analysis = (events: readonly AgentRunEvent[]) =>
+    verifyRunGoal(run("agent", "succeeded", events, "data-analysis"));
+
+  test("the baseline plus an answer is answered", () => {
+    const verdict = analysis([contextCaptured, completed(ANSWER, 4), answerComposed, reportCiting(ARTIFACT(ANSWER))]);
+
+    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-data-analysis.1", unmet: [] });
+  });
+
+  test("a report with no answer to show falls short on the template's own artifact", () => {
+    const verdict = analysis([contextCaptured, completed(ANSWER, 4), reportCiting(ARTIFACT(ANSWER))]);
+
+    expect(verdict).toEqual({ outcome: "unanswered", verifier: "agent-data-analysis.1", unmet: ["no-answer"] });
+  });
+
+  test("the baseline dominates, so a run that composed nothing is told THAT", () => {
+    // Composition, not replacement: naming the smaller of two problems is the
+    // mistake composing avoids. A run that never reported has not become a run that
+    // merely skipped an answer.
+    expect(analysis([contextCaptured, completed(ANSWER, 4), closing]).unmet).toEqual(["no-report"]);
+    expect(
+      analysis([contextCaptured, completed(CORRELATION.empty, 0), reportCiting(ARTIFACT(CORRELATION.empty))]).unmet,
+    ).toEqual(["empty-evidence"]);
+  });
+
+  test("presenting a table is worth exactly what presenting a chart is", () => {
+    // §3.4: a one-row result, a single number and a result with no numeric column
+    // are complete answers. A rule that only accepted a chart would be #356 again —
+    // stated in terms of an artifact only some of the valid answers can produce.
+    const chart: AgentRunEvent = {
+      ...answerComposed,
+      presentation: {
+        kind: "chart",
+        spec: { type: "bar", x: "region", y: ["net_total"], caption: "Net total by region." },
+      },
+    };
+
+    expect(analysis([contextCaptured, completed(ANSWER, 4), chart, reportCiting(ARTIFACT(ANSWER))]).outcome).toBe(
+      "answered",
+    );
+  });
+
+  /**
+   * The link between the two halves of an analytical answer (#373 review).
+   *
+   * The baseline asks for a cited report and the template asks for a presented
+   * result, and until this arm nothing tied them together: a run could present
+   * artifact A while every claim cited artifact B and still score `answered` —
+   * unrelated prose beside a chart, which is exactly the shape of run this verifier
+   * exists to see.
+   */
+  describe("the report has to be about the result the run presented", () => {
+    const OTHER = "4f2c9a10-0000-4000-8000-000000000007";
+
+    test("a report citing some other result the run read is not an answer to the presentation", () => {
+      const verdict = analysis([
+        contextCaptured,
+        completed(ANSWER, 4),
+        completed(OTHER, 3),
+        answerComposed,
+        reportCiting(ARTIFACT(OTHER)),
+      ]);
+
+      expect(verdict).toEqual({ outcome: "unanswered", verifier: "agent-data-analysis.1", unmet: ["answer-uncited"] });
+    });
+
+    test("one claim among several is enough: the rule is a link, not a restriction on the report", () => {
+      // A report says more than what the chart shows, and it should. What is required
+      // is that SOMETHING in it rests on the result being presented, which is what the
+      // model can produce in the order the tools are called: it holds the answer's
+      // correlation id, having just passed it to present_answer.
+      const verdict = analysis([
+        contextCaptured,
+        completed(ANSWER, 4),
+        completed(OTHER, 3),
+        answerComposed,
+        reportCiting(ARTIFACT(OTHER), ARTIFACT(ANSWER)),
+      ]);
+
+      expect(verdict).toEqual({ outcome: "answered", verifier: "agent-data-analysis.1", unmet: [] });
+    });
+
+    test("a claim resting on the schema snapshot alone does not link the report to the answer", () => {
+      expect(analysis([contextCaptured, completed(ANSWER, 4), answerComposed, reportCiting(SNAPSHOT)]).unmet).toEqual([
+        "answer-uncited",
+      ]);
+    });
+
+    test("the missing answer dominates the missing link, so the larger problem is the one named", () => {
+      // Composition again: a run with no presentation at all is told THAT rather than
+      // told its report failed to cite a presentation it never made.
+      expect(analysis([contextCaptured, completed(ANSWER, 4), reportCiting(SNAPSHOT)]).unmet).toEqual(["no-answer"]);
+    });
+  });
+
+  test("a run answering purely from the schema snapshot is unanswered, deliberately", () => {
+    // The rule's stated blind spot, asserted so that it is a decision on the record
+    // rather than an accident nobody measured: an analysis that read no data is not
+    // an analysis, and the remedy for a schema question is the `investigation`
+    // workflow rather than a wider notion of evidence.
+    const schemaOnly = [contextCaptured, reportCiting(SNAPSHOT)];
+
+    expect(analysis(schemaOnly).unmet).toEqual(["no-answer"]);
+    expect(verifyRunGoal(run("agent", "succeeded", schemaOnly)).unmet).toEqual([]);
+  });
+
+  test("a cancelled run without a report reports the cancellation instead", () => {
+    expect(verifyRunGoal(run("agent", "cancelled", [contextCaptured], "data-analysis")).unmet).toEqual(["cancelled"]);
+  });
+});
+
 describe("the verifier registry", () => {
   test("names one rule per workflow type, so a new workflow cannot inherit another one's bar", () => {
     expect(Object.keys(AGENT_WORKFLOW_GOALS).sort()).toEqual([
+      "data-analysis",
       "database-assessment",
       "investigation",
       "operations",

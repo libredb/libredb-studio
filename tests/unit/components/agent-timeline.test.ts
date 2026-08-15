@@ -15,8 +15,9 @@
 
 import { describe, test, expect } from "bun:test";
 import { foldLedgerEntries, parseLedgerLine } from "@/components/agent/timeline";
-import { AGENT_EXECUTION_POLICY, AGENT_MAX_REPAIR_ATTEMPTS } from "@/lib/agent/execution-policy";
+import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
+import { DEFAULT_AGENT_WORKFLOW_TYPE } from "@/lib/agent/types";
 
 const OPENED: AgentLedgerEntry = {
   kind: "run-opened",
@@ -102,6 +103,7 @@ describe("foldLedgerEntries", () => {
       ["query-optimization", "query optimization"],
       ["database-assessment", "a database assessment"],
       ["operations", "an operations reading"],
+      ["data-analysis", "a data analysis"],
     ] as const) {
       const view = foldLedgerEntries([{ ...OPENED, workflowType }]);
       expect(view.items[0].headline, workflowType).toBe(`Run opened in agent mode for ${words}`);
@@ -159,9 +161,26 @@ describe("foldLedgerEntries", () => {
 
     const closing = view.items.at(-2);
     expect(closing?.headline).toBe("Closing statement");
-    expect(closing?.detail).toBe("Start with the salary index.");
+    // Carried as PROSE rather than as a detail: `detail` is the app's own words, and
+    // this is the model's — a distinction the surface reads, because prose is what it
+    // renders with the structure the model wrote (#373 review).
+    expect(closing?.prose).toBe("Start with the salary index.");
+    expect(closing?.detail).toBeUndefined();
     expect(closing?.tone).toBe("progress");
     expect(view.items.at(-1)?.detail).toBe("The model stopped without composing a cited report.");
+  });
+
+  test("the app's own lines carry no prose, so nothing else is rendered as the model's", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: { kind: "run-finished", atMs: 9, status: "succeeded", stopReason: "model-stopped" },
+      }),
+    ]);
+
+    expect(view.items[0]?.prose).toBeUndefined();
+    expect(view.items[1]?.prose).toBeUndefined();
   });
 
   test("a run that ran out of steps says so, and keeps what it gathered", () => {
@@ -582,12 +601,38 @@ describe("foldLedgerEntries — the budget meter", () => {
       },
     });
 
-  test("the ceilings are the constants the server enforces, not a second copy", () => {
-    const view = foldLedgerEntries([]);
+  /**
+   * The ceilings differ per workflow, so a meter that read one row would state a
+   * number the server is not enforcing for four runs out of five. The workflow is
+   * taken off the run's own header — the only entry that carries it.
+   */
+  test.each(["investigation", "query-optimization", "database-assessment", "operations", "data-analysis"] as const)(
+    "a %s run's gauges are that workflow's own ceilings",
+    (workflowType) => {
+      const view = foldLedgerEntries([{ ...OPENED, workflowType }]);
+      const budgets = AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets;
 
-    expect(gauge(view, "statements").limit).toBe(AGENT_EXECUTION_POLICY.budgets.maxStatementsPerRun);
-    expect(gauge(view, "database-time").limit).toBe(AGENT_EXECUTION_POLICY.budgets.maxTotalRunMs);
-    expect(gauge(view, "repairs").limit).toBe(AGENT_MAX_REPAIR_ATTEMPTS);
+      expect(view.workflowType).toBe(workflowType);
+      expect(gauge(view, "statements").limit).toBe(budgets.maxStatementsPerRun);
+      expect(gauge(view, "database-time").limit).toBe(budgets.maxTotalRunMs);
+      expect(gauge(view, "repairs").limit).toBe(AGENT_MAX_REPAIR_ATTEMPTS);
+    },
+  );
+
+  /**
+   * Two ledgers fold to the default, and for the same reason `run-store.ts` reads one
+   * that way: a header written before the field can only have been an investigation,
+   * and a stream joined after its header has gone past has nothing else to read.
+   */
+  test("a header with no workflow, and a ledger with no header, both fold to the default", () => {
+    const budgets = AGENT_WORKFLOW_BUDGETS[DEFAULT_AGENT_WORKFLOW_TYPE].policy.budgets;
+
+    for (const entries of [[OPENED], []]) {
+      const view = foldLedgerEntries(entries);
+      expect(view.workflowType).toBe(DEFAULT_AGENT_WORKFLOW_TYPE);
+      expect(gauge(view, "statements").limit).toBe(budgets.maxStatementsPerRun);
+      expect(gauge(view, "database-time").limit).toBe(budgets.maxTotalRunMs);
+    }
   });
 
   test("a run that has done nothing has consumed nothing", () => {
@@ -968,8 +1013,8 @@ describe("foldLedgerEntries — what a timeline item offers to hydrate", () => {
 
 describe("a plan comparison reads as a comparison, and says what those plans are", () => {
   const comparison = (
-    before: { access: string; estimatedRows?: number; estimatedCost?: number },
-    after: { access: string; estimatedRows?: number; estimatedCost?: number },
+    before: { access: string; estimatedRows?: number; estimatedCost?: number; uninterpretedStep?: boolean },
+    after: { access: string; estimatedRows?: number; estimatedCost?: number; uninterpretedStep?: boolean },
   ): AgentLedgerEntry =>
     event({
       kind: "event",
@@ -1004,6 +1049,21 @@ describe("a plan comparison reads as a comparison, and says what those plans are
 
     expect(view.items[1]?.detail).toContain("Estimates only");
     expect(view.items[1]?.detail).toContain("EXPLAIN ANALYZE is policy-denied");
+  });
+
+  test("a partly-read plan is described exactly as a fully-read one of the same access", () => {
+    // `uninterpretedStep` was added for the auto-execute gate (#373) and this is the
+    // constraint that came with it: a comparison is about how two statements differ in
+    // the access they were read to have, and whether one of them also sorted is not a
+    // difference this reading measured. So the sentence is the one it was before the
+    // field existed, and the field is read by the gate alone.
+    const flagged = foldLedgerEntries([
+      OPENED,
+      comparison({ access: "full-scan", uninterpretedStep: true }, { access: "index", uninterpretedStep: true }),
+    ]);
+    const plain = foldLedgerEntries([OPENED, comparison({ access: "full-scan" }, { access: "index" })]);
+
+    expect(flagged.items[1]?.detail).toBe(plain.items[1]?.detail ?? "");
   });
 
   test("an engine that reports no estimates gets no parenthetical, rather than a zero", () => {
@@ -1186,6 +1246,7 @@ describe("an ending says whether the run ANSWERED, not only how it stopped (B24)
       "no-plan-comparison",
       "no-plan-evidence",
       "no-table-profile",
+      "no-answer",
       "cancelled",
     ]) {
       const view = foldLedgerEntries([
@@ -1433,5 +1494,178 @@ describe("the verdict and the sentence beneath it are read as one pair (#350)", 
     ]);
 
     expect(view.items[1]?.detail).toBeUndefined();
+  });
+});
+
+describe("an answer reads as the app's decision, with the model's caption quoted", () => {
+  const ANSWER_SQL = "SELECT region, SUM(net_total) AS net_total FROM orders GROUP BY region";
+
+  const answer = (presentation: unknown): AgentLedgerEntry =>
+    event({
+      kind: "event",
+      event: {
+        kind: "answer-composed",
+        atMs: 9,
+        sql: ANSWER_SQL,
+        artifact: {
+          correlationId: "corr-answer",
+          runId: "run-1",
+          operationId: "sql.query.read",
+          summary: { rowCount: 4, columnNames: ["region", "net_total"], elapsedMs: 11 },
+        },
+        presentation,
+        handover: "none",
+      },
+    } as AgentLedgerEntry & { kind: "event" });
+
+  /** The same answer, with the handover the gate decided. */
+  const handedOver = (handover: string, handoverWarning?: string): AgentLedgerEntry =>
+    event({
+      kind: "event",
+      event: {
+        kind: "answer-composed",
+        atMs: 9,
+        sql: ANSWER_SQL,
+        artifact: {
+          correlationId: "corr-answer",
+          runId: "run-1",
+          operationId: "sql.query.read",
+          summary: { rowCount: 4, columnNames: ["region", "net_total"], elapsedMs: 11 },
+        },
+        presentation: { kind: "table" },
+        handover,
+        ...(handoverWarning === undefined ? {} : { handoverWarning }),
+      },
+    } as AgentLedgerEntry & { kind: "event" });
+
+  test("a chart answer names the type in the app's own words and quotes the caption", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      answer({
+        kind: "chart",
+        spec: { type: "bar", x: "region", y: ["net_total"], caption: "Net total by region, largest first." },
+      }),
+    ]);
+
+    expect(view.items[1]?.headline).toBe("Answer composed");
+    expect(view.items[1]?.detail).toContain("bar chart");
+    // The caption is the model's own prose and is rendered as quoted content, never
+    // spliced into a sentence a user would read as the app speaking.
+    expect(view.items[1]?.quoted).toBe("Net total by region, largest first.");
+  });
+
+  test("a table answer is stated as an answer, not as a fallback", () => {
+    const view = foldLedgerEntries([OPENED, answer({ kind: "table" })]);
+
+    expect(view.items[1]?.headline).toBe("Answer composed");
+    expect(view.items[1]?.detail).toContain("table");
+    // There is no caption on a table answer, so there is nothing to quote.
+    expect(view.items[1]?.quoted).toBeUndefined();
+  });
+
+  test("the result is offered by id, and the statement is offered to the editor", () => {
+    const view = foldLedgerEntries([OPENED, answer({ kind: "table" })]);
+
+    expect(view.items[1]?.artifactId).toBe("corr-answer");
+    expect(view.items[1]?.applySql).toBe(ANSWER_SQL);
+  });
+
+  test("the answer entry says it IS the answer, and no other entry does", () => {
+    // The rail shows an answer as it arrives (#373 review) and shows no other stored result
+    // on its own, so which entry that is has to be a fact the fold states. Inferring
+    // it from the fields beside it does not work: a table answer with no hand-over
+    // carries what a drafted statement and a stored result carry between them.
+    const view = foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-completed",
+          atMs: 8,
+          stepId: "s1",
+          artifact: {
+            correlationId: "corr-read",
+            runId: "run-1",
+            operationId: "sql.query.read",
+            summary: { rowCount: 2, columnNames: ["id"], elapsedMs: 3 },
+          },
+        },
+      } as AgentLedgerEntry & { kind: "event" }),
+      answer({ kind: "table" }),
+    ]);
+
+    expect(view.items[2]?.isAnswer).toBe(true);
+    expect(view.items[1]?.isAnswer).toBeUndefined();
+    expect(view.items[0]?.isAnswer).toBeUndefined();
+  });
+
+  test("a chart answer carries its spec, so the surface is chosen from the record", () => {
+    // The spec travels with the entry rather than being asked of the rows later:
+    // this is what makes the app's chart the one the RUN composed, and it is the
+    // same rule the explain surface follows.
+    const spec = { type: "bar", x: "region", y: ["net_total"], caption: "Net total by region." } as const;
+    const view = foldLedgerEntries([OPENED, answer({ kind: "chart", spec })]);
+
+    expect(view.items[1]?.chartSpec).toEqual(spec);
+  });
+
+  test("a table answer carries no spec, and neither does any other entry", () => {
+    const view = foldLedgerEntries([OPENED, answer({ kind: "table" })]);
+
+    expect(view.items[1]?.chartSpec).toBeUndefined();
+    expect(view.items[0]?.chartSpec).toBeUndefined();
+  });
+
+  test("the entry says what did NOT happen: nothing was sent anywhere to be run", () => {
+    // `handover` records the outcome. The sentence is keyed on it as a total record,
+    // so the wording cannot outlive its truth.
+    const view = foldLedgerEntries([OPENED, answer({ kind: "table" })]);
+
+    expect(view.items[1]?.detail).toContain("Nothing was sent to the editor");
+  });
+
+  test("a handed-over statement is stated as a handover, and what the editor did is the editor's own", () => {
+    // §2.3: the editor's re-run produces no ledger event and cannot — it happens in
+    // the browser, against a route this runtime does not own. So the entry records
+    // that the run HANDED OVER, and says the rest is visible in the editor rather
+    // than claiming a result it never saw.
+    const view = foldLedgerEntries([OPENED, handedOver("auto-executed")]);
+
+    expect(view.items[1]?.detail).toContain("handed the statement to your editor to run");
+    expect(view.items[1]?.detail).toContain("what it did with it is visible there");
+  });
+
+  test("a gate that declined says so, in the run's own words, and never silently", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      handedOver("applied", "Not run for you: the plan reads as a full table read, so this one is yours to run."),
+    ]);
+
+    expect(view.items[1]?.detail).toContain("The statement is in your editor and was not run");
+    expect(view.items[1]?.detail).toContain("Not run for you: the plan reads as a full table read");
+  });
+
+  test("an applied answer with no recorded warning still reads as a refusal, not as a run", () => {
+    // A ledger is read long after it is written, and an entry missing a field must
+    // not fall through to the sentence describing the outcome that DID run.
+    const view = foldLedgerEntries([OPENED, handedOver("applied")]);
+
+    expect(view.items[1]?.detail).toContain("The statement is in your editor and was not run");
+    expect(view.items[1]?.detail).not.toContain("handed the statement");
+  });
+
+  test("the columns the chart names never reach the app's own sentence", () => {
+    // Column names are engine-supplied text. They belong in the quoted field or in
+    // the result itself, never in a line the user reads as the app speaking.
+    const view = foldLedgerEntries([
+      OPENED,
+      answer({
+        kind: "chart",
+        spec: { type: "pie", x: "region", y: ["net_total"], caption: "share by region" },
+      }),
+    ]);
+
+    expect(view.items[1]?.detail).not.toContain("net_total");
+    expect(view.items[1]?.detail).not.toContain("region");
   });
 });

@@ -51,6 +51,7 @@ const mockSetPlaygroundMode = mock(() => {});
 // Query Execution
 const mockExecuteQuery = mock(() => {});
 const mockForceExecuteQuery = mock(() => {});
+const mockExecuteHandedOverStatement = mock(() => {});
 const mockCancelQuery = mock(() => {});
 const mockSetSafetyCheckQuery = mock(() => {});
 const mockSetBottomPanelMode = mock(() => {});
@@ -177,6 +178,7 @@ mock.module("@/hooks/use-query-execution", () => ({
     executeQuery: mockExecuteQuery,
     cancelQuery: mockCancelQuery,
     forceExecuteQuery: mockForceExecuteQuery,
+    executeHandedOverStatement: mockExecuteHandedOverStatement,
     safetyCheckQuery: null,
     setSafetyCheckQuery: mockSetSafetyCheckQuery,
     unlimitedWarningOpen: false,
@@ -536,6 +538,7 @@ describe("Studio", () => {
     mockSetPlaygroundMode.mockClear();
     mockExecuteQuery.mockClear();
     mockForceExecuteQuery.mockClear();
+    mockExecuteHandedOverStatement.mockClear();
     mockCancelQuery.mockClear();
     mockSetSafetyCheckQuery.mockClear();
     mockSetBottomPanelMode.mockClear();
@@ -1468,6 +1471,60 @@ describe("Studio", () => {
     expect(capturedAgentRailProps.connectionName).toBeNull();
   });
 
+  // What a long read costs is not the same fact on every engine, and the rail says
+  // SQLite's where a user consents to auto-execute — so the shell has to tell it
+  // which engine this connection speaks.
+  test("the rail is told which engine the connection speaks", async () => {
+    mockAgentConfig(true);
+    connMgrOverride = { activeConnection: managedConn, connections: [managedConn] };
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    expect(capturedAgentRailProps.connectionType).toBe("postgres");
+  });
+
+  test("with no connection selected the rail is told there is no engine either", async () => {
+    mockAgentConfig(true);
+    connMgrOverride = { activeConnection: null, connections: [] };
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    expect(capturedAgentRailProps.connectionType).toBeNull();
+  });
+
+  /**
+   * The handover the answer's `auto-executed` outcome names (§2.1 of
+   * `docs/AGENT_ANALYST_DESIGN.md`). The shell does both halves — the statement goes
+   * into the editor AND is run there — through the hook's own capped entry point,
+   * which is what keeps the run's answer off the tab's widened execution options.
+   */
+  test("a statement the run handed over is shown in the editor and run through the run's own route", async () => {
+    mockAgentConfig(true);
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    act(() => (capturedAgentRailProps.onRunStatement as (sql: string, runId: string) => void)("SELECT 1", "arun_1"));
+
+    expect(mockUpdateCurrentTab).toHaveBeenCalledWith({ query: "SELECT 1" });
+    // The RUN is what is executed against, not the text (#373 review): the text is
+    // put in the editor so the user can read what is running.
+    expect(mockExecuteHandedOverStatement).toHaveBeenCalledWith("arun_1", "SELECT 1");
+    // Never the general entry point: that one posts to the editor's read-WRITE route,
+    // which is the boundary this hand-over exists to keep.
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+  });
+
+  test("a statement the user applies is placed and not run", async () => {
+    mockAgentConfig(true);
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    act(() => (capturedAgentRailProps.onApplyStatement as (sql: string) => void)("SELECT 2"));
+
+    expect(mockUpdateCurrentTab).toHaveBeenCalledWith({ query: "SELECT 2" });
+    expect(mockExecuteHandedOverStatement).not.toHaveBeenCalled();
+  });
+
   test("below md the mobile nav opens the rail as a sheet", async () => {
     mockAgentConfig(true);
     const { findByTestId } = render(<Studio />);
@@ -1698,6 +1755,31 @@ describe("Studio", () => {
     expect(hydrated.runId).toBe("arun_1");
     expect(hydrated.result.rows).toEqual([{ id: 7 }]);
     expect(mockSetBottomPanelMode).toHaveBeenCalledWith("results");
+  });
+
+  test("an answer composed as a chart opens the charts surface, carrying the run's own chart", async () => {
+    // The rail hands over the presentation the run RECORDED, and the shell switches
+    // to the surface the hydration named. Nothing in this path looks at the rows to
+    // decide that a chart would suit them.
+    const spec = { type: "bar", x: "id", y: ["total"], caption: "Total by id." };
+    mockAgentArtifactFetch(200, ARTIFACT_BODY);
+    const { findByTestId } = render(<Studio />);
+    await findByTestId("agent-rail");
+
+    await act(async () => {
+      await (
+        capturedAgentRailProps.onShowArtifact as (ref: {
+          runId: string;
+          correlationId: string;
+          chartSpec: unknown;
+        }) => Promise<void>
+      )({ runId: "arun_1", correlationId: "corr_9", chartSpec: spec });
+    });
+
+    expect(mockSetBottomPanelMode).toHaveBeenCalledWith("charts");
+    const hydrated = capturedBottomPanelProps.agentArtifact as { surface: string; chartSpec: unknown };
+    expect(hydrated.surface).toBe("charts");
+    expect(hydrated.chartSpec).toEqual(spec);
   });
 
   test("a released result is reported to the user rather than hydrated as empty", async () => {

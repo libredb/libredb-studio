@@ -7,6 +7,8 @@ import { ArtifactStoreError, ExecutionArtifactStore } from "@/lib/db/operations/
  * re-running the statement, and it is bounded three ways: an explicit release
  * when the run ends (the deterministic path), a TTL for runs that never end,
  * and a hard entry cap so a flood of abandoned runs cannot grow without limit.
+ * The cap is spent run-fairly: the run that reaches it gives up its own oldest
+ * artifact, never another run's.
  *
  * There is no clock inside the store, exactly as `ExecutionBudgetTracker` has
  * none: every time-dependent method takes the caller's `nowMs`, so the TTL is
@@ -141,5 +143,43 @@ describe("ExecutionArtifactStore lifecycle", () => {
     expect(store.get("corr-1", 1_200)).toBeUndefined();
     expect(store.get("corr-2", 1_200)?.correlationId).toBe("corr-2");
     expect(store.get("corr-3", 1_200)?.correlationId).toBe("corr-3");
+  });
+
+  test("a busy run at the cap gives up its OWN oldest, so a quiet run keeps every artifact", () => {
+    // The store is process-wide, so without this the run that reaches the cap
+    // first pays for it with somebody else's evidence: a rail offering "Show
+    // result" on a live run would 404 on a run that had done nothing wrong.
+    const store = new ExecutionArtifactStore({ ttlMs: 60_000, maxArtifacts: 4 });
+    store.put(artifact("quiet-1", "run-quiet", 1_000), 1_000);
+    store.put(artifact("quiet-2", "run-quiet", 1_100), 1_100);
+    store.put(artifact("busy-1", "run-busy", 1_200), 1_200);
+    store.put(artifact("busy-2", "run-busy", 1_300), 1_300);
+
+    store.put(artifact("busy-3", "run-busy", 1_400), 1_400);
+    store.put(artifact("busy-4", "run-busy", 1_500), 1_500);
+
+    expect(store.size).toBe(4);
+    expect(store.get("quiet-1", 1_500)?.correlationId).toBe("quiet-1");
+    expect(store.get("quiet-2", 1_500)?.correlationId).toBe("quiet-2");
+    expect(store.get("busy-1", 1_500)).toBeUndefined();
+    expect(store.get("busy-2", 1_500)).toBeUndefined();
+    expect(store.get("busy-3", 1_500)?.correlationId).toBe("busy-3");
+    expect(store.get("busy-4", 1_500)?.correlationId).toBe("busy-4");
+  });
+
+  test("falls back to the store's oldest when the storing run holds nothing to give up", () => {
+    // The memory bound is the reason the cap exists at all, so a run storing its
+    // FIRST artifact into a full store still stores it: run-fairness decides WHO
+    // pays, it never lets the entry count past the cap.
+    const store = new ExecutionArtifactStore({ ttlMs: 60_000, maxArtifacts: 2 });
+    store.put(artifact("corr-1", "run-1", 1_000), 1_000);
+    store.put(artifact("corr-2", "run-1", 1_100), 1_100);
+
+    store.put(artifact("corr-3", "run-2", 1_200), 1_200);
+
+    expect(store.size).toBe(2);
+    expect(store.get("corr-1", 1_200)).toBeUndefined();
+    expect(store.get("corr-2", 1_200)?.correlationId).toBe("corr-2");
+    expect(store.get("corr-3", 1_200)?.runId).toBe("run-2");
   });
 });

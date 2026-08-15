@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAgentModelCapability } from "@/lib/agent/capability-labels";
 // Type-only, so nothing of the probe — or of the AI SDK it runs — reaches this bundle.
 import type { AgentModelCapability } from "@/lib/agent/capability-probe";
@@ -37,6 +37,12 @@ export interface AgentRunStartInput {
    * request rather than a setting — nothing the browser sends later can change it.
    */
   readonly workflowType?: AgentRunWorkflowType;
+  /**
+   * Whether the run may also run its answer in the caller's editor. A request, like
+   * the two above: the server PERSISTS it on the run record, and nothing sent later
+   * can widen a run that is already open.
+   */
+  readonly autoExecute?: boolean;
   readonly objective: string;
   readonly connectionId: string;
 }
@@ -300,5 +306,20 @@ export function useAgentRun(): AgentRunFollower {
     }
   }, [runId]);
 
-  return { runId, isBusy, isStopping, timeline: foldLedgerEntries(entries), error, refusal, start, cancel };
+  /*
+    Memoised on the entries alone, which is the whole of the fold's input. Without
+    it the fold re-walked the entire accumulated ledger on every render of the rail
+    rather than on every new event — a multiplier that cost nothing while a run was
+    sixteen turns and is worth removing now that a drive may take sixty turns and
+    spend forty-two statements — `data-analysis`, which is the largest row in
+    `AGENT_WORKFLOW_BUDGETS` and the one to size this against. (It was written
+    against `database-assessment`'s forty-eight and forty-five, which understated the
+    ceiling by a quarter the moment the analysis row landed.) What it does not remove
+    is the fold's O(n) work per
+    new entry, which is O(n squared) over a run's life; that is measured as fine at
+    these sizes and is not optimised on a list nobody has seen be slow.
+  */
+  const timeline = useMemo(() => foldLedgerEntries(entries), [entries]);
+
+  return { runId, isBusy, isStopping, timeline, error, refusal, start, cancel };
 }

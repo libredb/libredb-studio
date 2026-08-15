@@ -78,12 +78,28 @@ You choose three things before pressing Start, and two of them are controls in t
 | **Agent** | The model is given the read-only tools and investigates: it drafts statements, reads results, and finishes by composing a report whose claims cite what it read. |
 
 **2. The workflow — what the run is for** (`AgentRail.tsx:433-448`, labels at `AgentRail.tsx:94-98`):
-**Investigate**, **Optimize**, **Assess**. Offered in both modes, because "how would you make this
-faster?" is an ordinary thing to ask a plan for.
+**Investigate**, **Optimize**, **Assess**, **Operate**, **Analyze**. Offered in both modes, because
+"how would you make this faster?" is an ordinary thing to ask a plan for.
+
+**Analyze** is the one that answers a question about the *data* rather than about the database:
+"which region brought in the most revenue last quarter", "how many orders shipped but were never
+invoiced", "did signups fall after the pricing change". It finishes by saying which result *is* the
+answer and how it should be shown — as a chart when the result has a category and a number to plot,
+and as a table when it is a single number, a single row, or has no numeric column at all. A table is
+a complete answer there, not a lesser one. What it presents is always a result it *read*: a query
+plan is the engine describing a statement rather than running it, and a table profile is a count
+about a table, so neither can be nominated as the answer — the run can still cite either as evidence
+in its report, and its report has to cite the result it presented, or the run is marked as not having
+answered. It is also the only workflow that offers the auto-execute
+checkbox below, because handing a statement to your editor is part of presenting an answer and the
+other four workflows have no answer to present.
 
 **3. The objective** — the box labelled *"What should the run investigate?"*, placeholder *"Why is
 checkout slow?"*, bounded to 4000 characters (`AGENT_MAX_OBJECTIVE_LENGTH` in
-`src/lib/agent/execution-policy.ts:157`).
+`src/lib/agent/execution-policy.ts:157`). It is **emptied once the server has opened the run**, so
+the next question needs no deleting; the question itself is not lost, since the run's header carries
+it and the timeline's first entry quotes it. A start that was *refused* leaves what you typed exactly
+where it was, so retrying is one click rather than one retyping.
 
 Both axes are **fixed when the run opens** and are read from the run's own record for the rest of
 its life (`src/app/api/agent/runs/route.ts:79-88`), so nothing can widen a Plan run into an Agent
@@ -208,6 +224,7 @@ yet. A run's steps appear here as they are recorded."*
 | `Plans compared` / `Index recommended` / `Rewrite recommended` | Optimize only |
 | `Profiled <table>` | Assess only: counts and findings |
 | `Result stored` … *"A moment, not a history"* | Operate only: an operational reading, with the caveat that it describes an instant already past |
+| `Answer composed` | The run named one stored result as its answer and said how to show it — as a table, or as a chart of a named type. A chart's caption is the model's own prose and is shown quoted; the columns never appear in the application's own sentence, because they are engine text |
 | `Report composed` | How many claims, each citing evidence |
 | `Closing statement` | The model's closing prose. It cites nothing and claims nothing — a Plan run's whole output, an Agent run's aside |
 | `Stop requested` | You pressed Stop; *"the run takes no further database step; work already in hand, such as a report, still finishes"* |
@@ -216,20 +233,118 @@ yet. A run's steps appear here as they are recorded."*
 and details are the application's words; anything from the model, the engine or you is rendered as a
 quoted block, because database content is untrusted input (`timeline.ts:25-36`).
 
+**The one exception is the closing statement, and it is a rendering rather than a mixing.** Models
+write that block as markdown, so it is rendered as markdown — headings, bullets, bold and inline
+code — inside a block of its own with a rule down its left edge, so you can still see where the
+application stops speaking. Only those five forms are interpreted; links, tables and fenced blocks
+stay the characters the model typed. Nothing on that path touches an HTML parser: it is built as
+React nodes, so a model that writes `<img src=x onerror=…>` has written text and nothing else.
+
+**The timeline stays at its newest entry** while you are at the bottom of it, so a run's report does
+not arrive below the fold. Scroll up to read an earlier step and it stops following — the next entry
+leaves you where you are — until you scroll back down.
+
 Two controls appear under an entry only when there is something to act on **and** the shell can act:
 
-- **Apply to editor** — puts a drafted statement into the editor. Always your click, never automatic.
-- **Show result** — hydrates the stored rows into the ordinary results grid, with a read-only
+- **Apply to editor** — puts a drafted statement into the editor. Always your click, never automatic,
+  unless the run was opened with **auto-execute** (below), which is the one thing that can put an
+  answer's statement into your editor and run it there.
+- **Show result** — hydrates the stored rows into the ordinary bottom-panel surface: the results
+  grid, the explain view for a plan, or the charts view for an answer the run composed as a chart —
+  drawn as the run said to draw it, and with the ordinary chart controls still yours to change. Which
+  surface opens is what the run recorded, not a guess from the data: a result whose answer said table
+  is shown as a table however chartable it looks. Every one of them carries a read-only
   provenance badge naming the run. It is offered only **while the run is live**: a run's stored rows
   are released when it ends, and the rail says so where the results are listed — *"A run's stored
   rows are released when the run ends, so a result can be shown only while its run is still
   going."* (`AgentRail.tsx:730-735`).
+
+**The answer itself is shown without being asked for.** When an `Answer composed` entry arrives, the
+rail opens that result immediately — as the chart the run composed, or as a table — because a run
+that answers with a picture and shows you a sentence saying it drew one has not answered. It happens
+once, at the moment the entry arrives, while the rows still exist; nothing is kept any longer than
+before, and while the run is live the entry's own **Show result** still brings the answer back if you
+dismiss the panel. This is not the rail acting on your behalf in the sense the rule above forbids:
+nothing is executed, and the rows are ones the run already read on its own bounded read-only path.
 
 At the bottom, once a report exists, a **Report** section lists each claim as the model's own quoted
 prose with its citations under it — `Artifact <id>` with the row count and the statement that
 produced it, or `Schema snapshot <fingerprint>` with the table count. A citation the rail cannot
 resolve in what it has read says so in amber rather than looking checked
 (`UNRESOLVED_DETAIL`, `timeline.ts:556`).
+
+---
+
+## Auto-execute: when the run runs the answer in your editor
+
+An **Analyze** run in **Agent** mode can be opened with **auto-execute**. It changes one thing and it
+is worth being exact about
+which: the run's own answer is produced the same way either way — from a result it read on its own
+bounded path, at 200 rows and a 10-second ceiling, with a ledger entry behind it. What the setting
+adds is that the answer's statement is also placed in your editor **and run there**, on the
+connection the run was opened on, at the editor's 500-row limit and with **no time limit**.
+
+**It is the same read-only session either way.** The re-run is not an ordinary editor execution: it
+is sent to the database inside the engine's own read-only transaction — the same one the run used to
+produce the answer — so a write or a DDL statement is refused **by the database**, not by reading the
+statement and judging it. That distinction is the whole of it: a `SELECT` can call a function that
+writes, and no amount of reading the statement would tell you so.
+
+**It is offered on Analyze alone, and only in Agent mode.** Auto-execute hands over *the answer*, and
+Analyze is the only workflow that produces one — an Investigate, Optimize, Assess or Operate run
+finishes with a report, not with a statement it is nominating as the answer, so there would be
+nothing to hand over. The checkbox therefore appears only when Analyze and Agent are both selected,
+and it disappears if you switch away; a run started after switching is started without the setting
+rather than with a setting that could not be honoured. (The API refuses `autoExecute: true` on the
+other workflows outright, rather than accepting it and quietly doing nothing.)
+
+**The control is the checkbox above Start**, *"Also run the final answer in my editor"*, with the
+terms under it in the words above: what the run keeps for its own read (200 rows, 10 seconds), what
+the editor keeps (the 500-row limit), what is given up (the time limit), and what happens instead
+when the run declines to run it for you. On a SQLite connection one more line appears, because there
+the missing time limit means something different: *"On SQLite a read is not interrupted when it runs
+long: it blocks other writers and this application until it finishes."*
+
+It is decided when the run is opened and cannot be changed afterwards — the request that opens the
+run is the only place it is set, and it is recorded on the run itself. So the checkbox stops
+responding while a run is open and says why; tick it before you press Start, and start a new run to
+change your mind. (The same field is accepted by `POST /api/agent/runs` as `autoExecute`, absent
+meaning off.)
+
+**The re-run is at the editor's default 500 rows even if you had widened this tab.** "Show unlimited
+rows" is a choice you made about a statement you wrote; a statement the run hands over does not
+inherit it, and it is run at the default limit whatever the tab was last set to.
+
+**A statement is only run for you when all three of these hold:**
+
+1. This run executed that exact statement itself. A final statement wider than anything the run ran
+   is never run for you — and one it only *explained* was never executed.
+2. The engine's plan for it reads as cheap: on PostgreSQL an indexed access path and an estimated
+   cost of at most 50 000; on SQLite every step a `SEARCH`. Anything unknown or unreadable counts as
+   risky, and on SQLite that is deliberate — a read there is not interrupted when it runs long, it
+   blocks other writers and this application until it finishes.
+3. The run measured its own execution of it at 2 000 ms or less.
+
+**When any of them fails the statement is put in your editor and left unrun, and the run says which
+one failed** — *"Not run for you: … so this one is yours to run."* A statement sitting there unrun is
+the feature working, not the feature failing.
+
+**Nothing is added to the statement.** No `LIMIT` is injected: a chart of 200 of 4 000 regions would
+look like a complete chart, and every number on it would be right, which is worse than an obvious
+error.
+
+**And it is only ever run on the connection you started the run on.** The statement itself cannot
+reach anywhere else — the server runs it on the connection recorded on the run, not on whatever the
+editor is pointed at. But if you switch the editor to a different connection while a run is going,
+the statement is **not** run at all: the rows would have landed in a tab connected somewhere else and
+been read as that database's answer. The timeline says so beside the answer — the run recorded that it
+handed the statement over, and this is the app telling you it did not carry that out. The statement is
+still there: take it with the control beside the entry and run it yourself, on whichever connection
+you are on now.
+
+**There is no ledger entry for the re-run.** The run may already have finished by the time it happens,
+and a finished run's record does not take additions. The timeline records that the run handed the
+statement over, and says that what happened next is visible in the editor.
 
 ---
 
@@ -259,6 +374,8 @@ whole vocabulary (`SHORTFALL_SENTENCES`, `timeline.ts:335-343`):
 | `no-plan-comparison` | "No before-and-after plan comparison was recorded, and no index was recommended: a query optimization rests on one or the other." |
 | `no-plan-evidence` | "The index was recommended without citing a plan this run read, so nothing the engine said backs it." |
 | `no-table-profile` | "No table was profiled, so the state of the data was never established." |
+| `no-answer` | "The run reported what it found but never produced an answer to show, so there is nothing to put in front of you." |
+| `answer-uncited` | "The run presented one result as the answer and its report rests on other evidence entirely, so the claims and the picture are not about the same thing." |
 | `cancelled` | "The run was stopped before it could finish." |
 
 A run **you** stopped reports `cancelled` rather than the output it was missing: a stop is not a
@@ -291,24 +408,60 @@ failure whose reason is in the server log.
 ## The budget meter's numbers
 
 The meter above the timeline shows **three gauges, and it shows only what the server actually
-enforces and the ledger actually records** (`AgentRail.tsx:650-678`, gauges built in
+enforces and the ledger actually records** (`AgentRail.tsx:662-699`, gauges built in
 `timeline.ts:668-672`):
 
 | Gauge | Reads | The limit, and where it comes from |
 | --- | --- | --- |
-| **Statements** | `used / 20` | `maxStatementsPerRun`. Every statement the pipeline allowed and invoked — catalog reads, drafts and repairs alike (`execution-policy.ts:46-56`) |
-| **Database time** | `used / 60.0 s` | `maxTotalRunMs`. **Database time only** — the elapsed time completed reads reported, not the wall clock |
+| **Statements** | `used / 30` on an investigation | `maxStatementsPerRun`. Every statement the pipeline allowed and invoked — catalog reads, drafts and repairs alike |
+| **Database time** | `used / 90.0 s` on an investigation | `maxTotalRunMs`. **Database time only** — the elapsed time completed reads reported, not the wall clock |
 | **Repair attempts** | `used / 3` | `AGENT_MAX_REPAIR_ATTEMPTS`. Only statements that failed **at the database** consume one; a policy denial does not |
 
 Under them, one line states the three ceilings that nothing durable counts against, so they are
-given as ceilings rather than as gauges: *"Each statement gets 10.0 s, each drive 5.0 min and at
-most 16 model turns."* (`AgentRail.tsx:666-669`, values from `statementTimeoutMs`,
-`AGENT_RUN_DEADLINE_MS` and `AGENT_MAX_MODEL_TURNS`).
+given as ceilings rather than as gauges: *"Each statement gets 10.0 s, each drive 7.5 min and at
+most 36 model turns."*
+
+**Every number on the meter is the one the server is enforcing on THIS run**, because the ceilings
+differ per workflow and both halves of the meter read the workflow off the run's own header. So the
+meter changes with the run, not with the buttons: pick another workflow while a run is in flight and
+the figures stay the run's.
+
+| Workflow | Model turns | Statements | Each drive | Database time |
+| --- | --- | --- | --- | --- |
+| **Investigate** | 36 | 30 | 7.5 min | 90 s |
+| **Optimize** | 36 | 30 | 7.5 min | 90 s |
+| **Assess** | 48 | 45 | 10.5 min | 135 s |
+| **Operations** | 20 | 12 | 5.0 min | 60 s |
+| **Analyze** | 60 | 42 | 15.0 min | 180 s |
+
+**These figures are approved and pending live measurement.** They are the starting point a
+measurement confirms or corrects, not numbers read off measured runs. Operations is the small row on
+purpose: it sends no SQL, so it never spends a statement drafting one and never repairs one, and its
+readings come from a closed set of six kinds. Analyze is the large row for the opposite reason: it
+iterates towards an aggregate rather than repeating a reading, and a `GROUP BY` over a fact table
+costs far more database time than a catalog read.
+
+**If you self-host behind a reverse proxy, Analyze needs a longer read timeout than the default.** A
+15-minute drive holds one streaming response open for its whole life, and nginx's default
+`proxy_read_timeout` is 60 seconds — so a long Analyze run has its stream cut and the rail loses it,
+even though the run itself survives on the server. `docs/AGENT.md` ("Deployment") gives the setting
+for nginx, ingress-nginx and the common PaaS routers.
+
+Before any run is open there is no header to read, and the meter shows the investigation figures —
+the same reading the server takes for a ledger that names no workflow.
 
 **There is no token gauge, and its absence is deliberate**: this build enforces no token budget, so
 a figure would mean nothing (`docs/BACKLOG.md` B10).
 
-Then the caveat, which is the part worth reading twice (`AgentRail.tsx:670-677`):
+**A run that ends early was asked to stop.** When a run comes within 2 model turns or 20 seconds of
+either of those ceilings, the server tells it once — in its own words, not the database's — that this
+is its last turn and that it should report what it has established now. So a run that finishes well
+short of every figure on the meter is usually a run that took that offer, and its report is a
+partial answer rather than a missing one. The bar does not move when it happens: a claim still has to
+cite something the run read, so a forced report is a cited report or it is no report at all. Nothing
+is asked of a **Plan** run, which has no report tool to call. The meter says this under the ceilings.
+
+Then the caveat, which is the part worth reading twice (`AgentRail.tsx:692-699`):
 
 - **Every ceiling is per drive.** A run resumed after a restart starts each of them again, so these
   totals can read past a single drive's ceiling.
@@ -425,7 +578,9 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded
   connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode is unaffected:
   it is toolless and reaches no database, so it works on every connection.
-- **It never executes a recommendation**, and never applies one to your editor by itself.
+- **It never executes a recommendation**, and never applies one to your editor by itself. The single
+  exception anywhere in the rail is auto-execute, which is off unless the run was opened with it, and
+  which covers only the answer's own statement under the three conditions above.
 - **It cannot be paused or resumed from the rail.** There is a Stop control and nothing standing in
   for a capability this build does not have (`docs/BACKLOG.md` B11).
 - **A stopped run stops at its next checkpoint**, not instantly: cancellation is enforced by the run
@@ -435,8 +590,9 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   that the ending now says it: *"A stop was requested before this ending: the run took no further
   database step, and finished what it already had in hand."*
 - **A run's stored rows do not outlive it**, so a report can outlive the rows its citations point at
-  (`docs/BACKLOG.md` B15). An artifact hydrates the grid and the explain view, not the chart or
-  export surfaces (B14).
+  (`docs/BACKLOG.md` B15). A result opens in the grid, the explain view or the charts view — whichever
+  the run's own record names — and cannot be exported from any of them, because Export writes the
+  tab's own rows (B34).
 - **An interrupted run is resumable but is not resumed on its own** — nothing enqueues a drive yet
   (`docs/BACKLOG.md` B9).
 - **It reads what your connection's role can read.** The declared-target allowlist, the statement

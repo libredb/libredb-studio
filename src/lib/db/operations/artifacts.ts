@@ -17,14 +17,22 @@
  * 2. TTL — the backstop for a run that never ends (an agent process dies, a
  *    caller forgets to release). An expired artifact is never served, whether
  *    or not anything has swept it yet, and `put` sweeps before it stores.
- * 3. `maxArtifacts` — a memory bound, evicting the oldest entry first. It is
- *    explicitly NOT a security control: dropping an artifact loses a result,
- *    it never grants access to one. (Contrast the rate limiter's capacity
- *    eviction, which `budgets.ts` rejected for budget accounting because
- *    restarting a counter at zero fails open.) It bounds the entry COUNT, so
- *    the worst-case footprint is `maxArtifacts` times whatever the execution
- *    profile's `maxResultBytes` admitted — the byte cap is enforced where the
- *    rows are read, not here.
+ * 3. `maxArtifacts` — a memory bound, and it is spent run-fairly: a store at the
+ *    cap evicts the OLDEST ARTIFACT OF THE RUN THAT IS STORING, not the oldest
+ *    in the map. The store is process-wide, so oldest-in-the-map made a run that
+ *    executed a lot pay with a quieter run's evidence, and the rail's "Show
+ *    result" 404s mid-run on a run that had done nothing. A run that is storing
+ *    its first artifact into a full store has nothing of its own to give up, and
+ *    then — and only then — the store's oldest goes, because the entry count is
+ *    the bound that must hold. It is explicitly NOT a security control: dropping
+ *    an artifact loses a result, it never grants access to one. (Contrast the
+ *    rate limiter's capacity eviction, which `budgets.ts` rejected for budget
+ *    accounting because restarting a counter at zero fails open.) What it bounds
+ *    is the number of entries the whole process holds at once, so the worst-case
+ *    footprint is `maxArtifacts` times whatever the execution profile's
+ *    `maxResultBytes` admitted — the byte cap is enforced where the rows are
+ *    read, not here. Sizing that number against the per-run statement ceilings
+ *    is the caller's job: see `AGENT_MAX_ARTIFACTS` in `src/lib/agent/runtime.ts`.
  *
  * There is no clock in this module, for the same reason `ExecutionBudgetTracker`
  * has none: every time-dependent method takes the caller's `nowMs`, which keeps
@@ -90,14 +98,11 @@ export class ExecutionArtifactStore<T = unknown> {
     if (this.artifacts.has(artifact.correlationId)) {
       throw new ArtifactStoreError(`artifact "${artifact.correlationId}" already exists — correlation ids are unique`);
     }
-    // Map iteration is insertion order, and executions are stored as they
-    // finish, so keys arrive oldest-first. Deleting the entry the loop is
-    // currently on is well-defined for a Map iterator, and the size check
-    // leads rather than follows so a store already under the cap deletes
-    // nothing.
-    for (const oldest of this.artifacts.keys()) {
-      if (this.artifacts.size < this.maxArtifacts) break;
-      this.artifacts.delete(oldest);
+    // The check leads rather than follows, so a store under the cap evicts
+    // nothing. One eviction is always enough: `put` is the only way the map
+    // grows and it enforces this every time, so the size never exceeds the cap.
+    if (this.artifacts.size >= this.maxArtifacts) {
+      this.evictOldestOf(artifact.runId);
     }
     this.artifacts.set(artifact.correlationId, artifact);
   }
@@ -135,6 +140,32 @@ export class ExecutionArtifactStore<T = unknown> {
 
   get size(): number {
     return this.artifacts.size;
+  }
+
+  /**
+   * Drops one entry to make room, preferring `runId`'s own oldest.
+   *
+   * Map iteration is insertion order and executions are stored as they finish,
+   * so keys arrive oldest-first and the first match is the run's oldest.
+   * Deleting the entry the loop is currently on is well-defined for a Map
+   * iterator.
+   *
+   * A run holding nothing gives up the store's own oldest instead, and that one
+   * is read from the iterator directly rather than through a loop that returns
+   * on its first pass — which is what it is, and which a static analyser reads
+   * as a loop that cannot iterate. The map is never empty here: this runs only
+   * once the size has reached a cap of at least one, so the guard is a type
+   * narrowing rather than a case that occurs.
+   */
+  private evictOldestOf(runId: string): void {
+    for (const [correlationId, held] of this.artifacts) {
+      if (held.runId === runId) {
+        this.artifacts.delete(correlationId);
+        return;
+      }
+    }
+    const oldest = this.artifacts.keys().next().value;
+    if (oldest !== undefined) this.artifacts.delete(oldest);
   }
 
   private hasExpired(artifact: ExecutionArtifact<T>, nowMs: number): boolean {

@@ -47,7 +47,12 @@ import { createHash } from "node:crypto";
 import { type ModelMessage, type ToolSet, streamText, tool } from "ai";
 import { captureContextSnapshot, packContextForTask, reusableSnapshot } from "./context-snapshot";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
-import { AGENT_MAX_MODEL_TURNS, AGENT_MODEL_TURN_TIMEOUT_MS } from "./execution-policy";
+import {
+  AGENT_MODEL_TURN_TIMEOUT_MS,
+  AGENT_REPORT_RESERVE_MS,
+  AGENT_REPORT_RESERVE_TURNS,
+  AGENT_WORKFLOW_BUDGETS,
+} from "./execution-policy";
 import { type AgentModel, mapAgentModelError } from "./model-adapter";
 import {
   type AgentRunInvocation,
@@ -57,6 +62,7 @@ import {
 } from "./run-service";
 import type { AgentSettledStepEvent } from "./run-store";
 import {
+  AGENT_ANSWER_CONTRACT,
   AGENT_EVIDENCE_CONTRACT,
   AGENT_TOOL_DEFINITIONS,
   type AgentToolContext,
@@ -69,30 +75,32 @@ import {
   inspectOperationsTool,
   inspectPlanTool,
   planTableProfile,
+  presentAnswerTool,
   profileTableTool,
   recommendChangeTool,
   inspectSchemaTool,
   runReadQueryTool,
   selectAgentTools,
 } from "./tools";
-import type {
-  AgentContextSnapshot,
-  AgentRunEvent,
-  AgentRunRecord,
-  AgentRunStopReason,
-  AgentRunTerminalStatus,
-  AgentRunWorkflowType,
+import {
+  AGENT_WORKFLOW_PRESENTS_ANSWER,
+  type AgentContextSnapshot,
+  type AgentRunEvent,
+  type AgentRunRecord,
+  type AgentRunStopReason,
+  type AgentRunTerminalStatus,
+  type AgentRunWorkflowType,
 } from "./types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END, fenceUntrustedContent } from "./untrusted-content";
 
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
-export type AgentToolResources = Omit<AgentToolContext, "runId" | "mode" | "actor">;
+export type AgentToolResources = Omit<AgentToolContext, "runId" | "mode" | "workflowType" | "actor">;
 
 export interface AgentInvestigationOptions {
   readonly service: AgentRunService;
   readonly model: AgentModel;
   readonly resources: AgentToolResources;
-  /** Backstop on model turns; defaults to `AGENT_MAX_MODEL_TURNS`. */
+  /** Backstop on model turns; defaults to the run's own workflow row in `AGENT_WORKFLOW_BUDGETS`. */
   readonly maxTurns?: number;
   /** Ceiling on ONE model call; defaults to `AGENT_MODEL_TURN_TIMEOUT_MS`. */
   readonly turnTimeoutMs?: number;
@@ -130,9 +138,9 @@ export interface AgentInvestigationResult {
 type DatabaseToolName = Exclude<AgentToolName, LedgerOnlyToolName>;
 
 /**
- * Tools `handleCall` dispatches itself rather than through `invokeDatabaseTool`.
+ * Tools that do NOT go through `invokeDatabaseTool`.
  *
- * Three of them reach nothing at all. `profile_table` DOES reach a database and DOES
+ * Four of them reach nothing at all. `profile_table` DOES reach a database and DOES
  * go through `service.runStep` — it is here only because its statement is composed
  * from the run's own inventory, so its step id has to be derived from the RESOLVED
  * target rather than from the model's arguments.
@@ -143,7 +151,7 @@ type DatabaseToolName = Exclude<AgentToolName, LedgerOnlyToolName>;
  * after the model's turn could not stop the read. Found by review on #345. Both
  * properties come back from settling the step like every other database reach.
  */
-type LedgerOnlyToolName = "compose_report" | "compare_plans" | "recommend_change" | "profile_table";
+type LedgerOnlyToolName = "compose_report" | "compare_plans" | "recommend_change" | "profile_table" | "present_answer";
 
 // ============================================================================
 // Prompting
@@ -171,13 +179,46 @@ const SHARED_RULES = [
  * a `SELECT 1` sent to the database purely to keep thinking — while holding the
  * correlation id it needed. The example object costs one line.
  */
+/**
+ * The bar a report is held to, in one sentence and in ONE place.
+ *
+ * Written once because it is said twice: in the rules a run opens with, and again in
+ * the reserve notice when the run is told to finish. Two wordings of one contract is
+ * how #350 happened — the model is then told two bars while the tool enforces one —
+ * so the second saying repeats this sentence rather than paraphrasing it.
+ */
+export const AGENT_CITATION_RULE =
+  "Every claim must cite an artifact this run read or the schema snapshot it captured.";
+
 const AGENT_RULES = [
   "You investigate a database read-only, through the tools you were given.",
   "Every statement you send is bounded and read-only; writes and DDL are refused before the database is reached.",
   "If a statement fails, draft a DIFFERENT one: the same statement is refused rather than retried, and your repair attempts are limited.",
   "A refusal that names a policy decision is a boundary, not a defect in your SQL. Rewording will not change it.",
-  "Finish by calling compose_report. Every claim must cite an artifact this run read or the schema snapshot it captured.",
+  `Finish by calling compose_report. ${AGENT_CITATION_RULE}`,
   AGENT_EVIDENCE_CONTRACT,
+].join(" ");
+
+/**
+ * What the run is told when it has come within the reserve of a ceiling (§1.5 of
+ * `docs/AGENT_ANALYST_DESIGN.md`).
+ *
+ * "Finish by calling compose_report" is already in `AGENT_RULES`; what nothing said
+ * until now is WHEN the room ran out. That is the #350 lesson applied ahead of time:
+ * a rule the model is not told is a rule live runs fail, and a run that hits a
+ * ceiling mid-thought leaves nothing behind at all.
+ *
+ * Server-authored and unfenced, like every other opening message: nothing a database
+ * wrote is in it, so there is nothing here for a fence to mark. It does not lower the
+ * bar either — `composeReportTool` still checks every citation against this run's own
+ * event log — which is why it repeats `AGENT_CITATION_RULE` verbatim rather than
+ * softening it: a forced report is a cited report or it is no report.
+ */
+export const AGENT_REPORT_RESERVE_NOTICE = [
+  "This run is nearly out of room: treat this as your last turn.",
+  "Call compose_report now with what you have already established, and leave out what you have not.",
+  AGENT_CITATION_RULE,
+  "A run that ends without a report answers nothing at all, so a partial report you can cite is worth more than a fuller one you never send.",
 ].join(" ");
 
 /**
@@ -222,6 +263,8 @@ const WORKFLOW_OBJECTIVES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
     "Your objective is the state of this database itself: where its data is incomplete, inconsistent or surprising.",
   operations:
     "Your objective is how this database is RUNNING right now: what is connected to it, what it is spending its time on, what is blocked, and where its space and its indexes are going.",
+  "data-analysis":
+    "Your objective is a question about the data in this database. Establish the answer from the data and produce something to show for it.",
 } satisfies Record<AgentRunWorkflowType, string>);
 
 /**
@@ -254,6 +297,30 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
     "EVERY READING IS A MOMENT. A session list is who was connected as you looked; a slow-query list is what the engine has accumulated, not what it did today. Say what you saw and when, and never imply you measured a trend or watched something change.",
     "recommend_change offers the user one index or one rewrite, and nothing else: an operational action — killing a session, vacuuming a table, dropping an index — has no card here, so state it as a claim in your report rather than filing it as a recommendation.",
   ].join(" "),
+  // The model's half of `agent-data-analysis.1`. The verdict requires an
+  // `answer-composed` event on top of the baseline, so the sentence naming
+  // `present_answer` is what makes that bar reachable — #350's lesson, applied at the
+  // moment the rule is written rather than after a live run fails it. The contract
+  // itself is IMPORTED from the tool layer rather than paraphrased here: two wordings
+  // of one contract is how #350 happened.
+  "data-analysis": [
+    "Answer from data you have READ. The schema tells you where to look; only a result you ran can be the answer.",
+    "profile_table at basic depth is how you tell a fact table from a lookup one, and a date column the business fills from an audit column nobody does: it returns row counts and how many rows have a value, and reads no value out of any column. Go deeper only if a basic profile leaves a question.",
+    "When you have the answer, call present_answer with the artifact id of the read that IS the answer.",
+    // The tool layer's `ANSWER_OPERATION` rule, in the model's terms (#350). A plan
+    // step carries a drafted statement and settles like any other, so nothing in what
+    // the model sees distinguishes a plan artifact from a read one; a rule enforced
+    // only by a refusal is a rule the model meets by spending a turn on it.
+    "Only a result of run_read_query can be presented: a plan describes a statement without running it, and a profile counts a table rather than answering the question. Cite either as evidence, but present a read.",
+    "A chart names columns of THAT result: they are checked against the result's real column names and refused if they do not match.",
+    AGENT_ANSWER_CONTRACT,
+    "Then call compose_report. The presentation shows the result; the claims are what say what it means.",
+    // The third arm of `agent-data-analysis.1`, in the model's own terms. The verdict
+    // now requires the report to be ABOUT the result presented, and the model holds the
+    // id it needs — it passed that id to `present_answer` one turn earlier and was
+    // answered with it. A rule the model is never told is a rule live runs fail (#350).
+    "At least one of those claims must cite the artifact you presented: a report about other evidence entirely is prose beside a picture, and the run is scored as not having answered.",
+  ].join(" "),
 } satisfies Record<AgentRunWorkflowType, string>);
 
 /**
@@ -267,9 +334,40 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
  * the axis argument this repository had just written down. Toollessness bears on
  * which TOOLS a run is offered, not on what the run is about.
  */
+/**
+ * The auto-execute gate, stated to the model that has to satisfy it.
+ *
+ * #350's lesson at the moment the rule is written: the gate's second condition is a
+ * plan of the answer's own statement, and no tool obtains one on the model's behalf.
+ * A run that never calls `inspect_plan` therefore cannot pass a gate it was never
+ * told about — the setting would look broken while every gate stayed green.
+ *
+ * The plan costs one statement out of the workflow's budget, which is the price
+ * §2.4.0 names for the condition. It is asked of the model rather than taken by the
+ * server because a statement the server ran here would have no `tool-invoked` and no
+ * `tool-completed` behind it, and the ledger invariant is that everything a run did
+ * is in its ledger.
+ */
+const AUTO_EXECUTE_RULE = [
+  "AUTO-EXECUTE IS ON for this run: the answer's statement is also placed in the user's editor and run there, on their connection and without the time limit your own reads have.",
+  "It is only run when three things hold: this run executed that exact statement itself, this run holds an inspect_plan of that same statement and the plan reads as cheap, and the run measured that execution as quick.",
+  "So call inspect_plan on the statement that IS the answer before you present it. Without one, the statement is placed in the editor unrun and the run says why.",
+].join(" ");
+
 function systemPrompt(record: AgentRunRecord): string {
   const rules = record.mode === "agent" ? `${AGENT_RULES} ${WORKFLOW_TOOL_RULES[record.workflowType]}` : PLANNING_RULES;
-  return `You are the LibreDB Studio database investigator. ${rules} ${WORKFLOW_OBJECTIVES[record.workflowType]} ${SHARED_RULES}`;
+  // Said only where it can happen, on all THREE counts. A planning run has no tools;
+  // a run opened without the setting hands nothing anywhere; and a workflow that is
+  // not offered `present_answer` has no way to make the presentation this rule is
+  // about — it would be told to call `inspect_plan` "on the statement that IS the
+  // answer before you present it" and then have no tool with which to present one.
+  // The third check is the #350/#356 rule: never state a rule to a model whose tool
+  // set cannot satisfy it. `AGENT_WORKFLOW_PRESENTS_ANSWER` is the same record the
+  // rail and the route read, so the setting cannot be offered where it is unsaid.
+  const canHandOver =
+    record.mode === "agent" && record.autoExecute && AGENT_WORKFLOW_PRESENTS_ANSWER[record.workflowType];
+  const handover = canHandOver ? ` ${AUTO_EXECUTE_RULE}` : "";
+  return `You are the LibreDB Studio database investigator. ${rules}${handover} ${WORKFLOW_OBJECTIVES[record.workflowType]} ${SHARED_RULES}`;
 }
 
 // ============================================================================
@@ -705,7 +803,6 @@ export async function runInvestigation(
   options: AgentInvestigationOptions,
 ): Promise<AgentInvestigationResult> {
   const { service, model, resources } = options;
-  const maxTurns = options.maxTurns ?? AGENT_MAX_MODEL_TURNS;
   const turnTimeoutMs = options.turnTimeoutMs ?? AGENT_MODEL_TURN_TIMEOUT_MS;
 
   // Refuses a run that has ended, and tells us what the previous process left
@@ -733,7 +830,18 @@ export async function runInvestigation(
 
   const record = resumed.record.status === "queued" ? await service.markRunning(runId) : resumed.record;
 
-  const context: AgentToolContext = { ...resources, runId: record.runId, mode: record.mode, actor: record.actor };
+  // Read from the record and not from a module constant: the turn ceiling is one of
+  // the four figures the decision table varies per workflow, and a drive that used
+  // another workflow's ceiling would end runs for a reason nothing enforced.
+  const maxTurns = options.maxTurns ?? AGENT_WORKFLOW_BUDGETS[record.workflowType].maxModelTurns;
+
+  const context: AgentToolContext = {
+    ...resources,
+    runId: record.runId,
+    mode: record.mode,
+    workflowType: record.workflowType,
+    actor: record.actor,
+  };
   const tools = declaredTools(record);
   const instructions = systemPrompt(record);
   const messages: ModelMessage[] = [{ role: "user", content: record.objective }];
@@ -810,6 +918,24 @@ export async function runInvestigation(
 
   let turns = 0;
   let text = "";
+  /** The reserve notice is a one-shot: a run is told once that it is out of room. */
+  let reserveAnnounced = false;
+
+  /**
+   * Tells the run, once, that it has come within the reserve of a ceiling.
+   *
+   * A message and not a rule change, which is what makes it safe: it spends no
+   * statement, consults no deadline admission and takes no turn of its own — it rides
+   * on the turn that was about to be taken anyway — and it does not touch the policy
+   * version or the verifier. A planning run is never told: it has no `compose_report`
+   * to call, so this would be an instruction the mode cannot follow (#350).
+   */
+  const announceReserve = (remainingMs: number): void => {
+    if (reserveAnnounced || record.mode !== "agent") return;
+    if (maxTurns - turns > AGENT_REPORT_RESERVE_TURNS && remainingMs > AGENT_REPORT_RESERVE_MS) return;
+    reserveAnnounced = true;
+    messages.push({ role: "user", content: AGENT_REPORT_RESERVE_NOTICE });
+  };
 
   /*
     Every terminal path goes through here, which is why the ledger writes belong here
@@ -834,6 +960,10 @@ export async function runInvestigation(
     // Inside the drive rather than before the loop, so a run that is already
     // cancelled or already out of time ends without reading a catalog first.
     if (!contextEstablished) await establishContext();
+    // After the context, so the inventory a first turn is given still arrives before
+    // the sentence telling it to finish, and before the turn is counted, because the
+    // notice rides on this turn rather than costing one.
+    announceReserve(remainingMs);
     turns += 1;
     // Whichever bound is smaller applies, and which one it was decides what the user
     // is told: a call that never returned is not a run that used its time.
@@ -898,6 +1028,7 @@ async function handleCall(input: {
   if (call.toolName === "compose_report") return composeReport(service, context, call.input);
   if (call.toolName === "compare_plans") return comparePlans(service, context, call.input);
   if (call.toolName === "recommend_change") return recommendChange(service, context, call.input);
+  if (call.toolName === "present_answer") return presentAnswer(service, context, call.input);
   // Profiling DOES reach a database, but its statement is composed from the run's
   // own inventory rather than from the model's arguments, so its step identity is
   // the table and depth it names. Handled here, where the run record is in hand.
@@ -1079,6 +1210,27 @@ async function recommendChange(
   if (outcome.kind === "unavailable") return { kind: "answered", text: outcome.modelText };
 
   await service.recordEvent(context.runId, { kind: "recommendation", ...outcome.recommendation });
+  return { kind: "answered", text: outcome.modelText };
+}
+
+/**
+ * Which result IS the answer, recorded and NOT terminal.
+ *
+ * A finding rather than a conclusion, exactly like a plan comparison: the run goes on
+ * to cite the same artifact in its report, and a run that presented a result and
+ * reported nothing has drawn a picture rather than answered a question. That is why
+ * this returns `answered` and only `compose_report` returns `reported`.
+ *
+ * The record is re-read for the reason the report re-reads it: the artifact an answer
+ * may name is one of the entries added while this loop was running, and the chart
+ * spec is checked against that artifact's real columns.
+ */
+async function presentAnswer(service: AgentRunService, context: AgentToolContext, input: unknown): Promise<CallResult> {
+  const { record } = await service.resume(context.runId);
+  const outcome = presentAnswerTool(context, record, input);
+  if (outcome.kind === "unavailable") return { kind: "answered", text: outcome.modelText };
+
+  await service.recordEvent(context.runId, { kind: "answer-composed", ...outcome.answer });
   return { kind: "answered", text: outcome.modelText };
 }
 

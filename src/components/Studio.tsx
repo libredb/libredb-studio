@@ -187,7 +187,19 @@ export default function Studio() {
   // Artifact hydration (#329 T11). The rail cites what a run stored; showing it puts
   // the rows into the bottom panel that already renders rows, and applying a drafted
   // statement puts it into the editor that already holds statements. There is no
-  // second grid and no second editor, and neither happens without a user action.
+  // second grid, no second chart component and no second editor. Which surface opens
+  // is the hydration's answer, and it comes from what the run recorded — the operation
+  // for a read or a plan, the composed answer for a chart — never from the shape of
+  // the rows.
+  //
+  // HYDRATION happens on a user action — a click on a citation. The HAND-OVER below
+  // does not, and this comment used to claim otherwise. The rail's handover effect
+  // calls `onApplyStatement` (for `handover: "applied"`) and `onRunStatement` (for
+  // `"auto-executed"`) from a `useEffect` over ledger entries, so an auto-execute run
+  // writes `currentTab.query` with no click at that moment. The consent was given
+  // once, when the run was opened with the checkbox ticked, and it is the whole of
+  // what makes this acceptable — so anything added here that would lose unsaved
+  // editor content must guard it rather than trusting a click to have happened.
   const agentArtifact = useAgentArtifact({
     explainFormat: metadata?.capabilities.explainFormat,
     onShown: (surface) => queryExec.setBottomPanelMode(surface),
@@ -680,7 +692,27 @@ export default function Studio() {
                 sheetOpen={isAgentSheetOpen}
                 onSheetOpenChange={setIsAgentSheetOpen}
                 prefill={agentPrefill.request}
+                connectionType={conn.activeConnection?.type ?? null}
                 onApplyStatement={(sql) => tabMgr.updateCurrentTab({ query: sql })}
+                /*
+                  The handover a run's answer can record (§2.1): the statement goes
+                  into the editor AND is run there. Through the hook's own entry point
+                  rather than `executeQuery`, and the difference is the boundary
+                  (#373 review): `executeQuery` goes to the editor's read-WRITE route,
+                  where a `SELECT` calling a VOLATILE function that writes would
+                  succeed. `executeHandedOverStatement` asks the run's own hand-over
+                  route instead, which runs the ledger's statement under the engine's
+                  read-only session at the editor's default row limit and with no
+                  statement timeout.
+
+                  The statement is put in the editor first so the user reads what is
+                  running while it runs; the RUN is what is sent, because the text the
+                  server executes is the ledger's, not this component's copy of it.
+                */
+                onRunStatement={(sql, runId) => {
+                  tabMgr.updateCurrentTab({ query: sql });
+                  void queryExec.executeHandedOverStatement(runId, sql);
+                }}
                 onShowArtifact={agentArtifact.show}
               />
             </ResizablePanel>

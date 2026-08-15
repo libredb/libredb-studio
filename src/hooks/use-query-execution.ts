@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
 import { isMultiStatement } from "@/lib/sql/statement-splitter";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { shouldRefreshSchema } from "@/lib/query-generators";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { logger } from "@/lib/logger";
@@ -39,6 +40,23 @@ interface UseQueryExecutionParams {
   playgroundMode: boolean;
   fetchSchema: (conn: DatabaseConnection) => Promise<void>;
   queryEditorRef: RefObject<QueryEditorRef | null>;
+}
+
+/**
+ * The id one history entry is filed under.
+ *
+ * `crypto.getRandomValues` rather than `Math.random`, which a scanner reads as a
+ * pseudorandom generator standing where a secure one belongs. Nothing here is a
+ * secret — the id names a row in this browser's own query history — but the two cost
+ * the same and only one of them has to be argued about in every review.
+ *
+ * Deliberately NOT `crypto.randomUUID`: it is restricted to secure contexts, and
+ * Studio is served over plain HTTP on several of its distribution channels, where it
+ * is simply undefined. `getRandomValues` carries no such restriction.
+ */
+function newHistoryId(): string {
+  const bytes = crypto.getRandomValues(new Uint32Array(2));
+  return `${bytes[0].toString(36)}${bytes[1].toString(36)}`;
 }
 
 /**
@@ -151,7 +169,7 @@ export function useQueryExecution({
       }
 
       // Options extraction
-      const { limit = 500, offset = 0, unlimited = false, params } = executionOptions || {};
+      const { limit = DEFAULT_QUERY_LIMIT, offset = 0, unlimited = false, params } = executionOptions || {};
 
       // isLoadingMore flag
       const isLoadMore = offset > 0;
@@ -197,7 +215,7 @@ export function useQueryExecution({
       abortControllerRef.current?.abort();
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
-      const queryId = `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const queryId = `q-${Date.now()}-${newHistoryId()}`;
       activeQueryIdRef.current = queryId;
 
       /**
@@ -326,7 +344,7 @@ export function useQueryExecution({
           const errorCode = error.code as string | undefined;
 
           storage.addToHistory({
-            id: Math.random().toString(36).substring(7),
+            id: newHistoryId(),
             connectionId: activeConnection.id,
             connectionName: activeConnection.name,
             tabName: tabToExec.name,
@@ -352,7 +370,7 @@ export function useQueryExecution({
         // Only add to history for new queries (not load more)
         if (!isLoadMore) {
           storage.addToHistory({
-            id: Math.random().toString(36).substring(7),
+            id: newHistoryId(),
             connectionId: activeConnection.id,
             connectionName: activeConnection.name,
             tabName: tabToExec.name,
@@ -538,6 +556,95 @@ export function useQueryExecution({
     [executeQuery],
   );
 
+  /**
+   * Run a statement an agent run handed to this editor (#329, §2.1/§2.5 of
+   * `docs/AGENT_ANALYST_DESIGN.md`; reshaped by the #373 review).
+   *
+   * It takes a RUN, not a statement to execute. The statement is named only so this
+   * hook can label the history entry with the text the user is looking at; what is
+   * sent is the run id, and the server reads the statement off that run's ledger.
+   *
+   * That is the whole of the security fix. This used to call `executeQuery`, which
+   * goes to `POST /api/db/query` — the editor's ordinary, read-WRITE path, guarded
+   * only by `isDangerousQuery`, a check on the statement's text. The agent's own read
+   * is bounded by the ENGINE (`BEGIN READ ONLY`, `PRAGMA query_only`), and a `SELECT`
+   * that calls a VOLATILE function performing an `INSERT` is refused there and
+   * performed here. No inspection of the text can tell those apart, so the replay is
+   * no longer served by a route that lacks the boundary: it goes to
+   * `POST /api/agent/runs/[runId]/handover`, which runs it through `queryReadOnly`
+   * under `AGENT_HANDOVER_PROFILE` at the editor's default row limit and with no
+   * statement timeout — the bounds the checkbox names, enforced by the database.
+   *
+   * The route is named as a literal rather than imported: `src/lib/agent/*` is out of
+   * the published package's module graph by construction
+   * (`tests/unit/agent-package-boundary.test.ts`), and this hook is in it.
+   *
+   * Nothing here appends a `LIMIT`, and nothing refreshes the schema afterwards: the
+   * text stays the text the run's ledger holds, and a read that the engine itself
+   * holds read-only cannot have changed one.
+   */
+  const executeHandedOverStatement = useCallback(
+    async (runId: string, sql: string) => {
+      if (!activeConnection) {
+        toast({ title: "No Connection", description: "Select a connection first.", variant: "destructive" });
+        return;
+      }
+      const targetTabId = activeTabId;
+      const tabToExec = tabs.find((t) => t.id === targetTabId) || currentTab;
+
+      setTabs((prev) => prev.map((t) => (t.id === targetTabId ? { ...t, isExecuting: true } : t)));
+      setBottomPanelMode("results");
+
+      const startTime = Date.now();
+      try {
+        const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/handover`, { method: "POST" });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "The hand-over could not be run");
+        }
+
+        const result = payload.result;
+        storage.addToHistory({
+          id: newHistoryId(),
+          connectionId: activeConnection.id,
+          connectionName: activeConnection.name,
+          tabName: tabToExec.name,
+          query: sql,
+          executionTime: result.executionTime ?? Date.now() - startTime,
+          status: "success",
+          executedAt: new Date(),
+          rowCount: result.rowCount,
+        });
+        setHistoryKey((prev) => prev + 1);
+
+        setTabs((prev) =>
+          prev.map((t) =>
+            t.id === targetTabId
+              ? { ...t, result, allRows: result.rows, currentOffset: result.rows.length, isExecuting: false }
+              : t,
+          ),
+        );
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        storage.addToHistory({
+          id: newHistoryId(),
+          connectionId: activeConnection.id,
+          connectionName: activeConnection.name,
+          tabName: tabToExec.name,
+          query: sql,
+          executionTime: Date.now() - startTime,
+          status: "error",
+          executedAt: new Date(),
+          errorMessage,
+        });
+        setHistoryKey((prev) => prev + 1);
+        setTabs((prev) => prev.map((t) => (t.id === targetTabId ? { ...t, isExecuting: false } : t)));
+        toast({ title: "Query Error", description: errorMessage, variant: "destructive" });
+      }
+    },
+    [activeConnection, activeTabId, tabs, currentTab, setTabs, toast],
+  );
+
   // Cancel running query
   const cancelQuery = useCallback(async () => {
     // Abort the fetch request
@@ -598,6 +705,7 @@ export function useQueryExecution({
   return {
     executeQuery,
     forceExecuteQuery,
+    executeHandedOverStatement,
     cancelQuery,
     handleLoadMore,
     handleUnlimitedQuery,

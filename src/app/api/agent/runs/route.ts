@@ -3,7 +3,12 @@ import { admitAgentModel } from "@/lib/agent/capability-gate";
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
 import { AGENT_MAX_OBJECTIVE_LENGTH } from "@/lib/agent/execution-policy";
 import { driveAgentRun, getAgentRunService } from "@/lib/agent/runtime";
-import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
+import {
+  AGENT_WORKFLOW_PRESENTS_ANSWER,
+  DEFAULT_AGENT_WORKFLOW_TYPE,
+  type AgentRunMode,
+  type AgentRunWorkflowType,
+} from "@/lib/agent/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { guardRoute } from "@/lib/api/require-session";
 import { logger } from "@/lib/logger";
@@ -33,6 +38,11 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
  *    investigation, which is what every run before the field was — and there is no
  *    other route that accepts it, so a run cannot change what it is for after it
  *    has been opened.
+ *  - **Auto-execute is fixed at start, and that is the reason it is a run field at
+ *    all.** It is what the run may hand to the editor to RUN, on a path with none of
+ *    the agent's own bounds, so it is decided once by the request that opens the run
+ *    and read from the run's own record for the rest of its life. Absent means off;
+ *    a value that is not a boolean is refused rather than coerced.
  */
 
 const ROUTE = "POST /api/agent/runs";
@@ -51,6 +61,7 @@ const WORKFLOW_TYPES: ReadonlySet<string> = new Set<AgentRunWorkflowType>([
   "query-optimization",
   "database-assessment",
   "operations",
+  "data-analysis",
 ]);
 
 function badRequest(message: string): NextResponse {
@@ -76,7 +87,7 @@ export async function POST(req: Request) {
       return badRequest("Request body must be JSON");
     }
 
-    const { mode, workflowType, objective, connectionId } = body;
+    const { mode, workflowType, autoExecute, objective, connectionId } = body;
     if (typeof mode !== "string" || !MODES.has(mode)) {
       return badRequest('mode must be "planning" or "agent"');
     }
@@ -86,6 +97,35 @@ export async function POST(req: Request) {
     // different one is how a user reads a report about work nobody requested.
     if (workflowType !== undefined && (typeof workflowType !== "string" || !WORKFLOW_TYPES.has(workflowType))) {
       return badRequest(`workflowType must be one of ${[...WORKFLOW_TYPES].join(", ")}`);
+    }
+    // Absent means off. Anything that is not a boolean is REFUSED rather than
+    // coerced: `"false"`, `0` and `null` are all truthy or falsy by accident in some
+    // serialiser, and guessing wrong here gives away the editor's time limit on a
+    // statement nobody agreed to run.
+    if (autoExecute !== undefined && typeof autoExecute !== "boolean") {
+      return badRequest("autoExecute must be a boolean");
+    }
+    // The setting only means something where the run can present an answer, because
+    // the hand-over IS `present_answer`'s. Accepting it elsewhere would persist a run
+    // record claiming a hand-over that nothing could ever perform, and would have the
+    // system prompt tell the model to inspect the plan of a presentation it has no
+    // tool to make. Refused rather than quietly normalised to `false`: a caller that
+    // asked for this got a run that will not do it, and a silent downgrade is how a
+    // user comes to believe a feature ran.
+    const requestedWorkflow = (workflowType ?? DEFAULT_AGENT_WORKFLOW_TYPE) as AgentRunWorkflowType;
+    if (autoExecute === true && !AGENT_WORKFLOW_PRESENTS_ANSWER[requestedWorkflow]) {
+      return badRequest(
+        `autoExecute is only available on workflows that present an answer: ${Object.keys(
+          AGENT_WORKFLOW_PRESENTS_ANSWER,
+        )
+          .filter((candidate) => AGENT_WORKFLOW_PRESENTS_ANSWER[candidate as AgentRunWorkflowType])
+          .join(", ")}`,
+      );
+    }
+    // Planning is toolless whatever the run is for, so the same argument applies to
+    // it in full: there is no `present_answer` in an empty tool set.
+    if (autoExecute === true && mode !== "agent") {
+      return badRequest("autoExecute is only available in agent mode: a planning run is offered no tools");
     }
     if (typeof objective !== "string" || objective.trim().length === 0) {
       return badRequest("objective must be a non-empty string");
@@ -130,6 +170,9 @@ export async function POST(req: Request) {
       // reaches the store exactly as one written before the field did, and the
       // store's own default is the single place the answer is decided.
       ...(workflowType === undefined ? {} : { workflowType: workflowType as AgentRunWorkflowType }),
+      // Spread for the same reason, and it matters more here: the store's `false` is
+      // the single place "nobody asked" is turned into an answer.
+      ...(autoExecute === undefined ? {} : { autoExecute }),
       actor: { sessionId: guard.session.username, role: guard.session.role },
       connectionId: connection.id,
       objective,
@@ -149,7 +192,13 @@ export async function POST(req: Request) {
     // The PERSISTED values are echoed, never the request's: a caller that omitted a
     // workflow type learns which one its run actually opened as.
     return NextResponse.json(
-      { runId: record.runId, status: record.status, mode: record.mode, workflowType: record.workflowType },
+      {
+        runId: record.runId,
+        status: record.status,
+        mode: record.mode,
+        workflowType: record.workflowType,
+        autoExecute: record.autoExecute,
+      },
       { status: 202 },
     );
   } catch (error) {

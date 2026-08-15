@@ -1004,4 +1004,109 @@ describe("DataCharts", () => {
       HTMLAnchorElement.prototype.click = originalClick;
     }
   });
+
+  // -----------------------------------------------------------------------
+  // A specification the caller supplies (the agent's answer)
+  // -----------------------------------------------------------------------
+
+  /**
+   * The model chooses the chart; inference is the fallback.
+   *
+   * And the fallback is load-bearing rather than tidy: this component turns a value
+   * it cannot read into a number with `Number(value) || 0`, so a chart drawn over a
+   * column the delivered rows do not have does not fail — it draws a confident flat
+   * line of zeros. The specification is validated on the server before it is
+   * recorded; it is validated AGAIN here, because what reaches the browser is a
+   * different delivery of the result from the one the server checked.
+   */
+  describe("a supplied specification", () => {
+    const spec = (overrides: Record<string, unknown> = {}) => ({
+      type: "line" as const,
+      x: "type",
+      y: ["count"] as [string, ...string[]],
+      caption: "Count by type.",
+      ...overrides,
+    });
+
+    test("the supplied type and axes are drawn, not the ones inference would have chosen", () => {
+      // Inference suggests a line chart for this result (it has a date column) and
+      // `revenue` for the value, so a bar chart of `cost` can only have come from the
+      // specification.
+      const { queryByTestId, queryByRole } = render(
+        React.createElement(DataCharts, {
+          result: mockNumericResult,
+          spec: spec({ type: "bar", x: "category", y: ["cost"] }),
+        }),
+      );
+
+      expect(queryByTestId("mock-bar-chart")).not.toBeNull();
+      expect(queryByTestId("mock-line-chart")).toBeNull();
+      expect(queryByRole("button", { name: /cost/ })).not.toBeNull();
+    });
+
+    test("a scatter specification takes its second axis from the columns it named", () => {
+      const { queryByTestId } = render(
+        React.createElement(DataCharts, {
+          result: pureNumericResult,
+          spec: spec({ type: "scatter", x: "x", y: ["y"] }),
+        }),
+      );
+
+      expect(queryByTestId("mock-scatter-chart")).not.toBeNull();
+    });
+
+    test("a specification naming a column the delivered result does not have falls back to inference", () => {
+      // The failure this prevents is silent: `net_total` is absent, every row reads
+      // as zero, and the picture is a flat line with this application's frame around
+      // it. The inferred pie is what the user gets instead.
+      const { queryByTestId } = render(
+        React.createElement(DataCharts, { result: fewCategoricalResult, spec: spec({ x: "net_total" }) }),
+      );
+
+      expect(queryByTestId("mock-pie-chart")).not.toBeNull();
+      expect(queryByTestId("mock-line-chart")).toBeNull();
+    });
+
+    test("a specification whose value column holds no numbers falls back the same way", () => {
+      const { queryByTestId } = render(
+        React.createElement(DataCharts, { result: fewCategoricalResult, spec: spec({ y: ["type"] }) }),
+      );
+
+      expect(queryByTestId("mock-pie-chart")).not.toBeNull();
+    });
+
+    test("a scatter specification whose x column holds no numbers falls back the same way", () => {
+      // Scatter reads BOTH axes as numbers, so a categorical x is the same flat-zero
+      // failure one axis along.
+      const { queryByTestId } = render(
+        React.createElement(DataCharts, {
+          result: fewCategoricalResult,
+          spec: spec({ type: "scatter", x: "type", y: ["count"] }),
+        }),
+      );
+
+      expect(queryByTestId("mock-pie-chart")).not.toBeNull();
+      expect(queryByTestId("mock-scatter-chart")).toBeNull();
+    });
+
+    test("every column a spec can name is a column this component actually draws", () => {
+      // The guard this replaces dropped any spec carrying `series`, which made the
+      // renderer the last of four layers to disagree about a field the other three
+      // accepted. `series` is gone from the contract, the schema and the type, so
+      // the property no longer exists to be dropped — and the way that stays true is
+      // that a spec's keys are exactly what `AgentChartSpec` declares.
+      expect(Object.keys(spec({}))).toEqual(["type", "x", "y", "caption"]);
+    });
+
+    test("a specification over a result nothing can chart still shows why it cannot", () => {
+      const { queryByText } = render(
+        React.createElement(DataCharts, {
+          result: mockSingleRowResult,
+          spec: spec({ x: "id", y: ["value"] }),
+        }),
+      );
+
+      expect(queryByText("Need at least 2 rows for visualization")).not.toBeNull();
+    });
+  });
 });

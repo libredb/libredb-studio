@@ -103,6 +103,7 @@ const EVENT_KINDS: ReadonlySet<string> = new Set(
     "plan-comparison": true,
     recommendation: true,
     "closing-statement": true,
+    "answer-composed": true,
     "run-finished": true,
   } satisfies Record<AgentRunEvent["kind"], true>),
 );
@@ -127,6 +128,13 @@ export type AgentLedgerEntry =
        * asserts against a real pre-change ledger rather than a hand-written one.
        */
       readonly workflowType?: AgentRunWorkflowType;
+      /**
+       * Optional on the READ side for the same reason `workflowType` is: `openRun`
+       * always writes one, and a header written before this field existed folds to
+       * `false` — which is what was true of it, since nothing then handed a
+       * statement anywhere.
+       */
+      readonly autoExecute?: boolean;
       readonly actor: AgentRunActor;
       readonly connectionId: string;
       readonly objective: string;
@@ -198,6 +206,8 @@ export interface AgentRunOpenInput {
   readonly mode: AgentRunMode;
   /** Defaults to `DEFAULT_AGENT_WORKFLOW_TYPE`; see `AgentRunWorkflowType`. */
   readonly workflowType?: AgentRunWorkflowType;
+  /** Defaults to `false`. Decided at start and never afterwards; see `AgentRunRecord`. */
+  readonly autoExecute?: boolean;
   readonly actor: AgentRunActor;
   readonly connectionId: string;
   readonly objective: string;
@@ -303,6 +313,7 @@ function foldLedger(runId: string, entries: readonly AgentLedgerEntry[]): AgentR
       runId,
       mode: header.mode,
       workflowType: header.workflowType ?? DEFAULT_AGENT_WORKFLOW_TYPE,
+      autoExecute: header.autoExecute ?? false,
       status,
       actor: header.actor,
       connectionId: header.connectionId,
@@ -345,6 +356,10 @@ export class AgentRunStore {
       // run HAS a workflow type, so there is no "ending that has neither" case whose
       // bytes an omission would keep identical. The compatibility is on the read side.
       workflowType: input.workflowType ?? DEFAULT_AGENT_WORKFLOW_TYPE,
+      // Written unconditionally too, and for the stronger reason: an omitted setting
+      // and a setting recorded as `false` must be the same run, so that no ledger
+      // generation can be read as having permitted something it did not.
+      autoExecute: input.autoExecute ?? false,
       actor: input.actor,
       connectionId: input.connectionId,
       objective: input.objective,

@@ -17,7 +17,7 @@ import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
 import { configureAgentModel, restoreAgentModel } from "../helpers/agent-model-env";
 import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
-import { AGENT_RUN_DEADLINE_MS } from "@/lib/agent/execution-policy";
+import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import * as realRunStore from "@/lib/agent/run-store";
 import { AgentRunServiceError } from "@/lib/agent/run-service";
 import { LLMAuthError, LLMConfigError, LLMRateLimitError } from "@/lib/llm/types";
@@ -26,6 +26,7 @@ import { SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
 import type { AgentToolResources } from "@/lib/agent/investigation";
 import type { ProviderCapabilities } from "@/lib/db/types";
+import type { AgentRunWorkflowType } from "@/lib/agent/types";
 import type { DatabaseConnection } from "@/lib/types";
 
 const dataDirs: string[] = [];
@@ -61,11 +62,13 @@ mock.module("@/lib/db", () => ({ createDatabaseProvider: async () => ({ getCapab
 mock.module("@/lib/agent/model-adapter", () => ({ createAgentModel: mockCreateAgentModel }));
 mock.module("@/lib/agent/investigation", () => ({ runInvestigation: mockRunInvestigation }));
 
-const { driveAgentRun, getAgentRunService, readAgentArtifact } = await import("@/lib/agent/runtime");
+const { AGENT_MAX_ARTIFACTS, driveAgentRun, getAgentRunService, readAgentArtifact } = await import(
+  "@/lib/agent/runtime"
+);
 
 const ACTOR = { sessionId: "ada", role: "user" } as const;
 
-async function openRun(runId: string): Promise<void> {
+async function openRun(runId: string, workflowType?: AgentRunWorkflowType): Promise<void> {
   const service = await getAgentRunService();
   await service.start({
     mode: "agent",
@@ -73,6 +76,7 @@ async function openRun(runId: string): Promise<void> {
     connectionId: "seed:sales",
     objective: "why is checkout slow",
     runId,
+    ...(workflowType === undefined ? {} : { workflowType }),
   });
 }
 
@@ -107,6 +111,27 @@ describe("getAgentRunService", () => {
 });
 
 describe("driveAgentRun", () => {
+  /**
+   * The wall clock is one of the four figures the decision table varies per workflow,
+   * so it has to be built from the RUN'S record: a composition root that read one
+   * constant would bound a `database-assessment` drive by an investigation's clock
+   * while the rail stated the assessment's, and only one of the two would be true.
+   */
+  test.each([["investigation"], ["database-assessment"], ["operations"]] as const)(
+    "gives a %s run the wall clock its own workflow was frozen with",
+    async (workflowType) => {
+      await openRun(`arun_clock_${workflowType.replace(/-/g, "_")}`, workflowType);
+
+      await driveAgentRun(`arun_clock_${workflowType.replace(/-/g, "_")}`);
+
+      const { deadline } = investigationCalls[investigationCalls.length - 1].resources;
+      const expected = AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs;
+      // A fresh deadline has spent only the microseconds since it was constructed.
+      expect(deadline.remainingMs()).toBeGreaterThan(expected - 1_000);
+      expect(deadline.remainingMs()).toBeLessThanOrEqual(expected);
+    },
+  );
+
   test("refuses a run that does not exist", async () => {
     await expect(driveAgentRun("arun_nosuchrun")).rejects.toThrow(AgentRunServiceError);
   });
@@ -315,6 +340,8 @@ describe("a drive that fails before the loop", () => {
  */
 describe("readAgentArtifact", () => {
   const RESULT = { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 4 };
+  /** What the module derives its TTL from, restated so this file reads it the same way. */
+  const LONGEST_DEADLINE_MS = Math.max(...Object.values(AGENT_WORKFLOW_BUDGETS).map((b) => b.runDeadlineMs));
 
   test("reads back what the run loop stored, and answers undefined once it has expired", async () => {
     await openRun("arun_artifact");
@@ -337,10 +364,57 @@ describe("readAgentArtifact", () => {
     expect(held?.value).toEqual(RESULT);
 
     // The TTL is the store's, not this module's: past it the same id is simply gone.
-    expect(readAgentArtifact("corr_read", 1_000 + AGENT_RUN_DEADLINE_MS * 4)).toBeUndefined();
+    expect(readAgentArtifact("corr_read", 1_000 + LONGEST_DEADLINE_MS * 4)).toBeUndefined();
+  });
+
+  /**
+   * The TTL is derived from the LONGEST workflow deadline, and it has to be: the store
+   * is process-wide, so a TTL taken from a shorter row would expire a
+   * `data-analysis` run's earliest result while that run was still allowed to
+   * cite it — the dead reference §1.2 of the design says the multiple exists to
+   * prevent. Asserted behaviourally, because the constant is private to the module.
+   */
+  test("a result outlives the longest run any workflow may have, by the factor the design relies on", async () => {
+    await openRun("arun_ttl");
+    await driveAgentRun("arun_ttl");
+    const { artifacts } = investigationCalls[investigationCalls.length - 1].resources;
+    artifacts.put(
+      {
+        correlationId: "corr_ttl",
+        runId: "arun_ttl",
+        operationId: "sql.query.read",
+        createdAtMs: 1_000,
+        value: RESULT,
+      },
+      1_000,
+    );
+
+    for (const [workflow, budget] of Object.entries(AGENT_WORKFLOW_BUDGETS)) {
+      expect(readAgentArtifact("corr_ttl", 1_000 + budget.runDeadlineMs * 4 - 1), workflow).toBeDefined();
+    }
+    expect(readAgentArtifact("corr_ttl", 1_000 + LONGEST_DEADLINE_MS * 4 - 1)).toBeDefined();
+    expect(readAgentArtifact("corr_ttl", 1_000 + LONGEST_DEADLINE_MS * 4)).toBeUndefined();
+    expect(LONGEST_DEADLINE_MS).toBe(AGENT_WORKFLOW_BUDGETS["data-analysis"].runDeadlineMs);
   });
 
   test("an id nothing ever stored is undefined rather than an error", () => {
     expect(readAgentArtifact("corr_never", 1_000)).toBeUndefined();
+  });
+});
+
+describe("AGENT_MAX_ARTIFACTS", () => {
+  /**
+   * The largest per-workflow statement ceiling the decision table freezes
+   * (`database-assessment`, 45) and the number of concurrent runs the single
+   * agent process is sized for (4). Asserted as a product rather than as the
+   * number itself so the assertion still means something when another workflow
+   * row lands: `data-analysis` at 42 statements is under this, and a row above
+   * 45 must move the constant with it.
+   */
+  const LARGEST_STATEMENT_CEILING = 45;
+  const ASSUMED_CONCURRENT_RUNS = 4;
+
+  test("holds every artifact the busiest workflow can produce, on all the runs assumed at once", () => {
+    expect(AGENT_MAX_ARTIFACTS).toBeGreaterThanOrEqual(LARGEST_STATEMENT_CEILING * ASSUMED_CONCURRENT_RUNS);
   });
 });

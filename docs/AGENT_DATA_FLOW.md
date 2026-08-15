@@ -230,18 +230,21 @@ own assistant messages (`investigation.ts:625-631`).
 | **The SQL of a read** (`run_read_query`) | After the schema, it goes to the database through the agent's own audited pipeline, under the read-only execution profile (`runReadQueryTool`, `tools.ts:1051-1058` → `executeAgentOperation`, `tools.ts:809`). It is recorded verbatim as a `statement-drafted` entry with the model's `rationale` (`investigation.ts:859`) | The rail: the SQL as a quoted block, the rationale as the entry's detail (`timeline.ts:378-385`, rendered at `AgentRail.tsx:693,699-703`). **Apply to editor** puts the text in your editor and runs nothing (`AgentRail.tsx:176-186`) |
 | **A recommended statement and rationale** (`recommend_change`) | The statement is checked against the change it claims to be, and every citation against this run's own ledger; either failing refuses it (`tools.ts:1402-1407`). **Nothing executes it** — the tool reaches no database | The rail: statement quoted, rationale as detail, with the application's own *"Not applied: nothing here runs this statement."* appended to it (`timeline.ts:421-430`) |
 | **Report claims** (`compose_report`) | Every citation is verified against this run's own event log, and one that resolves to nothing refuses the whole report (`composeReportTool`, `tools.ts:1488-1489`). The claim prose is **not echoed back** to the model: the tool's reply is a count (`tools.ts:1503-1505`) | Recorded (`investigation.ts:1040`) and rendered in the **Report** section, each claim a quoted block with its citations under it; a citation the rail cannot resolve reads amber rather than looking checked (`AgentRail.tsx:745-758`, `timeline.ts:556`) |
-| **Its closing prose** | Accumulated from the stream's text deltas (`investigation.ts:601`, taken at `:788`) and recorded only when non-empty, so an empty entry cannot record that the model spoke (`:773`) | The rail, under the application's own headline *Closing statement* (`timeline.ts:444-451`) |
+| **Its closing prose** | Accumulated from the stream's text deltas (`investigation.ts:601`, taken at `:788`) and recorded only when non-empty, so an empty entry cannot record that the model spoke (`:773`) | The rail, under the application's own headline *Closing statement* — as prose, with the headings, bullets, bold and inline code the model wrote (`renderProse`), inside a bordered block that keeps the quoting boundary visible |
 
 Three notes about that last column, because the rail's own rule is narrower than it first reads:
 
-- **Two of those fields are the application's `detail`, not the quoted block**: a drafted statement's
-  `rationale` and the closing prose (`timeline.ts:382,450`). The separation the rail enforces — the
-  application's words and text from elsewhere never share a field (`timeline.ts:25-36`) — is what
-  keeps **database** content out of a sentence the user reads as the application speaking. These two
-  are model prose sitting in the field beside the application's own headline.
+- **One of those fields is the application's `detail`, not the quoted block**: a drafted statement's
+  `rationale`. The separation the rail enforces — the application's words and text from elsewhere
+  never share a field (`timeline.ts:25-36`) — is what keeps **database** content out of a sentence
+  the user reads as the application speaking, and this one is model prose sitting in the field beside
+  the application's own headline. The closing prose used to be there too and is now a third field,
+  `prose`, rendered as markdown in a block of its own: it arrives as headings and bullets, and one
+  paragraph of literal hash marks is what a plan run's whole output read as before.
 - **None of it reaches an HTML parser.** Every one of these is passed as a React child, so escaping
   is structural rather than a step someone applies; `dangerouslySetInnerHTML` appears nowhere under
-  `src/components/agent/`.
+  `src/components/agent/`. That is true of the markdown rendering too — `renderProse` builds React
+  nodes and uses no markdown library, so structure is gained without a parser being introduced.
 - **Nothing returned becomes an instruction to the next turn.** The system instructions are built
   from constants once per drive (`systemPrompt`, `investigation.ts:240-243`, called at `:697`) and
   `takeTurn` is handed that same string unchanged on every turn (`:787`, used at `:580`).
@@ -343,17 +346,17 @@ Full entry: `docs/BACKLOG.md` B29.
 
 ## How much can leave
 
-The frozen execution policy is the ceiling on one run's egress
-(`src/lib/agent/execution-policy.ts:46-56`):
+The frozen execution policies are the ceiling on one run's egress, one row per workflow
+(`AGENT_WORKFLOW_BUDGETS` in `src/lib/agent/execution-policy.ts`):
 
 | Bound | Value | What it caps |
 | --- | --- | --- |
 | `maxResultRows` / `maxResultBytes` | 200 rows / 256 KiB | The most one read can return — and therefore the most one tool result can send |
-| `maxStatementsPerRun` | 20 | Reads per run, catalog reads and repairs included |
+| `maxStatementsPerRun` | 12-45, by workflow | Reads per drive, catalog reads and repairs included |
 | `AGENT_CONTEXT_PACK_MAX_CHARS` | 6000 | The fenced schema inventory |
 | `MAX_ER_CHARS` | 2000 | The fenced relations block |
 | `AGENT_MAX_OBJECTIVE_LENGTH` | 4000 | Your objective |
-| `AGENT_MAX_MODEL_TURNS` | 16 | Model calls per drive |
+| `maxModelTurns` | 20-60, by workflow | Model calls per drive |
 
 An oversized read is **refused, not truncated**, so a result that reached the model is a complete
 one. Note the honest edge: the comparison happens after the driver has materialised the rows, so an

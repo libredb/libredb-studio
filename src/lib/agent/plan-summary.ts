@@ -46,12 +46,34 @@ export interface AgentPlanSummary {
   /** The whole plan's estimate, when the engine reports one. Absent, never zero. */
   readonly estimatedRows?: number;
   readonly estimatedCost?: number;
+  /**
+   * At least one step of the plan said something this reading does not interpret, so
+   * `access` describes the steps that WERE read and not the whole plan (#373 review).
+   *
+   * Set by the SQLite reading alone, and read by the auto-execute gate alone. It is a
+   * companion to `access` rather than a value of it because the two answer different
+   * questions: `full-scan` beside this flag still means a table is read end to end, and
+   * folding the flag into `unknown` would throw away the part the reading did establish.
+   *
+   * Absent when every step was read, the way the estimates are absent when the engine
+   * reports none: an explicit `false` on a plan nobody flagged would read as a
+   * measurement of completeness, and this is only ever a measurement of incompleteness.
+   *
+   * NOT read by `compare_plans` or by `describeAccess` (`src/components/agent/timeline.ts`),
+   * and that is deliberate. A comparison is about how two statements differ in the
+   * access they were read to have; whether one of them also sorted is not a difference
+   * this reading claims to have measured, so a comparison says exactly what it said
+   * before this field existed.
+   */
+  readonly uninterpretedStep?: boolean;
 }
 
-/** What one node contributed: whether it scanned, and whether it used an index. */
+/** What one node contributed: whether it scanned, whether it used an index, and whether it was read at all. */
 interface AccessTally {
   scanned: boolean;
   indexed: boolean;
+  /** A step that matched neither rule. Tallied only where a reading claims to read every step. */
+  uninterpreted: boolean;
 }
 
 function accessOf(tally: AccessTally): AgentPlanAccess {
@@ -97,10 +119,24 @@ function tallyPostgres(node: Record<string, unknown>, tally: AccessTally): void 
   for (const child of children) if (isRecord(child)) tallyPostgres(child, tally);
 }
 
+/**
+ * PostgreSQL sets NO `uninterpretedStep`, and the omission is a decision (#373 review).
+ *
+ * A PG plan is mostly nodes this reading does not tally — `Sort`, `Hash Join`,
+ * `Aggregate`, `Gather`, `Materialize` — and none of them is a relation access, so
+ * flagging them would mean flagging nearly every plan the engine can produce. What
+ * makes that trade different from SQLite's is that the two engines give the gate
+ * different things to hold on to: PostgreSQL reports a numeric `Total Cost` for the
+ * WHOLE plan, which the gate already weighs against a ceiling, and it preempts a
+ * statement that overruns `statement_timeout`. So an unrecognised node there is
+ * covered by a bound that is already enforced. SQLite reports no cost at all, does not
+ * preempt, and blocks writers while a read runs, which leaves the access reading as
+ * the gate's entire evidence — and a reading that skipped a step is not evidence.
+ */
 function summarisePostgres(rows: readonly Record<string, unknown>[]): AgentPlanSummary {
   const root = postgresRoot(rows);
   if (root === null) return { access: "unknown" };
-  const tally: AccessTally = { scanned: false, indexed: false };
+  const tally: AccessTally = { scanned: false, indexed: false, uninterpreted: false };
   tallyPostgres(root, tally);
   // The ROOT's estimates: they describe the whole plan, and a child's would describe
   // one step of it while reading as though it were the answer.
@@ -136,14 +172,31 @@ function summarisePostgres(rows: readonly Record<string, unknown>[]): AgentPlanS
 const SQLITE_INDEX_STEP = /^SEARCH\b/;
 const SQLITE_SCAN_STEP = /^SCAN\b/;
 
+/**
+ * Every step is either read or COUNTED AS UNREAD — found by review on #373.
+ *
+ * `EXPLAIN QUERY PLAN` answers one row per step and this reading recognises two of
+ * them, so a plan of `SEARCH t USING INDEX ix` plus `USE TEMP B-TREE FOR ORDER BY`
+ * used to summarise as a flat `index`: a claim that every relation is reached through
+ * an index, made about a plan half of which had not been looked at. The auto-execute
+ * gate takes that word as its entire condition 2 on this engine, so the unread step was
+ * handed to a user's editor to run without a timeout on the strength of it.
+ *
+ * The flag rides beside `access` rather than collapsing it to `unknown`, because what
+ * the recognised steps said is still true and a comparison still wants it.
+ */
 function summariseSqlite(rows: readonly Record<string, unknown>[]): AgentPlanSummary {
-  const tally: AccessTally = { scanned: false, indexed: false };
+  const tally: AccessTally = { scanned: false, indexed: false, uninterpreted: false };
   for (const row of rows) {
     const detail = typeof row.detail === "string" ? row.detail.trim() : "";
     if (SQLITE_INDEX_STEP.test(detail)) tally.indexed = true;
     else if (SQLITE_SCAN_STEP.test(detail)) tally.scanned = true;
+    // Anything else, INCLUDING a row carrying no readable detail at all: a step this
+    // build has never seen and a row that is not a query-plan row are the same thing
+    // to a gate — something happened here that nobody weighed.
+    else tally.uninterpreted = true;
   }
-  return { access: accessOf(tally) };
+  return { access: accessOf(tally), ...(tally.uninterpreted ? { uninterpretedStep: true } : {}) };
 }
 
 // ─── the seam ───────────────────────────────────────────────────────────────

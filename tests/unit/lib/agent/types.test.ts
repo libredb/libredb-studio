@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { assertPersistableState } from "@/lib/agent/state-guard";
 import type {
   AgentArtifactReference,
+  AgentChartSpec,
   AgentContextSnapshot,
   AgentEvidenceReference,
   AgentReportClaim,
@@ -146,6 +147,21 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
       ],
     },
   },
+  // The data-analysis face's own artifact: which result IS the answer, and how it
+  // is to be shown. The spec names columns of THAT result and carries no colours,
+  // no title and no aggregation — presentation is the app's, and an aggregation
+  // here would be one nothing recorded.
+  "answer-composed": {
+    kind: "answer-composed",
+    atMs: 9,
+    sql: "SELECT region, SUM(net_total) AS net_total FROM orders GROUP BY region",
+    artifact: ARTIFACT,
+    presentation: {
+      kind: "chart",
+      spec: { type: "bar", x: "customer", y: ["total"], caption: "Net total by region, largest first." },
+    },
+    handover: "none",
+  },
   // The uncited counterpart: what the model said when it did not compose a report.
   // A planning run's whole output is one of these, and it round-trips as plainly as
   // the rest — prose is already the most inert thing a ledger can hold.
@@ -160,6 +176,7 @@ const RUN: AgentRunRecord = {
   runId: "run_1",
   mode: "agent",
   workflowType: "query-optimization",
+  autoExecute: false,
   status: "succeeded",
   actor: { sessionId: "sess_1", role: "user" },
   connectionId: "conn_1",
@@ -239,6 +256,36 @@ describe("contract shapes", () => {
     expect(DATABASE_ERROR.class).toBe("database-error");
     expect("message" in DATABASE_ERROR).toBe(true);
     expect("statementFingerprint" in DATABASE_ERROR).toBe(true);
+  });
+
+  test("a chart spec cannot ask for a histogram, because the run has no bins to show", () => {
+    // A histogram is a client-side binning of raw values, so the picture would show
+    // something the artifact does not contain. A bucketing wanted is a bucketing the
+    // SQL should do — and then it is a bar chart of an aggregate the run can cite.
+    // @ts-expect-error — `histogram` is inexpressible, though `DataCharts` offers it.
+    const binned: AgentChartSpec = { type: "histogram", x: "total", y: ["total"], caption: "spread" };
+    expect(String(binned.type)).toBe("histogram");
+  });
+
+  test("a chart spec cannot be composed without a y column", () => {
+    // @ts-expect-error — an empty `y` is inexpressible: a chart with nothing on the
+    // value axis is a chart of nothing.
+    const axisless: AgentChartSpec = { type: "bar", x: "customer", y: [], caption: "nothing" };
+    expect(axisless.y).toHaveLength(0);
+  });
+
+  test("a chart spec carries no colour, no title, no size and no aggregation", () => {
+    const spec = (EVENTS["answer-composed"] as Extract<AgentRunEvent, { kind: "answer-composed" }>).presentation;
+    if (spec.kind !== "chart") throw new Error("expected the fixture to carry a chart");
+
+    expect(Object.keys(spec.spec).sort()).toEqual(["caption", "type", "x", "y"]);
+  });
+
+  test("a table answer carries no chart spec at all", () => {
+    const table: Extract<AgentRunEvent, { kind: "answer-composed" }>["presentation"] = { kind: "table" };
+    // @ts-expect-error — the table arm has no `spec`, so a chart cannot ride along
+    // on an answer that says it is a table.
+    expect(table.spec).toBeUndefined();
   });
 
   test("the persisted actor is a session and a role, never a policy mode", () => {

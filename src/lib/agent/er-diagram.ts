@@ -46,7 +46,10 @@ export type AgentErDetail = "minimal" | "medium" | "full";
  * A total record, so a workflow added to the contract has to decide. An assessment
  * reasons about keys and their indexes, so it gets everything; an optimization cares
  * which columns join, so it gets the columns; an investigation mostly needs to know
- * what connects to what.
+ * what connects to what. An analysis is `medium` for the optimization's reason and
+ * not the assessment's: joining a fact table to the dimension a question groups by is
+ * a question about WHICH columns join, while how each key is indexed is what an
+ * assessment asks and an analysis never does.
  *
  * `operations` answers `minimal` and never uses it: that workflow captures no schema
  * snapshot at all (`investigation.ts` says why), so there is no inventory for a
@@ -59,6 +62,7 @@ const WORKFLOW_DETAIL: Readonly<Record<AgentRunWorkflowType, AgentErDetail>> = O
   "query-optimization": "medium",
   "database-assessment": "full",
   operations: "minimal",
+  "data-analysis": "medium",
 } satisfies Record<AgentRunWorkflowType, AgentErDetail>);
 
 export const erDetailForWorkflow = (workflowType: AgentRunWorkflowType): AgentErDetail => WORKFLOW_DETAIL[workflowType];

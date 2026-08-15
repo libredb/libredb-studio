@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import {
-  AGENT_EXECUTION_POLICY,
+  AGENT_WORKFLOW_BUDGETS,
   AGENT_EXECUTION_PROFILE,
   AGENT_OPERATIONS_PROFILE,
 } from "@/lib/agent/execution-policy";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AgentRepairLedger, fingerprintStatement } from "@/lib/agent/repair-ledger";
 import {
+  AGENT_ANSWER_CONTRACT,
   AGENT_TOOL_DEFINITIONS,
   type AgentToolContext,
   comparePlansTool,
@@ -16,13 +17,19 @@ import {
   inspectPlanTool,
   inspectSchemaTool,
   planTableProfile,
+  presentAnswerTool,
   profileTableTool,
   recommendChangeTool,
   runReadQueryTool,
   selectAgentTools,
 } from "@/lib/agent/tools";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
-import type { AgentRunEvent, AgentRunRecord, AgentRunWorkflowType } from "@/lib/agent/types";
+import {
+  AGENT_WORKFLOW_PRESENTS_ANSWER,
+  type AgentRunEvent,
+  type AgentRunRecord,
+  type AgentRunWorkflowType,
+} from "@/lib/agent/types";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
@@ -110,12 +117,16 @@ function harness(
   const acquireProvider = mock(async () => provider);
   const tracker = new ExecutionBudgetTracker();
   const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });
-  const deadline = new AgentRunDeadline(AGENT_EXECUTION_POLICY.budgets.maxTotalRunMs * 2, frozenClock);
+  const deadline = new AgentRunDeadline(
+    AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxTotalRunMs * 2,
+    frozenClock,
+  );
   const repairs = new AgentRepairLedger();
 
   const context: AgentToolContext = {
     runId: "run-1",
     mode: "agent",
+    workflowType: "investigation",
     actor: { sessionId: "session-1", role: "user" },
     connection,
     capabilities,
@@ -153,7 +164,13 @@ afterEach(() => {
   consoleSpy.mockRestore();
 });
 
-const WORKFLOW_TYPES = ["investigation", "query-optimization", "database-assessment", "operations"] as const;
+const WORKFLOW_TYPES = [
+  "investigation",
+  "query-optimization",
+  "database-assessment",
+  "operations",
+  "data-analysis",
+] as const;
 
 /**
  * The workflows built ON the read-class four. `operations` is deliberately not one of
@@ -161,7 +178,7 @@ const WORKFLOW_TYPES = ["investigation", "query-optimization", "database-assessm
  * offering any of them would put back, tool by tool, the engine restriction that
  * workflow exists to escape.
  */
-const SQL_WORKFLOW_TYPES = ["investigation", "query-optimization", "database-assessment"] as const;
+const SQL_WORKFLOW_TYPES = ["investigation", "query-optimization", "database-assessment", "data-analysis"] as const;
 
 /** A run record narrowed to what tool selection is allowed to read. */
 const persisted = (
@@ -219,6 +236,23 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
     expect(names).toEqual(["inspect_operations", "recommend_change", "compose_report"]);
   });
 
+  test("present_answer is offered exactly where AGENT_WORKFLOW_PRESENTS_ANSWER says it is", () => {
+    // The binding that keeps four layers agreeing. The rail offers the auto-execute
+    // checkbox from this record, the route accepts the field from it, and
+    // `investigation.ts` states AUTO_EXECUTE_RULE from it — all three describing a
+    // hand-over that only `present_answer` can perform. A workflow that gained the
+    // tool without the flag would take the setting silently and never offer it;
+    // one that gained the flag without the tool would promise a hand-over it cannot
+    // make. Asserted over EVERY workflow, so neither direction can drift.
+    for (const workflowType of WORKFLOW_TYPES) {
+      const names = selectAgentTools(persisted("agent", workflowType)).map((tool) => tool.name);
+      expect(names.includes("present_answer"), workflowType).toBe(AGENT_WORKFLOW_PRESENTS_ANSWER[workflowType]);
+    }
+    // And the record is not vacuously false everywhere, which would satisfy the loop
+    // above while the feature did not exist.
+    expect(AGENT_WORKFLOW_PRESENTS_ANSWER["data-analysis"]).toBe(true);
+  });
+
   test("no workflow but operations is offered the curated reading", () => {
     for (const workflowType of SQL_WORKFLOW_TYPES) {
       const names = selectAgentTools(persisted("agent", workflowType)).map((tool) => tool.name);
@@ -244,8 +278,16 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
       "compose_report",
       "profile_table",
     ]);
+    expect(selectAgentTools(persisted("agent", "data-analysis")).map((tool) => tool.name)).toEqual([
+      "inspect_schema",
+      "run_read_query",
+      "inspect_plan",
+      "compose_report",
+      "profile_table",
+      "present_answer",
+    ]);
     const investigation = selectAgentTools(persisted("agent", "investigation")).map((tool) => tool.name);
-    for (const template of ["compare_plans", "recommend_change", "profile_table"]) {
+    for (const template of ["compare_plans", "recommend_change", "profile_table", "present_answer"]) {
       expect(investigation).not.toContain(template);
     }
     expect(selectAgentTools(persisted("agent", "query-optimization")).map((t) => t.name)).not.toContain(
@@ -292,16 +334,17 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
       undefined,
       undefined,
       undefined,
+      undefined,
     ]);
   });
 
-  test("exactly the three ledger-only tools declare no operation", () => {
+  test("exactly the four ledger-only tools declare no operation", () => {
     const withoutOperation = Object.values(AGENT_TOOL_DEFINITIONS)
       .filter((tool) => tool.operationId === undefined)
       .map((tool) => tool.name)
       .sort();
 
-    expect(withoutOperation).toEqual(["compare_plans", "compose_report", "recommend_change"]);
+    expect(withoutOperation).toEqual(["compare_plans", "compose_report", "present_answer", "recommend_change"]);
   });
 
   test("the returned set is frozen, so a caller cannot push a tool into it", () => {
@@ -492,9 +535,11 @@ describe("runReadQueryTool — the allowed path", () => {
 
     const budget = h.queryReadOnly.mock.calls[0][1];
     expect(budget.statementTimeoutMs).toBe(3_000);
-    expect(budget.statementTimeoutMs).toBeLessThan(AGENT_EXECUTION_POLICY.budgets.statementTimeoutMs);
-    expect(budget.maxResultRows).toBe(AGENT_EXECUTION_POLICY.budgets.maxResultRows);
-    expect(budget.maxResultBytes).toBe(AGENT_EXECUTION_POLICY.budgets.maxResultBytes);
+    expect(budget.statementTimeoutMs).toBeLessThan(
+      AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.statementTimeoutMs,
+    );
+    expect(budget.maxResultRows).toBe(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultRows);
+    expect(budget.maxResultBytes).toBe(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultBytes);
   });
 
   test("returns an artifact reference summarising the result, never the rows", async () => {
@@ -617,7 +662,7 @@ describe("runReadQueryTool — a policy denial is not a syntax error", () => {
     const target = await inspectSchemaTool(targetH.context, { schema: "secrets" });
 
     const absoluteH = harness();
-    for (let i = 0; i < AGENT_EXECUTION_POLICY.budgets.maxStatementsPerRun; i++) {
+    for (let i = 0; i < AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxStatementsPerRun; i++) {
       absoluteH.tracker.beginExecution("run-1");
       absoluteH.tracker.endExecution("run-1", { statements: 1, elapsedMs: 1 });
     }
@@ -668,7 +713,7 @@ describe("runReadQueryTool — a policy denial is not a syntax error", () => {
 
   test("a run over its statement budget is denied without reaching the provider", async () => {
     const h = harness();
-    for (let i = 0; i < AGENT_EXECUTION_POLICY.budgets.maxStatementsPerRun; i++) {
+    for (let i = 0; i < AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxStatementsPerRun; i++) {
       h.tracker.beginExecution("run-1");
       h.tracker.endExecution("run-1", { statements: 1, elapsedMs: 1 });
     }
@@ -680,6 +725,57 @@ describe("runReadQueryTool — a policy denial is not a syntax error", () => {
     expect(h.queryReadOnly).not.toHaveBeenCalled();
     expect(h.acquireProvider).not.toHaveBeenCalled();
   });
+
+  /**
+   * The budget the layer enforces is the RUN'S, chosen by its persisted workflow.
+   * Spending exactly an investigation's ceiling denies an investigation and leaves a
+   * database-assessment run — whose ceiling is higher — free to read: one tracker,
+   * one usage, two answers, so the deciding number can only have come from the
+   * workflow.
+   */
+  test("the statement ceiling enforced is the run's own workflow's, not one constant", async () => {
+    const investigationCeiling = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxStatementsPerRun;
+    expect(AGENT_WORKFLOW_BUDGETS["database-assessment"].policy.budgets.maxStatementsPerRun).toBeGreaterThan(
+      investigationCeiling,
+    );
+
+    const spend = (h: Harness) => {
+      for (let i = 0; i < investigationCeiling; i++) {
+        h.tracker.beginExecution("run-1");
+        h.tracker.endExecution("run-1", { statements: 1, elapsedMs: 1 });
+      }
+    };
+
+    const investigation = harness();
+    spend(investigation);
+    const denied = await runReadQueryTool(investigation.context, { sql: "SELECT 1" });
+
+    const assessment = harness({ workflowType: "database-assessment" });
+    spend(assessment);
+    const allowed = await runReadQueryTool(assessment.context, { sql: "SELECT 1" });
+
+    if (denied.kind !== "refused") throw new Error("expected the investigation to be refused");
+    expect(denied.refusal).toEqual({ class: "policy-denied", reasonCode: "STATEMENT_BUDGET_EXCEEDED" });
+    expect(allowed.kind).toBe("completed");
+  });
+
+  /**
+   * The version in a denial is what an operator traces the decision back to, so it
+   * has to name the row that DECIDED. One shared string would make every recorded
+   * denial point at a ceiling three workflows out of four never had.
+   */
+  test.each(["investigation", "database-assessment", "operations"] as const)(
+    "a %s run's denial names that workflow's policy version",
+    async (workflowType) => {
+      const h = harness({ workflowType });
+
+      const outcome = await runReadQueryTool(h.context, { sql: "DELETE FROM a" });
+
+      if (outcome.kind !== "refused") throw new Error("expected refused");
+      expect(outcome.modelText).toContain(AGENT_WORKFLOW_BUDGETS[workflowType].policy.version);
+      expect(outcome.modelText).toContain(workflowType);
+    },
+  );
 });
 
 describe("executeAgentOperation — the approval gate", () => {
@@ -2056,13 +2152,17 @@ function curatedHarness(
   const acquireProvider = mock(async () => provider);
   const tracker = new ExecutionBudgetTracker();
   const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });
-  const deadline = new AgentRunDeadline(AGENT_EXECUTION_POLICY.budgets.maxTotalRunMs * 2, frozenClock);
+  const deadline = new AgentRunDeadline(
+    AGENT_WORKFLOW_BUDGETS.operations.policy.budgets.maxTotalRunMs * 2,
+    frozenClock,
+  );
   const repairs = new AgentRepairLedger();
 
   let tick = 1_000;
   const context: AgentToolContext = {
     runId: "run-1",
     mode: "agent",
+    workflowType: "operations",
     actor: { sessionId: "session-1", role: "user" },
     // A connection type with no read-only statement path at all, which is the whole
     // point: this is the engine the other tools are refused on.
@@ -2261,7 +2361,11 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     // an overflow is an answer to correct rather than rows to quietly drop. The cap
     // that can still be breached is the BYTE one — the row cap is applied by the
     // projection, which is what makes "ask again with a smaller limit" actionable.
-    const wide = "x".repeat(AGENT_EXECUTION_POLICY.budgets.maxResultBytes);
+    // Read off the `operations` row, because this branch split the single execution
+    // policy into one frozen budget per workflow and `inspect_operations` is that
+    // workflow's tool. Taking the ceiling from the row the tool actually enforces is
+    // what keeps this test honest if the rows ever diverge on bytes.
+    const wide = "x".repeat(AGENT_WORKFLOW_BUDGETS.operations.policy.budgets.maxResultBytes);
     const h = curatedHarness({}, { getStorageStats: mock(async () => [{ name: wide, size: "1 MB", sizeBytes: 1 }]) });
 
     const outcome = await inspectOperationsTool(h.context, { kind: "storage" });
@@ -2277,7 +2381,7 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     await inspectOperationsTool(h.context, { kind: "sessions", limit: 200 });
 
     expect(h.curated.getActiveSessions).toHaveBeenCalledWith({
-      limit: AGENT_EXECUTION_POLICY.budgets.maxResultRows,
+      limit: AGENT_WORKFLOW_BUDGETS.operations.policy.budgets.maxResultRows,
     });
   });
 
@@ -2463,5 +2567,839 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
   test("the tool tells the model, in its own description, that a reading is a moment", async () => {
     // Pinned decision 8's prompt half. The timeline carries the other half.
     expect(AGENT_TOOL_DEFINITIONS.inspect_operations.description).toContain("EVERY READING IS A MOMENT");
+  });
+});
+
+/*
+  `present_answer` — the answer-composed decision, and the spec the app will draw
+  (design §3.1-3.4).
+
+  The reason a spec is validated instead of trusted is one line in `DataCharts`:
+  `Number(value) || 0`. A chart over a column that holds no numbers does not render
+  blank and does not fail — it renders a confident flat line of zeros, inside this
+  application's own frame. So every column a spec names is checked against the
+  artifact that answer IS, and a refusal restates the half of the contract that was
+  broken, because a refusal is read by a model that is demonstrably confused.
+*/
+/**
+ * Every JSON object literal in a piece of text, as a model would lift it.
+ *
+ * Brace-counting rather than a regular expression, because a presentation object
+ * NESTS a spec and a regex over `{...}` stops at the first inner brace — which would
+ * quietly lift half an example and assert against something no model would send.
+ */
+function jsonObjectsIn(text: string): unknown[] {
+  const objects: unknown[] = [];
+  for (let start = text.indexOf("{"); start !== -1; start = text.indexOf("{", start + 1)) {
+    let depth = 0;
+    for (let index = start; index < text.length; index += 1) {
+      if (text[index] === "{") depth += 1;
+      else if (text[index] === "}") depth -= 1;
+      if (depth !== 0) continue;
+      try {
+        objects.push(JSON.parse(text.slice(start, index + 1)));
+        start = index;
+      } catch {
+        // Not a complete JSON object — prose with braces in it, and not an example.
+      }
+      break;
+    }
+  }
+  return objects;
+}
+
+describe("present_answer records which result IS the answer, and how to show it", () => {
+  const ANSWER_CORRELATION = "corr-answer";
+
+  /** The read that produced the answer, as the ledger holds it: a draft, then a result. */
+  function answered(
+    h: Harness,
+    overrides: {
+      readonly rows?: Record<string, unknown>[];
+      readonly columnNames?: string[];
+      readonly rowCount?: number;
+      readonly stored?: boolean;
+      /** The statement the run drafted for the answer, where the test is about it. */
+      readonly sql?: string;
+    } = {},
+  ): AgentRunEvent[] {
+    const rows = overrides.rows ?? [
+      { region: "north", net_total: 120 },
+      { region: "south", net_total: 90 },
+    ];
+    const columnNames = overrides.columnNames ?? ["region", "net_total"];
+    const artifact = {
+      correlationId: ANSWER_CORRELATION,
+      runId: "run-1",
+      operationId: "sql.query.read" as const,
+      summary: { rowCount: overrides.rowCount ?? rows.length, columnNames, elapsedMs: 11 },
+    };
+    if (overrides.stored !== false) {
+      h.artifacts.put(
+        {
+          correlationId: ANSWER_CORRELATION,
+          runId: "run-1",
+          operationId: "sql.query.read",
+          createdAtMs: 1_000,
+          value: queryResult({ rows, fields: columnNames, rowCount: rows.length }),
+        },
+        1_000,
+      );
+    }
+    return [
+      {
+        kind: "statement-drafted",
+        atMs: 1,
+        stepId: "step-1",
+        sql: overrides.sql ?? ANSWER_SQL,
+        rationale: "the question, in SQL",
+      },
+      { kind: "tool-completed", atMs: 2, stepId: "step-1", artifact },
+    ];
+  }
+
+  const ANSWER_SQL = "SELECT region, SUM(net_total) AS net_total FROM orders GROUP BY region";
+
+  const CHART = {
+    kind: "chart",
+    spec: { type: "bar", x: "region", y: ["net_total"], caption: "Net total by region." },
+  } as const;
+
+  const present = (h: Harness, events: AgentRunEvent[], input: unknown, autoExecute = false) =>
+    presentAnswerTool(h.context, { runId: "run-1", events, autoExecute }, input);
+
+  test("the tool is registered, reaches no database, and exactly one workflow is offered it", () => {
+    // The record stays the one place a tool set is decided. `data-analysis` is the
+    // workflow whose verdict requires an answer, so it is the workflow that can
+    // produce one; offering it anywhere else would put a tool in front of a run
+    // whose bar never asks for it.
+    expect(AGENT_TOOL_DEFINITIONS.present_answer.name).toBe("present_answer");
+    expect(AGENT_TOOL_DEFINITIONS.present_answer.operationId).toBeUndefined();
+    const offering = WORKFLOW_TYPES.filter((workflowType) =>
+      selectAgentTools(persisted("agent", workflowType)).some((tool) => tool.name === "present_answer"),
+    );
+    expect(offering).toEqual(["data-analysis"]);
+  });
+
+  test("the workflow's own rules state the presentation contract in the tool's words", () => {
+    // #350's lesson as a mechanism rather than as a habit: the contract is one
+    // string, said in the description and in the run's opening rules, so the two
+    // cannot drift into two bars for one tool.
+    expect(AGENT_TOOL_DEFINITIONS.present_answer.description).toContain(AGENT_ANSWER_CONTRACT);
+  });
+
+  test("the description shows both presentations, and its own schema accepts them", () => {
+    // The `AGENT_EVIDENCE_CONTRACT` pattern: the example and the parser come from one
+    // piece of code, so a description offering a shape the schema refuses fails here
+    // rather than in a run.
+    const offered = jsonObjectsIn(AGENT_TOOL_DEFINITIONS.present_answer.description);
+
+    expect(offered.map((object) => (object as { kind: string }).kind).sort()).toEqual(["chart", "table"]);
+    for (const presentation of offered) {
+      const parsed = AGENT_TOOL_DEFINITIONS.present_answer.inputSchema.safeParse({
+        artifact: ANSWER_CORRELATION,
+        presentation,
+      });
+      expect(parsed.success, JSON.stringify(presentation)).toBe(true);
+    }
+  });
+
+  test("the description names every chart type the contract admits, and no other", () => {
+    const description = AGENT_TOOL_DEFINITIONS.present_answer.description;
+
+    for (const type of ["bar", "line", "area", "pie", "scatter", "stacked-bar"]) {
+      expect(description, type).toContain(type);
+    }
+    // The one the component offers and this contract does not: it bins values in the
+    // browser, so the picture would show something the artifact does not contain.
+    expect(description).not.toContain("histogram");
+  });
+
+  test("a chart over the run's own result is recorded, with the ledger's statement", () => {
+    const h = harness();
+    const events = answered(h);
+
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: CHART });
+
+    if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+    expect(outcome.answer.sql).toBe(ANSWER_SQL);
+    expect(outcome.answer.artifact.correlationId).toBe(ANSWER_CORRELATION);
+    expect(outcome.answer.presentation).toEqual(CHART);
+    // Nothing in this runtime hands a statement anywhere, so this is the only value
+    // the field can carry — and it says so rather than implying a choice was made.
+    expect(outcome.answer.handover).toBe("none");
+    // The chart is not the answer: the claims are, and the model is told so here.
+    expect(outcome.modelText).toContain("compose_report");
+  });
+
+  /**
+   * One answer per run, decided from the run's own events (#373 review).
+   *
+   * The tool is NON-terminal on purpose — the run goes on to cite the same artifact in
+   * its report — so nothing in the loop stopped a model calling it twice. Two calls
+   * wrote two `answer-composed` entries, and on an auto-execute run the rail then
+   * delivered BOTH statements to the editor and ran both, without a timeout, under a
+   * checkbox that promised the final answer. The run's own ledger is what settles it,
+   * the way every other "did this run already do that" question here is settled.
+   */
+  describe("an answer already on the ledger is not composed a second time", () => {
+    /** The `answer-composed` entry a first, successful presentation leaves behind. */
+    const alreadyAnswered = (h: Harness): AgentRunEvent[] => {
+      const events = answered(h);
+      const first = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } });
+      if (first.kind !== "answered") throw new Error(`expected the first answer to be recorded, got ${first.kind}`);
+      return [...events, { kind: "answer-composed", atMs: 3, ...first.answer }];
+    };
+
+    test("a second presentation is refused, and the refusal names what to do next", () => {
+      const h = harness();
+
+      const second = present(h, alreadyAnswered(h), {
+        artifact: ANSWER_CORRELATION,
+        presentation: { kind: "table" },
+      });
+
+      if (second.kind !== "unavailable") throw new Error("expected the second answer to be refused");
+      expect(second.reasonCode).toBe("ANSWER_ALREADY_RECORDED");
+      // The way out, which is the only thing left for this run to do.
+      expect(second.modelText).toContain("compose_report");
+    });
+
+    test("a differently shaped second answer is refused too: it is the run that already answered", () => {
+      // Not a duplicate check. The refusal is about the run having answered, so a
+      // second answer over a different presentation — or a different artifact — is the
+      // same thing to it: a run that answers twice has answered nothing.
+      const h = harness();
+
+      const second = present(h, alreadyAnswered(h), { artifact: ANSWER_CORRELATION, presentation: CHART });
+
+      expect(second).toMatchObject({ kind: "unavailable", reasonCode: "ANSWER_ALREADY_RECORDED" });
+    });
+
+    test("the refusal is decided before the arguments are read, so bad ones cannot mask it", () => {
+      // Order matters: an `INVALID_TOOL_INPUT` here would invite the model to correct
+      // its arguments and call again, which is precisely what must not happen.
+      const h = harness();
+
+      const second = present(h, alreadyAnswered(h), { artifact: 42 });
+
+      expect(second).toMatchObject({ kind: "unavailable", reasonCode: "ANSWER_ALREADY_RECORDED" });
+    });
+
+    test("the first answer of a run is unaffected", () => {
+      const h = harness();
+
+      const first = present(h, answered(h), { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } });
+
+      expect(first.kind).toBe("answered");
+    });
+  });
+
+  test("a spec asking for a series split is refused at the parser, because nothing draws one", () => {
+    // The contract does not invite `series` and the schema is strict, so a model that
+    // asks for one is told at the door rather than being told nothing. The defect
+    // this replaces was the other shape: the field was invited, validated, recorded
+    // on the ledger and narrated by the rail, and then dropped by `DataCharts` —
+    // which has no series split — so the picture on screen was not the picture the
+    // ledger recorded and nothing said so. Inviting only what the renderer can draw
+    // is the #356 rule applied to a field instead of to a tool.
+    const h = harness();
+    const events = answered(h);
+
+    const withSeries = present(h, events, {
+      artifact: ANSWER_CORRELATION,
+      presentation: {
+        kind: "chart",
+        spec: { type: "line", x: "region", y: ["net_total"], series: "region", caption: "by region" },
+      },
+    });
+
+    if (withSeries.kind !== "unavailable") throw new Error("expected the series spec to be refused");
+    expect(withSeries.reasonCode).toBe("INVALID_TOOL_INPUT");
+    // And the refusal carries the contract, so the model is told what IS accepted.
+    expect(withSeries.modelText).toContain(AGENT_ANSWER_CONTRACT);
+  });
+
+  test("the answer contract invites no series field, and says what to do instead", () => {
+    // The contract is the only thing a model reads before composing a spec, so a
+    // sentence here inviting a field the renderer drops is how the original defect
+    // reached the ledger. What is asserted is the absence of the KEY — the word
+    // itself still appears, in the sentence redirecting the model to several y
+    // columns, which is the redirection that makes the absence actionable rather
+    // than merely silent.
+    expect(AGENT_ANSWER_CONTRACT).not.toContain('"series"');
+    expect(AGENT_ANSWER_CONTRACT).toContain("there is no separate series field");
+  });
+
+  describe("the plan the gate weighs is joined to the answer by what the statement IS", () => {
+    /**
+     * The same statement as `ANSWER_SQL`, formatted the way a model formats an
+     * aggregate it is about to show someone: several lines, and a terminator.
+     *
+     * The two statements this join compares are drafted INDEPENDENTLY — one as
+     * `run_read_query`'s argument, one as `inspect_plan`'s — so this is not a
+     * contrived difference. The join used to be exact string equality and missed it,
+     * resolving to `plan-risky`: fail-closed and safe, but it made the gate inert far
+     * more often than §2.4.0 implies, and a user reads a working gate as broken.
+     */
+    const PLAN_SQL = "select region,\n       sum(net_total) as net_total\nfrom orders\ngroup by region;";
+
+    /** A cheap plan: an index scan under the cost ceiling, so the gate can say yes. */
+    const withCheapPlan = (h: Harness) =>
+      h.artifacts.put(
+        {
+          correlationId: "corr-plan",
+          runId: "run-1",
+          operationId: "sql.explain.estimate",
+          createdAtMs: 1_000,
+          value: queryResult({
+            rows: [{ "QUERY PLAN": [{ Plan: { "Node Type": "Index Scan", "Total Cost": 8, "Plan Rows": 3 } }] }],
+          }),
+        },
+        1_000,
+      );
+
+    const planEvents = (sql: string): AgentRunEvent[] => [
+      { kind: "statement-drafted", atMs: 3, stepId: "step-plan", sql, rationale: "what will this cost" },
+      {
+        kind: "tool-completed",
+        atMs: 4,
+        stepId: "step-plan",
+        artifact: {
+          correlationId: "corr-plan",
+          runId: "run-1",
+          operationId: "sql.explain.estimate",
+          summary: { rowCount: 1, columnNames: ["QUERY PLAN"], elapsedMs: 2 },
+        },
+      },
+    ];
+
+    test("a plan of the same statement typed differently is FOUND, and the gate hands over", () => {
+      const h = harness();
+      withCheapPlan(h);
+      const events = [...answered(h), ...planEvents(PLAN_SQL)];
+
+      const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } }, true);
+
+      if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+      expect(outcome.answer.handover).toBe("auto-executed");
+      expect(outcome.answer.handoverWarning).toBeUndefined();
+    });
+
+    test("a plan of a DIFFERENT statement is still not found, so the canonical form is not a blur", () => {
+      // The other direction, and the one that matters for safety: literals keep their
+      // exact spelling in the repair ledger's canonical form, so a cheap plan of one
+      // statement cannot license the hand-over of another.
+      const h = harness();
+      withCheapPlan(h);
+      const events = [...answered(h), ...planEvents("SELECT region FROM customers WHERE id = 1")];
+
+      const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } }, true);
+
+      if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+      expect(outcome.answer.handover).toBe("applied");
+      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+    });
+
+    /**
+     * The one comment that is not trivia (#373 review).
+     *
+     * `fingerprintStatement` normalises comments away, which is right for the repair
+     * ledger it belongs to and wrong here: under `pg_hint_plan` a hint block is
+     * an optimizer DIRECTIVE, so the cheap indexed plan taken for the unhinted text
+     * says nothing about a statement whose hint forces a sequential scan. A statement
+     * carrying one therefore takes no part in this join, on either side.
+     */
+    const HINTED_SQL = `/*+ SeqScan(orders) */ ${ANSWER_SQL}`;
+
+    test("a plan whose statement carries an optimizer hint does not license an unhinted answer", () => {
+      const h = harness();
+      withCheapPlan(h);
+      const events = [...answered(h), ...planEvents(HINTED_SQL)];
+
+      const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } }, true);
+
+      if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+      expect(outcome.answer.handover).toBe("applied");
+      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+    });
+
+    test("an answer that carries an optimizer hint is not licensed by the unhinted plan", () => {
+      // The direction that was the defect: the run inspects the plain statement, gets
+      // a cheap indexed plan, and then answers with a hinted one that forces a
+      // sequential scan. Both fingerprint alike.
+      const h = harness();
+      withCheapPlan(h);
+      const events = [...answered(h, { sql: HINTED_SQL }), ...planEvents(ANSWER_SQL)];
+
+      const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } }, true);
+
+      if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+      expect(outcome.answer.handover).toBe("applied");
+      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+    });
+
+    test("a hinted answer is not licensed by the plan of the identically hinted statement either", () => {
+      // Fail closed rather than join on the hint text. Joining would assert that the
+      // plan the run holds IS the hinted plan, and the run obtains that plan by
+      // sending the statement under an `EXPLAIN` prefix — whether `pg_hint_plan`
+      // still reads a hint there is a property of an extension this repository does
+      // not ship, does not test against, and cannot verify from here. A gate whose
+      // failure mode is a stalled production database does not rest on that.
+      const h = harness();
+      withCheapPlan(h);
+      const events = [...answered(h, { sql: HINTED_SQL }), ...planEvents(HINTED_SQL)];
+
+      const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } }, true);
+
+      if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+      expect(outcome.answer.handover).toBe("applied");
+      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+    });
+
+    test("an ordinary comment is still trivia, so the join still absorbs one", () => {
+      // The narrowness of the fix, pinned: what changed is that a DIRECTIVE stops the
+      // join, not that comments do. A model that annotates its aggregate has still
+      // written the same statement.
+      const h = harness();
+      withCheapPlan(h);
+      const events = [...answered(h), ...planEvents(`/* the monthly rollup */ ${PLAN_SQL}`)];
+
+      const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } }, true);
+
+      if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+      expect(outcome.answer.handover).toBe("auto-executed");
+    });
+  });
+
+  test("a table answer needs no chart validation: one row and no numeric column is an answer", () => {
+    // §3.4: a table is a first-class outcome. This result would fail every chart
+    // check there is — one row, one non-numeric column — and is a complete answer.
+    const h = harness();
+    const events = answered(h, { rows: [{ status: "healthy" }], columnNames: ["status"], stored: false });
+
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } });
+
+    if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
+    expect(outcome.answer.presentation).toEqual({ kind: "table" });
+  });
+
+  test("an artifact id this run never produced is refused", () => {
+    // The `verifiedAgainst` posture, one level up: the answer names a result, and it
+    // has to be a result on THIS run's ledger.
+    const h = harness();
+
+    const outcome = present(h, answered(h), { artifact: "corr-someone-elses", presentation: { kind: "table" } });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("ANSWER_ARTIFACT_UNKNOWN");
+  });
+
+  test("a result no statement of this run drafted has nothing to hand over, and is refused", () => {
+    // The catalog read `inspect_schema` composes: a real result of this run, under the
+    // read operation, and produced by a statement the SERVER wrote — so there is no
+    // statement of the model's to put behind the answer.
+    const h = harness();
+    const events: AgentRunEvent[] = [
+      {
+        kind: "tool-completed",
+        atMs: 1,
+        stepId: "step-catalog",
+        artifact: {
+          correlationId: ANSWER_CORRELATION,
+          runId: "run-1",
+          operationId: "sql.query.read",
+          summary: { rowCount: 12, columnNames: ["table_name", "column_name"], elapsedMs: 4 },
+        },
+      },
+    ];
+
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("ANSWER_STATEMENT_UNKNOWN");
+  });
+
+  /**
+   * What may be PRESENTED is narrower than what may be CITED (#373 review).
+   *
+   * `producedArtifact` answers "did this run produce that?", which is the right
+   * question for a citation: a claim may legitimately rest on a plan the run read, and
+   * narrowing that would make an honest report uncomposable. It is the wrong question
+   * for an ANSWER. A plan is the engine's DESCRIPTION of a statement — nothing was
+   * executed, no data was read, and its rows are `QUERY PLAN` text — so a run could
+   * name a `sql.explain.estimate` artifact, be accepted, and satisfy this workflow's
+   * verdict without ever having read the data it was opened to analyse.
+   */
+  describe("only a reading of the data can be the ANSWER", () => {
+    const PLAN_CORRELATION = "corr-plan-answer";
+
+    /** A plan this run inspected: its own artifact, with its own drafted statement. */
+    const inspectedPlan = (): AgentRunEvent[] => [
+      { kind: "statement-drafted", atMs: 3, stepId: "step-plan", sql: ANSWER_SQL, rationale: "what will this cost" },
+      {
+        kind: "tool-completed",
+        atMs: 4,
+        stepId: "step-plan",
+        artifact: {
+          correlationId: PLAN_CORRELATION,
+          runId: "run-1",
+          operationId: "sql.explain.estimate",
+          summary: { rowCount: 1, columnNames: ["QUERY PLAN"], elapsedMs: 2 },
+        },
+      },
+    ];
+
+    test("a plan is refused, though it is this run's artifact and carries a drafted statement", () => {
+      const h = harness();
+
+      const outcome = present(h, inspectedPlan(), { artifact: PLAN_CORRELATION, presentation: { kind: "table" } });
+
+      if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+      expect(outcome.reasonCode).toBe("ANSWER_NOT_A_DATA_READ");
+      // The way out, named: this run has a tool that reads data, and the refusal says so.
+      expect(outcome.modelText).toContain("run_read_query");
+    });
+
+    test("the refusal comes BEFORE the statement is resolved, so the reason names the real problem", () => {
+      // Order matters for what the model is told. A plan step DOES carry a drafted
+      // statement, so a check placed after `statementBehind` would have accepted the
+      // plan; a profile has none, so it would have been told its result had no
+      // statement when the truth is that a profile is not an answer at all.
+      const h = harness();
+      const events: AgentRunEvent[] = [
+        {
+          kind: "table-profiled",
+          atMs: 1,
+          artifact: {
+            correlationId: ANSWER_CORRELATION,
+            runId: "run-1",
+            operationId: "sql.table.profile",
+            summary: { rowCount: 1, columnNames: ["row_count"], elapsedMs: 4 },
+          },
+          profile: { table: "orders", depth: "basic", rowCount: 3, columns: [], findings: [] },
+        },
+      ];
+
+      const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } });
+
+      if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+      expect(outcome.reasonCode).toBe("ANSWER_NOT_A_DATA_READ");
+    });
+
+    test("the same plan may still be CITED, so the citation path is untouched", () => {
+      // The half that must NOT change. A claim resting on a plan the run read is an
+      // honest claim, and `recommend_change` and `compose_report` both depend on it.
+      const h = harness();
+
+      const composed = composeReportTool(
+        h.context,
+        { runId: "run-1", events: inspectedPlan() },
+        {
+          claims: [
+            {
+              claim: "The aggregate reaches its rows with a sequential scan.",
+              evidence: [{ source: "artifact", correlationId: PLAN_CORRELATION }],
+            },
+          ],
+        },
+      );
+
+      expect(composed.kind).toBe("composed");
+    });
+
+    test("the description states the constraint, so the model is told rather than discovering it", () => {
+      // #350's half. A rule enforced only by a refusal is a rule the model meets by
+      // spending a turn on it.
+      expect(AGENT_TOOL_DEFINITIONS.present_answer.description).toContain("run_read_query");
+    });
+  });
+
+  test("a column the result does not have is refused, and the real names are listed FENCED", () => {
+    const h = harness();
+
+    const outcome = present(h, answered(h), {
+      artifact: ANSWER_CORRELATION,
+      presentation: { kind: "chart", spec: { type: "bar", x: "regoin", y: ["net_total"], caption: "typo" } },
+    });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("CHART_COLUMN_NOT_IN_RESULT");
+    // Column names are engine-supplied text. The refusal has to list them so the
+    // model can correct itself, and therefore owes them the same fence the rows get.
+    expect(outcome.modelText).toContain(UNTRUSTED_CONTENT_BEGIN);
+    expect(outcome.modelText).toContain(UNTRUSTED_CONTENT_END);
+    expect(outcome.modelText).toContain("net_total");
+    expect(outcome.modelText).toContain("region");
+  });
+
+  test("a y column that holds no numbers is refused, against the rows that were delivered", () => {
+    const h = harness();
+    const events = answered(h, {
+      rows: [
+        { region: "north", net_total: "unknown" },
+        { region: "south", net_total: "n/a" },
+      ],
+    });
+
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: CHART });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("CHART_COLUMN_NOT_NUMERIC");
+  });
+
+  test("the numeric check reads the LIVE artifact store, so a released result refuses", () => {
+    // B15, pinned: the store is process memory released when the run ends, and
+    // `answer-composed` is written DURING the run — which is exactly why this check
+    // can read rows at all. One instant later it cannot, and the honest answer then
+    // is a refusal, never a spec that passed because nothing was there to check it.
+    const h = harness();
+    const events = answered(h);
+
+    h.artifacts.releaseRun("run-1");
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: CHART });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("ANSWER_RESULT_RELEASED");
+  });
+
+  test("the >80% rule is the one DataCharts applies, boundary included", () => {
+    const h = harness();
+    const fourOfFive = answered(h, {
+      rows: [
+        { region: "a", net_total: 1 },
+        { region: "b", net_total: 2 },
+        { region: "c", net_total: 3 },
+        { region: "d", net_total: 4 },
+        { region: "e", net_total: "later" },
+      ],
+    });
+
+    // 4 of 5 is exactly 80%, and the rule is MORE than 80%: refused.
+    const boundary = present(h, fourOfFive, { artifact: ANSWER_CORRELATION, presentation: CHART });
+
+    if (boundary.kind !== "unavailable") throw new Error("expected a refusal at the boundary");
+    expect(boundary.reasonCode).toBe("CHART_COLUMN_NOT_NUMERIC");
+
+    // Nulls are not values: they are excluded before the ratio is taken, and numeric
+    // STRINGS count, because that is what the component will parse.
+    const other = harness();
+    const numericStrings = answered(other, {
+      rows: [
+        { region: "a", net_total: "120.5" },
+        { region: "b", net_total: null },
+        { region: "c", net_total: 90 },
+      ],
+    });
+
+    expect(present(other, numericStrings, { artifact: ANSWER_CORRELATION, presentation: CHART }).kind).toBe("answered");
+  });
+
+  test("fewer than two rows is refused: the component renders an empty state below two", () => {
+    const h = harness();
+    const events = answered(h, { rows: [{ region: "north", net_total: 120 }] });
+
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: CHART });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("CHART_TOO_FEW_ROWS");
+    // And the refusal says what to do instead, because a table IS the answer here.
+    expect(outcome.modelText).toContain("table");
+  });
+
+  test("a pie takes exactly one y, and a scatter needs a numeric x", () => {
+    const h = harness();
+    const events = answered(h);
+
+    const pie = present(h, events, {
+      artifact: ANSWER_CORRELATION,
+      presentation: {
+        kind: "chart",
+        spec: { type: "pie", x: "region", y: ["net_total", "region"], caption: "two slices of what?" },
+      },
+    });
+    const scatter = present(h, events, {
+      artifact: ANSWER_CORRELATION,
+      presentation: {
+        kind: "chart",
+        spec: { type: "scatter", x: "region", y: ["net_total"], caption: "against a label" },
+      },
+    });
+
+    if (pie.kind !== "unavailable") throw new Error("expected the pie to be refused");
+    expect(pie.reasonCode).toBe("CHART_SHAPE_MISMATCH");
+    if (scatter.kind !== "unavailable") throw new Error("expected the scatter to be refused");
+    expect(scatter.reasonCode).toBe("CHART_SHAPE_MISMATCH");
+  });
+
+  test("arguments that do not parse are answered with the contract itself", () => {
+    const h = harness();
+
+    const outcome = present(h, answered(h), { artifact: ANSWER_CORRELATION, presentation: { kind: "picture" } });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
+    expect(
+      jsonObjectsIn(outcome.modelText)
+        .map((object) => (object as { kind: string }).kind)
+        .sort(),
+    ).toEqual(["chart", "table"]);
+  });
+
+  test("planning mode has no such tool, and another run's ledger is a wiring bug, not a refusal", () => {
+    const planning = harness({ mode: "planning" });
+    const h = harness();
+
+    const outcome = present(planning, [], { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected a refusal");
+    expect(outcome.reasonCode).toBe("MODE_HAS_NO_TOOLS");
+    expect(() =>
+      presentAnswerTool(
+        h.context,
+        { runId: "run-2", events: [], autoExecute: false },
+        { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } },
+      ),
+    ).toThrow(/does not belong to this run/);
+  });
+
+  // ─── the auto-execute gate, as the tool layer reads it ────────────────────
+
+  /**
+   * A plan this run inspected for `sql`, as the ledger and the artifact store hold
+   * it: the drafted statement is the INNER one the model asked about, which is what
+   * lets the gate know this plan is about the answer's statement.
+   */
+  function planned(h: Harness, sql: string, plan: Record<string, unknown>): AgentRunEvent[] {
+    h.artifacts.put(
+      {
+        correlationId: "corr-plan",
+        runId: "run-1",
+        operationId: "sql.explain.estimate",
+        createdAtMs: 1_000,
+        value: queryResult({ rows: [{ "QUERY PLAN": [{ Plan: plan }] }], fields: ["QUERY PLAN"], rowCount: 1 }),
+      },
+      1_000,
+    );
+    return [
+      { kind: "statement-drafted", atMs: 3, stepId: "step-plan", sql, rationale: "before answering" },
+      {
+        kind: "tool-completed",
+        atMs: 4,
+        stepId: "step-plan",
+        artifact: {
+          correlationId: "corr-plan",
+          runId: "run-1",
+          operationId: "sql.explain.estimate",
+          summary: { rowCount: 1, columnNames: ["QUERY PLAN"], elapsedMs: 4 },
+        },
+      },
+    ];
+  }
+
+  const CHEAP_PLAN = { "Node Type": "Index Scan", "Plan Rows": 2, "Total Cost": 8.2 };
+  const SCAN_PLAN = { "Node Type": "Seq Scan", "Plan Rows": 900_000, "Total Cost": 400_000 };
+
+  test("a run opened without auto-execute hands nothing over, whatever its plan says", () => {
+    const h = harness();
+    const events = [...answered(h), ...planned(h, ANSWER_SQL, CHEAP_PLAN)];
+
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: CHART });
+
+    if (outcome.kind !== "answered") throw new Error("expected an answer");
+    expect(outcome.answer.handover).toBe("none");
+    expect(outcome.answer.handoverWarning).toBeUndefined();
+  });
+
+  test("all three conditions holding hands the statement over, verbatim", () => {
+    const h = harness();
+    const events = [...answered(h), ...planned(h, ANSWER_SQL, CHEAP_PLAN)];
+
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: CHART }, true);
+
+    if (outcome.kind !== "answered") throw new Error("expected an answer");
+    expect(outcome.answer.handover).toBe("auto-executed");
+    expect(outcome.answer.handoverWarning).toBeUndefined();
+    // §2.5: the text is the run's own statement and nothing is added to it. An
+    // injected LIMIT would make a chart of 200 of 4000 regions look like a complete
+    // one, and no number on it would be wrong.
+    expect(outcome.answer.sql).toBe(ANSWER_SQL);
+    expect(outcome.answer.sql.toUpperCase()).not.toContain("LIMIT");
+  });
+
+  test("the plan the gate reads is one this run holds for THIS statement", () => {
+    // A plan of some other statement says nothing about this one, and reading it as
+    // though it did is the mislabelling `compare_plans` refuses for the same reason.
+    const h = harness();
+    const events = [...answered(h), ...planned(h, "SELECT 1", CHEAP_PLAN)];
+
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: CHART }, true);
+
+    if (outcome.kind !== "answered") throw new Error("expected an answer");
+    expect(outcome.answer.handover).toBe("applied");
+    expect(outcome.answer.handoverWarning).toContain("Not run for you");
+  });
+
+  test("a risky plan is applied to the editor unrun, and the run says which condition refused", () => {
+    const h = harness();
+    const events = [...answered(h), ...planned(h, ANSWER_SQL, SCAN_PLAN)];
+
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: CHART }, true);
+
+    if (outcome.kind !== "answered") throw new Error("expected an answer");
+    expect(outcome.answer.handover).toBe("applied");
+    expect(outcome.answer.handoverWarning).toContain("full table read");
+    // Never a silent skip: the model is told too, because it is what writes the
+    // report the user reads next to the statement sitting there unrun.
+    expect(outcome.modelText).toContain("Not run for you");
+  });
+
+  test("a plan whose rows the store has released is risky, not a pass", () => {
+    const h = harness();
+    const events = [...answered(h), ...planned(h, ANSWER_SQL, CHEAP_PLAN)];
+    h.artifacts.releaseRun("run-1");
+
+    const outcome = present(h, events, { artifact: ANSWER_CORRELATION, presentation: { kind: "table" } }, true);
+
+    if (outcome.kind !== "answered") throw new Error("expected an answer");
+    expect(outcome.answer.handover).toBe("applied");
+  });
+
+  test("a statement the run only EXPLAINED never reaches the gate at all", () => {
+    // This case used to reach condition 1: a plan artifact is this run's and carries a
+    // drafted statement, nothing ever ran that text, and the answer was handed over
+    // unrun with "never executed this exact statement". It is refused earlier now, and
+    // the consequence is worth recording — condition 1 can no longer FAIL from this
+    // layer, because the only artifact that may be presented is a read whose own
+    // statement is by construction among the statements the run executed. The
+    // condition stays in `auto-execute.ts`, which is pure and enumerated over every
+    // combination in its own suite: a gate that guards an unbounded execution path
+    // must not depend on which artifacts some other layer happens to admit.
+    const h = harness();
+    const events = [...answered(h), ...planned(h, "SELECT * FROM orders", CHEAP_PLAN)];
+
+    const outcome = present(h, events, { artifact: "corr-plan", presentation: { kind: "table" } }, true);
+
+    expect(outcome).toMatchObject({ kind: "unavailable", reasonCode: "ANSWER_NOT_A_DATA_READ" });
+  });
+
+  test("the measurement the gate weighs is the one the ledger recorded for this result", () => {
+    const h = harness();
+    const slow = answered(h).map((event) =>
+      event.kind === "tool-completed"
+        ? { ...event, artifact: { ...event.artifact, summary: { ...event.artifact.summary, elapsedMs: 9_000 } } }
+        : event,
+    );
+
+    const outcome = present(
+      h,
+      [...slow, ...planned(h, ANSWER_SQL, CHEAP_PLAN)],
+      { artifact: ANSWER_CORRELATION, presentation: CHART },
+      true,
+    );
+
+    if (outcome.kind !== "answered") throw new Error("expected an answer");
+    expect(outcome.answer.handover).toBe("applied");
+    expect(outcome.answer.handoverWarning).toContain("9000 ms");
   });
 });

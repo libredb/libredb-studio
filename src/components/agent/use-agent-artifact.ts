@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import type { AgentChartSpec } from "@/lib/agent/types";
 import type { ExplainFormat } from "@/lib/db/types";
 import { type AgentArtifactHydration, hydrateAgentArtifact } from "./hydration";
 
@@ -25,6 +26,13 @@ import { type AgentArtifactHydration, hydrateAgentArtifact } from "./hydration";
 export interface AgentArtifactReference {
   readonly runId: string;
   readonly correlationId: string;
+  /**
+   * How the run said to draw this result, for the one ask that has an answer behind
+   * it. It comes from the run's ledger by way of the timeline, never from the rows
+   * the route returns — which is what keeps the surface a decision the run recorded
+   * rather than a guess about the data.
+   */
+  readonly chartSpec?: AgentChartSpec;
 }
 
 export interface AgentArtifactOptions {
@@ -57,7 +65,7 @@ export function useAgentArtifact(options: AgentArtifactOptions): AgentArtifactHo
   */
   const latestAsk = useRef(0);
 
-  const show = async ({ runId, correlationId }: AgentArtifactReference): Promise<void> => {
+  const show = async ({ runId, correlationId, chartSpec }: AgentArtifactReference): Promise<void> => {
     const ask = latestAsk.current + 1;
     latestAsk.current = ask;
     try {
@@ -68,7 +76,7 @@ export function useAgentArtifact(options: AgentArtifactOptions): AgentArtifactHo
       if (!res.ok) {
         throw new Error(typeof body.error === "string" ? body.error : `This result could not be read (${res.status})`);
       }
-      const hydrated = hydrateAgentArtifact(body, options.explainFormat);
+      const hydrated = hydrateAgentArtifact(body, options.explainFormat, chartSpec);
       if (hydrated === null) throw new Error("The server answered with a result this build cannot read");
       if (ask !== latestAsk.current) return;
       setArtifact(hydrated);

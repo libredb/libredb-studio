@@ -1,18 +1,20 @@
-import { AGENT_EXECUTION_POLICY, AGENT_MAX_REPAIR_ATTEMPTS } from "@/lib/agent/execution-policy";
+import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentGoalShortfall } from "@/lib/agent/goal-verifier";
 import type { AgentPlanAccess, AgentPlanSummary } from "@/lib/agent/plan-summary";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
-import type {
-  AgentEvidenceReference,
-  AgentReadingDenyCode,
-  AgentReportClaim,
-  AgentRunEvent,
-  AgentRunFailureReason,
-  AgentRunMode,
-  AgentRunStatus,
-  AgentRunStopReason,
-  AgentRunWorkflowType,
-  AgentToolRefusal,
+import {
+  type AgentChartSpec,
+  type AgentEvidenceReference,
+  type AgentReadingDenyCode,
+  type AgentReportClaim,
+  type AgentRunEvent,
+  type AgentRunFailureReason,
+  type AgentRunMode,
+  type AgentRunStatus,
+  type AgentRunStopReason,
+  type AgentRunWorkflowType,
+  type AgentToolRefusal,
+  DEFAULT_AGENT_WORKFLOW_TYPE,
 } from "@/lib/agent/types";
 
 /**
@@ -36,11 +38,14 @@ import type {
  *    A database error is the only variant with a message, and that message is
  *    `quoted`, not narrated.
  *
- * The one VALUE import from the runtime modules is `execution-policy.ts`, and it
- * is deliberate (#329 T10b): it is frozen constants with no runtime imports of its
- * own, and the budget meter's ceilings have to be the numbers the server actually
- * enforces rather than a second copy that can drift from them. Nothing else here
- * imports a value from `src/lib/agent`.
+ * TWO value imports from the runtime modules, and both are deliberate (#329 T10b,
+ * and the per-workflow ceilings): `execution-policy.ts`, because the budget meter's
+ * ceilings have to be the numbers the server actually enforces rather than a second
+ * copy that can drift from them, and `DEFAULT_AGENT_WORKFLOW_TYPE` from `types.ts`,
+ * because a header written before the workflow field must fold to the same workflow
+ * the server reads it as. Both modules are frozen constants and type declarations
+ * with no runtime imports of their own; nothing else here imports a value from
+ * `src/lib/agent`.
  */
 
 export type AgentTimelineTone = "neutral" | "progress" | "refused" | "done";
@@ -57,6 +62,22 @@ export interface AgentTimelineItem {
   /** Verbatim content from the model, the engine or the user. Rendered quoted. */
   readonly quoted?: string;
   /**
+   * Prose the MODEL wrote, for a surface to render with the structure it wrote it in.
+   *
+   * A third field beside the two above rather than a use of either, because it is a
+   * third thing. `detail` is the application speaking, and the closing statement is
+   * not the application; `quoted` is content shown verbatim, which is right for a
+   * statement, an engine message or the user's own objective, and wrong for the one
+   * entry whose whole content is a model's markdown — measured live, a plan run's
+   * output reached the user as hash marks and asterisks (#373 review).
+   *
+   * It is still untrusted content. What changes is that its headings and bullets are
+   * rendered as headings and bullets (`renderProse`, which builds React nodes and
+   * reaches no HTML parser); what does not change is that it stays in a block of its
+   * own, so a reader can still see where the application stopped speaking.
+   */
+  readonly prose?: string;
+  /**
    * The statement this entry drafted, when it drafted one (#329 T11). Present is
    * what makes the rail offer to apply it to the editor; a user action is still what
    * applies it.
@@ -68,6 +89,43 @@ export interface AgentTimelineItem {
    * itself renders no grid.
    */
   readonly artifactId?: string;
+  /**
+   * How the run said to DRAW the artifact above, when this entry is an answer composed
+   * as a chart. Carried here so the surface a shown result opens in comes from what
+   * the run RECORDED rather than from what its rows happen to look like — the same
+   * rule the explain surface follows. Absent on a table answer and on every other
+   * entry, because neither recorded a chart.
+   */
+  readonly chartSpec?: AgentChartSpec;
+  /**
+   * Set on the ONE entry that is the run's own answer, and on nothing else.
+   *
+   * A read the run took along the way and the answer it composed both carry an
+   * `artifactId`, and the surface that shows the answer as it arrives (`AgentRail`)
+   * must not tell them apart by which optional fields happen to sit beside it: an
+   * answer with a table presentation and no hand-over carries exactly what a
+   * `statement-drafted` plus `tool-completed` pair carries between them. So the fold
+   * names the entry rather than leaving the browser to infer it.
+   */
+  readonly isAnswer?: true;
+  /**
+   * What the RUN already did with this entry's statement, when the entry is an
+   * answer the run handed to the editor (§2.3 of `docs/AGENT_ANALYST_DESIGN.md`).
+   *
+   * Present only for a handover that happened: `none` is the setting being off, and
+   * carrying it here would ask the rail to act on a decision to do nothing. The
+   * statement rides along rather than being read off `applySql`, so the text the host
+   * receives is the one THIS decision was recorded with and the field is total —
+   * there is no handover here without the statement it handed over.
+   *
+   * `applySql` stays beside it and means what it always meant: the user may take the
+   * statement themselves. This field is the run's own action, and the rail performs
+   * it once per entry rather than offering it.
+   */
+  readonly handover?: {
+    readonly kind: Exclude<Extract<AgentRunEvent, { kind: "answer-composed" }>["handover"], "none">;
+    readonly sql: string;
+  };
 }
 
 /**
@@ -137,6 +195,13 @@ export interface AgentRunTimeline {
    */
   readonly failureReason: AgentRunFailureReason | null;
   readonly budget: readonly AgentBudgetGauge[];
+  /**
+   * What the run was opened FOR, folded from its header — and therefore which row of
+   * `AGENT_WORKFLOW_BUDGETS` the server is enforcing on it. The gauges above are
+   * built from that row, and the rail states the ceilings nothing counts from the
+   * same one, so meter and server cannot disagree.
+   */
+  readonly workflowType: AgentRunWorkflowType;
   /** The run's composed report, or null while it has composed none. */
   readonly report: AgentRunReport | null;
 }
@@ -214,6 +279,27 @@ const PLAN_ESTIMATE_CAVEAT =
 const NOT_APPLIED_CAVEAT = "Not applied: nothing here runs this statement.";
 
 /**
+ * What an answer's `handover` means, in the app's own words.
+ *
+ * A total record over the field rather than a sentence written beside it: a widened
+ * union stops this file compiling until somebody words the new outcome, which is
+ * what stops a sentence outliving its truth.
+ *
+ * The `auto-executed` wording is the distinction §2.3 says must be stated rather
+ * than glossed. The run handed the statement over; the editor ran it on the user's
+ * own connection, against a route this runtime does not own, so there is no ledger
+ * entry for what happened next and this entry does not pretend to one. What the
+ * editor did is visible in the editor.
+ */
+const HANDOVER_SENTENCES: Readonly<Record<Extract<AgentRunEvent, { kind: "answer-composed" }>["handover"], string>> =
+  Object.freeze({
+    none: "Nothing was sent to the editor; applying the statement is the user's own action.",
+    applied: "The statement is in your editor and was not run there.",
+    "auto-executed":
+      "This run handed the statement to your editor to run: it ran on your connection, under the editor's own limits, and what it did with it is visible there rather than here.",
+  });
+
+/**
  * The honesty an operational reading owes its reader, for the same reason the plan
  * caveat exists: the app says it, rather than trusting the model to remember.
  *
@@ -258,6 +344,7 @@ const WORKFLOW_WORDS: Readonly<Record<AgentRunWorkflowType, string>> = {
   "query-optimization": "query optimization",
   "database-assessment": "a database assessment",
   operations: "an operations reading",
+  "data-analysis": "a data analysis",
 };
 
 /**
@@ -396,6 +483,10 @@ const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
   "no-plan-evidence":
     "The index was recommended without citing a plan this run read, so nothing the engine said backs it.",
   "no-table-profile": "No table was profiled, so the state of the data was never established.",
+  "no-answer":
+    "The run reported what it found but never produced an answer to show, so there is nothing to put in front of you.",
+  "answer-uncited":
+    "The run presented one result as the answer and its report rests on other evidence entirely, so the claims and the picture are not about the same thing.",
   cancelled: "The run was stopped before it could finish.",
 };
 
@@ -521,13 +612,45 @@ function describeEvent(
                 .map((finding) => `${finding.column}: ${finding.code} — ${finding.detail}`)
                 .join(" ")}`,
       };
+    case "answer-composed":
+      return {
+        tone: "progress",
+        // The app's own words for the app's own decision. The chart TYPE is one of
+        // this repository's own vocabulary, so it may be spoken here; the columns
+        // are the engine's text and may not, which is why none of them appear.
+        headline: "Answer composed",
+        // The gate's warning is the SERVER's own sentence, not model prose and not
+        // engine text, so it is spoken in this line rather than quoted. A refusal
+        // that says nothing is indistinguishable from the feature being broken.
+        detail: `Shown as a ${event.presentation.kind === "chart" ? `${event.presentation.spec.type} chart` : "table"}, from ${event.artifact.summary.rowCount} row(s). ${HANDOVER_SENTENCES[event.handover]}${event.handoverWarning === undefined ? "" : ` ${event.handoverWarning}`}`,
+        // The model's own prose about what the chart shows, quoted as model prose. A
+        // table answer has no caption, so there is nothing to quote — and it carries
+        // no spec either, so showing it opens the surface a table belongs in.
+        ...(event.presentation.kind === "chart"
+          ? { quoted: event.presentation.spec.caption, chartSpec: event.presentation.spec }
+          : {}),
+        // The statement the answer rests on, offered to the editor. A user action is
+        // still what applies it, and the run itself sent it nowhere.
+        applySql: event.sql,
+        artifactId: event.artifact.correlationId,
+        // This entry IS the answer, said rather than inferred: the rail shows an
+        // answer as it arrives and shows no other stored result on its own.
+        isAnswer: true,
+        // What the run itself did with the statement, for the host to carry out. The
+        // gate's outcome is the ledger's, so the rail acts on what was RECORDED
+        // rather than deciding again in the browser what may be run.
+        ...(event.handover === "none" ? {} : { handover: { kind: event.handover, sql: event.sql } }),
+      };
     case "closing-statement":
       return {
         // Content the run produced, so it reads like the report entry rather than
         // like an ending — but under its own name, because it cites nothing.
         tone: "progress",
         headline: "Closing statement",
-        detail: event.text,
+        // The model's own words, and carried as such: this used to be a `detail`,
+        // which is the field for the application's sentences, and the surface rendered
+        // a plan run's entire markdown answer into one paragraph of literal characters.
+        prose: event.text,
       };
     default:
       return {
@@ -726,9 +849,25 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
   */
   let mode: AgentRunMode = "agent";
 
+  /*
+    What the run may SPEND depends on this, so the gauges below cannot be built from
+    a module-level constant: the server enforces the run's own workflow row, and a
+    meter stating another row's numbers would be stating a ceiling nothing enforces.
+
+    It is read from the header alone, unlike `mode`, because the header is the only
+    entry that carries it — `run-started` names the mode and not the workflow. A
+    ledger whose beginning the rail has not read therefore shows the default, which
+    is the same reading `run-store.ts` takes: an investigation is the only thing the
+    runtime could do when a header without the field was written.
+  */
+  let workflowType: AgentRunWorkflowType = DEFAULT_AGENT_WORKFLOW_TYPE;
+
   entries.forEach((entry, index) => {
     if (entry.kind === "cancellation-requested") stopRequested = true;
-    if (entry.kind === "run-opened") mode = entry.mode;
+    if (entry.kind === "run-opened") {
+      mode = entry.mode;
+      workflowType = entry.workflowType ?? DEFAULT_AGENT_WORKFLOW_TYPE;
+    }
     if (entry.kind === "event") {
       const { event } = entry;
       if (event.kind === "run-started") {
@@ -763,12 +902,13 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
     items.push({ id: `entry-${index}`, ...describeEntry(entry, mode, stopRequested) });
   });
 
-  const budgets = AGENT_EXECUTION_POLICY.budgets;
+  const budgets = AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets;
   return {
     items,
     status,
     stopRequested,
     failureReason,
+    workflowType,
     budget: [
       { id: "statements", label: "Statements", used: statements, limit: budgets.maxStatementsPerRun, unit: "count" },
       { id: "database-time", label: "Database time", used: databaseMs, limit: budgets.maxTotalRunMs, unit: "ms" },

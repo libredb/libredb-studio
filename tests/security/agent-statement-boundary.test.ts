@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { AGENT_HANDOVER_BUDGET } from "@/lib/agent/execution-policy";
 import type { ExecutionBudget, ExecutionUsage } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import {
@@ -353,6 +354,26 @@ describe("agent statement boundary — layer (b): SQLite refuses the same statem
 
     expect((await profile.queryReadOnly("PRAGMA query_only", AGENT_BUDGET)).rows).toEqual([{ query_only: 1 }]);
     await expect(profile.queryReadOnly("INSERT INTO t (id, v) VALUES (3, 'after')", AGENT_BUDGET)).rejects.toThrow();
+  });
+
+  test("the EDITOR HAND-OVER's budget is refused by the same engine, timeout and all", async () => {
+    // #373 review. The hand-over replays a run's answer in the user's editor, and it
+    // used to do that on the ordinary editor route — a read-write session, where every
+    // one of the statements above would have run. It now goes through this very method
+    // under `AGENT_HANDOVER_BUDGET`, whose statement timeout is the ceiling that stands
+    // in for "none", and the boundary is a property of the SESSION rather than of the
+    // budget. Driven straight at the profile, with the pipeline bypassed, so what is
+    // asserted is the engine.
+    for (const attack of sqliteAttacks.filter((candidate) => candidate.sqlite === "rejected")) {
+      const before = await tableState();
+      await expect(profile.queryReadOnly(attack.sql, AGENT_HANDOVER_BUDGET)).rejects.toThrow();
+      expect(await tableState()).toEqual(before);
+    }
+    // And a legitimate read is still served under it, so the refusals above are the
+    // engine refusing writes rather than the budget refusing everything.
+    expect((await profile.queryReadOnly("SELECT id FROM t ORDER BY id", AGENT_HANDOVER_BUDGET)).rows).toEqual([
+      { id: 1 },
+    ]);
   });
 
   test("legitimate reads still work through the profile after the whole hostile corpus", async () => {
