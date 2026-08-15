@@ -1909,17 +1909,20 @@ entry per schema change, per connection, forever — before it is worth having.
 Done when a plan run's grounding is the same before and after a restart, or when the process-held
 hold is documented as the intended ceiling and this entry is deleted.
 
-### B43. Six copy buttons outside the agent rail fail silently on plain HTTP
+### B43. Nine copy call sites outside the agent rail fail silently on plain HTTP
 
 `navigator.clipboard` is a secure-context API: over plain HTTP on any host but loopback it is
 `undefined`, and this product ships that way on several distribution channels — the trap already
 recorded for `crypto.randomUUID` in `use-query-execution.ts`. `src/components/copy-button.tsx`
 (#389) handles it by falling back to `document.execCommand("copy")` and reporting a failure of both,
-but it is used only by the agent rail. Every other copy in the app reaches the API unguarded:
-`TableItem.tsx`, `RowDetailSheet.tsx`, `CodeGenerator.tsx`, `TestDataGenerator.tsx`,
-`DataImportModal.tsx`, `StudioMobileHeader.tsx` and `QueryEditor.tsx`. Four of them flip a label to
-"Copied!" in the same statement that starts the write, so on those channels the app reports a
-success nobody observed and the user finds out when they paste.
+but it is used only by the agent rail. Every other copy in the app reaches the API unguarded — nine
+call sites across seven components: `TableItem.tsx`, `RowDetailSheet.tsx` (three: one per field, two
+on the whole-row path), `CodeGenerator.tsx`, `TestDataGenerator.tsx`, `DataImportModal.tsx`,
+`StudioMobileHeader.tsx` and `QueryEditor.tsx`.
+
+Four of the seven claim a success nobody observed, in the same statement that starts the write:
+`CodeGenerator`, `TestDataGenerator` and `RowDetailSheet` flip a label, and `TableItem` raises a
+`toast.success`. On those channels the user is told the copy worked and finds out when they paste.
 
 Done when every copy in the app goes through `CopyButton` (or its `writeToClipboard`), with a test
 per site that the label does not claim success when the write was refused.

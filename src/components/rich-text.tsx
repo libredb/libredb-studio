@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { PencilLine } from "lucide-react";
 import { CopyButton } from "@/components/copy-button";
+import type { DatabaseType } from "@/lib/types";
 
 /**
  * Renders the inline markup an LLM emits — `**bold**` and `` `code` `` — as React nodes.
@@ -71,52 +72,69 @@ const BULLET_LINE = /^\s*[-*]\s+(.*)$/;
 const FENCE_LINE = /^\s*```([^`]*)$/;
 
 /**
- * The fence tags this surface will hand to a query editor.
+ * Every engine this product speaks, as a fence tag.
  *
- * An ALLOWLIST, and fail-closed, which is the same posture the auto-execute gate takes
- * about a dialect it has no rule for: the tag is the model saying what the block is,
- * and offering to put a shell command into a SQL editor would be this surface claiming
- * something the model contradicted. An untagged fence is offered — see `isQueryTag`.
+ * A TOTAL RECORD over `DatabaseType` rather than a list, and that is the point: the
+ * first version of this was a hand-written set whose comment claimed every engine was
+ * in it, and `libredb` was not (#389 review). A comment cannot keep that promise and a
+ * record can — an engine added to the union stops this file compiling until someone
+ * decides what its blocks are called.
  *
- * Every engine this product speaks is here, because the editor takes each of their
- * query languages, plus the aliases models actually write for them. A tag missing from
- * this set costs the user a button and never a wrong one; the copy control is offered
- * on every block either way.
+ * The keys are the canonical type-ids because that is what the union holds; the aliases
+ * models actually write live below.
  */
-const QUERY_FENCE_TAGS: ReadonlySet<string> = new Set([
+const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
+  postgres: true,
+  mysql: true,
+  sqlite: true,
+  mongodb: true,
+  redis: true,
+  oracle: true,
+  mssql: true,
+  libredb: true,
+  couchbase: true,
+  clickhouse: true,
+  druid: true,
+});
+
+/**
+ * The other names the same query languages go by, which is what a model actually types.
+ *
+ * Separate from the record above because these answer to nothing: no union widens when
+ * a model invents `pgsql`, so completeness here is a judgement rather than a guarantee.
+ * A tag missing from either costs the user a button and never a wrong one — the copy
+ * control is offered on every block regardless.
+ */
+const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "sql",
-  "postgres",
   "postgresql",
   "pgsql",
   "psql",
   "plpgsql",
-  "mysql",
   "mariadb",
-  "sqlite",
   "sqlite3",
-  "oracle",
   "plsql",
-  "mssql",
   "tsql",
   "sqlserver",
-  "mongodb",
   "mongo",
-  "redis",
-  "clickhouse",
-  "couchbase",
   "n1ql",
-  "druid",
 ]);
 
 /**
  * Whether a fence holds something the editor should be offered.
+ *
+ * Fail-closed on an unrecognised tag, the same posture the auto-execute gate takes about
+ * a dialect it has no rule for: the tag is the model saying what the block is, and
+ * offering to put a shell command into a SQL editor would be this surface claiming
+ * something the model contradicted.
  *
  * An untagged fence counts. Models write one for SQL constantly, and in a document
  * whose entire subject is a database the bare fence is a query far more often than it
  * is anything else — while the cost of being wrong is one click that puts text in an
  * editor, which the user can see and undo.
  */
-const isQueryTag = (tag: string | undefined): boolean => tag === undefined || QUERY_FENCE_TAGS.has(tag);
+const isQueryTag = (tag: string | undefined): boolean =>
+  tag === undefined || Object.hasOwn(ENGINE_FENCE_TAGS, tag) || QUERY_FENCE_ALIASES.has(tag);
 
 export interface ProseOptions {
   /**

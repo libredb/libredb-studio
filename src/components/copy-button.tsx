@@ -98,6 +98,20 @@ const OUTCOME_LABELS: Readonly<Record<Exclude<CopyOutcome, "idle">, string>> = O
   failed: "Copy failed",
 });
 
+/**
+ * The accessible name per outcome. `idle` has none of its own: the resting name is the
+ * caller's `label`, which is also the visible text, so there is nothing to add.
+ *
+ * Each entry CONTAINS its visible label above, which is what WCAG 2.5.3 asks for — a
+ * name that dropped the visible words would leave voice-control users naming a button
+ * the page does not answer to.
+ */
+const ACCESSIBLE_NAMES: Readonly<Record<CopyOutcome, string | undefined>> = Object.freeze({
+  idle: undefined,
+  copied: "Copied",
+  failed: "Copy failed — select the text and copy it yourself",
+});
+
 export function CopyButton({ text, testId, label = "Copy", className }: CopyButtonProps) {
   const [outcome, setOutcome] = useState<CopyOutcome>("idle");
 
@@ -115,9 +129,18 @@ export function CopyButton({ text, testId, label = "Copy", className }: CopyButt
     <button
       type="button"
       data-testid={testId}
-      // The failure names what is left to do. A control that cannot perform its own
-      // action owes the user the one that still works.
-      aria-label={outcome === "failed" ? "Copy failed — select the text and copy it yourself" : label}
+      /*
+        The accessible name FOLLOWS the outcome, and the first version of this did not
+        (#389 review): it stayed the resting label while the visible text changed, so a
+        screen-reader user was told "Copy" over a button reading "Copied" and never
+        learned the copy had happened. It also broke WCAG 2.5.3 — the accessible name
+        must contain the visible label, and "Copied" is not inside "Copy".
+
+        The failure's name says what is left to do, because a control that cannot perform
+        its own action owes the user the one that still works. It still contains the
+        visible label, so 2.5.3 holds there too.
+      */
+      aria-label={ACCESSIBLE_NAMES[outcome] ?? label}
       onClick={() => {
         void writeToClipboard(text).then((copied) => setOutcome(copied ? "copied" : "failed"));
       }}

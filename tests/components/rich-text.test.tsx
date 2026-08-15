@@ -4,6 +4,7 @@ import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { renderProse } from "@/components/rich-text";
+import type { DatabaseType } from "@/lib/types";
 
 /**
  * Fenced code blocks in model prose (#389).
@@ -127,6 +128,46 @@ describe("renderProse code hand-off to the editor", () => {
 
     fireEvent.click(getByTestId("prose-code-apply"));
     expect(onApplySql).toHaveBeenCalledWith("SELECT 1;");
+  });
+
+  test("offers a fence tagged with the embedded engine, which the first allowlist omitted", () => {
+    // `libredb` is a `DatabaseType` and its provider declares `queryDialect: "libredb"`,
+    // so a plan for one is as applicable as a plan for PostgreSQL. The hand-written set
+    // this replaced claimed every engine was in it and left this one out (#389 review).
+    const onApplySql = mock((_sql: string) => {});
+    const { getByTestId } = render(<div>{renderProse(`${FENCE}libredb\nSELECT 1;\n${FENCE}`, { onApplySql })}</div>);
+
+    fireEvent.click(getByTestId("prose-code-apply"));
+    expect(onApplySql).toHaveBeenCalledWith("SELECT 1;");
+  });
+
+  test("offers a fence tagged with any engine the product speaks", () => {
+    // The record is total over `DatabaseType`, so this is the assertion that a NEW engine
+    // cannot ship without its tag: adding one to the union breaks the build, and adding
+    // it here without a tag breaks this.
+    const engines = [
+      "postgres",
+      "mysql",
+      "sqlite",
+      "mongodb",
+      "redis",
+      "oracle",
+      "mssql",
+      "libredb",
+      "couchbase",
+      "clickhouse",
+      "druid",
+    ] satisfies DatabaseType[];
+
+    for (const engine of engines) {
+      const onApplySql = mock((_sql: string) => {});
+      const { getByTestId, unmount } = render(
+        <div>{renderProse(`${FENCE}${engine}\nSELECT 1;\n${FENCE}`, { onApplySql })}</div>,
+      );
+      fireEvent.click(getByTestId("prose-code-apply"));
+      expect(onApplySql).toHaveBeenCalledWith("SELECT 1;");
+      unmount();
+    }
   });
 
   test("withholds the editor from a fence the model said is not a query", () => {

@@ -117,6 +117,20 @@ describe("CopyButton", () => {
     expect(getByTestId("copy").getAttribute("aria-label")).toContain("select");
   });
 
+  test("tells a screen reader the copy happened, in a name that contains the visible label", async () => {
+    // The accessible name overrides the button's text, so one left at the resting label
+    // would report "Copy all" over a button reading "Copied" — no outcome for a screen
+    // reader, and a WCAG 2.5.3 failure for voice control, which names what it sees.
+    setClipboard({ writeText: () => Promise.resolve() });
+
+    const { getByTestId } = render(<CopyButton text="SELECT 9" testId="copy" label="Copy all" />);
+    expect(getByTestId("copy").getAttribute("aria-label")).toBe("Copy all");
+
+    fireEvent.click(getByTestId("copy"));
+    await waitFor(() => expect(getByTestId("copy").getAttribute("aria-label")).toBe("Copied"));
+    expect(getByTestId("copy").textContent).toContain("Copied");
+  });
+
   test("returns to its resting label, so a second copy reads as a second copy", async () => {
     setClipboard({ writeText: () => Promise.resolve() });
 
