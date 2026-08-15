@@ -43,6 +43,23 @@ interface UseQueryExecutionParams {
 }
 
 /**
+ * The id one history entry is filed under.
+ *
+ * `crypto.getRandomValues` rather than `Math.random`, which a scanner reads as a
+ * pseudorandom generator standing where a secure one belongs. Nothing here is a
+ * secret — the id names a row in this browser's own query history — but the two cost
+ * the same and only one of them has to be argued about in every review.
+ *
+ * Deliberately NOT `crypto.randomUUID`: it is restricted to secure contexts, and
+ * Studio is served over plain HTTP on several of its distribution channels, where it
+ * is simply undefined. `getRandomValues` carries no such restriction.
+ */
+function newHistoryId(): string {
+  const bytes = crypto.getRandomValues(new Uint32Array(2));
+  return `${bytes[0].toString(36)}${bytes[1].toString(36)}`;
+}
+
+/**
  * Why an explain run cannot proceed, phrased for the user. Absent metadata means
  * "not loaded yet", not "unsupported" — blaming the database type there would be
  * misleading.
@@ -175,7 +192,7 @@ export function useQueryExecution({
       // Set up abort controller for query cancellation
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
-      const queryId = `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const queryId = `q-${Date.now()}-${newHistoryId()}`;
       activeQueryIdRef.current = queryId;
 
       // Playground mode: begin a transaction before executing (will rollback after)
@@ -272,7 +289,7 @@ export function useQueryExecution({
           const errorCode = error.code as string | undefined;
 
           storage.addToHistory({
-            id: Math.random().toString(36).substring(7),
+            id: newHistoryId(),
             connectionId: activeConnection.id,
             connectionName: activeConnection.name,
             tabName: tabToExec.name,
@@ -308,7 +325,7 @@ export function useQueryExecution({
         // Only add to history for new queries (not load more)
         if (!isLoadMore) {
           storage.addToHistory({
-            id: Math.random().toString(36).substring(7),
+            id: newHistoryId(),
             connectionId: activeConnection.id,
             connectionName: activeConnection.name,
             tabName: tabToExec.name,
@@ -549,7 +566,7 @@ export function useQueryExecution({
 
         const result = payload.result;
         storage.addToHistory({
-          id: Math.random().toString(36).substring(7),
+          id: newHistoryId(),
           connectionId: activeConnection.id,
           connectionName: activeConnection.name,
           tabName: tabToExec.name,
@@ -571,7 +588,7 @@ export function useQueryExecution({
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         storage.addToHistory({
-          id: Math.random().toString(36).substring(7),
+          id: newHistoryId(),
           connectionId: activeConnection.id,
           connectionName: activeConnection.name,
           tabName: tabToExec.name,
