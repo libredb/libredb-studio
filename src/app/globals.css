@@ -1,8 +1,8 @@
 @import "tailwindcss";
 /*
  * The studio surface/text token layer. Kept in its own file because it is the one
- * part of this stylesheet that ALSO ships in the package (`dist/styles.css`) for
- * platform to import — see .claude/rules/platform-integration.md.
+ * part of this stylesheet that ALSO ships in the package (`dist/styles.css`), for
+ * an app embedding the library surface to import — see the file's own header.
  */
 @import "../styles/theme.css";
 

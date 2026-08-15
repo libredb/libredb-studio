@@ -388,10 +388,35 @@ describe("VisualExplain", () => {
     });
   });
 
+  /*
+   * Asserted on the FIRST request's own signal, never on a spy over
+   * `AbortController.prototype.abort`.
+   *
+   * That spy is global: it counts every abort anywhere in the process, including
+   * the other components this test group runs alongside — AgentRail creates its
+   * own controllers. Both a total and a delta across the click failed
+   * intermittently on full-suite runs (measured at 2 in 4 on `main`), because a
+   * foreign abort landing inside the window moved the number. A signal belongs to
+   * exactly one request, so nothing else can touch it.
+   */
   test("clicking Re-analyze after a completed run aborts the previous controller", async () => {
     const user = userEvent.setup();
-    globalThis.fetch = mockFetchStreamMulti("First analysis result.") as unknown as typeof fetch;
-    const abortSpy = spyOn(AbortController.prototype, "abort");
+    const signals: (AbortSignal | undefined)[] = [];
+    const encoder = new TextEncoder();
+    const fetchMock = mock((_url: string, init?: RequestInit) => {
+      signals.push(init?.signal ?? undefined);
+      return Promise.resolve({
+        ok: true,
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode("First analysis result."));
+            controller.close();
+          },
+        }),
+        json: () => Promise.resolve({}),
+      });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     try {
       const { queryByText } = render(<VisualExplain plan={samplePlan} query="SELECT 1" />);
@@ -401,27 +426,25 @@ describe("VisualExplain", () => {
       await waitFor(() => {
         expect(queryByText("Re-analyze")).not.toBeNull();
       });
-
-      /*
-       * The spy sits on the SHARED `AbortController.prototype`, so it counts every
-       * abort in this process — including ones from the other components this
-       * group runs alongside (AgentRail among them). Asserting a total made the
-       * test fail roughly half the time on a full-suite run, on `main` as much as
-       * here. The delta across the click is the only part that is this test's
-       * business, and it is also the exact claim being made.
-       */
-      const abortsBefore = abortSpy.mock.calls.length;
+      expect(signals).toHaveLength(1);
+      expect(signals[0]?.aborted).toBe(false);
 
       // abortControllerRef.current is already set from the first run, so this second
       // invocation exercises the "abort previous request" branch before issuing a new fetch.
       await user.click(queryByText("Re-analyze")!);
 
       await waitFor(() => {
-        expect(abortSpy.mock.calls.length).toBe(abortsBefore + 1);
-        expect((globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+        // The first run's signal is aborted, and a second request went out with a
+        // signal of its own — the two halves of "supersede, then re-issue".
+        expect(signals[0]?.aborted).toBe(true);
+        expect(signals).toHaveLength(2);
+        expect(signals[1]?.aborted).toBe(false);
       });
     } finally {
-      abortSpy.mockRestore();
+      // The component aborts its live request on unmount; leaving the mock in
+      // place lets that happen against this test's own fetch rather than a
+      // neighbour's.
+      cleanup();
     }
   });
 

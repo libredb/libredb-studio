@@ -4,7 +4,7 @@
  * tsup cannot do this: its `handle-css-and-xyflow` plugin resolves every `.css`
  * import to an empty module on purpose, because CSS is the consumer's bundler's
  * job at build time, not the runtime's. So the token stylesheet — the one part of
- * studio's CSS that platform genuinely needs — has to be copied verbatim.
+ * studio's CSS a consumer genuinely needs — has to be copied verbatim.
  *
  * It runs after `tsup`, which is `clean: true` and would otherwise delete it.
  */

@@ -32,10 +32,10 @@ describe("ThemeToggle", () => {
   });
 
   /**
-   * The embedded case. Platform owns the `dark` class, studio has no provider, and
-   * next-themes' default context reports an empty `themes` array. A button that
-   * calls a no-op `setTheme` would look functional and do nothing, so it must not
-   * exist at all.
+   * The embedded case. A host app owns the `dark` class, studio has no provider,
+   * and next-themes' default context reports an empty `themes` array. A button
+   * that calls a no-op `setTheme` would look functional and do nothing, so it
+   * must not exist at all.
    */
   test("renders nothing when no ThemeProvider is mounted above it", () => {
     withTheme(undefined, []);

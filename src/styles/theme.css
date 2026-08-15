@@ -4,8 +4,15 @@
  * This file is shipped in the package (`dist/styles.css`) because
  * `src/app/globals.css` is not: anything expressed as a global CSS rule reaches
  * standalone studio only, so a component that resolves its colour through a token
- * defined here would be colourless when platform embeds it. Platform imports this
- * file directly — see `.claude/rules/platform-integration.md`.
+ * defined here would be colourless wherever the library surface is embedded. An
+ * app consuming `@libredb/studio` imports this file once, after Tailwind:
+ *
+ *   @import "tailwindcss";
+ *   @import "@libredb/studio/styles.css";
+ *
+ * Without it `var(--studio-…)` resolves to nothing, which is invalid at
+ * computed-value time: grounds fall back to transparent and hairlines to
+ * currentColor. Standalone studio is unaffected — globals.css imports it.
  *
  * Two ramps, one contract:
  *
@@ -93,10 +100,10 @@
  * value resolved at build time — without it every utility would freeze whichever
  * palette was in scope when Tailwind compiled, and `.dark` would change nothing.
  *
- * These are colour tokens, so naming them `text-fg-muted` is safe: the
- * tailwind-merge hazard documented in the platform rules is about `text-*` tokens
- * that carry a FONT SIZE, which twMerge misreads as colours. A `text-*` token that
- * really is a colour is exactly what twMerge expects.
+ * These are colour tokens, so naming them `text-fg-muted` is safe: the known
+ * tailwind-merge hazard is `text-*` tokens that carry a FONT SIZE, which twMerge
+ * misreads as colours and silently strips. A `text-*` token that really is a
+ * colour is exactly what twMerge expects.
  */
 @theme inline {
   --color-canvas: var(--studio-canvas);

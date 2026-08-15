@@ -5,11 +5,11 @@ import { ThemeProvider as NextThemesProvider, type ThemeProviderProps } from "ne
 /**
  * Theme wiring for STANDALONE studio only.
  *
- * The embedded package deliberately does not mount this. Platform owns the
- * `dark` class on its own document, and `dark:`-free studio components read the
- * theme through the tokens in `styles/theme.css`, so embedded studio follows the
- * host's theme with no provider, no toggle and no coordination. Mounting a second
- * provider inside platform would fight the host for the same class attribute.
+ * The package's library surface deliberately does not mount this. A host app owns
+ * the `dark` class on its own document, and studio's components read the theme
+ * through the tokens in `styles/theme.css`, so an embedded studio follows the
+ * host with no provider, no toggle and no coordination. Mounting a second
+ * provider inside a host would fight it for the same class attribute.
  *
  * `defaultTheme="dark"` keeps the pre-token appearance for anyone who never
  * touches the toggle — dark is what LibreDB Studio has always been.

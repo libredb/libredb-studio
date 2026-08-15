@@ -11,7 +11,7 @@ export type EffectiveTheme = "dark" | "light";
  *
  * Deliberately reads the `dark` class off the document rather than calling
  * `useTheme()`. That class is where next-themes writes studio's own choice AND
- * where platform writes the host's, so one source answers both deployments, and
+ * where a host app writes its own, so one source answers both deployments and an
  * embedded studio needs no provider to follow along. It is observed rather than
  * read once because either owner can change it at any time.
  */

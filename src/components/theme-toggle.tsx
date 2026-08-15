@@ -34,9 +34,9 @@ const NEXT_LABEL = {
  * is in night mode still starts on studio's own default rather than theirs.
  *
  * Renders NOTHING when no `ThemeProvider` is mounted above it. That is the
- * embedded case: platform owns the theme, `useTheme()` falls back to next-themes'
- * default context — whose `themes` array is empty — and a toggle that cannot
- * change anything is worse than no toggle at all.
+ * embedded case: the host app owns the theme, `useTheme()` falls back to
+ * next-themes' default context — whose `themes` array is empty — and a toggle
+ * that cannot change anything is worse than no toggle at all.
  */
 export function ThemeToggle({ className }: { className?: string }) {
   const { theme, setTheme, themes } = useTheme();
