@@ -135,6 +135,19 @@ reading claimed `slowQueryCount: 2` while the log itself returned zero rows, and
 discrepancy** instead of picking whichever number made a better answer. If it happens during your
 demo, stop and read it out.
 
+### 12b. The same question, against Redis
+**Agent · Operate ·** on a Redis connection: `How is this Redis instance doing? Memory, clients, and what keys are stored.`
+
+Answers: memory used (2.30M, and what share of the limit that is), connected clients, whether anything
+is blocked, and which commands those clients are running. Verified against `redis-cli INFO` — the
+figures match.
+
+**This is the case to show a sceptic.** Redis has no SQL at all, and agent mode's other workflows
+cannot reach it: they need a database-native read-only statement path, which only PostgreSQL and
+SQLite provide. Operate does not write SQL — it reads what the engine already reports about itself —
+so it answers the same operational questions on every provider Studio supports. Run case 9 against
+PostgreSQL and this one against Redis back to back, and the point makes itself.
+
 ---
 
 ## Act 4 — "it makes queries faster, and shows its work" (4 minutes)
@@ -253,7 +266,8 @@ ledger, not from the model's opinion of its own work.
 
 **"Which databases?"** Analyze, Optimize, Assess and Investigate need a database-native read-only
 path, which today means **PostgreSQL and SQLite**. Operate reads the engine's own statistics instead
-and works on every provider. Plan mode has no limit at all.
+and works on every provider — driven live against Redis, which has no SQL at all (case 12b). Plan
+mode has no limit at all.
 
 **"What does it cost per question?"** Each workflow has a frozen ceiling on model turns, statements,
 wall clock and database time, and the rail shows the meter live. The figures are the starting point
