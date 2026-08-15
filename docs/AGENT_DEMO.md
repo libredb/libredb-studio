@@ -206,16 +206,32 @@ This is the case to dwell on. A demo that only shows case 16 is showing a party 
 
 ## Act 6 — "it is safe to point at production" (4 minutes)
 
-### 18. Plan mode: it never touches the database
-Switch to **Plan** and ask anything: `How would you assess this database before a production release?`
+### 18. Plan mode: it knows your schema and still never touches the database
+Switch to **Plan** and ask: `How would you assess this database before a production release?`
 
-A structured plan comes back — phases, what to inspect, what each step would establish — rendered as
-headings and bullets. Zero statements were sent. This is the mode to hand someone who wants the
-reasoning without the risk.
+A structured plan comes back — phases, what to inspect, what each step would establish, and what it
+does *not* reach — rendered as headings and bullets. Point at the meter while it is on screen:
+**`Statements 0 / 30`, `Database time 0.0 s`.** Nothing was sent.
 
-*Known limitation, and say it rather than let someone find it:* a plan run reasons from the objective
-alone, so today it gives a sound general method rather than a plan naming your tables. The written
-plan is honest about what it did not inspect.
+Then look at what the plan names. Against dvdrental it works through `public.staff`, `public.rental`,
+`public.payment`, `public.inventory`, `public.film_actor`, the reporting views — and in one run it
+singled out `public.staff` for a credentials check, naming the `username`, `password` and `email`
+columns. It has never seen a row.
+
+**The trick, and it is worth explaining because it is the whole safety argument:** the run is handed
+a schema inventory an *earlier agent run* on the same connection already read. Reading it costs
+nothing and touches nothing, so plan mode keeps its promise exactly — still toolless, still zero
+statements — while reasoning about your database rather than about databases in general.
+
+**Demo it in this order or the point is lost.** On a freshly started server, ask the plan question
+first: the model says plainly that it has not seen this database and gives a general method. Then run
+any Agent-mode question against that connection. Then ask the plan question again. Same question,
+same model, and now it names your tables. That contrast is the case.
+
+*Bounds, worth stating before someone finds them:* the inventory is held in the server process, for
+the last sixteen connections used, and only PostgreSQL and SQLite runs outside the Operate workflow
+capture one. After a restart, or on a connection no agent run has touched, a plan run says so rather
+than inventing tables.
 
 ### 19. Both axes are independent
 **Plan · Optimize ·** `What would you check first if this database were slow in production?`
@@ -282,5 +298,7 @@ Say these plainly if asked; do not build a demo around them.
 - **Follow-up questions.** Each run starts fresh. Asking "and how many of those?" after another
   question gets a confident answer to a different question, because nothing carries the referent.
   (`docs/BACKLOG.md` B36.)
-- **A plan that names your tables.** See case 18.
+- **A plan on a cold server.** Case 18 grounds a plan from an inventory an agent run left behind, so
+  a freshly restarted server plans generically until something has read that connection. The run says
+  so; do not build the demo on it. (`docs/BACKLOG.md` B42.)
 - **Causal questions** — "why are sales down?" — need business context the schema does not carry.
