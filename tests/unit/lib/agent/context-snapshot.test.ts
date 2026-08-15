@@ -1,7 +1,10 @@
-import { describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   AGENT_CONTEXT_PACK_MAX_CHARS,
   captureContextSnapshot,
+  forgetHeldSnapshots,
+  heldSnapshotForConnection,
+  holdSnapshotForConnection,
   packContextForTask,
   reusableSnapshot,
 } from "@/lib/agent/context-snapshot";
@@ -665,5 +668,81 @@ describe("reusableSnapshot — the refresh that reads nothing", () => {
     const second: AgentContextSnapshot = { ...first, fingerprint: first.fingerprint, capturedAtMs: 9_999 };
 
     expect(reusableSnapshot([captureEvent(first), captureEvent(second)], "conn-1")?.capturedAtMs).toBe(9_999);
+  });
+});
+
+/**
+ * What one PROCESS holds, which is what a plan run may be handed (#384).
+ *
+ * A planning run is toolless and reads nothing, so the only inventory it can be
+ * given is one somebody else already read. These assert the two properties that
+ * make handing it over safe: an inventory never travels between connections, and an
+ * entry whose identity is not the one its own inventory produces is never held at
+ * all — the same bar `reusableSnapshot` applies to a ledger entry.
+ */
+describe("the inventories a process holds", () => {
+  beforeEach(() => {
+    forgetHeldSnapshots();
+  });
+
+  test("what was held for a connection is what comes back", async () => {
+    const snapshot = await captured("postgres");
+    holdSnapshotForConnection(snapshot);
+
+    expect(heldSnapshotForConnection("conn-1")).toEqual(snapshot);
+  });
+
+  test("a process that has read nothing for a connection holds nothing", async () => {
+    const snapshot = await captured("postgres");
+    holdSnapshotForConnection(snapshot);
+
+    // Not "no inventory anywhere": one is held, for another database entirely, and
+    // that is exactly the answer a run on this connection must not be given.
+    expect(heldSnapshotForConnection("conn-other")).toBeNull();
+  });
+
+  test("an inventory that does not fingerprint as itself is not held", async () => {
+    const snapshot = await captured("postgres");
+    const tampered: AgentContextSnapshot = {
+      ...snapshot,
+      tables: snapshot.tables.map((table) => ({ ...table, columns: [] })),
+    };
+
+    holdSnapshotForConnection(tampered);
+
+    expect(heldSnapshotForConnection("conn-1")).toBeNull();
+  });
+
+  test("the newest reading of a connection replaces the one before it", async () => {
+    const snapshot = await captured("postgres");
+    holdSnapshotForConnection(snapshot);
+    holdSnapshotForConnection({ ...snapshot, capturedAtMs: 9_999 });
+
+    expect(heldSnapshotForConnection("conn-1")?.capturedAtMs).toBe(9_999);
+  });
+
+  /**
+   * Bounded, because these are whole inventories and a long-lived server touches
+   * many connections. The eviction is by least-recently-held, which is why holding a
+   * connection again moves it to the end rather than leaving it where it entered.
+   */
+  test("holding many connections evicts the least recently held, not the newest", async () => {
+    const snapshot = await captured("postgres");
+    for (let index = 0; index < 17; index += 1) {
+      holdSnapshotForConnection({ ...snapshot, connectionId: `conn-${index}` });
+      // Re-held on every pass, so it stays the most recent and outlives 16 others.
+      holdSnapshotForConnection({ ...snapshot, connectionId: "conn-kept" });
+    }
+
+    expect(heldSnapshotForConnection("conn-0")).toBeNull();
+    expect(heldSnapshotForConnection("conn-16")).not.toBeNull();
+    expect(heldSnapshotForConnection("conn-kept")).not.toBeNull();
+  });
+
+  test("forgetting empties the hold, which is what a restart does to it", async () => {
+    holdSnapshotForConnection(await captured("postgres"));
+    forgetHeldSnapshots();
+
+    expect(heldSnapshotForConnection("conn-1")).toBeNull();
   });
 });

@@ -74,7 +74,7 @@ You choose three things before pressing Start, and two of them are controls in t
 
 | Button | What it means |
 | --- | --- |
-| **Plan** | The model reasons about your objective and writes an approach. It has **no tools**, so it performs zero database operations. This is what a run opens in. |
+| **Plan** | The model reasons about your objective and writes an approach. It has **no tools**, so it performs zero database operations. This is what a run opens in. It can still plan against your real tables — see [What a Plan run knows about your database](#what-a-plan-run-knows-about-your-database). |
 | **Agent** | The model is given the read-only tools and investigates: it drafts statements, reads results, and finishes by composing a report whose claims cite what it read. |
 
 **2. The workflow — what the run is for** (`AgentRail.tsx:433-448`, labels at `AgentRail.tsx:94-98`):
@@ -112,6 +112,29 @@ investigated. The rail says so rather than offering a Start that must fail:
 > *"… cannot be rebuilt on the server: its settings live in this browser. A run re-resolves its
 > connection there after a restart, so it can only investigate a connection the server holds too."*
 > (`AgentRail.tsx:492-498`)
+
+### What a Plan run knows about your database
+
+A Plan run never sends a statement to your database. That is the whole point of the mode, and it has
+not changed: you can start one against production and nothing reaches it.
+
+What changed is what the run is *told*. A Plan run is shown the schema inventory — tables, columns,
+keys and relations — **if an Agent run has already read it on this connection since the server
+started.** An Agent run reads the catalog once at the top of its run and the server keeps that
+reading; a Plan run is handed it, and is told plainly that it was somebody else's reading. So the
+plan you get names your real tables and the joins between them instead of describing an inspection
+of a database in general.
+
+A Plan run that has no inventory — a connection nothing has investigated yet, or any connection
+after the server restarts — says so in its answer and writes the plan as the inspection it would
+carry out to find out. It will not name tables it has not been shown. If you want a Plan run
+grounded in your schema, run an Agent run on that connection first; a short one is enough, because
+the catalog reading happens before the model's first turn.
+
+Two things the inventory is not. It is **structure, not measurement**: it says a table exists and
+what its columns are, never how many rows it holds or how large it is, so a plan cannot tell you
+which table is the big one. And it is **a reading from a moment**: it is whatever the last Agent run
+saw, and a schema that changed since is not noticed until the next Agent run reads it.
 
 ---
 

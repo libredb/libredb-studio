@@ -148,7 +148,9 @@ The mode is HOW a run executes:
 - **`planning`** — the model reasons about the objective and produces a plan. Its tool set is
   **empty**, so a planning run performs zero database operations. This is decided on the server from
   the run's persisted mode; a client-supplied tool list has no way in, because there is no parameter
-  for one.
+  for one. A planning run may still be told what this database CONTAINS — see
+  [What a plan run knows](#what-a-plan-run-knows) — and that changes nothing about the sentence
+  above: the inventory it is shown was read by an earlier agent run, never by it.
 - **`agent`** — the model receives the read-class tools below and investigates.
 
 The mode is fixed when the run is opened. A later request cannot widen a planning run, and the
@@ -239,6 +241,46 @@ is the successful ending — planning is toolless, `compose_report` does not exi
 once the plan is written is the only way a good planning run can end. The rail therefore words that
 one ending per mode (#350); every other ending is a shortfall in either mode, because a planning run
 that ran out of time produced no plan either.
+
+### What a plan run knows
+
+A plan run reaches no database, so everything it knows about your schema, it was told. Until #384 it
+was told nothing, and the plans showed it: asked on 2026-08-15 how it would assess a real six-table
+SQLite database before a release, a live run answered that it could not reach the live environment
+and produced an inspection plan that would have read identically against any database in the world.
+
+The fix does not change what plan mode DOES. It changes what it is given:
+
+- **An agent run reads a connection's catalog once per run**, through `inspect_schema` and the
+  audited execution path, and records the inventory in its own ledger (`context-captured`).
+- **`context-snapshot.ts` also holds that inventory in the server process**, keyed by connection and
+  refused unless it fingerprints as itself — the same check `reusableSnapshot` applies to a ledger
+  entry. Nothing else writes to it, so there is no second path to an engine anywhere in it.
+- **A plan run on that connection is handed it.** It arrives exactly as it arrives in agent mode —
+  the packed inventory and the relations, both fenced as `UNTRUSTED_CONTENT` — with one preface
+  saying what only the server can say: *the inventory below was read from this database by an earlier
+  run on this connection. This run has read nothing and will read nothing.* The rules then tell the
+  model to write the plan against it, to name the real tables rather than tables in general, and that
+  an inventory of what EXISTS carries no row counts, no sizes and no timings, so nothing in it is a
+  measurement.
+- **A plan run that is handed none is told so**, in the same rules: it has not seen this database, it
+  must say so, and it must invent no table names. That is what a plan run gets on a connection no
+  agent run has read in this process — a brand-new connection, or any connection after a restart.
+
+Three consequences worth stating plainly, because each is easy to assume the other way round:
+
+1. **Plan mode still performs zero database operations.** It sends no statement, captures nothing,
+   writes no `context-captured` entry, and acquires no provider. Being handed an inventory costs
+   nothing, which is exactly why this is the only grounding the mode may have.
+2. **The hold is process memory, not durable state**, like the run-scoped artifact store and for the
+   same reason: nothing about a plan run is worth a second durable store keyed outside a run. So a
+   plan drive resumed in a process that has read nothing for its connection is ungrounded and says
+   so, rather than being given an inventory nobody in that process ever read. That a restart plans
+   blind until the next agent run is the honest cost, and it is recorded as `docs/BACKLOG.md` B42
+   rather than left for a reader to discover.
+3. **The schema is never egressed anywhere it was not already going.** The same table and column
+   names an agent run's prompt carries reach the same model, for a connection the same user can open
+   an agent run on.
 
 ## Durability and resume
 

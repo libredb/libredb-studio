@@ -27,6 +27,12 @@
  * reading time, not of the connection — so two identical builds agree and a changed
  * schema does not.
  *
+ * A captured inventory is also HELD for its connection, in this process, and that is
+ * what a planning run may be handed (#384). Planning stays toolless and reads
+ * nothing; being given an inventory an agent run already read costs no statement, so
+ * the mode's bar is untouched, and a plan run with none is told so rather than left
+ * to write about a database it has not seen. See `holdSnapshotForConnection`.
+ *
  * That is what makes the REFRESH free. A capture is recorded in the run's ledger
  * with the inventory attached, so a later drive — including one that resumed after
  * the process died — calls `reusableSnapshot` and re-derives its whole schema
@@ -330,6 +336,74 @@ export async function captureContextSnapshot(context: AgentToolContext): Promise
       tables,
     },
   };
+}
+
+// ============================================================================
+// What this process has already read
+// ============================================================================
+
+/**
+ * The inventories this PROCESS has already read, one per connection (#384).
+ *
+ * It exists for planning mode, which is toolless and must perform zero database
+ * operations. A plan run may therefore never read a catalog — and a plan run told
+ * nothing about the schema writes the plan it would write about any database in the
+ * world, which is what live runs on 2026-08-15 produced. The only honest way out is
+ * to hand it an inventory somebody ELSE already paid for: this holds the ones an
+ * agent run on the same connection read through the audited catalog path, so a plan
+ * run can be given one without a single statement being sent.
+ *
+ * Three properties are what make that safe rather than merely cheap:
+ *
+ *  - **Nothing here ever reads a database.** Entries arrive only from
+ *    `captureContextSnapshot`, which is agent-mode-only and goes through the T6
+ *    catalog tool; this module adds no second path to an engine.
+ *  - **An entry is refused unless its identity is the one its own inventory
+ *    produces**, exactly as `reusableSnapshot` refuses a ledger entry. A snapshot
+ *    that fingerprints as something else is not held at all, so a reader never has
+ *    to decide whether to trust one.
+ *  - **It is keyed by connection**, which is the same boundary the run loop already
+ *    enforces (`RUN_CONNECTION_MISMATCH`). An inventory cannot travel between
+ *    databases, and everyone who can open a run on a connection can read its catalog
+ *    through that run anyway.
+ *
+ * What it deliberately is NOT: durable. This is process memory, like the run-scoped
+ * artifact store and for the same reason — a restart loses it, and a plan run in a
+ * process that has read nothing is told plainly that it has no inventory rather than
+ * being given a stale one from somewhere. A plan run's grounding is therefore a
+ * property of the deployment's recent history, and the run says which case it is.
+ */
+const HELD_SNAPSHOT_LIMIT = 16;
+
+const heldSnapshots = new Map<string, AgentContextSnapshot>();
+
+/** Holds one connection's inventory for later reuse. Bounded, most recent kept. */
+export function holdSnapshotForConnection(snapshot: AgentContextSnapshot): void {
+  if (fingerprintTables(snapshot.tables) !== snapshot.fingerprint) return;
+  // Deleted before it is set, so re-holding a connection makes it the most recent
+  // rather than leaving it where it first entered: insertion order is the eviction
+  // order below, and a connection under active use must not age out under one that
+  // was read once.
+  heldSnapshots.delete(snapshot.connectionId);
+  heldSnapshots.set(snapshot.connectionId, snapshot);
+  for (const oldest of heldSnapshots.keys()) {
+    if (heldSnapshots.size <= HELD_SNAPSHOT_LIMIT) break;
+    heldSnapshots.delete(oldest);
+  }
+}
+
+/** The inventory this process holds for a connection, or `null` when it holds none. */
+export function heldSnapshotForConnection(connectionId: string): AgentContextSnapshot | null {
+  return heldSnapshots.get(connectionId) ?? null;
+}
+
+/**
+ * Empties the hold. For tests, which must be able to express the cold process —
+ * the one a plan run finds after a restart, and the case a grounded run must not
+ * be mistaken for.
+ */
+export function forgetHeldSnapshots(): void {
+  heldSnapshots.clear();
 }
 
 // ============================================================================

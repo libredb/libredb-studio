@@ -98,9 +98,14 @@ Gemini deployment behind a proxy is therefore not configurable (`docs/BACKLOG.md
 - **Opening the rail sends nothing.** A shortcut fills the objective box and starts nothing
   (`src/components/agent/use-agent-prefill.ts`); the first model call happens when you press
   **Start**.
-- **A `planning` run reaches no database.** Its tool set is empty, so nothing but your objective and
-  the server's own rules is sent (`selectAgentTools`, and `establishContext` returns early for a
-  non-agent mode at `src/lib/agent/investigation.ts:728-733`).
+- **A `planning` run reaches no database.** Its tool set is empty, so it sends no statement, captures
+  nothing and acquires no provider (`selectAgentTools`, and the planning branch of
+  `establishContext` in `src/lib/agent/investigation.ts`). What it MAY send to the model, besides
+  your objective and the server's own rules, is a schema inventory an **agent** run on the same
+  connection already read and this process still holds (#384): the same packed tables and relations
+  an agent run's prompt carries, fenced identically. Nothing about your DATA is in it — an inventory
+  is names, types, keys and relations, and no row is read to build one — and a plan run on a
+  connection this process has read nothing for sends nothing of the kind and is told it has none.
 
 There is one model call the agent makes before the run itself: the **capability probe**, one round
 trip asking the model to call a trivial tool. Its prompt is a fixed server-written string and

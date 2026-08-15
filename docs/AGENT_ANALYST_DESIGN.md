@@ -1323,9 +1323,17 @@ is stated rather than left as an omission.
   follows the seams it uses. Where the two meet — both will want a fourth `WORKFLOW_*` record and
   both touch B17/B27's unresolved question of what operation descriptor a non-SQL metadata read
   takes — that is a merge conversation, not a design one.
-- **Giving plan mode database context.** Planning is toolless by contract and performs zero database
-  operations (`investigation.ts:736-738`), and a planning run of an analysis is an ordinary thing to
-  ask for. Whether it should see the schema is a separate decision with its own egress consequences.
+- **~~Giving plan mode database context.~~ Decided and built in #384, and narrower than the heading
+  suggests.** Plan mode still performs zero database operations: it captures nothing, and the
+  question this bullet left open — whether it should READ the schema — was answered *no*, because the
+  reading is the promise. What it may be given instead is an inventory somebody else already read.
+  `context-snapshot.ts` holds each connection's most recent inventory in the process that captured
+  it, agent runs put it there through the audited catalog path, and a plan run on that connection is
+  handed it with no statement sent — fenced as untrusted content and prefaced with whose reading it
+  was. A plan run on a connection this process has read nothing for is told so in its rules and
+  writes a generic plan on purpose. The egress consequence this bullet anticipated is therefore the
+  one the inventory already had: the same table and column names an agent run's prompt carries, sent
+  to the same model, for a connection the same user could open a run on.
 - **Timeline autoscroll.** Real, and a UI decision that has nothing to do with any of the above.
 - **Run history.** A run is observable only from its own ledger; nothing enqueues a drive (B9) and
   nothing lists past runs. Out of scope.

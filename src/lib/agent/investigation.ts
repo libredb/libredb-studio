@@ -45,7 +45,13 @@
 
 import { createHash } from "node:crypto";
 import { type ModelMessage, type ToolSet, streamText, tool } from "ai";
-import { captureContextSnapshot, packContextForTask, reusableSnapshot } from "./context-snapshot";
+import {
+  captureContextSnapshot,
+  heldSnapshotForConnection,
+  holdSnapshotForConnection,
+  packContextForTask,
+  reusableSnapshot,
+} from "./context-snapshot";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
 import {
   AGENT_MODEL_TURN_TIMEOUT_MS,
@@ -236,6 +242,37 @@ const PLANNING_RULES = [
 ].join(" ");
 
 /**
+ * What a plan run is told when it HAS an inventory, and what it is told when it has
+ * none (#384).
+ *
+ * Both halves are the #350 rule applied twice over. A run handed a schema and not
+ * told to write the plan against it produces the same generic advice it produced
+ * without one — the inventory sits in the window unused — and a run handed nothing
+ * and not told so writes about tables it invented. Live runs on 2026-08-15 are the
+ * first of those: six real tables were on the connection, none of them appeared, and
+ * the plan would have read identically against any database in the world.
+ *
+ * The grounded half says three things and each is load-bearing. It names the
+ * inventory as something an EARLIER run read, because this run read nothing and a
+ * plan that implies otherwise is the false-self-description defect this repository
+ * keeps finding. It asks for the real names, which is the whole point. And it says
+ * what an inventory is not: a list of what EXISTS carries no row counts, no sizes
+ * and no timings, so a plan that concludes which table is the big one from it has
+ * measured nothing.
+ */
+const PLANNING_SCHEMA_RULES = [
+  "A schema inventory for this database is in this conversation, with its relations beside it.",
+  "It was read by an EARLIER run on this connection, never by you: this run sends nothing to any database, so it is a record of what exists — not of how many rows anything holds, how large it is, or how fast it runs.",
+  "Write the plan against it. Name the real tables, columns and relations each step would inspect instead of writing about tables in general, and say what each step would establish about them.",
+  "Name nothing that is not in it, and say plainly where it does not reach — an inventory shows structure, and most of what your objective asks about is established only by the reads you are proposing.",
+].join(" ");
+
+const PLANNING_NO_SCHEMA_RULES = [
+  "No schema inventory is available to this run, so you have not seen this database at all.",
+  "Say that plainly in your plan and invent no table or column names: write it as the inspection that would establish what this database holds, step by step, starting from its catalog.",
+].join(" ");
+
+/**
  * What each workflow is FOR, said to the model (#330 T3).
  *
  * A total record, so a workflow added to the contract stops this file compiling
@@ -354,8 +391,16 @@ const AUTO_EXECUTE_RULE = [
   "So call inspect_plan on the statement that IS the answer before you present it. Without one, the statement is placed in the editor unrun and the run says why.",
 ].join(" ");
 
-function systemPrompt(record: AgentRunRecord): string {
-  const rules = record.mode === "agent" ? `${AGENT_RULES} ${WORKFLOW_TOOL_RULES[record.workflowType]}` : PLANNING_RULES;
+/**
+ * The rules, given what this drive was able to give the run.
+ *
+ * `schemaKnown` bears on planning alone: agent mode already tells the model about a
+ * missing inventory in the capture's own words (`FALLBACK_ADVICE`), and its rules
+ * are about the tools either way.
+ */
+function systemPrompt(record: AgentRunRecord, schemaKnown: boolean): string {
+  const planningRules = `${PLANNING_RULES} ${schemaKnown ? PLANNING_SCHEMA_RULES : PLANNING_NO_SCHEMA_RULES}`;
+  const rules = record.mode === "agent" ? `${AGENT_RULES} ${WORKFLOW_TOOL_RULES[record.workflowType]}` : planningRules;
   // Said only where it can happen, on all THREE counts. A planning run has no tools;
   // a run opened without the setting hands nothing anywhere; and a workflow that is
   // not offered `present_answer` has no way to make the presentation this rule is
@@ -394,6 +439,22 @@ const snapshotHandoverText = (fingerprint: string): string =>
  */
 function packSnapshotMessage(snapshot: AgentContextSnapshot, objective: string): string {
   return packContextForTask(snapshot, objective, { preface: snapshotHandoverText(snapshot.fingerprint) });
+}
+
+/**
+ * The same inventory, prefaced for a run that did not read it.
+ *
+ * A plan run is given no citation form, because it has no `compose_report` to cite
+ * into; what it is given instead is the one sentence that keeps its plan honest —
+ * who read this, and that this run read nothing. The fenced header already carries
+ * when it was read and that it has not been re-read since, so the preface says the
+ * part the header cannot: that the reading was somebody else's.
+ */
+const PLANNING_SNAPSHOT_PREFACE =
+  "The inventory below was read from this database by an earlier run on this connection. This run has read nothing and will read nothing.";
+
+function packPlanningSnapshotMessage(snapshot: AgentContextSnapshot, objective: string): string {
+  return packContextForTask(snapshot, objective, { preface: PLANNING_SNAPSHOT_PREFACE });
 }
 
 /**
@@ -843,7 +904,6 @@ export async function runInvestigation(
     actor: record.actor,
   };
   const tools = declaredTools(record);
-  const instructions = systemPrompt(record);
   const messages: ModelMessage[] = [{ role: "user", content: record.objective }];
   const priorProgress = describePriorProgress(record);
   if (priorProgress !== null) messages.push({ role: "user", content: priorProgress });
@@ -857,6 +917,8 @@ export async function runInvestigation(
   const notAttempted = new Set<string>();
 
   let contextEstablished = false;
+  /** Whether this drive was able to put an inventory in front of the model. */
+  let schemaKnown = false;
 
   /**
    * Gives this drive the run's schema context, once, before the first turn.
@@ -873,12 +935,27 @@ export async function runInvestigation(
    * A run whose catalog cannot be read is told so and continues: the tools are
    * still there, and a narrowed `inspect_schema` is exactly what an overflowing
    * catalog needs.
+   *
+   * PLANNING takes neither path (#384). It stays toolless and still sends nothing:
+   * what it may be given is an inventory some agent run on this same connection
+   * already read, held in this process by `context-snapshot.ts`. Being handed one
+   * costs no statement, so the mode's bar is untouched — a plan run reaches no
+   * database whether or not one is there — and a plan run that is handed none is
+   * told so in its rules rather than left to write about a database it has not seen.
    */
   const establishContext = async (): Promise<void> => {
     contextEstablished = true;
     // Planning is toolless and must perform zero database operations. Not merely
     // skipped for cost: reaching the catalog here would break the mode's own bar.
-    if (record.mode !== "agent") return;
+    // So it is offered only what this process READ ALREADY, and never a read.
+    if (record.mode !== "agent") {
+      const inventory = heldSnapshotForConnection(record.connectionId);
+      if (inventory === null) return;
+      schemaKnown = true;
+      messages.push({ role: "user", content: packPlanningSnapshotMessage(inventory, record.objective) });
+      messages.push({ role: "user", content: packRelations(inventory, record.workflowType) });
+      return;
+    }
 
     // An operations run captures no schema inventory, and this is the one workflow
     // where that is a decision rather than a failure. The capture reads the catalog
@@ -895,6 +972,10 @@ export async function runInvestigation(
 
     const recorded = reusableSnapshot(record.events, record.connectionId);
     if (recorded !== null) {
+      // Held on the reuse path too, not only on the capture: a resumed drive in a
+      // fresh process is exactly where the hold is empty, and this is the reading
+      // that refills it from what the ledger already proved.
+      holdSnapshotForConnection(recorded);
       messages.push({ role: "user", content: packSnapshotMessage(recorded, record.objective) });
       messages.push({ role: "user", content: packRelations(recorded, record.workflowType) });
       return;
@@ -912,6 +993,10 @@ export async function runInvestigation(
       tableCount: snapshot.tables.length,
       snapshot,
     });
+    // After the ledger, never before it: what a plan run may later be handed is an
+    // inventory that is durably part of some run's own history, not one this process
+    // read and failed to write down.
+    holdSnapshotForConnection(snapshot);
     messages.push({ role: "user", content: packSnapshotMessage(snapshot, record.objective) });
     messages.push({ role: "user", content: packRelations(snapshot, record.workflowType) });
   };
@@ -968,7 +1053,10 @@ export async function runInvestigation(
     // Whichever bound is smaller applies, and which one it was decides what the user
     // is told: a call that never returned is not a run that used its time.
     const turnBudgetMs = Math.min(remainingMs, turnTimeoutMs);
-    const turn = await takeTurn(model, instructions, messages, tools, turnBudgetMs);
+    // Built after the context, because in planning mode the rules depend on whether
+    // there WAS one: a run told to plan against an inventory it was not given is the
+    // same defect as a run given one and never told to use it (#350).
+    const turn = await takeTurn(model, systemPrompt(record, schemaKnown), messages, tools, turnBudgetMs);
     text = turn.text;
     if (turn.aborted) return conclude("failed", turnBudgetMs < remainingMs ? "model-timeout" : "deadline-exceeded");
     if (turn.toolCalls.length === 0) return conclude("succeeded", "model-stopped");

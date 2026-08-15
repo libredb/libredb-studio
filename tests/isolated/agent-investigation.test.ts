@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
+import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_REPORT_RESERVE_TURNS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import {
@@ -241,6 +242,10 @@ let consoleSpy: ReturnType<typeof spyOn<Console, "log">>;
 
 beforeEach(() => {
   consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+  // The inventories a process holds outlive a run by design (#384), so every test
+  // here starts from the cold process. Without this a planning test would be
+  // grounded or not depending on which agent test ran before it.
+  forgetHeldSnapshots();
 });
 
 afterEach(() => {
@@ -745,6 +750,211 @@ describe("planning mode performs zero database operations", () => {
     expect(invocationsOf(await eventsOf(b.store, run.runId))).toEqual([]);
     expect(script.turns[1]?.transcript).toContain("run_read_query");
     expect(result.status).toBe("succeeded");
+  });
+
+  /*
+    #384. Plan mode's promise is that it never executes a query against the
+    database, and these do not touch it: what changes is what the run is TOLD.
+
+    The defect that produced this block was measured on 2026-08-15. Asked how it
+    would assess a real six-table database, a plan run answered "without direct
+    access to the live environment … I cannot execute live queries or run
+    diagnostics directly" and named not one table. Nothing was wrong with the
+    sentence — the run genuinely had nothing — and that is the point: a plan that
+    would read identically against any database in the world is not a plan about
+    this one.
+
+    So a plan run is handed the inventory an agent run on the same connection
+    already read (`context-snapshot.ts` holds it), and the two directions are both
+    asserted here: what a grounded plan run is shown and told, and what an
+    ungrounded one is told instead. Neither acquires a provider.
+  */
+  describe("a plan run reasons about THIS database when the process has already read it", () => {
+    /** The system prompt, which is where a planning run's rules are stated. */
+    const rulesOf = (turn: Turn): string => {
+      const messages = (turn.body.messages ?? []) as { role?: string; content?: unknown }[];
+      const system = messages.find((message) => message.role === "system");
+      return typeof system?.content === "string" ? system.content : "";
+    };
+
+    /** A catalog that answers with two related tables, so the inventory has real names. */
+    const catalog = async (sql: string): Promise<QueryResult> => {
+      if (sql.includes("information_schema.columns")) {
+        return queryResult({
+          rows: [
+            {
+              table_schema: "public",
+              table_name: "orders",
+              column_name: "id",
+              data_type: "integer",
+              is_nullable: "NO",
+            },
+            {
+              table_schema: "public",
+              table_name: "orders",
+              column_name: "customer_id",
+              data_type: "integer",
+              is_nullable: "NO",
+            },
+            {
+              table_schema: "public",
+              table_name: "customers",
+              column_name: "id",
+              data_type: "integer",
+              is_nullable: "NO",
+            },
+          ],
+          fields: ["table_schema", "table_name", "column_name", "data_type", "is_nullable"],
+          rowCount: 3,
+        });
+      }
+      if (sql.includes("table_constraints")) {
+        return queryResult({
+          rows: [
+            {
+              table_schema: "public",
+              table_name: "orders",
+              column_name: "customer_id",
+              referenced_schema: "public",
+              referenced_table: "customers",
+              referenced_column: "id",
+            },
+          ],
+          fields: ["table_schema", "table_name", "column_name", "referenced_table", "referenced_column"],
+          rowCount: 1,
+        });
+      }
+      return queryResult({ rows: [], fields: [], rowCount: 0 });
+    };
+
+    /** One agent run, which is what puts this connection's inventory in the process. */
+    const readTheCatalogOnce = async (b: Boot): Promise<void> => {
+      const run = await startRun(b, "agent");
+      const script = scriptedModel(answersProse("understood"));
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+      });
+    };
+
+    test("it is shown the real tables and their relations, fenced, and still sends nothing", async () => {
+      const reader = boot(freshDataDir(), { answer: catalog });
+      await readTheCatalogOnce(reader);
+
+      const b = boot(freshDataDir(), { answer: catalog });
+      const run = await startRun(b, "planning");
+      const script = scriptedModel(answersProse("a plan"));
+
+      const result = await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+      });
+
+      const transcript = script.turns[0]?.transcript ?? "";
+      expect(transcript).toContain("orders");
+      expect(transcript).toContain("customers");
+      // The relations block, so a plan can name a join and not only a table.
+      expect(transcript).toContain("customer_id");
+      // Database-derived text reaches the model fenced here exactly as in agent
+      // mode: table names are writable by whoever can write to the database.
+      expect(transcript).toContain(UNTRUSTED_CONTENT_BEGIN);
+      // And the mode's own bar is untouched: no tool, no provider, no statement.
+      expect(script.turns[0]?.body.tools).toBeUndefined();
+      expect(b.acquireProvider).not.toHaveBeenCalled();
+      expect(b.queryReadOnly).not.toHaveBeenCalled();
+      expect(kindsOf(await eventsOf(b.store, run.runId))).not.toContain("context-captured");
+      expect(result.status).toBe("succeeded");
+    });
+
+    /*
+      The prompt half, which is not optional (#350): a rule the model is not told is
+      a rule live runs fail. An inventory handed over and never mentioned in the
+      rules is a window full of schema and a plan that ignores it.
+    */
+    test("it is told the inventory is somebody else's reading, and what it may not conclude from it", async () => {
+      const reader = boot(freshDataDir(), { answer: catalog });
+      await readTheCatalogOnce(reader);
+
+      const b = boot(freshDataDir(), { answer: catalog });
+      const run = await startRun(b, "planning");
+      const script = scriptedModel(answersProse("a plan"));
+
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+      });
+
+      const rules = rulesOf(script.turns[0] as Turn);
+      expect(rules).toContain("A schema inventory for this database is in this conversation");
+      expect(rules).toContain("read by an EARLIER run on this connection, never by you");
+      expect(rules).toContain("Name the real tables");
+      // What an inventory is NOT: it says what exists, so nothing in it is a
+      // measurement, and a plan that ranks tables by size from it has measured
+      // nothing.
+      expect(rules).toContain("not of how many rows anything holds");
+      // The workflow framing still applies to a plan of one.
+      expect(rules).toContain("You have no tools in this mode");
+      // The preface the inventory arrives under says the same thing in the messages.
+      expect(script.turns[0]?.transcript).toContain("This run has read nothing and will read nothing.");
+    });
+
+    test("a run whose schema is unknown is told so rather than left to invent one", async () => {
+      const b = boot(freshDataDir(), { answer: catalog });
+      const run = await startRun(b, "planning");
+      const script = scriptedModel(answersProse("a plan"));
+
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+      });
+
+      const rules = rulesOf(script.turns[0] as Turn);
+      expect(rules).toContain("No schema inventory is available to this run");
+      expect(rules).toContain("invent no table or column names");
+      expect(rules).not.toContain("A schema inventory for this database is in this conversation");
+      // Nothing was shown to it either — no packed inventory reaches a run that has
+      // none, so there is nothing for it to mistake for one. (The fence markers
+      // themselves are in every run's rules, which is why the header is what this
+      // looks for.)
+      expect(script.turns[0]?.transcript).not.toContain("table(s) read at epoch");
+      expect(b.acquireProvider).not.toHaveBeenCalled();
+    });
+
+    /*
+      An inventory is held for the connection it describes, and a plan run reads the
+      connection its own record names. This is the same boundary the loop already
+      enforces on the resources it is driven with, seen from the other side.
+    */
+    test("an inventory read for another connection does not ground this one", async () => {
+      const reader = boot(freshDataDir(), { answer: catalog });
+      await readTheCatalogOnce(reader);
+
+      const other = boot(freshDataDir(), { answer: catalog });
+      const run = await other.service.start({
+        mode: "planning",
+        actor: ACTOR,
+        connectionId: "conn_2",
+        objective: OBJECTIVE,
+      });
+      const script = scriptedModel(answersProse("a plan"));
+
+      await runInvestigation(run.runId, {
+        service: other.service,
+        model: await modelOver(script.fetch),
+        resources: {
+          ...other.resources,
+          connection: { ...CONNECTION, id: "conn_2" },
+          scope: createTargetScope("conn_2"),
+        },
+      });
+
+      expect(rulesOf(script.turns[0] as Turn)).toContain("No schema inventory is available to this run");
+      expect(script.turns[0]?.transcript).not.toContain("customers");
+    });
   });
 
   test("no workflow may present an answer yet, so an agent run calling it is told there is no such tool", async () => {
@@ -1774,9 +1984,12 @@ describe("the run reads its schema context through the catalog tool", () => {
 
     expect(b.acquireProvider).not.toHaveBeenCalled();
     expect(kindsOf(await eventsOf(b.store, run.runId))).not.toContain("context-captured");
-    // Not merely skipped for cost: a planning run is never even TOLD that a schema
-    // inventory was unavailable, because it was never going to read one.
+    // Not merely skipped for cost. Since #384 a planning run IS told whether an
+    // inventory was available to it — but never in the capture's own words, which
+    // send a model to `inspect_schema`: that is a tool this mode does not have, and
+    // naming it would be the #350 failure exactly.
     expect(script.turns[0]?.transcript).not.toContain("inspect_schema");
+    expect(script.turns[0]?.transcript).toContain("No schema inventory is available to this run");
   });
 
   test("a catalog the run cannot read leaves the run going, and says what to do instead", async () => {

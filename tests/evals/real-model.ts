@@ -22,14 +22,26 @@
  */
 
 import { createAgentModel } from "@/lib/agent/model-adapter";
-import type { AgentRunWorkflowType } from "@/lib/agent/types";
+import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import { LLMRateLimitError } from "@/lib/llm/types";
 import { DEPARTMENTS, type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
 import type { EvalDrive } from "../isolated/fixtures/agent-eval-harness";
+import { answersProse } from "../isolated/fixtures/agent-scripted-model";
 
 interface RealModelCase {
   readonly name: string;
   readonly engine: EvalEngine;
+  /** HOW the run executes. Absent means `agent`, as the store's default is. */
+  readonly mode?: AgentRunMode;
+  /**
+   * Whether this connection's inventory must already be read when the run opens.
+   *
+   * For plan cases (#384): planning reads no catalog of its own, so what it knows
+   * about the schema is what an agent run left behind. Setting this reads it once
+   * with a SCRIPTED model, which costs no credential and makes the case measure the
+   * live model instead of which other cases happened to run before it.
+   */
+  readonly grounded?: boolean;
   /** What the run is FOR. Absent means the store's default, an investigation. */
   readonly workflowType?: AgentRunWorkflowType;
   readonly objective: string;
@@ -268,6 +280,19 @@ const noneUnnamed = async (sql: string) => {
  *  - Whether the model UNDERSTOOD what it cited. The bar is about what the claims
  *    rest on, and a run can rest on the right result for the wrong reason.
  */
+/**
+ * The bar a grounded plan is held to: it names at least one table this database has.
+ *
+ * What it cannot see, said rather than implied: whether the plan's STEPS are any
+ * good, whether the tables it names are the ones the objective is about, and whether
+ * it claimed anything it could not know from an inventory — an inventory carries no
+ * row counts, so "the largest table" is a claim no plan run can support. A plan
+ * naming one real table is the floor, not the ceiling.
+ */
+function plannedAgainstNoRealTable(drive: EvalDrive): string | undefined {
+  return DEPARTMENTS.some((table) => drive.text.includes(table)) ? undefined : "plan-names-no-real-table";
+}
+
 const populationShortfall = (drive: EvalDrive): string | undefined => {
   const draftedFor = new Map<string, string>();
   for (const event of drive.events) {
@@ -427,8 +452,33 @@ export const CASES: readonly RealModelCase[] = [
   {
     name: "planning",
     engine: "postgres",
+    mode: "planning",
     objective: "How would you find out why the orders report is slow?",
     expectation: "produces a plan in prose; performs zero database operations",
+  },
+  {
+    /*
+      #384's live half, on the objective that produced the defect.
+
+      Driven in a browser against Gemini on 2026-08-15, a plan run answered "without
+      direct access to the live environment … I cannot execute live queries or run
+      diagnostics directly" and named none of the six tables the connection had. The
+      plan was true about itself and useless about the database.
+
+      A plan run is now handed the inventory an agent run already read, and this is
+      the only thing no scripted model can measure: whether a live one USES it. The
+      bar is deliberately the lowest honest one — at least one real table named —
+      because what the run was told is checkable and what a good plan reads like is
+      not. `grounded` warms the connection with a SCRIPTED drive, so the case
+      measures the model rather than which cases ran before it.
+    */
+    name: "planning-grounded",
+    engine: "postgres",
+    mode: "planning",
+    grounded: true,
+    objective: "How would you assess this database's health before a production release?",
+    expectation: "plans against the tables this database actually has, naming them",
+    judge: plannedAgainstNoRealTable,
   },
   {
     /*
@@ -503,13 +553,31 @@ export function summarise(testCase: RealModelCase, drive: EvalDrive): CaseOutcom
  * happens to look like it today.
  */
 export async function openCaseRun(testCase: RealModelCase): Promise<EvalRun> {
+  if (testCase.grounded === true) await readInventoryOnce(testCase.engine);
   return openEvalRun({
     engine: testCase.engine,
     objective: testCase.objective,
     ...(testCase.workflowType === undefined ? {} : { workflowType: testCase.workflowType }),
-    ...(testCase.name === "planning" ? { mode: "planning" as const } : {}),
+    ...(testCase.mode === undefined ? {} : { mode: testCase.mode }),
     ...(testCase.answer === undefined ? {} : { answer: testCase.answer }),
   });
+}
+
+/**
+ * Reads one engine's catalog through a scripted agent run, and throws it away.
+ *
+ * The reading is the point: `context-snapshot.ts` holds the inventory for the
+ * connection, which is the only way a plan run can know anything about a schema. The
+ * model here is scripted and says one word, so this costs no model credit — the run
+ * captures its context before the first turn either way.
+ */
+async function readInventoryOnce(engine: EvalEngine): Promise<void> {
+  const reader = await openEvalRun({ engine });
+  try {
+    await reader.drive([answersProse("Nothing to add.")]);
+  } finally {
+    reader.dispose();
+  }
 }
 
 async function runCase(testCase: RealModelCase): Promise<CaseOutcome> {

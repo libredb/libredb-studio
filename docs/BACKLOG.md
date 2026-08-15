@@ -1889,3 +1889,21 @@ experiment.
 
 Done when the documented behaviour and the schema agree, whichever way is chosen, with a test
 covering a config that sets `roles` only in `defaults`.
+
+### B42. A plan run's grounding does not survive a restart, because the inventory is held in memory
+
+A planning run performs zero database operations, so the only schema it can know is one an agent run
+on the same connection already read. `context-snapshot.ts` holds that inventory in the server
+process (#384), which means a restarted server plans blind on every connection until someone drives
+an agent run again — and the same plan run resumed in a fresh process is grounded on one drive and
+not on the next. The run says which case it is in, so nothing it writes is false; what it is not is
+predictable.
+
+The two candidate fixes were both rejected in #384 for reasons that still hold: capturing the
+catalog in plan mode would end the mode's promise, and writing the inventory into the plan run's own
+ledger would need an event kind whose timeline copy says "Schema captured" about a run that captured
+nothing. A durable store keyed by connection is the third, and it needs an eviction answer — one
+entry per schema change, per connection, forever — before it is worth having.
+
+Done when a plan run's grounding is the same before and after a restart, or when the process-held
+hold is documented as the intended ceiling and this entry is deleted.

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
+import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
+import { DEPARTMENTS, type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
 import { answersProse, callsTool, reportOn } from "../isolated/fixtures/agent-scripted-model";
 import { chatToolCallStream } from "../isolated/fixtures/agent-transport";
+import { CASES, openCaseRun, summarise } from "./real-model";
 
 /**
  * The canonical investigation, on both Phase 1 engines (#330 T1).
@@ -23,6 +25,9 @@ let consoleSpy: ReturnType<typeof spyOn<Console, "log">>;
 beforeEach(() => {
   // The audited execution layer writes one JSON line per operation to stdout.
   consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+  // What a plan run may be handed outlives the run that read it (#384), so each
+  // scenario states its own starting point instead of inheriting the last one's.
+  forgetHeldSnapshots();
 });
 
 afterEach(() => {
@@ -113,6 +118,85 @@ describe("a planning run is judged by what planning mode can produce", () => {
 
     expect(drive.kinds).toEqual(["run-started", "run-finished"]);
     expect(drive.verdict.unmet).toEqual(["no-plan"]);
+  });
+
+  /*
+    The scenario #384 exists for, end to end: an agent run reads this connection's
+    catalog through the audited path, and the plan run that follows is given what it
+    read — every table by name, and not one statement of its own.
+
+    Both runs are opened before either is driven, which is what makes the ORDER the
+    thing under test: the plan run is grounded by the reading, not by having been
+    opened after it.
+  */
+  test("a plan run on a connection this deployment has already read plans against its real tables", async () => {
+    const reader = await open("postgres");
+    const planner = await open("postgres", { mode: "planning" });
+
+    const reading = await reader.drive([answersProse("Nothing to add.")]);
+    const drive = await planner.drive([answersProse("I would start with ", "the employees table.")]);
+
+    expect(reading.statements).toHaveLength(3);
+    // The plan run sent none of its own, and recorded no capture: what it was given,
+    // it was given for free.
+    expect(drive.statements).toEqual([]);
+    expect(drive.kinds).toEqual(["run-started", "closing-statement", "run-finished"]);
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
+
+    const transcript = drive.transcripts[0] ?? "";
+    for (const table of DEPARTMENTS) expect(transcript).toContain(table);
+    expect(transcript).toContain("This run has read nothing and will read nothing.");
+  });
+
+  test("a plan run on a connection nothing has read says so instead of inventing tables", async () => {
+    const run = await open("postgres", { mode: "planning" });
+
+    const drive = await run.drive([answersProse("I would begin with the catalog.")]);
+
+    expect(drive.statements).toEqual([]);
+    expect(drive.transcripts[0] ?? "").toContain("No schema inventory is available to this run");
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
+  });
+});
+
+/*
+  What the real-model eval's `planning-grounded` case can catch, pinned the way
+  `empty-result-detection.test.ts` pins its own case: with the case object the live
+  job uses, and a scripted model where the live one goes.
+
+  The case is the only measurement of whether a REAL model uses an inventory it was
+  handed, so what it can detect must not be established by reading it. Two things
+  are asserted — that opening the case grounds its run at all, and that its bar
+  separates a plan naming a real table from one naming none.
+*/
+describe("the planning-grounded case can fail on the defect it was written for", () => {
+  const planningCase = CASES.find((entry) => entry.name === "planning-grounded");
+  if (!planningCase) throw new Error("no eval case named planning-grounded");
+
+  const openCase = async (): Promise<EvalRun> => {
+    const run = await openCaseRun(planningCase);
+    runs.push(run);
+    return run;
+  };
+
+  test("opening the case grounds its run, without the case sending anything itself", async () => {
+    const run = await openCase();
+
+    const drive = await run.drive([answersProse("I would start with the engineering table.")]);
+
+    // The warm-up read the catalog; the case's own run read nothing.
+    expect(drive.statements).toEqual([]);
+    expect(drive.transcripts[0] ?? "").toContain("This run has read nothing and will read nothing.");
+  });
+
+  test("a plan naming no real table is scored unanswered, and one naming a real table is not", async () => {
+    const naming = await openCase();
+    const named = await naming.drive([answersProse("I would profile ", "the engineering table first.")]);
+    expect(summarise(planningCase, named).verdict).toBe("answered");
+
+    const vague = await openCase();
+    const generic = await vague.drive([answersProse("I would review schema definitions and available artifacts.")]);
+    expect(summarise(planningCase, generic).verdict).toBe("unanswered (plan-names-no-real-table)");
   });
 });
 
