@@ -239,10 +239,17 @@ already read the answer on its own bounded path. Nothing on screen claims an exe
 happen.
 
 Read the sentence out. It names one reading, not a list of the readings that might have applied —
-and there are five it could have named: no plan held for that exact statement, a step the server
-could not interpret, a whole-table read, a plan with no cost in it, or a cost over the ceiling. That
-last one arrives with both numbers in it (*"the engine estimates 4320000, against a ceiling of
-50000"*), which is the version someone can argue with.
+and there are seven it could have named: no plan held for that exact statement, a plan in a dialect
+this server has no rule for, a step it could not interpret, an access path it could not determine, a
+whole-table read, a plan with no cost in it, or a cost over the ceiling.
+
+Two of those distinctions are finer than they look and worth keeping straight if someone asks: "the
+plan reads the whole table" and "this server could not tell how the statement reaches its rows" are
+different facts, and so are "no plan is held" and "a plan is held that this server cannot weigh". The
+gate refuses in all four, and says which.
+
+The cost case arrives with both numbers in it — *"the engine estimates 4320000, against a ceiling of
+50000"* — which is the version someone can argue with.
 
 This is the case to dwell on. A demo that only shows case 16 is showing a party trick; showing 16 and
 17 together is showing a control.

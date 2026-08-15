@@ -310,6 +310,40 @@ describe("the eight combinations", () => {
     expect(warning).toContain("could not read");
   });
 
+  /*
+    The two readings the first attempt at this got WRONG (#388 review).
+
+    Replacing the menu with a specific sentence is only an improvement where the
+    sentence is true, and two cases were made worse rather than better: an access path
+    the reader could not determine was described as a whole-table read, and a plan in a
+    dialect this server has no rule for was described as no plan at all. Both went from
+    an honest list to a confident falsehood, which is the worse of the two failures —
+    a reader can act on "or", and cannot act on a wrong reason they believe.
+  */
+  test("an access path the reader could not determine is not called a whole-table read", () => {
+    const decision = evaluateAutoExecute({
+      ...passing(),
+      plan: { format: "postgres-json", summary: { access: "unknown", estimatedCost: 1 } },
+    });
+
+    const warning = decision.handover === "applied" ? decision.warning : "";
+    expect(decision).toMatchObject({ condition: "plan-risky" });
+    expect(warning).not.toContain("whole table");
+    expect(warning).toContain("could not tell");
+  });
+
+  test("a dialect with no rule is not called a missing plan", () => {
+    const decision = evaluateAutoExecute({
+      ...passing(),
+      plan: { format: "mysql-json", summary: { access: "index", estimatedCost: 1 } },
+    });
+
+    const warning = decision.handover === "applied" ? decision.warning : "";
+    expect(decision).toMatchObject({ condition: "plan-risky" });
+    expect(warning).not.toContain("no plan");
+    expect(warning).toContain("no rule for weighing");
+  });
+
   test("a plan reporting no cost is not the same refusal as one reporting a large one", () => {
     const noCost = evaluateAutoExecute({
       ...passing(),

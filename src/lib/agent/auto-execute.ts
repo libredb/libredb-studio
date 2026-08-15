@@ -138,20 +138,42 @@ export type AgentAutoExecuteDecision =
  * because "the estimate is 4320000 against a ceiling of 50000" can be argued with and
  * "possibly expensive" cannot.
  */
-type PlanRefusal = "no-plan" | "unreadable-step" | "reads-whole-table" | "no-estimate" | "over-ceiling";
+type PlanRefusal =
+  | "no-plan"
+  | "unverified-dialect"
+  | "unreadable-step"
+  | "unreadable-access"
+  | "reads-whole-table"
+  | "no-estimate"
+  | "over-ceiling";
 
+/**
+ * `unknown` and `full-scan` are separated here, and the first attempt at this grouped
+ * them (#388 review). They are not the same reading: `full-scan` means at least one
+ * relation is read end to end, and `unknown` means the reading could not tell
+ * (`plan-summary.ts`). Calling the second one a whole-table read is a specific claim
+ * about a plan nobody managed to interpret — which is worse than the menu this
+ * replaced, because a reader can act on "or" and cannot act on a confident wrong
+ * reason. The same applies to a dialect with no rule: a plan IS held, so "no plan" is
+ * false; what is missing is a way to weigh it.
+ */
 function planRefusal(plan: AgentAutoExecutePlan | undefined): PlanRefusal | null {
   if (plan === undefined) return "no-plan";
   if (plan.summary.uninterpretedStep === true) return "unreadable-step";
   if (plan.format === "postgres-json") {
+    if (plan.summary.access === "unknown") return "unreadable-access";
     if (plan.summary.access !== "index" && plan.summary.access !== "mixed") return "reads-whole-table";
     if (plan.summary.estimatedCost === undefined) return "no-estimate";
     return plan.summary.estimatedCost <= AGENT_AUTO_EXECUTE_MAX_PLAN_COST ? null : "over-ceiling";
   }
-  // SQLite carries no cost at all, so `access` is the whole reading and anything that
-  // is not wholly indexed reads a table whose size nothing in the plan states.
-  if (plan.format === "sqlite-queryplan") return plan.summary.access === "index" ? null : "reads-whole-table";
-  return "no-plan";
+  // SQLite carries no cost at all, so `access` is the whole reading: anything wholly
+  // indexed passes, an unreadable plan says so, and everything else reads a table whose
+  // size nothing in the plan states.
+  if (plan.format === "sqlite-queryplan") {
+    if (plan.summary.access === "index") return null;
+    return plan.summary.access === "unknown" ? "unreadable-access" : "reads-whole-table";
+  }
+  return "unverified-dialect";
 }
 
 /**
@@ -160,8 +182,12 @@ function planRefusal(plan: AgentAutoExecutePlan | undefined): PlanRefusal | null
  */
 const PLAN_REFUSAL_TEXT: Readonly<Record<PlanRefusal, string>> = Object.freeze({
   "no-plan": "this run holds no plan for that exact statement, so there was nothing to weigh",
+  "unverified-dialect":
+    "this server has no rule for weighing a plan from this database, and reading it by another engine's rule would be a claim about a plan nobody has looked at",
   "unreadable-step":
     "the plan carried a step this server could not read, and a reading it cannot interpret is not a reading that it is cheap",
+  "unreadable-access":
+    "this server could not tell from the plan how the statement reaches its rows, and said nothing must not read as said it was cheap",
   "reads-whole-table": "the plan reads the whole table rather than reaching its rows through an index",
   "no-estimate": "the engine returned a plan with no cost in it, so there was no number to weigh",
   "over-ceiling": "the plan is too expensive",
