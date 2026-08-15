@@ -1667,6 +1667,26 @@ declared-target allowlist, the statement guard and the role's own grants are the
 - **B34** — a hydrated result cannot be exported: the Export menu serializes the tab's own rows, so it
   is hidden while a run's result is shown.
 
+The next six were found by driving the product against a live model in a browser, which is the only
+way any of them could have been found: every one of them passes every gate.
+
+- **B36** — a follow-up question is answered as if it were the first. Runs carry no memory of each
+  other, and neither the surface nor the model says so — the model picks a plausible referent and
+  answers a question nobody asked, with the citations a correct answer carries.
+- **B37** — a seed config the server cannot read disables the agent on every connection, and the rail
+  blames the connection: "its settings live in this browser", said of a connection this application
+  seeds itself. The browser cannot tell an empty seed list from a failed one.
+- **B38** — an engine with no read-only execution path is offered a run anyway, and refuses only after
+  the run has opened and spent a model turn. The rail withholds every other capability the host
+  cannot serve; this is the one it does not.
+- **B39** — a data-analysis run has no honest way to conclude that the question is not about this
+  database. Its only route to `answered` is a reading of the data, so a run that establishes the
+  question is unanswerable fabricates one — the #356 shape again, in a new place.
+- **B40** — `bun dev` cannot log in: the CSP omits `unsafe-eval` in every environment and React's
+  development build needs it, so the login page never hydrates. Production is unaffected.
+- **B41** — `defaults` in a seed config does not merge `roles`, though the documentation says the
+  block is merged into every connection.
+
 ## Related documentation
 
 - [`docs/AGENT_GUIDE.md`](./AGENT_GUIDE.md) — the user guide: the rail's own vocabulary, the three

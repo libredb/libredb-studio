@@ -1730,3 +1730,120 @@ resumed often enough passes any constant.
 Done when a drive's artifact allowance is derived from the run's own history rather than from a
 per-drive constant — most likely as part of B6 — with a test that drives one run twice past the cap
 and shows the first drive's cited results still readable, or the surface stating that they are not.
+
+### B36. A follow-up question is answered as if it were the first one
+
+Driven live on 2026-08-15. An analysis run answered "compare the average salary of employees hired
+before 1990 with those hired after" correctly. The next question typed into the same box — "and how
+many of those employees are there in each group?" — was answered about DEPARTMENTS: nine of them,
+289 in Development. "Those groups" had no referent, because a run carries none: `start()` clears the
+entries and opens a fresh ledger, and the model is handed the objective and the schema and nothing
+else.
+
+The defect is not that runs are independent. It is that the surface does not say so, and the model
+does not either — it silently picks a plausible referent and answers a question nobody asked, with
+the same confident citations a correct answer carries. A user reading the report cannot tell the
+difference without re-reading their own question.
+
+Two shapes would close it and they are not the same feature. The smaller: let a run be TOLD about
+the run before it — its objective and its report — as fenced context, so "those groups" resolves or
+is honestly refused. The larger: run history, so a user can see and return to earlier runs (the
+objective box being emptied after a run, which landed with this PR, at least stops the surface
+reading as a conversation).
+
+Neither should be built by threading the browser's memory into the prompt: a resumed drive would not
+have it, and the context a run reasons from has to live where the run does.
+
+Done when a follow-up either resolves against the previous run or is refused for lack of a referent,
+with an eval that drives two runs and asserts the second does not answer a different question.
+
+### B37. A malformed seed config disables the agent everywhere, and blames the connection
+
+Driven live on 2026-08-15. A `seed-connections.yaml` missing a required field made
+`GET /api/connections/managed` throw. The browser then held an empty `servedSeeds`, so
+`resolveAgentRunConnectionId` returned null for EVERY connection — including the two samples this
+application ships and seeds itself — and the rail said:
+
+> "Sample (Employees) cannot be rebuilt on the server: its settings live in this browser."
+
+Which is false twice over. The connection is a seed, its settings live on the server, and what
+actually happened is that the server could not read its own config. The true cause appeared in the
+server log and nowhere a user can see. The rail is stating a conclusion drawn from an absence it
+cannot distinguish from a failure — the same shape as an unreadable plan reading as a cheap one
+(#373), and it costs an operator the whole agent surface while pointing them at the wrong file.
+
+Done when the browser can tell "the server served no seeds" apart from "the server could not load
+its seeds", and the rail says the second one differently — with a test that fails the managed
+endpoint and asserts the copy names the server's configuration rather than the connection.
+
+### B38. A run is offered on an engine that cannot run it, and refuses only after a model turn
+
+Driven live on 2026-08-15. Starting an agent run on the bundled `libredb` sample opens the run,
+captures nothing, drafts a statement, invokes `run_read_query` and then ends `failed` with
+`engine-unsupported`: "The agent cannot run on this database engine: it offers no read-only
+execution profile." The sentence is exact and the failure is honest. It is also entirely
+predictable before the run: `queryReadOnly` is a property of the provider, known from the
+connection's type, and nothing about the objective can change it.
+
+So a user spends a model turn and a run id to be told something the rail could have said while the
+Start button was still grey. This repository already follows the opposite rule everywhere it
+matters — `HydrationControls` renders no control the host cannot serve, the stop button is absent
+rather than disabled, and `canHandOver` withholds the auto-execute checkbox from a host with no
+runner. Agent mode on an unsupported engine is the one place a capability is offered and then
+withdrawn after it was taken up.
+
+Done when the rail states the engine's unsuitability before a run is started — the same way it
+already states an unresolvable connection — with a test that pins the message and one that pins
+Start being unavailable for it.
+
+### B39. An analysis run cannot say "this database cannot answer that" without fabricating a read
+
+Driven live on 2026-08-15. Asked "what is our customer churn rate this quarter?" against an
+employees database, the run answered honestly: the schema holds employee records, not customer
+records. To do so it executed
+
+```sql
+SELECT 'The database contains employee records (employee, department, dept_emp, salary, title) ...'
+```
+
+— a string literal, run purely to produce the `sql.query.read` artifact that `present_answer`
+requires and `agent-data-analysis.1` scores on. The run took 36 steps to get there.
+
+The user-visible outcome is correct and readable, which is why this is recorded rather than fixed in
+haste. The mechanism is not: the workflow's only route to `answered` is a reading of the data, so a
+question the data cannot answer has no honest route at all, and the model games the rule instead of
+reporting the finding. This is the #356 family — a bar only one kind of correct answer can clear —
+and the remedy is the same shape: a second arm. A run that establishes from the schema snapshot that
+the question is not about this database has answered it, and should be able to say so without
+inventing a query.
+
+Done when a data-analysis run can conclude "not answerable here" and be scored `answered` for it,
+with the rule stated in `WORKFLOW_TOOL_RULES` (a rule the model is not told is a rule live runs
+fail) and an eval that asserts no fabricated statement is sent.
+
+### B40. `bun dev` cannot log in, because the CSP omits `unsafe-eval` in every environment
+
+`securityHeaders` (`src/lib/security/headers.ts`) deliberately omits `unsafe-eval`, which is right
+for production and correct for Monaco. React's DEVELOPMENT build needs it, and without it the login
+page never hydrates: the Sign In button has no handler, no request reaches `/api/auth/login`, and
+the console carries only "eval() is not supported in this environment". A contributor's first
+`bun dev` is a dead end unless they already hold a session cookie from a production run — which is
+why this has gone unnoticed.
+
+Production is unaffected and nothing here argues for weakening the shipped policy. The fix is to
+relax the directive only where `NODE_ENV === "development"`, in one place, with the reason written
+next to it.
+
+Done when `bun dev` can log in from a cold browser profile, with a test asserting the shipped
+(non-development) policy still omits `unsafe-eval`.
+
+### B41. `defaults` in a seed config does not merge `roles`
+
+`docs/SEED_CONNECTIONS.md` says the `defaults` block is "merged into every connection". A config
+whose `roles` appears only under `defaults` is rejected with
+`Invalid seed config: connections.0.roles: expected array, received undefined`. Either the merge is
+narrower than the sentence, or the sentence is wrong; a config file is not the place to find out by
+experiment.
+
+Done when the documented behaviour and the schema agree, whichever way is chosen, with a test
+covering a config that sets `roles` only in `defaults`.
