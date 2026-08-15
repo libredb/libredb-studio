@@ -161,9 +161,26 @@ describe("foldLedgerEntries", () => {
 
     const closing = view.items.at(-2);
     expect(closing?.headline).toBe("Closing statement");
-    expect(closing?.detail).toBe("Start with the salary index.");
+    // Carried as PROSE rather than as a detail: `detail` is the app's own words, and
+    // this is the model's — a distinction the surface reads, because prose is what it
+    // renders with the structure the model wrote (#373 review).
+    expect(closing?.prose).toBe("Start with the salary index.");
+    expect(closing?.detail).toBeUndefined();
     expect(closing?.tone).toBe("progress");
     expect(view.items.at(-1)?.detail).toBe("The model stopped without composing a cited report.");
+  });
+
+  test("the app's own lines carry no prose, so nothing else is rendered as the model's", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: { kind: "run-finished", atMs: 9, status: "succeeded", stopReason: "model-stopped" },
+      }),
+    ]);
+
+    expect(view.items[0]?.prose).toBeUndefined();
+    expect(view.items[1]?.prose).toBeUndefined();
   });
 
   test("a run that ran out of steps says so, and keeps what it gathered", () => {
@@ -1554,7 +1571,7 @@ describe("an answer reads as the app's decision, with the model's caption quoted
   });
 
   test("the answer entry says it IS the answer, and no other entry does", () => {
-    // The rail shows an answer as it arrives (#379) and shows no other stored result
+    // The rail shows an answer as it arrives (#373 review) and shows no other stored result
     // on its own, so which entry that is has to be a fact the fold states. Inferring
     // it from the fields beside it does not work: a table answer with no hand-over
     // carries what a drafted statement and a stored result carry between them.

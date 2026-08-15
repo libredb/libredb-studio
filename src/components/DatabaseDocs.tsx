@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { FileText, Loader2, Search, Sparkles, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TableSchema } from "@/lib/types";
-import { renderInlineBold } from "@/components/rich-text";
+import { renderInline } from "@/components/rich-text";
 
 interface DatabaseDocsProps {
   schema: TableSchema[];
@@ -141,21 +141,21 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
       if (line.startsWith("- ")) {
         return (
           <li key={i} className="text-xs text-zinc-400 ml-4 leading-relaxed">
-            {renderInlineBold(line.slice(2))}
+            {renderInline(line.slice(2))}
           </li>
         );
       }
       if (line.match(/^\d+\.\s/)) {
         return (
           <li key={i} className="text-xs text-zinc-400 ml-4 leading-relaxed list-decimal">
-            {renderInlineBold(line)}
+            {renderInline(line)}
           </li>
         );
       }
       if (line.trim()) {
         return (
           <p key={i} className="text-xs text-zinc-400 leading-relaxed">
-            {renderInlineBold(line)}
+            {renderInline(line)}
           </p>
         );
       }

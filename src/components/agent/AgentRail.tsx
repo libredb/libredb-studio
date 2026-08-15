@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { Bot, Loader2, PencilLine, Play, Square, TableProperties } from "lucide-react";
+import { renderProse } from "@/components/rich-text";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
 import { describeAgentCapability } from "@/lib/agent/capability-labels";
@@ -446,7 +447,7 @@ export function AgentRail({
   };
 
   /*
-    Emptying the box for the next question (#379).
+    Emptying the box for the next question (#373 review).
 
     Measured: after a run completed the objective still held the previous question, so
     asking a second one meant selecting the old text and deleting it first.
@@ -553,7 +554,7 @@ export function AgentRail({
   }, [run.runId, run.timeline.items, onApplyStatement, onRunStatement, connectionId]);
 
   /*
-    Showing the answer the run composed (#379).
+    Showing the answer the run composed (#373 review).
 
     A `data-analysis` run exists to answer with a result, and often that result is a
     chart. Driven live twice on 2026-08-15, both runs reached `answer-composed` with a
@@ -688,7 +689,7 @@ export function AgentRail({
           onShowArtifact({ runId: activeRunId, correlationId, ...(chartSpec === undefined ? {} : { chartSpec }) });
 
   /*
-    Keeping the newest entry in view (#379).
+    Keeping the newest entry in view (#373 review).
 
     Measured on a completed run: the container sat at `scrollTop: 0` with a
     `scrollHeight` of 760 against a `clientHeight` of 360, so the report — the thing
@@ -1108,6 +1109,27 @@ export function AgentRail({
                 <span className="text-xs text-zinc-300">{item.headline}</span>
               </div>
               {item.detail !== undefined && <p className="mt-0.5 pl-3.5 text-xs text-zinc-500">{item.detail}</p>}
+              {/*
+                Prose the MODEL wrote, rendered with the structure it wrote it in
+                (#373 review). Measured in plan mode against a live model: the closing
+                statement arrived as markdown and reached the user as hash marks and
+                asterisks, and plan mode's whole output is this one block.
+
+                Inside its own bordered block, which is the half that has to survive
+                being readable: `renderProse` builds React nodes and reaches no HTML
+                parser, so nothing here can execute — but a heading a model wrote must
+                still not read as a heading the application wrote, and the rule that
+                the app's words and everyone else's never share a line is what the
+                border keeps true.
+              */}
+              {item.prose !== undefined && (
+                <div
+                  data-testid="agent-prose"
+                  className="mt-1 ml-3.5 space-y-1 border-l border-white/10 pl-2 text-zinc-400"
+                >
+                  {renderProse(item.prose)}
+                </div>
+              )}
               {/*
                 The one place this surface contradicts the ledger, and it does so beside
                 the sentence it contradicts. The entry above is folded from what the RUN

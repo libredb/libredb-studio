@@ -62,6 +62,22 @@ export interface AgentTimelineItem {
   /** Verbatim content from the model, the engine or the user. Rendered quoted. */
   readonly quoted?: string;
   /**
+   * Prose the MODEL wrote, for a surface to render with the structure it wrote it in.
+   *
+   * A third field beside the two above rather than a use of either, because it is a
+   * third thing. `detail` is the application speaking, and the closing statement is
+   * not the application; `quoted` is content shown verbatim, which is right for a
+   * statement, an engine message or the user's own objective, and wrong for the one
+   * entry whose whole content is a model's markdown — measured live, a plan run's
+   * output reached the user as hash marks and asterisks (#373 review).
+   *
+   * It is still untrusted content. What changes is that its headings and bullets are
+   * rendered as headings and bullets (`renderProse`, which builds React nodes and
+   * reaches no HTML parser); what does not change is that it stays in a block of its
+   * own, so a reader can still see where the application stopped speaking.
+   */
+  readonly prose?: string;
+  /**
    * The statement this entry drafted, when it drafted one (#329 T11). Present is
    * what makes the rail offer to apply it to the editor; a user action is still what
    * applies it.
@@ -631,7 +647,10 @@ function describeEvent(
         // like an ending — but under its own name, because it cites nothing.
         tone: "progress",
         headline: "Closing statement",
-        detail: event.text,
+        // The model's own words, and carried as such: this used to be a `detail`,
+        // which is the field for the application's sentences, and the surface rendered
+        // a plan run's entire markdown answer into one paragraph of literal characters.
+        prose: event.text,
       };
     default:
       return {

@@ -386,7 +386,7 @@ describe("AgentRail", () => {
   });
 
   /**
-   * The box is emptied for the next question (#379).
+   * The box is emptied for the next question (#373 review).
    *
    * Measured: after a run completed, `agent-objective` still held the previous
    * question, so asking a second one meant selecting the old text and deleting it.
@@ -1950,7 +1950,7 @@ describe("AgentRail", () => {
   });
 
   /**
-   * The answer a run composes is SHOWN, rather than described (#379).
+   * The answer a run composes is SHOWN, rather than described (#373 review).
    *
    * Driven live against Gemini twice on 2026-08-15: both runs reached
    * `answer-composed` with `presentation.kind === "chart"` and a valid spec, and
@@ -2105,7 +2105,109 @@ describe("AgentRail", () => {
   });
 
   /**
-   * The timeline follows the newest entry (#379).
+   * The model's prose reads as prose (#373 review).
+   *
+   * Measured in plan mode, live: the closing statement came back as markdown —
+   * `### Step 1: Schema Integrity and Consistency Check`, `* **What to inspect:** …` —
+   * and the rail rendered it into a single paragraph as literal characters. Plan mode's
+   * whole output is one such block, so the mode read as broken.
+   *
+   * What is NOT changed here is the quoted blocks. Verbatim is what quoting means, and
+   * the boundary between what the application says and what came from elsewhere is a
+   * security property rather than a style: the objective, the engine's own message, a
+   * drafted statement and a report's claims are all shown exactly as they arrived.
+   */
+  describe("model prose", () => {
+    const CLOSING = [
+      "### Step 1: Schema Integrity",
+      "",
+      "* **What to inspect:** the `orders` table",
+      "* Whether every order has a customer",
+      "",
+      "Nothing here has been run.",
+    ].join("\n");
+
+    const closingLine = (text: string): string =>
+      `${JSON.stringify({ kind: "event", event: { kind: "closing-statement", atMs: 1_004, text } })}\n`;
+
+    async function runWith(lines: readonly string[]) {
+      mockAgentFetch(lines);
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "how would you check this" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      return view;
+    }
+
+    test("a closing statement written as markdown is rendered as markdown, not as characters", async () => {
+      const { findByTestId } = await runWith([OPENED_LINE, STARTED_LINE, closingLine(CLOSING), FINISHED_LINE]);
+
+      const prose = await findByTestId("agent-prose");
+      expect(prose.querySelector("h4")?.textContent).toBe("Step 1: Schema Integrity");
+      expect(prose.querySelectorAll("ul").length).toBe(1);
+      expect(prose.querySelectorAll("li").length).toBe(2);
+      expect(prose.querySelector("li strong")?.textContent).toBe("What to inspect:");
+      expect(prose.querySelector("li code")?.textContent).toBe("orders");
+      expect(prose.querySelectorAll("p")[0]?.textContent).toBe("Nothing here has been run.");
+      // The markers the user was reading before.
+      expect(prose.textContent).not.toContain("###");
+      expect(prose.textContent).not.toContain("**");
+    });
+
+    test("it is still the model speaking: nothing of it reaches the app's own line", async () => {
+      const { findByTestId, findAllByTestId } = await runWith([
+        OPENED_LINE,
+        STARTED_LINE,
+        closingLine(CLOSING),
+        FINISHED_LINE,
+      ]);
+
+      const prose = await findByTestId("agent-prose");
+      const items = await findAllByTestId("agent-timeline-item");
+      const entry = items.find((item) => item.textContent?.includes("Closing statement"));
+      // The headline is the app's; the prose is the model's, and it is inside its own
+      // block rather than spliced into the sentence beside it.
+      expect(entry?.contains(prose)).toBe(true);
+      expect(prose.textContent).not.toContain("Closing statement");
+    });
+
+    test("an HTML payload a model wrote is still text after all of it", async () => {
+      const { findByTestId } = await runWith([
+        OPENED_LINE,
+        STARTED_LINE,
+        closingLine('### <img src=x onerror="steal()">'),
+        FINISHED_LINE,
+      ]);
+
+      const prose = await findByTestId("agent-prose");
+      expect(prose.querySelector("img")).toBeNull();
+      expect(prose.querySelector("h4")?.textContent).toBe('<img src=x onerror="steal()">');
+    });
+
+    test("a quoted block stays verbatim, markers and all", async () => {
+      // The objective is quoted content, and quoted content is what the user reads to
+      // see where the application stops speaking. It is shown as it arrived.
+      const objective = "why is **checkout** slow";
+      const opened = `${JSON.stringify({
+        kind: "run-opened",
+        atMs: 1_000,
+        runId: "arun_1",
+        mode: "planning",
+        actor: { sessionId: "ada", role: "user" },
+        connectionId: "seed:sales",
+        objective,
+      })}\n`;
+      const { findAllByTestId } = await runWith([opened, STARTED_LINE]);
+
+      const items = await findAllByTestId("agent-timeline-item");
+      expect(items[0].querySelector("pre")?.textContent).toBe(objective);
+      expect(items[0].querySelector("strong")).toBeNull();
+    });
+  });
+
+  /**
+   * The timeline follows the newest entry (#373 review).
    *
    * Measured on a completed run: the scroll container sat at `scrollTop: 0` with a
    * `scrollHeight` of 760 against a `clientHeight` of 360, so the report — the thing
