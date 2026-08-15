@@ -50,6 +50,7 @@ const WORKFLOW_TYPES: ReadonlySet<string> = new Set<AgentRunWorkflowType>([
   "investigation",
   "query-optimization",
   "database-assessment",
+  "operations",
 ]);
 
 function badRequest(message: string): NextResponse {

@@ -261,6 +261,35 @@ describe("AgentRail", () => {
     expect(getByTestId("agent-workflow-investigation").getAttribute("aria-pressed")).toBe("true");
   });
 
+  test("the Operate workflow is offered, and starting it asks the server for it", async () => {
+    // The rail's button row is generated from the label record, so this is the
+    // assertion that the new workflow is actually reachable by a user rather than
+    // merely present in a type.
+    const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+    const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    const operate = getByTestId("agent-workflow-operations");
+    expect(operate.getAttribute("aria-pressed")).toBe("false");
+    expect(operate.textContent).toBe("Operate");
+
+    fireEvent.click(getByTestId("agent-mode-agent"));
+    fireEvent.click(operate);
+    expect(getByTestId("agent-workflow-operations").getAttribute("aria-pressed")).toBe("true");
+    expect(getByTestId("agent-workflow-investigation").getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.change(getByTestId("agent-objective"), { target: { value: "what is blocked right now" } });
+    await act(async () => {
+      fireEvent.click(getByTestId("agent-start"));
+    });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      mode: "agent",
+      workflowType: "operations",
+      objective: "what is blocked right now",
+      connectionId: "seed:sales",
+    });
+  });
+
   test("a workflow chosen in one mode survives the switch to the other", () => {
     const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
 

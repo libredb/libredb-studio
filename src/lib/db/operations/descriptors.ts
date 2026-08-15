@@ -13,6 +13,7 @@
  * statement (epic #325 product decision).
  */
 
+import { z } from "zod";
 import type { ExplainMode } from "@/lib/explain";
 import { OperationRegistry } from "./registry";
 import { agentPlanExecutionSqlInput, agentReadSqlInput } from "./statement-guard";
@@ -116,11 +117,97 @@ export const sqlTableProfileDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+/**
+ * Which operational reading a curated call asks for.
+ *
+ * Named after what a DBA asks about rather than after the provider method that
+ * answers, because the method is an implementation this layer may re-route and the
+ * question is not. Every member maps onto a method the `DatabaseProvider` interface
+ * declares for EVERY engine (`src/lib/db/types.ts`), which is the whole reason this
+ * operation can be offered where `sql.query.read` cannot.
+ */
+export const CURATED_OPERATION_KINDS = [
+  "sessions",
+  "slow-queries",
+  "table-stats",
+  "index-stats",
+  "storage",
+  "health",
+] as const;
+
+export type CuratedOperationKind = (typeof CURATED_OPERATION_KINDS)[number];
+
+/**
+ * The input contract for a curated operational read.
+ *
+ * It cannot reuse `agentReadSqlInput`: there is no statement. A curated call names a
+ * READING, and the server decides which provider method answers it — so the thing
+ * validated here is the question, not a statement somebody could smuggle a side
+ * effect into. `kind` is REQUIRED, unlike `inspect_schema`'s optional selector: that
+ * field's absent case means "the inventory a bare inspection always meant", and this
+ * operation has no history for an absent value to mean.
+ *
+ * Exported so the agent tool declares the SAME schema the descriptor validates
+ * against. Two schemas for one contract is two things to keep equal, and the one
+ * that drifted would be the one a model was refused by after being told otherwise.
+ */
+export const agentCuratedReadInput = z.strictObject({
+  kind: z.enum(CURATED_OPERATION_KINDS),
+  /** How many rows the reading may return. Passed to the engine where its method takes one, and applied to the rows either way. */
+  limit: z.number().int().min(1).max(200).optional(),
+  /** Narrows the table and index readings; ignored by the readings that have no schema dimension. */
+  schema: z.string().min(1).optional(),
+});
+
+export type AgentCuratedReadInput = z.infer<typeof agentCuratedReadInput>;
+
+const CURATED_OPERATION_READ_ID = "db.operations.read";
+
+/**
+ * The curated operational read: what the engine says about ITSELF.
+ *
+ * A FIFTH descriptor, and the one `docs/BACKLOG.md` B27 said would need its own
+ * shape — "a metrics read needs a descriptor shape for non-SQL reads". This is that
+ * shape: an input contract that carries no statement at all.
+ *
+ * **R0/`metadata-read`, and that is a claim rather than a convenience.** R1 requires
+ * a `RiskVerification` naming the database-native mechanism that bounds the
+ * operation, and a curated provider method has none to name — there is no statement
+ * for a read-only transaction to bound. What bounds it instead is the SHAPE of the
+ * call: the model supplies a kind out of a closed enum and two scalars, the server
+ * chooses the method, and no model-authored text reaches an engine on this path. The
+ * six readings are the engine's own operational views, which is metadata about the
+ * server rather than the contents of user tables.
+ *
+ * The honest edge, stated rather than glossed: two of the readings carry TEXT that a
+ * user wrote. `SlowQueryStats.query` and `ActiveSessionDetails.query` are statements,
+ * and a statement can have literal values in it; `ActiveSessionDetails.user` is an
+ * identity. That is inherent to the question "which queries are slow" and cannot be
+ * redacted without answering a different question, so it is declared here and in
+ * `docs/AGENT.md` instead. An operator who does not want it can deny this one
+ * operation id in the audit stream without denying any other agent read — which is
+ * the same argument the table-profile descriptor makes for having its own id.
+ */
+export const dbOperationsReadDescriptor: RegistrableOperationDescriptor = {
+  id: CURATED_OPERATION_READ_ID,
+  riskClass: 0,
+  accessLevel: "metadata-read",
+  requiredCapabilities: [],
+  // Light in the sense the budget means it: one provider call, no statement the
+  // engine has to plan. It is NOT free — `getActiveSessions` reads a live view — and
+  // the row cap is applied by the projection, because these methods take no budget.
+  resourceCost: "light",
+  supportsDryRun: false,
+  requiresApproval: false,
+  inputSchema: agentCuratedReadInput,
+};
+
 export function createCanonicalOperationRegistry(): OperationRegistry {
   const registry = new OperationRegistry();
   registry.register(sqlQueryReadDescriptor);
   registry.register(sqlExplainEstimateDescriptor);
   registry.register(sqlExplainAnalyzeDescriptor);
   registry.register(sqlTableProfileDescriptor);
+  registry.register(dbOperationsReadDescriptor);
   return registry;
 }

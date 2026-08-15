@@ -26,11 +26,19 @@ Three properties frame everything below, and each of them is load-bearing rather
   already allows, and it has no second path to a driver. The pipeline is **not** shared with the
   rest of the application: `src/lib/agent/tools.ts:844` is its only production call site, and the
   editor's `/api/db/query` reaches the provider directly (`src/app/api/db/query/route.ts:44`).
-- **Agent mode requires PostgreSQL or SQLite.** They are the only providers implementing
-  `queryReadOnly` (`postgres.ts:870`, `sqlite.ts:397`); any other engine fails profiled acquisition
-  with `PROFILE_UNSUPPORTED_BY_PROVIDER` (`src/lib/db/factory.ts:437`) and the run ends
-  `engine-unsupported` (`src/lib/agent/runtime.ts:199`). Plan mode is toolless and reaches no
-  database, so no engine restriction applies to it.
+- **Agent mode requires PostgreSQL or SQLite — except the `operations` workflow, which runs
+  anywhere.** They are the only providers implementing `queryReadOnly` (`postgres.ts:870`,
+  `sqlite.ts:397`), so any other engine fails profiled acquisition with
+  `PROFILE_UNSUPPORTED_BY_PROVIDER` and the run ends `engine-unsupported`
+  (`src/lib/agent/runtime.ts:199`). The restriction is a property of the **execution profile**, not
+  of the factory: `agent-read-only` sends model-authored statements and is served only where the
+  engine can bound one, while `agent-operations` sends no statement at all — it calls the curated
+  reporting methods every provider implements — and its acquisition therefore does not require
+  `queryReadOnly` (`src/lib/db/factory.ts`, `PROFILE_ACQUISITION`). Everything else about the two
+  acquisitions is identical: the same `readOnly: true` open, the same optional least-privilege
+  `agentUser`, and the same profiled cache, so an operations run is never handed the editor's
+  writable pool either. Plan mode is toolless and reaches no database, so no engine restriction
+  applies to it.
 
 This document describes what the runtime *does*. The security matrix rows that cover it are 3.4 and
 3.5 in [`docs/SECURITY.md`](./SECURITY.md) — both marked **Partial**, with the reasons stated there;
@@ -147,7 +155,7 @@ tool-selection function is re-checked at the execution seam, so a caller holding
 still cannot execute a tool the selector would never have offered.
 
 The **workflow type** is WHAT the run is for — `investigation` (the default),
-`query-optimization` or `database-assessment` — and it is fixed at start for the same reason and by
+`query-optimization`, `database-assessment` or `operations` — and it is fixed at start for the same reason and by
 the same mechanism. Both `selectAgentTools` and `verifyRunGoal` are functions of the run's own
 persisted value, so there is no parameter through which a workflow could arrive twice, and no other
 route accepts one. It is **optional in the request body**: omitting it opens an investigation, which
@@ -171,7 +179,9 @@ Two properties are worth stating, because both are easy to assume the other way 
 
 Composing claims that rest on something the run actually read is the baseline **every** workflow has
 to meet. A template adds to that baseline rather than replacing it — see
-[The query-optimization template](#the-query-optimization-template).
+[The query-optimization template](#the-query-optimization-template) — with one stated exception:
+`operations` drops the baseline's emptiness clause, because an empty operational reading is an
+answer rather than an absence of one. See [The operations template](#the-operations-template).
 
 A run's **actor** — the session and role that opened it — is written into the run's own record at
 start, and every later authorization decision reads it from there. Not from the request that resumes
@@ -300,9 +310,10 @@ that is logged, and the original failure is what propagates.
 
 ## The tool set
 
-Four tools, and `agent` mode receives exactly these. Three of them reach the database, each through
-`executeAuditedOperation` against a provider acquired under the agent read-only execution profile —
-never the shared writable connection cache.
+Four tools are the read class, and `agent` mode receives exactly these unless its workflow says
+otherwise. Three of them reach the database, each through `executeAuditedOperation` against a
+provider acquired under the agent read-only execution profile — never the shared writable connection
+cache.
 
 | Tool | Operation | What the model supplies |
 | --- | --- | --- |
@@ -442,11 +453,112 @@ and that is a reversal of a product decision rather than an oversight: epic #325
 set at three and #330 T3 reopened it. Its own id is what lets an operator see profiling in the audit
 stream, and deny it, without denying every read the agent makes.
 
-Four honest limits, each with a backlog entry: SQLite hides constraint-created indexes so
+Three honest limits, each with a backlog entry: SQLite hides constraint-created indexes so
 `fk_unindexed` can fire on a covered key (**B25**); only an email shape is tested, because `LIKE`
-cannot express a digit run (**B26**); no monitor snapshot is produced, because engine health reaches
-provider methods no descriptor covers (**B27**); and a profile that times out reports the failure
-rather than falling back to catalog statistics (**B28**).
+cannot express a digit run (**B26**); and a profile that times out reports the failure rather than
+falling back to catalog statistics (**B28**).
+
+### The operations template
+
+A run opened as `operations` answers a DBA's questions about a **live** database — the slowest
+queries, the active sessions and which of them are blocked, the biggest tables, the unused indexes,
+storage pressure — and it is the one workflow that is **not** built on the read class.
+
+| Offered | Not offered |
+| --- | --- |
+| `inspect_operations`, `recommend_change`, `compose_report` | `inspect_schema`, `run_read_query`, `inspect_plan`, `profile_table`, `compare_plans` |
+
+**Everything it leaves out is left out for one reason: those tools send SQL.** All three read-class
+tools reach the database through `provider.queryReadOnly`, which only PostgreSQL and SQLite
+implement, so offering any of them here would reintroduce — tool by tool — the exact engine
+restriction this workflow exists to escape. `compare_plans` is left out because it names two
+`inspect_plan` artifacts this run cannot produce: a tool that could only ever refuse is worse than
+no tool.
+
+`inspect_operations` takes a **kind** and nothing a model wrote:
+
+| Kind | Provider method | What comes back |
+| --- | --- | --- |
+| `sessions` | `getActiveSessions` | Who is connected, what each is running, for how long, and whether it is blocked |
+| `slow-queries` | `getSlowQueries` | The statements the engine reports as costly, with call counts and times |
+| `table-stats` | `getTableStats` | Row counts and sizes, plus dead rows where the engine tracks them |
+| `index-stats` | `getIndexStats` | Size and scan counts, so an unused index is visible |
+| `storage` | `getStorageStats` | Space and its growth |
+| `health` | `getHealth` | One row of connection, size and cache figures |
+
+Four properties carry the template:
+
+- **The reach is the point.** Every provider declares these six methods, so this workflow runs on
+  MySQL, Oracle, SQL Server, MongoDB and Redis as well as the two Phase 1 engines. That is asserted
+  against what a run actually did, not against its tool set:
+  `tests/evals/operations.test.ts` drives the arc on a MySQL preset that carries no `queryReadOnly`
+  at all — as the real provider does not — so it can answer **no statement whatsoever**, and the
+  eval asserts the run sent none.
+- **A reading is an ordinary artifact.** It settles a step through `runStep` like `profile_table`,
+  produces a `QueryResult` (rows and declared fields, projected by the server from the typed provider
+  result), and is stored under its own operation id — so citations, `verifiedAgainst`, the artifact
+  route and the rail's "Show result" all work unchanged. The columns are **declared per kind**, not
+  derived from the first row, so an empty reading still says what it would have contained.
+- **A provider that cannot serve a kind is refused, not crashed.** Three shapes, all typed. A
+  missing method and an over-large reading are `reading-refused` refusals carrying
+  `KIND_UNSUPPORTED_BY_PROVIDER` and `READING_OVER_BUDGET` — refusals rather than run-loop outcomes
+  because by then the pipeline has allowed the call, a statement of the run's budget is spent and an
+  execution is on the audit stream, so a step that settled as "never attempted" would contradict the
+  ledger. A method that **throws** becomes an ordinary repairable `database-error` refusal with the
+  engine's own words fenced, and that holds for a driver-native error too: the curated methods do not
+  map their errors uniformly the way `queryReadOnly` does (`mongodb.getTableStats` calls
+  `listCollections().toArray()` outside any try/catch), so anything that is not already a
+  `DatabaseError` is wrapped at the seam rather than allowed to propagate and end the run `internal`.
+  An over-large reading is refused rather than truncated, because a partial operational reading is a
+  misleading one.
+- **`limit` and `schema` are applied by the server, not merely passed on.** Only
+  `getActiveSessions` and `getSlowQueries` take a limit at all, and four of the curated methods take
+  no options whatsoever (`oracle.getTableStats`, `mssql.getTableStats`, `mssql.getIndexStats`,
+  `mongodb.getTableStats`), so a selector honoured only in the arguments would be silently dropped on
+  those engines — and the over-budget refusal would be advising a retry with a smaller limit that
+  does nothing. The projection therefore narrows by schema and then bounds by limit itself.
+- **Every reading is a moment.** The tool description says so, the run's opening rules say so, and
+  the timeline says so on the entry itself — *"A moment, not a history: this reading says what the
+  engine reported as it was taken."* A session list is who was connected as the run looked, and
+  nothing here measures a trend.
+
+Its goal verifier is `agent-operations.1`: a composed report, resting on what the engine said about
+itself. **It deliberately does not compose on the investigation baseline**, which is the #356 lesson
+applied rather than repeated: the baseline ends a run `empty-evidence` when every cited result
+returned zero rows, and for an operational reading that is backwards. "No session is blocked", "no
+slow query is recorded", "no index is unused" are answers, and they are the answers a healthy server
+gives. A run that composed nothing is `no-report`, and a cancelled one says so instead.
+
+The citation half of the rule — *your report must cite a reading you took* — is told to the model in
+`WORKFLOW_TOOL_RULES` and enforced where it can actually fail: at composition. `composeReportTool`
+refuses any claim whose evidence does not name something this run produced, and the only citable
+thing an operations run can produce IS a reading (it is offered no other tool that settles a step and
+captures no schema snapshot). A verifier arm for "cited no reading" would therefore be a verdict
+advertised to users that no run could ever show, which is the same dead-arm objection that kept the
+other templates honest.
+
+Two limits stated rather than glossed:
+
+- **The statement timeout cannot be enforced on this path.** `budget.statementTimeoutMs` becomes
+  PostgreSQL's `SET LOCAL statement_timeout` because a statement is what is being sent;
+  `getSlowQueries(options?)` and its siblings take no budget at all, so the deadline's clamp is
+  advisory here. What still binds is the rest: the run deadline decides whether the call is admitted,
+  the statement budget counts it, and the row and byte caps are applied by the projection.
+- **`recommend_change` offers an index or a rewrite, and nothing else.** Most operational actions —
+  kill a blocking session, vacuum a bloated table, drop an unused index — are neither, and widening
+  the durable `change` union is a separate decision. The run's rules therefore tell the model to
+  state those as claims in the report rather than file them as recommendations.
+
+**The curated read is a fifth operation descriptor** (`db.operations.read`, R0 `metadata-read`) — the
+shape the backlog's monitor-snapshot deferral asked for, "a descriptor shape for non-SQL reads". R0 rather than R1 is a
+claim about what bounds it: an R1 descriptor must NAME the database-native mechanism bounding it, and
+a curated provider call has none, because there is no statement for a read-only transaction to bound.
+What bounds it instead is the input contract, which carries a kind out of a closed enum and two
+scalars — no `sql` key exists on it at all. The honest edge: `SlowQueryStats.query` and
+`ActiveSessionDetails.query` are statements somebody wrote, and a statement can carry literal values;
+`ActiveSessionDetails.user` is an identity. That is inherent to "which queries are slow" and cannot be
+redacted without answering a different question, so it is declared here — and an operator who does not
+want it can deny this one operation id in the audit stream without denying any other agent read.
 
 ### What the fence is proved to hold against
 
@@ -668,6 +780,7 @@ build until somebody decides what "answered" means for it.
 | `agent` (investigation) | The run composed at least one claim, **and** the claims do not rest entirely on empty results. | `no-report`, `empty-evidence` |
 | `agent` (query-optimization) | The baseline above, **and** either a plan comparison on the ledger or an index recommendation citing a plan this run read. `agent-query-optimization.2`. | the above, plus `no-plan-comparison`, `no-plan-evidence` |
 | `agent` (database-assessment) | The baseline above, **and** a table profiled. `agent-database-assessment.1`. | the above, plus `no-table-profile` |
+| `agent` (operations) | A composed report. `agent-operations.1`. **Not** composed on the baseline: an empty reading is an answer, so the emptiness clause is dropped. Its claims already cite a reading — `compose_report` refuses uncited claims and a reading is the only citable artifact this workflow can produce — so that half needs no arm of its own. | `no-report`, `cancelled` |
 
 A run stopped by its user reports `cancelled` instead of the missing output: a stop is not
 a defect of the run, and counting it as one would make every cancellation read as a model
@@ -775,14 +888,15 @@ model passed the capability probe**; for anybody else the answer is that there i
 | **A TOOLLESS model drove both panels.** Each posted a prompt and rendered what came back, so any configured model produced an answer — including one that cannot call a tool, which is what a small local `ollama` model usually is. | An agent run is refused before it opens: the start path probes the model, and an established incapability is a `422` naming what could not be established. What such a model can still drive is planning mode, which is toolless by contract and therefore reaches no database at all. | `src/lib/agent/capability-gate.ts`; `tests/isolated/agent-capability-gate.test.ts`; [What a refused model looks like in the app](#what-a-refused-model-looks-like-in-the-app). |
 | **One click that RAN the model's SQL.** NL2SQL's Run and Autopilot's Execute pushed model-authored SQL — including DDL — straight into the studio's execution path. | The rail hands a statement to the **editor** and never runs it: an explicit "Apply to editor" on a drafted statement or a recommendation. Nothing in the runtime executes a proposed statement. | `src/components/agent/timeline.ts` — the `statement-drafted` and `recommendation` entries carry `applySql`; `tests/evals/query-optimization.test.ts` — the recommendation is recorded and no `CREATE INDEX` reaches the database. |
 | **Proposed a statement the run never sent.** NL2SQL's product was a statement, whatever the model wrote. | Only `recommend_change` proposes an unexecuted statement; it accepts `index` or `rewrite`, the statement must match the card it is filed under, and it belongs to the `query-optimization` workflow. An investigation — what a plain-English question opens — cannot propose anything. | `src/lib/agent/tools.ts` (`recommendationSchema`, `matchesCard`, `QUERY_OPTIMIZATION_TOOLS`); `tests/evals/legacy-surface-coverage.test.ts`. |
-| **Read live monitoring.** Autopilot's whole input came from `/api/db/monitoring`: slow queries, index usage, table statistics, cache and connection metrics. | No tool reaches any of it. `AgentToolName` has seven members and the closest, `profile_table`, composes counts over one table. **B17**, **B27**. | `src/lib/agent/tools.ts`; `tests/evals/legacy-surface-coverage.test.ts` — the seven members and the three operations they may name are asserted as a set, so a monitoring tool under ANY name fails it; a model that asks for one anyway is told there is no such tool and sends no statement of its own. |
+| **Read live monitoring.** Autopilot's whole input came from `/api/db/monitoring`: slow queries, index usage, table statistics, cache and connection metrics. | **Restored, and bounded.** `inspect_operations` reads the same provider methods under the `db.operations.read` descriptor, and it reaches ONE workflow: a run opened to Operate. An investigation or an assessment is still offered nothing that reads monitoring, so "the agent can read monitoring" is only true of that workflow. The two deferrals that tracked this — the monitoring half of the M2 tooling entry, and the assessment's missing monitor snapshot — are closed and removed from the backlog. | `src/lib/agent/tools.ts`; `tests/evals/legacy-surface-coverage.test.ts` — the members and the operations they may name are asserted as a set, so a monitoring member under ANY name has to land there; `tests/evals/operations.test.ts` — the arc, on an engine that answers no statement. |
 | **A free-form markdown report**, opening with a performance score out of 100 and closing with configuration advice. | A report is claims, each citing an artifact this run read or the snapshot it captured, verified against the run's own ledger before it is recorded. A number cited to nothing cannot be reported — the citation is what is checked, never the claim's text, so a fabricated score citing a real artifact would be accepted. | `src/lib/agent/tools.ts` (`composeReportTool`); `tests/evals/legacy-surface-coverage.test.ts` — an invented correlation id is refused and the run ends `unanswered (no-report)`. |
 | **Maintenance tasks** — `VACUUM`, `ANALYZE`, reindexing — in the same report. | Nothing proposes them: the `change` card has two members and neither is maintenance. It stays where it was before the panels — the monitoring surface, and the user's own editor. | `src/lib/agent/tools.ts` (`recommendationSchema`). |
 | **Multi-turn conversation.** NL2SQL replayed the whole exchange on every request, so "and how many in the second one?" was answerable. | A run's objective is fixed when it starts and no ledger event records a later question. A follow-up is a NEW run: it re-reads the catalog and knows nothing the first one established. | `src/app/api/agent/runs/route.ts`; `src/lib/agent/types.ts` (`AgentRunEvent`); `tests/evals/legacy-surface-coverage.test.ts`. |
-| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent serves **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is refused rather than guessed at. Nothing refuses the run at its start, so a run opened on another engine begins, captures no schema, and is told no schema inventory can be read for that connection type. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`); `tests/unit/lib/agent/context-snapshot.test.ts` — a `mysql` connection reaches no database; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`. |
+| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes SQL for **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is refused rather than guessed at. Nothing refuses the run at its start, so a run opened on another engine begins, captures no schema, and is told no schema inventory can be read for that connection type. **The `operations` workflow is the exception and runs on every engine**, because it composes no SQL at all: it captures no schema by design and is told so in the server's own voice instead. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`); `tests/unit/lib/agent/context-snapshot.test.ts` — a `mysql` connection reaches no database; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`. |
 
-Two of these are tracked as deferrals with what it would take to close them (B17, B27), and the first
-row is Phase 1's own boundary rather than a defect (B21 is its one residual). The rest are consequences
+One of these has since been restored under its own workflow (the monitoring row, which closed both
+deferrals that tracked it), and the first row is Phase 1's own boundary rather than a defect (B21 is
+its one residual). The rest are consequences
 of the removal rather than work in progress: they are what the product decided not to do, and that
 decision is only honest while they are written down where a maintainer will find them.
 
@@ -1045,8 +1159,6 @@ declared-target allowlist, the statement guard and the role's own grants are the
   rows.
 - **B16** — the opt-in `@workflow/world-postgres` backend is not present in the standalone payload,
   so it cannot load in the container image or the npx payload.
-- **B17** — monitoring tools are deferred, so nothing reads slow queries, index usage or engine
-  metrics; table profiling landed with #330 T3 and closed the other half of that entry.
 - **B20** — a Gemini deployment behind a proxy is not configurable: `LLM_API_URL` is unread for that
   kind, in the chat surface as much as in the agent.
 - **B21** — the published package's `BottomPanel` carries the agent-provenance branch as dormant
@@ -1065,6 +1177,9 @@ declared-target allowlist, the statement guard and the role's own grants are the
   against drift, but that guard derives only the agent paths: every other family is still hand-kept,
   and even here only a path's presence is asserted, never that a documented shape still matches its
   handler.
+- **B33** — a run is observable only from its own ledger. There is no OpenTelemetry export and no
+  metrics: the record described above is complete, and getting it into a stack the operator already
+  runs is designed (#332) and deliberately unbuilt.
 
 ## Related documentation
 

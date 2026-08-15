@@ -4,6 +4,7 @@ import type { AgentPlanAccess, AgentPlanSummary } from "@/lib/agent/plan-summary
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
 import type {
   AgentEvidenceReference,
+  AgentReadingDenyCode,
   AgentReportClaim,
   AgentRunEvent,
   AgentRunFailureReason,
@@ -212,6 +213,22 @@ const PLAN_ESTIMATE_CAVEAT =
 /** Said on every recommendation, because the run does not make the change. */
 const NOT_APPLIED_CAVEAT = "Not applied: nothing here runs this statement.";
 
+/**
+ * The honesty an operational reading owes its reader, for the same reason the plan
+ * caveat exists: the app says it, rather than trusting the model to remember.
+ *
+ * A curated reading settles as an ordinary `tool-completed`, which renders "Result
+ * stored" and nothing about WHAT kind of result it is — so without this the timeline
+ * would show a session list exactly as it shows a table read, and a reader would have
+ * no way to tell that the rows describe an instant that has already passed. Attached
+ * on the operation id, which is the only thing on the event that identifies the
+ * reading.
+ */
+const POINT_IN_TIME_CAVEAT = "A moment, not a history: this reading says what the engine reported as it was taken.";
+
+/** The operation a curated operational reading is stored under. */
+const OPERATIONS_OPERATION_ID = "db.operations.read";
+
 /** How an engine reaches the rows, in words. Total, so a new access kind cannot render blank. */
 const ACCESS_WORDS: Readonly<Record<AgentPlanAccess, string>> = {
   "full-scan": "a full scan",
@@ -240,6 +257,7 @@ const WORKFLOW_WORDS: Readonly<Record<AgentRunWorkflowType, string>> = {
   investigation: "an investigation",
   "query-optimization": "query optimization",
   "database-assessment": "a database assessment",
+  operations: "an operations reading",
 };
 
 /**
@@ -382,6 +400,16 @@ const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
 };
 
 /**
+ * What a refused operational reading is called in the rail. The reason code is shown
+ * as the detail, so the headline says which of the two happened in the reader's own
+ * terms rather than repeating the constant.
+ */
+const READING_REFUSAL_HEADLINES: Readonly<Record<AgentReadingDenyCode, string>> = {
+  KIND_UNSUPPORTED_BY_PROVIDER: "This engine serves no reading of that kind",
+  READING_OVER_BUDGET: "The reading was larger than the run may carry",
+};
+
+/**
  * The sentence for a reason, for a surface that shows it outside the timeline.
  *
  * Exported so the rail's status line and the timeline entry cannot drift into two
@@ -399,6 +427,8 @@ function describeRefusal(refusal: AgentToolRefusal): Omit<AgentTimelineItem, "id
       return { headline: "Refused by policy", detail: refusal.reasonCode };
     case "approval-required":
       return { headline: "Approval required", detail: refusal.operationId };
+    case "reading-refused":
+      return { headline: READING_REFUSAL_HEADLINES[refusal.reasonCode], detail: refusal.reasonCode };
     default:
       return { headline: "The database refused the statement", quoted: refusal.message };
   }
@@ -437,13 +467,15 @@ function describeEvent(
         headline: "Tool invoked",
         detail: event.operationId === undefined ? event.tool : `${event.tool} via ${event.operationId}`,
       };
-    case "tool-completed":
+    case "tool-completed": {
+      const stored = `${event.artifact.summary.rowCount} ${event.artifact.summary.rowCount === 1 ? "row" : "rows"}, ${event.artifact.summary.columnNames.length} ${event.artifact.summary.columnNames.length === 1 ? "column" : "columns"}, ${event.artifact.summary.elapsedMs} ms (${event.artifact.correlationId})`;
       return {
         tone: "progress",
         headline: "Result stored",
-        detail: `${event.artifact.summary.rowCount} ${event.artifact.summary.rowCount === 1 ? "row" : "rows"}, ${event.artifact.summary.columnNames.length} ${event.artifact.summary.columnNames.length === 1 ? "column" : "columns"}, ${event.artifact.summary.elapsedMs} ms (${event.artifact.correlationId})`,
+        detail: event.artifact.operationId === OPERATIONS_OPERATION_ID ? `${stored} ${POINT_IN_TIME_CAVEAT}` : stored,
         artifactId: event.artifact.correlationId,
       };
+    }
     case "tool-refused":
       return { tone: "refused", ...describeRefusal(event.refusal) };
     case "report-composed":
@@ -648,6 +680,10 @@ function reportOf(claims: readonly AgentReportClaim[], index: LedgerIndex): Agen
  *  - A policy denial and an approval requirement charge nothing at all:
  *    `execution.ts` returns before `tracker.beginExecution` on any non-allow, and
  *    `AgentRepairLedger` consumes a repair attempt only for a database error.
+ *  - A refused operational reading charges a STATEMENT and no repair. It is decided
+ *    inside the invoke callback, after the pipeline allowed the call and
+ *    `beginExecution` ran, so the tracker has already counted it; and no rewording
+ *    could have changed the answer, so the repair ledger does not.
  *  - Database time is the elapsed time completed reads reported. A statement that
  *    failed has none in the ledger, so none is invented for it — the caveat the
  *    rail shows beside the meter is what says so.
@@ -715,6 +751,11 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
       } else if (event.kind === "tool-refused" && event.refusal.class === "database-error") {
         statements += 1;
         repairs += 1;
+      } else if (event.kind === "tool-refused" && event.refusal.class === "reading-refused") {
+        // Counted as a statement and NOT as a repair, which is what actually happened:
+        // the call was admitted and executed against the run's budget, and no repair
+        // attempt was spent because no rewording could have changed the answer.
+        statements += 1;
       }
     }
     // Indexed, because two entries can legitimately be identical in content and

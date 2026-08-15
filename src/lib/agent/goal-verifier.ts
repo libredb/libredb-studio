@@ -58,7 +58,8 @@ export type AgentGoalVerifierId =
    */
   | "agent-query-optimization.1"
   | "agent-query-optimization.2"
-  | "agent-database-assessment.1";
+  | "agent-database-assessment.1"
+  | "agent-operations.1";
 
 /**
  * What a run was required to produce and did not. Deliberately a closed union of
@@ -278,10 +279,46 @@ function verifyDatabaseAssessmentGoal(run: VerifiableAgentRun): readonly AgentGo
  * bar nobody applied. A versioned id whose meaning can change silently is worse
  * than no id at all, so the two halves are one value.
  */
+/**
+ * The operations bar: a cited report resting on what the engine said about ITSELF.
+ *
+ * **The one template that does NOT compose on the investigation baseline, and the
+ * exception is the whole #356 lesson applied rather than repeated.** The baseline
+ * ends a run `empty-evidence` when every result it cited returned zero rows, and for
+ * a bounded read that is right — `0 rows` means the question found nothing. For an
+ * operational reading it is precisely backwards. "No session is blocked", "the engine
+ * reports no slow queries", "no index is unused" are ANSWERS, and they are the
+ * answers a healthy database gives. Holding this workflow to the baseline would mark
+ * every run against a healthy server unanswered, which is the same error as demanding
+ * an artifact only some valid answers can produce.
+ *
+ * **Why "the report cites a reading" is not a second arm here, though it IS the rule
+ * the model is told.** It cannot fail in this workflow, and an arm that cannot fail
+ * is a verdict a user is promised and no run can ever show. `composeReportTool`
+ * refuses any claim whose evidence does not name something this run produced, and the
+ * only citable things an operations run can produce are `db.operations.read`
+ * artifacts: it is offered no other tool that settles a step, and it captures no
+ * schema snapshot to cite. So a composed report already IS a report citing a reading,
+ * enforced at composition rather than judged afterwards. Writing the arm anyway would
+ * have bought its own line coverage from a hand-built ledger no run can produce —
+ * the same dead-arm objection that kept the recon template to one arm.
+ *
+ * What is left is therefore real: a run that composed nothing has not answered, and a
+ * cancelled one says so instead. Both are written out here rather than borrowed, so
+ * that a later change to the baseline's emptiness rule cannot silently arrive through
+ * a call this function no longer makes.
+ */
+function verifyOperationsGoal(run: VerifiableAgentRun): readonly AgentGoalShortfall[] {
+  const claims = composedClaims(run.events);
+  if (claims.length === 0) return run.status === "cancelled" ? ["cancelled"] : ["no-report"];
+  return [];
+}
+
 export const AGENT_WORKFLOW_GOALS: Readonly<Record<AgentRunWorkflowType, AgentWorkflowGoal>> = Object.freeze({
   investigation: { verifier: "agent-investigation.1", verify: verifyInvestigationGoal },
   "query-optimization": { verifier: "agent-query-optimization.2", verify: verifyQueryOptimizationGoal },
   "database-assessment": { verifier: "agent-database-assessment.1", verify: verifyDatabaseAssessmentGoal },
+  operations: { verifier: "agent-operations.1", verify: verifyOperationsGoal },
 } satisfies Record<AgentRunWorkflowType, AgentWorkflowGoal>);
 
 const PLANNING_GOAL: AgentWorkflowGoal = { verifier: AGENT_PLANNING_VERIFIER, verify: verifyPlanningGoal };

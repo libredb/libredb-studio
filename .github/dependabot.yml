@@ -1,0 +1,153 @@
+# Dependabot version updates (docs/BACKLOG.md C5).
+#
+# Grouping is the whole point of this file. Ungrouped, a repository with ~1170
+# installed packages raises one pull request per package, every one of which has
+# to pass the same six gates as a human's - and the 100 percent line-coverage
+# gate means a bot pull request is never a rubber stamp. So updates are batched
+# into a handful of pull requests a week, split only where the split changes how
+# a reviewer reads them: what ships versus what does not.
+#
+# Bun is supported through the `npm` ecosystem - Dependabot treats it as part of
+# `npm_and_yarn` and understands `bun.lock`. Only version updates work today;
+# Bun security updates are not implemented upstream, which is why the security
+# side still runs through Trivy and `bun audit`.
+#
+# CI installs with `bun install --frozen-lockfile` (scripts/ci-install.sh), so a
+# pull request whose `bun.lock` does not match its `package.json` fails loudly
+# rather than resolving around the difference. That is the safety net behind
+# every group below.
+
+version: 2
+
+updates:
+  # ---------------------------------------------------------------- npm / bun
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Istanbul"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+
+    # Both groups batch minor and patch only, which means a major that is not
+    # ignored below arrives as its own pull request. That is deliberate, not an
+    # oversight: batching majors with routine updates makes one pull request that
+    # cannot be merged as a unit - refusing recharts 3 would also hold back the
+    # `next` patch riding along with it - and majors are individually a decision
+    # rather than a bump. The fan-out is bounded: nine majors are outstanding as
+    # of 2026-08-15 across ~1170 installed packages, and open-pull-requests-limit
+    # caps how many wait at once.
+    groups:
+      # What ships. Kept separate from tooling because a reviewer weighs these
+      # against "does the editor still work in a browser", not "does lint pass".
+      production:
+        applies-to: version-updates
+        dependency-type: "production"
+        update-types: ["minor", "patch"]
+
+      # What never leaves CI or a developer's machine. Safe to batch wide: the
+      # gates are themselves the test of a tooling bump.
+      development:
+        applies-to: version-updates
+        dependency-type: "development"
+        update-types: ["minor", "patch"]
+
+    ignore:
+      # Database driver majors are deliberate work, not a merge. Each one is
+      # bound by the provider tri-sync rule (code, docs and tests move in the
+      # same pull request) and, more importantly, our unit tests mock these
+      # drivers - so a major that changes wire behaviour passes CI green and
+      # breaks only against a real server. ioredis 6 is the live example: it
+      # defaults to RESP3, and src/lib/db/providers/keyvalue/redis.ts parses
+      # INFO, SLOWLOG GET and CLIENT LIST by hand. A bot pull request for that
+      # would look safe and would not be. Patch and minor updates still flow.
+      - dependency-name: "pg"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "mysql2"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "better-sqlite3"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "oracledb"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "mssql"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "mongodb"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "ioredis"
+        update-types: ["version-update:semver-major"]
+
+      # The agent runtime is pinned to exact versions the owner ratified, and
+      # tests/unit/agent-dependency-boundary.test.ts fails if any of them moves.
+      # A bot bump here is a guaranteed red build, so do not raise one.
+      - dependency-name: "ai"
+      - dependency-name: "workflow"
+      - dependency-name: "@workflow/world-local"
+      - dependency-name: "@workflow/world-postgres"
+      - dependency-name: "@ai-sdk/openai"
+      - dependency-name: "@ai-sdk/google"
+      - dependency-name: "@ai-sdk/anthropic"
+
+      # Exact-pinned on purpose: the html-to-image family mis-renders Tailwind 4
+      # computed styles, which is why the ER diagram export uses this engine and
+      # this version (see tsup.config.ts). Moving it is an export-quality
+      # decision to make in a browser, not a version bump.
+      - dependency-name: "@zumer/snapdom"
+
+  # ------------------------------------------------------------ GitHub Actions
+  # Actions are SHA-pinned with the human-readable tag in a trailing comment
+  # (`uses: actions/checkout@de0fac2... # v6`). Dependabot moves both together,
+  # which is the only practical way to keep SHA pinning current.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Istanbul"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns: ["*"]
+
+  # ------------------------------------------------------------------- Docker
+  # Two Dockerfiles: the application image and the OLM operator image. The
+  # generated .next/standalone/Dockerfile is build output and is not tracked.
+  - package-ecosystem: "docker"
+    directories:
+      - "/"
+      - "/operator"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Istanbul"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      docker:
+        applies-to: version-updates
+        patterns: ["*"]
+    ignore:
+      # `oven/bun:<version>` in the Dockerfile and `bun-version:` in the
+      # workflows are the same number maintained in two places Dependabot cannot
+      # see as one. Bumping only the image would build the release with a
+      # different Bun than every CI job used - including a different lockfile
+      # writer - and would still go green, which is the worst shape a drift can
+      # take. Move both by hand, in one pull request.
+      - dependency-name: "oven/bun"

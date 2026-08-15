@@ -73,7 +73,7 @@ export type AgentRunMode = "planning" | "agent";
  * later request cannot widen a run after it opens — not because a filter rejects one,
  * but because there is no parameter through which a workflow could arrive twice.
  */
-export type AgentRunWorkflowType = "investigation" | "query-optimization" | "database-assessment";
+export type AgentRunWorkflowType = "investigation" | "query-optimization" | "database-assessment" | "operations";
 
 /**
  * What a run is for when nothing said.
@@ -119,6 +119,11 @@ export type AgentRunFailureReason =
    * The connection's engine has no database-native read-only execution profile, so
    * this run could never have been permitted on it. A property of the connection the
    * user chose, not a fault of the server — which is why it is not `internal`.
+   *
+   * WORKFLOW-CONDITIONAL since the `operations` workflow (#325): that workflow reads
+   * only the curated provider methods every engine implements, under its own
+   * execution profile, so it never asks for a read-only STATEMENT path and can never
+   * end this way. Every other workflow still can, and does, on the same connection.
    */
   | "engine-unsupported"
   /** The run's persisted connection no longer resolves on the server. */
@@ -232,7 +237,16 @@ export interface AgentContextSnapshot {
 }
 
 /**
- * Why a tool call produced no result. The three variants are distinct in TYPE,
+ * Why a curated operational reading was refused. Both are decided INSIDE the call,
+ * after the pipeline allowed it and the provider was acquired, which is exactly why
+ * they are refusals rather than "the run decided not to ask": a statement of the run's
+ * budget was charged and the execution was audited, so a settlement that said nothing
+ * happened would contradict the ledger.
+ */
+export type AgentReadingDenyCode = "KIND_UNSUPPORTED_BY_PROVIDER" | "READING_OVER_BUDGET";
+
+/**
+ * Why a tool call produced no result. The four variants are distinct in TYPE,
  * not merely in a string field, so the run loop cannot hand a policy denial to
  * the model as if the statement were malformed.
  *
@@ -240,11 +254,17 @@ export interface AgentContextSnapshot {
  * text — untrusted input, exactly like public issue text — and any prompt it
  * re-enters has to label and quote it. `statementFingerprint` is what a resumed
  * run reads to know it has already failed on that exact statement.
+ *
+ * `reading-refused` carries no message at all: nothing an engine wrote is in it. It
+ * is the server's own decision about a curated reading it will not deliver, and its
+ * reason code is a closed union rather than prose for the same reason the policy
+ * variant's is.
  */
 export type AgentToolRefusal =
   | { readonly class: "policy-denied"; readonly reasonCode: PolicyDenyCode }
   | { readonly class: "approval-required"; readonly operationId: string }
-  | { readonly class: "database-error"; readonly statementFingerprint: string; readonly message: string };
+  | { readonly class: "database-error"; readonly statementFingerprint: string; readonly message: string }
+  | { readonly class: "reading-refused"; readonly reasonCode: AgentReadingDenyCode };
 
 interface AgentRunEventBase {
   /** Epoch milliseconds. A number, not a Date: a Date does not round-trip. */

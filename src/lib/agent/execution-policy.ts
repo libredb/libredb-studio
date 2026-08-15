@@ -43,6 +43,18 @@ import type { ExecutionPolicy } from "@/lib/db/operations/policy";
  */
 export const AGENT_EXECUTION_PROFILE: ExecutionProfile = "agent-read-only";
 
+/**
+ * The profile a CURATED operational read is served under.
+ *
+ * A second profile rather than a second acquirer, so the operations path keeps every
+ * property the read-only one has — the profiled cache, the `agentUser` credential,
+ * the `readOnly: true` open — and differs in exactly one thing: it does not require
+ * the engine to offer a read-only statement path, because it sends no statement.
+ * That single difference is what lets this workflow run on MySQL, Oracle, SQL Server,
+ * MongoDB and Redis, and it is expressed once, in `factory.ts`'s profile table.
+ */
+export const AGENT_OPERATIONS_PROFILE: ExecutionProfile = "agent-operations";
+
 const BUDGETS: ExecutionBudget = Object.freeze({
   /** The run loop is sequential: one statement in flight, so a run cannot fan out. */
   maxConcurrentExecutions: 1,

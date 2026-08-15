@@ -101,6 +101,7 @@ describe("foldLedgerEntries", () => {
       ["investigation", "an investigation"],
       ["query-optimization", "query optimization"],
       ["database-assessment", "a database assessment"],
+      ["operations", "an operations reading"],
     ] as const) {
       const view = foldLedgerEntries([{ ...OPENED, workflowType }]);
       expect(view.items[0].headline, workflowType).toBe(`Run opened in agent mode for ${words}`);
@@ -328,6 +329,32 @@ describe("foldLedgerEntries", () => {
     expect(view.items[0].tone).toBe("progress");
   });
 
+  test("an operational reading says it is a MOMENT, which an ordinary read does not", () => {
+    // A curated reading settles as an ordinary `tool-completed`, so without this the
+    // timeline would show a session list exactly as it shows a table read and a
+    // reader would have no way to tell the rows describe an instant already past.
+    // Attached on the operation id, the only thing on the event that identifies it.
+    const reading = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-completed",
+          atMs: 7,
+          stepId: "s1",
+          artifact: {
+            correlationId: "corr_ops",
+            runId: "arun_1",
+            operationId: "db.operations.read",
+            summary: { rowCount: 3, columnNames: ["pid", "state"], elapsedMs: 4 },
+          },
+        },
+      }),
+    ]);
+
+    expect(reading.items[0].detail).toContain("3 rows, 2 columns, 4 ms (corr_ops)");
+    expect(reading.items[0].detail).toContain("A moment, not a history");
+  });
+
   /**
    * The point of the whole refusal split: a denial is reported as a denial by its
    * deny code, with no engine text anywhere in the item, because there is none to
@@ -388,6 +415,42 @@ describe("foldLedgerEntries", () => {
 
     expect(view.items[0].headline).toBe("The database refused the statement");
     expect(view.items[0].quoted).toBe('relation "custmers" does not exist');
+  });
+
+  test("a refused reading is its own outcome, and quotes nothing, because no engine wrote it", () => {
+    // The two reading refusals are the server's own decision about a curated reading
+    // it will not deliver, so the item names what happened rather than fencing text.
+    const unsupported = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-refused",
+          atMs: 10,
+          stepId: "s1",
+          refusal: { class: "reading-refused", reasonCode: "KIND_UNSUPPORTED_BY_PROVIDER" },
+        },
+      }),
+    ]);
+    const oversized = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-refused",
+          atMs: 10,
+          stepId: "s1",
+          refusal: { class: "reading-refused", reasonCode: "READING_OVER_BUDGET" },
+        },
+      }),
+    ]);
+
+    expect(unsupported.items[0].headline).toBe("This engine serves no reading of that kind");
+    expect(unsupported.items[0].detail).toBe("KIND_UNSUPPORTED_BY_PROVIDER");
+    expect(unsupported.items[0].quoted).toBeUndefined();
+    expect(oversized.items[0].headline).toBe("The reading was larger than the run may carry");
+    // The call WAS made and charged, so it counts against the statement budget — and
+    // it is not a repair, because no rewording of the request would change it.
+    expect(unsupported.budget.find((meter) => meter.id === "statements")?.used).toBe(1);
+    expect(unsupported.budget.find((meter) => meter.id === "repairs")?.used).toBe(0);
   });
 
   test("a composed report reports how many claims it carries", () => {

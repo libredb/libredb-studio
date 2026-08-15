@@ -399,6 +399,58 @@ shipped product, and the entry is deleted then and not before.
 
 ---
 
+## Chart configuration surface
+
+Both entries were found on 2026-08-14 while reviewing #362, which added the Gateway API
+`HTTPRoute` template. Neither is caused by that change; both are gaps it made visible.
+
+### N1. The chart cannot expose the app on OpenShift, where `Route` is the native way in
+
+`grep -rl 'route.openshift.io' charts/ operator/` returns nothing: the chart renders an `Ingress`
+(`templates/ingress.yaml`) and, since #362, a Gateway API `HTTPRoute` (`templates/route.yaml`), but
+never a `route.openshift.io/v1` `Route`. Meanwhile the chart carries an OpenShift security-context
+adaptation (`templates/_helpers.tpl`, `templates/deployment.yaml`) and the repository publishes an
+OpenShift operator to OperatorHub, so OpenShift is a first-class target everywhere except the one
+object that makes the app reachable there.
+
+The consequence is the same symptom #362 was opened to fix, one platform over: `helm install`
+succeeds, the pod runs, and the operator has to hand-write a `Route` outside the chart and keep it in
+sync across upgrades. An `Ingress` is *sometimes* served on OpenShift by the router's ingress
+translation, but that is a compatibility shim with its own annotation dialect, not the native path,
+and it does not cover re-encrypt or passthrough TLS.
+
+Note the naming collision this now carries: `route.*` in `values.yaml` means Gateway API as of #362,
+so an OpenShift `Route` cannot reuse that key. `openshiftRoute.*` is the obvious alternative, and
+whichever key is chosen should be stated in the chart README next to `ingress.*` and `route.*` so the
+three exposure paths read as siblings.
+
+Done when an OpenShift cluster can be served by the chart alone, with TLS termination selectable, and
+when the README says which of the three exposure mechanisms belongs to which platform.
+
+### N2. `AUTH_COOKIE_SECURE` is reachable in every distribution channel except the chart
+
+`grep -rl AUTH_COOKIE_SECURE charts/ operator/helm-charts/` returns nothing. The variable is read at
+`src/lib/auth.ts:90` and is the documented answer for a browser reaching the app over plain HTTP on a
+non-loopback host (`docs/OIDC.md`, `docs/DISTRIBUTION.md`), where auth cookies otherwise carry the
+`Secure` flag, the browser rejects them, and — in the words of the comment at `src/lib/auth.ts:117` —
+"login silently loops". The upstream report that produced that comment is getumbrel/umbrel-apps#5847.
+
+Every other `config.*` key in this class already has a first-class value (`storageProvider`,
+`llmProvider`, `oidcIssuer`, ...) rendered by `templates/configmap.yaml` under the established
+`{{- if .Values.config.X }}` pattern. A chart user has to reach for `extraEnv` instead, which means
+the one setting most likely to be needed on a LAN or home-server install is the one setting that is
+not discoverable from `values.yaml`.
+
+This is not hypothetical: plain-HTTP channels shipping without the override has already been
+diagnosed on three separate distribution channels.
+
+Done when `config.authCookieSecure` exists, renders through the configmap like its siblings, is
+documented in the chart README's values table, and leaves the app's own default in place when unset —
+the variable's semantics are three-state (`true` / `false` / unset lets the app decide), so a plain
+boolean value with a `false` default would silently change behaviour for existing installs.
+
+---
+
 ## Security Phase 1 deferrals
 
 Each of these was decided during Phase 1, not overlooked. Delete an entry when the work lands.
@@ -656,16 +708,27 @@ the operator image has a different lifecycle and a different consumer (OpenShift
 OperatorHub, which does its own scanning). Done when a certification requirement
 asks for one.
 
-### C5. Dependabot has alerts but no version-update configuration
+### C5. Dependabot raises version updates but cannot raise security ones
 
-The repository has Dependabot alerts and secret scanning enabled, but there is no
-`.github/dependabot.yml`, so nothing opens a pull request for a bump. The
-dependency gate therefore reports advisories that a human has to act on by hand.
-Adding version updates is cheap and the reason it was not done here is scope, not
-disagreement - it also interacts with the 100 percent coverage gate and the
-required checks in ways worth thinking about once (a bot pull request must pass
-the same six gates). Done when `dependabot.yml` lands with a grouping strategy
-that does not produce one pull request per transitive package.
+`.github/dependabot.yml` now groups weekly version updates across npm/bun, GitHub
+Actions and both Dockerfiles, which is what the original entry asked for. What it
+cannot do is the other half: Dependabot's Bun support covers **version updates
+only** - security updates are not implemented upstream for this ecosystem. So an
+advisory against a package Bun resolves still reaches nobody automatically; Trivy
+and `bun audit` remain the only things that see it, and acting on one is still a
+human step.
+
+That is also why several dependencies are deliberately excluded from the bot, each
+with its reason recorded in the config: database driver majors (mocked in tests, so
+a wire-behaviour change goes green - ioredis 6's RESP3 default is the live case),
+the exact-pinned agent runtime (a bump fails
+`tests/unit/agent-dependency-boundary.test.ts` by design), `@zumer/snapdom` (pinned
+for ER-diagram export fidelity), and the `oven/bun` base image (its version lives
+in two places - the Dockerfile tag and the workflows' `bun-version` input - that
+Dependabot cannot see as one, so it must move by hand in both).
+
+Done when Bun security updates land upstream and the exclusion list can be
+re-read against whatever they cover.
 
 ### C6. `bun audit` cannot answer "is there a fix"
 
@@ -690,6 +753,126 @@ behind it. Done when the bundled runtime's version and provenance appear in the
 SBOM or a sibling document - a second Trivy pass over the `fetch-node.sh`
 scripts' pinned version, or a hand-maintained component entry, whichever ships
 without adding a new failure mode to the release chain.
+
+### C8. No artefact root declares that part of the distribution is not MIT
+
+`LICENSE` states the project's own MIT terms and nothing at the root of any
+packaged artefact says that not everything inside them is under those terms. Two
+kinds of obligation sit behind that.
+
+The routine kind is attribution: a scan of the installed tree (1169 distinct
+packages) puts 1136 under MIT, Apache-2.0, ISC or BSD, all of which want the
+copyright notice to travel with redistributed copies, and two carry attribution as
+their whole purpose - `caniuse-lite` is CC-BY-4.0 and the `geist` font is under
+the SIL Open Font License.
+
+The specific kind is `seed-assets/sqlite/employee.db`, which is CC BY-SA 3.0 and
+therefore genuinely share-alike, not merely attribution-required. That was handled
+deliberately - `seed-assets/sqlite/ATTRIBUTION.md` records the provenance, the
+license, the modifications made here and the fact that the file is redistributed
+under the same terms - but the file ships in the image (the runner stage copies
+`seed-assets` explicitly) and in the packaged tarballs, and nothing at the root of
+those artefacts points at that nested ATTRIBUTION.md. A reader of the image sees
+an MIT `LICENSE` and a CC BY-SA database with no note connecting them.
+
+Done when a generated `NOTICE` (or `THIRD_PARTY_LICENSES`) ships at the root of
+the image and the tarballs, names the sample database's separate terms explicitly,
+and is regenerated from the lockfile rather than hand-maintained.
+
+### C9. `elkjs` is EPL-2.0 and a direct production dependency
+
+Every other direct production dependency is permissive. `elkjs@0.11.1` is
+EPL-2.0, a file-level reciprocal license with a patent-retaliation clause, and it
+is ours by choice rather than pulled in transitively: the schema diagram's layout
+worker imports it at `src/components/schema-diagram/elk.worker.ts`. It is used
+unmodified, which is the case EPL-2.0 is comfortable with, so nothing is wrong
+today - but it means the distributed bundle is MIT-plus-EPL rather than MIT, and
+that is a question an acquirer's counsel asks rather than one they overlook.
+
+Recorded rather than acted on because the alternatives are worse: ELK is the only
+layout engine in the ecosystem that produces the layered orthogonal routing the
+ER diagram depends on. Done when either the mixed terms are stated openly
+(alongside C8, which is the natural place) or a permissive layout engine proves it
+can match the output.
+
+### C10. The last DOMPurify advisories are held open by Monaco's pin
+
+`dompurify` via `monaco-editor` is the only advisory chain that reaches a user.
+Everything else `bun audit` reports - `minimatch`, `brace-expansion`, `flatted`,
+`picomatch`, `esbuild`, `@babel/core`, `undici` - arrives through `eslint`,
+`typescript-eslint`, `knip`, `tsup`, `workflow` and `@ai-sdk/*`, and none of it is
+in the image. `undici` was checked specifically, because the agent runtime sits in
+`devDependencies` by design yet reaches the standalone build: building with
+`DOCKER_BUILD=true` shows no `undici` anywhere under `.next/standalone`, since
+`@ai-sdk/provider-utils` reaches it through a `createRequire` call that output
+tracing cannot follow.
+
+#374 moved the shipped copy from 3.2.7 to 3.4.8 by upgrading Monaco itself, which
+cleared 14 of the 17. **Three or four remain** (FOSSA counts three, GitHub
+Advanced Security four - one advisory postdates FOSSA's scan) and none can be
+closed here: they need 3.4.9, 3.4.11, 3.4.12 and 3.4.13, Monaco pins dompurify
+exactly, and 0.56.0 is its newest release.
+
+**Do not "fix" these with a `package.json` override.** Monaco ships DOMPurify
+inlined in its prebuilt `min/vs` bundle and nothing in `src/` imports the package,
+so an override would change a lockfile entry no shipped code reads, leave the
+bundle byte-identical, and turn `bun audit`, FOSSA and Trivy green at once. The
+GHAS findings land on `bun.lock:<line>`, which is the tell: every one of those
+tools reads the manifest, not the artefact.
+
+Two related non-findings, recorded so they are not re-derived: `dompurify` is
+dual-licensed (MPL-2.0 OR Apache-2.0), so the copyleft half can simply not be
+chosen; and the LGPL-3.0 `@img/sharp-libvips-*` binaries never reach the runtime
+image, because the runner stage copies `node_modules` selectively and nothing in
+`src/` uses `next/image`.
+
+Consequence for the README: FOSSA publishes a second badge
+(`?type=shield&issueType=security`) alongside the license one already there, and
+it is red for exactly these advisories. Adding it was declined on 2026-08-15 -
+it would advertise a standing failure caused by an upstream pin rather than by
+anything neglected here. Add it when it goes green.
+
+Done when Monaco ships a dompurify at or past 3.4.13. Re-check on each Monaco
+release; verify by grepping the staged bundle for the version literal
+(`grep -o '"3\.4\.[0-9]*"' public/monaco/vs/editor-*.js`) rather than trusting the
+lockfile.
+
+### C11. The FOSSA integration reports three permanent failures
+
+FOSSA was connected in August 2026 and posts three commit statuses -
+`License Compliance`, `Security Analysis`, `Dependency Quality`. Under its default
+`Standard Bundle Distribution` policy all three fail, and they fail on every
+commit rather than on a regression, because they describe the standing dependency
+tree. They are commit statuses rather than check runs, so they carry no log to
+click through, and they are not in `main`'s required-check list, so they do not
+block a merge.
+
+The exported license issues (19) are almost entirely artefacts of how they are
+counted. Fourteen are the same LGPL-3.0 `@img/sharp-libvips-*` package counted
+once per platform binary, none of which ships (see C10). Two are file-level
+detections inside the `next` bundle (MPL-2.0 and a denied CC-BY-SA-4.0) against a
+package that is itself MIT. One is `highlight.js` CC-BY-SA-4.0 at depth 4 behind
+`@arethetypeswrong/cli`, a devDependency. One is the project itself at depth 0,
+denied for CC-BY-SA-3.0, which is the deliberately-vendored sample database in C8.
+That leaves `elkjs` EPL-2.0 - C9, and the only entry that is both real and ours.
+
+The cost of leaving it is that a permanently-red status trains everyone, including
+outside contributors, to read red as normal; #362 is the case where a genuine
+red mattered and was noticed only because nothing else was red.
+
+**Largely resolved on 2026-08-15.** The owner worked the FOSSA dashboard: the
+license findings above were ignored with their reasons, and `License Compliance`
+and `Dependency Quality` now pass. `Security Analysis` still reports three, which
+is the honest number - they are the Monaco-pinned DOMPurify advisories in C10, and
+this is now a status that means something rather than one that is always red.
+
+What remains is the cause rather than the symptom. FOSSA reads `bun.lock` but does
+not apply the manifest's dev/production split, so every devDependency is scanned as
+if it shipped - that is why `highlight.js`, four devDependency-only chains and the
+platform binaries appeared at all. Each new devDependency can therefore raise a
+finding that has to be ignored by hand. Done when that is reported upstream and
+fixed, or when the policy is scoped to production dependencies so the ignore list
+stops growing.
 
 ---
 
@@ -1296,36 +1479,6 @@ asserting it (`tests/unit/packaging-payload-prune.test.ts` pins what the payload
 nearest existing home for such an assertion), and when `docs/AGENT.md`'s deployment section loses the
 caveat that points here.
 
-### B17. Monitoring tools are deferred; profiling landed with #330 T3
-
-**Half of this entry is done and the other half is unchanged.** #330 T3 instructed that profiling
-reach the database "as new descriptors in `descriptors.ts` at R0/R1", which reopened the
-three-descriptor product decision this entry rested on: `sql.table.profile` is registered, and
-`profile_table` is offered to the `database-assessment` workflow. What follows is the original
-reasoning, kept because the monitoring half still stands on it.
-
-
-
-Recorded as #329's own narrowing (planning decision P1), not as something discovered later. The
-canonical operation set is exactly three descriptors (`src/lib/db/operations/descriptors.ts`), and the
-parent epic pinned that number as a product decision, so a tool has to fit one of them or it does not
-exist. The M2 tool set is therefore schema inspection, a bounded read, an estimating plan inspection
-and report composition.
-
-The two that were left out sit on opposite sides of that line. **Table profiling** (row counts, null
-ratios, cardinality, value distributions) fits: it is a bounded read whose SQL the server composes
-per dialect, exactly like the catalog read. What it multiplies is scope — each statistic is a
-dialect-specific composition with its own cost, and a profile that silently scans a large table is
-its own hazard. **Monitoring** does not fit at all: it reaches `getMetrics`, slow-query listings and
-session listings, which are provider methods no descriptor covers, so wiring it would be a database
-reach outside `src/lib/db/operations/` — a defect by this milestone's constraint rather than a
-shortcut.
-
-Done, for profiling, when the composed statements exist per dialect with their own cost bound and the
-tool is added to the read-class set. Done, for monitoring, only after a decision about whether the
-operation set grows a fourth descriptor for non-SQL metadata reads — which drags the verification
-marker, the provider triad and the security matrix with it, and is a human product call.
-
 ### B20. A Gemini deployment behind a proxy is not configurable, on either surface
 
 `resolveApiUrl` (`src/lib/llm/utils/config.ts`) returns `LLM_API_URL` for every provider kind, so the
@@ -1444,18 +1597,6 @@ landed rather than approximated.
 
 Done when the shape tests are per-dialect predicates rather than one shared `LIKE`, with the digit
 run among them and each verified against that engine's own grammar.
-
-### B27. A database assessment reports no monitor snapshot
-
-#330 T3 lists a monitor snapshot among the assessment template's outputs. It is not built, for the
-reason B17 gives: engine health reaches `getMetrics`, slow-query listings and session listings, which
-are provider methods no operation descriptor covers. A profiling descriptor could be added because a
-profile is a composed SQL statement; a metrics read is not, so it needs a descriptor shape for
-non-SQL reads — with its own verification marker, its own provider triad and its own security-matrix
-row — which is a product decision rather than a subtask.
-
-Done when that shape exists and the assessment template reports engine health beside its table
-profiles.
 
 ### B28. A profile that times out reports nothing rather than falling back to catalog statistics
 
@@ -1582,3 +1723,23 @@ Done when the guard derives every family from `src/app/api/**` under one stated 
 as documented, and the reference is reshaped where that rule does not currently hold. It is also
 worth noting what the guard does NOT check even for the agent: that a documented request or response
 shape still matches the handler. Only presence is asserted.
+
+### B33. An agent run is observable only from its own ledger — nothing exports it
+
+A run's whole record is the append-only ledger: lifecycle, tool invocations, refusals with their deny
+class, budget counters and the goal verdict. The rail and the eval harness both read runs out of it,
+and an operator debugging a run today reads it directly. What does not exist is a way to get that
+record into the observability stack a self-hosting team already runs — no OpenTelemetry spans, no
+OTLP export, no metrics.
+
+Designed in full and deliberately not built (#332, closed 2026-08-14): endpoint-gated activation on
+`OTEL_EXPORTER_OTLP_ENDPOINT`, a dynamic import so no exporter module loads while it is unset,
+metadata-only span attributes by default with a documented verbose delta, and no second global SDK
+registration in the embedded build. The reason it is deferred is dependency surface and timing rather
+than doubt about the design: it adds `@ai-sdk/otel` plus an exporter to a package libredb-platform
+also consumes, and the agent's event model is still gaining kinds — instrumenting it now means
+maintaining a span catalogue against a moving target. Nothing in Phase 1 depends on it and no user is
+waiting on it.
+
+Done when the event model has settled and somebody is running Studio beside a stack that wants agent
+runs in it. The decisions above are the starting point; #332 holds the full scope.

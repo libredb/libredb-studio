@@ -62,7 +62,7 @@ import { type ScriptedTurn, modelOver, scriptedModel } from "./agent-scripted-mo
 
 // ─── the two Phase 1 engines ────────────────────────────────────────────────
 
-export type EvalEngine = "postgres" | "sqlite";
+export type EvalEngine = "postgres" | "sqlite" | "mysql";
 
 export interface EvalEnginePreset {
   readonly connection: DatabaseConnection;
@@ -78,6 +78,16 @@ export interface EvalEnginePreset {
   readonly catalogReads: readonly string[];
   /** What the scripted engine answers a catalog read with, so a snapshot can be built. */
   readonly catalogAnswer: (sql: string) => QueryResult | null;
+  /**
+   * Whether the stub provider carries `queryReadOnly` at all.
+   *
+   * The engine property that decides which workflows may run: only PostgreSQL and
+   * SQLite implement it, and `acquireExecutionProfileProvider` refuses the
+   * `agent-read-only` profile without it. A preset that does not serve it therefore
+   * cannot answer a statement AT ALL — which is what makes "this run sent none" a
+   * property the fixture enforces rather than one the assertions merely observe.
+   */
+  readonly servesReadOnlyStatements: boolean;
 }
 
 const POSTGRES_CAPABILITIES: ProviderCapabilities = {
@@ -141,6 +151,7 @@ export const EVAL_ENGINES: Readonly<Record<EvalEngine, EvalEnginePreset>> = Obje
       if (sql.includes("pg_index")) return result([], ["tablename"]);
       return null;
     },
+    servesReadOnlyStatements: true,
   },
   sqlite: {
     connection: { id: "conn_eval", name: "Company (SQLite)", type: "sqlite", createdAt: new Date(0) },
@@ -153,8 +164,96 @@ export const EVAL_ENGINES: Readonly<Record<EvalEngine, EvalEnginePreset>> = Obje
         ? result([], ["name", "tbl_name", "sql"])
         : result(SQLITE_DDL_ROWS, ["name", "type", "sql"]);
     },
+    servesReadOnlyStatements: true,
+  },
+  /**
+   * A THIRD engine, and the only one here that is not a Phase 1 engine.
+   *
+   * It exists to make the operations workflow's whole claim observable: that
+   * workflow is offered on engines with no database-native read-only statement path,
+   * and until this preset the harness could not express one.
+   *
+   * It carries NO `queryReadOnly`, exactly as the real MySQL provider does not, so it
+   * can answer neither a catalog read nor a statement: a run that sent one dies
+   * visibly here instead of being quietly answered by PostgreSQL's default fixture
+   * row. That is the difference between a fixture that observes the workflow's
+   * central property and one that enforces it.
+   */
+  mysql: {
+    connection: { id: "conn_eval", name: "Company (MySQL)", type: "mysql", createdAt: new Date(0) },
+    capabilities: { ...POSTGRES_CAPABILITIES, explainFormat: "mysql-json", defaultPort: 3306 },
+    catalogReads: [],
+    catalogAnswer: () => null,
+    servesReadOnlyStatements: false,
   },
 } satisfies Record<EvalEngine, EvalEnginePreset>);
+
+/**
+ * What the scripted engine reports about ITSELF, for the curated readings.
+ *
+ * Every provider declares these six on the `DatabaseProvider` interface, which is
+ * exactly why the operations workflow can be offered everywhere — so the stub
+ * carries them on every engine, not only on the ones that answer statements.
+ */
+export interface EvalCuratedReadings {
+  readonly getActiveSessions: (options?: { limit?: number }) => Promise<unknown[]>;
+  readonly getSlowQueries: (options?: { limit?: number }) => Promise<unknown[]>;
+  readonly getTableStats: (options?: { schema?: string }) => Promise<unknown[]>;
+  readonly getIndexStats: (options?: { schema?: string }) => Promise<unknown[]>;
+  readonly getStorageStats: () => Promise<unknown[]>;
+  readonly getHealth: () => Promise<unknown>;
+}
+
+const DEFAULT_CURATED: EvalCuratedReadings = {
+  getActiveSessions: async () => [
+    {
+      pid: 71,
+      user: "app",
+      database: "company",
+      state: "active",
+      query: "UPDATE orders SET total = 1 WHERE id = 9",
+      duration: "00:04:10",
+      durationMs: 250_000,
+      blocked: true,
+      waitEvent: "lock",
+    },
+  ],
+  getSlowQueries: async () => [
+    { queryId: "q7", query: "SELECT * FROM orders", calls: 900, totalTime: 90_000, avgTime: 100, rows: 900 },
+  ],
+  getTableStats: async () => [
+    {
+      schemaName: "company",
+      tableName: "orders",
+      rowCount: 1_000_000,
+      tableSize: "900 MB",
+      tableSizeBytes: 900_000_000,
+      totalSize: "1 GB",
+      totalSizeBytes: 1_000_000_000,
+    },
+  ],
+  getIndexStats: async () => [
+    {
+      schemaName: "company",
+      tableName: "orders",
+      indexName: "orders_unused_idx",
+      columns: ["note"],
+      isUnique: false,
+      isPrimary: false,
+      indexSize: "40 MB",
+      indexSizeBytes: 40_000_000,
+      scans: 0,
+    },
+  ],
+  getStorageStats: async () => [{ name: "data", size: "1 GB", sizeBytes: 1_000_000_000, usagePercent: 91 }],
+  getHealth: async () => ({
+    activeConnections: 12,
+    databaseSize: "1 GB",
+    cacheHitRatio: "88.0",
+    slowQueries: [],
+    activeSessions: [],
+  }),
+};
 
 // ─── one drive's observation ────────────────────────────────────────────────
 
@@ -202,6 +301,12 @@ export interface EvalRunOptions {
    * step invoked with no outcome, which is the process-death window itself.
    */
   readonly acquireFails?: () => Error | undefined;
+  /**
+   * Overrides individual curated readings, so a fixture can make ONE of them
+   * unavailable on an engine that serves the rest — the case the operations
+   * verifier's second arm exists for.
+   */
+  readonly curated?: Partial<Record<keyof EvalCuratedReadings, unknown>>;
 }
 
 export interface EvalDriveOptions {
@@ -276,7 +381,16 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
       statements.push(sql);
       return options.catalogAnswer?.(sql) ?? engine.catalogAnswer(sql) ?? (await answer(sql));
     };
-    const provider = { queryReadOnly } as unknown as DatabaseProvider;
+    // The curated readings sit on EVERY preset, because every provider declares them;
+    // `queryReadOnly` sits only on the presets whose real engine implements it. A
+    // preset without it can answer nothing but a curated reading, so an operations
+    // eval that sent a statement fails on the fixture rather than on an assertion
+    // somebody might later delete as redundant.
+    const provider = {
+      ...(engine.servesReadOnlyStatements ? { queryReadOnly } : {}),
+      ...DEFAULT_CURATED,
+      ...options.curated,
+    } as unknown as DatabaseProvider;
 
     // The deadline's clock reads its start, and every later reading is that start
     // plus `spentMs`. At the default of zero it never advances, so the deadline is

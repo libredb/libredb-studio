@@ -1,31 +1,68 @@
 import { describe, test, expect } from "bun:test";
 import {
   createCanonicalOperationRegistry,
+  dbOperationsReadDescriptor,
   sqlExplainAnalyzeDescriptor,
   sqlExplainEstimateDescriptor,
   sqlQueryReadDescriptor,
   sqlTableProfileDescriptor,
 } from "@/lib/db/operations/descriptors";
 
-const canonicalDescriptors = [
+/**
+ * The descriptors whose input IS a statement. Kept apart from the registry's full
+ * set since the curated operational read joined it: that descriptor takes no `sql`
+ * key at all, which is the point of it, so the statement-contract assertions below
+ * are not true of it and must not be made to be.
+ */
+const sqlDescriptors = [
   sqlQueryReadDescriptor,
   sqlExplainEstimateDescriptor,
   sqlExplainAnalyzeDescriptor,
   sqlTableProfileDescriptor,
 ];
 
+const canonicalDescriptors = [...sqlDescriptors, dbOperationsReadDescriptor];
+
 describe("canonical operation registry", () => {
-  test("registers exactly the four canonical descriptors — no write, DDL, or admin operation exists", () => {
-    // Four since #330 T3, which reopened a decision epic #325 had pinned at three.
+  test("registers exactly the five canonical descriptors — no write, DDL, or admin operation exists", () => {
+    // Five since the `operations` workflow, which added the one descriptor carrying no
+    // statement at all (`docs/BACKLOG.md` B27). Four since #330 T3, which reopened a
+    // decision epic #325 had pinned at three.
     // The assertion is exact-array equality on purpose: it is the one place a
     // descriptor can be added without somebody noticing.
     const registry = createCanonicalOperationRegistry();
     expect(registry.registeredIds()).toEqual([
+      "db.operations.read",
       "sql.explain.analyze",
       "sql.explain.estimate",
       "sql.query.read",
       "sql.table.profile",
     ]);
+  });
+
+  test("the curated operational read is R0 metadata, and takes no statement at all", () => {
+    // R0 rather than R1, and that is a claim about what bounds it rather than a way
+    // around the verification marker: an R1 descriptor must NAME the database-native
+    // mechanism bounding it, and a curated provider call has none — there is no
+    // statement for a read-only transaction to bound. What bounds it is the shape of
+    // the input, which carries a kind out of a closed enum and nothing a model wrote.
+    expect(dbOperationsReadDescriptor).toMatchObject({
+      id: "db.operations.read",
+      riskClass: 0,
+      accessLevel: "metadata-read",
+      requiresApproval: false,
+      supportsDryRun: false,
+    });
+    expect(dbOperationsReadDescriptor.verification).toBeUndefined();
+    // The structural difference from every other descriptor: no `sql` field exists,
+    // so a statement cannot be smuggled through this operation at all.
+    expect(dbOperationsReadDescriptor.inputSchema.safeParse({ sql: "SELECT 1" }).success).toBe(false);
+    expect(dbOperationsReadDescriptor.inputSchema.safeParse({ kind: "sessions", sql: "SELECT 1" }).success).toBe(false);
+    expect(dbOperationsReadDescriptor.inputSchema.safeParse({ kind: "sessions", limit: 25 }).success).toBe(true);
+    // `kind` is required: unlike `inspect_schema`'s selector there is no historical
+    // meaning for its absence, so a missing one is refused rather than defaulted.
+    expect(dbOperationsReadDescriptor.inputSchema.safeParse({}).success).toBe(false);
+    expect(dbOperationsReadDescriptor.inputSchema.safeParse({ kind: "tablespaces" }).success).toBe(false);
   });
 
   test("profiling is a bounded DATA read that needs no approval, and is separately auditable", () => {
@@ -110,7 +147,7 @@ describe("plan inspection vs plan execution", () => {
 
 describe("canonical input schemas", () => {
   test("accept exactly one non-empty SQL statement string", () => {
-    for (const descriptor of canonicalDescriptors) {
+    for (const descriptor of sqlDescriptors) {
       expect(descriptor.inputSchema.safeParse({ sql: "SELECT 1" }).success).toBe(true);
     }
   });
@@ -126,7 +163,7 @@ describe("canonical input schemas", () => {
       undefined,
       [],
     ];
-    for (const descriptor of canonicalDescriptors) {
+    for (const descriptor of sqlDescriptors) {
       for (const input of hostileInputs) {
         expect(descriptor.inputSchema.safeParse(input).success).toBe(false);
       }

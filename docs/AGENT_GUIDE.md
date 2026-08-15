@@ -22,7 +22,7 @@ needs the mechanism behind it, it links there instead of restating it.
 
 - [Where the agent is](#where-the-agent-is)
 - [What a run is](#what-a-run-is)
-- [The three workflows](#the-three-workflows)
+- [The four workflows](#the-four-workflows)
 - [What you see while a run goes](#what-you-see-while-a-run-goes)
 - [What "answered" means](#what-answered-means)
 - [The budget meter's numbers](#the-budget-meters-numbers)
@@ -99,7 +99,7 @@ investigated. The rail says so rather than offering a Start that must fail:
 
 ---
 
-## The three workflows
+## The four workflows
 
 Each workflow changes three things: what the model is told the run is FOR, which tools it is offered,
 and the bar its verdict is judged against.
@@ -153,6 +153,41 @@ those counts, with stated thresholds; the model may interpret them and cannot in
 **Answered when** the Investigate bar is met **and** a table was actually profiled
 (`verifyDatabaseAssessmentGoal`, `goal-verifier.ts:211`).
 
+### Operate
+
+For how the database is **running right now** — the slowest queries, who is connected and what is
+blocked, the biggest tables, the unused indexes, storage pressure. It is the one workflow that
+**sends no SQL at all**: the only tool that reaches the database is `inspect_operations`, and you
+name a *reading* rather than a statement — `sessions`, `slow-queries`, `table-stats`, `index-stats`,
+`storage` or `health`. The server calls the engine's own reporting interface and stores the answer
+as an ordinary citable result.
+
+Two consequences you will notice:
+
+- **It runs on every engine.** The other workflows need a database-native read-only statement path,
+  which only PostgreSQL and SQLite have; this one needs none, so a run opened on MySQL, Oracle, SQL
+  Server, MongoDB or Redis works rather than ending `engine-unsupported`.
+- **It has no schema and no free-form SQL.** There is no `inspect_schema` and no `run_read_query`
+  here, and the run is told so in its opening message rather than being left to discover it.
+
+Two things this workflow will not do, and it says so rather than implying otherwise:
+
+- **Every reading is a moment, not a history.** A session list is who was connected as the run
+  looked. The timeline says so on the entry itself: *"A moment, not a history: this reading says what
+  the engine reported as it was taken."* (`POINT_IN_TIME_CAVEAT`, `timeline.ts`), and the model is
+  told the same before it starts, so a report cannot quietly imply a trend was measured.
+- **It cannot propose an operational action.** `recommend_change` offers an index or a rewrite and
+  nothing else, so "kill this session" or "vacuum this table" is stated as a claim in the report
+  rather than filed as a recommendation you could apply with one click.
+
+**Answered when** the run composed a report (`verifyOperationsGoal`, `goal-verifier.ts`). Every
+claim in it already cites a reading the run took — `compose_report` refuses a claim whose evidence
+names nothing this run produced, and a reading is the only thing this workflow can produce to cite —
+so the citation is enforced as you write, not judged afterwards. Note what is deliberately **not**
+required: a reading that came back **empty** still counts. No blocked session and no slow query is
+what a healthy server looks like, and treating that as an absence of evidence would mark an accurate
+report as unanswered.
+
 ---
 
 ## What you see while a run goes
@@ -172,6 +207,7 @@ yet. A run's steps appear here as they are recorded."*
 | `The database refused the statement` | The engine's own message, quoted |
 | `Plans compared` / `Index recommended` / `Rewrite recommended` | Optimize only |
 | `Profiled <table>` | Assess only: counts and findings |
+| `Result stored` … *"A moment, not a history"* | Operate only: an operational reading, with the caveat that it describes an instant already past |
 | `Report composed` | How many claims, each citing evidence |
 | `Closing statement` | The model's closing prose. It cites nothing and claims nothing — a Plan run's whole output, an Agent run's aside |
 | `Stop requested` | You pressed Stop; *"the run takes no further database step; work already in hand, such as a report, still finishes"* |

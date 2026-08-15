@@ -263,7 +263,7 @@ describe("POST /api/agent/runs", () => {
   });
 
   test("every workflow type this server serves is accepted", async () => {
-    for (const workflowType of ["investigation", "query-optimization", "database-assessment"]) {
+    for (const workflowType of ["investigation", "query-optimization", "database-assessment", "operations"]) {
       const res = await POST(startRequest({ ...VALID_BODY, workflowType }));
       expect(res.status, workflowType).toBe(202);
     }

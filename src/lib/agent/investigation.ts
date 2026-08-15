@@ -66,6 +66,7 @@ import {
   comparePlansTool,
   composeReportTool,
   handoverText,
+  inspectOperationsTool,
   inspectPlanTool,
   planTableProfile,
   profileTableTool,
@@ -179,6 +180,15 @@ const AGENT_RULES = [
   AGENT_EVIDENCE_CONTRACT,
 ].join(" ");
 
+/**
+ * What an operations run is given instead of a schema inventory.
+ *
+ * Server-authored and unfenced, like the other opening messages: nothing a database
+ * wrote is in it.
+ */
+const OPERATIONS_CONTEXT_NOTE =
+  "No schema inventory was captured for this run, and none is needed: this run reads what the engine reports about itself, not what its tables contain. Take the readings you need with inspect_operations. There is no tool here that sends SQL, so nothing is established for you until a reading returns it.";
+
 const PLANNING_RULES = [
   "You have no tools in this mode and cannot reach the database at all.",
   "Answer with a plan in prose: what you would inspect, in what order, and what each step would establish.",
@@ -210,6 +220,8 @@ const WORKFLOW_OBJECTIVES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
     "Your objective is a statement that is too slow. What matters is HOW the engine reaches its rows, and what change would make it reach them differently.",
   "database-assessment":
     "Your objective is the state of this database itself: where its data is incomplete, inconsistent or surprising.",
+  operations:
+    "Your objective is how this database is RUNNING right now: what is connected to it, what it is spending its time on, what is blocked, and where its space and its indexes are going.",
 } satisfies Record<AgentRunWorkflowType, string>);
 
 /**
@@ -229,6 +241,18 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
     "Profile the tables that matter with profile_table, deepening only where a shallower profile left a question: basic counts rows and missing values, distribution adds distinct counts, pattern tests for personal-data shapes.",
     "Only COUNTS come back. No value is read out of any column, so do not claim what a column contains — claim what its counts show.",
     "Grade what you find against completeness, uniqueness, consistency and validity, and say which of the four each finding speaks to.",
+  ].join(" "),
+  operations: [
+    "You have NO SQL in this run: there is no inspect_schema, no run_read_query and no inspect_plan, and no schema inventory was captured for you. Everything you can read, you read with inspect_operations.",
+    "Take the readings your objective needs — sessions, slow-queries, table-stats, index-stats, storage, health — one call each, and narrow them with limit or schema rather than asking for everything.",
+    // The verifier's rule, in the model's own terms. A rule the model is never told is
+    // a rule live runs fail (#350, #356), so the bar and its honest exception are both
+    // said here, next to the tools that can satisfy them.
+    "Your report must cite at least one reading you took: this run answers with what the engine said about itself, not with what you expect of a database like this one.",
+    "A reading that comes back EMPTY is an answer, not a failure — no blocked session, no slow query, no unused index is what a healthy server looks like. Cite it and say what it shows.",
+    "If this engine serves no reading of a kind you asked for, you will be told so plainly. Try another kind rather than guessing: a report has to cite a reading you actually took, so a run that takes none can report nothing.",
+    "EVERY READING IS A MOMENT. A session list is who was connected as you looked; a slow-query list is what the engine has accumulated, not what it did today. Say what you saw and when, and never imply you measured a trend or watched something change.",
+    "recommend_change offers the user one index or one rewrite, and nothing else: an operational action — killing a session, vacuuming a table, dropping an index — has no card here, so state it as a claim in your report rather than filing it as a recommendation.",
   ].join(" "),
 } satisfies Record<AgentRunWorkflowType, string>);
 
@@ -324,6 +348,13 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string): string
   }
   if (refusal.class === "approval-required") {
     return `Step ${event.stepId} (${toolName}) needs a human approval that this run does not have: operation ${refusal.operationId}.`;
+  }
+  if (refusal.class === "reading-refused") {
+    // The reading was TAKEN — the run spent a statement on it — and the server
+    // declined to deliver it. A resumed run is told that, rather than being told the
+    // step was never attempted, which is what it would hear if this settled as a
+    // run-loop outcome instead of a refusal.
+    return `Step ${event.stepId} (${toolName}) reached the database and its reading was not delivered: ${refusal.reasonCode}. Ask for a different reading rather than repeating this one.`;
   }
   // The engine's own words: untrusted, so fenced rather than quoted into the
   // server's voice. The fingerprint stands in for a correlation id, which a
@@ -523,6 +554,10 @@ function invokeDatabaseTool(
 ): Promise<AgentToolOutcome> {
   if (name === "inspect_schema") return inspectSchemaTool(context, input as { schema?: string; table?: string });
   if (name === "run_read_query") return runReadQueryTool(context, input as { sql: string; rationale?: string });
+  // Before the fall-through, which is the hazard the type above exists to make
+  // visible: an operational reading routed to `inspectPlanTool` would be re-parsed
+  // against a statement schema and answered INVALID_TOOL_INPUT forever.
+  if (name === "inspect_operations") return inspectOperationsTool(context, input);
   return inspectPlanTool(context, input as { sql: string });
 }
 
@@ -736,6 +771,19 @@ export async function runInvestigation(
     // Planning is toolless and must perform zero database operations. Not merely
     // skipped for cost: reaching the catalog here would break the mode's own bar.
     if (record.mode !== "agent") return;
+
+    // An operations run captures no schema inventory, and this is the one workflow
+    // where that is a decision rather than a failure. The capture reads the catalog
+    // through `inspect_schema`, which this workflow is not offered and which most of
+    // the engines it runs on cannot serve at all: on anything but PostgreSQL and
+    // SQLite the capture comes back `unavailable` carrying advice to "use
+    // inspect_schema", and telling a model to call a tool it does not have is exactly
+    // the failure #350 recorded. So the run is told, in the server's own voice, what
+    // it does and does not have.
+    if (record.workflowType === "operations") {
+      messages.push({ role: "user", content: OPERATIONS_CONTEXT_NOTE });
+      return;
+    }
 
     const recorded = reusableSnapshot(record.events, record.connectionId);
     if (recorded !== null) {

@@ -50,9 +50,14 @@
 import { z } from "zod";
 import { type AuditReason, emitAuditEvent } from "@/lib/audit";
 import type { ExecutionProfile } from "@/lib/db/factory";
-import { ConnectionError, DatabaseConfigError, DatabaseError, PoolExhaustedError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, DatabaseError, PoolExhaustedError, QueryError } from "@/lib/db/errors";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import type { ExecutionBudget, ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
+import {
+  type AgentCuratedReadInput,
+  type CuratedOperationKind,
+  agentCuratedReadInput,
+} from "@/lib/db/operations/descriptors";
 import { actorLabel, executeAuditedOperation } from "@/lib/db/operations/execution";
 import { inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
@@ -66,7 +71,12 @@ import {
   composeEstimatingExplain,
 } from "./composed-sql";
 import type { AgentDeadlineDenyCode, AgentRunDeadline } from "./deadline";
-import { AGENT_EXECUTION_POLICY, AGENT_EXECUTION_PROFILE, AGENT_MINIMUM_CALL_MS } from "./execution-policy";
+import {
+  AGENT_EXECUTION_POLICY,
+  AGENT_EXECUTION_PROFILE,
+  AGENT_MINIMUM_CALL_MS,
+  AGENT_OPERATIONS_PROFILE,
+} from "./execution-policy";
 import type { AgentRepairDenyCode, AgentRepairLedger } from "./repair-ledger";
 import { fingerprintStatement } from "./repair-ledger";
 import { summarisePlan } from "./plan-summary";
@@ -84,6 +94,7 @@ import type {
   AgentContextSnapshot,
   AgentEvidenceReference,
   AgentPlanSide,
+  AgentReadingDenyCode,
   AgentReportClaim,
   AgentRunActor,
   AgentRunEvent,
@@ -105,7 +116,9 @@ export type AgentToolName =
   /** Query optimization only: two estimated plans of the same question. */
   | "compare_plans"
   /** Query optimization only: a change the user may apply. Never executed here. */
-  | "recommend_change";
+  | "recommend_change"
+  /** Operations only: one curated reading of what the engine says about itself. */
+  | "inspect_operations";
 
 /**
  * The canonical operations a tool may drive. `sql.explain.analyze` is a member so
@@ -119,7 +132,12 @@ export type AgentOperationId =
   | "sql.explain.estimate"
   | "sql.explain.analyze"
   /** Bounded per-table profiling; #330 T3 reopened the three-descriptor decision. */
-  | "sql.table.profile";
+  | "sql.table.profile"
+  /**
+   * A curated operational reading. The one operation on this list that carries no
+   * statement — see `dbOperationsReadDescriptor` for why it needs its own id.
+   */
+  | "db.operations.read";
 
 export interface AgentToolDefinition {
   readonly name: AgentToolName;
@@ -392,6 +410,13 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
     description: `Propose one index or one rewrite for the user to apply themselves. The statement is never executed by this run; it is offered to the user's editor. Every recommendation must cite evidence this run produced. ${AGENT_EVIDENCE_CONTRACT}`,
     inputSchema: recommendationSchema,
   },
+  inspect_operations: {
+    name: "inspect_operations",
+    description:
+      "Read what the engine says about ITSELF, right now. Pass kind to choose the reading: sessions (who is connected, what each is running, how long it has been running and whether it is blocked), slow-queries (the statements this engine reports as costly), table-stats (row counts and sizes, and dead rows where the engine tracks them), index-stats (size and how many scans each index has served, so an unused one is visible), storage (space and its growth) or health (one row of connection, size and cache figures). No SQL is involved: you name the reading and the server calls the engine's own reporting interface, so these are the readings that work on every engine. limit bounds EVERY kind, and schema narrows the table and index ones; the server applies both itself, so they hold whatever the engine does with them. EVERY READING IS A MOMENT, not a history: it says what is true as it is taken, and calling it twice does not make a trend.",
+    inputSchema: agentCuratedReadInput,
+    operationId: "db.operations.read",
+  },
   compose_report: {
     name: "compose_report",
     description: `Compose the run's findings and finish. Every claim must cite at least one artifact this run read or the schema snapshot it captured; an uncited claim is refused. ${AGENT_EVIDENCE_CONTRACT}`,
@@ -440,10 +465,38 @@ const DATABASE_ASSESSMENT_TOOLS: readonly AgentToolDefinition[] = Object.freeze(
   AGENT_TOOL_DEFINITIONS.profile_table,
 ]);
 
+/**
+ * The operations template's tools, and the ONLY set that is not built on the
+ * read-class four.
+ *
+ * Deliberately not `[...AGENT_MODE_TOOLS, inspect_operations]`, which is what every
+ * other template does. All three of the read-class tools this leaves out —
+ * `inspect_schema`, `run_read_query`, `inspect_plan` — reach the database through
+ * `provider.queryReadOnly`, which only PostgreSQL and SQLite implement. Offering any
+ * of them here would reintroduce, tool by tool, the exact engine restriction this
+ * workflow exists to escape: the run would open on MySQL, be offered a tool, call it,
+ * and be answered by an acquisition that refuses the engine.
+ *
+ * `inspect_schema` was checked rather than assumed, per the spec's condition:
+ * `inspectSchemaTool` composes a statement and hands it to `executeAgentOperation`,
+ * whose invoke callback is `runStatement`, which calls `provider.queryReadOnly`. It
+ * depends on it, so it is left out.
+ *
+ * `recommend_change` is here and `compare_plans` is not: a comparison names two
+ * `inspect_plan` artifacts this run cannot produce, so offering it would be offering
+ * a tool that can only ever refuse.
+ */
+const OPERATIONS_TOOLS: readonly AgentToolDefinition[] = Object.freeze([
+  AGENT_TOOL_DEFINITIONS.inspect_operations,
+  AGENT_TOOL_DEFINITIONS.recommend_change,
+  AGENT_TOOL_DEFINITIONS.compose_report,
+]);
+
 const WORKFLOW_TOOLS: Readonly<Record<AgentRunWorkflowType, readonly AgentToolDefinition[]>> = Object.freeze({
   investigation: AGENT_MODE_TOOLS,
   "query-optimization": QUERY_OPTIMIZATION_TOOLS,
   "database-assessment": DATABASE_ASSESSMENT_TOOLS,
+  operations: OPERATIONS_TOOLS,
 } satisfies Record<AgentRunWorkflowType, readonly AgentToolDefinition[]>);
 
 /**
@@ -572,6 +625,23 @@ function denialText(reasonCode: PolicyDenyCode): string {
     "Choose a different approach that stays inside a bounded read-only inspection.",
   ].join(" ");
 }
+
+/**
+ * What a refused curated reading tells the model, and both sentences are advice it
+ * can actually act on.
+ *
+ * `READING_OVER_BUDGET`'s advice is only worth giving because `limit` is applied by
+ * the projection for EVERY kind rather than only by the two provider methods that
+ * take one — see `runCuratedRead`. Advice a tool cannot honour is worse than none:
+ * the model would spend its statement budget re-asking for a reading it can never be
+ * given.
+ */
+const READING_REFUSAL_TEXT: Record<AgentReadingDenyCode, string> = {
+  KIND_UNSUPPORTED_BY_PROVIDER:
+    "This database serves no reading of that kind, so nothing was read. Ask for a different kind, or report what the other readings established — including that this one is unavailable here.",
+  READING_OVER_BUDGET:
+    "That reading came back larger than this run may carry, so none of it was kept: a partial reading would be a misleading one. Ask again with a smaller limit; it bounds every kind of reading, not only the ones the engine limits itself.",
+};
 
 function approvalText(operationId: string): string {
   return [
@@ -810,9 +880,64 @@ export async function executeAgentOperation(
   context: AgentToolContext,
   request: AgentOperationRequest,
 ): Promise<AgentToolOutcome> {
+  return runAuditedAgentCall(context, {
+    operationId: request.operationId,
+    // The statement IS the identity of a SQL call: two calls sending the same text
+    // are the same call however the model worded its way to them.
+    fingerprintSource: request.sql,
+    input: { sql: request.sql },
+    ...(request.label === undefined ? {} : { label: request.label }),
+    ...(request.target === undefined ? {} : { target: request.target }),
+    invoke: (validatedInput, budget, phase) => runStatement(context, validatedInput, budget, phase),
+  });
+}
+
+/**
+ * What one audited agent call needs, whatever KIND of call it is.
+ *
+ * The two paths differ in three things and nothing else: what identifies the call to
+ * the repair ledger, what `input` the pipeline validates against the descriptor, and
+ * what the invoke callback does. Everything that makes the call safe — the mode
+ * check, the ledger, the deadline admission and its audited refusal, the budget
+ * clamp, the audited execution, the artifact — is written once here, because a
+ * second copy of a gate order is a second thing that can be got wrong quietly.
+ */
+interface AuditedAgentCall {
+  readonly operationId: AgentOperationId;
+  /** Canonical text this call is identified by in the repair ledger. */
+  readonly fingerprintSource: string;
+  /** The input the DESCRIPTOR validates. `{sql}` for a statement, the selector for a curated read. */
+  readonly input: unknown;
+  readonly label?: string;
+  readonly target?: { readonly catalog?: string; readonly schema?: string };
+  readonly invoke: (
+    validatedInput: unknown,
+    budget: ExecutionBudget,
+    phase: { statementSent: boolean },
+  ) => Promise<QueryResult>;
+}
+
+/**
+ * A curated reading the run decided not to keep, raised from inside the invoke
+ * callback because that is the only place the answer is known.
+ *
+ * A sentinel rather than a return value: `executeAuditedOperation` owns the callback's
+ * result type, and there is no seam for a second outcome. Caught by the one catch
+ * below and turned into the typed `reading-refused` refusal — the call was made and
+ * the audit records an execution, so the step settles like every other reach that
+ * happened.
+ */
+class AgentCuratedReadError extends Error {
+  constructor(readonly reasonCode: AgentReadingDenyCode) {
+    super(reasonCode);
+    this.name = "AgentCuratedReadError";
+  }
+}
+
+async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgentCall): Promise<AgentToolOutcome> {
   if (context.mode !== "agent") return unavailable("MODE_HAS_NO_TOOLS");
 
-  const fingerprint = fingerprintStatement(request.sql);
+  const fingerprint = fingerprintStatement(call.fingerprintSource);
   const repairAdmission = context.repairs.admit(fingerprint);
   if (!repairAdmission.admitted) return unavailable(repairAdmission.reasonCode);
 
@@ -823,7 +948,7 @@ export async function executeAgentOperation(
     minimumMs: AGENT_MINIMUM_CALL_MS,
   });
   if (!admission.admitted) {
-    auditDeadlineRefusal(context, actor, request.operationId, admission.reasonCode);
+    auditDeadlineRefusal(context, actor, call.operationId, admission.reasonCode);
     return unavailable(admission.reasonCode);
   }
 
@@ -848,9 +973,9 @@ export async function executeAgentOperation(
         actor,
         scope: context.scope,
         request: {
-          operationId: request.operationId,
-          target: { connectionId: context.scope.connectionId, ...request.target },
-          input: { sql: request.sql },
+          operationId: call.operationId,
+          target: { connectionId: context.scope.connectionId, ...call.target },
+          input: call.input,
         },
         capabilities: context.capabilities,
       },
@@ -860,9 +985,33 @@ export async function executeAgentOperation(
         artifacts: context.artifacts,
         clock: context.clock,
       },
-      ({ validatedInput, budget }) => runStatement(context, validatedInput, budget, phase),
+      ({ validatedInput, budget }) => call.invoke(validatedInput, budget, phase),
     );
   } catch (error) {
+    // A curated reading the run chose not to keep. First, because it is a decision
+    // this layer made about a call that DID happen — not an environment failure and
+    // not a statement the model could repair.
+    //
+    // It settles the step as a REFUSAL rather than leaving it unattempted, and that is
+    // the whole reason it is not an `unavailable` code: by the time it is raised the
+    // pipeline has allowed the call, `beginExecution` has run, one statement of the
+    // run's budget is spent and an `agent_operation` execution event is on the audit
+    // stream — and for `READING_OVER_BUDGET` the provider method has actually run and
+    // returned rows. A ledger that recorded that as "nothing was attempted" would tell
+    // a resumed run, in the server's own voice, something the audit trail contradicts.
+    //
+    // The failure is recorded so the identical reading is not asked for twice, and it
+    // costs no repair attempt: no rewording of the request would change the answer.
+    if (error instanceof AgentCuratedReadError) {
+      context.repairs.recordFailure(fingerprint, "reading-refused");
+      return {
+        kind: "refused",
+        refusal: { class: "reading-refused", reasonCode: error.reasonCode },
+        // The server's own words: nothing an engine wrote is in this sentence, so it
+        // is not fenced.
+        modelText: READING_REFUSAL_TEXT[error.reasonCode],
+      };
+    }
     // The phase gate comes FIRST and is unconditional. A failure raised before the
     // statement was sent — a wrong credential, an unreachable host, a refused
     // execution profile, or anything the pipeline itself threw — is the environment's,
@@ -876,7 +1025,7 @@ export async function executeAgentOperation(
       // a correlation id, which a failed execution never produced.
       modelText: fenceUntrustedContent(error.message, {
         label: "database error",
-        operationId: request.operationId,
+        operationId: call.operationId,
         reference: fingerprint,
       }),
     };
@@ -925,7 +1074,7 @@ export async function executeAgentOperation(
     // the same as saying how to cite it. The id is a server-minted UUID, so nothing
     // untrusted is spliced into this sentence.
     modelText: `${handoverText(artifact.correlationId)}\n${fenceUntrustedContent(renderRows(result.rows), {
-      label: `${request.label ?? "result"}, ${result.rowCount} row(s)`,
+      label: `${call.label ?? "result"}, ${result.rowCount} row(s)`,
       operationId: artifact.operationId,
       reference: artifact.correlationId,
     })}`,
@@ -1055,6 +1204,314 @@ export async function runReadQueryTool(
   const parsed = parseToolInput(readStatementSchema, input);
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
   return executeAgentOperation(context, { operationId: "sql.query.read", sql: parsed.value.sql, label: "read result" });
+}
+
+// ============================================================================
+// The curated operational read
+// ============================================================================
+
+/** A date the engine reported, as text a prompt can carry. Absent stays absent. */
+const instant = (value: Date | undefined): string | null => (value === undefined ? null : value.toISOString());
+
+/**
+ * One curated reading: the provider method that answers it, the columns it projects
+ * to, and the name it is fenced under.
+ *
+ * The columns are DECLARED rather than derived from the first row, and that is what
+ * makes the artifact a `QueryResult` a reader can trust: a reading that came back
+ * empty still says what it would have contained, so `fields` is never a function of
+ * whether the engine happened to have anything to report.
+ *
+ * `method` is named separately from `read` so a provider that does not actually carry
+ * the method can be refused before it is called. Every provider DECLARES all six on
+ * the interface, so this is the defensive case rather than the common one — but a
+ * `TypeError` out of this layer would end a run, and the workflow's whole promise is
+ * that an engine which cannot answer says so.
+ *
+ * `schemaColumn` is what makes the `schema` selector mean the same thing on every
+ * engine. The provider methods are asked to narrow where their signature allows it,
+ * but four of them take no options at all (`oracle.getTableStats`,
+ * `mssql.getTableStats`, `mssql.getIndexStats`, `mongodb.getTableStats`), so a
+ * narrowing that lived only in the arguments would be silently dropped on those
+ * engines and the run would report another schema's tables as the one it asked for.
+ * The reading therefore names the projected column its schema lives in, and the
+ * caller applies the filter itself.
+ */
+interface CuratedReading {
+  readonly label: string;
+  readonly method: keyof DatabaseProvider;
+  readonly fields: readonly string[];
+  /** The projected column `input.schema` narrows on, or absent when the reading has no schema dimension. */
+  readonly schemaColumn?: string;
+  readonly read: (
+    provider: DatabaseProvider,
+    input: AgentCuratedReadInput,
+    limit: number,
+  ) => Promise<Record<string, unknown>[]>;
+}
+
+const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> = Object.freeze({
+  sessions: {
+    label: "active sessions",
+    method: "getActiveSessions",
+    fields: [
+      "pid",
+      "user",
+      "database",
+      "applicationName",
+      "clientAddr",
+      "state",
+      "query",
+      "duration",
+      "durationMs",
+      "waitEventType",
+      "waitEvent",
+      "blocked",
+    ],
+    read: async (provider, _input, limit) =>
+      (await provider.getActiveSessions({ limit })).map((session) => ({
+        pid: session.pid,
+        user: session.user,
+        database: session.database,
+        applicationName: session.applicationName ?? null,
+        clientAddr: session.clientAddr ?? null,
+        state: session.state,
+        query: session.query,
+        duration: session.duration,
+        durationMs: session.durationMs,
+        waitEventType: session.waitEventType ?? null,
+        waitEvent: session.waitEvent ?? null,
+        blocked: session.blocked ?? false,
+      })),
+  },
+  "slow-queries": {
+    label: "slow queries",
+    method: "getSlowQueries",
+    fields: ["queryId", "query", "calls", "totalTime", "avgTime", "minTime", "maxTime", "rows"],
+    read: async (provider, _input, limit) =>
+      (await provider.getSlowQueries({ limit })).map((entry) => ({
+        queryId: entry.queryId ?? null,
+        query: entry.query,
+        calls: entry.calls,
+        totalTime: entry.totalTime,
+        avgTime: entry.avgTime,
+        minTime: entry.minTime ?? null,
+        maxTime: entry.maxTime ?? null,
+        rows: entry.rows,
+      })),
+  },
+  "table-stats": {
+    label: "table statistics",
+    method: "getTableStats",
+    schemaColumn: "schemaName",
+    fields: [
+      "schemaName",
+      "tableName",
+      "rowCount",
+      "deadRowCount",
+      "tableSize",
+      "tableSizeBytes",
+      "indexSizeBytes",
+      "totalSizeBytes",
+      "lastVacuum",
+      "lastAnalyze",
+      "bloatRatio",
+    ],
+    read: async (provider, input) =>
+      (await provider.getTableStats(input.schema === undefined ? {} : { schema: input.schema })).map((table) => ({
+        schemaName: table.schemaName,
+        tableName: table.tableName,
+        rowCount: table.rowCount,
+        deadRowCount: table.deadRowCount ?? null,
+        tableSize: table.tableSize,
+        tableSizeBytes: table.tableSizeBytes,
+        indexSizeBytes: table.indexSizeBytes ?? null,
+        totalSizeBytes: table.totalSizeBytes,
+        lastVacuum: instant(table.lastVacuum),
+        lastAnalyze: instant(table.lastAnalyze),
+        bloatRatio: table.bloatRatio ?? null,
+      })),
+  },
+  "index-stats": {
+    label: "index statistics",
+    method: "getIndexStats",
+    schemaColumn: "schemaName",
+    fields: [
+      "schemaName",
+      "tableName",
+      "indexName",
+      "indexType",
+      "columns",
+      "isUnique",
+      "isPrimary",
+      "indexSizeBytes",
+      "scans",
+      "usageRatio",
+    ],
+    read: async (provider, input) =>
+      (await provider.getIndexStats(input.schema === undefined ? {} : { schema: input.schema })).map((index) => ({
+        schemaName: index.schemaName,
+        tableName: index.tableName,
+        indexName: index.indexName,
+        indexType: index.indexType ?? null,
+        columns: index.columns.join(", "),
+        isUnique: index.isUnique,
+        isPrimary: index.isPrimary,
+        indexSizeBytes: index.indexSizeBytes,
+        scans: index.scans,
+        usageRatio: index.usageRatio ?? null,
+      })),
+  },
+  storage: {
+    label: "storage",
+    method: "getStorageStats",
+    fields: ["name", "location", "size", "sizeBytes", "usagePercent", "walSizeBytes"],
+    read: async (provider) =>
+      (await provider.getStorageStats()).map((store) => ({
+        name: store.name,
+        location: store.location ?? null,
+        size: store.size,
+        sizeBytes: store.sizeBytes,
+        usagePercent: store.usagePercent ?? null,
+        walSizeBytes: store.walSizeBytes ?? null,
+      })),
+  },
+  health: {
+    label: "health",
+    method: "getHealth",
+    // The scalar figures only. `HealthInfo` also nests its own slow-query and session
+    // lists, and those are the two readings that have their own kind — projecting them
+    // here as well would give one fact two shapes and two ways to be cited.
+    fields: ["activeConnections", "databaseSize", "cacheHitRatio", "slowQueryCount", "activeSessionCount"],
+    read: async (provider) => {
+      const health = await provider.getHealth();
+      return [
+        {
+          activeConnections: health.activeConnections,
+          databaseSize: health.databaseSize,
+          cacheHitRatio: health.cacheHitRatio,
+          slowQueryCount: health.slowQueries.length,
+          activeSessionCount: health.activeSessions.length,
+        },
+      ];
+    },
+  },
+} satisfies Record<CuratedOperationKind, CuratedReading>);
+
+/**
+ * Calls the one curated method the reading names and projects what it returns.
+ *
+ * HONEST LIMIT, and it is a real weakening of this run's bounds rather than an
+ * oversight: `budget.statementTimeoutMs` cannot be enforced here. On the SQL path it
+ * becomes PostgreSQL's `SET LOCAL statement_timeout`, because a statement is what is
+ * being sent; `getSlowQueries(options?: {limit?})` and its five siblings take no
+ * budget at all, so the deadline's clamp is ADVISORY on this path. What still binds
+ * is everything else: the run deadline decides whether the call is admitted, the
+ * statement budget counts it, and the row and byte caps are applied below by this
+ * projection instead of by the engine. A reading that is still too LARGE once it has
+ * been narrowed is REFUSED rather than truncated, which is the same promise the read
+ * path makes — a delivered result is a complete one.
+ *
+ * `limit` and `schema` are applied HERE, to the projected rows, and not merely passed
+ * to the provider. That is not defensive duplication: only `getActiveSessions` and
+ * `getSlowQueries` take a limit at all, and four of the curated methods take no
+ * options whatsoever, so a selector honoured only in the arguments would be a promise
+ * the tool description makes and half the engines silently break. Narrowing before
+ * bounding, because a limit applied to the wrong schema's rows answers a question
+ * nobody asked.
+ */
+async function runCuratedRead(
+  context: AgentToolContext,
+  validatedInput: unknown,
+  budget: ExecutionBudget,
+  phase: { statementSent: boolean },
+): Promise<QueryResult> {
+  const input = validatedInput as AgentCuratedReadInput;
+  const reading = CURATED_READINGS[input.kind];
+  const provider = await context.acquireProvider(context.connection, AGENT_OPERATIONS_PROFILE);
+  if (typeof provider[reading.method] !== "function") {
+    throw new AgentCuratedReadError("KIND_UNSUPPORTED_BY_PROVIDER");
+  }
+
+  const limit = Math.min(input.limit ?? budget.maxResultRows, budget.maxResultRows);
+  const startedAtMs = context.clock?.() ?? Date.now();
+  // Set immediately before the call leaves, for the same reason the statement path
+  // sets it: anything that threw while we were still connecting is not the model's.
+  phase.statementSent = true;
+
+  let read: Record<string, unknown>[];
+  try {
+    read = await reading.read(provider, input, limit);
+  } catch (error) {
+    throw asReadingFailure(error, context.connection.type);
+  }
+
+  const narrowed =
+    reading.schemaColumn === undefined || input.schema === undefined
+      ? read
+      : read.filter((row) => row[reading.schemaColumn as string] === input.schema);
+  const rows = narrowed.slice(0, limit);
+
+  if (JSON.stringify(rows).length > budget.maxResultBytes) {
+    throw new AgentCuratedReadError("READING_OVER_BUDGET");
+  }
+
+  return {
+    rows,
+    fields: [...reading.fields],
+    rowCount: rows.length,
+    executionTime: (context.clock?.() ?? Date.now()) - startedAtMs,
+  };
+}
+
+/**
+ * A curated method's failure, in a class this layer's routing understands.
+ *
+ * The SQL path can rely on providers mapping their driver's errors: `queryReadOnly`
+ * is implemented on two providers and both wrap what the driver throws. The curated
+ * methods do NOT map uniformly — `mongodb.getTableStats` and `getIndexStats` call
+ * `listCollections().toArray()` outside any try/catch, and several providers'
+ * `ensureConnected` does the same — so a `MongoServerError` or a driver's own
+ * `TypeError` can reach this seam raw. Without this, `isStatementFailure` would
+ * answer false, the error would propagate out of the tool layer, and the run would be
+ * classified `internal` and DIE, on exactly the engines this workflow exists to
+ * reach.
+ *
+ * A `DatabaseError` is passed through untouched, whichever kind it is: the routing
+ * above already separates an environment failure (connection, pool, config) from a
+ * statement failure, and re-wrapping would destroy that distinction. Everything else
+ * becomes a `QueryError` carrying the thrown value's own text, which then travels the
+ * ordinary repairable path — fenced, on the ledger, and leaving the model free to ask
+ * for a different kind.
+ */
+function asReadingFailure(error: unknown, provider: DatabaseConnection["type"]): unknown {
+  if (error instanceof DatabaseError) return error;
+  return new QueryError(error instanceof Error ? error.message : String(error), provider);
+}
+
+/**
+ * The operational reading: what the engine says about itself, right now.
+ *
+ * The one agent tool that sends no statement, which is exactly why it runs where the
+ * others cannot. It reaches the database through the same audited pipeline as every
+ * other tool — same registry, same policy, same budget tracker, same artifact store —
+ * so its result is citable, showable and counted like any other, and an operator sees
+ * it in the audit stream under its own operation id.
+ */
+export async function inspectOperationsTool(context: AgentToolContext, input: unknown): Promise<AgentToolOutcome> {
+  const parsed = parseToolInput(agentCuratedReadInput, input);
+  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
+  const selector = parsed.value;
+  return runAuditedAgentCall(context, {
+    operationId: "db.operations.read",
+    // The reading, not a statement — canonical so that two identical requests are one
+    // call to the repair ledger however the model ordered its arguments.
+    fingerprintSource: `operations:${selector.kind}:${selector.limit ?? ""}:${selector.schema ?? ""}`,
+    input: selector,
+    label: CURATED_READINGS[selector.kind].label,
+    invoke: (validatedInput, budget, phase) => runCuratedRead(context, validatedInput, budget, phase),
+    ...(selector.schema === undefined ? {} : { target: { schema: selector.schema } }),
+  });
 }
 
 /**

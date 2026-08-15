@@ -95,6 +95,7 @@ const WORKFLOW_LABELS: Readonly<Record<AgentRunWorkflowType, string>> = {
   investigation: "Investigate",
   "query-optimization": "Optimize",
   "database-assessment": "Assess",
+  operations: "Operate",
 };
 
 /** A run that is over cannot be asked for anything, so nothing is offered for it. */

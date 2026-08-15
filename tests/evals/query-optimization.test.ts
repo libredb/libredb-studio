@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
+import { type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
 import {
   type Turn,
   answersProse,
@@ -35,8 +35,12 @@ afterEach(() => {
 const SLOW = "SELECT * FROM employee WHERE last_name = 'Facello'";
 const FAST = "SELECT emp_no FROM employee WHERE last_name = 'Facello'";
 
-/** What each engine answers an estimating EXPLAIN with, per statement. */
-const PLANS: Readonly<Record<EvalEngine, (sql: string) => Record<string, unknown>[]>> = {
+/**
+ * What each engine answers an estimating EXPLAIN with, per statement. Keyed on the
+ * two engines that answer a composed statement at all — this workflow is offered on
+ * no other.
+ */
+const PLANS: Readonly<Record<"postgres" | "sqlite", (sql: string) => Record<string, unknown>[]>> = {
   postgres: (sql) =>
     sql.includes("emp_no FROM")
       ? [{ "QUERY PLAN": [{ Plan: { "Node Type": "Index Only Scan", "Total Cost": 8.3, "Plan Rows": 1 } }] }]
@@ -47,7 +51,7 @@ const PLANS: Readonly<Record<EvalEngine, (sql: string) => Record<string, unknown
       : [{ id: 2, parent: 0, notused: 0, detail: "SCAN employee" }],
 };
 
-async function open(engine: EvalEngine): Promise<EvalRun> {
+async function open(engine: "postgres" | "sqlite"): Promise<EvalRun> {
   const run = await openEvalRun({
     engine,
     workflowType: "query-optimization",

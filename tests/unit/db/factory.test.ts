@@ -841,6 +841,29 @@ describe("acquireExecutionProfileProvider", () => {
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
+  test("serves the SAME engine under the operations profile, which needs no read-only statement path", async () => {
+    // Both directions of the workflow-aware engine gate, on one connection. The
+    // restriction is a property of the PROFILE, not of the factory: `agent-read-only`
+    // sends model-authored statements and is served only where the engine can bound
+    // one, while `agent-operations` sends none and calls the curated reporting methods
+    // every provider implements. Asserting them together is what keeps a later
+    // simplification from collapsing the two.
+    const connection = makeConnection("redis", { id: "redis-operations" });
+
+    const refused: unknown = await acquireExecutionProfileProvider(connection, "agent-read-only").catch(
+      (e: unknown) => e,
+    );
+    expect(refused).toBeInstanceOf(ExecutionProfileError);
+
+    const provider = await acquireExecutionProfileProvider(connection, "agent-operations");
+
+    expect(provider.isConnected()).toBe(true);
+    expect(typeof provider.queryReadOnly).not.toBe("function");
+    // It is still a PROFILED acquisition: the operations path may not be handed the
+    // editor's writable pool, which is the invariant the profiled cache carries.
+    expect(getExecutionProfileCacheStats().size).toBe(1);
+  });
+
   test("refuses to vend a PostgreSQL profile whose role is too privileged, and caches nothing", async () => {
     // The provider verifies the role at open (a read-only transaction does not
     // stop COPY TO PROGRAM or pg_read_file), and the refusal has to reach the
