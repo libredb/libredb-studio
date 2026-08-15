@@ -290,7 +290,12 @@ const noneUnnamed = async (sql: string) => {
  * naming one real table is the floor, not the ceiling.
  */
 function plannedAgainstNoRealTable(drive: EvalDrive): string | undefined {
-  return DEPARTMENTS.some((table) => drive.text.includes(table)) ? undefined : "plan-names-no-real-table";
+  // Case-folded on both sides: the plan is PROSE, so "the Engineering table" and an
+  // identifier quoted the way SQL uppercases it both name the table this bar is
+  // about. A case-sensitive match would report the defect against a run that did
+  // exactly what it was asked to.
+  const plan = drive.text.toLowerCase();
+  return DEPARTMENTS.some((table) => plan.includes(table.toLowerCase())) ? undefined : "plan-names-no-real-table";
 }
 
 const populationShortfall = (drive: EvalDrive): string | undefined => {

@@ -722,6 +722,42 @@ describe("the inventories a process holds", () => {
   });
 
   /**
+   * The hold is fed by two callers with different ages: a fresh CAPTURE, which is
+   * always the newest reading there is, and a resumed run's LEDGER REUSE, which
+   * carries whatever that run read when it started. A run resumed hours later would
+   * otherwise walk the whole process back to its own older schema, and every plan
+   * run on that connection would be grounded on it — a regression nothing observes,
+   * because both inventories are internally valid and neither is a lie.
+   */
+  test("an older reading never replaces a newer one", async () => {
+    const snapshot = await captured("postgres");
+    holdSnapshotForConnection({ ...snapshot, capturedAtMs: 9_999 });
+    holdSnapshotForConnection({ ...snapshot, capturedAtMs: 1 });
+
+    expect(heldSnapshotForConnection("conn-1")?.capturedAtMs).toBe(9_999);
+  });
+
+  /**
+   * Recency and AGE are two different things, and the fix for one must not undo the
+   * other: the reading kept is the newest, while the connection's place in the bound
+   * is refreshed by being USED. A resumed run holding its own older inventory is a
+   * connection in active use, so it must not age out under sixteen connections read
+   * once each.
+   */
+  test("re-holding an older reading still refreshes the connection's place in the bound", async () => {
+    const snapshot = await captured("postgres");
+    holdSnapshotForConnection({ ...snapshot, capturedAtMs: 9_999 });
+
+    for (let index = 0; index < 17; index += 1) {
+      holdSnapshotForConnection({ ...snapshot, connectionId: `conn-${index}` });
+      holdSnapshotForConnection({ ...snapshot, capturedAtMs: 1 });
+    }
+
+    expect(heldSnapshotForConnection("conn-1")?.capturedAtMs).toBe(9_999);
+    expect(heldSnapshotForConnection("conn-0")).toBeNull();
+  });
+
+  /**
    * Bounded, because these are whole inventories and a long-lived server touches
    * many connections. The eviction is by least-recently-held, which is why holding a
    * connection again moves it to the end rather than leaving it where it entered.

@@ -198,6 +198,22 @@ describe("the planning-grounded case can fail on the defect it was written for",
     const generic = await vague.drive([answersProse("I would review schema definitions and available artifacts.")]);
     expect(summarise(planningCase, generic).verdict).toBe("unanswered (plan-names-no-real-table)");
   });
+
+  /*
+    Prose is not an identifier. A model writing "the Engineering table", or quoting
+    the name as SQL uppercases it, has named the table this bar is about — and a
+    judge that missed it would report the defect against a run that did exactly what
+    it was supposed to, which is worse than having no bar.
+  */
+  test("the bar reads a table name the way a sentence writes it, not the way the catalog stores it", async () => {
+    const run = await openCase();
+
+    const drive = await run.drive([
+      answersProse("I would start with the Engineering table, then ENGINEERING's indexes."),
+    ]);
+
+    expect(summarise(planningCase, drive).verdict).toBe("answered");
+  });
 });
 
 describe("the verdict is on the ledger, where a user reads it (B24)", () => {

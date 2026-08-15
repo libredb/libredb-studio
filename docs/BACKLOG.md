@@ -1896,8 +1896,9 @@ A planning run performs zero database operations, so the only schema it can know
 on the same connection already read. `context-snapshot.ts` holds that inventory in the server
 process (#384), which means a restarted server plans blind on every connection until someone drives
 an agent run again — and the same plan run resumed in a fresh process is grounded on one drive and
-not on the next. The run says which case it is in, so nothing it writes is false; what it is not is
-predictable.
+not on the next. The hold is also bounded at 16 connections, so a deployment working across more
+than that loses grounding on the least recently used one with no restart involved. The run says
+which case it is in, so nothing it writes is false; what it is not is predictable.
 
 The two candidate fixes were both rejected in #384 for reasons that still hold: capturing the
 catalog in plan mode would end the mode's promise, and writing the inventory into the plan run's own

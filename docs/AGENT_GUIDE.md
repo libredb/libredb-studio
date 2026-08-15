@@ -119,22 +119,34 @@ A Plan run never sends a statement to your database. That is the whole point of 
 not changed: you can start one against production and nothing reaches it.
 
 What changed is what the run is *told*. A Plan run is shown the schema inventory — tables, columns,
-keys and relations — **if an Agent run has already read it on this connection since the server
-started.** An Agent run reads the catalog once at the top of its run and the server keeps that
-reading; a Plan run is handed it, and is told plainly that it was somebody else's reading. So the
-plan you get names your real tables and the joins between them instead of describing an inspection
-of a database in general.
+keys and relations — **if an Agent run has already read it on this connection.** An Agent run reads
+the catalog once at the top of its run and the server keeps that reading; a Plan run is handed it,
+and is told plainly that it was somebody else's reading. So the plan you get names your real tables
+and the joins between them instead of describing an inspection of a database in general.
 
-A Plan run that has no inventory — a connection nothing has investigated yet, or any connection
-after the server restarts — says so in its answer and writes the plan as the inspection it would
-carry out to find out. It will not name tables it has not been shown. If you want a Plan run
-grounded in your schema, run an Agent run on that connection first; a short one is enough, because
-the catalog reading happens before the model's first turn.
+If you want a Plan run grounded in your schema, run an **Agent** run on that connection first; a
+short one is enough, because the catalog reading happens before the model's first turn. Three things
+decide whether that reading exists, and it is worth knowing them before concluding the feature is
+broken:
+
+- **The engine.** The catalog is read on PostgreSQL and SQLite — the two engines whose Agent runs
+  send statements at all. Nothing is captured on the others, so a Plan run there is never grounded.
+- **The workflow.** Investigate, Optimize, Assess and Analyze read the catalog. **Operate does not** —
+  it asks the engine about itself rather than about its tables — so an Operate run does not ground
+  anything.
+- **How recently.** The server keeps the reading in memory, for the **16 most recently used
+  connections**. A restart clears it, and a connection you have not touched in a while can drop out
+  once sixteen others have been read — with no restart involved. Running an Agent run on it again
+  brings it back.
+
+A Plan run that has no inventory says so in its answer and writes the plan as the inspection it
+would carry out to find out. It will not name tables it has not been shown.
 
 Two things the inventory is not. It is **structure, not measurement**: it says a table exists and
 what its columns are, never how many rows it holds or how large it is, so a plan cannot tell you
-which table is the big one. And it is **a reading from a moment**: it is whatever the last Agent run
-saw, and a schema that changed since is not noticed until the next Agent run reads it.
+which table is the big one. And it is **a reading from a moment**: it is the most recent reading any
+Agent run has taken — a run resumed from an older one does not push the newer reading out — and a
+schema that changed since is not noticed until the next Agent run reads it.
 
 ---
 

@@ -377,15 +377,33 @@ const HELD_SNAPSHOT_LIMIT = 16;
 
 const heldSnapshots = new Map<string, AgentContextSnapshot>();
 
-/** Holds one connection's inventory for later reuse. Bounded, most recent kept. */
+/**
+ * Holds one connection's inventory for later reuse. Bounded, newest reading kept.
+ *
+ * Two things happen here and they are deliberately not the same thing, because the
+ * callers differ in age. A fresh CAPTURE is always the newest reading of a
+ * connection there is; a resumed run's LEDGER REUSE carries whatever that run read
+ * when it started, which may be hours older than what another run has since held.
+ *
+ *  - **Which reading is kept is decided by `capturedAtMs`**, so a resumed run cannot
+ *    walk the whole process back to its own older schema and ground every later plan
+ *    run on it. Nothing would observe that regression: both inventories are
+ *    internally valid, and neither is a lie about the database it came from.
+ *  - **Where the connection sits in the bound is decided by USE**, so re-holding it
+ *    moves it to the end of the insertion order whichever reading won. A connection a
+ *    resumed run is actively working on must not age out under sixteen connections
+ *    read once each.
+ *
+ * Found by review on #384, which had one `delete`/`set` doing both jobs at once.
+ */
 export function holdSnapshotForConnection(snapshot: AgentContextSnapshot): void {
   if (fingerprintTables(snapshot.tables) !== snapshot.fingerprint) return;
-  // Deleted before it is set, so re-holding a connection makes it the most recent
-  // rather than leaving it where it first entered: insertion order is the eviction
-  // order below, and a connection under active use must not age out under one that
-  // was read once.
+  const held = heldSnapshots.get(snapshot.connectionId);
+  const newest = held !== undefined && held.capturedAtMs > snapshot.capturedAtMs ? held : snapshot;
+  // Deleted before it is set, so the connection's place in the eviction order below
+  // is refreshed even on the path where the reading it arrived with was the older one.
   heldSnapshots.delete(snapshot.connectionId);
-  heldSnapshots.set(snapshot.connectionId, snapshot);
+  heldSnapshots.set(snapshot.connectionId, newest);
   for (const oldest of heldSnapshots.keys()) {
     if (heldSnapshots.size <= HELD_SNAPSHOT_LIMIT) break;
     heldSnapshots.delete(oldest);

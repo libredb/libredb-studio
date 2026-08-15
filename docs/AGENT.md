@@ -251,11 +251,22 @@ and produced an inspection plan that would have read identically against any dat
 
 The fix does not change what plan mode DOES. It changes what it is given:
 
-- **An agent run reads a connection's catalog once per run**, through `inspect_schema` and the
-  audited execution path, and records the inventory in its own ledger (`context-captured`).
+- **Some agent runs read a connection's catalog once per run**, through `inspect_schema` and the
+  audited execution path, and record the inventory in their own ledger (`context-captured`). Which
+  ones is narrower than "an agent run", and the difference is what decides whether a plan run on that
+  connection can be grounded at all: the capture happens on **PostgreSQL and SQLite** — the only
+  engines `CATALOG_PLANS` can build an inventory for, and the only ones whose provider serves the
+  `agent-read-only` profile at all — and in **every workflow but `operations`**, which skips the
+  capture by design because it reads what the engine reports about itself rather than what its tables
+  contain. Anywhere else the capture answers `CATALOG_READ_REFUSED`, as does a catalog read the
+  database itself refuses. None of those runs leaves an inventory behind.
 - **`context-snapshot.ts` also holds that inventory in the server process**, keyed by connection and
   refused unless it fingerprints as itself — the same check `reusableSnapshot` applies to a ledger
-  entry. Nothing else writes to it, so there is no second path to an engine anywhere in it.
+  entry. Nothing else writes to it, so there is no second path to an engine anywhere in it. It keeps
+  the **newest** reading of a connection, decided by `capturedAtMs` rather than by arrival order, so a
+  run resumed hours later cannot walk the process back to the schema it started with; and it is
+  **bounded to the 16 most recently used connections**, so a connection can fall out of it without any
+  restart once enough others have been read.
 - **A plan run on that connection is handed it.** It arrives exactly as it arrives in agent mode —
   the packed inventory and the relations, both fenced as `UNTRUSTED_CONTENT` — with one preface
   saying what only the server can say: *the inventory below was read from this database by an earlier
@@ -264,8 +275,11 @@ The fix does not change what plan mode DOES. It changes what it is given:
   an inventory of what EXISTS carries no row counts, no sizes and no timings, so nothing in it is a
   measurement.
 - **A plan run that is handed none is told so**, in the same rules: it has not seen this database, it
-  must say so, and it must invent no table names. That is what a plan run gets on a connection no
-  agent run has read in this process — a brand-new connection, or any connection after a restart.
+  must say so, and it must invent no table names. That is what a plan run gets whenever this process
+  holds no inventory for its connection, which is more cases than "nobody has run one": a brand-new
+  connection, any connection after a restart, a connection whose only agent runs were `operations`
+  runs or ran on an engine this cannot inventory, and a connection pushed out of the bound by
+  sixteen others.
 
 Three consequences worth stating plainly, because each is easy to assume the other way round:
 
@@ -275,9 +289,9 @@ Three consequences worth stating plainly, because each is easy to assume the oth
 2. **The hold is process memory, not durable state**, like the run-scoped artifact store and for the
    same reason: nothing about a plan run is worth a second durable store keyed outside a run. So a
    plan drive resumed in a process that has read nothing for its connection is ungrounded and says
-   so, rather than being given an inventory nobody in that process ever read. That a restart plans
-   blind until the next agent run is the honest cost, and it is recorded as `docs/BACKLOG.md` B42
-   rather than left for a reader to discover.
+   so, rather than being given an inventory nobody in that process ever read. That a restart — or a
+   seventeenth connection — plans blind until the next agent run is the honest cost, and it is
+   recorded as `docs/BACKLOG.md` B42 rather than left for a reader to discover.
 3. **The schema is never egressed anywhere it was not already going.** The same table and column
    names an agent run's prompt carries reach the same model, for a connection the same user can open
    an agent run on.
