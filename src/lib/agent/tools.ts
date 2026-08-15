@@ -15,9 +15,20 @@
  *    the run is for, and
  *    a client-supplied tool list has no way in — not because it is filtered, but
  *    because there is no parameter for it. The same rule is enforced a second time
- *    at the execution seam (`executeAgentOperation` refuses any mode but `agent`
- *    before the ledger, the deadline or an acquisition), so a caller holding a
- *    context cannot execute a tool the selector would never have offered.
+ *    at the execution seam, and since the plan-mode grounding design of 2026-08-15
+ *    the seam states it precisely: outside agent mode a call is refused
+ *    (`MODE_HAS_NO_TOOLS`, before the ledger, the deadline or an acquisition) UNLESS
+ *    it is marked `grounding`, which is the server establishing a plan run's context
+ *    before the model's first turn. Nothing a model sends can carry that flag — a
+ *    planning run is still handed an empty tool set, so no dispatch of a model's tool
+ *    call reaches the seam at all — and the two exported grounding entry points
+ *    (`readCatalogForGrounding`, `readStatementForGrounding`) are called by
+ *    `establishContext` with SERVER-composed statements. The property that survives
+ *    unchanged is the one that matters: no model, in any mode, executes anything the
+ *    selector did not offer it. What is NOT claimed is that the seam is a boundary
+ *    against the server's own callers: `readStatementForGrounding` takes arbitrary
+ *    SQL, and what keeps it read-only is the same statement guard, policy, profile
+ *    and audit trail every other call meets, not the mode check.
  * 2. **A policy denial is a different KIND of outcome than a database error.** The
  *    two travel as distinct variants of `AgentToolRefusal` (T2 pinned that union so
  *    a denial has no readable `message` field at all), and the text handed to the
@@ -298,6 +309,24 @@ export interface AgentOperationRequest {
   readonly label?: string;
   /** Declared target dimensions, so a scope allowlist can bound them. */
   readonly target?: { readonly catalog?: string; readonly schema?: string };
+  /**
+   * Marks this call as the SERVER's own grounding read rather than a tool the model
+   * asked for — the one thing that may reach a database outside agent mode.
+   *
+   * The mode gate below exists to enforce "a planning run's MODEL cannot invoke a
+   * tool", and it enforced that by refusing every call any planning run made. Since
+   * the plan-mode grounding design of 2026-08-15 a planning run establishes its
+   * context server-side before its first turn, exactly as an agent run does, so the
+   * gate has to distinguish the two things it was conflating. It is spelled as a flag
+   * on the REQUEST rather than on the context because a context is what the tool
+   * dispatch already holds: a marker there would travel to every call the dispatch
+   * makes, while this one can only be set by a caller composing a specific statement.
+   *
+   * Nothing else about the call is relaxed. The statement is still server-composed,
+   * still read-only, still audited, still bounded by the run's budget and deadline,
+   * and still refused by the same policy — and the model is still handed no tools.
+   */
+  readonly grounding?: boolean;
 }
 
 // ============================================================================
@@ -313,6 +342,19 @@ const catalogSelectorSchema = z.strictObject({
   kind: z.enum(["columns", "relations", "indexes"]).optional(),
   schema: z.string().optional(),
   table: z.string().optional(),
+});
+
+/**
+ * The same selector, plus the one kind the model is not offered.
+ *
+ * `statistics` is composed only while the SERVER establishes a run's context, and it
+ * is deliberately absent from the model-facing schema above: a kind the tool
+ * description does not explain is a kind a model would call blind. Both schemas parse
+ * the same shape otherwise, so the grounding path gets the same argument validation
+ * rather than a private, unvalidated one.
+ */
+const groundingSelectorSchema = catalogSelectorSchema.extend({
+  kind: z.enum(["columns", "relations", "indexes", "statistics"]).optional(),
 });
 
 const readStatementSchema = z.strictObject({
@@ -676,8 +718,15 @@ export function selectAgentTools(run: Pick<AgentRunRecord, "mode" | "workflowTyp
 // ============================================================================
 
 const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Object.freeze({
+  // "Produce a plan in prose" until 2026-08-15, when the plan-mode design made the
+  // deliverable ONE runnable statement (or an explicit `NO STATEMENT:` refusal) for
+  // every workflow but `operations`. This sentence is said to a model that has just
+  // reached for a tool, which is exactly the moment it must not be handed a second,
+  // looser contract than the one its rules state: two wordings of one contract is how
+  // #350 happened. So it says what is true here — nothing can be called — and leaves
+  // what to produce to the rules that already say it.
   MODE_HAS_NO_TOOLS:
-    "This run is in planning mode, which has no tools at all. Produce a plan in prose; no database call is possible from here.",
+    "This run is in planning mode, which has no tools at all: no database call is possible from here. Answer with what your instructions asked you to produce.",
   // Said by every tool, including the two that reach no database and compose no SQL,
   // so it may not promise a statement (#350). `recommend_change` and `compose_report`
   // shared a sentence written for the SQL-composing tools, and a model that got an
@@ -1073,6 +1122,7 @@ export async function executeAgentOperation(
     input: { sql: request.sql },
     ...(request.label === undefined ? {} : { label: request.label }),
     ...(request.target === undefined ? {} : { target: request.target }),
+    ...(request.grounding === undefined ? {} : { grounding: request.grounding }),
     invoke: (validatedInput, budget, phase) => runStatement(context, validatedInput, budget, phase),
   });
 }
@@ -1095,6 +1145,8 @@ interface AuditedAgentCall {
   readonly input: unknown;
   readonly label?: string;
   readonly target?: { readonly catalog?: string; readonly schema?: string };
+  /** The server's own grounding read. See `AgentOperationRequest.grounding`. */
+  readonly grounding?: boolean;
   readonly invoke: (
     validatedInput: unknown,
     budget: ExecutionBudget,
@@ -1120,7 +1172,10 @@ class AgentCuratedReadError extends Error {
 }
 
 async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgentCall): Promise<AgentToolOutcome> {
-  if (context.mode !== "agent") return unavailable("MODE_HAS_NO_TOOLS");
+  // Outside agent mode only a grounding read passes, and the flag is set by nothing
+  // the model can reach: `selectAgentTools` still hands a planning run an empty tool
+  // set, so no dispatch of a model's tool call ever arrives here with it.
+  if (context.mode !== "agent" && call.grounding !== true) return unavailable("MODE_HAS_NO_TOOLS");
 
   const fingerprint = fingerprintStatement(call.fingerprintSource);
   const repairAdmission = context.repairs.admit(fingerprint);
@@ -1297,6 +1352,13 @@ const CATALOG_LABELS: Readonly<Record<AgentCatalogKind, string>> = Object.freeze
   columns: "schema inventory",
   relations: "foreign-key inventory",
   indexes: "index inventory",
+  // The word "estimated" is part of the label rather than of the surrounding prose
+  // because this header is what the model reads the rows under: every number below
+  // it is the engine's own estimate, which may be stale or absent entirely.
+  // `catalogSelectorSchema` does not offer this kind to the model — the statistics
+  // read is composed server-side while a run establishes its context — so the label
+  // is here to keep the record total, not because a tool call can reach it today.
+  statistics: "estimated statistics inventory",
 });
 
 /**
@@ -1355,7 +1417,58 @@ export async function inspectSchemaTool(
   context: AgentToolContext,
   input: { readonly kind?: AgentCatalogKind; readonly schema?: string; readonly table?: string },
 ): Promise<AgentToolOutcome> {
-  const parsed = parseToolInput(catalogSelectorSchema, input);
+  return readCatalog(context, catalogSelectorSchema, input, false);
+}
+
+/**
+ * The same catalog read, taken by the SERVER while it establishes a run's context.
+ *
+ * Two things separate it from the tool above and nothing else does: it accepts the
+ * `statistics` kind the model is not offered, and it is marked as a grounding read so
+ * the mode gate admits it in planning mode — where the model still has no tools and
+ * still sends nothing. Everything that makes the call safe is the same code path.
+ *
+ * A named function rather than a flag threaded through `inspectSchemaTool`, because
+ * the model's tool dispatch calls that one by name: an option there could be set by a
+ * future caller wiring the dispatch through, and this cannot be reached from it at
+ * all.
+ */
+export async function readCatalogForGrounding(
+  context: AgentToolContext,
+  input: { readonly kind?: AgentCatalogKind; readonly schema?: string; readonly table?: string },
+): Promise<AgentToolOutcome> {
+  return readCatalog(context, groundingSelectorSchema, input, true);
+}
+
+/**
+ * One server-composed statement, taken as part of a run's grounding.
+ *
+ * The narrow companion to `readCatalogForGrounding`, for the one composed statement
+ * that is not a catalog KIND: SQLite's `sqlite_stat1` availability probe, which has
+ * to be its own statement because SQLite resolves table names at prepare time (see
+ * `composeStatisticsAvailabilityProbe`). The caller composes it — this layer neither
+ * accepts nor builds SQL from anything a model wrote — and the statement guard,
+ * the policy pipeline and the audit stream are the same ones every other call meets.
+ */
+export async function readStatementForGrounding(
+  context: AgentToolContext,
+  request: { readonly sql: string; readonly label: string },
+): Promise<AgentToolOutcome> {
+  return executeAgentOperation(context, {
+    operationId: "sql.query.read",
+    sql: request.sql,
+    label: request.label,
+    grounding: true,
+  });
+}
+
+async function readCatalog(
+  context: AgentToolContext,
+  selectorSchema: z.ZodType<{ kind?: AgentCatalogKind; schema?: string; table?: string }>,
+  input: { readonly kind?: AgentCatalogKind; readonly schema?: string; readonly table?: string },
+  grounding: boolean,
+): Promise<AgentToolOutcome> {
+  const parsed = parseToolInput(selectorSchema, input);
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
   const selector = normalizeSelector(parsed.value);
   let sql: string;
@@ -1367,6 +1480,7 @@ export async function inspectSchemaTool(
   return executeAgentOperation(context, {
     operationId: "sql.query.read",
     sql,
+    grounding,
     label: CATALOG_LABELS[selector.kind ?? "columns"],
     // Declared, so a scope carrying a schema allowlist bounds which schema may be
     // inspected. A raw read cannot declare its schema, which is why an allowlist

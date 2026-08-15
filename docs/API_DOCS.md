@@ -806,7 +806,7 @@ Opens a run and returns immediately; the drive happens in the background.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `mode` | string | Yes | `"planning"` (toolless — performs zero database operations) or `"agent"` |
+| `mode` | string | Yes | `"planning"` or `"agent"`. A planning run's model is handed no tools and the run executes **no statement of yours and writes nothing**; it does not perform zero database operations — since 2026-08-15 the server reads the connection's catalog and the engine's estimated statistics before the first turn, read-only and audited like every other agent read, and on PostgreSQL and SQLite only |
 | `workflowType` | string | No | `"investigation"` (the default), `"query-optimization"` or `"database-assessment"`. An unrecognised value is **refused, not defaulted** |
 | `objective` | string | Yes | Non-empty, at most 4000 characters |
 | `connectionId` | string | Yes | Must resolve **server-side**. An inline `connection` object in the body is refused |

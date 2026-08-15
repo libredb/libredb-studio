@@ -53,6 +53,8 @@ import {
   reusableSnapshot,
 } from "./context-snapshot";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
+import { PLAN_NO_STATEMENT_MARKER, readPlanStatement, validatePlanStatement } from "./plan-statement";
+import { packSchemaStatistics, readSchemaStatistics } from "./schema-stats";
 import {
   AGENT_MODEL_TURN_TIMEOUT_MS,
   AGENT_REPORT_RESERVE_MS,
@@ -98,6 +100,7 @@ import {
   type AgentRunWorkflowType,
 } from "./types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END, fenceUntrustedContent } from "./untrusted-content";
+import type { DatabaseType, TableSchema } from "@/lib/types";
 
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
 export type AgentToolResources = Omit<AgentToolContext, "runId" | "mode" | "workflowType" | "actor">;
@@ -236,10 +239,117 @@ export const AGENT_REPORT_RESERVE_NOTICE = [
 const OPERATIONS_CONTEXT_NOTE =
   "No schema inventory was captured for this run, and none is needed: this run reads what the engine reports about itself, not what its tables contain. Take the readings you need with inspect_operations. There is no tool here that sends SQL, so nothing is established for you until a reading returns it.";
 
-const PLANNING_RULES = [
-  "You have no tools in this mode and cannot reach the database at all.",
-  "Answer with a plan in prose: what you would inspect, in what order, and what each step would establish.",
+/**
+ * The same workflow, planned rather than run.
+ *
+ * Its own sentence because `OPERATIONS_CONTEXT_NOTE` names `inspect_operations`, and
+ * a planning run has no tools: telling a model to call a tool it does not have is the
+ * #350 failure exactly. This is also why an operations plan is not grounded at all —
+ * an operations objective is not about the schema, so a catalog read would spend the
+ * run's statements on an inventory the plan has no use for.
+ */
+const PLANNING_OPERATIONS_CONTEXT_NOTE =
+  "No schema inventory was read for this run, and none is needed: an operations objective is about what the engine reports about ITSELF — its sessions, its locks, its waits, its configuration — not about what its tables contain. Nothing about this server has been established for you, so write the plan as the readings you would take and what each would settle.";
+
+/**
+ * What a plan run is told when its context could not be established.
+ *
+ * Not the capture's own words: `FALLBACK_ADVICE` sends a model to `inspect_schema`,
+ * which this mode does not have (#350). And not silence either — the design's item 6
+ * is explicit that an ungrounded run must KNOW it is ungrounded, because the rules
+ * that steer it away from inventing table names depend on that being honest.
+ *
+ * The engine type is named because it is the usual cause: grounding is served for the
+ * dialects `CATALOG_COMPOSERS` covers, PostgreSQL and SQLite, and on anything else
+ * there is nothing to read. It is a server-side enum, so nothing untrusted is spliced
+ * into a sentence the model reads as the server's own.
+ */
+const planningUngroundedNote = (type: DatabaseType): string =>
+  `No schema inventory could be read for this run on this ${type} connection, so nothing about this database has been established for you: not its tables, not its columns, not its relations, and not the size of anything. You have no tools and can read nothing further.`;
+
+/**
+ * What is true of a plan run whatever its workflow and whatever it was given.
+ *
+ * It used to say the run "cannot reach the database at all", and that became false on
+ * 2026-08-15: the SERVER reads this connection's catalog and its estimated statistics
+ * before the first turn. What stayed true is the sentence that actually bears on the
+ * model's behaviour — it holds no tool, so nothing it writes reaches anything, and
+ * nothing further will be read on its behalf. Stating the wider claim would have been
+ * the false self-description this mode keeps being caught in.
+ */
+const PLANNING_TOOLLESS_RULE =
+  "You have no tools in this mode: nothing further will be read for you, and everything you can know about this database is already in this conversation.";
+
+/**
+ * The refusal path, in the model's own words — the second of a plan run's two
+ * legitimate outcomes.
+ *
+ * Stated on BOTH the grounded and the ungrounded side, because "the inventory does
+ * not support this question" is an ordinary outcome rather than an error: a run that
+ * has a schema and no way to answer from it must refuse exactly as loudly as a run
+ * that has no schema at all. `NO STATEMENT:` is a convention in the OUTPUT and not a
+ * tool, which is what lets a toolless mode make its two outcomes mechanically
+ * distinguishable — the verdict (item 5 of the design) and the rail (item 7) both key
+ * on this marker, so the wording is load-bearing rather than stylistic.
+ *
+ * The last sentence names the defect this whole contract exists to remove. A plan
+ * that lists what it would inspect is what shipped until now, and it scored as a
+ * success against a verifier that accepted any non-empty prose; saying only "write a
+ * statement" leaves a model that cannot write one to fall back on precisely that.
+ */
+const PLANNING_NO_STATEMENT_RULE = [
+  `If what you were given does not support the objective, write NO STATEMENT AT ALL: begin a line with \`${PLAN_NO_STATEMENT_MARKER}\`, say exactly what is missing, and then ask the ONE question that would let you write it.`,
+  "That is a complete answer here, and it is expected whenever the inventory does not reach the objective.",
+  "A general inspection plan is not an answer here: a plan that would read identically against any database in the world says nothing about this one.",
 ].join(" ");
+
+/**
+ * What a plan of each workflow is to produce (section 3 of the plan-mode design).
+ *
+ * A TOTAL record over `AgentRunWorkflowType`, for the reason `WORKFLOW_OBJECTIVES` and
+ * `WORKFLOW_TOOL_RULES` are: a workflow added to the union stops this file compiling
+ * until someone decides what a plan of it hands back. The alternative — one deliverable
+ * sentence for every workflow — is what makes a plan of a query optimization ask for
+ * "the statement that answers the question" when the objective already came with one.
+ *
+ * `operations` is the exception the owner ruled on, and it is a decision rather than an
+ * omission: an operations objective is about what the engine reports about ITSELF, so
+ * the run is not grounded, there is no schema to write a statement against, and the
+ * statement contract would be a rule its inputs cannot satisfy — the #350 failure.
+ */
+type PlanDeliverable = { readonly kind: "statement"; readonly noun: string } | { readonly kind: "prose" };
+
+const PLAN_DELIVERABLES: Readonly<Record<AgentRunWorkflowType, PlanDeliverable>> = Object.freeze({
+  investigation: { kind: "statement", noun: "the statement that answers the question" },
+  "query-optimization": { kind: "statement", noun: "the rewritten statement" },
+  "database-assessment": { kind: "statement", noun: "the statement that measures the quality concern" },
+  "data-analysis": { kind: "statement", noun: "the statement that produces the answer" },
+  operations: { kind: "prose" },
+} satisfies Record<AgentRunWorkflowType, PlanDeliverable>);
+
+/**
+ * The deliverable, said to a run that HAS an inventory.
+ *
+ * The fence tag is the connection's canonical type-id and not the word `sql`, because
+ * something already reads that tag: `rich-text.tsx` decides from it whether to offer
+ * the editor hand-off (#389), over a total record of exactly these type-ids. A tag it
+ * does not know costs the user the button. The type-id is a server-side enum, so
+ * nothing untrusted is spliced into a sentence the model reads as the server's own.
+ *
+ * The closing sentence is item 6's honest limit, made where the claim is made: the
+ * inventory records what EXISTS, not what this user's role may select from, so a
+ * statement checked against it is not a statement guaranteed to run. Saying "use only
+ * names from the inventory" without it would promise a soundness nothing here has.
+ */
+const planningStatementContract = (deliverable: { readonly noun: string }, type: DatabaseType): string =>
+  [
+    `Produce ONE runnable statement: ${deliverable.noun}.`,
+    `Put it in a single fenced block tagged \`${type}\` — three backticks, that tag, the statement, three backticks — and put nothing else inside that block.`,
+    "Put the rationale AFTER the statement, and keep it brief: which tables it reads, which joins it makes, and why that answers the objective.",
+    "Use no table name and no column name that is not in that inventory. A name that is not there is one you invented, and the statement will fail on it.",
+    "A statement built only from names in the inventory is still not a statement that is certain to run: the inventory records what EXISTS in this database, not what the user's role is permitted to read.",
+    PLANNING_NO_STATEMENT_RULE,
+  ].join(" ");
 
 /**
  * What a plan run is told when it HAS an inventory, and what it is told when it has
@@ -260,25 +370,122 @@ const PLANNING_RULES = [
  * and no timings, so a plan that concludes which table is the big one from it has
  * measured nothing.
  */
-const PLANNING_SCHEMA_RULES = [
-  "A schema inventory for this database is in this conversation, with its relations beside it.",
-  "It was read by an EARLIER run on this connection, never by you: this run sends nothing to any database, so it is a record of what exists — not of how many rows anything holds, how large it is, or how fast it runs.",
-  "Write the plan against it. Name the real tables, columns and relations each step would inspect instead of writing about tables in general, and say what each step would establish about them.",
-  "Name nothing that is not in it, and say plainly where it does not reach — an inventory shows structure, and most of what your objective asks about is established only by the reads you are proposing.",
-].join(" ");
+/**
+ * What this drive was able to establish, as the rules have to describe it.
+ *
+ * Three separate facts rather than one flag, because the rules make three separate
+ * claims and each of them is a claim a live run would be caught making falsely: that
+ * there IS an inventory, WHO read it, and whether anything in the conversation says
+ * how big anything is. The plan-mode grounding design of 2026-08-15 is what forced
+ * the split — until then only an earlier run could have read it, so "never by you"
+ * was safely hard-coded.
+ */
+interface PlanningGrounding {
+  /** Whether an inventory reached the model at all. */
+  readonly schemaKnown: boolean;
+  /** Who read it. A plan run now reads its own, and says so. */
+  readonly readBy: "this-run" | "earlier-run";
+  /** Whether a statistics block reached the model beside the inventory. */
+  readonly statisticsShown: boolean;
+}
 
-const PLANNING_NO_SCHEMA_RULES = [
-  "No schema inventory is available to this run, so you have not seen this database at all.",
-  "Say that plainly in your plan and invent no table or column names: write it as the inspection that would establish what this database holds, step by step, starting from its catalog.",
+/**
+ * Where the inventory came from, in the rules' own words.
+ *
+ * Neither sentence claims the run reached NO database, and that is a correction
+ * rather than an omission: on both paths this run reads the engine's own estimated
+ * statistics beside the inventory, so "this run has sent nothing" — which is what the
+ * `earlier-run` sentence said while the hold was a plan run's only source (#384) —
+ * became false the moment plan mode started grounding itself. What is true on both
+ * paths is the narrower promise the mode actually sells, and it is what both
+ * sentences say: no statement of the USER'S was run, nothing was written, and the
+ * model has no tools.
+ */
+const PLANNING_PROVENANCE: Readonly<Record<PlanningGrounding["readBy"], string>> = Object.freeze({
+  "this-run":
+    "It was read from the database by this run itself, before your first turn, through the same read-only catalog path the agent mode uses: no statement of the user's was run, nothing was written, and you have no tools and will read nothing further.",
+  "earlier-run":
+    "It was read by an EARLIER run on this connection rather than by this one, which is why this run did not have to read it again: no statement of the user's was run, nothing was written, and you have no tools and will read nothing further.",
+});
+
+/**
+ * What the inventory does NOT say, given what else is in the conversation.
+ *
+ * The no-statistics sentence is the one #384 wrote, and it stays exactly true when
+ * nothing else was read. The other replaces it rather than joining it: a run that HAS
+ * been shown estimated statistics must not also be told that nothing here says how
+ * many rows anything holds, and a run shown estimates must be told what an estimate
+ * is worth. Saying both would leave the model to pick.
+ */
+const PLANNING_LIMIT_WITHOUT_STATISTICS =
+  "It is a record of what exists — not of how many rows anything holds, how large it is, or how fast it runs.";
+
+const PLANNING_LIMIT_WITH_STATISTICS =
+  "Estimated statistics are in the conversation beside it: every number there is the engine's own estimate, it can be badly out of date, and it is ABSENT for a table nobody has analysed — a table listed as having no statistics is one whose size is unknown, never one you may treat as empty or small. Use them to choose the shape of a statement, never as a measurement, and never quote one as a fact about the data.";
+
+function planningSchemaRules(
+  grounding: PlanningGrounding,
+  deliverable: { readonly noun: string },
+  type: DatabaseType,
+): string {
+  return [
+    "A schema inventory for this database is in this conversation, with its relations beside it.",
+    PLANNING_PROVENANCE[grounding.readBy],
+    grounding.statisticsShown ? PLANNING_LIMIT_WITH_STATISTICS : PLANNING_LIMIT_WITHOUT_STATISTICS,
+    // "Write the plan against it" until 2026-08-15, which asked for the lecture the
+    // whole design exists to remove. What survives is the half that was right: the
+    // real names, rather than tables in general.
+    "Write the statement against it. Name the real tables, columns and relations it reads instead of writing about tables in general.",
+    planningStatementContract(deliverable, type),
+  ].join(" ");
+}
+
+/**
+ * What a plan run is told when it has no inventory at all.
+ *
+ * It is steered to the refusal, and that is the design's item 6 rather than a
+ * stylistic choice: a run with no schema cannot produce the deliverable, and the only
+ * two things it can do instead are invent a schema or write the generic advice that
+ * was the original defect. Both are refused here by name, and the one permitted
+ * answer — `NO STATEMENT:` plus the question that would unblock it — is the same
+ * marker the grounded side uses, so the refusal is mechanically the same outcome
+ * whatever produced it.
+ *
+ * The deliverable is still named. A run told only "you cannot" has nothing to say
+ * what it is missing FOR, and the question it is asked to ask is a question about the
+ * statement it was meant to write.
+ */
+const planningNoSchemaRules = (deliverable: { readonly noun: string }): string =>
+  [
+    "No schema inventory is available to this run, so you have not seen this database at all: not one table name, not one column, not one relation.",
+    `You were asked for ${deliverable.noun}, and you cannot write one from this: invent no table or column names, and do not guess a schema from the wording of the objective.`,
+    `So answer with the refusal instead — begin a line with \`${PLAN_NO_STATEMENT_MARKER}\`, say that this run was given no inventory of this database, and ask the ONE question that would let you write the statement.`,
+    "A general inspection plan is not an answer here: a plan that would read identically against any database in the world says nothing about this one.",
+  ].join(" ");
+
+/**
+ * What an operations plan is told instead of the statement contract.
+ *
+ * The prose row of the deliverable table, and the reason it is a row rather than a
+ * silence: this workflow composes no SQL and is grounded with no schema, so a run of
+ * it must be told what it IS to produce, not merely left without the contract the
+ * other four are given.
+ */
+const PLANNING_PROSE_RULES = [
+  "No schema inventory is available to this run, and this objective needs none: it is about what the engine reports about ITSELF — its sessions, its locks, its waits, its configuration — not about what its tables contain.",
+  "There is no statement to write here and no fenced block to produce, and you must invent no table or column names.",
+  "Answer in prose: the readings you would take, in what order, and what each one would settle.",
 ].join(" ");
 
 /**
  * What each workflow is FOR, said to the model (#330 T3).
  *
  * A total record, so a workflow added to the contract stops this file compiling
- * until someone decides what to ask of it. Appended to `AGENT_RULES` and never to
- * `PLANNING_RULES`: planning is toolless, and telling it to call tools would be
- * asking for something the mode cannot do.
+ * until someone decides what to ask of it. Appended to `AGENT_RULES` and never to a
+ * planning run's rules: planning is toolless, and telling it to call tools would be
+ * asking for something the mode cannot do. What a plan of each workflow produces
+ * instead is `PLAN_DELIVERABLES`, which is total over the same union for the same
+ * reason.
  *
  * The optimization block names `inspect_schema`'s index selector explicitly, and
  * that is not padding. A live run on 2026-08-12 reached for
@@ -398,8 +605,19 @@ const AUTO_EXECUTE_RULE = [
  * missing inventory in the capture's own words (`FALLBACK_ADVICE`), and its rules
  * are about the tools either way.
  */
-function systemPrompt(record: AgentRunRecord, schemaKnown: boolean): string {
-  const planningRules = `${PLANNING_RULES} ${schemaKnown ? PLANNING_SCHEMA_RULES : PLANNING_NO_SCHEMA_RULES}`;
+function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, type: DatabaseType): string {
+  // The deliverable decides the branch BEFORE the grounding does, because the prose
+  // workflow is not ungrounded by accident: `establishContext` skips the capture for
+  // it deliberately, so telling it what a run without an inventory should do would
+  // describe a shortfall it does not have.
+  const deliverable = PLAN_DELIVERABLES[record.workflowType];
+  const planningDeliverableRules =
+    deliverable.kind === "prose"
+      ? PLANNING_PROSE_RULES
+      : grounding.schemaKnown
+        ? planningSchemaRules(grounding, deliverable, type)
+        : planningNoSchemaRules(deliverable);
+  const planningRules = `${PLANNING_TOOLLESS_RULE} ${planningDeliverableRules}`;
   const rules = record.mode === "agent" ? `${AGENT_RULES} ${WORKFLOW_TOOL_RULES[record.workflowType]}` : planningRules;
   // Said only where it can happen, on all THREE counts. A planning run has no tools;
   // a run opened without the setting hands nothing anywhere; and a workflow that is
@@ -446,15 +664,34 @@ function packSnapshotMessage(snapshot: AgentContextSnapshot, objective: string):
  *
  * A plan run is given no citation form, because it has no `compose_report` to cite
  * into; what it is given instead is the one sentence that keeps its plan honest —
- * who read this, and that this run read nothing. The fenced header already carries
- * when it was read and that it has not been re-read since, so the preface says the
- * part the header cannot: that the reading was somebody else's.
+ * who read this. The fenced header already carries when it was read and that it has
+ * not been re-read since, so the preface says the part the header cannot: whose
+ * reading it was.
+ *
+ * Two prefaces because there are now two truths, and the wrong one is a false
+ * self-description of exactly the kind this repository keeps finding. Since the
+ * plan-mode grounding design of 2026-08-15 the ordinary case is that the run read the
+ * inventory ITSELF, server-side, before its first turn; being handed a reading some
+ * earlier run on the connection already paid for is the fast path, not the only path.
+ *
+ * The `earlier-run` sentence no longer says the run has read NOTHING, for the reason
+ * `PLANNING_PROVENANCE` records: the statistics beside the inventory are read on both
+ * paths, so the only claim that stays true on both is the one about the user's own
+ * statements.
  */
-const PLANNING_SNAPSHOT_PREFACE =
-  "The inventory below was read from this database by an earlier run on this connection. This run has read nothing and will read nothing.";
+const PLANNING_SNAPSHOT_PREFACE: Readonly<Record<PlanningGrounding["readBy"], string>> = Object.freeze({
+  "this-run":
+    "The inventory below was read from this database by this run, before your first turn, through a read-only catalog read the server composed. No statement of your objective's was run, and you will read nothing further.",
+  "earlier-run":
+    "The inventory below was read from this database by an earlier run on this connection, so this run did not have to read it again. No statement of your objective's was run, and you will read nothing further.",
+});
 
-function packPlanningSnapshotMessage(snapshot: AgentContextSnapshot, objective: string): string {
-  return packContextForTask(snapshot, objective, { preface: PLANNING_SNAPSHOT_PREFACE });
+function packPlanningSnapshotMessage(
+  snapshot: AgentContextSnapshot,
+  objective: string,
+  readBy: PlanningGrounding["readBy"],
+): string {
+  return packContextForTask(snapshot, objective, { preface: PLANNING_SNAPSHOT_PREFACE[readBy] });
 }
 
 /**
@@ -917,8 +1154,87 @@ export async function runInvestigation(
   const notAttempted = new Set<string>();
 
   let contextEstablished = false;
-  /** Whether this drive was able to put an inventory in front of the model. */
-  let schemaKnown = false;
+  /**
+   * What this drive was able to put in front of the model, as the planning rules
+   * have to describe it. Rebuilt rather than mutated in place so the rules can only
+   * ever state a combination this code actually produced.
+   */
+  let grounding: PlanningGrounding = { schemaKnown: false, readBy: "this-run", statisticsShown: false };
+  /**
+   * The inventory a plan run's drafted statement is checked against, or `null` when
+   * this drive has none.
+   *
+   * `null` is a load-bearing value rather than an empty default: a run on an engine
+   * this server cannot ground checked nothing, and an empty inventory would report
+   * every table the model named as one this database does not have. It is the
+   * SNAPSHOT's tables and not the grounding flag, because the check needs the names.
+   */
+  let planningInventory: readonly TableSchema[] | null = null;
+
+  /**
+   * A planning run's grounding: the inventory, its relations, and what the engine
+   * estimates about its own tables.
+   *
+   * Three sources, cheapest first, and the order is the whole design:
+   *
+   *  1. **This run's own ledger.** A resumed plan run re-derives the inventory it
+   *     already recorded and sends nothing at all.
+   *  2. **What this process already read**, for any run on this connection. Free,
+   *     and the case #384 built; it is now the fast path rather than the only one.
+   *  3. **A capture**, which reads the catalog through the audited path and records
+   *     it, so the next drive of this run takes path 1.
+   *
+   * The statistics are read on every grounded path, including the two free ones, and
+   * that is deliberate: what the model may conclude has to depend on what it was
+   * shown, not on which process happened to have read a catalog earlier. They are
+   * NOT folded into the snapshot — estimates are not schema, they change under a
+   * running database, and the snapshot's fingerprint is what makes it reusable (see
+   * `schema-stats.ts`).
+   *
+   * A run that cannot be grounded is TOLD so, in the server's own voice and without
+   * naming a tool it does not have. The rules phase depends on that flag being
+   * honest: `grounding.schemaKnown` is what decides whether the model is told to
+   * write against an inventory or told it has not seen this database at all.
+   */
+  const establishPlanningContext = async (): Promise<void> => {
+    const recorded = reusableSnapshot(record.events, record.connectionId);
+    const held = recorded === null ? heldSnapshotForConnection(record.connectionId) : null;
+    let snapshot = recorded ?? held;
+    // Only the process-held reading is somebody else's. A recorded one is this run's
+    // own earlier drive, and telling the model otherwise would be a false
+    // self-description of exactly the kind this mode keeps being caught in.
+    const readBy: PlanningGrounding["readBy"] = held === null ? "this-run" : "earlier-run";
+
+    if (snapshot === null) {
+      const capture = await captureContextSnapshot(context);
+      if (capture.kind === "unavailable") {
+        messages.push({ role: "user", content: planningUngroundedNote(context.connection.type) });
+        return;
+      }
+      snapshot = capture.snapshot;
+      await service.recordEvent(runId, {
+        kind: "context-captured",
+        fingerprint: snapshot.fingerprint,
+        tableCount: snapshot.tables.length,
+        snapshot,
+      });
+    }
+    // After the ledger on the capture path, for the reason the agent path records:
+    // what another run may later be handed is an inventory durably part of some run's
+    // own history. Re-holding a reading that came from the hold is not a no-op either
+    // — it moves the connection back to the newest end of the eviction order.
+    holdSnapshotForConnection(snapshot);
+    messages.push({ role: "user", content: packPlanningSnapshotMessage(snapshot, record.objective, readBy) });
+    messages.push({ role: "user", content: packRelations(snapshot, record.workflowType) });
+
+    const statistics = await readSchemaStatistics(context);
+    messages.push({ role: "user", content: packSchemaStatistics(snapshot.tables, statistics) });
+    grounding = { schemaKnown: true, readBy, statisticsShown: statistics.kind === "read" };
+    // What the closing statement will be checked against, taken from the same reading
+    // the model was shown: a statement validated against an inventory the model never
+    // saw would be checked against a database and blamed on a model.
+    planningInventory = snapshot.tables;
+  };
 
   /**
    * Gives this drive the run's schema context, once, before the first turn.
@@ -936,37 +1252,34 @@ export async function runInvestigation(
    * still there, and a narrowed `inspect_schema` is exactly what an overflowing
    * catalog needs.
    *
-   * PLANNING takes neither path (#384). It stays toolless and still sends nothing:
-   * what it may be given is an inventory some agent run on this same connection
-   * already read, held in this process by `context-snapshot.ts`. Being handed one
-   * costs no statement, so the mode's bar is untouched — a plan run reaches no
-   * database whether or not one is there — and a plan run that is handed none is
-   * told so in its rules rather than left to write about a database it has not seen.
+   * PLANNING now establishes its context the same way, and that is the one line of
+   * the contract the plan-mode grounding design of 2026-08-15 deliberately changed.
+   * It used to consult `heldSnapshotForConnection` and nothing else (#384), so a plan
+   * run was about a real database only when an AGENT run had read one on the same
+   * connection, in this same process — which is to say: never, after a restart, on a
+   * second replica, or for a user who had not already used the mode this one exists
+   * to be safer than. What did NOT change is the property the mode sells: a plan run
+   * still runs NO statement of the user's, still writes nothing, and the model is
+   * still handed no tools. It reads the catalog, which is what the sidebar does on
+   * every connect.
    */
   const establishContext = async (): Promise<void> => {
     contextEstablished = true;
-    // Planning is toolless and must perform zero database operations. Not merely
-    // skipped for cost: reaching the catalog here would break the mode's own bar.
-    // So it is offered only what this process READ ALREADY, and never a read.
-    if (record.mode !== "agent") {
-      const inventory = heldSnapshotForConnection(record.connectionId);
-      if (inventory === null) return;
-      schemaKnown = true;
-      messages.push({ role: "user", content: packPlanningSnapshotMessage(inventory, record.objective) });
-      messages.push({ role: "user", content: packRelations(inventory, record.workflowType) });
+
+    // An operations run captures no schema inventory, and this is the one workflow
+    // where that is a decision rather than a failure: the objective is about what the
+    // engine reports about itself, not about what its tables hold. Hoisted above the
+    // mode branch since planning grounds itself, so that the decision is made once —
+    // the two modes differ only in which sentence they are given, because
+    // `OPERATIONS_CONTEXT_NOTE` names a tool a planning run does not have (#350).
+    if (record.workflowType === "operations") {
+      const note = record.mode === "agent" ? OPERATIONS_CONTEXT_NOTE : PLANNING_OPERATIONS_CONTEXT_NOTE;
+      messages.push({ role: "user", content: note });
       return;
     }
 
-    // An operations run captures no schema inventory, and this is the one workflow
-    // where that is a decision rather than a failure. The capture reads the catalog
-    // through `inspect_schema`, which this workflow is not offered and which most of
-    // the engines it runs on cannot serve at all: on anything but PostgreSQL and
-    // SQLite the capture comes back `unavailable` carrying advice to "use
-    // inspect_schema", and telling a model to call a tool it does not have is exactly
-    // the failure #350 recorded. So the run is told, in the server's own voice, what
-    // it does and does not have.
-    if (record.workflowType === "operations") {
-      messages.push({ role: "user", content: OPERATIONS_CONTEXT_NOTE });
+    if (record.mode !== "agent") {
+      await establishPlanningContext();
       return;
     }
 
@@ -1031,11 +1344,56 @@ export async function runInvestigation(
     after it. It is skipped when empty rather than written blank, because an empty
     entry would record that the model spoke.
   */
+  /**
+   * Records the statement a PLAN run drafted, when it drafted one (item 5 of the
+   * plan-mode SQL-generator design of 2026-08-15; `docs/BACKLOG.md` B44).
+   *
+   * Here rather than in the rail, because the ledger is the only thing that outlives
+   * the drive: #389's control reads SQL out of a markdown fence in the BROWSER, which
+   * works when the model fences its SQL, offers nothing when it does not, and leaves
+   * the run's own record with no statement in it to check, cite or verify.
+   *
+   * Three runs deliberately record nothing:
+   *
+   *  - an AGENT run, whose statements are drafted through a tool and already carry a
+   *    `stepId` tying each one to the call that ran it. Reading its closing prose
+   *    again would record a statement it never asked to run.
+   *  - an OPERATIONS plan, the one workflow whose deliverable is prose by decision. It
+   *    was never asked for a statement, so a block in its output is illustration.
+   *  - a run that refused, or that fenced nothing. A refusal is an outcome the verdict
+   *    reads for itself; it is not a statement, and recording one would be this layer
+   *    inventing a deliverable the model declined to write.
+   *
+   * The validation attached here is narrow on purpose and the event's own docblock
+   * says how narrow: a statement checked against the inventory is not a statement that
+   * will run, because the inventory records what exists and not what the user's role
+   * may select from.
+   */
+  const recordPlanStatement = async (closing: string): Promise<void> => {
+    if (record.mode === "agent" || record.workflowType === "operations") return;
+    const draft = readPlanStatement(closing);
+    if (draft.kind !== "statement") return;
+    await service.recordEvent(runId, {
+      kind: "plan-statement-drafted",
+      sql: draft.sql,
+      // The engine this drive was given, not one read off the record: a statement is
+      // written for the connection it would actually be run against.
+      dialect: context.connection.type,
+      ...validatePlanStatement(draft.sql, planningInventory),
+    });
+  };
+
   const conclude = async (
     status: AgentRunTerminalStatus,
     stopReason: AgentRunStopReason,
   ): Promise<AgentInvestigationResult> => {
-    if (text.length > 0) await service.recordEvent(runId, { kind: "closing-statement", text });
+    if (text.length > 0) {
+      await service.recordEvent(runId, { kind: "closing-statement", text });
+      // After the prose, in the order a reader folds them: the statement is a fact
+      // ABOUT that prose, and an entry claiming a draft the ledger has no output for
+      // would read as a statement arriving from nowhere.
+      await recordPlanStatement(text);
+    }
     await service.finish(runId, status, { stopReason });
     return { runId, status, stopReason, turns, text };
   };
@@ -1056,7 +1414,16 @@ export async function runInvestigation(
     // Built after the context, because in planning mode the rules depend on whether
     // there WAS one: a run told to plan against an inventory it was not given is the
     // same defect as a run given one and never told to use it (#350).
-    const turn = await takeTurn(model, systemPrompt(record, schemaKnown), messages, tools, turnBudgetMs);
+    const turn = await takeTurn(
+      model,
+      // The engine is the fence tag a plan run is told to write, so the prompt reads
+      // it from the connection this drive was given rather than from the record: the
+      // resources are what a statement would actually be run against.
+      systemPrompt(record, grounding, context.connection.type),
+      messages,
+      tools,
+      turnBudgetMs,
+    );
     text = turn.text;
     if (turn.aborted) return conclude("failed", turnBudgetMs < remainingMs ? "model-timeout" : "deadline-exceeded");
     if (turn.toolCalls.length === 0) return conclude("succeeded", "model-stopped");

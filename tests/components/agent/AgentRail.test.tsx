@@ -2961,6 +2961,321 @@ describe("AgentRail", () => {
     });
   });
 
+  /**
+   * The statement a plan run drafted, as a card (item 7 of the plan-mode SQL-generator
+   * design of 2026-08-15).
+   *
+   * Plan mode's deliverable is now a ledger fact rather than a fence the browser
+   * happened to find (item 5), and this is where the user meets it. Three of the four
+   * tests below are about a claim rather than a control, because that is where this
+   * surface can do harm:
+   *
+   *  - **A write must be unmissable, and not only to a sighted user.** The owner ruled
+   *    that plan mode may draft one; what it may never do is let "Apply to editor" put
+   *    a `DELETE` in the editor as though it were a `SELECT`. A colour says that to
+   *    nobody using a screen reader, so the mark rides in the button's own accessible
+   *    name.
+   *  - **A finding must sit beside the statement it is about.** A table the inventory
+   *    does not hold is what the identifier check exists to surface; swallowed, it
+   *    leaves an unvalidated statement looking like a sound one.
+   *  - **The refusal marker is a protocol token and never copy.** It reaches the user
+   *    stripped, inside a card that says what the outcome is.
+   */
+  describe("the statement a plan run drafted", () => {
+    const closingLine = (text: string): string =>
+      `${JSON.stringify({ kind: "event", event: { kind: "closing-statement", atMs: 1_004, text } })}\n`;
+
+    const draftedLine = (event: Record<string, unknown>): string =>
+      `${JSON.stringify({
+        kind: "event",
+        event: { kind: "plan-statement-drafted", atMs: 1_005, dialect: "postgres", ...event },
+      })}\n`;
+
+    const READ = {
+      sql: "SELECT title FROM film ORDER BY rental_count DESC",
+      readOnly: true,
+      identifiers: { kind: "checked", unknownTables: [] },
+    };
+
+    async function planRun(lines: readonly string[], props: Partial<React.ComponentProps<typeof AgentRail>> = {}) {
+      mockAgentFetch(lines);
+      const view = render(<AgentRail {...DEFAULT_PROPS} {...props} />);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "which films are popular" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      return view;
+    }
+
+    test("the drafted statement gets a card of its own, showing the SQL verbatim", async () => {
+      const { findByTestId } = await planRun([OPENED_LINE, STARTED_LINE, draftedLine(READ), FINISHED_LINE]);
+
+      const card = await findByTestId("agent-plan-statement");
+      // Verbatim, in a block of its own: this is model text, and the rail's standing
+      // rule is that the user can see where the application stopped speaking.
+      expect(card.querySelector("pre")?.textContent).toBe(READ.sql);
+      expect(card.getAttribute("data-read-only")).toBe("true");
+    });
+
+    test("applying hands the host the exact statement the ledger recorded", async () => {
+      const onApplyStatement = mock((_sql: string) => {});
+      const { findByTestId } = await planRun([OPENED_LINE, STARTED_LINE, draftedLine(READ), FINISHED_LINE], {
+        onApplyStatement,
+      });
+
+      fireEvent.click(await findByTestId("agent-plan-apply-statement"));
+      expect(onApplyStatement).toHaveBeenCalledWith(READ.sql);
+    });
+
+    test("a host with no editor is offered no editor control, and still offers the clipboard", async () => {
+      // The rule every affordance in this rail follows: nothing is offered that this
+      // host could not carry out.
+      const { findByTestId, queryByTestId } = await planRun([
+        OPENED_LINE,
+        STARTED_LINE,
+        draftedLine(READ),
+        FINISHED_LINE,
+      ]);
+
+      expect(queryByTestId("agent-plan-apply-statement")).toBeNull();
+      expect(await findByTestId("agent-plan-statement-copy")).not.toBeNull();
+    });
+
+    test("the statement can be copied through the control that works over plain HTTP", async () => {
+      // `CopyButton` rather than a second `navigator.clipboard` call: the API is
+      // secure-context only and this product ships over plain HTTP on several channels.
+      const writeText = mock(() => Promise.resolve());
+      Object.defineProperty(globalThis.navigator, "clipboard", { value: { writeText }, configurable: true });
+      const { findByTestId } = await planRun([OPENED_LINE, STARTED_LINE, draftedLine(READ), FINISHED_LINE]);
+
+      fireEvent.click(await findByTestId("agent-plan-statement-copy"));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith(READ.sql));
+    });
+
+    test("a guard objection is marked in the ACCESSIBLE NAME of the control that applies it, not only in colour", async () => {
+      const onApplyStatement = mock((_sql: string) => {});
+      const { findByTestId } = await planRun(
+        [
+          OPENED_LINE,
+          STARTED_LINE,
+          draftedLine({
+            sql: "DELETE FROM film WHERE rental_count = 0",
+            readOnly: false,
+            guardViolation: "NON_READ_STATEMENT",
+            identifiers: { kind: "checked", unknownTables: [] },
+          }),
+          FINISHED_LINE,
+        ],
+        { onApplyStatement },
+      );
+
+      const apply = await findByTestId("agent-plan-apply-statement");
+      const name = apply.getAttribute("aria-label") ?? "";
+      expect(name).toContain("Apply");
+      // WCAG 2.5.3: the accessible name contains the visible label, so a voice user
+      // can still say what they read.
+      expect(name).toContain("did not read this as a bounded read");
+      // And visibly, for everyone else — carried on the card rather than on a class
+      // name, so it can be asserted rather than inferred from styling.
+      const card = await findByTestId("agent-plan-statement");
+      expect(card.getAttribute("data-read-only")).toBe("false");
+      const mark = await findByTestId("agent-plan-statement-guard");
+      expect(mark.textContent).toContain("did not read this as a bounded read");
+      // The guard's own reason, beside the mark: it is this repository's closed
+      // vocabulary rather than model text, and it is what tells a reader whether the
+      // objection was about an effect or about text the guard could not settle.
+      expect(mark.textContent).toContain("NON_READ_STATEMENT");
+    });
+
+    /*
+      `readOnly` is `inspectAgentStatement(sql) === null` and nothing else, and the
+      guard's own header records that it over-refuses legitimate reads on purpose —
+      PostgreSQL's `#>`/`#>>` jsonb operators are refused with everything carrying a
+      `#`, because two dialects disagree about where such a statement ENDS.
+
+      So this card, which is the most consequential sentence on the whole surface, says
+      what the guard did and never what the SQL does. A pure jsonb read announced to a
+      user, and to a screen reader, as SQL that can delete their data is the
+      overstatement this repository is repeatedly caught in.
+    */
+    test("an objection the guard could not classify is not presented as a write", async () => {
+      const onApplyStatement = mock((_sql: string) => {});
+      const { findByTestId } = await planRun(
+        [
+          OPENED_LINE,
+          STARTED_LINE,
+          draftedLine({
+            sql: "SELECT payload #>> '{a,b}' FROM events",
+            readOnly: false,
+            guardViolation: "DIALECT_AMBIGUOUS_TEXT",
+            identifiers: { kind: "checked", unknownTables: [] },
+          }),
+          FINISHED_LINE,
+        ],
+        { onApplyStatement },
+      );
+
+      const card = await findByTestId("agent-plan-statement");
+      // Still marked, still amber, still not offered as an ordinary read: the run
+      // could not establish that this only reads, and that is worth a user's attention.
+      expect(card.getAttribute("data-read-only")).toBe("false");
+      expect((await findByTestId("agent-plan-statement-guard")).textContent).toContain("DIALECT_AMBIGUOUS_TEXT");
+      // And nowhere on it, or in the name the control carries, is the claim the server
+      // never made.
+      const name = (await findByTestId("agent-plan-apply-statement")).getAttribute("aria-label") ?? "";
+      expect(`${card.textContent} ${name}`).not.toContain("change or delete");
+      expect(`${card.textContent} ${name}`).not.toContain("This is not a read");
+    });
+
+    /*
+      The ledger shape a real run produces, which none of the cases above has: the
+      closing prose HOLDS the fenced statement, and the drafted event is written from
+      it immediately after. So the same `DELETE` is on screen twice — inside the prose,
+      where #389's per-block control offers "Apply to editor" with no mark, no
+      accessible name and no colour, and in the card, which marks it.
+
+      The unmarked control sits directly above the marked one and is the one a user
+      reaches for first. It is the silent hand-off item 4 of the design exists to
+      prevent, so it is withheld from the entry the statement was read out of; the
+      card is the hand-off, and the block keeps its clipboard.
+    */
+    test("the prose the statement was read out of offers no second, unmarked editor control", async () => {
+      const onApplyStatement = mock((_sql: string) => {});
+      const sql = "DELETE FROM film WHERE rental_count = 0";
+      const { findByTestId, queryByTestId, queryAllByTestId } = await planRun(
+        [
+          OPENED_LINE,
+          STARTED_LINE,
+          closingLine(`\`\`\`postgres\n${sql}\n\`\`\`\n\nIt removes the unrented titles.`),
+          draftedLine({
+            sql,
+            readOnly: false,
+            guardViolation: "NON_READ_STATEMENT",
+            identifiers: { kind: "checked", unknownTables: [] },
+          }),
+          FINISHED_LINE,
+        ],
+        { onApplyStatement },
+      );
+
+      // The marked control, and only it.
+      expect(await findByTestId("agent-plan-apply-statement")).not.toBeNull();
+      expect(queryByTestId("prose-code-apply")).toBeNull();
+      // Nothing else is taken away: the block still renders and still copies.
+      expect((await findByTestId("agent-prose")).textContent).toContain(sql);
+      expect(queryAllByTestId("prose-code-copy").length).toBe(1);
+    });
+
+    test("a plan run that drafted no statement keeps the fence reading #389 gave it", async () => {
+      // The fallback is unchanged where there is no card to defer to. Withholding it
+      // everywhere would cost a user the one hand-off plan mode had before this design.
+      const onApplyStatement = mock((_sql: string) => {});
+      const { findByTestId } = await planRun(
+        [OPENED_LINE, STARTED_LINE, closingLine("```postgres\nSELECT title FROM film\n```"), FINISHED_LINE],
+        { onApplyStatement },
+      );
+
+      fireEvent.click(await findByTestId("prose-code-apply"));
+      expect(onApplyStatement).toHaveBeenCalledWith("SELECT title FROM film");
+    });
+
+    test("a name the inventory does not hold is shown beside the statement, in the model's own text", async () => {
+      const { findByTestId } = await planRun(
+        [
+          OPENED_LINE,
+          STARTED_LINE,
+          draftedLine({
+            sql: "SELECT * FROM payments",
+            readOnly: true,
+            identifiers: { kind: "checked", unknownTables: ["payments", "refunds"] },
+          }),
+          FINISHED_LINE,
+        ],
+        { onApplyStatement: mock((_sql: string) => {}) },
+      );
+
+      // The finding reaches a screen reader too, on the control that acts on it: a
+      // user who never sees the amber list is otherwise told only "Apply to editor"
+      // about a statement whose names were not all found.
+      const name = (await findByTestId("agent-plan-apply-statement")).getAttribute("aria-label") ?? "";
+      expect(name).toContain("2 table(s)");
+      expect(name).toContain("does not hold");
+
+      const findings = await findByTestId("agent-plan-statement-unknown");
+      // The names are engine and model text, so they are shown as quoted content
+      // rather than spliced into the app's sentence — and they ARE shown: a count
+      // alone leaves the user with nothing to look for in the statement above.
+      expect(findings.textContent).toContain("payments");
+      expect(findings.textContent).toContain("refunds");
+      expect(findings.textContent).toContain("not in the inventory");
+    });
+
+    test("a statement nothing checked says so, rather than passing for a checked one", async () => {
+      const { findByTestId, queryByTestId } = await planRun(
+        [
+          OPENED_LINE,
+          STARTED_LINE,
+          draftedLine({ sql: "SELECT 1", readOnly: true, identifiers: { kind: "no-inventory" } }),
+          FINISHED_LINE,
+        ],
+        { onApplyStatement: mock((_sql: string) => {}) },
+      );
+
+      expect((await findByTestId("agent-plan-statement-unchecked")).textContent).toContain(
+        "No schema inventory was read",
+      );
+      expect(queryByTestId("agent-plan-statement-unknown")).toBeNull();
+      // An empty list of unknown names would be a CLAIM — that every name resolves —
+      // and this run made none, so the control says nothing checked them.
+      expect((await findByTestId("agent-plan-apply-statement")).getAttribute("aria-label")).toContain(
+        "Nothing checked the names it uses",
+      );
+    });
+
+    test("a statement whose names all resolve claims nothing further about it", async () => {
+      const { queryByTestId, findByTestId } = await planRun([
+        OPENED_LINE,
+        STARTED_LINE,
+        draftedLine(READ),
+        FINISHED_LINE,
+      ]);
+
+      await findByTestId("agent-plan-statement");
+      expect(queryByTestId("agent-plan-statement-unknown")).toBeNull();
+      expect(queryByTestId("agent-plan-statement-unchecked")).toBeNull();
+      expect(queryByTestId("agent-plan-statement-guard")).toBeNull();
+    });
+
+    test("a refusal renders as its own card, and the marker never reaches the user", async () => {
+      const { findByTestId, queryByTestId } = await planRun([
+        OPENED_LINE,
+        STARTED_LINE,
+        closingLine("NO STATEMENT: nothing here records a rental.\n\nWhich table holds them?"),
+        FINISHED_LINE,
+      ]);
+
+      const card = await findByTestId("agent-plan-refusal");
+      expect(card.textContent).toContain("nothing here records a rental.");
+      expect(card.textContent).toContain("Which table holds them?");
+      expect(card.textContent).not.toContain("NO STATEMENT");
+      // A refusal is not a statement: there is nothing to apply and nothing is offered.
+      expect(queryByTestId("agent-plan-statement")).toBeNull();
+      expect(queryByTestId("agent-plan-apply-statement")).toBeNull();
+    });
+
+    test("an ordinary closing statement is not dressed as a refusal", async () => {
+      const { findByTestId, queryByTestId } = await planRun([
+        OPENED_LINE,
+        STARTED_LINE,
+        closingLine("Start with the rental index."),
+        FINISHED_LINE,
+      ]);
+
+      expect((await findByTestId("agent-prose")).textContent).toContain("Start with the rental index.");
+      expect(queryByTestId("agent-plan-refusal")).toBeNull();
+    });
+  });
+
   test("the sheet closes through the caller that opened it", async () => {
     const onSheetOpenChange = mock(() => {});
     media.setMatches(true);

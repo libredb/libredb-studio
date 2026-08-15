@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Bot, Loader2, PencilLine, Play, Square, TableProperties } from "lucide-react";
+import { Bot, Loader2, PencilLine, Play, Square, TableProperties, TriangleAlert } from "lucide-react";
 import { CopyButton } from "@/components/copy-button";
 import { renderProse } from "@/components/rich-text";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -23,7 +23,12 @@ import {
 } from "@/lib/agent/types";
 import type { DatabaseType } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { type AgentBudgetGauge, type AgentTimelineTone, describeFailureReason } from "./timeline";
+import {
+  type AgentBudgetGauge,
+  type AgentPlanStatementView,
+  type AgentTimelineTone,
+  describeFailureReason,
+} from "./timeline";
 import type { AgentPrefillRequest } from "./use-agent-prefill";
 import { useAgentRun } from "./use-agent-run";
 
@@ -193,7 +198,11 @@ const gaugeFraction = (gauge: AgentBudgetGauge): number => Math.min(100, (gauge.
  */
 function refusalActionText(planModeOffered: boolean, streamingDisproved: boolean): string {
   if (planModeOffered) {
-    return "Plan mode needs no tools, so it may still work with this model: it reasons about your question and drafts an approach without reading the database. Try it, or configure a different model — one that passes the probe — for a run that reads the database.";
+    // "without reading the database" until 2026-08-15, when plan mode began grounding
+    // itself: the SERVER reads the catalog and the engine's estimated statistics before
+    // the first turn. What is still true is the sentence the mode is actually sold on,
+    // and it is the one the user is given here.
+    return "Plan mode needs no tools, so it may still work with this model: it reasons about your question and drafts a statement for you to run yourself. It runs no statement of yours and writes nothing. Try it, or configure a different model — one that passes the probe — for a run that investigates the database itself.";
   }
   if (streamingDisproved) {
     return "This endpoint answered without streaming, and plan mode reads the same stream, so it would produce nothing here either. A different model, or an endpoint that streams, is what gets an answer.";
@@ -300,6 +309,207 @@ function HydrationControls({
         </button>
       )}
     </div>
+  );
+}
+
+/**
+ * Prose the model wrote, in the structure it wrote it in (#389, #373 review).
+ *
+ * A component rather than inline JSX because it is now rendered in two places: bare
+ * beside its entry, and inside the refusal card below, where the run's explanation of
+ * what it could not do IS the card's content. The block itself is identical either
+ * way — same test id, same border — so the "where the application stopped speaking"
+ * boundary does not move depending on which ending a run reached.
+ */
+function ProseBlock({
+  text,
+  onApplySql,
+  statementCarded,
+  className,
+}: {
+  readonly text: string;
+  readonly onApplySql: ((sql: string) => void) | undefined;
+  /**
+   * Whether this run's drafted statement is already offered, MARKED, from the card
+   * beside this prose — in which case the per-block control inside it is withheld.
+   *
+   * A plan run's closing prose is the text its statement was read out of, so the same
+   * SQL is in both places, and #389's per-block "Apply to editor" says nothing about
+   * what it is applying: `renderProse` is handed text and knows nothing of the guard's
+   * verdict. Leaving it there puts an unmarked control immediately above the marked
+   * one, against the SQL, which is the silent hand-off the marking exists to prevent.
+   */
+  readonly statementCarded: boolean;
+  readonly className: string;
+}) {
+  const apply = statementCarded ? undefined : onApplySql;
+  return (
+    <div data-testid="agent-prose" className={cn("space-y-1 border-l border-white/10 pl-2 text-zinc-400", className)}>
+      {renderProse(text, apply === undefined ? {} : { onApplySql: apply })}
+      {/*
+        And the plan as a whole, in the markdown the model wrote rather than in the
+        rendering above: what a user pastes into a ticket is the text, and the text is
+        what was recorded.
+      */}
+      <CopyButton text={text} testId="agent-prose-copy" label="Copy all" />
+    </div>
+  );
+}
+
+/**
+ * The name a screen reader, a voice user and a tooltip all get for the one control
+ * that puts a plan run's statement into the editor (item 7 of the plan-mode design).
+ *
+ * The visible label comes FIRST and unaltered, which is WCAG 2.5.3: a voice user says
+ * what they can see, so "Apply to editor" has to be inside whatever this returns.
+ * Everything after it is the part a colour cannot carry.
+ *
+ * Both warnings are stated in the terms the server established and no stronger, and the
+ * first of them was once stated a good deal stronger. It read "This statement is not a
+ * read: applying it puts SQL in your editor that can change or delete data", which is a
+ * claim about the statement's EFFECT that `readOnly` cannot support: it is
+ * `inspectAgentStatement(sql) === null`, and four of that guard's six objections say
+ * only that it could not read the text — an unclosed span, a run two dialects disagree
+ * about, a second statement, no statement at all — while its own header records that it
+ * over-refuses legitimate reads on purpose. A jsonb read using `#>>` would have been
+ * announced to a screen-reader user as SQL that can delete their data. So the name says
+ * what the guard did, and the reason travels with it.
+ *
+ * The identifier finding is about names the captured inventory does not hold, which is
+ * a reason the statement may not run rather than proof that it will not.
+ */
+function applyStatementName(draft: AgentPlanStatementView): string {
+  const marks: string[] = [];
+  if (!draft.readOnly)
+    marks.push(
+      `The statement guard did not read this as a bounded read (${draft.guardViolation ?? "no reason recorded"}), so nothing here establishes that running it would only read.`,
+    );
+  if (draft.identifiers.kind === "no-inventory") marks.push("Nothing checked the names it uses.");
+  else if (draft.identifiers.unknownTables.length > 0) {
+    marks.push(
+      `It names ${draft.identifiers.unknownTables.length} table(s) the inventory this run read does not hold, so it may not run as written.`,
+    );
+  }
+  return ["Apply to editor.", ...marks].join(" ");
+}
+
+/**
+ * What a PLAN run produced, as the one thing on this surface a user is meant to take
+ * away with them (item 7 of the plan-mode SQL-generator design of 2026-08-15).
+ *
+ * Until this card, plan mode's statement could only be read out of a markdown fence in
+ * the browser (#389) — which offered nothing when the model did not fence it, and, more
+ * to the point, offered an unremarkable "Apply to editor" whatever the statement was.
+ * The owner's ruling is that plan mode MAY draft a write and must never hand one over
+ * quietly, so the marking is the reason this card exists and not decoration on it:
+ *
+ *  - the mark is on the card, on a line of its own, and in the applying control's
+ *    accessible NAME, because a colour and a border say nothing to a screen reader.
+ *    It states what the GUARD did — "did not read this as a bounded read", with the
+ *    reason — and never what the SQL does, because `readOnly` is
+ *    `inspectAgentStatement(sql) === null` and four of that guard's six objections say
+ *    only that it could not settle the text. It is also the only editor hand-off a
+ *    plan run's statement gets: the closing prose the statement was read out of has
+ *    its per-block control withheld (`planStatementRecorded`), because that one cannot
+ *    say what it is applying;
+ *  - `data-read-only` carries the guard's own verdict as data rather than as a class
+ *    name, so the distinction can be asserted in a test instead of inferred from
+ *    styling — and it is named after the field it holds, because "write" is a claim
+ *    that verdict does not make;
+ *  - what the identifier check found sits beside the statement rather than in a
+ *    sentence further up. An unvalidated statement that looks like a sound one is the
+ *    failure this half exists to prevent, and a count alone leaves a reader with
+ *    nothing to look for in the SQL above.
+ *
+ * The names themselves are model and engine text and stay out of the app's sentences,
+ * the rule every other block in this rail follows: the sentence is ours, the names are
+ * listed beside it as the quoted content they are.
+ *
+ * Nothing here blocks anything, and nothing claims the statement will run. The
+ * inventory records what EXISTS, not what the user's role may select from — said in the
+ * card, where the claim is made — and the run itself executed nothing: applying is the
+ * user's own action, on their own connection, as it has been in every mode.
+ */
+function PlanStatementCard({
+  draft,
+  onApply,
+}: {
+  readonly draft: AgentPlanStatementView;
+  readonly onApply: ((sql: string) => void) | undefined;
+}) {
+  const unknown = draft.identifiers.kind === "checked" ? draft.identifiers.unknownTables : [];
+
+  return (
+    <section
+      data-testid="agent-plan-statement"
+      data-read-only={draft.readOnly ? "true" : "false"}
+      className={cn(
+        "mt-1 ml-3.5 rounded border p-1.5",
+        draft.readOnly ? "border-white/10" : "border-amber-400/50 bg-amber-500/5",
+      )}
+    >
+      {!draft.readOnly && (
+        <p
+          data-testid="agent-plan-statement-guard"
+          className="mb-1 flex items-start gap-1 text-[0.625rem] text-amber-300"
+        >
+          <TriangleAlert strokeWidth={1.5} className="mt-px w-3 h-3 shrink-0" aria-hidden="true" />
+          <span>
+            The statement guard did not read this as a bounded read (
+            <span className="font-mono">{draft.guardViolation ?? "no reason recorded"}</span>). It is drafted, not run —
+            nothing has happened to your data — but nothing here establishes that running it would only read.
+          </span>
+        </p>
+      )}
+      {/* Verbatim, with the clipboard control every other verbatim block in this rail
+          carries: the statement is what the user came for, and selecting it by hand
+          inside a narrow scrolling panel is what they were left with before #389. */}
+      <QuotedBlock text={draft.sql} testId="agent-plan-statement-copy" tone="loud" />
+      {unknown.length > 0 && (
+        <div data-testid="agent-plan-statement-unknown" className="mt-1 text-[0.625rem] text-amber-400/80">
+          <p>These names are not in the inventory this run read, so the statement may not run as written:</p>
+          {/* Model and engine text, listed rather than spliced into the sentence above. */}
+          <ul className="mt-0.5 flex flex-wrap gap-1">
+            {unknown.map((name) => (
+              <li key={name} className="rounded bg-black/40 px-1 py-0.5 font-mono text-amber-200">
+                {name}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {draft.identifiers.kind === "no-inventory" && (
+        <p data-testid="agent-plan-statement-unchecked" className="mt-1 text-[0.625rem] text-amber-400/80">
+          No schema inventory was read for this run, so the names in this statement were not checked against anything.
+        </p>
+      )}
+      {onApply !== undefined && (
+        <div className="mt-1 flex items-center gap-1">
+          <button
+            type="button"
+            data-testid="agent-plan-apply-statement"
+            aria-label={applyStatementName(draft)}
+            onClick={() => onApply(draft.sql)}
+            className={cn(
+              "flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] transition-colors hover:bg-white/5",
+              draft.readOnly ? "text-zinc-400 hover:text-zinc-200" : "text-amber-300",
+            )}
+          >
+            <PencilLine strokeWidth={1.5} className="w-3 h-3" />
+            Apply to editor
+          </button>
+        </div>
+      )}
+      {/*
+        Where the claim is made, so no reader takes a checked statement for a runnable
+        one (item 6 of the design). An inventory records what exists; whether this
+        session may read it is the engine's answer, given when the statement runs.
+      */}
+      <p data-testid="agent-plan-statement-caveat" className="mt-1 text-[0.625rem] text-zinc-600">
+        The run executed nothing. What was checked is what this run read of the schema, which records what exists rather
+        than what your role is permitted to read.
+      </p>
+    </section>
   );
 }
 
@@ -1190,27 +1400,63 @@ export function AgentRail({
                 the app's words and everyone else's never share a line is what the
                 border keeps true.
               */}
-              {item.prose !== undefined && (
-                <div
-                  data-testid="agent-prose"
-                  className="mt-1 ml-3.5 space-y-1 border-l border-white/10 pl-2 text-zinc-400"
-                >
-                  {/*
-                    The editor is offered to the statements INSIDE the prose (#389).
-                    Plan mode is toolless, so it writes no `statement-drafted` event and
-                    reaches no `applySql` — its SQL exists only as a fenced block in this
-                    text, which is why the hand-off is made here rather than beside the
-                    entry. A host with no editor passes nothing and is offered nothing,
-                    the rule every other affordance in this rail follows.
-                  */}
-                  {renderProse(item.prose, onApplyStatement === undefined ? {} : { onApplySql: onApplyStatement })}
-                  {/*
-                    And the plan as a whole, in the markdown the model wrote rather than
-                    in the rendering above: what a user pastes into a ticket is the text,
-                    and the text is what was recorded.
-                  */}
-                  <CopyButton text={item.prose} testId="agent-prose-copy" label="Copy all" />
-                </div>
+              {/*
+                The editor is offered to the statements INSIDE the prose (#389), EXCEPT on
+                the entry a plan run's statement was read out of.
+
+                That exception is the whole marking requirement, not a detail of it. The
+                closing prose of a plan run HOLDS the fenced statement, so without it the
+                same `DELETE` renders twice: once in the card below, amber, with the guard's
+                verdict and an accessible name that carries it — and once here, immediately
+                above it, as a plain grey "Apply to editor" with no mark and no name, which
+                is the control a user reaches for first because it sits against the SQL.
+                `renderProse` cannot label it: it is handed text and knows nothing of the
+                ledger. So the marked hand-off is the only hand-off, and the block keeps its
+                clipboard. Everywhere else — an agent run, a plan run that drafted nothing —
+                #389's control is untouched, because there is no card there to defer to.
+
+                A host with no editor passes nothing and is offered nothing, the rule every
+                other affordance in this rail follows.
+
+                A refusal is the same prose in a different frame. The run reached its other
+                legitimate ending — it says the schema does not answer the question — and
+                that is what the card states; the marker the ledger read it by was stripped
+                on the way here, because it is a protocol token the model was told to emit
+                and not a sentence it wrote for anyone to read.
+              */}
+              {item.prose !== undefined &&
+                (item.planRefusal === true ? (
+                  <section
+                    data-testid="agent-plan-refusal"
+                    className="mt-1 ml-3.5 rounded border border-amber-400/40 bg-amber-500/5 p-1.5"
+                  >
+                    <p className="text-[0.625rem] text-amber-300">
+                      This run drafted no statement: it reports that the schema it read does not answer the question as
+                      asked. What it says is missing, and what it needs from you, are in its own words below.
+                    </p>
+                    <ProseBlock
+                      text={item.prose}
+                      onApplySql={onApplyStatement}
+                      statementCarded={item.planStatementRecorded === true}
+                      className="mt-1"
+                    />
+                  </section>
+                ) : (
+                  <ProseBlock
+                    text={item.prose}
+                    onApplySql={onApplyStatement}
+                    statementCarded={item.planStatementRecorded === true}
+                    className="mt-1 ml-3.5"
+                  />
+                ))}
+              {/*
+                The run's own deliverable, with what the server established about it. Its
+                own card rather than a line beside the entry, because a statement a user
+                may be about to run is the one thing on this surface that can do damage
+                if it is presented as something it is not.
+              */}
+              {item.planStatement !== undefined && (
+                <PlanStatementCard draft={item.planStatement} onApply={onApplyStatement} />
               )}
               {/*
                 The one place this surface contradicts the ledger, and it does so beside

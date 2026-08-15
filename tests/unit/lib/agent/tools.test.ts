@@ -19,6 +19,8 @@ import {
   planTableProfile,
   presentAnswerTool,
   profileTableTool,
+  readCatalogForGrounding,
+  readStatementForGrounding,
   recommendChangeTool,
   runReadQueryTool,
   selectAgentTools,
@@ -1372,6 +1374,77 @@ describe("inspectSchemaTool — the server composes the catalog statement", () =
 
     expect(outcome.modelText).toContain(UNTRUSTED_CONTENT_BEGIN);
     expect(outcome.modelText).toContain("schema inventory");
+  });
+});
+
+/*
+  The one call that may reach a database outside agent mode, and the boundary that
+  keeps it narrow (plan-mode grounding design, 2026-08-15).
+
+  The mode gate used to enforce two different things with one check: "a planning
+  run's MODEL cannot invoke a tool" — which still holds and is asserted above — and
+  "a planning run performs no database operation at all", which the owner decided to
+  change, because it left the safe mode able to plan only against a schema the unsafe
+  mode had already read in this same process. Grounding is the SERVER's work: the
+  statement is composed here, the model is handed no tools, and everything that makes
+  the call safe is the path it already went through.
+*/
+describe("the grounding seam — the server's own read, outside agent mode", () => {
+  test("a planning run's grounding read completes, and it is the server's composed statement", async () => {
+    const h = harness({ mode: "planning" });
+
+    const outcome = await readCatalogForGrounding(h.context, { kind: "columns" });
+
+    expect(outcome.kind).toBe("completed");
+    expect(h.queryReadOnly.mock.calls[0][0]).toContain("information_schema.columns");
+  });
+
+  test("the model-facing tool is still refused in the same mode, which is the whole boundary", async () => {
+    const h = harness({ mode: "planning" });
+
+    const outcome = await inspectSchemaTool(h.context, { kind: "columns" });
+
+    if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+    expect(outcome.reasonCode).toBe("MODE_HAS_NO_TOOLS");
+    expect(h.acquireProvider).not.toHaveBeenCalled();
+  });
+
+  test("the statistics inventory is composable by the server and is not a kind the model may ask for", async () => {
+    const grounded = harness();
+    const asked = harness();
+
+    const groundedOutcome = await readCatalogForGrounding(grounded.context, { kind: "statistics" });
+    const askedOutcome = await inspectSchemaTool(asked.context, { kind: "statistics" });
+
+    expect(groundedOutcome.kind).toBe("completed");
+    expect(grounded.queryReadOnly.mock.calls[0][0]).toContain("reltuples");
+    // Not a policy denial and not a database error: the argument is one the model's
+    // own tool schema does not offer, so it never becomes a statement.
+    if (askedOutcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${askedOutcome.kind}`);
+    expect(askedOutcome.reasonCode).toBe("INVALID_TOOL_INPUT");
+    expect(asked.acquireProvider).not.toHaveBeenCalled();
+  });
+
+  test("a grounding statement the server composed runs in planning mode too", async () => {
+    const h = harness({ mode: "planning" });
+
+    const outcome = await readStatementForGrounding(h.context, {
+      sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'",
+      label: "statistics availability",
+    });
+
+    expect(outcome.kind).toBe("completed");
+    // Still audited, still budgeted: the seam relaxes the mode check and nothing else.
+    expect(h.tracker.usage("run-1").executedStatements).toBe(1);
+  });
+
+  test("a grounding read is still bounded by the run's policy, so a scope allowlist denies it", async () => {
+    const h = harness({ mode: "planning", scope: createTargetScope("conn-1", { schemas: ["public"] }) });
+
+    const outcome = await readCatalogForGrounding(h.context, { kind: "columns", schema: "secrets" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
+    expect(outcome.refusal).toEqual({ class: "policy-denied", reasonCode: "TARGET_OUT_OF_SCOPE" });
   });
 });
 

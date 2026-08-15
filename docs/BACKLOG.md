@@ -1890,25 +1890,6 @@ experiment.
 Done when the documented behaviour and the schema agree, whichever way is chosen, with a test
 covering a config that sets `roles` only in `defaults`.
 
-### B42. A plan run's grounding does not survive a restart, because the inventory is held in memory
-
-A planning run performs zero database operations, so the only schema it can know is one an agent run
-on the same connection already read. `context-snapshot.ts` holds that inventory in the server
-process (#384), which means a restarted server plans blind on every connection until someone drives
-an agent run again — and the same plan run resumed in a fresh process is grounded on one drive and
-not on the next. The hold is also bounded at 16 connections, so a deployment working across more
-than that loses grounding on the least recently used one with no restart involved. The run says
-which case it is in, so nothing it writes is false; what it is not is predictable.
-
-The two candidate fixes were both rejected in #384 for reasons that still hold: capturing the
-catalog in plan mode would end the mode's promise, and writing the inventory into the plan run's own
-ledger would need an event kind whose timeline copy says "Schema captured" about a run that captured
-nothing. A durable store keyed by connection is the third, and it needs an eviction answer — one
-entry per schema change, per connection, forever — before it is worth having.
-
-Done when a plan run's grounding is the same before and after a restart, or when the process-held
-hold is documented as the intended ceiling and this entry is deleted.
-
 ### B43. Nine copy call sites outside the agent rail fail silently on plain HTTP
 
 `navigator.clipboard` is a secure-context API: over plain HTTP on any host but loopback it is
@@ -1927,18 +1908,22 @@ Four of the seven claim a success nobody observed, in the same statement that st
 Done when every copy in the app goes through `CopyButton` (or its `writeToClipboard`), with a test
 per site that the label does not claim success when the write was refused.
 
-### B44. A plan's SQL is recognised from a markdown fence, not recorded as a statement
+### B45. A held inventory is keyed by connection id alone, so it carries no database identity
 
-Plan mode is toolless, so it writes no `statement-drafted` event: the only place a statement it
-drafted exists is inside the closing statement's markdown. #389 reads it from the fence, which is
-why the "Apply to editor" control there depends on the model having fenced its SQL at all — an
-unfenced statement in a paragraph is still just prose, and a fence tagged with something outside
-`QUERY_FENCE_TAGS` is deliberately not offered.
+`heldSnapshots` in `context-snapshot.ts` is keyed on the connection id and nothing else, and the
+snapshot's fingerprint is a function of the inventory alone — deliberately not of the connection, so
+that two identical builds agree. Neither the key nor the identity therefore records WHICH database
+the reading came from. A connection record re-pointed at another database, or at another engine,
+while keeping its id is served the old database's inventory by this process until the entry is
+evicted or the process restarts.
 
-The alternative is a planning-mode tool that records a drafted statement and reaches no database,
-which would make the statement a ledger fact rather than a parse. It was not built here because it
-widens the mode's contract — "planning has no tools" is a sentence three surfaces and the capability
-gate all rely on — and the fence covers what live models actually emit.
+It predates the plan-mode grounding work of 2026-08-15 and was found by it: a fixture opening three
+engine presets on one connection id showed a SQLite plan run PostgreSQL's tables, which is the same
+shape at test scale. It matters more now than it did, because a plan run both fills this hold and
+reads it, and because what the hold serves is now the ground a drafted statement is validated
+against — a statement checked against the wrong database's tables reports no unknown names.
 
-Done when either the fence reading is judged sufficient and this entry is deleted, or planning
-records its statements durably and the rail reads them from the ledger like every other mode.
+Done when a held entry is accepted only for the database it was read from — the obvious candidate is
+folding the connection's engine and target into the key rather than into the fingerprint, which must
+stay a function of the inventory — with a test that a re-pointed connection is not served the
+previous reading.

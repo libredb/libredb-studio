@@ -4,6 +4,7 @@ import {
   AgentComposedSqlError,
   composeCatalogRead,
   composeEstimatingExplain,
+  composeStatisticsAvailabilityProbe,
   MAX_CATALOG_SELECTOR_LENGTH,
 } from "@/lib/agent/composed-sql";
 import { agentReadSqlInput, inspectAgentStatement } from "@/lib/db/operations/statement-guard";
@@ -219,7 +220,7 @@ describe("composeCatalogRead — the relation and index inventories (#329 T8)", 
 
   test("every kind on every served dialect is a statement the guard admits", () => {
     for (const dialect of ["postgres", "sqlite"] as const) {
-      for (const kind of ["columns", "relations", "indexes"] as const) {
+      for (const kind of ["columns", "relations", "indexes", "statistics"] as const) {
         const sql = composeCatalogRead(dialect, { kind });
         expect(agentReadSqlInput.safeParse({ sql }).success, `${dialect}/${kind}`).toBe(true);
       }
@@ -227,7 +228,7 @@ describe("composeCatalogRead — the relation and index inventories (#329 T8)", 
   });
 
   test("an unserved dialect is refused for every kind, never composed on a guess", () => {
-    for (const kind of ["columns", "relations", "indexes"] as const) {
+    for (const kind of ["columns", "relations", "indexes", "statistics"] as const) {
       expect(() => composeCatalogRead("mysql", { kind }), kind).toThrow(AgentComposedSqlError);
     }
   });
@@ -243,9 +244,175 @@ describe("composeCatalogRead — the relation and index inventories (#329 T8)", 
   });
 
   test("SQLite refuses a schema selector that is not its only schema, on every kind", () => {
-    for (const kind of ["columns", "relations", "indexes"] as const) {
+    for (const kind of ["columns", "relations", "indexes", "statistics"] as const) {
       expect(() => composeCatalogRead("sqlite", { kind, schema: "sales" }), kind).toThrow(AgentComposedSqlError);
       expect(guardAccepts(composeCatalogRead("sqlite", { kind, schema: "MAIN" })), kind).toBe(true);
+    }
+  });
+});
+
+/**
+ * The statistics inventory (plan-mode SQL generator, work item 1).
+ *
+ * Every assertion here is about one of two things: that the composition reads the
+ * engine's OWN estimates rather than computing anything (a scan is what makes this
+ * mode unsafe to point at production), and that a table the engine holds no
+ * estimate for stays IN the inventory as a table without statistics — because the
+ * consumer must be able to tell "no statistics" from "zero rows", and an omitted
+ * table reads as silence.
+ */
+describe("composeCatalogRead — the statistics inventory", () => {
+  test("PostgreSQL reads the estimates the catalog already holds, and computes nothing", () => {
+    const sql = composeCatalogRead("postgres", { kind: "statistics" });
+
+    expect(guardAccepts(sql)).toBe(true);
+    expect(sql).toContain("pg_class");
+    expect(sql).toContain("reltuples");
+    expect(sql).toContain("pg_stats");
+    expect(sql).toContain("n_distinct");
+    expect(sql).toContain("null_frac");
+    // A scan is the thing this composition exists to avoid; COUNT is how it would
+    // arrive, and ANALYZE is how the estimates would be refreshed (a write).
+    expect(sql.toUpperCase()).not.toContain("COUNT(");
+    expect(sql.toUpperCase()).not.toContain("ANALYZE");
+  });
+
+  test("PostgreSQL keeps a never-analysed table in the inventory rather than dropping it", () => {
+    // The LEFT JOIN is the whole mechanism: pg_stats holds no row for a table that
+    // was never ANALYZEd, so an inner join would omit it and the reader could not
+    // distinguish "no statistics" from "table not there".
+    expect(composeCatalogRead("postgres", { kind: "statistics" })).toContain("LEFT JOIN pg_stats");
+  });
+
+  test("PostgreSQL emits n_distinct raw, leaving the negative-ratio conversion to the reader", () => {
+    const sql = composeCatalogRead("postgres", { kind: "statistics" });
+
+    // pg_stats.n_distinct is negative when it expresses a ratio of the row count.
+    // Converting it here would put a derived number on the wire under the same name
+    // as the raw one, and the reader could no longer label the result as derived.
+    expect(sql).not.toContain("CASE");
+    expect(sql).toContain("s.n_distinct AS n_distinct");
+  });
+
+  test("PostgreSQL narrows on the same selectors as every other kind", () => {
+    const sql = composeCatalogRead("postgres", { kind: "statistics", schema: "sales", table: "orders" });
+
+    expect(sql).toContain("n.nspname = 'sales'");
+    expect(sql).toContain("c.relname = 'orders'");
+    expect(guardAccepts(sql)).toBe(true);
+  });
+
+  test("SQLite reads sqlite_stat1, joined from sqlite_master so unanalysed tables stay listed", () => {
+    const sql = composeCatalogRead("sqlite", { kind: "statistics" });
+
+    expect(guardAccepts(sql)).toBe(true);
+    expect(sql).toContain("sqlite_master");
+    expect(sql).toContain("LEFT JOIN sqlite_stat1");
+    expect(sql.toUpperCase()).not.toContain("COUNT(");
+  });
+
+  test("SQLite narrows on a table selector and hides its own internal objects", () => {
+    const sql = composeCatalogRead("sqlite", { kind: "statistics", table: "orders" });
+
+    expect(sql).toContain("m.name = 'orders'");
+    expect(sql).toContain("sqlite@_%");
+    expect(guardAccepts(sql)).toBe(true);
+  });
+
+  test("a hostile selector is quoted here too", () => {
+    for (const dialect of ["postgres", "sqlite"] as const) {
+      const sql = composeCatalogRead(dialect, { kind: "statistics", table: "orders'; DROP TABLE users --" });
+
+      expect(inspectAgentStatement(sql), dialect).toBeNull();
+      expect(sql, dialect).toContain("''");
+    }
+  });
+
+  test("an unserved dialect is refused with UNSUPPORTED_DIALECT rather than composed on a guess", () => {
+    for (const dialect of ["mysql", "oracle", "mssql", "mongodb", "redis"] as const) {
+      try {
+        composeCatalogRead(dialect, { kind: "statistics" });
+        throw new Error(`expected a refusal for ${dialect}`);
+      } catch (error) {
+        expect(error, dialect).toBeInstanceOf(AgentComposedSqlError);
+        expect((error as AgentComposedSqlError).reasonCode, dialect).toBe("UNSUPPORTED_DIALECT");
+      }
+    }
+  });
+});
+
+/**
+ * `sqlite_stat1` does not exist until an explicit `ANALYZE` has run, and SQLite
+ * resolves table names at PREPARE time — so a statement mentioning it cannot
+ * degrade gracefully on a database that has never been analysed. The probe is how
+ * that case is answered without failing the run; these tests pin it to the engine
+ * rather than to the intention.
+ */
+describe("composeStatisticsAvailabilityProbe", () => {
+  test("SQLite gets a sqlite_master probe the guard admits", () => {
+    const sql = composeStatisticsAvailabilityProbe("sqlite");
+
+    expect(sql).not.toBeNull();
+    expect(sql).toContain("sqlite_master");
+    expect(sql).toContain("'sqlite_stat1'");
+    expect(agentReadSqlInput.safeParse({ sql }).success).toBe(true);
+  });
+
+  test("PostgreSQL needs none, because absence is already expressed in the read itself", () => {
+    expect(composeStatisticsAvailabilityProbe("postgres")).toBeNull();
+  });
+
+  test("an unserved dialect is refused rather than answered with null", () => {
+    try {
+      composeStatisticsAvailabilityProbe("mysql");
+      throw new Error("expected a refusal");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AgentComposedSqlError);
+      expect((error as AgentComposedSqlError).reasonCode).toBe("UNSUPPORTED_DIALECT");
+    }
+  });
+
+  /**
+   * On a live engine, because the whole design of the SQLite side rests on two
+   * facts a textual assertion cannot establish: that the statistics read really
+   * does fail on a database nobody has analysed (so the probe is load-bearing, not
+   * decoration), and that after `ANALYZE` a table SQLite wrote no statistics for is
+   * still returned with a NULL stat instead of vanishing.
+   */
+  test("the probe answers before ANALYZE, and the read fails without it, on a live engine", () => {
+    const database = new Database(":memory:");
+    try {
+      database.run("CREATE TABLE orders (id INTEGER PRIMARY KEY, total REAL)");
+      database.run("CREATE INDEX orders_total_idx ON orders (total)");
+      // No index, so SQLite writes no sqlite_stat1 row for it even after ANALYZE.
+      database.run("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)");
+      database.run("INSERT INTO orders (total) VALUES (1.0), (2.0), (3.0)");
+
+      const probe = composeStatisticsAvailabilityProbe("sqlite") as string;
+      expect(database.prepare(probe).all()).toEqual([]);
+      // The reason the probe exists: the read is unpreparable, not empty.
+      expect(() => database.prepare(composeCatalogRead("sqlite", { kind: "statistics" }))).toThrow(
+        "no such table: sqlite_stat1",
+      );
+
+      database.run("ANALYZE");
+
+      expect(database.prepare(probe).all()).toEqual([{ name: "sqlite_stat1" }]);
+      const rows = database.prepare(composeCatalogRead("sqlite", { kind: "statistics" })).all() as {
+        table_name: string;
+        index_name: string | null;
+        stat: string | null;
+      }[];
+
+      // `notes` is present WITHOUT statistics, which is the distinction the reader
+      // needs; `orders` carries SQLite's own estimate, whose first field is the row
+      // count the engine believes.
+      expect(rows).toEqual([
+        { table_name: "notes", index_name: null, stat: null },
+        { table_name: "orders", index_name: "orders_total_idx", stat: "3 1" },
+      ]);
+    } finally {
+      database.close();
     }
   });
 });

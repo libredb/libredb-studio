@@ -98,14 +98,17 @@ Gemini deployment behind a proxy is therefore not configurable (`docs/BACKLOG.md
 - **Opening the rail sends nothing.** A shortcut fills the objective box and starts nothing
   (`src/components/agent/use-agent-prefill.ts`); the first model call happens when you press
   **Start**.
-- **A `planning` run reaches no database.** Its tool set is empty, so it sends no statement, captures
-  nothing and acquires no provider (`selectAgentTools`, and the planning branch of
-  `establishContext` in `src/lib/agent/investigation.ts`). What it MAY send to the model, besides
-  your objective and the server's own rules, is a schema inventory an **agent** run on the same
-  connection already read and this process still holds (#384): the same packed tables and relations
-  an agent run's prompt carries, fenced identically. Nothing about your DATA is in it — an inventory
-  is names, types, keys and relations, and no row is read to build one — and a plan run on a
-  connection this process has read nothing for sends nothing of the kind and is told it has none.
+- **A `planning` run runs no statement of yours.** Its tool set is empty, so the model sends nothing
+  and asks for nothing (`selectAgentTools`). Since 2026-08-15 the SERVER does read this connection's
+  catalog for it, before the first turn and through the same read-only, audited path an agent run
+  uses (`establishContext` in `src/lib/agent/investigation.ts`): the alternative was a mode that knew
+  your database only when an agent run had already read it in the same process. What that reads is a
+  schema inventory — names, types, keys and relations — plus what the engine already RECORDS about
+  its own tables (`pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite). No
+  table is scanned and no value is read out of any column, so nothing about your DATA is in it. Those
+  numbers are the engine's estimates, and the prompt says so. On any other engine nothing is read at
+  all and the run is told it has no inventory. Nothing is written, and every statement a plan drafts
+  is handed to you to run yourself.
 
 There is one model call the agent makes before the run itself: the **capability probe**, one round
 trip asking the model to call a trivial tool. Its prompt is a fixed server-written string and

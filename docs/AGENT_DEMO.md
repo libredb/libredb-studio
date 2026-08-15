@@ -258,43 +258,40 @@ This is the case to dwell on. A demo that only shows case 16 is showing a party 
 
 ## Act 6 — "it is safe to point at production" (4 minutes)
 
-### 18. Plan mode: it knows your schema and still never touches the database
+### 18. Plan mode: it knows your schema and runs nothing of yours
+
+> **This case was measured before 2026-08-15 and its script is no longer accurate.** The plan-mode
+> SQL-generator design of that date changed what the mode does: a plan run now reads this
+> connection's catalog and the engine's estimated statistics **itself**, server-side, before the
+> model's first turn, and its deliverable is one runnable statement rather than a plan in prose. The
+> claims below that the mode "never touches the database" and that the meter reads `0 / 30` are the
+> retired contract, and the numbers in the paragraphs that follow were observed under it. **Re-drive
+> this case and rewrite it from what you see** rather than reading it as written; `docs/AGENT.md`
+> ("What a plan run knows") carries the current contract in the meantime.
+
 Switch to **Plan**, select **Investigate**, and ask: `How would you assess this database before a production release?`
 
-A structured plan comes back — phases, what to inspect, what each step would establish, and what it
-does *not* reach — rendered as headings and bullets. Point at the meter while it is on screen:
-**`Statements 0 / 30`, `Database time 0.0 s`.** Nothing was sent.
-
-Select the workflow deliberately here rather than leaving whatever the last case selected: the
-statement ceiling is per workflow, so the same untouched meter reads `0 / 30` under Investigate,
-`0 / 42` under Analyze and `0 / 45` under Assess. The zero is the point; the denominator is whichever
-workflow is selected.
+What to say while it runs is the property the mode is actually sold on, and that one is unchanged:
+**a plan run executes no statement of yours, writes nothing, and hands every statement it drafts to
+you to run yourself.** The reading it does take is a catalog read — the same one the sidebar takes on
+every connect — through the same read-only, audited, budgeted path an Agent run's `inspect_schema`
+uses. The model itself is still handed no tools.
 
 Then look at what the plan names. Against dvdrental it works through `public.staff`, `public.rental`,
 `public.payment`, `public.inventory`, `public.film_actor`, the reporting views — and in one run it
 singled out `public.staff` for a credentials check, naming the `username`, `password` and `email`
-columns. It has never seen a row.
+columns. It has never seen a row: the grounding reads the catalog and the engines' own estimates,
+never a value out of a column.
 
-**The trick, and it is worth explaining because it is the whole safety argument:** the run is handed
-a schema inventory an *earlier agent run* on the same connection already read. Reading it costs
-nothing and touches nothing, so plan mode keeps its promise exactly — still toolless, still zero
-statements — while reasoning about your database rather than about databases in general.
-
-**Demo it in this order or the point is lost.** On a freshly started server, ask the plan question
-first: the model says plainly that it has not seen this database and gives a general method. Then run
-any Agent-mode question against that connection. Then ask the plan question again. Same question,
-same model, and now it names your tables. That contrast is the case.
-
-*Bounds, worth stating before someone finds them:* the inventory is held in the server process, for
-the last sixteen connections used, and only PostgreSQL and SQLite runs outside the Operate workflow
-capture one. After a restart, or on a connection no agent run has touched, a plan run says so rather
-than inventing tables.
+*Bounds, worth stating before someone finds them:* the grounding serves **PostgreSQL and SQLite
+only**, because those are the dialects the catalog composer serves. On any other engine a plan run is
+ungrounded, and its rules steer it to say so rather than to invent tables.
 
 ### 19. Both axes are independent
 **Plan · Optimize ·** `What would you check first if this database were slow in production?`
 
-Still a plan, still zero statements — but framed by the optimization workflow, so it is about access
-paths rather than generic health. Plan/Agent and the workflow are two separate choices.
+Still a plan, and still nothing of yours executed — but framed by the optimization workflow, so it is
+about access paths rather than generic health. Plan/Agent and the workflow are two separate choices.
 
 ### 19b. A plan you can actually take with you
 Ask the same Plan run for something concrete — **Plan · Optimize ·** `Which indexes would you check first, and what statement would show me their usage?` — and look at what comes back.
@@ -304,14 +301,21 @@ puts the statement in the editor unrun, and **Copy** puts it on the clipboard. *
 foot of the plan takes the whole thing as the markdown the model wrote — the version that pastes into
 a ticket with its headings intact.
 
-Driven live against dvdrental, the plan came back with two blocks — a `pg_stat_user_indexes` read
-ordered by `idx_scan`, and the `sys.dm_db_index_usage_stats` equivalent it offered for SQL Server —
-each with its own pair of controls. Click Apply on the first and it lands in the editor with its
-indentation intact, ready to run. Meter: **`Statements 0 / 30`.**
+Driven live against dvdrental **before 2026-08-15**, the plan came back with two blocks — a
+`pg_stat_user_indexes` read ordered by `idx_scan`, and the `sys.dm_db_index_usage_stats` equivalent
+it offered for SQL Server — each with its own pair of controls. Click Apply on the first and it lands
+in the editor with its indentation intact, ready to run.
 
-Worth saying out loud if a DBA in the room asks how a toolless mode produced a statement: it did not
-run one and it did not record one. The statement is text inside the plan, and both controls hand it
-to a human. Nothing in plan mode reaches a database, including these.
+Since that date the run's statement is a **ledger fact**, not text the browser found: the server
+reads it out of the closing prose, records it as `plan-statement-drafted` with the guard's read-only
+verdict and what the identifier check found, and the rail shows it in a card of its own. A statement
+the guard did not read as a bounded read is **marked** there — amber, with the guard's own reason —
+and the marked control is the only "Apply to editor" offered for it. Re-drive this case: what the
+model produces, and how many blocks it writes, was observed under the old contract.
+
+Worth saying out loud if a DBA in the room asks how a toolless mode produced a statement: the model
+had no tools and the run executed nothing of yours. Applying is your click, in your editor, on your
+connection.
 
 *Where the editor button is withheld:* a block the model tagged as something other than a query
 language — `bash`, `json` — is copyable and is not offered to the SQL editor, because the model said

@@ -77,15 +77,20 @@ export const MAX_CATALOG_SELECTOR_LENGTH = 128;
 /**
  * Which inventory a catalog read asks for.
  *
- * Three kinds rather than one wide statement, because the engines do not agree on
+ * Four kinds rather than one wide statement, because the engines do not agree on
  * how many reads the inventory takes and a single composed monster would have to be
  * verified per dialect anyway. Each kind is one bounded read (`sql.query.read`)
  * under the same descriptor, so the split costs statements out of the run's budget
  * and buys nothing in privilege — which is exactly the trade the row cap forces:
  * one flat projection per kind stays diagnosable when it overflows, where a nested
  * aggregate would come back as one unreadable row-per-table blob.
+ *
+ * `statistics` is the newest and the only one whose values are ESTIMATES: it reads
+ * what the engine already recorded about table sizes and column distributions, and
+ * computes nothing. See `composePostgresStatistics` / `composeSqliteStatistics` for
+ * what each engine actually holds and for what it does not hold at all.
  */
-export type AgentCatalogKind = "columns" | "relations" | "indexes";
+export type AgentCatalogKind = "columns" | "relations" | "indexes" | "statistics";
 
 export interface AgentCatalogSelector {
   /** Defaults to the column inventory, which is what a bare `inspect_schema` means. */
@@ -242,6 +247,59 @@ function composePostgresIndexes(selector: AgentCatalogSelector): string {
 }
 
 /**
+ * The statistics inventory: what the engine already believes, never what a scan
+ * would prove.
+ *
+ * `pg_class.reltuples` and `pg_stats` are catalog reads. Nothing here counts, so
+ * the cost does not grow with the table — which is the property that lets a plan
+ * run be pointed at production, and the reason `COUNT(DISTINCT col)` (the honest
+ * way to get the same numbers) is refused by the design rather than merely
+ * unimplemented.
+ *
+ * FOUR things a consumer of these rows must not read as more than they are, all of
+ * them consequences of the source rather than of this projection:
+ *
+ *  - **`reltuples` is an estimate, and `-1` means "never counted".** PostgreSQL 14+
+ *    initialises it to -1 for a relation that has been neither `VACUUM`ed nor
+ *    `ANALYZE`d; older servers left it at 0, which is indistinguishable from an
+ *    empty table. A reader that prints -1 as a row count states a falsehood.
+ *  - **`n_distinct` is NEGATIVE when it is a ratio.** PostgreSQL stores `-k` to mean
+ *    "k * reltuples distinct values" (so -1 is a unique column) when the estimated
+ *    count scales with the table. The conversion is deliberately NOT done here: it
+ *    needs `reltuples`, which is itself an estimate that may be -1, and a converted
+ *    number emitted under the name `n_distinct` would be a derived value wearing the
+ *    raw one's name. Both columns go out raw and the reader converts and LABELS the
+ *    result as derived (work item 2).
+ *  - **A never-analysed table has no `pg_stats` rows at all**, which is why the join
+ *    is a LEFT JOIN from `pg_class`. The table then appears once with every
+ *    statistics column NULL — present and unknown, rather than absent. An inner join
+ *    would omit it, and silence reads as zero.
+ *  - **`pg_stats` is permission-filtered.** It is a view over `pg_statistic` that
+ *    returns rows only for tables the calling role may read, so a least-privilege
+ *    agent role sees "no statistics" for a table it cannot select from — the same
+ *    shape as never analysed, and not distinguishable from here.
+ *
+ * `relkind` is restricted to ordinary (`r`) and partitioned (`p`) tables: those are
+ * the relkinds `pg_stats` describes and that a plan's row estimates come from. A
+ * view has no statistics of its own, and including one would add a row whose every
+ * statistic is NULL for a reason unrelated to `ANALYZE`.
+ */
+function composePostgresStatistics(selector: AgentCatalogSelector): string {
+  return (
+    "SELECT n.nspname AS table_schema, c.relname AS table_name, c.reltuples AS estimated_rows, " +
+    "s.attname AS column_name, s.n_distinct AS n_distinct, s.null_frac AS null_frac " +
+    "FROM pg_class c " +
+    "JOIN pg_namespace n ON n.oid = c.relnamespace " +
+    "LEFT JOIN pg_stats s ON s.schemaname = n.nspname AND s.tablename = c.relname " +
+    "WHERE c.relkind IN ('r', 'p') " +
+    "AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')" +
+    equalsClause("n.nspname", selector.schema, "schema", "postgres") +
+    equalsClause("c.relname", selector.table, "table", "postgres") +
+    " ORDER BY n.nspname, c.relname, s.attname"
+  );
+}
+
+/**
  * SQLite serves one schema, and a selector naming another is refused rather than
  * quietly read as `main`.
  */
@@ -294,6 +352,48 @@ function composeSqliteIndexes(selector: AgentCatalogSelector): string {
 }
 
 /**
+ * SQLite's statistics inventory, from `sqlite_stat1`.
+ *
+ * `ANALYZE` writes one row per INDEX, whose `stat` column is a space-separated list
+ * of integers: the first is the number of rows in the table, and each one after it
+ * is the average number of rows matching an equal prefix of the index's columns. So
+ * the row estimate and a per-index-prefix distinctness estimate are both derivable
+ * from that string — by the reader, which is where the parsing and the labelling
+ * belong — and a NULL FRACTION IS NOT AVAILABLE AT ALL on this engine. The reader
+ * must report it absent rather than assume zero.
+ *
+ * The join direction is the load-bearing part, and it is verified against a live
+ * engine in the tests rather than reasoned about:
+ *
+ *  - driving from `sqlite_master` with a LEFT JOIN keeps every table in the
+ *    inventory, including one SQLite holds no statistics for. That is not a rare
+ *    case: `ANALYZE` writes NOTHING for a table with no indexes, so an inner join
+ *    would silently omit exactly the tables whose sizes are least known.
+ *  - the estimate is therefore per index, not per column. This engine has no
+ *    per-column distribution to read.
+ *
+ * WHY A SEPARATE PROBE, and not a self-guarding statement: `sqlite_stat1` does not
+ * exist until an explicit `ANALYZE` has run, and SQLite resolves table names when it
+ * PREPARES a statement. So there is no single statement that reads the table when it
+ * is there and returns nothing when it is not — a `WHERE EXISTS (SELECT … FROM
+ * sqlite_master …)` guard still mentions `sqlite_stat1` in a FROM clause and still
+ * fails to prepare with `no such table`. The sqlite_master check is therefore its own
+ * statement, `composeStatisticsAvailabilityProbe`, and a caller runs it FIRST; a
+ * zero-row answer means "this database has never been analysed", which is reported
+ * as statistics absent and must not be reported as a database failure.
+ */
+function composeSqliteStatistics(selector: AgentCatalogSelector): string {
+  assertSqliteSchema(selector);
+  return (
+    "SELECT m.name AS table_name, s.idx AS index_name, s.stat AS stat " +
+    "FROM sqlite_master m LEFT JOIN sqlite_stat1 s ON s.tbl = m.name " +
+    "WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite@_%' ESCAPE '@'" +
+    equalsClause("m.name", selector.table, "table", "sqlite") +
+    " ORDER BY m.name, s.idx"
+  );
+}
+
+/**
  * Per dialect, per kind. SQLite's relation read IS its object read: foreign keys
  * are declared inside `CREATE TABLE` and the only structured alternative
  * (`pragma_foreign_key_list`) is refused by the guard, so the same statement serves
@@ -302,9 +402,45 @@ function composeSqliteIndexes(selector: AgentCatalogSelector): string {
 const CATALOG_COMPOSERS: Partial<
   Record<DatabaseType, Readonly<Record<AgentCatalogKind, (selector: AgentCatalogSelector) => string>>>
 > = {
-  postgres: { columns: composePostgresCatalog, relations: composePostgresRelations, indexes: composePostgresIndexes },
-  sqlite: { columns: composeSqliteCatalog, relations: composeSqliteCatalog, indexes: composeSqliteIndexes },
+  postgres: {
+    columns: composePostgresCatalog,
+    relations: composePostgresRelations,
+    indexes: composePostgresIndexes,
+    statistics: composePostgresStatistics,
+  },
+  sqlite: {
+    columns: composeSqliteCatalog,
+    relations: composeSqliteCatalog,
+    indexes: composeSqliteIndexes,
+    statistics: composeSqliteStatistics,
+  },
 };
+
+/**
+ * The statement that answers "does this database hold any statistics at all?", or
+ * `null` when the dialect needs no such question asked.
+ *
+ * Only SQLite needs one, for the prepare-time reason documented on
+ * `composeSqliteStatistics`. PostgreSQL's `pg_class` and `pg_stats` are part of every
+ * installation, so absence there is per-table and already expressed IN the statistics
+ * read as NULL statistics columns — a probe would answer a question that read has
+ * already answered more precisely, and returning a statement for it would invite a
+ * caller to treat an empty result as "no statistics anywhere".
+ *
+ * An unserved dialect is refused rather than answered `null`, because `null` here
+ * means "verified: no probe needed", and a dialect nobody has verified has not
+ * earned that answer.
+ */
+export function composeStatisticsAvailabilityProbe(dialect: DatabaseType): string | null {
+  if (!Object.hasOwn(CATALOG_COMPOSERS, dialect)) {
+    throw new AgentComposedSqlError(
+      `no verified statistics composition for provider type "${dialect}"`,
+      "UNSUPPORTED_DIALECT",
+    );
+  }
+  if (dialect !== "sqlite") return null;
+  return "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'";
+}
 
 /**
  * The dialect's estimating EXPLAIN prefix. Both forms DESCRIBE without running:

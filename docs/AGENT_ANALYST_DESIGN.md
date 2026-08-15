@@ -1323,20 +1323,21 @@ is stated rather than left as an omission.
   follows the seams it uses. Where the two meet — both will want a fourth `WORKFLOW_*` record and
   both touch B17/B27's unresolved question of what operation descriptor a non-SQL metadata read
   takes — that is a merge conversation, not a design one.
-- **~~Giving plan mode database context.~~ Decided and built in #384, and narrower than the heading
-  suggests.** Plan mode still performs zero database operations: it captures nothing, and the
-  question this bullet left open — whether it should READ the schema — was answered *no*, because the
-  reading is the promise. What it may be given instead is an inventory somebody else already read.
-  `context-snapshot.ts` holds each connection's most recent inventory — newest by `capturedAtMs`, and
-  bounded to sixteen connections — in the process that captured it. What puts one there is narrower
-  than "an agent run": the capture serves PostgreSQL and SQLite only, and every workflow but
-  `operations`, so an Operate run and a run on any other engine leave nothing behind. A plan run on a
-  connection that IS held is handed it with no statement sent, fenced as untrusted content and
-  prefaced with whose reading it was; a plan run on one that is not — never read, read only by the
-  runs above, evicted, or lost to a restart — is told so in its rules and writes a generic plan on
-  purpose. The egress consequence this bullet anticipated is therefore the
-  one the inventory already had: the same table and column names an agent run's prompt carries, sent
-  to the same model, for a connection the same user could open a run on.
+- **~~Giving plan mode database context.~~ Decided and built in #384, then decided the other way on
+  2026-08-15 — this bullet is kept as the record of a superseded decision, not as current
+  behaviour.** #384 answered the question this bullet left open — whether plan mode should READ the
+  schema — with *no*, on the ground that not reading was the promise, and handed a plan run an
+  inventory somebody else had already read: `context-snapshot.ts` held each connection's most recent
+  inventory, in the process that captured it, filled only by a prior agent run. That made the safe
+  mode useful only to someone who had already used the unsafe one, and blind after a restart or on a
+  second replica. The plan-mode SQL-generator design of 2026-08-15 reversed it: a plan run now
+  establishes its own context server-side before the model's first turn, so **"plan mode performs
+  zero database operations" is retired**, and the property the mode is actually sold on is stated
+  instead — it runs no statement of the user's, writes nothing, and hands every statement it drafts
+  to the user to run themselves. `docs/AGENT.md` carries the current contract. The egress
+  consequence this bullet anticipated is unchanged either way: the same table and column names an
+  agent run's prompt carries, sent to the same model, for a connection the same user could open a
+  run on.
 - **Timeline autoscroll.** Real, and a UI decision that has nothing to do with any of the above.
 - **Run history.** A run is observable only from its own ledger; nothing enqueues a drive (B9) and
   nothing lists past runs. Out of scope.

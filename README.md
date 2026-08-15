@@ -137,8 +137,10 @@ what comes back, and finishes by composing a report whose every claim cites the 
 - **Agent mode reads PostgreSQL and SQLite only.** The read-only profile is database-native, so it
   exists only where a provider implements it — `queryReadOnly` on `postgres.ts:870` and
   `sqlite.ts:397`, and nowhere else. On any other engine an Agent-mode run ends `engine-unsupported`
-  (`src/lib/agent/runtime.ts:199`). **Plan** mode is toolless, reaches no database at all, and works
-  on every connection.
+  (`src/lib/agent/runtime.ts:199`). **Plan** mode opens on every connection — the model there is
+  toolless, runs no statement of yours, writes nothing, and drafts a statement for you to run
+  yourself — but the schema reading that grounds it takes the same path, so it is grounded on those
+  same two engines and says so plainly anywhere else.
 - **Three workflows**: **Investigate** (answer a question), **Optimize** (compare estimated plans,
   propose an index or a rewrite), **Assess** (profile tables — counts only, never values).
 - **Nothing runs itself.** The agent never starts a run for you, never writes to the editor, and

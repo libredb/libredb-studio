@@ -414,13 +414,32 @@ describe("captureContextSnapshot — when no honest inventory can be built", () 
     expect(h.statements()).toHaveLength(0);
   });
 
-  test("a planning run reaches no database and gets no snapshot", async () => {
-    const h = harness("postgres");
+  /*
+    This test asserted the opposite until 2026-08-15: a planning run reached no
+    database and got no snapshot, because the mode gate in `tools.ts` refused it. The
+    plan-mode grounding design changed that deliberately — a plan run could otherwise
+    be about a real database only when an AGENT run had already read one in this same
+    process, which made the safe mode's usefulness conditional on having used the
+    unsafe one.
 
-    const capture = await captureContextSnapshot({ ...h.context, mode: "planning" });
+    So it is rewritten rather than deleted, and what it pins is the property that did
+    NOT change: the capture is a catalog read, composed by the server, and it takes
+    the same audited path in either mode. The model's toollessness is enforced
+    elsewhere and asserted there (`selectAgentTools`, and the seam in `tools.test.ts`).
+  */
+  test("a planning run captures its context through exactly the same audited catalog reads", async () => {
+    const agent = harness("postgres");
+    const planning = harness("postgres");
 
-    expect(capture.kind).toBe("unavailable");
-    expect(h.statements()).toHaveLength(0);
+    const captured = await captureContextSnapshot(agent.context);
+    const capture = await captureContextSnapshot({ ...planning.context, mode: "planning" });
+
+    expect(capture.kind).toBe("captured");
+    // The same three server-composed statements, in the same order. A planning run
+    // that reached a database by some other route would show up here as a difference.
+    expect(planning.statements()).toEqual(agent.statements());
+    if (capture.kind !== "captured" || captured.kind !== "captured") throw new Error("unreachable");
+    expect(capture.snapshot.fingerprint).toBe(captured.snapshot.fingerprint);
   });
 
   test("a result the artifact store no longer holds is not reconstructed from the model text", async () => {

@@ -459,7 +459,16 @@ export const CASES: readonly RealModelCase[] = [
     engine: "postgres",
     mode: "planning",
     objective: "How would you find out why the orders report is slow?",
-    expectation: "produces a plan in prose; performs zero database operations",
+    // "no statement of the user's", not "no database operation": since the grounding
+    // design of 2026-08-15 the server reads this connection's catalog before the
+    // first turn. The model is still handed no tool and sends nothing itself.
+    // The deliverable changed with the plan-mode design of 2026-08-15: a plan of an
+    // investigation is ONE runnable statement in a fenced block, or an explicit
+    // `NO STATEMENT:` refusal naming what is missing. Prose with neither is the
+    // lecture the design exists to remove, so a live drive that produces one is a
+    // failure of this case rather than a pass.
+    expectation:
+      "produces one fenced statement against the real inventory, or an explicit NO STATEMENT: refusal; runs no statement of the user's",
   },
   {
     /*
