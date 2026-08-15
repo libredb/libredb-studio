@@ -8,6 +8,40 @@ Nothing in this file is aspirational.
 The refusals are not filler. Half of what makes an agent worth putting near a production database is
 what it declines to do, and a demo that only shows the happy path sells the wrong product.
 
+## What works on which engine
+
+Driven live on 2026-08-15, one engine at a time, against real servers. **Verified** means a run of
+that kind was started on that engine and its outcome read off the screen — nothing in this table is
+inferred from the code.
+
+| Engine | Plan mode | Operate | Investigate · Analyze · Optimize · Assess |
+| --- | --- | --- | --- |
+| **PostgreSQL** 18 | Verified, grounded | Verified | Verified |
+| **SQLite** | Verified, grounded | Verified | Verified |
+| **Redis** 7 | Verified | Verified | Refused |
+| **MongoDB** 8 | Verified | Verified | Refused, verified |
+| **SQL Server** 2022 | Verified | Verified | Refused |
+| **ClickHouse** 26 | Verified | Verified | Refused |
+| **LibreDB** (embedded) | Verified | Not established | Refused, verified |
+| MySQL · Oracle · Couchbase · Druid | Expected to work | Expected to work | Refused |
+
+**Read the table this way.** Plan mode has no engine limit — it sends no statements at all — but it
+is only *grounded* (case 18) on PostgreSQL and SQLite, because only those two capture a schema
+inventory. Operate reads what the engine reports about itself, so it needs no SQL and reaches
+everything. The other four workflows write SQL and need a database-native read-only statement path,
+which today only PostgreSQL and SQLite provide; everywhere else the run ends with *"The agent cannot
+run on this database engine: it offers no read-only execution profile."*
+
+The last row is honest rather than modest: those four implement the same provider interface the six
+above do, so the same rules should apply — but nobody has started a run on them, so they are not
+claimed. "Refused" for their four SQL workflows is not a guess: it follows from the same
+`queryReadOnly` requirement that refused MongoDB, and that one was watched.
+
+**LibreDB's own embedded sample** is the one gap. Its four SQL workflows refuse like the others
+(watched), but an Operate run against it could not be completed here: the sample file was held under
+an exclusive lock by another process, so the run failed on the connection rather than on anything the
+agent did. Worth knowing before you demo against it.
+
 ## Before you demo
 
 **Databases used here.** PostgreSQL 18 with the [Pagila / dvdrental sample](https://neon.com/postgresql/getting-started/sample-database)
@@ -280,10 +314,9 @@ in that result or it is refused. An answer must be a result of a query the run a
 or a profile cannot be presented as one. The verdict at the end of a run is computed from the run's
 ledger, not from the model's opinion of its own work.
 
-**"Which databases?"** Analyze, Optimize, Assess and Investigate need a database-native read-only
-path, which today means **PostgreSQL and SQLite**. Operate reads the engine's own statistics instead
-and works on every provider — driven live against Redis, which has no SQL at all (case 12b). Plan
-mode has no limit at all.
+**"Which databases?"** See the table at the top. The short version: Operate works everywhere and was
+driven live on six engines including Redis, which has no SQL at all; the four SQL workflows need
+PostgreSQL or SQLite today; plan mode has no engine limit and is grounded on those same two.
 
 **"What does it cost per question?"** Each workflow has a frozen ceiling on model turns, statements,
 wall clock and database time, and the rail shows the meter live. The figures are the starting point
@@ -291,14 +324,28 @@ for a measurement that has not been taken yet — treat them as bounds, not as a
 
 ---
 
-## Cases that are not ready to demo
+## Not yet — and what each one is waiting on
 
-Say these plainly if asked; do not build a demo around them.
+Say these plainly if asked. Everything here is recorded in `docs/BACKLOG.md` with the design that
+would close it, so "not yet" means deferred with a reason, not overlooked.
 
-- **Follow-up questions.** Each run starts fresh. Asking "and how many of those?" after another
-  question gets a confident answer to a different question, because nothing carries the referent.
-  (`docs/BACKLOG.md` B36.)
-- **A plan on a cold server.** Case 18 grounds a plan from an inventory an agent run left behind, so
-  a freshly restarted server plans generically until something has read that connection. The run says
-  so; do not build the demo on it. (`docs/BACKLOG.md` B42.)
-- **Causal questions** — "why are sales down?" — need business context the schema does not carry.
+| Not yet | What happens today | Waiting on |
+| --- | --- | --- |
+| **Follow-up questions** | Each run starts fresh, and neither the surface nor the model says so — ask "and how many of those?" and you get a confident answer to a different question | B36 — either carrying the previous run's objective and report into the next as fenced context, or run history |
+| **A plan on a cold server** | The inventory lives in the server process, so after a restart a plan run is ungrounded and says so | B42 — a durable inventory, which needs a timeline that does not claim a plan run captured a schema |
+| **Causal questions** — "why are sales down?" | Answered from the schema alone, which cannot know which decomposition of a metric is the business one | A per-connection business note, held server-side; sketched in `docs/AGENT_ANALYST_DESIGN.md` §5 |
+| **"This database cannot answer that"** | It does say so, but has to run a throwaway query to be scored as having answered — the run above spent 36 steps to report that an employees database holds no customer data | B39 — a second arm on the verdict, so a schema-only conclusion counts |
+| **Agent mode on MySQL, Oracle, MongoDB, Redis…** | Only Operate. The other four workflows refuse, correctly and clearly | A database-native read-only statement path per engine — the same `queryReadOnly` PostgreSQL and SQLite implement |
+| **A run you can watch from your own stack** | Everything is in the run's ledger and on the rail; nothing is exported | B33 — OpenTelemetry spans, designed in #332 and deliberately not built while the event model is still moving |
+| **Resuming a run after a restart** | A drive that dies leaves a durable ledger, but nothing picks it up | B9 — a queue and a re-attach path for the stream |
+| **A budget you can trust to the minute** | The ceilings are real and enforced; the *numbers* are a starting point nobody has measured | One instrumented long run per workflow |
+| **Connections you created in the UI** | Agent mode is offered only on seed connections, because a run has to be rebuildable server-side | A server-held credential for user connections — not designed |
+
+Two smaller ones worth knowing before they surprise you on stage:
+
+- **A refused PostgreSQL role reads as a refused engine.** Point the agent at a superuser and the
+  message says the engine offers no read-only profile. The engine does; the role is too broad, and
+  only the server log says so (case 22).
+- **A connection error can arrive as "the reason is in the server log".** An Operate run against a
+  locked LibreDB file failed with a perfectly actionable message — *"already open by another process
+  (exclusive lock)"* — that the rail did not show.
