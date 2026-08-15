@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import {
-  PLAN_NO_STATEMENT_MARKER,
-  readPlanStatement,
-  readStatementTables,
-  validatePlanStatement,
-} from "@/lib/agent/plan-statement";
+import { PLAN_NO_STATEMENT_MARKER, readPlanStatement } from "@/lib/agent/plan-draft";
+import { readStatementTables, validatePlanStatement } from "@/lib/agent/plan-statement";
 import type { TableSchema } from "@/lib/types";
 
 /**

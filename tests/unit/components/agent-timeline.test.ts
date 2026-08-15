@@ -16,7 +16,7 @@
 import { describe, test, expect } from "bun:test";
 import { foldLedgerEntries, parseLedgerLine } from "@/components/agent/timeline";
 import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
-import { PLAN_NO_STATEMENT_MARKER } from "@/lib/agent/plan-statement";
+import { PLAN_NO_STATEMENT_MARKER } from "@/lib/agent/plan-draft";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
 import { DEFAULT_AGENT_WORKFLOW_TYPE } from "@/lib/agent/types";
 

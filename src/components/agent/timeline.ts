@@ -1,7 +1,7 @@
 import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentGoalShortfall } from "@/lib/agent/goal-verifier";
 import type { AgentPlanAccess, AgentPlanSummary } from "@/lib/agent/plan-summary";
-import { readPlanStatement } from "@/lib/agent/plan-statement";
+import { readPlanStatement } from "@/lib/agent/plan-draft";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
 import {
   type AgentChartSpec,

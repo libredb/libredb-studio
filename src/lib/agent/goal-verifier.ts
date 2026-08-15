@@ -38,7 +38,7 @@
  * claims RESTED on, which is a fact about the run.
  */
 
-import { readPlanStatement } from "./plan-statement";
+import { readPlanStatement } from "./plan-draft";
 import type { AgentReportClaim, AgentRunEvent, AgentRunMode, AgentRunRecord, AgentRunWorkflowType } from "./types";
 
 /**

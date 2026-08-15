@@ -53,7 +53,8 @@ import {
   reusableSnapshot,
 } from "./context-snapshot";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
-import { PLAN_NO_STATEMENT_MARKER, readPlanStatement, validatePlanStatement } from "./plan-statement";
+import { PLAN_NO_STATEMENT_MARKER, readPlanStatement } from "./plan-draft";
+import { validatePlanStatement } from "./plan-statement";
 import { packSchemaStatistics, readSchemaStatistics } from "./schema-stats";
 import {
   AGENT_MODEL_TURN_TIMEOUT_MS,
