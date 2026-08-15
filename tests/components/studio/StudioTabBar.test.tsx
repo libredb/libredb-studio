@@ -67,7 +67,9 @@ describe("StudioTabBar", () => {
     const { container } = render(<StudioTabBar {...props} />);
     const tabElements = container.querySelectorAll('[class*="border-t-2"]');
     expect(tabElements[0]?.className).toContain("border-blue-500");
-    expect(tabElements[0]?.className).toContain("bg-[#141414]");
+    // The accent stays a literal blue (it reads on either ground); the tab's own
+    // ground is the elevated surface token, so it follows the theme.
+    expect(tabElements[0]?.className).toContain("bg-overlay");
   });
 
   test("inactive tab has transparent border", () => {

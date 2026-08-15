@@ -401,14 +401,23 @@ describe("VisualExplain", () => {
       await waitFor(() => {
         expect(queryByText("Re-analyze")).not.toBeNull();
       });
-      expect(abortSpy).not.toHaveBeenCalled();
+
+      /*
+       * The spy sits on the SHARED `AbortController.prototype`, so it counts every
+       * abort in this process — including ones from the other components this
+       * group runs alongside (AgentRail among them). Asserting a total made the
+       * test fail roughly half the time on a full-suite run, on `main` as much as
+       * here. The delta across the click is the only part that is this test's
+       * business, and it is also the exact claim being made.
+       */
+      const abortsBefore = abortSpy.mock.calls.length;
 
       // abortControllerRef.current is already set from the first run, so this second
       // invocation exercises the "abort previous request" branch before issuing a new fetch.
       await user.click(queryByText("Re-analyze")!);
 
       await waitFor(() => {
-        expect(abortSpy).toHaveBeenCalledTimes(1);
+        expect(abortSpy.mock.calls.length).toBe(abortsBefore + 1);
         expect((globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls.length).toBe(2);
       });
     } finally {
@@ -460,7 +469,7 @@ describe("VisualExplain", () => {
 
     const nonSqlPre = Array.from(pres).find((pre) => pre.textContent?.includes("plain block content"));
     expect(nonSqlPre).not.toBeUndefined();
-    expect(nonSqlPre!.className).toContain("bg-white/[0.02]");
+    expect(nonSqlPre!.className).toContain("bg-fill-subtle");
 
     const strongEl = Array.from(container.querySelectorAll("strong")).find((el) => el.textContent === "Important");
     expect(strongEl).not.toBeUndefined();
@@ -745,13 +754,13 @@ describe("VisualExplain", () => {
       },
     ];
     const { container } = render(<VisualExplain plan={unknownPlan} />);
-    // Unknown type uses Database icon with text-zinc-500
+    // Unknown type uses Database icon with text-fg-muted
     // Need to find the icon inside the node icon wrapper (p-1 rounded div)
-    const iconWrappers = container.querySelectorAll(".bg-white\\/5");
-    // The node icon container has bg-white/5 for non-scan types
+    const iconWrappers = container.querySelectorAll(".bg-fill");
+    // The node icon container has bg-fill for non-scan types
     let foundZincIcon = false;
     iconWrappers.forEach((wrapper) => {
-      const icon = wrapper.querySelector(".text-zinc-500");
+      const icon = wrapper.querySelector(".text-fg-muted");
       if (icon) foundZincIcon = true;
     });
     expect(foundZincIcon).toBe(true);

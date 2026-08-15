@@ -25,7 +25,7 @@ export function renderInlineBold(text: string): ReactNode[] {
     }
 
     nodes.push(
-      <strong key={key} className="text-zinc-200">
+      <strong key={key} className="text-fg">
         {match[1]}
       </strong>,
     );

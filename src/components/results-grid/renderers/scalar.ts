@@ -17,7 +17,7 @@ export const scalarRenderer: ValueRenderer = {
     if (strVal === "false" || strVal === "inactive" || strVal === "disabled") {
       return { display, className: "text-rose-500/90" };
     }
-    return { display, className: "text-zinc-300" };
+    return { display, className: "text-fg-secondary" };
   },
   renderDetail(value) {
     // Scalars have no expanded form — the detail sheet shows the compact text.

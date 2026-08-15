@@ -8,14 +8,14 @@ export default function ErrorPage({ error, reset }: { error: Error & { digest?: 
   }, [error]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-white">
+    <div className="flex min-h-screen items-center justify-center bg-surface text-fg">
       <div className="max-w-md text-center px-6">
         <div className="mb-4 text-5xl">!</div>
         <h1 className="text-xl font-semibold mb-2">Something went wrong</h1>
-        <p className="text-zinc-400 mb-6 text-sm">
+        <p className="text-fg-tertiary mb-6 text-sm">
           LibreDB Studio encountered an unexpected error. You can try again or report this issue.
         </p>
-        {error.digest && <p className="text-zinc-600 text-xs mb-4">Error ID: {error.digest}</p>}
+        {error.digest && <p className="text-fg-subtle text-xs mb-4">Error ID: {error.digest}</p>}
         <div className="flex gap-3 justify-center">
           <button
             onClick={reset}
@@ -27,7 +27,7 @@ export default function ErrorPage({ error, reset }: { error: Error & { digest?: 
             href="https://github.com/libredb/libredb-studio/issues"
             target="_blank"
             rel="noopener noreferrer"
-            className="px-5 py-2.5 border border-zinc-700 hover:border-zinc-500 text-zinc-300 rounded-lg text-sm font-medium transition-colors"
+            className="px-5 py-2.5 border border-edge hover:border-edge-hover text-fg-secondary rounded-lg text-sm font-medium transition-colors"
           >
             Report Issue
           </a>

@@ -104,15 +104,15 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl bg-zinc-950 border-white/10 text-zinc-100 p-0 overflow-hidden flex flex-col max-h-[90vh]">
-        <DialogHeader className="px-6 py-4 border-b border-white/5 bg-zinc-900/50">
+      <DialogContent className="max-w-3xl bg-surface border-hairline-strong text-fg p-0 overflow-hidden flex flex-col max-h-[90vh]">
+        <DialogHeader className="px-6 py-4 border-b border-hairline bg-panel">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-blue-500/10 border border-blue-500/20">
               <TableIcon strokeWidth={1.5} className="w-5 h-5 text-blue-400" />
             </div>
             <div>
               <DialogTitle className="text-xs font-medium">Create New Table</DialogTitle>
-              <p className="text-xs text-zinc-500 mt-1 font-medium">Define schema structure</p>
+              <p className="text-xs text-fg-muted mt-1 font-medium">Define schema structure</p>
             </div>
           </div>
         </DialogHeader>
@@ -122,10 +122,10 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
           <div className="space-y-4">
             <div className="flex items-center gap-2">
               <Settings2 strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-500/50" />
-              <Label className="text-xs font-medium text-zinc-500">General Settings</Label>
+              <Label className="text-xs font-medium text-fg-muted">General Settings</Label>
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="tableName" className="text-xs font-medium text-zinc-400">
+              <Label htmlFor="tableName" className="text-xs font-medium text-fg-tertiary">
                 Table Name
               </Label>
               <Input
@@ -133,7 +133,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
                 placeholder="e.g. customers, orders, analytics_logs"
                 value={tableName}
                 onChange={(e) => setTableName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_"))}
-                className="bg-zinc-900 border-white/5 focus-visible:ring-blue-500/50"
+                className="bg-raised border-hairline focus-visible:ring-blue-500/50"
               />
             </div>
           </div>
@@ -143,7 +143,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Type strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-500/50" />
-                <Label className="text-xs font-medium text-zinc-500">Column Definitions</Label>
+                <Label className="text-xs font-medium text-fg-muted">Column Definitions</Label>
               </div>
               <Button
                 variant="ghost"
@@ -159,27 +159,27 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
               {columns.map((col, index) => (
                 <div
                   key={index}
-                  className="flex items-end gap-3 p-3 rounded-lg bg-zinc-900/30 border border-white/5 group hover:border-white/10 transition-colors"
+                  className="flex items-end gap-3 p-3 rounded-lg bg-panel border border-hairline group hover:border-hairline-strong transition-colors"
                 >
                   <div className="flex-1 space-y-2">
-                    <Label className="text-xs text-zinc-500 font-medium">Column Name</Label>
+                    <Label className="text-xs text-fg-muted font-medium">Column Name</Label>
                     <Input
                       value={col.name}
                       onChange={(e) =>
                         updateColumn(index, { name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_") })
                       }
                       placeholder="column_name"
-                      className="h-8 text-xs bg-zinc-950 border-white/5"
+                      className="h-8 text-xs bg-surface border-hairline"
                     />
                   </div>
 
                   <div className="w-40 space-y-2">
-                    <Label className="text-xs text-zinc-500 font-medium">Type</Label>
+                    <Label className="text-xs text-fg-muted font-medium">Type</Label>
                     <Select value={col.type} onValueChange={(val) => updateColumn(index, { type: val })}>
-                      <SelectTrigger className="h-8 text-xs bg-zinc-950 border-white/5">
+                      <SelectTrigger className="h-8 text-xs bg-surface border-hairline">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent className="bg-zinc-950 border-white/10">
+                      <SelectContent className="bg-surface border-hairline-strong">
                         {DATA_TYPES.map((t) => (
                           <SelectItem key={t} value={t} className="text-xs">
                             {t}
@@ -196,7 +196,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
 
                   <div className="flex items-center gap-4 pb-2 px-2">
                     <div className="flex flex-col items-center gap-1.5" title="Primary Key">
-                      <Label className="text-[0.5rem] text-zinc-600 uppercase font-black">PK</Label>
+                      <Label className="text-[0.5rem] text-fg-subtle uppercase font-black">PK</Label>
                       <Checkbox
                         checked={col.isPrimary}
                         onCheckedChange={(checked) =>
@@ -205,23 +205,23 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
                             isNullable: checked ? false : col.isNullable,
                           })
                         }
-                        className="border-white/20 data-[state=checked]:bg-yellow-500 data-[state=checked]:border-yellow-500"
+                        className="border-edge data-[state=checked]:bg-yellow-500 data-[state=checked]:border-yellow-500"
                       />
                     </div>
                     <div className="flex flex-col items-center gap-1.5" title="Nullable">
-                      <Label className="text-[0.5rem] text-zinc-600 uppercase font-black">Null</Label>
+                      <Label className="text-[0.5rem] text-fg-subtle uppercase font-black">Null</Label>
                       <Checkbox
                         checked={col.isNullable}
                         onCheckedChange={(checked) => updateColumn(index, { isNullable: !!checked })}
-                        className="border-white/20 data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
+                        className="border-edge data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
                       />
                     </div>
                     <div className="flex flex-col items-center gap-1.5" title="Unique">
-                      <Label className="text-[0.5rem] text-zinc-600 uppercase font-black">Unq</Label>
+                      <Label className="text-[0.5rem] text-fg-subtle uppercase font-black">Unq</Label>
                       <Checkbox
                         checked={col.isUnique}
                         onCheckedChange={(checked) => updateColumn(index, { isUnique: !!checked })}
-                        className="border-white/20 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
+                        className="border-edge data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
                       />
                     </div>
                   </div>
@@ -229,7 +229,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 mb-0.5"
+                    className="h-8 w-8 text-fg-subtle hover:text-red-400 hover:bg-red-500/10 mb-0.5"
                     onClick={() => removeColumn(index)}
                   >
                     <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5" />
@@ -240,13 +240,13 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
           </div>
 
           {/* Preview Section */}
-          <div className="p-4 rounded-lg bg-black border border-white/5 font-mono">
+          <div className="p-4 rounded-lg bg-black border border-hairline font-mono">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-blue-500" />
-                <span className="text-xs font-medium text-zinc-500">SQL Preview</span>
+                <span className="text-xs font-medium text-fg-muted">SQL Preview</span>
               </div>
-              <span className="text-[0.625rem] text-zinc-700">Auto-generated</span>
+              <span className="text-[0.625rem] text-fg-faint">Auto-generated</span>
             </div>
             <pre className="text-xs text-blue-400/80 whitespace-pre-wrap leading-relaxed">
               {generateSQL() || "-- Name your table to see SQL"}
@@ -254,8 +254,8 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
           </div>
         </div>
 
-        <DialogFooter className="px-6 py-4 border-t border-white/5 bg-zinc-900/50">
-          <Button variant="ghost" onClick={onClose} className="text-xs text-zinc-400 hover:text-white">
+        <DialogFooter className="px-6 py-4 border-t border-hairline bg-panel">
+          <Button variant="ghost" onClick={onClose} className="text-xs text-fg-tertiary hover:text-fg-bright">
             Cancel
           </Button>
           <Button

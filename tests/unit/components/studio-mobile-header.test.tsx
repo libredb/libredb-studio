@@ -184,7 +184,7 @@ describe("StudioMobileHeader", () => {
       <StudioMobileHeader {...defaultProps} activeMobileTab="editor" onAskAgent={noop} />,
     );
     // Row 2 container
-    expect(html).toContain("bg-[#080808]");
+    expect(html).toContain("bg-sunken");
     // The ask button (not inside dropdown, directly visible) — #331 T3 replaced the
     // in-editor AI chat toggle that used to sit here, and it is named for the ask
     // rather than for the rail: MobileNav renders an "Agent" control on this same
@@ -200,14 +200,14 @@ describe("StudioMobileHeader", () => {
     const html = renderToStaticMarkup(
       <StudioMobileHeader {...defaultProps} activeMobileTab="database" onAskAgent={noop} />,
     );
-    expect(html).not.toContain("bg-[#080808]");
+    expect(html).not.toContain("bg-sunken");
     expect(html).not.toContain("lucide-bot");
     expect(html).not.toContain("RUN");
   });
 
   test("hides editor action bar when activeMobileTab is schema", () => {
     const html = renderToStaticMarkup(<StudioMobileHeader {...defaultProps} activeMobileTab="schema" />);
-    expect(html).not.toContain("bg-[#080808]");
+    expect(html).not.toContain("bg-sunken");
     expect(html).not.toContain("CANCEL");
     expect(html).not.toContain("lucide-play");
   });

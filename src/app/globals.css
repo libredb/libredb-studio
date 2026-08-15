@@ -1,4 +1,10 @@
 @import "tailwindcss";
+/*
+ * The studio surface/text token layer. Kept in its own file because it is the one
+ * part of this stylesheet that ALSO ships in the package (`dist/styles.css`) for
+ * platform to import — see .claude/rules/platform-integration.md.
+ */
+@import "../styles/theme.css";
 
 @theme {
   --font-sans: var(--font-geist-sans);
@@ -187,27 +193,32 @@
 
 @layer components {
   .glass-panel {
-    background-color: rgba(9, 9, 11, 0.5);
+    background-color: var(--studio-panel);
     backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--studio-hairline);
   }
-  
+
   .editor-scrollbar::-webkit-scrollbar {
     width: 8px;
     height: 8px;
   }
-  
+
   .editor-scrollbar::-webkit-scrollbar-track {
     background: transparent;
   }
-  
+
+  /*
+   * The scrollbar thumb is the one control with no token of its own: it has to
+   * stay legible against the editor ground in both themes, which the hairline
+   * ramp is too faint to do. Derived from the fill ramp instead, doubled.
+   */
   .editor-scrollbar::-webkit-scrollbar-thumb {
-    background: #262626;
+    background: var(--studio-fg-subtle);
     border-radius: 10px;
   }
-  
+
   .editor-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: #404040;
+    background: var(--studio-fg-muted);
   }
 
   /* Monaco Execution Highlight */

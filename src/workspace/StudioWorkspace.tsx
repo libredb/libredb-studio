@@ -291,10 +291,7 @@ export function StudioWorkspace({
   return (
     <div
       data-studio-workspace=""
-      className={cn(
-        "dark flex h-full w-full bg-[#050505] text-zinc-100 overflow-hidden font-sans select-none",
-        className,
-      )}
+      className={cn("dark flex h-full w-full bg-canvas text-fg overflow-hidden font-sans select-none", className)}
     >
       <ResizablePanelGroup id="workspace-main" direction="horizontal" className="h-full">
         <ResizablePanel defaultSize={22} minSize={15} maxSize={35} className="hidden md:block">
@@ -322,7 +319,7 @@ export function StudioWorkspace({
         </ResizablePanel>
         <ResizableHandle className="hidden md:flex w-1 bg-transparent hover:bg-blue-500/30 transition-colors" />
         <ResizablePanel defaultSize={78}>
-          <div className="flex-1 flex flex-col min-w-0 h-full bg-[#0a0a0a]">
+          <div className="flex-1 flex flex-col min-w-0 h-full bg-surface">
             {/* No desktop/mobile headers — platform provides its own */}
 
             <StudioTabBar
@@ -388,7 +385,7 @@ export function StudioWorkspace({
                         </div>
                       </div>
                     </ResizablePanel>
-                    <ResizableHandle className="h-1 bg-white/5 hover:bg-blue-500/20" />
+                    <ResizableHandle className="h-1 bg-fill hover:bg-blue-500/20" />
                     <ResizablePanel defaultSize={60} minSize={20}>
                       <BottomPanel
                         mode={queryExec.bottomPanelMode}
@@ -512,24 +509,23 @@ export function StudioWorkspace({
 
       {/* Unlimited Query Warning */}
       <AlertDialog open={queryExec.unlimitedWarningOpen} onOpenChange={queryExec.setUnlimitedWarningOpen}>
-        <AlertDialogContent className="bg-[#111] border-white/5 max-w-sm p-0 gap-0 overflow-hidden">
+        <AlertDialogContent className="bg-overlay border-hairline max-w-sm p-0 gap-0 overflow-hidden">
           <div className="px-6 pt-6 pb-4">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-red-500/10 flex items-center justify-center shrink-0">
                 <AlertTriangle strokeWidth={1.5} className="w-5 h-5 text-amber-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <AlertDialogTitle className="text-xs font-medium text-zinc-100 mb-1">
-                  Load all results?
-                </AlertDialogTitle>
-                <AlertDialogDescription className="text-xs text-zinc-500 leading-relaxed">
-                  This may slow down your browser. Max <span className="text-zinc-400">100K</span> rows will be loaded.
+                <AlertDialogTitle className="text-xs font-medium text-fg mb-1">Load all results?</AlertDialogTitle>
+                <AlertDialogDescription className="text-xs text-fg-muted leading-relaxed">
+                  This may slow down your browser. Max <span className="text-fg-tertiary">100K</span> rows will be
+                  loaded.
                 </AlertDialogDescription>
               </div>
             </div>
           </div>
           <div className="px-6 pb-6 flex gap-2">
-            <AlertDialogCancel className="flex-1 h-9 bg-white/5 border-0 text-zinc-400 text-xs font-medium hover:bg-white/10 hover:text-zinc-200">
+            <AlertDialogCancel className="flex-1 h-9 bg-fill border-0 text-fg-tertiary text-xs font-medium hover:bg-fill-strong hover:text-fg">
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction

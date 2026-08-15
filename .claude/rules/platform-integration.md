@@ -64,6 +64,33 @@ must replicate those rules in its own `globals.css`. Currently that means the cu
 `<button>` for small icon buttons per the Component Rules above, so without it embedded studio shows
 a text/default cursor on those. Keep this list in sync when adding global rules.
 
+## Theme tokens (`@libredb/studio/styles.css`) — REQUIRED import
+
+Studio's surface and text colours resolve through the token layer in `src/styles/theme.css`
+(`bg-surface`, `border-hairline`, `text-fg-muted`, …). That file — and ONLY that file, not the rest
+of `globals.css` — is staged into the package as `dist/styles.css` by `scripts/copy-theme.mjs`
+(tsup cannot: its plugin resolves every `.css` import to an empty module on purpose). Platform must
+import it, once, after Tailwind:
+
+```css
+/* platform globals.css */
+@import "tailwindcss";
+@import "@libredb/studio/styles.css";
+```
+
+Without it every tokenised studio surface falls back to transparent/inherited — panels lose their
+ground and hairlines disappear, in embedded mode only.
+
+**Theme selection is the host's.** Studio mounts `ThemeProvider` (next-themes, `attribute="class"`)
+in `src/app/layout.tsx`, which is standalone-only and never reaches the package. Embedded studio
+therefore has no provider and no opinion: it reads whatever `dark` class platform puts on its own
+document and follows it. `ThemeToggle` detects the absent provider (`useTheme().themes` is empty)
+and renders `null`, so platform does not get a second, fighting theme control. Do not mount
+`ThemeProvider` from any `src/exports/*` entry.
+
+Colours that are NOT tokens, by intent: accent hues (`bg-blue-600`, `text-red-400`, …) and
+`text-white` where it labels a coloured button — both read correctly on either ground.
+
 ## Verification Workflow
 
 After any UI change in studio:
