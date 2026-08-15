@@ -487,6 +487,7 @@ export const AGENT_ANSWER_CONTRACT = [
   "Every column a chart names must be a column of THAT result, spelled as the result spells it, and every y column must hold numbers.",
   "A chart needs at least two rows; a pie takes exactly one y; a scatter needs a numeric x as well.",
   "Present a table when the result is a single number, has one row, or has no numeric column: that is a complete answer, not a lesser one.",
+  "When the objective asks for a chart and the result can carry one, chart it: the user named the shape of the answer they wanted.",
 ].join(" ");
 
 const recommendationSchema = z.strictObject({

@@ -2688,6 +2688,29 @@ describe("present_answer records which result IS the answer, and how to show it"
     expect(AGENT_TOOL_DEFINITIONS.present_answer.description).toContain(AGENT_ANSWER_CONTRACT);
   });
 
+  /*
+    Driven live on 2026-08-15, twice, on both engines: "Show me the average salary by
+    department as a chart" and "Draw a bar chart of rental volume per month" were both
+    answered with a TABLE. The data carried a category and a number in each case, so
+    nothing refused the chart — the model simply chose the other one.
+
+    Reading the contract explains why. It defends the table ("that is a complete
+    answer, not a lesser one"), which is deliberate and stays: a single number charted
+    is worse than a single number. But it never said when a chart IS right, and it
+    never mentioned the objective. A model reading the list found a permission and no
+    pull the other way.
+
+    So the asymmetry is the defect, and the fix is one sentence rather than a rule
+    engine: the model decides, and now it decides knowing what was asked. #350's
+    lesson — a behaviour nobody states is a behaviour live runs do not have.
+  */
+  test("the contract says when a chart is right, not only when a table is", () => {
+    expect(AGENT_ANSWER_CONTRACT).toContain("asks for a chart");
+    // The table's defence stays: it is what stops a single number being charted to
+    // look like more than it is.
+    expect(AGENT_ANSWER_CONTRACT).toContain("complete answer, not a lesser one");
+  });
+
   test("the description shows both presentations, and its own schema accepts them", () => {
     // The `AGENT_EVIDENCE_CONTRACT` pattern: the example and the parser come from one
     // piece of code, so a description offering a shape the schema refuses fails here
