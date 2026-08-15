@@ -437,6 +437,93 @@ describe("useStorageSync", () => {
       );
     });
 
+    /**
+     * A push is the ONLY thing that moves a local mutation to the server. Dropping
+     * a failed one means the write survives in localStorage and nowhere else —
+     * silently, until the user happens to touch that same collection again. The
+     * queue must therefore outlive the failure.
+     */
+    test("retries a collection whose push failed instead of dropping it", async () => {
+      localStorage.setItem("libredb_server_migrated", "true");
+      let attempts = 0;
+      const fetchMock = mockGlobalFetch({
+        "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        "/api/storage/migrate": { ok: true, status: 200, json: { ok: true, migrated: [] } },
+        "/api/storage/connections": () => {
+          attempts += 1;
+          return attempts === 1
+            ? { ok: false, status: 500, json: { error: "Write failed" } }
+            : { ok: true, status: 200, json: { ok: true } };
+        },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isServerMode).toBe(true);
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "connections" } }));
+      });
+
+      await waitFor(
+        () => {
+          expect(result.current.syncError).not.toBeNull();
+        },
+        { timeout: 3000 },
+      );
+
+      // No further mutation is dispatched: the retry has to come from the hook.
+      await waitFor(
+        () => {
+          expect(attempts).toBeGreaterThanOrEqual(2);
+        },
+        { timeout: 5000 },
+      );
+      await waitFor(
+        () => {
+          expect(result.current.syncError).toBeNull();
+        },
+        { timeout: 3000 },
+      );
+      expect(calledPaths(fetchMock).filter((p) => p === "/api/storage/connections").length).toBeGreaterThanOrEqual(2);
+    });
+
+    test("stops retrying once the push lands", async () => {
+      localStorage.setItem("libredb_server_migrated", "true");
+      let attempts = 0;
+      mockGlobalFetch({
+        "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        "/api/storage/migrate": { ok: true, status: 200, json: { ok: true, migrated: [] } },
+        "/api/storage/connections": () => {
+          attempts += 1;
+          return { ok: true, status: 200, json: { ok: true } };
+        },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isServerMode).toBe(true);
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "connections" } }));
+      });
+
+      await waitFor(
+        () => {
+          expect(attempts).toBe(1);
+        },
+        { timeout: 3000 },
+      );
+
+      // A successful push empties the queue: nothing schedules a second attempt.
+      await act(async () => await new Promise((r) => setTimeout(r, 1600)));
+      expect(attempts).toBe(1);
+    });
+
     test("sets syncError on push failure", async () => {
       localStorage.setItem("libredb_server_migrated", "true");
 

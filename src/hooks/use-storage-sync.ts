@@ -12,6 +12,10 @@ import { logger } from "@/lib/logger";
 
 const MIGRATION_FLAG = "libredb_server_migrated";
 const DEBOUNCE_MS = 500;
+/** First retry delay after a failed push; doubles per consecutive failure. */
+const RETRY_BASE_MS = 1000;
+/** Ceiling for the backoff, so a long outage settles into a slow poll. */
+const RETRY_MAX_MS = 30_000;
 
 export interface StorageSyncState {
   isServerMode: boolean;
@@ -39,10 +43,12 @@ export function useStorageSync(): StorageSyncState {
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingCollectionsRef = useRef<Set<string>>(new Set());
+  const retryDelayRef = useRef(RETRY_BASE_MS);
   const serverModeRef = useRef(false);
 
   // ── Push a collection to server (debounced) ──
-  const pushToServer = useCallback(async (collection: string, data: unknown) => {
+  /** Resolves to whether the collection actually reached the server. */
+  const pushToServer = useCallback(async (collection: string, data: unknown): Promise<boolean> => {
     try {
       const res = await fetch(`/api/storage/${collection}`, {
         method: "PUT",
@@ -55,11 +61,17 @@ export function useStorageSync(): StorageSyncState {
       }
       setLastSyncedAt(new Date());
       setSyncError(null);
+      return true;
     } catch (err) {
       logger.warn("StorageSync push failed", { collection, error: err instanceof Error ? err.message : String(err) });
       setSyncError(err instanceof Error ? err.message : "Sync failed");
+      return false;
     }
   }, []);
+
+  // Self-reference so a failed flush can schedule the next one without
+  // `flushPending` and `schedulePush` depending on each other.
+  const flushPendingRef = useRef<() => void>(() => {});
 
   // ── Flush pending collections ──
   const flushPending = useCallback(async () => {
@@ -69,16 +81,31 @@ export function useStorageSync(): StorageSyncState {
 
     setIsSyncing(true);
     try {
-      await Promise.all(
-        collections.map((col) => {
-          const getter = getCollectionData(col);
-          return pushToServer(col, getter);
-        }),
+      const outcomes = await Promise.all(
+        collections.map(async (col) => [col, await pushToServer(col, getCollectionData(col))] as const),
       );
+
+      // A collection that failed to push is still only in localStorage. Putting
+      // it back in the queue is what keeps the write recoverable — without this
+      // it stays local until the user happens to mutate that same collection
+      // again, which for a one-off edit is never.
+      const failed = outcomes.filter(([, ok]) => !ok).map(([col]) => col);
+      if (failed.length > 0) {
+        for (const col of failed) {
+          pendingCollectionsRef.current.add(col);
+        }
+        if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+        const delay = retryDelayRef.current;
+        retryDelayRef.current = Math.min(delay * 2, RETRY_MAX_MS);
+        debounceTimerRef.current = setTimeout(() => flushPendingRef.current(), delay);
+      } else {
+        retryDelayRef.current = RETRY_BASE_MS;
+      }
     } finally {
       setIsSyncing(false);
     }
   }, [pushToServer]);
+  flushPendingRef.current = flushPending;
 
   // ── Schedule debounced push ──
   const schedulePush = useCallback(
