@@ -50,8 +50,11 @@ export function MetricChart({ data, color, title, unit = "" }: MetricChartProps)
             tickFormatter={(v) => `${v}${unit}`}
           />
           <Tooltip
-            labelFormatter={formatTime}
-            formatter={(value: number) => [`${value.toFixed(1)}${unit}`, title]}
+            // recharts 3 widened both signatures: the label arrives as a
+            // ReactNode and the value as `ValueType | undefined`. Reading
+            // `.toFixed` off the absent case throws and takes the tooltip down.
+            labelFormatter={(label) => formatTime(Number(label))}
+            formatter={(value) => [typeof value === "number" ? `${value.toFixed(1)}${unit}` : "—", title]}
             contentStyle={{
               backgroundColor: "#111",
               border: "1px solid rgba(255,255,255,0.1)",

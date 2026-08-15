@@ -21,7 +21,21 @@ mock.module("recharts", () => ({
   YAxis: () => React.createElement("div", { "data-testid": "y-axis" }),
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) =>
     React.createElement("div", { "data-testid": "responsive-container" }, children),
-  Tooltip: () => React.createElement("div", { "data-testid": "tooltip" }),
+  // Recharts only calls these on hover, which happy-dom cannot trigger, so
+  // invoke them directly. recharts 3 widened both signatures: `label` is a
+  // ReactNode and `value` is `ValueType | undefined`, so exercise the absent
+  // case too rather than only the number the chart normally supplies.
+  Tooltip: (props: Record<string, unknown>) => {
+    const labelFormatter = props.labelFormatter as ((label: unknown) => string) | undefined;
+    const formatter = props.formatter as ((value: unknown) => [string, string]) | undefined;
+    return React.createElement(
+      "div",
+      { "data-testid": "tooltip" },
+      React.createElement("span", { "data-testid": "tooltip-label" }, labelFormatter?.(SAMPLE_TS)),
+      React.createElement("span", { "data-testid": "tooltip-value" }, formatter?.(42.567)?.[0]),
+      React.createElement("span", { "data-testid": "tooltip-value-absent" }, formatter?.(undefined)?.[0]),
+    );
+  },
 }));
 
 const { MetricChart } = await import("@/components/monitoring/tabs/MetricChart");
@@ -81,6 +95,20 @@ describe("MetricChart", () => {
     ];
     const { getByTestId } = render(<MetricChart data={data} color="#ef4444" title="Errors" />);
     expect(getByTestId("area").getAttribute("data-color")).toBe("#ef4444");
+  });
+
+  test("tooltip formats the timestamp and the value, and survives an absent value", () => {
+    const data = [
+      { timestamp: SAMPLE_TS, value: 10 },
+      { timestamp: SAMPLE_TS + 1000, value: 20 },
+    ];
+    const { getByTestId } = render(<MetricChart data={data} color="#3b82f6" title="Latency" unit="ms" />);
+
+    expect(getByTestId("tooltip-label").textContent).toBe("09:05:07");
+    expect(getByTestId("tooltip-value").textContent).toBe("42.6ms");
+    // recharts 3 types the value as `ValueType | undefined`. Reading `.toFixed`
+    // off that throws, taking the whole tooltip down with it.
+    expect(getByTestId("tooltip-value-absent").textContent).toBe("—");
   });
 
   test("renders all chart sub-components", () => {

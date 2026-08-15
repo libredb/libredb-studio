@@ -1003,7 +1003,9 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                   cx="50%"
                   cy="50%"
                   outerRadius="70%"
-                  label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                  // recharts 3 types `percent` as optional; arithmetic on the
+                  // absent case renders the literal label "name (NaN%)".
+                  label={({ name, percent }) => `${name} (${((percent ?? 0) * 100).toFixed(0)}%)`}
                   labelLine={{ stroke: "#444" }}
                 >
                   {chartData.slice(0, 10).map((_entry, index) => (
