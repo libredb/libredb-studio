@@ -166,8 +166,8 @@ exact surface where types-resolution and CJS/ESM-masquerading bugs hide.
 
 ```jsonc
 // scripts
-"attw": "rm -rf .attw && bun pm pack --quiet --destination .attw && attw .attw/*.tgz --profile node16",
-"prepublishOnly": "tsup && bun run attw"
+"attw": "rm -rf .attw && bun pm pack --quiet --destination .attw && attw .attw/*.tgz --profile node16 --exclude-entrypoints styles.css",
+"prepublishOnly": "bun run build:lib && bun run attw"
 ```
 
 Notes:
@@ -181,8 +181,28 @@ Notes:
   `--ignore-rules no-resolution`, which could mask a real node16 failure.
 - `rm -rf .attw` runs FIRST (not trailing): a trailing `&& rm` would mask attw's exit code, and pre-cleaning
   drops a stale tarball from a previous version bump.
-- attw needs `dist/` from `build:lib` (tsup), so `prepublishOnly` runs `tsup` before `attw`. In CI use
-  `build:lib`, never `next build`, before attw.
+- attw needs `dist/` from `build:lib`, so `prepublishOnly` runs `build:lib` before `attw`. In CI use
+  `build:lib`, never `next build`, before attw. **`build:lib`, not bare `tsup`** — see the stylesheet note
+  below; a bare `tsup` here published a dist with the stylesheet missing.
+- `--exclude-entrypoints styles.css` is not a waiver, it is a statement of scope. attw resolves entry points
+  as *modules*; `./styles.css` is a plain file, so attw reports it as unresolvable no matter how correct the
+  export map is. Excluding it keeps the check green on a non-finding — and means attw is NOT what guards that
+  entry point. `tests/unit/packaging-theme-stylesheet.test.ts` is, and it exists precisely because nothing
+  else in the publish chain would have failed loudly.
+
+### The token stylesheet is part of the published surface
+
+`src/app/globals.css` is a Next.js concern and is not packaged. Everything under `src/exports/` colours
+itself through `var(--studio-*)`, so an embedding host that imports the components and not the tokens gets
+invalid computed values — grounds fall to transparent, hairlines to `currentColor`. The tokens ship as their
+own file for that reason:
+
+```ts
+import "@libredb/studio/styles.css"; // required once, before any studio component renders
+```
+
+`build:lib` is `tsup && node scripts/copy-theme.mjs`, and the order is load-bearing: tsup runs with
+`clean: true`, so anything staged into `dist/` before it is wiped. The copy has to come after.
 - Git-ignore `.attw/` and `*.tgz` (packaging scratch).
 - CI: the `lint-and-build` job runs `build:lib` then `attw` (plus a Biome format check) so the package
   surface is gated on every PR.

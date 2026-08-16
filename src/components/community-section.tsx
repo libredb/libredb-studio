@@ -32,12 +32,12 @@ export function CommunitySection({ variant }: CommunitySectionProps) {
 function DesktopCommunity() {
   return (
     <div className="space-y-4">
-      <div className="h-px bg-white/[0.06]" />
+      <div className="h-px bg-fill-strong" />
 
       <div className="flex items-center justify-between">
         <div className="space-y-1">
-          <h3 className="text-xs font-medium text-zinc-200">Join the Community</h3>
-          <p className="text-xs text-zinc-500">This project is open source. Your contributions make it better!</p>
+          <h3 className="text-xs font-medium text-fg">Join the Community</h3>
+          <p className="text-xs text-fg-muted">This project is open source. Your contributions make it better!</p>
         </div>
         <span className="shrink-0 text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
           Open Source
@@ -51,12 +51,12 @@ function DesktopCommunity() {
             href={action.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-2.5 min-w-[140px] flex-1 px-3 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.06] hover:bg-white/[0.08] hover:border-white/[0.12] transition-all duration-200 group"
+            className="flex items-center gap-2.5 min-w-[140px] flex-1 px-3 py-2.5 rounded-xl bg-fill border border-hairline hover:bg-fill-strong hover:border-hairline-strong transition-all duration-200 group"
           >
             <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${action.color}`}>
               <action.icon className="h-4 w-4" />
             </div>
-            <span className="text-xs font-medium text-zinc-400 group-hover:text-zinc-200 transition-colors duration-200">
+            <span className="text-xs font-medium text-fg-tertiary group-hover:text-fg transition-colors duration-200">
               {action.label}
             </span>
           </a>

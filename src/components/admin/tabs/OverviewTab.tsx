@@ -39,6 +39,8 @@ import { motion, AnimatePresence, type Variants } from "framer-motion";
 import Link from "next/link";
 import type { FleetHealthItem } from "@/app/api/admin/fleet-health/route";
 import type { AuditEvent } from "@/lib/audit";
+import { useEffectiveTheme } from "@/hooks/use-effective-theme";
+import { chartTooltipStyle } from "@/lib/charts/palette";
 
 // ─── Animation Variants ─────────────────────────────────────────────────────
 
@@ -79,14 +81,6 @@ const feedItemVariants: Variants = {
 };
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-
-const DARK_TOOLTIP_STYLE = {
-  backgroundColor: "#18181b",
-  border: "1px solid rgba(255,255,255,0.1)",
-  borderRadius: "8px",
-  fontSize: 12,
-  color: "#a1a1aa",
-};
 
 const GAUGE_COLORS = {
   excellent: "#10b981",
@@ -437,15 +431,23 @@ function HeroStatusBanner({
   return (
     <motion.div variants={heroVariants} className="relative">
       <div
-        className={`relative overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-br from-zinc-900/80 via-zinc-950 to-zinc-900/80 p-6 ${statusGlow}`}
+        className={`relative overflow-hidden rounded-2xl border border-hairline bg-gradient-to-br from-panel via-surface to-panel p-6 ${statusGlow}`}
       >
         {/* Decorative blur orbs */}
         <div className="absolute top-0 left-1/4 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute bottom-0 right-1/4 w-48 h-48 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative flex flex-col md:flex-row gap-6 items-center">
-          {/* Left: Radial Health Gauge */}
-          <div className="relative flex-shrink-0">
+          {/*
+            Left: Radial Health Gauge.
+
+            `pb-4` is the strip the LIVE badge sits in. The gauge box is 160px and
+            the ring's outer edge lands at y=152 (outerRadius 90% of an 80px
+            radius), so a badge pinned inside the box overlapped the ring and read
+            as clipped. The padding gives it somewhere to be that is below the
+            ring without a negative offset the card's `overflow-hidden` could cut.
+          */}
+          <div className="relative flex-shrink-0 pb-4">
             <div className="w-[160px] h-[160px]">
               <ResponsiveContainer width="100%" height="100%">
                 <RadialBarChart
@@ -460,15 +462,16 @@ function HeroStatusBanner({
                 </RadialBarChart>
               </ResponsiveContainer>
             </div>
-            {/* Center overlay */}
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
+            {/* Center overlay — pinned to the CHART box, not the padded wrapper,
+                so the badge's strip does not pull the reading off centre. */}
+            <div className="absolute inset-x-0 top-0 h-[160px] flex flex-col items-center justify-center">
               <span className="text-3xl font-bold tabular-nums" style={{ color: gaugeColor }}>
                 {animatedScore}%
               </span>
-              <span className="text-xs text-zinc-500 uppercase tracking-wider">Health</span>
+              <span className="text-xs text-fg-muted uppercase tracking-wider">Health</span>
             </div>
-            {/* LIVE badge */}
-            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
+            {/* LIVE badge — in the padding below the ring, clear of the stroke. */}
+            <div className="absolute bottom-0 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
               <motion.div
                 className="w-2 h-2 rounded-full bg-emerald-500"
                 animate={{ scale: [1, 1.05, 1], opacity: [0.7, 1, 0.7] }}
@@ -504,14 +507,14 @@ function HeroStatusBanner({
               </div>
               <div className="flex items-center gap-2">
                 {user && (
-                  <Badge variant="outline" className="border-white/10 text-zinc-500 h-5 text-[0.625rem]">
+                  <Badge variant="outline" className="border-hairline-strong text-fg-muted h-5 text-[0.625rem]">
                     {user.username} ({user.role})
                   </Badge>
                 )}
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 text-xs text-zinc-500 hover:text-zinc-300"
+                  className="h-7 text-xs text-fg-muted hover:text-fg-secondary"
                   onClick={onRefresh}
                   disabled={fleetLoading}
                 >
@@ -578,14 +581,14 @@ function CounterCard({
   const displayValue = isString ? value : formatValue ? formatValue(value as number) : value;
 
   return (
-    <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+    <div className="rounded-xl border border-hairline bg-fill-subtle p-3">
       <div className="flex items-center gap-1.5 mb-1.5">
         <Icon className={`w-3.5 h-3.5 ${color}`} />
-        <span className="text-xs text-zinc-500 uppercase tracking-wider">{label}</span>
+        <span className="text-xs text-fg-muted uppercase tracking-wider">{label}</span>
       </div>
       <div className="flex items-baseline gap-1">
-        <span className="text-2xl font-bold text-zinc-100 tabular-nums">{displayValue}</span>
-        {suffix && <span className="text-xs text-zinc-500">{suffix}</span>}
+        <span className="text-2xl font-bold text-fg tabular-nums">{displayValue}</span>
+        {suffix && <span className="text-xs text-fg-muted">{suffix}</span>}
       </div>
       {trend !== undefined && trend !== 0 && (
         <div className={`flex items-center gap-0.5 mt-1 text-xs ${trend > 0 ? "text-emerald-400" : "text-red-400"}`}>
@@ -646,8 +649,8 @@ function FleetHealthSection({
     <motion.div variants={itemVariants}>
       <div className="flex items-center gap-2 mb-3">
         <Radio className="h-4 w-4 text-blue-400" />
-        <h2 className="text-sm font-bold text-zinc-300">Fleet Status</h2>
-        <span className="text-xs text-zinc-600">
+        <h2 className="text-sm font-bold text-fg-secondary">Fleet Status</h2>
+        <span className="text-xs text-fg-subtle">
           {fleetHealth.length} endpoint{fleetHealth.length !== 1 ? "s" : ""}
         </span>
       </div>
@@ -655,10 +658,10 @@ function FleetHealthSection({
       {fleetLoading && fleetHealth.length === 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[...Array(3)].map((_, i) => (
-            <div key={i} className="rounded-xl border border-white/5 bg-zinc-900/50 p-4">
-              <Skeleton className="h-4 w-24 mb-3 bg-zinc-800" />
-              <Skeleton className="h-3 w-32 mb-2 bg-zinc-800" />
-              <Skeleton className="h-2 w-full bg-zinc-800" />
+            <div key={i} className="rounded-xl border border-hairline bg-panel p-4">
+              <Skeleton className="h-4 w-24 mb-3 bg-overlay" />
+              <Skeleton className="h-3 w-32 mb-2 bg-overlay" />
+              <Skeleton className="h-2 w-full bg-overlay" />
             </div>
           ))}
         </div>
@@ -681,7 +684,7 @@ function FleetHealthSection({
                 href="/admin/monitoring"
                 variants={itemVariants}
                 whileHover={{ scale: 1.02, y: -2 }}
-                className={`group relative rounded-xl border-2 ${colors.border} bg-zinc-900/50 p-4 transition-all duration-200 hover:bg-white/[0.04] ${colors.glow} cursor-pointer block overflow-hidden`}
+                className={`group relative rounded-xl border-2 ${colors.border} bg-panel p-4 transition-all duration-200 hover:bg-fill ${colors.glow} cursor-pointer block overflow-hidden`}
               >
                 {/* Top gradient glow line */}
                 <div
@@ -693,9 +696,7 @@ function FleetHealthSection({
                     <div
                       className={`w-2 h-2 rounded-full ${colors.dot} ${item.status === "healthy" ? "animate-pulse" : ""}`}
                     />
-                    <span className="text-sm font-medium text-zinc-200 truncate max-w-[150px]">
-                      {item.connectionName}
-                    </span>
+                    <span className="text-sm font-medium text-fg truncate max-w-[150px]">{item.connectionName}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     {item.environment && (
@@ -710,7 +711,7 @@ function FleetHealthSection({
                         {ENVIRONMENT_LABELS[item.environment as keyof typeof ENVIRONMENT_LABELS] || item.environment}
                       </Badge>
                     )}
-                    <div className="p-1 rounded bg-white/[0.04]">
+                    <div className="p-1 rounded bg-fill">
                       <Icon className={`w-3.5 h-3.5 ${getDBColor(item.type as DatabaseType)}`} />
                     </div>
                   </div>
@@ -718,7 +719,7 @@ function FleetHealthSection({
 
                 {/* Latency bar */}
                 <div className="mb-2">
-                  <div className="h-1.5 rounded-full bg-white/[0.04] overflow-hidden">
+                  <div className="h-1.5 rounded-full bg-fill overflow-hidden">
                     <motion.div
                       className="h-full rounded-full"
                       style={{ backgroundColor: colors.latencyColor }}
@@ -729,20 +730,20 @@ function FleetHealthSection({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 text-xs text-zinc-500">
-                  <span className="font-mono text-zinc-400">
+                <div className="flex items-center gap-3 text-xs text-fg-muted">
+                  <span className="font-mono text-fg-tertiary">
                     {item.status === "error" ? "timeout" : `${item.latencyMs}ms`}
                   </span>
                   {item.databaseSize && (
                     <>
-                      <span className="text-zinc-700">&middot;</span>
-                      <span className="font-mono text-zinc-400">{item.databaseSize}</span>
+                      <span className="text-fg-faint">&middot;</span>
+                      <span className="font-mono text-fg-tertiary">{item.databaseSize}</span>
                     </>
                   )}
                   {item.activeConnections !== undefined && (
                     <>
-                      <span className="text-zinc-700">&middot;</span>
-                      <span className="font-mono text-zinc-400">{item.activeConnections} conn</span>
+                      <span className="text-fg-faint">&middot;</span>
+                      <span className="font-mono text-fg-tertiary">{item.activeConnections} conn</span>
                     </>
                   )}
                 </div>
@@ -776,7 +777,7 @@ function KeyMetricsSection({
     <motion.div variants={itemVariants}>
       <div className="flex items-center gap-2 mb-3">
         <Gauge className="h-4 w-4 text-blue-400" />
-        <h2 className="text-sm font-bold text-zinc-300">Key Metrics</h2>
+        <h2 className="text-sm font-bold text-fg-secondary">Key Metrics</h2>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <MetricGauge
@@ -825,7 +826,7 @@ function MetricGauge({
   const gaugeData = [{ value: pct, fill: color }];
 
   return (
-    <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4 flex flex-col items-center">
+    <div className="rounded-xl border border-hairline bg-fill-subtle p-4 flex flex-col items-center">
       <div className="relative w-[100px] h-[100px]">
         <ResponsiveContainer width="100%" height="100%">
           <RadialBarChart
@@ -843,10 +844,10 @@ function MetricGauge({
           <span className="text-xl font-bold tabular-nums" style={{ color }}>
             {displayValue ?? animatedValue}
           </span>
-          <span className="text-[0.625rem] text-zinc-500">{unit}</span>
+          <span className="text-[0.625rem] text-fg-muted">{unit}</span>
         </div>
       </div>
-      <span className="text-xs text-zinc-500 mt-1 uppercase tracking-wider">{label}</span>
+      <span className="text-xs text-fg-muted mt-1 uppercase tracking-wider">{label}</span>
     </div>
   );
 }
@@ -865,12 +866,12 @@ function MetricBigNumber({
   const animatedValue = useAnimatedCounter(value);
 
   return (
-    <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4 flex flex-col items-center justify-center">
+    <div className="rounded-xl border border-hairline bg-fill-subtle p-4 flex flex-col items-center justify-center">
       <div className="p-2 rounded-lg bg-purple-500/10 mb-2">
         <Icon className="w-5 h-5 text-purple-400" />
       </div>
-      <span className="text-3xl font-bold text-zinc-100 tabular-nums">{formatNumber(animatedValue)}</span>
-      <span className="text-xs text-zinc-500 mt-1 uppercase tracking-wider">{label}</span>
+      <span className="text-3xl font-bold text-fg tabular-nums">{formatNumber(animatedValue)}</span>
+      <span className="text-xs text-fg-muted mt-1 uppercase tracking-wider">{label}</span>
       {trend !== 0 && (
         <div className={`flex items-center gap-0.5 mt-1.5 text-xs ${trend > 0 ? "text-emerald-400" : "text-red-400"}`}>
           {trend > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
@@ -893,17 +894,19 @@ function AnalyticsSection({
   queryStats: { total: number; byDay: { day: string; success: number; fail: number }[] };
   activityFeed: ActivityFeedItem[];
 }) {
+  const tooltipStyle = chartTooltipStyle(useEffectiveTheme());
+
   return (
     <motion.div variants={itemVariants}>
       <div className="grid gap-6 md:grid-cols-2">
         {/* Gradient AreaChart */}
-        <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-5">
-          <h3 className="text-sm font-bold text-zinc-300 mb-4 flex items-center gap-2">
+        <div className="rounded-xl border border-hairline bg-panel p-5">
+          <h3 className="text-sm font-bold text-fg-secondary mb-4 flex items-center gap-2">
             <Activity className="h-4 w-4 text-blue-400" />
             Query Volume (7 days)
           </h3>
           {queryStats.total === 0 ? (
-            <div className="flex items-center justify-center py-8 text-sm text-zinc-600">No query history yet.</div>
+            <div className="flex items-center justify-center py-8 text-sm text-fg-subtle">No query history yet.</div>
           ) : (
             <div className="h-[200px]">
               <ResponsiveContainer width="100%" height="100%">
@@ -926,7 +929,7 @@ function AnalyticsSection({
                     tickLine={false}
                     width={30}
                   />
-                  <Tooltip contentStyle={DARK_TOOLTIP_STYLE} />
+                  <Tooltip contentStyle={tooltipStyle} />
                   <Area
                     type="monotone"
                     dataKey="success"
@@ -954,13 +957,13 @@ function AnalyticsSection({
         </div>
 
         {/* Recent Activity Feed */}
-        <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-5">
-          <h3 className="text-sm font-bold text-zinc-300 mb-4 flex items-center gap-2">
+        <div className="rounded-xl border border-hairline bg-panel p-5">
+          <h3 className="text-sm font-bold text-fg-secondary mb-4 flex items-center gap-2">
             <Clock className="h-4 w-4 text-blue-400" />
             Recent Activity
           </h3>
           {activityFeed.length === 0 ? (
-            <div className="flex items-center justify-center py-8 text-sm text-zinc-600">No recent activity.</div>
+            <div className="flex items-center justify-center py-8 text-sm text-fg-subtle">No recent activity.</div>
           ) : (
             <div className="max-h-[260px] overflow-y-auto editor-scrollbar space-y-1">
               <AnimatePresence>
@@ -971,17 +974,17 @@ function AnalyticsSection({
                     variants={feedItemVariants}
                     initial="hidden"
                     animate="visible"
-                    className="flex items-center gap-2.5 py-1.5 px-2 rounded-lg hover:bg-white/[0.03] transition-colors"
+                    className="flex items-center gap-2.5 py-1.5 px-2 rounded-lg hover:bg-fill transition-colors"
                   >
                     {item.type === "audit" ? (
-                      <Wrench className="w-3.5 h-3.5 text-zinc-600 flex-shrink-0" />
+                      <Wrench className="w-3.5 h-3.5 text-fg-subtle flex-shrink-0" />
                     ) : (
-                      <Zap className="w-3.5 h-3.5 text-zinc-600 flex-shrink-0" />
+                      <Zap className="w-3.5 h-3.5 text-fg-subtle flex-shrink-0" />
                     )}
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs text-zinc-400 truncate">{item.text}</div>
+                      <div className="text-xs text-fg-tertiary truncate">{item.text}</div>
                       {item.connectionName && (
-                        <div className="text-xs text-zinc-600 truncate">{item.connectionName}</div>
+                        <div className="text-xs text-fg-subtle truncate">{item.connectionName}</div>
                       )}
                     </div>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -990,7 +993,7 @@ function AnalyticsSection({
                       ) : (
                         <XCircle className="w-3 h-3 text-red-500" />
                       )}
-                      <span className="text-xs text-zinc-600 whitespace-nowrap">{formatRelativeTime(item.time)}</span>
+                      <span className="text-xs text-fg-subtle whitespace-nowrap">{formatRelativeTime(item.time)}</span>
                     </div>
                   </motion.div>
                 ))}
@@ -1040,7 +1043,7 @@ function QuickActionsSection() {
     <motion.div variants={itemVariants}>
       <div className="flex items-center gap-2 mb-3">
         <Sparkles className="h-4 w-4 text-blue-400" />
-        <h2 className="text-sm font-bold text-zinc-300">Quick Actions</h2>
+        <h2 className="text-sm font-bold text-fg-secondary">Quick Actions</h2>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {actions.map((action) => (
@@ -1048,7 +1051,7 @@ function QuickActionsSection() {
             key={action.label}
             href={action.href}
             whileHover={{ scale: 1.02, y: -4 }}
-            className={`group relative rounded-xl border border-white/5 ${action.borderColor} bg-zinc-900/50 p-5 transition-all duration-200 cursor-pointer block overflow-hidden hover:shadow-[0_0_30px_rgba(59,130,246,0.06)]`}
+            className={`group relative rounded-xl border border-hairline ${action.borderColor} bg-panel p-5 transition-all duration-200 cursor-pointer block overflow-hidden hover:shadow-[0_0_30px_rgba(59,130,246,0.06)]`}
           >
             {/* Background gradient on hover */}
             <div
@@ -1056,12 +1059,12 @@ function QuickActionsSection() {
             />
 
             <div className="relative">
-              <div className={`p-2 rounded-lg bg-white/[0.04] w-fit mb-3`}>
+              <div className={`p-2 rounded-lg bg-fill w-fit mb-3`}>
                 <action.icon className={`w-5 h-5 ${action.iconColor}`} />
               </div>
-              <h3 className="text-sm font-bold text-zinc-200 mb-1">{action.label}</h3>
-              <p className="text-xs text-zinc-500 mb-3">{action.description}</p>
-              <div className="flex items-center gap-1 text-xs text-zinc-600 group-hover:text-zinc-400 transition-colors">
+              <h3 className="text-sm font-bold text-fg mb-1">{action.label}</h3>
+              <p className="text-xs text-fg-muted mb-3">{action.description}</p>
+              <div className="flex items-center gap-1 text-xs text-fg-subtle group-hover:text-fg-tertiary transition-colors">
                 <span>Open</span>
                 <ArrowRight className="w-3 h-3 group-hover:translate-x-1 transition-transform" />
               </div>
@@ -1118,7 +1121,7 @@ function EmptyState() {
         <motion.div variants={itemVariants} className="relative mb-6">
           <div className="absolute inset-0 w-20 h-20 bg-blue-500/20 rounded-full blur-xl" />
           <motion.div
-            className="relative p-5 rounded-2xl border border-white/10 bg-zinc-900/80"
+            className="relative p-5 rounded-2xl border border-hairline-strong bg-panel"
             animate={{
               boxShadow: [
                 "0 0 20px rgba(59,130,246,0.1)",
@@ -1132,10 +1135,10 @@ function EmptyState() {
           </motion.div>
         </motion.div>
 
-        <motion.h2 variants={itemVariants} className="text-2xl font-bold text-zinc-100 mb-2">
+        <motion.h2 variants={itemVariants} className="text-2xl font-bold text-fg mb-2">
           Welcome to Command Center
         </motion.h2>
-        <motion.p variants={itemVariants} className="text-sm text-zinc-500 max-w-md mb-8">
+        <motion.p variants={itemVariants} className="text-sm text-fg-muted max-w-md mb-8">
           Connect your first database to unlock real-time fleet monitoring, analytics, and intelligent query assistance.
         </motion.p>
 
@@ -1148,13 +1151,13 @@ function EmptyState() {
             <motion.div
               key={f.label}
               variants={itemVariants}
-              className="rounded-xl border border-white/5 bg-white/[0.02] p-4 text-center"
+              className="rounded-xl border border-hairline bg-fill-subtle p-4 text-center"
             >
               <div className="p-2 rounded-lg bg-blue-500/10 w-fit mx-auto mb-2">
                 <f.icon className="w-5 h-5 text-blue-400" />
               </div>
-              <div className="text-sm font-bold text-zinc-200 mb-1">{f.label}</div>
-              <div className="text-xs text-zinc-500">{f.description}</div>
+              <div className="text-sm font-bold text-fg mb-1">{f.label}</div>
+              <div className="text-xs text-fg-muted">{f.description}</div>
             </motion.div>
           ))}
         </motion.div>

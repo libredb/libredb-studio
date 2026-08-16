@@ -413,7 +413,7 @@ export default function Studio() {
   };
 
   return (
-    <div className="flex h-screen w-full bg-[#050505] text-zinc-100 overflow-hidden font-sans select-none">
+    <div className="flex h-screen w-full bg-canvas text-fg overflow-hidden font-sans select-none">
       <ResizablePanelGroup id="studio-main" orientation="horizontal" className="h-full">
         {/* A stable `id` is what keeps the layout attached to the right panel once
             a sibling is conditional (the agent rail); it replaces v3's `order`,
@@ -447,7 +447,7 @@ export default function Studio() {
         </ResizablePanel>
         <ResizableHandle className="hidden md:flex w-1 bg-transparent hover:bg-blue-500/30 transition-colors" />
         <ResizablePanel id="studio-body" defaultSize={agentEnabled ? "54" : "78"}>
-          <div className="flex-1 flex flex-col min-w-0 h-full bg-[#0a0a0a] pb-16 md:pb-0">
+          <div className="flex-1 flex flex-col min-w-0 h-full bg-surface pb-16 md:pb-0">
             <StudioMobileHeader
               connections={conn.connections}
               activeConnection={conn.activeConnection}
@@ -467,7 +467,7 @@ export default function Studio() {
               onSaveQuery={() => setIsSaveQueryModalOpen(true)}
               onClearQuery={() => tabMgr.updateCurrentTab({ query: "" })}
               onExecuteQuery={() => queryExec.executeQuery()}
-              onCancelQuery={queryExec.cancelQuery}
+              onCancelQuery={() => queryExec.cancelQuery()}
               onBeginTransaction={() => txn.handleTransaction("begin")}
               onCommitTransaction={() => txn.handleTransaction("commit")}
               onRollbackTransaction={() => txn.handleTransaction("rollback")}
@@ -512,13 +512,13 @@ export default function Studio() {
 
               {/* Mobile: Database Tab */}
               {activeMobileTab === "database" && (
-                <div className="md:hidden h-full bg-[#080808] overflow-auto p-4">
+                <div className="md:hidden h-full bg-sunken overflow-auto p-4">
                   <div className="mb-4 flex items-center justify-between">
-                    <h2 className="text-xs font-medium text-zinc-300">Connections</h2>
+                    <h2 className="text-xs font-medium text-fg-secondary">Connections</h2>
                     <Button
                       variant="outline"
                       size="sm"
-                      className="h-8 text-xs border-white/10 hover:bg-white/5"
+                      className="h-8 text-xs border-hairline-strong hover:bg-fill"
                       onClick={() => setIsConnectionModalOpen(true)}
                     >
                       <Plus strokeWidth={1.5} className="w-3 h-3 mr-1" /> Add
@@ -539,7 +539,7 @@ export default function Studio() {
 
               {/* Mobile: Schema Tab */}
               {activeMobileTab === "schema" && (
-                <div className="md:hidden h-full bg-[#080808] overflow-auto p-4">
+                <div className="md:hidden h-full bg-sunken overflow-auto p-4">
                   {conn.activeConnection ? (
                     <SchemaExplorer
                       schema={conn.schema}
@@ -562,7 +562,7 @@ export default function Studio() {
                       onGenerateTestData={(name) => setTestDataTable(name)}
                     />
                   ) : (
-                    <div className="flex flex-col items-center justify-center h-full text-zinc-500">
+                    <div className="flex flex-col items-center justify-center h-full text-fg-muted">
                       <Database strokeWidth={1.5} className="w-12 h-12 mb-4 opacity-30" />
                       <p className="text-xs">Select a connection first</p>
                     </div>
@@ -585,7 +585,7 @@ export default function Studio() {
                           editingEnabled={editingEnabled}
                           onSaveQuery={() => setIsSaveQueryModalOpen(true)}
                           onExecuteQuery={() => queryExec.executeQuery()}
-                          onCancelQuery={queryExec.cancelQuery}
+                          onCancelQuery={() => queryExec.cancelQuery()}
                           onBeginTransaction={() => txn.handleTransaction("begin")}
                           onCommitTransaction={() => txn.handleTransaction("commit")}
                           onRollbackTransaction={() => txn.handleTransaction("rollback")}
@@ -617,7 +617,7 @@ export default function Studio() {
                         </div>
                       </div>
                     </ResizablePanel>
-                    <ResizableHandle className="h-1 bg-white/5 hover:bg-blue-500/20" />
+                    <ResizableHandle className="h-1 bg-fill hover:bg-blue-500/20" />
                     <ResizablePanel id="studio-editor-bottom" defaultSize="60" minSize="20">
                       <BottomPanel
                         mode={queryExec.bottomPanelMode}
@@ -798,24 +798,25 @@ export default function Studio() {
 
       {/* Unlimited Query Warning */}
       <AlertDialog open={queryExec.unlimitedWarningOpen} onOpenChange={queryExec.setUnlimitedWarningOpen}>
-        <AlertDialogContent className="bg-[#111] border-white/5 max-w-sm p-0 gap-0 overflow-hidden">
+        <AlertDialogContent className="bg-overlay border-hairline max-w-sm p-0 gap-0 overflow-hidden">
           <div className="px-6 pt-6 pb-4">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-red-500/10 flex items-center justify-center shrink-0">
                 <AlertTriangle strokeWidth={1.5} className="w-5 h-5 text-amber-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <AlertDialogTitle className="text-[0.8125rem] font-medium text-zinc-100 mb-1">
+                <AlertDialogTitle className="text-[0.8125rem] font-medium text-fg mb-1">
                   Load all results?
                 </AlertDialogTitle>
-                <AlertDialogDescription className="text-xs text-zinc-500 leading-relaxed">
-                  This may slow down your browser. Max <span className="text-zinc-400">100K</span> rows will be loaded.
+                <AlertDialogDescription className="text-xs text-fg-muted leading-relaxed">
+                  This may slow down your browser. Max <span className="text-fg-tertiary">100K</span> rows will be
+                  loaded.
                 </AlertDialogDescription>
               </div>
             </div>
           </div>
           <div className="px-6 pb-6 flex gap-2">
-            <AlertDialogCancel className="flex-1 h-9 bg-white/5 border-0 text-zinc-400 text-xs font-medium hover:bg-white/10 hover:text-zinc-200">
+            <AlertDialogCancel className="flex-1 h-9 bg-fill border-0 text-fg-tertiary text-xs font-medium hover:bg-fill-strong hover:text-fg">
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction

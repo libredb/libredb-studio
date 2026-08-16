@@ -24,6 +24,7 @@ mock.module("@/components/ui/sonner", () => ({
 
 // Dynamic import so mocks are registered first
 const { default: RootLayout, metadata } = await import("@/app/layout");
+const { ThemeProvider } = await import("@/components/theme-provider");
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
@@ -50,7 +51,12 @@ describe("RootLayout", () => {
     expect(getByText("Test Child")).not.toBeNull();
   });
 
-  test("renders Toaster with correct props", () => {
+  /**
+   * The Toaster used to be handed `theme="dark"`, which overrode the `useTheme()`
+   * call inside it (the spread lands after) and pinned toasts to dark even once
+   * the rest of the app could switch. Passing NO theme is what makes it follow.
+   */
+  test("renders Toaster without a theme, so it follows next-themes", () => {
     const { getByTestId } = render(
       <RootLayout>
         <span>content</span>
@@ -59,10 +65,10 @@ describe("RootLayout", () => {
     const toaster = getByTestId("toaster");
     expect(toaster).not.toBeNull();
     expect(toaster.getAttribute("data-position")).toBe("bottom-right");
-    expect(toaster.getAttribute("data-theme")).toBe("dark");
+    expect(toaster.getAttribute("data-theme")).toBeNull();
   });
 
-  test("renders html with lang=en and body with correct classes via SSR", () => {
+  test("renders html with lang=en and the font classes via SSR", () => {
     const html = ReactDOMServer.renderToString(
       <RootLayout>
         <span>content</span>
@@ -71,7 +77,22 @@ describe("RootLayout", () => {
     expect(html).toContain('lang="en"');
     expect(html).toContain("mock-geist-sans");
     expect(html).toContain("antialiased");
-    expect(html).toContain("dark");
+  });
+
+  /**
+   * `dark` was hardcoded onto <body>, which is why standalone studio had no light
+   * theme at all. Ownership of that class now belongs to ThemeProvider — asserting
+   * its ABSENCE here is what stops it being reintroduced.
+   */
+  test("body no longer pins the theme with a hardcoded dark class", () => {
+    const element = RootLayout({ children: React.createElement("span") });
+    const bodyClassName = element.props.children.props.className as string;
+    expect(bodyClassName.split(" ")).not.toContain("dark");
+  });
+
+  test("mounts ThemeProvider — theme selection is standalone studio's own", () => {
+    const element = RootLayout({ children: React.createElement("span") });
+    expect(element.props.children.props.children.type).toBe(ThemeProvider);
   });
 
   test("renders multiple children correctly", () => {

@@ -86,8 +86,40 @@ export function useQueryExecution({
   fetchSchema,
   queryEditorRef,
 }: UseQueryExecutionParams) {
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const activeQueryIdRef = useRef<string | null>(null);
+  /**
+   * The run in flight for each tab, keyed by tab id.
+   *
+   * Per TAB, not per hook. Tabs execute independently — `executeQuery` targets
+   * whichever `targetTabId` it is given — so a single controller made every new
+   * run abort whatever was running anywhere. Starting a query in tab B killed
+   * tab A's, and because A's abort then read as "superseded" it cleared no flags
+   * and raised no toast: tab A sat on "Executing…" forever, with no result and
+   * no error. Keying the map by tab is what keeps one tab's Run out of another's.
+   */
+  const runsRef = useRef(new Map<string, { controller: AbortController; queryId: string }>());
+
+  // Latest-value refs. `executeQuery` reads these at call time only, so keeping
+  // them out of its dependency list makes the callback identity stable across a
+  // keystroke — which is what stops the `execute-query` listener below from being
+  // torn down and re-attached on every character typed into the editor, and what
+  // lets callers memoize on it.
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const currentTabRef = useRef(currentTab);
+  currentTabRef.current = currentTab;
+  const activeTabIdRef = useRef(activeTabId);
+  activeTabIdRef.current = activeTabId;
+
+  // Nothing this hook started should outlive it: a fetch left running after the
+  // studio unmounts resolves into a setState on a component that is gone. Every
+  // tab's run, not just the last one started.
+  useEffect(() => {
+    const runs = runsRef.current;
+    return () => {
+      for (const run of runs.values()) run.controller.abort();
+      runs.clear();
+    };
+  }, []);
 
   const [safetyCheckQuery, setSafetyCheckQuery] = useState<string | null>(null);
   const [unlimitedWarningOpen, setUnlimitedWarningOpen] = useState(false);
@@ -119,8 +151,9 @@ export function useQueryExecution({
       isExplain: boolean = false,
       executionOptions?: QueryExecutionOptions,
     ) => {
+      const activeTabId = activeTabIdRef.current;
       const targetTabId = tabId || activeTabId;
-      const tabToExec = tabs.find((t) => t.id === targetTabId) || currentTab;
+      const tabToExec = tabsRef.current.find((t) => t.id === targetTabId) || currentTabRef.current;
 
       // Modern Execution Logic: Prioritize selection from ref, then override, then tab state
       let queryToExecute = overrideQuery;
@@ -189,11 +222,33 @@ export function useQueryExecution({
       }
 
       const startTime = Date.now();
-      // Set up abort controller for query cancellation
+      // Set up abort controller for query cancellation.
+      //
+      // A new run supersedes the one still in flight ON THIS TAB. Without the
+      // abort the older request keeps streaming and its late response overwrites
+      // the newer one — the user runs A, then B, and reads A's rows under B's
+      // statement. Scoped to `targetTabId` so a run in another tab is left alone.
+      runsRef.current.get(targetTabId)?.controller.abort();
       const abortController = new AbortController();
-      abortControllerRef.current = abortController;
       const queryId = `q-${Date.now()}-${newHistoryId()}`;
-      activeQueryIdRef.current = queryId;
+      runsRef.current.set(targetTabId, { controller: abortController, queryId });
+
+      /**
+       * A newer run has taken THIS TAB over. An absent entry is deliberately NOT
+       * superseded: the run finished and cleared itself, and the background
+       * EXPLAIN outlives its own query — its plan is still the right plan for the
+       * results on screen.
+       */
+      const isSuperseded = () => {
+        const active = runsRef.current.get(targetTabId);
+        return active !== undefined && active.queryId !== queryId;
+      };
+
+      /** Write to the tab this run owns — and only while it still owns it. */
+      const commitToTab = (update: (tab: QueryTab) => QueryTab) => {
+        if (isSuperseded()) return;
+        setTabs((prev) => prev.map((t) => (t.id === targetTabId ? update(t) : t)));
+      };
 
       // Playground mode: begin a transaction before executing (will rollback after)
       const isPlaygroundRun = playgroundMode && !transactionActive && !isExplain && !isLoadMore;
@@ -257,7 +312,12 @@ export function useQueryExecution({
         });
 
         // Run EXPLAIN in background for non-explain queries (SELECT only)
-        let explainPromise: Promise<Response> | null = null;
+        //
+        // Typed as `Response | null` because its rejection is handled at creation
+        // (below), not where it is consumed: the consumer only runs after the main
+        // query settles, and a plan request that fails first — or is aborted with
+        // its run — would be an unhandled rejection until then.
+        let explainPromise: Promise<Response | null> | null = null;
         if (!isExplain && !isLoadMore && explainStrategy) {
           const explainSql = explainStrategy.buildSql(queryToExecute, "estimate");
           if (explainSql) {
@@ -274,6 +334,20 @@ export function useQueryExecution({
                 // unbound and the panel would keep the previous plan (PR #304).
                 ...(params && { params }),
               }),
+              // The plan belongs to this run, so it dies with it. Without the
+              // signal, cancelling the query — or unmounting the studio — leaves
+              // a request nobody can stop, which lands a plan on a tab that has
+              // moved on.
+              signal: abortController.signal,
+            }).catch((err) => {
+              // Aborting is this hook's own doing, not a failure worth reporting.
+              if (!(err instanceof DOMException && err.name === "AbortError")) {
+                logger.warn("Background EXPLAIN fetch failed", {
+                  route: "use-query-execution",
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
+              return null;
             });
           }
         }
@@ -302,17 +376,7 @@ export function useQueryExecution({
 
           // Handle query cancellation via response code
           if (errorCode === ApiErrorCode.QUERY_CANCELLED) {
-            setTabs((prev) =>
-              prev.map((t) =>
-                t.id === targetTabId
-                  ? {
-                      ...t,
-                      isExecuting: false,
-                      isLoadingMore: false,
-                    }
-                  : t,
-              ),
-            );
+            commitToTab((t) => ({ ...t, isExecuting: false, isLoadingMore: false }));
             toast({ title: "Query Cancelled", description: "Query execution was cancelled." });
             return;
           }
@@ -369,51 +433,53 @@ export function useQueryExecution({
           // Background EXPLAIN - don't block, update async
           explainPromise
             .then(async (explainRes) => {
-              if (explainRes.ok) {
-                const explainData = await explainRes.json();
-                const plan = { format: explainStrategy.format, raw: explainStrategy.extractPlan(explainData) };
-                setTabs((prev) => prev.map((t) => (t.id === targetTabId ? { ...t, explainPlan: plan } : t)));
-              }
+              if (!explainRes?.ok) return;
+              const explainData = await explainRes.json();
+              const plan = { format: explainStrategy.format, raw: explainStrategy.extractPlan(explainData) };
+              // `commitToTab` drops the plan if a newer run owns the tab: a plan
+              // describing the previous statement is worse than no plan at all.
+              commitToTab((t) => ({ ...t, explainPlan: plan }));
             })
-            .catch((err) => console.error("[EXPLAIN] Background fetch failed:", err));
+            .catch((err) => {
+              logger.warn("Background EXPLAIN parse failed", {
+                route: "use-query-execution",
+                error: err instanceof Error ? err.message : String(err),
+              });
+            });
         }
 
         // Update tab state: Load More (append) vs new query (replace)
-        setTabs((prev) =>
-          prev.map((t) => {
-            if (t.id !== targetTabId) return t;
+        commitToTab((t) => {
+          // Load More mode: append rows
+          if (isLoadMore && t.result) {
+            const existingRows = t.allRows || t.result.rows;
+            const newAllRows = [...existingRows, ...resultData.rows];
 
-            // Load More mode: append rows
-            if (isLoadMore && t.result) {
-              const existingRows = t.allRows || t.result.rows;
-              const newAllRows = [...existingRows, ...resultData.rows];
-
-              return {
-                ...t,
-                result: {
-                  ...resultData,
-                  rows: newAllRows,
-                  rowCount: newAllRows.length,
-                },
-                allRows: newAllRows,
-                currentOffset: offset + resultData.rows.length,
-                isExecuting: false,
-                isLoadingMore: false,
-              };
-            }
-
-            // New query mode: replace
             return {
               ...t,
-              result: isExplain ? null : resultData, // Don't show EXPLAIN as results
-              allRows: isExplain ? t.allRows : resultData.rows,
-              currentOffset: isExplain ? t.currentOffset : resultData.rows.length,
+              result: {
+                ...resultData,
+                rows: newAllRows,
+                rowCount: newAllRows.length,
+              },
+              allRows: newAllRows,
+              currentOffset: offset + resultData.rows.length,
               isExecuting: false,
               isLoadingMore: false,
-              explainPlan: explainPlanData || t.explainPlan,
             };
-          }),
-        );
+          }
+
+          // New query mode: replace
+          return {
+            ...t,
+            result: isExplain ? null : resultData, // Don't show EXPLAIN as results
+            allRows: isExplain ? t.allRows : resultData.rows,
+            currentOffset: isExplain ? t.currentOffset : resultData.rows.length,
+            isExecuting: false,
+            isLoadingMore: false,
+            explainPlan: explainPlanData || t.explainPlan,
+          };
+        });
 
         // Playground mode: auto-rollback after getting results
         if (isPlaygroundRun) {
@@ -462,21 +528,18 @@ export function useQueryExecution({
             logger.warn("Playground transaction rollback failed", { route: "use-query-execution" });
           }
         }
-        setTabs((prev) =>
-          prev.map((t) =>
-            t.id === targetTabId
-              ? {
-                  ...t,
-                  isExecuting: false,
-                  isLoadingMore: false,
-                }
-              : t,
-          ),
-        );
+        // A superseded run must not clear the flags the newer run just set: the
+        // spinner belongs to the query that is still running.
+        const superseded = isSuperseded();
+        commitToTab((t) => ({ ...t, isExecuting: false, isLoadingMore: false }));
 
         // Don't show error toast for user-initiated cancellation
         if (error instanceof DOMException && error.name === "AbortError") {
-          toast({ title: "Query Cancelled", description: "Query execution was cancelled." });
+          // Superseding is not cancelling. The user asked for another query; they
+          // did not ask to be told this one stopped.
+          if (!superseded) {
+            toast({ title: "Query Cancelled", description: "Query execution was cancelled." });
+          }
           return;
         }
 
@@ -489,23 +552,16 @@ export function useQueryExecution({
         }
         toast({ title, description: errorMessage, variant: "destructive" });
       } finally {
-        abortControllerRef.current = null;
-        activeQueryIdRef.current = null;
+        // Only the run that still owns this tab's slot may clear it. A superseded
+        // run finishes AFTER its replacement started, and deleting the entry here
+        // would leave the newer query with no controller and no id — a Cancel
+        // button that aborts nothing and a server-side cancel that is never sent.
+        if (!isSuperseded()) {
+          runsRef.current.delete(targetTabId);
+        }
       }
     },
-    [
-      activeConnection,
-      tabs,
-      currentTab,
-      activeTabId,
-      toast,
-      fetchSchema,
-      metadata,
-      transactionActive,
-      playgroundMode,
-      setTabs,
-      queryEditorRef,
-    ],
+    [activeConnection, toast, fetchSchema, metadata, transactionActive, playgroundMode, setTabs, queryEditorRef],
   );
 
   // Force execute (bypass safety check) — unified via skipSafety flag
@@ -606,29 +662,45 @@ export function useQueryExecution({
     [activeConnection, activeTabId, tabs, currentTab, setTabs, toast],
   );
 
-  // Cancel running query
-  const cancelQuery = useCallback(async () => {
-    // Abort the fetch request
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
+  /**
+   * Cancel the run on one tab — the active one unless a caller names another.
+   *
+   * The Cancel button belongs to a tab, so cancelling has to name the tab too;
+   * with a single hook-wide controller it stopped whichever run started last,
+   * which is not necessarily the one the user is looking at.
+   *
+   * NEVER hand this to an `onClick` directly. React passes the MouseEvent into
+   * the first slot, `tabId` reads it as a tab that holds no run, and the button
+   * silently cancels nothing — the type checker permits it, because an optional
+   * parameter still satisfies `() => void`. Wrap it: `() => cancelQuery()`.
+   */
+  const cancelQuery = useCallback(
+    async (tabId?: string) => {
+      const targetTabId = tabId ?? activeTabIdRef.current;
+      const run = runsRef.current.get(targetTabId);
+      if (!run) return;
 
-    // Also cancel on the server side
-    if (activeQueryIdRef.current && activeConnection) {
-      try {
-        await fetch("/api/db/cancel", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...buildConnectionPayload(activeConnection),
-            queryId: activeQueryIdRef.current,
-          }),
-        });
-      } catch {
-        logger.warn("Query cancellation request failed", { route: "use-query-execution" });
+      run.controller.abort();
+
+      // Also cancel on the server side: aborting the fetch drops the response,
+      // it does not stop the statement the engine is still executing.
+      if (activeConnection) {
+        try {
+          await fetch("/api/db/cancel", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...buildConnectionPayload(activeConnection),
+              queryId: run.queryId,
+            }),
+          });
+        } catch {
+          logger.warn("Query cancellation request failed", { route: "use-query-execution" });
+        }
       }
-    }
-  }, [activeConnection]);
+    },
+    [activeConnection],
+  );
 
   // Load More handler
   const handleLoadMore = useCallback(() => {

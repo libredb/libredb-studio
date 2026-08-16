@@ -466,4 +466,36 @@ describe("OverviewTab", () => {
       expect(queryByText("Connection refused")).not.toBeNull();
     });
   });
+
+  // ── Chart tooltip ──────────────────────────────────────────────────────────
+
+  /**
+   * Recharts inline-styles its tooltip, so it is one of the surfaces that cannot
+   * read the CSS tokens and has to be handed a palette. Left hardcoded, the dark
+   * card stayed dark on a light page — dark ink on a near-black box.
+   */
+  async function tooltipStyleUnderTheme(theme: "dark" | "light") {
+    document.documentElement.classList.remove("dark", "light");
+    document.documentElement.classList.add(theme);
+    mockGlobalFetch({ "/api/admin/audit": { ok: true, json: { events: [] } } });
+
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+    const tooltip = result!.container.querySelector("[data-testid='mock-tooltip']");
+    return { bg: tooltip?.getAttribute("data-bg"), color: tooltip?.getAttribute("data-color") };
+  }
+
+  test("the query-volume tooltip is dark-on-dark in the dark theme", async () => {
+    const { bg, color } = await tooltipStyleUnderTheme("dark");
+    expect(bg).toBe("#18181b");
+    expect(color).toBe("#a1a1aa");
+  });
+
+  test("and light-on-white in the light theme", async () => {
+    const { bg, color } = await tooltipStyleUnderTheme("light");
+    expect(bg).toBe("#ffffff");
+    expect(color).toBe("#3f3f46");
+  });
 });

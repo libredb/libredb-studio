@@ -12,6 +12,7 @@ import type { SchemaCompletionCache, SchemaColumnItem } from "@/lib/editor/sql-c
 import { registerMongoDBCompletionProvider } from "@/lib/editor/mongodb-completions";
 import { registerLibreDBLanguage } from "@/lib/editor/libredb-language";
 import { configureMonacoLoader } from "@/lib/editor/monaco-loader";
+import { useEffectiveTheme } from "@/hooks/use-effective-theme";
 
 // Serve Monaco from our own origin rather than @monaco-editor/react's jsdelivr default.
 // Runs at module load so it is in place before the first <Editor> mounts.
@@ -95,6 +96,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     const monaco = useMonaco();
     const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
     const [hasSelection, setHasSelection] = useState(false);
+
+    // Both themes are defined in `beforeMount`; this only picks which is applied.
+    // Monaco re-reads the `theme` prop on change, so the switch needs no remount.
+    const editorTheme = useEffectiveTheme() === "light" ? "db-light" : "db-dark";
 
     // Explain capability gate, shared by the toolbar button and the context-menu action.
     const canExplain = Boolean(onExplain) && Boolean(capabilities?.supportsExplain);
@@ -423,6 +428,40 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
           "editorIndentGuide.activeBackground": "#333333",
         },
       });
+
+      /*
+       * Monaco paints its own canvas and knows nothing about the CSS token layer,
+       * so the editor is the one surface that needs the palette written twice.
+       * Same syntax hues either side — they are chosen for contrast against the
+       * CODE, not against the chrome — with only the ground and the guides moved.
+       * `editor.background` mirrors `--studio-canvas` in both themes so the pane
+       * sits flush with the shell it lives in.
+       */
+      monacoInstance.editor.defineTheme("db-light", {
+        base: "vs",
+        inherit: true,
+        rules: [
+          { token: "keyword", foreground: "0000ff", fontStyle: "bold" },
+          { token: "function", foreground: "795e26" },
+          { token: "string", foreground: "a31515" },
+          { token: "number", foreground: "098658" },
+          { token: "comment", foreground: "008000" },
+          { token: "operator", foreground: "3f3f46" },
+          { token: "identifier", foreground: "001080" },
+        ],
+        colors: {
+          "editor.background": "#f4f4f5",
+          "editor.foreground": "#27272a",
+          "editorCursor.foreground": "#0000ff",
+          "editor.lineHighlightBackground": "#e4e4e7",
+          "editorLineNumber.foreground": "#a1a1aa",
+          "editorLineNumber.activeForeground": "#52525b",
+          "editor.selectionBackground": "#add6ff",
+          "editor.inactiveSelectionBackground": "#e5ebf1",
+          "editorIndentGuide.background": "#e4e4e7",
+          "editorIndentGuide.activeBackground": "#a1a1aa",
+        },
+      });
     };
 
     // SQL completion provider
@@ -472,13 +511,15 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     };
 
     return (
-      <div className="h-full w-full flex flex-col bg-[#050505] relative overflow-hidden group">
+      <div className="h-full w-full flex flex-col bg-canvas relative overflow-hidden group">
         {/* Dynamic Pro Toolbar - Hidden on mobile */}
-        <div className="hidden md:flex items-center gap-1 px-4 py-1.5 bg-[#0a0a0a] border-b border-white/5 overflow-x-auto no-scrollbar scroll-smooth">
+        <div className="hidden md:flex items-center gap-1 px-4 py-1.5 bg-surface border-b border-hairline overflow-x-auto no-scrollbar scroll-smooth">
           {hasSelection && (
             <Button
               variant="ghost"
               size="sm"
+              // `text-white` is the label ON a blue button, not the top of the
+              // text ramp: it must stay white in the light theme too.
               className="h-7 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 hover:text-white gap-2 shadow-[0_0_10px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
               onClick={handleExecute}
             >
@@ -490,7 +531,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
+              className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-2"
               onClick={handleFormat}
               title={language === "json" ? "Format JSON (Shift+Alt+F)" : "Format SQL (Shift+Alt+F)"}
             >
@@ -501,7 +542,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
+            className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-2"
             onClick={handleCopy}
           >
             <Copy strokeWidth={1.5} className="w-3 h-3" /> {hasSelection ? "Copy Sel" : "Copy"}
@@ -510,20 +551,20 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs font-medium text-zinc-500 hover:text-red-400 gap-2"
+            className="h-7 text-xs font-medium text-fg-muted hover:text-red-400 gap-2"
             onClick={handleClear}
           >
             <Trash2 strokeWidth={1.5} className="w-3 h-3" /> Clear
           </Button>
 
-          <div className="h-4 w-px bg-white/5" />
+          <div className="h-4 w-px bg-fill" />
 
           <Button
             variant="ghost"
             size="sm"
             className={cn(
               "h-7 text-xs font-medium gap-2",
-              showLineNumbers ? "text-zinc-300" : "text-zinc-500 hover:text-white",
+              showLineNumbers ? "text-fg-secondary" : "text-fg-muted hover:text-fg-bright",
             )}
             onClick={() => setShowLineNumbers(!showLineNumbers)}
             title={showLineNumbers ? "Hide line numbers" : "Show line numbers"}
@@ -544,7 +585,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
                 <Zap strokeWidth={1.5} className="w-3 h-3" /> Explain
               </Button>
             )}
-            <kbd className="px-1.5 py-0.5 rounded bg-zinc-900 border border-white/5 text-[0.5625rem] text-zinc-600 font-mono">
+            <kbd className="px-1.5 py-0.5 rounded bg-raised border border-hairline text-[0.5625rem] text-fg-subtle font-mono">
               ⌘+Enter
             </kbd>
           </div>
@@ -555,13 +596,13 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
           <Editor
             height="100%"
             language={language}
-            theme="db-dark"
+            theme={editorTheme}
             value={value}
             beforeMount={handleBeforeMount}
             onChange={handleEditorChange}
             loading={
-              <div className="h-full w-full bg-[#050505] flex items-center justify-center">
-                <Loader2 strokeWidth={1.5} className="w-6 h-6 animate-spin text-zinc-800" />
+              <div className="h-full w-full bg-canvas flex items-center justify-center">
+                <Loader2 strokeWidth={1.5} className="w-6 h-6 animate-spin text-fg-subtle" />
               </div>
             }
             onMount={(editor, monaco) => {

@@ -298,7 +298,7 @@ describe("SnapshotTimeline", () => {
       <SnapshotTimeline snapshots={threeSnapshots} onCompare={mock(() => {})} onDelete={mock(() => {})} />,
     );
     // Each snapshot node is a div with min-w-[100px]. Connector divs are inside nodes (not the last one).
-    // Connectors have class: absolute top-[7px] left-[50%] w-full h-[2px] bg-white/10
+    // Connectors have class: absolute top-[7px] left-[50%] w-full h-[2px] bg-fill-strong
     const connectors = container.querySelectorAll(".top-\\[7px\\].left-\\[50\\%\\]");
     // n-1 connectors for n=3 snapshots
     expect(connectors.length).toBe(2);
@@ -344,12 +344,12 @@ describe("SnapshotTimeline", () => {
     );
     // Unselected state: no dot is highlighted, labels use the muted color
     expect(container.querySelector(".bg-blue-500")).toBeNull();
-    expect(container.querySelectorAll(".text-zinc-500.group-hover\\:text-zinc-300").length).toBe(2);
+    expect(container.querySelectorAll(".text-fg-muted.group-hover\\:text-fg-secondary").length).toBe(2);
     fireEvent.click(queryByText("Before migration")!);
     // Selected state: exactly one highlighted dot and one highlighted label
     expect(container.querySelectorAll(".bg-blue-500.border-blue-400.scale-125").length).toBe(1);
     expect(container.querySelectorAll(".mt-2.text-center.text-blue-400").length).toBe(1);
-    expect(container.querySelectorAll(".text-zinc-500.group-hover\\:text-zinc-300").length).toBe(1);
+    expect(container.querySelectorAll(".text-fg-muted.group-hover\\:text-fg-secondary").length).toBe(1);
   });
 
   test("delete passes correct snapshot id", () => {

@@ -103,12 +103,12 @@ export function CommandPalette({
     <CommandDialog
       open={open}
       onOpenChange={setOpen}
-      className="sm:max-w-[560px] bg-[#0a0a0a] border-white/10"
+      className="sm:max-w-[560px] bg-surface border-hairline-strong"
       showCloseButton={false}
     >
-      <CommandInput placeholder="Search tables, connections, queries, actions..." className="text-zinc-200" />
+      <CommandInput placeholder="Search tables, connections, queries, actions..." className="text-fg" />
       <CommandList className="max-h-[400px]">
-        <CommandEmpty className="text-zinc-500">No results found.</CommandEmpty>
+        <CommandEmpty className="text-fg-muted">No results found.</CommandEmpty>
 
         {/* Quick Actions */}
         <CommandGroup heading="Actions">
@@ -118,11 +118,11 @@ export function CommandPalette({
             <CommandShortcut>Ctrl+Enter</CommandShortcut>
           </CommandItem>
           <CommandItem onSelect={() => runAction(onFormatQuery)}>
-            <AlignLeft strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-400" />
+            <AlignLeft strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-tertiary" />
             <span>Format Query</span>
           </CommandItem>
           <CommandItem onSelect={() => runAction(onSaveQuery)}>
-            <Save strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-400" />
+            <Save strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-tertiary" />
             <span>Save Current Query</span>
           </CommandItem>
           {onAskAgent && (
@@ -183,9 +183,9 @@ export function CommandPalette({
           <CommandGroup heading="Tables">
             {schema.map((table) => (
               <CommandItem key={table.name} onSelect={() => runAction(() => onTableClick(table.name))}>
-                <Table2 strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-500" />
+                <Table2 strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-muted" />
                 <span>{table.name}</span>
-                <span className="ml-auto text-xs text-zinc-600">
+                <span className="ml-auto text-xs text-fg-subtle">
                   {table.columns.length} cols
                   {table.rowCount !== undefined && ` / ${table.rowCount} rows`}
                 </span>
@@ -201,7 +201,7 @@ export function CommandPalette({
               <CommandItem key={sq.id} onSelect={() => runAction(() => onLoadSavedQuery(sq.query))}>
                 <Bookmark strokeWidth={1.5} className="w-3.5 h-3.5 text-purple-400" />
                 <span>{sq.name}</span>
-                <span className="ml-auto text-xs text-zinc-600 truncate max-w-[150px]">
+                <span className="ml-auto text-xs text-fg-subtle truncate max-w-[150px]">
                   {sq.query.substring(0, 40)}...
                 </span>
               </CommandItem>
@@ -214,9 +214,9 @@ export function CommandPalette({
           <CommandGroup heading="Recent Queries">
             {historyItems.map((item: QueryHistoryItem) => (
               <CommandItem key={item.id} onSelect={() => runAction(() => onLoadHistoryQuery(item.query))}>
-                <Clock strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-500" />
-                <span className="truncate max-w-[350px] text-zinc-400">{item.query.substring(0, 60)}</span>
-                <span className="ml-auto text-xs text-zinc-600">{item.executionTime}ms</span>
+                <Clock strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-muted" />
+                <span className="truncate max-w-[350px] text-fg-tertiary">{item.query.substring(0, 60)}</span>
+                <span className="ml-auto text-xs text-fg-subtle">{item.executionTime}ms</span>
               </CommandItem>
             ))}
           </CommandGroup>

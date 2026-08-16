@@ -165,7 +165,7 @@ export function ConnectionModal({
             </h2>
           </div>
           <div className="flex items-center justify-between">
-            <p className="text-xs text-zinc-500">
+            <p className="text-xs text-fg-muted">
               {isEditMode
                 ? "Update your database connection parameters."
                 : "Configure your database connection parameters securely."}
@@ -198,7 +198,7 @@ export function ConnectionModal({
                     value={pasteInput}
                     onChange={(e) => setPasteInput(e.target.value)}
                     placeholder="postgres://user:pass@host:5432/db  or  mongodb://..."
-                    className="h-9 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 text-xs font-mono flex-1"
+                    className="h-9 bg-panel border-hairline focus:border-blue-500/50 text-xs font-mono flex-1"
                     onKeyDown={(e) => e.key === "Enter" && handlePasteConnectionString()}
                   />
                   <Button
@@ -209,7 +209,7 @@ export function ConnectionModal({
                     Parse
                   </Button>
                 </div>
-                <p className="text-xs text-zinc-500">
+                <p className="text-xs text-fg-muted">
                   Supports: postgres://, mysql://, mongodb://, redis://, oracle://, mssql://
                 </p>
               </div>
@@ -221,8 +221,8 @@ export function ConnectionModal({
           {/* Connection Name - always visible */}
           <div className="space-y-2">
             <div className="flex items-center gap-2 mb-1">
-              <Database strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
-              <Label htmlFor="name" className="text-xs font-mediumr text-zinc-500">
+              <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+              <Label htmlFor="name" className="text-xs font-mediumr text-fg-muted">
                 Connection Name
               </Label>
             </div>
@@ -231,13 +231,13 @@ export function ConnectionModal({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="My Database"
-              className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-xs"
+              className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs"
             />
           </div>
 
           {/* Environment Selector */}
           <div className="space-y-2">
-            <Label className="text-xs font-mediumr text-zinc-500">Environment</Label>
+            <Label className="text-xs font-mediumr text-fg-muted">Environment</Label>
             <div className="flex flex-wrap items-center gap-2">
               {(Object.keys(ENVIRONMENT_COLORS) as ConnectionEnvironment[]).map((env) => (
                 <button
@@ -246,8 +246,8 @@ export function ConnectionModal({
                   className={cn(
                     "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-mediumr transition-all border",
                     environment === env
-                      ? "border-white/20 bg-white/5 text-zinc-200"
-                      : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5",
+                      ? "border-edge bg-fill text-fg"
+                      : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
                   )}
                 >
                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: ENVIRONMENT_COLORS[env] }} />
@@ -273,17 +273,17 @@ export function ConnectionModal({
                   "flex flex-col items-center justify-center p-3 md:p-4 rounded-xl border transition-all duration-200 gap-2 group",
                   type === db.value
                     ? "bg-blue-600/10 border-blue-500/50 shadow-[0_0_20px_rgba(59,130,246,0.1)]"
-                    : "bg-zinc-900/50 border-white/5 hover:border-white/10 hover:bg-zinc-900",
+                    : "bg-panel border-hairline hover:border-hairline-strong hover:bg-raised",
                   isEditMode && type !== db.value && "opacity-30 cursor-not-allowed",
                 )}
               >
                 <db.icon
                   className={cn(
                     "w-6 h-6 mb-1 transition-transform group-hover:scale-110",
-                    type === db.value ? db.color : "text-zinc-600",
+                    type === db.value ? db.color : "text-fg-subtle",
                   )}
                 />
-                <span className={cn("text-xs font-medium", type === db.value ? "text-zinc-200" : "text-zinc-500")}>
+                <span className={cn("text-xs font-medium", type === db.value ? "text-fg" : "text-fg-muted")}>
                   {db.label}
                 </span>
               </button>
@@ -294,14 +294,14 @@ export function ConnectionModal({
             <>
               {/* Connection string mode toggle */}
               {getDBConfig(type).showConnectionStringToggle && (
-                <div className="flex items-center gap-2 p-1 rounded-lg bg-zinc-900/50 border border-white/5">
+                <div className="flex items-center gap-2 p-1 rounded-lg bg-panel border border-hairline">
                   <button
                     onClick={() => setMongoConnectionMode("host")}
                     className={cn(
                       "flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-all",
                       mongoConnectionMode === "host"
                         ? "bg-blue-600/20 text-blue-400 border border-blue-500/30"
-                        : "text-zinc-500 hover:text-zinc-300",
+                        : "text-fg-muted hover:text-fg-secondary",
                     )}
                   >
                     <Globe strokeWidth={1.5} className="w-3 h-3" />
@@ -313,7 +313,7 @@ export function ConnectionModal({
                       "flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-all",
                       mongoConnectionMode === "connectionString"
                         ? "bg-blue-600/20 text-blue-400 border border-blue-500/30"
-                        : "text-zinc-500 hover:text-zinc-300",
+                        : "text-fg-muted hover:text-fg-secondary",
                     )}
                   >
                     <Link strokeWidth={1.5} className="w-3 h-3" />
@@ -326,8 +326,8 @@ export function ConnectionModal({
                 <>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 mb-1">
-                      <Link strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
-                      <Label htmlFor="connectionString" className="text-xs font-mediumr text-zinc-500">
+                      <Link strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                      <Label htmlFor="connectionString" className="text-xs font-mediumr text-fg-muted">
                         Connection URI
                       </Label>
                     </div>
@@ -336,13 +336,13 @@ export function ConnectionModal({
                       value={connectionString}
                       onChange={(e) => setConnectionString(e.target.value)}
                       placeholder={connectionUriPlaceholder}
-                      className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-xs font-mono"
+                      className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
                     />
                   </div>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 mb-1">
-                      <Database strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
-                      <Label htmlFor="database" className="text-xs font-mediumr text-zinc-500">
+                      <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                      <Label htmlFor="database" className="text-xs font-mediumr text-fg-muted">
                         {databaseFieldLabel} Name (optional override)
                       </Label>
                     </div>
@@ -351,15 +351,15 @@ export function ConnectionModal({
                       value={database}
                       onChange={(e) => setDatabase(e.target.value)}
                       placeholder="Extracted from URI if not provided"
-                      className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-xs font-mono"
+                      className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
                     />
                   </div>
                 </>
               ) : isFileBased(type) ? (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 mb-1">
-                    <Database strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
-                    <Label htmlFor="database" className="text-xs font-medium text-zinc-500">
+                    <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                    <Label htmlFor="database" className="text-xs font-medium text-fg-muted">
                       Database File Path
                     </Label>
                   </div>
@@ -368,15 +368,15 @@ export function ConnectionModal({
                     value={database}
                     onChange={(e) => setDatabase(e.target.value)}
                     placeholder="/path/to/database file"
-                    className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-xs font-mono"
+                    className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
                   />
                 </div>
               ) : (
                 <>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 mb-1">
-                      <Globe strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
-                      <Label htmlFor="host" className="text-xs font-mediumr text-zinc-500">
+                      <Globe strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                      <Label htmlFor="host" className="text-xs font-mediumr text-fg-muted">
                         Host & Instance
                       </Label>
                     </div>
@@ -387,14 +387,14 @@ export function ConnectionModal({
                         onChange={(e) => setHost(e.target.value)}
                         placeholder="localhost"
                         autoComplete="off"
-                        className="md:col-span-3 h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-xs"
+                        className="md:col-span-3 h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs"
                       />
                       <Input
                         id="port"
                         value={port}
                         onChange={(e) => setPort(e.target.value)}
                         autoComplete="off"
-                        className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-xs font-mono"
+                        className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
                       />
                     </div>
                   </div>
@@ -402,8 +402,8 @@ export function ConnectionModal({
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <div className="flex items-center gap-2 mb-1">
-                        <Key strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
-                        <Label htmlFor="user" className="text-xs font-mediumr text-zinc-500">
+                        <Key strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="user" className="text-xs font-mediumr text-fg-muted">
                           Username
                         </Label>
                       </div>
@@ -413,13 +413,13 @@ export function ConnectionModal({
                         onChange={(e) => setUser(e.target.value)}
                         placeholder="user"
                         autoComplete="off"
-                        className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-xs"
+                        className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs"
                       />
                     </div>
                     <div className="space-y-2">
                       <div className="flex items-center gap-2 mb-1">
-                        <ShieldCheck strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
-                        <Label htmlFor="password" className="text-xs font-mediumr text-zinc-500">
+                        <ShieldCheck strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="password" className="text-xs font-mediumr text-fg-muted">
                           Password
                         </Label>
                       </div>
@@ -432,15 +432,15 @@ export function ConnectionModal({
                         // Server credential, not the user's own login: "new-password" is the only
                         // value Chrome honours to keep saved site passwords out of the field.
                         autoComplete="new-password"
-                        className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-xs"
+                        className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs"
                       />
                     </div>
                   </div>
 
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 mb-1">
-                      <Database strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
-                      <Label htmlFor="database" className="text-xs font-mediumr text-zinc-500">
+                      <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                      <Label htmlFor="database" className="text-xs font-mediumr text-fg-muted">
                         {databaseFieldLabel} Name
                       </Label>
                     </div>
@@ -449,7 +449,7 @@ export function ConnectionModal({
                       value={database}
                       onChange={(e) => setDatabase(e.target.value)}
                       placeholder="db"
-                      className="h-10 bg-zinc-900/50 border-white/5 focus:border-blue-500/50 transition-all text-xs font-mono"
+                      className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
                     />
                   </div>
                 </>
@@ -463,7 +463,7 @@ export function ConnectionModal({
               <button
                 type="button"
                 onClick={() => setShowAdvanced(!showAdvanced)}
-                className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-white/5 hover:border-white/10 bg-zinc-900/30 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-all"
+                className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-hairline hover:border-hairline-strong bg-panel text-xs font-medium text-fg-tertiary hover:text-fg transition-all"
               >
                 <Settings2 strokeWidth={1.5} className="w-3.5 h-3.5 text-orange-500" />
                 <span>Advanced</span>
@@ -485,28 +485,28 @@ export function ConnectionModal({
                     <div className="p-3 rounded-lg border border-orange-500/10 bg-orange-500/5 space-y-3">
                       {type === "oracle" && (
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-mediumr text-zinc-500">Service Name</Label>
+                          <Label className="text-xs font-mediumr text-fg-muted">Service Name</Label>
                           <Input
                             value={serviceName}
                             onChange={(e) => setServiceName(e.target.value)}
                             placeholder="ORCL or XEPDB1"
-                            className="h-9 bg-zinc-900/50 border-white/5 focus:border-orange-500/50 text-xs"
+                            className="h-9 bg-panel border-hairline focus:border-orange-500/50 text-xs"
                           />
-                          <p className="text-xs text-zinc-500">
+                          <p className="text-xs text-fg-muted">
                             If empty, the Database Name field is used as the service name.
                           </p>
                         </div>
                       )}
                       {type === "mssql" && (
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-mediumr text-zinc-500">Instance Name</Label>
+                          <Label className="text-xs font-mediumr text-fg-muted">Instance Name</Label>
                           <Input
                             value={instanceName}
                             onChange={(e) => setInstanceName(e.target.value)}
                             placeholder="SQLEXPRESS"
-                            className="h-9 bg-zinc-900/50 border-white/5 focus:border-orange-500/50 text-xs"
+                            className="h-9 bg-panel border-hairline focus:border-orange-500/50 text-xs"
                           />
-                          <p className="text-xs text-zinc-500">
+                          <p className="text-xs text-fg-muted">
                             For named instances (e.g. SQLEXPRESS). Leave empty for default instance.
                           </p>
                         </div>
@@ -525,7 +525,7 @@ export function ConnectionModal({
               <button
                 type="button"
                 onClick={() => setShowSSL(!showSSL)}
-                className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-white/5 hover:border-white/10 bg-zinc-900/30 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-all"
+                className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-hairline hover:border-hairline-strong bg-panel text-xs font-medium text-fg-tertiary hover:text-fg transition-all"
               >
                 <Lock strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-500" />
                 <span>SSL / TLS</span>
@@ -546,7 +546,7 @@ export function ConnectionModal({
                   >
                     <div className="p-3 rounded-lg border border-emerald-500/10 bg-emerald-500/5 space-y-3">
                       <div className="space-y-2">
-                        <Label className="text-xs font-mediumr text-zinc-500">SSL Mode</Label>
+                        <Label className="text-xs font-mediumr text-fg-muted">SSL Mode</Label>
                         <div className="flex flex-wrap gap-1.5">
                           {(["disable", "require", "verify-ca", "verify-full"] as SSLMode[]).map((mode) => (
                             <button
@@ -557,7 +557,7 @@ export function ConnectionModal({
                                 "px-2.5 py-1.5 rounded-md text-xs font-mediumr transition-all border",
                                 sslMode === mode
                                   ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
-                                  : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5",
+                                  : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
                               )}
                             >
                               {mode}
@@ -568,35 +568,35 @@ export function ConnectionModal({
                       {sslMode !== "disable" && (
                         <div className="space-y-3">
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-mediumr text-zinc-500">CA Certificate (PEM)</Label>
+                            <Label className="text-xs font-mediumr text-fg-muted">CA Certificate (PEM)</Label>
                             <textarea
                               value={caCert}
                               onChange={(e) => setCaCert(e.target.value)}
                               placeholder="-----BEGIN CERTIFICATE-----&#10;Paste CA cert content here...&#10;-----END CERTIFICATE-----"
                               rows={3}
-                              className="w-full rounded-md bg-zinc-900/50 border border-white/5 focus:border-emerald-500/50 text-xs font-mono text-zinc-300 p-2 resize-none placeholder:text-zinc-600"
+                              className="w-full rounded-md bg-panel border border-hairline focus:border-emerald-500/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
                             />
                           </div>
                           {(sslMode === "verify-ca" || sslMode === "verify-full") && (
                             <>
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-mediumr text-zinc-500">Client Certificate (PEM)</Label>
+                                <Label className="text-xs font-mediumr text-fg-muted">Client Certificate (PEM)</Label>
                                 <textarea
                                   value={clientCert}
                                   onChange={(e) => setClientCert(e.target.value)}
                                   placeholder="-----BEGIN CERTIFICATE-----&#10;Optional client cert...&#10;-----END CERTIFICATE-----"
                                   rows={3}
-                                  className="w-full rounded-md bg-zinc-900/50 border border-white/5 focus:border-emerald-500/50 text-xs font-mono text-zinc-300 p-2 resize-none placeholder:text-zinc-600"
+                                  className="w-full rounded-md bg-panel border border-hairline focus:border-emerald-500/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
                                 />
                               </div>
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-mediumr text-zinc-500">Client Private Key (PEM)</Label>
+                                <Label className="text-xs font-mediumr text-fg-muted">Client Private Key (PEM)</Label>
                                 <textarea
                                   value={clientKey}
                                   onChange={(e) => setClientKey(e.target.value)}
                                   placeholder="-----BEGIN PRIVATE KEY-----&#10;Optional client key...&#10;-----END PRIVATE KEY-----"
                                   rows={3}
-                                  className="w-full rounded-md bg-zinc-900/50 border border-white/5 focus:border-emerald-500/50 text-xs font-mono text-zinc-300 p-2 resize-none placeholder:text-zinc-600"
+                                  className="w-full rounded-md bg-panel border border-hairline focus:border-emerald-500/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
                                 />
                               </div>
                             </>
@@ -612,7 +612,7 @@ export function ConnectionModal({
               <button
                 type="button"
                 onClick={() => setShowSSH(!showSSH)}
-                className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-white/5 hover:border-white/10 bg-zinc-900/30 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-all"
+                className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-hairline hover:border-hairline-strong bg-panel text-xs font-medium text-fg-tertiary hover:text-fg transition-all"
               >
                 <Terminal strokeWidth={1.5} className="w-3.5 h-3.5 text-purple-500" />
                 <span>SSH Tunnel</span>
@@ -637,45 +637,45 @@ export function ConnectionModal({
                           type="checkbox"
                           checked={sshEnabled}
                           onChange={(e) => setSSHEnabled(e.target.checked)}
-                          className="rounded border-white/20 bg-zinc-900/50"
+                          className="rounded border-edge bg-panel"
                         />
-                        <span className="text-xs font-medium text-zinc-300">Enable SSH Tunnel</span>
+                        <span className="text-xs font-medium text-fg-secondary">Enable SSH Tunnel</span>
                       </label>
                       {sshEnabled && (
                         <div className="space-y-3">
                           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                             <div className="md:col-span-3 space-y-1.5">
-                              <Label className="text-xs font-mediumr text-zinc-500">SSH Host</Label>
+                              <Label className="text-xs font-mediumr text-fg-muted">SSH Host</Label>
                               <Input
                                 value={sshHost}
                                 onChange={(e) => setSSHHost(e.target.value)}
                                 placeholder="bastion.example.com"
                                 autoComplete="off"
-                                className="h-9 bg-zinc-900/50 border-white/5 focus:border-purple-500/50 text-xs"
+                                className="h-9 bg-panel border-hairline focus:border-purple-500/50 text-xs"
                               />
                             </div>
                             <div className="space-y-1.5">
-                              <Label className="text-xs font-mediumr text-zinc-500">Port</Label>
+                              <Label className="text-xs font-mediumr text-fg-muted">Port</Label>
                               <Input
                                 value={sshPort}
                                 onChange={(e) => setSSHPort(e.target.value)}
                                 autoComplete="off"
-                                className="h-9 bg-zinc-900/50 border-white/5 focus:border-purple-500/50 text-xs font-mono"
+                                className="h-9 bg-panel border-hairline focus:border-purple-500/50 text-xs font-mono"
                               />
                             </div>
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-mediumr text-zinc-500">Username</Label>
+                            <Label className="text-xs font-mediumr text-fg-muted">Username</Label>
                             <Input
                               value={sshUsername}
                               onChange={(e) => setSSHUsername(e.target.value)}
                               placeholder="ubuntu"
                               autoComplete="off"
-                              className="h-9 bg-zinc-900/50 border-white/5 focus:border-purple-500/50 text-xs"
+                              className="h-9 bg-panel border-hairline focus:border-purple-500/50 text-xs"
                             />
                           </div>
                           <div className="space-y-2">
-                            <Label className="text-xs font-mediumr text-zinc-500">Auth Method</Label>
+                            <Label className="text-xs font-mediumr text-fg-muted">Auth Method</Label>
                             <div className="flex gap-2">
                               <button
                                 type="button"
@@ -684,7 +684,7 @@ export function ConnectionModal({
                                   "flex-1 px-3 py-1.5 rounded-md text-xs font-mediumr transition-all border",
                                   sshAuthMethod === "password"
                                     ? "border-purple-500/30 bg-purple-500/10 text-purple-400"
-                                    : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5",
+                                    : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
                                 )}
                               >
                                 Password
@@ -696,7 +696,7 @@ export function ConnectionModal({
                                   "flex-1 px-3 py-1.5 rounded-md text-xs font-mediumr transition-all border",
                                   sshAuthMethod === "privateKey"
                                     ? "border-purple-500/30 bg-purple-500/10 text-purple-400"
-                                    : "border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-white/5",
+                                    : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
                                 )}
                               >
                                 Private Key
@@ -705,37 +705,37 @@ export function ConnectionModal({
                           </div>
                           {sshAuthMethod === "password" ? (
                             <div className="space-y-1.5">
-                              <Label className="text-xs font-mediumr text-zinc-500">SSH Password</Label>
+                              <Label className="text-xs font-mediumr text-fg-muted">SSH Password</Label>
                               <Input
                                 type="password"
                                 value={sshPassword}
                                 onChange={(e) => setSSHPassword(e.target.value)}
                                 placeholder="••••••••"
                                 autoComplete="new-password"
-                                className="h-9 bg-zinc-900/50 border-white/5 focus:border-purple-500/50 text-xs"
+                                className="h-9 bg-panel border-hairline focus:border-purple-500/50 text-xs"
                               />
                             </div>
                           ) : (
                             <div className="space-y-3">
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-mediumr text-zinc-500">Private Key (PEM)</Label>
+                                <Label className="text-xs font-mediumr text-fg-muted">Private Key (PEM)</Label>
                                 <textarea
                                   value={sshPrivateKey}
                                   onChange={(e) => setSSHPrivateKey(e.target.value)}
                                   placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;Paste private key here...&#10;-----END OPENSSH PRIVATE KEY-----"
                                   rows={4}
-                                  className="w-full rounded-md bg-zinc-900/50 border border-white/5 focus:border-purple-500/50 text-xs font-mono text-zinc-300 p-2 resize-none placeholder:text-zinc-600"
+                                  className="w-full rounded-md bg-panel border border-hairline focus:border-purple-500/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
                                 />
                               </div>
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-mediumr text-zinc-500">Passphrase (optional)</Label>
+                                <Label className="text-xs font-mediumr text-fg-muted">Passphrase (optional)</Label>
                                 <Input
                                   type="password"
                                   value={sshPassphrase}
                                   onChange={(e) => setSSHPassphrase(e.target.value)}
                                   placeholder="Key passphrase (if encrypted)"
                                   autoComplete="new-password"
-                                  className="h-9 bg-zinc-900/50 border-white/5 focus:border-purple-500/50 text-xs"
+                                  className="h-9 bg-panel border-hairline focus:border-purple-500/50 text-xs"
                                 />
                               </div>
                             </div>
@@ -780,12 +780,12 @@ export function ConnectionModal({
       </div>
 
       {/* Sticky footer */}
-      <div className="shrink-0 bg-zinc-900/30 p-4 md:p-6 border-t border-white/5">
+      <div className="shrink-0 bg-panel p-4 md:p-6 border-t border-hairline">
         <div className="flex flex-col-reverse gap-3 md:flex-row md:items-center md:justify-between">
           <Button
             variant="ghost"
             onClick={onClose}
-            className="w-full md:w-auto text-zinc-500 hover:text-zinc-200 hover:bg-white/5 text-xs font-medium"
+            className="w-full md:w-auto text-fg-muted hover:text-fg hover:bg-fill text-xs font-medium"
           >
             Cancel
           </Button>
@@ -794,11 +794,12 @@ export function ConnectionModal({
               variant="outline"
               onClick={handleTestConnection}
               disabled={isTesting}
-              className="w-full md:w-auto border-white/10 text-zinc-400 hover:text-white hover:bg-white/5 text-xs font-medium h-10 px-4"
+              className="w-full md:w-auto border-hairline-strong text-fg-tertiary hover:text-fg-bright hover:bg-fill text-xs font-medium h-10 px-4"
             >
               {isTesting ? (
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 border-2 border-zinc-400/30 border-t-zinc-400 rounded-full animate-spin" />
+                  {/* On an outline button, so the spinner follows the text ramp. */}
+                  <div className="w-3 h-3 border-2 border-fg-tertiary/30 border-t-fg-tertiary rounded-full animate-spin" />
                   Testing...
                 </div>
               ) : (
@@ -824,6 +825,7 @@ export function ConnectionModal({
                     exit={{ opacity: 0 }}
                     className="flex items-center gap-2"
                   >
+                    {/* Inside a solid blue button — white is right on either ground. */}
                     <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                     Connecting...
                   </motion.div>
@@ -854,7 +856,7 @@ export function ConnectionModal({
           if (!open) onClose();
         }}
       >
-        <DrawerContent className="max-h-[95dvh] bg-[#0a0a0a] border-white/5 text-zinc-200 p-0 flex flex-col">
+        <DrawerContent className="max-h-[95dvh] bg-surface border-hairline text-fg p-0 flex flex-col">
           <DrawerHeader className="sr-only">
             <DrawerTitle>{isEditMode ? "Edit Connection" : "New Connection"}</DrawerTitle>
             <DrawerDescription>Configure database connection parameters.</DrawerDescription>
@@ -868,7 +870,7 @@ export function ConnectionModal({
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent
-        className="sm:max-w-[500px] lg:max-w-[540px] max-h-[90vh] bg-[#0a0a0a] border-white/5 text-zinc-200 p-0 overflow-hidden shadow-2xl flex flex-col"
+        className="sm:max-w-[500px] lg:max-w-[540px] max-h-[90vh] bg-surface border-hairline text-fg p-0 overflow-hidden shadow-2xl flex flex-col"
         showCloseButton={false}
       >
         <DialogTitle className="sr-only">{isEditMode ? "Edit Connection" : "New Connection"}</DialogTitle>

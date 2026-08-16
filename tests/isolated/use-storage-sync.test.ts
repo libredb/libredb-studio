@@ -437,6 +437,201 @@ describe("useStorageSync", () => {
       );
     });
 
+    /**
+     * A push is the ONLY thing that moves a local mutation to the server. Dropping
+     * a failed one means the write survives in localStorage and nowhere else —
+     * silently, until the user happens to touch that same collection again. The
+     * queue must therefore outlive the failure.
+     */
+    test("retries a collection whose push failed instead of dropping it", async () => {
+      localStorage.setItem("libredb_server_migrated", "true");
+      let attempts = 0;
+      const fetchMock = mockGlobalFetch({
+        "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        "/api/storage/migrate": { ok: true, status: 200, json: { ok: true, migrated: [] } },
+        "/api/storage/connections": () => {
+          attempts += 1;
+          return attempts === 1
+            ? { ok: false, status: 500, json: { error: "Write failed" } }
+            : { ok: true, status: 200, json: { ok: true } };
+        },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isServerMode).toBe(true);
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "connections" } }));
+      });
+
+      await waitFor(
+        () => {
+          expect(result.current.syncError).not.toBeNull();
+        },
+        { timeout: 3000 },
+      );
+
+      // No further mutation is dispatched: the retry has to come from the hook.
+      await waitFor(
+        () => {
+          expect(attempts).toBeGreaterThanOrEqual(2);
+        },
+        { timeout: 5000 },
+      );
+      await waitFor(
+        () => {
+          expect(result.current.syncError).toBeNull();
+        },
+        { timeout: 3000 },
+      );
+      expect(calledPaths(fetchMock).filter((p) => p === "/api/storage/connections").length).toBeGreaterThanOrEqual(2);
+    });
+
+    test("stops retrying once the push lands", async () => {
+      localStorage.setItem("libredb_server_migrated", "true");
+      let attempts = 0;
+      mockGlobalFetch({
+        "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        "/api/storage/migrate": { ok: true, status: 200, json: { ok: true, migrated: [] } },
+        "/api/storage/connections": () => {
+          attempts += 1;
+          return { ok: true, status: 200, json: { ok: true } };
+        },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isServerMode).toBe(true);
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "connections" } }));
+      });
+
+      await waitFor(
+        () => {
+          expect(attempts).toBe(1);
+        },
+        { timeout: 3000 },
+      );
+
+      // A successful push empties the queue: nothing schedules a second attempt.
+      await act(async () => await new Promise((r) => setTimeout(r, 1600)));
+      expect(attempts).toBe(1);
+    });
+
+    /**
+     * The retry timer and the debounce timer are different clocks.
+     *
+     * A push takes as long as the network does, and the user keeps working while
+     * it is in flight — so when a failure comes back, the debounce slot usually
+     * holds a fresh timer for an edit that has nothing to do with it. Sharing one
+     * ref meant the retry replaced that timer with its own backoff, and a single
+     * failed push held a later, healthy write off the server for as long as the
+     * backoff ran.
+     *
+     * The tell is WHEN that write lands. On its own debounce it goes out ~500ms
+     * after the edit; hostage to the backoff it cannot go out before the first
+     * retry step, which is a full second after the failure. The threshold sits
+     * between the two with room on both sides.
+     */
+    test("a failed push does not swallow a later edit's debounce", async () => {
+      localStorage.setItem("libredb_server_migrated", "true");
+      let connectionsAttempts = 0;
+      let historyAt: number | null = null;
+
+      mockGlobalFetch({
+        "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        "/api/storage/migrate": { ok: true, status: 200, json: { ok: true, migrated: [] } },
+        "/api/storage/connections": async () => {
+          connectionsAttempts += 1;
+          // Long enough that the next edit is dispatched while this is in flight,
+          // short enough that it fails BEFORE that edit's own debounce fires.
+          await new Promise((r) => setTimeout(r, 100));
+          return { ok: false, status: 500, json: { error: "Write failed" } };
+        },
+        "/api/storage/history": () => {
+          historyAt = Date.now();
+          return { ok: true, status: 200, json: { ok: true } };
+        },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isServerMode).toBe(true);
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "connections" } }));
+      });
+      // The failing push has STARTED but not resolved: this is the window in which
+      // the user's next edit arms the debounce the retry used to steal.
+      await waitFor(() => {
+        expect(connectionsAttempts).toBe(1);
+      });
+      const editedAt = Date.now();
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "history" } }));
+      });
+
+      await waitFor(
+        () => {
+          expect(historyAt).not.toBeNull();
+        },
+        { timeout: 5000 },
+      );
+
+      // ~500ms when the edit keeps its own debounce; no sooner than ~1100ms when
+      // the retry's backoff has replaced it.
+      expect(historyAt! - editedAt).toBeLessThan(800);
+    });
+
+    /**
+     * A push in flight when the user navigates away resolves after teardown. Its
+     * failure branch used to arm a retry then — a timer no cleanup could reach,
+     * on a hook that no longer exists, backing off to one request every 30s for
+     * the life of the page.
+     */
+    test("a push that fails after unmount does not leave a timer running", async () => {
+      localStorage.setItem("libredb_server_migrated", "true");
+      let attempts = 0;
+
+      mockGlobalFetch({
+        "/api/storage/config": { ok: true, status: 200, json: { provider: "postgres", serverMode: true } },
+        "/api/storage/migrate": { ok: true, status: 200, json: { ok: true, migrated: [] } },
+        "/api/storage/connections": async () => {
+          attempts += 1;
+          await new Promise((r) => setTimeout(r, 150));
+          return { ok: false, status: 500, json: { error: "Write failed" } };
+        },
+        "/api/storage": { ok: true, status: 200, json: {} },
+      });
+
+      const { result, unmount } = renderHook(() => useStorageSync());
+      await waitFor(() => {
+        expect(result.current.isServerMode).toBe(true);
+      });
+
+      act(() => {
+        window.dispatchEvent(new CustomEvent("libredb-storage-change", { detail: { collection: "connections" } }));
+      });
+      await waitFor(() => {
+        expect(attempts).toBe(1);
+      });
+
+      unmount();
+
+      // Past the first backoff step (1s) with room to spare: a re-armed retry
+      // would have fired by now.
+      await new Promise((r) => setTimeout(r, 2000));
+      expect(attempts).toBe(1);
+    });
+
     test("sets syncError on push failure", async () => {
       localStorage.setItem("libredb_server_migrated", "true");
 

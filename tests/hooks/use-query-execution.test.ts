@@ -1826,6 +1826,350 @@ describe("useQueryExecution", () => {
     globalThis.fetch = originalFetch;
   });
 
+  // ── Run lifecycle: one run at a time, and a plan that belongs to its run ───
+  //
+  // Two runs of the same hook share `abortControllerRef` / `activeQueryIdRef`.
+  // Everything below pins WHICH run owns those refs at a given moment, because
+  // the failure modes are silent: a cancel button that stops nothing, and an
+  // EXPLAIN plan describing a query the tab no longer shows.
+
+  describe("run lifecycle", () => {
+    interface DeferredCall {
+      url: string;
+      init: RequestInit;
+      body: Record<string, unknown>;
+      settle: (json: unknown) => void;
+    }
+
+    let originalFetch: typeof globalThis.fetch;
+
+    /**
+     * A fetch that never settles on its own. Each call is captured so a test can
+     * resolve exactly one request at a time — which is the only way to describe
+     * "run A's plan comes back after run B started" as a test.
+     */
+    function installDeferredFetch(): DeferredCall[] {
+      const calls: DeferredCall[] = [];
+      globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        // Only the query endpoint is deferred. The side channels (cancel, the
+        // playground transaction) must answer immediately or `cancelQuery` would
+        // never return and the test would hang rather than fail.
+        if (!url.includes("/api/db/query")) {
+          calls.push({
+            url,
+            init: init ?? {},
+            body: init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : {},
+            settle: () => {},
+          });
+          return Promise.resolve(
+            new Response(JSON.stringify({ success: true }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }
+        return new Promise<Response>((resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("The operation was aborted.", "AbortError")),
+          );
+          calls.push({
+            url,
+            init: init ?? {},
+            body: init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : {},
+            settle: (json: unknown) =>
+              resolve(
+                new Response(JSON.stringify(json), { status: 200, headers: { "content-type": "application/json" } }),
+              ),
+          });
+        });
+      }) as typeof fetch;
+      return calls;
+    }
+
+    const isExplain = (c: DeferredCall) => typeof c.body.sql === "string" && c.body.sql.startsWith("EXPLAIN");
+    const mainCalls = (calls: DeferredCall[]) => calls.filter((c) => c.url.includes("/api/db/query") && !isExplain(c));
+    const explainCalls = (calls: DeferredCall[]) => calls.filter(isExplain);
+
+    /** Params whose `setTabs` actually keeps state, so a write can be observed. */
+    function statefulParams() {
+      let tabs = [createTab()];
+      const setTabs = mock((updater: unknown) => {
+        if (typeof updater === "function") {
+          tabs = (updater as (prev: QueryTab[]) => QueryTab[])(tabs);
+        }
+      });
+      return { params: createDefaultParams({ setTabs }), readTabs: () => tabs };
+    }
+
+    /** Lets the microtasks queued by a settled fetch run to completion. */
+    const flush = () => act(async () => await new Promise((r) => setTimeout(r, 0)));
+
+    beforeEach(() => {
+      originalFetch = globalThis.fetch;
+      mockToastDefault.mockClear();
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    test("the background EXPLAIN travels on the same abort signal as its query", async () => {
+      const calls = installDeferredFetch();
+      const { params } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT * FROM users");
+      });
+      await flush();
+
+      expect(explainCalls(calls)).toHaveLength(1);
+      // Same signal object, not merely "a" signal: a plan request that outlives
+      // its own query is a request nobody can stop.
+      expect(explainCalls(calls)[0].init.signal).toBe(mainCalls(calls)[0].init.signal);
+    });
+
+    test("cancelling a run stops its background EXPLAIN too", async () => {
+      const calls = installDeferredFetch();
+      const { params } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT * FROM users");
+      });
+      await flush();
+
+      await act(async () => {
+        await result.current.cancelQuery();
+      });
+
+      expect(explainCalls(calls)[0].init.signal?.aborted).toBe(true);
+    });
+
+    test("unmounting aborts whatever is still in flight", async () => {
+      const calls = installDeferredFetch();
+      const { params } = statefulParams();
+      const { result, unmount } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT * FROM users");
+      });
+      await flush();
+
+      unmount();
+
+      expect(mainCalls(calls)[0].init.signal?.aborted).toBe(true);
+    });
+
+    test("a second run supersedes the first rather than racing it", async () => {
+      const calls = installDeferredFetch();
+      const { params } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT 1");
+      });
+      await flush();
+      act(() => {
+        result.current.executeQuery("SELECT 2");
+      });
+      await flush();
+
+      expect(mainCalls(calls)[0].init.signal?.aborted).toBe(true);
+      expect(mainCalls(calls)[1].init.signal?.aborted).toBe(false);
+      // Superseding is not cancelling: the user asked for a second query, they
+      // did not ask to be told the first one stopped.
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+      expect(mockToastError).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Supersession is per TAB. A single hook-wide controller made a Run in one
+     * tab abort the query in another — and because that abort read as
+     * "superseded" it cleared no flags and raised no toast, so the other tab sat
+     * on "Executing…" for ever with no result and no error.
+     */
+    test("running in a second tab leaves the first tab's query alone", async () => {
+      const calls = installDeferredFetch();
+      const { params } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT 1", "tab-1");
+      });
+      await flush();
+      act(() => {
+        result.current.executeQuery("SELECT 2", "tab-2");
+      });
+      await flush();
+
+      expect(mainCalls(calls)).toHaveLength(2);
+      // Tab 1's request is untouched — it is a different tab's work.
+      expect(mainCalls(calls)[0].init.signal?.aborted).toBe(false);
+      expect(mainCalls(calls)[1].init.signal?.aborted).toBe(false);
+    });
+
+    test("cancelling one tab does not stop another tab's query", async () => {
+      const calls = installDeferredFetch();
+      const { params } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT 1", "tab-1");
+      });
+      await flush();
+      act(() => {
+        result.current.executeQuery("SELECT 2", "tab-2");
+      });
+      await flush();
+
+      await act(async () => {
+        await result.current.cancelQuery("tab-2");
+      });
+
+      expect(mainCalls(calls)[0].init.signal?.aborted).toBe(false);
+      expect(mainCalls(calls)[1].init.signal?.aborted).toBe(true);
+
+      // The server-side cancel names tab 2's query, not the last one started.
+      const cancelCall = calls.find((c) => c.url.includes("/api/db/cancel"));
+      expect(cancelCall?.body.queryId).toBe(mainCalls(calls)[1].body.queryId);
+    });
+
+    test("a superseded run does not disarm the cancel button of the run that replaced it", async () => {
+      const calls = installDeferredFetch();
+      const { params } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT 1");
+      });
+      await flush();
+      act(() => {
+        result.current.executeQuery("SELECT 2");
+      });
+      // Run A now unwinds (abort → catch → finally) while B is still in flight.
+      await flush();
+      await flush();
+
+      await act(async () => {
+        await result.current.cancelQuery();
+      });
+
+      expect(mainCalls(calls)[1].init.signal?.aborted).toBe(true);
+      const cancelCall = calls.find((c) => c.url.includes("/api/db/cancel"));
+      expect(cancelCall).toBeDefined();
+      // The id sent to the server must be B's, the query that is actually running.
+      expect(cancelCall!.body.queryId).toBe(mainCalls(calls)[1].body.queryId);
+    });
+
+    test("a late EXPLAIN plan still lands when no newer run has taken over", async () => {
+      const calls = installDeferredFetch();
+      const { params, readTabs } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT * FROM users");
+      });
+      await flush();
+
+      await act(async () => {
+        mainCalls(calls)[0].settle(mockQueryResult);
+      });
+      await act(async () => {
+        explainCalls(calls)[0].settle({ rows: [{ "QUERY PLAN": [{ Plan: { "Node Type": "Seq Scan" } }] }] });
+      });
+      await flush();
+
+      expect(readTabs()[0].explainPlan).toBeDefined();
+    });
+
+    test("a late EXPLAIN plan is dropped once a newer run owns the tab", async () => {
+      const calls = installDeferredFetch();
+      const { params, readTabs } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT * FROM users");
+      });
+      await flush();
+      await act(async () => {
+        mainCalls(calls)[0].settle(mockQueryResult);
+      });
+
+      // Run B starts before A's plan comes back.
+      act(() => {
+        result.current.executeQuery("SELECT * FROM orders");
+      });
+      await flush();
+
+      await act(async () => {
+        explainCalls(calls)[0].settle({ rows: [{ "QUERY PLAN": [{ Plan: { "Node Type": "Seq Scan" } }] }] });
+      });
+      await flush();
+
+      // The plan describes `users`; the tab is now running `orders`.
+      expect(readTabs()[0].explainPlan).toBeUndefined();
+    });
+
+    test("a failed background EXPLAIN is logged, not thrown at the console", async () => {
+      const consoleErrorSpy = spyOn(console, "error").mockImplementation(() => {});
+      globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const body = init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : {};
+        if (url.includes("/api/db/query") && typeof body.sql === "string" && body.sql.startsWith("EXPLAIN")) {
+          return Promise.reject(new TypeError("network down"));
+        }
+        return Promise.resolve(
+          new Response(JSON.stringify(mockQueryResult), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }) as typeof fetch;
+      const { params } = statefulParams();
+
+      const { result } = renderHook(() => useQueryExecution(params));
+      await act(async () => {
+        await result.current.executeQuery("SELECT * FROM users");
+      });
+      await flush();
+
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
+      consoleErrorSpy.mockRestore();
+    });
+
+    test("an unreadable EXPLAIN body leaves the tab and the console alone", async () => {
+      // A 200 whose body is not JSON: the plan parse throws AFTER the response
+      // arrived, which is a different path from a failed request.
+      const consoleErrorSpy = spyOn(console, "error").mockImplementation(() => {});
+      globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const body = init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : {};
+        const isPlanRequest =
+          url.includes("/api/db/query") && typeof body.sql === "string" && body.sql.startsWith("EXPLAIN");
+        return Promise.resolve(
+          new Response(isPlanRequest ? "<html>gateway timeout</html>" : JSON.stringify(mockQueryResult), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }) as typeof fetch;
+      const { params, readTabs } = statefulParams();
+
+      const { result } = renderHook(() => useQueryExecution(params));
+      await act(async () => {
+        await result.current.executeQuery("SELECT * FROM users");
+      });
+      await flush();
+
+      expect(readTabs()[0].explainPlan).toBeUndefined();
+      expect(readTabs()[0].result).toBeDefined();
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
+      consoleErrorSpy.mockRestore();
+    });
+  });
+
   // ── One-shot star prompt (#331 community nudge) ───────────────────────────
 
   describe("star prompt", () => {

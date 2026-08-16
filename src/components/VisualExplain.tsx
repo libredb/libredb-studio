@@ -205,11 +205,11 @@ const NodeIcon = ({ type }: { type: string }) => {
   if (type.includes("Scan")) return <Search strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />;
   if (type.includes("Join")) return <Layers strokeWidth={1.5} className="w-3.5 h-3.5 text-purple-400" />;
   if (type.includes("Sort")) return <ArrowDown strokeWidth={1.5} className="w-3.5 h-3.5 text-amber-400" />;
-  if (type.includes("Limit")) return <LayoutGrid strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-400" />;
+  if (type.includes("Limit")) return <LayoutGrid strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-tertiary" />;
   if (type.includes("Aggregate") || type.includes("Group"))
     return <Zap strokeWidth={1.5} className="w-3.5 h-3.5 text-pink-400" />;
   if (type.includes("Hash")) return <HardDrive strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />;
-  return <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-500" />;
+  return <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-muted" />;
 };
 
 const StatusBadge = ({ status }: { status: "good" | "warning" | "critical" }) => {
@@ -245,24 +245,21 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
           // display:flex makes the button block-level with auto width, so the
           // depth margin is deducted from the available width (w-full would
           // overflow by depth * 20px)
-          "text-left group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all cursor-pointer hover:bg-white/5",
-          depth === 0 && "bg-white/[0.02]",
+          "text-left group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all cursor-pointer hover:bg-fill",
+          depth === 0 && "bg-fill-subtle",
         )}
         onClick={() => setExpanded(!expanded)}
         style={{ marginLeft: depth * 20 }}
       >
         {/* Expand icon */}
         {children.length > 0 && (
-          <ChevronRight className={cn("w-3 h-3 text-zinc-600 transition-transform", expanded && "rotate-90")} />
+          <ChevronRight className={cn("w-3 h-3 text-fg-subtle transition-transform", expanded && "rotate-90")} />
         )}
         {children.length === 0 && <div className="w-3" />}
 
         {/* Icon */}
         <div
-          className={cn(
-            "p-1 rounded",
-            isSeqScan ? "bg-amber-500/10" : isIndexScan ? "bg-emerald-500/10" : "bg-white/5",
-          )}
+          className={cn("p-1 rounded", isSeqScan ? "bg-amber-500/10" : isIndexScan ? "bg-emerald-500/10" : "bg-fill")}
         >
           <NodeIcon type={nodeType} />
         </div>
@@ -270,26 +267,26 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
         {/* Type & Table */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-zinc-200 truncate">{nodeType}</span>
+            <span className="text-xs font-medium text-fg truncate">{nodeType}</span>
             {node["Relation Name"] && (
-              <span className="text-xs text-zinc-500 font-mono truncate">{node["Relation Name"]}</span>
+              <span className="text-xs text-fg-muted font-mono truncate">{node["Relation Name"]}</span>
             )}
           </div>
         </div>
 
         {/* Stats */}
         <div className="flex items-center gap-4 text-xs font-mono">
-          <span className="text-zinc-500 w-16 text-right">{formatNumber(actualRows)} rows</span>
+          <span className="text-fg-muted w-16 text-right">{formatNumber(actualRows)} rows</span>
           <span
             className={cn(
               "w-16 text-right",
-              timePercent > 50 ? "text-red-400" : timePercent > 20 ? "text-amber-400" : "text-zinc-400",
+              timePercent > 50 ? "text-red-400" : timePercent > 20 ? "text-amber-400" : "text-fg-tertiary",
             )}
           >
             {formatTime(actualTime)}
           </span>
           {/* Time bar */}
-          <div className="w-20 h-1.5 bg-white/5 rounded-full overflow-hidden">
+          <div className="w-20 h-1.5 bg-fill rounded-full overflow-hidden">
             <div
               className={cn(
                 "h-full rounded-full transition-all",
@@ -303,12 +300,12 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
 
       {/* Details on expand */}
       {expanded && (
-        <div className="ml-8 pl-4 border-l border-white/5" style={{ marginLeft: depth * 20 + 32 }}>
+        <div className="ml-8 pl-4 border-l border-hairline" style={{ marginLeft: depth * 20 + 32 }}>
           {/* Filter info */}
           {node["Filter"] && (
             <div className="flex items-start gap-2 py-1 text-xs">
               <span className="text-amber-500/70 font-medium shrink-0">Filter:</span>
-              <span className="text-zinc-500 font-mono break-all">{node["Filter"]}</span>
+              <span className="text-fg-muted font-mono break-all">{node["Filter"]}</span>
             </div>
           )}
           {/* Index info */}
@@ -320,7 +317,7 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
           )}
           {/* Buffer stats */}
           {((node["Shared Hit Blocks"] ?? 0) > 0 || (node["Shared Read Blocks"] ?? 0) > 0) && (
-            <div className="flex items-center gap-4 py-1 text-xs text-zinc-600">
+            <div className="flex items-center gap-4 py-1 text-xs text-fg-subtle">
               {(node["Shared Hit Blocks"] ?? 0) > 0 && <span>Cache hits: {node["Shared Hit Blocks"]}</span>}
               {(node["Shared Read Blocks"] ?? 0) > 0 && <span>Disk reads: {node["Shared Read Blocks"]}</span>}
             </div>
@@ -362,35 +359,35 @@ const TreeNodeView = ({ node, depth = 0 }: { node: ExplainTreeNode; depth?: numb
     <>
       {/* Expand icon */}
       {hasChildren ? (
-        <ChevronRight className={cn("w-3 h-3 text-zinc-600 transition-transform", expanded && "rotate-90")} />
+        <ChevronRight className={cn("w-3 h-3 text-fg-subtle transition-transform", expanded && "rotate-90")} />
       ) : (
         <div className="w-3" />
       )}
 
       {/* Icon */}
-      <div className="p-1 rounded bg-white/5">
-        <ListTree strokeWidth={1.5} className="w-3 h-3 text-zinc-400" />
+      <div className="p-1 rounded bg-fill">
+        <ListTree strokeWidth={1.5} className="w-3 h-3 text-fg-tertiary" />
       </div>
 
       {/* Label */}
       <div className="flex-1 min-w-0">
-        <span className="text-xs font-medium text-zinc-200 truncate">{node.label}</span>
+        <span className="text-xs font-medium text-fg truncate">{node.label}</span>
       </div>
 
       {/* Metric badges — only when the node actually carries metrics */}
       {hasMetrics && (
         <div className="flex items-center gap-4 text-xs font-mono">
           {metrics!.actualRows !== undefined && (
-            <span className="text-zinc-500 w-16 text-right">{formatNumber(metrics!.actualRows)} rows</span>
+            <span className="text-fg-muted w-16 text-right">{formatNumber(metrics!.actualRows)} rows</span>
           )}
           {metrics!.estRows !== undefined && (
-            <span className="text-zinc-500 w-16 text-right">~{formatNumber(metrics!.estRows)} rows</span>
+            <span className="text-fg-muted w-16 text-right">~{formatNumber(metrics!.estRows)} rows</span>
           )}
           {metrics!.actualTimeMs !== undefined && (
-            <span className="text-zinc-400 w-16 text-right">{formatTime(metrics!.actualTimeMs)}</span>
+            <span className="text-fg-tertiary w-16 text-right">{formatTime(metrics!.actualTimeMs)}</span>
           )}
           {metrics!.estCost !== undefined && (
-            <span className="text-zinc-400 w-16 text-right">cost {formatNumber(metrics!.estCost)}</span>
+            <span className="text-fg-tertiary w-16 text-right">cost {formatNumber(metrics!.estCost)}</span>
           )}
         </div>
       )}
@@ -403,7 +400,7 @@ const TreeNodeView = ({ node, depth = 0 }: { node: ExplainTreeNode; depth?: numb
       {hasChildren ? (
         <button
           type="button"
-          className="text-left group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all cursor-pointer hover:bg-white/5"
+          className="text-left group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-all cursor-pointer hover:bg-fill"
           onClick={toggle}
           aria-expanded={expanded}
           style={{ marginLeft: depth * 20 }}
@@ -421,7 +418,7 @@ const TreeNodeView = ({ node, depth = 0 }: { node: ExplainTreeNode; depth?: numb
 
       {/* Children */}
       {expanded && hasChildren && (
-        <div className="ml-8 pl-4 border-l border-white/5" style={{ marginLeft: depth * 20 + 32 }}>
+        <div className="ml-8 pl-4 border-l border-hairline" style={{ marginLeft: depth * 20 + 32 }}>
           {children.map((child, idx) => (
             <TreeNodeView key={idx} node={child} depth={depth + 1} />
           ))}
@@ -543,7 +540,7 @@ function AIExplainTab({
                   "text-xs font-mono p-3 rounded-lg overflow-x-auto border",
                   isSql
                     ? "bg-blue-500/5 border-blue-500/10 text-blue-300"
-                    : "bg-white/[0.02] border-white/5 text-zinc-400",
+                    : "bg-fill-subtle border-hairline text-fg-tertiary",
                 )}
               >
                 {content}
@@ -577,27 +574,27 @@ function AIExplainTab({
       // Headers
       if (line.startsWith("## ")) {
         elements.push(
-          <h2 key={idx} className="text-xs font-medium text-zinc-200 mt-4 mb-2 flex items-center gap-2">
+          <h2 key={idx} className="text-xs font-medium text-fg mt-4 mb-2 flex items-center gap-2">
             {line.slice(3)}
           </h2>,
         );
       } else if (line.startsWith("### ")) {
         elements.push(
-          <h3 key={idx} className="text-xs font-medium text-zinc-300 mt-3 mb-1">
+          <h3 key={idx} className="text-xs font-medium text-fg-secondary mt-3 mb-1">
             {line.slice(4)}
           </h3>,
         );
       } else if (line.startsWith("- ")) {
         elements.push(
-          <div key={idx} className="flex items-start gap-2 text-xs text-zinc-400 leading-relaxed ml-2 my-0.5">
-            <span className="text-zinc-600 mt-1 shrink-0">•</span>
+          <div key={idx} className="flex items-start gap-2 text-xs text-fg-tertiary leading-relaxed ml-2 my-0.5">
+            <span className="text-fg-subtle mt-1 shrink-0">•</span>
             <span>{renderInlineFormatting(line.slice(2))}</span>
           </div>,
         );
       } else if (/^\d+\.\s/.test(line)) {
         const num = line.match(/^(\d+)\./)?.[1];
         elements.push(
-          <div key={idx} className="flex items-start gap-2 text-xs text-zinc-400 leading-relaxed ml-2 my-0.5">
+          <div key={idx} className="flex items-start gap-2 text-xs text-fg-tertiary leading-relaxed ml-2 my-0.5">
             <span className="text-blue-400 font-medium mt-0 shrink-0 w-4">{num}.</span>
             <span>{renderInlineFormatting(line.replace(/^\d+\.\s*/, ""))}</span>
           </div>,
@@ -606,7 +603,7 @@ function AIExplainTab({
         elements.push(<div key={idx} className="h-1" />);
       } else {
         elements.push(
-          <p key={idx} className="text-xs text-zinc-400 leading-relaxed my-0.5">
+          <p key={idx} className="text-xs text-fg-tertiary leading-relaxed my-0.5">
             {renderInlineFormatting(line)}
           </p>,
         );
@@ -622,7 +619,7 @@ function AIExplainTab({
     return parts.map((part, i) => {
       if (part.startsWith("**") && part.endsWith("**")) {
         return (
-          <strong key={i} className="text-zinc-200 font-medium">
+          <strong key={i} className="text-fg font-medium">
             {part.slice(2, -2)}
           </strong>
         );
@@ -645,8 +642,8 @@ function AIExplainTab({
         <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-purple-500/20 to-blue-500/10 flex items-center justify-center mb-4">
           <Sparkles strokeWidth={1.5} className="w-7 h-7 text-purple-400" />
         </div>
-        <h3 className="text-xs font-medium text-zinc-200 mb-1">AI Query Analysis</h3>
-        <p className="text-xs text-zinc-500 max-w-[280px] leading-relaxed mb-4">
+        <h3 className="text-xs font-medium text-fg mb-1">AI Query Analysis</h3>
+        <p className="text-xs text-fg-muted max-w-[280px] leading-relaxed mb-4">
           Get a plain-language explanation of your query&apos;s execution plan with concrete optimization suggestions.
         </p>
         <button
@@ -656,13 +653,13 @@ function AIExplainTab({
             "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition-all",
             query
               ? "bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/20"
-              : "bg-white/5 text-zinc-600 cursor-not-allowed",
+              : "bg-fill text-fg-subtle cursor-not-allowed",
           )}
         >
           <Sparkles strokeWidth={1.5} className="w-3 h-3" />
           Analyze with AI
         </button>
-        {!query && <p className="text-xs text-zinc-600 mt-2">Run a query first to enable AI analysis.</p>}
+        {!query && <p className="text-xs text-fg-subtle mt-2">Run a query first to enable AI analysis.</p>}
       </div>
     );
   }
@@ -670,15 +667,15 @@ function AIExplainTab({
   return (
     <div className="h-full flex flex-col">
       {/* Re-analyze button */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-[#0a0a0a]">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-hairline bg-surface">
         <div className="flex items-center gap-2">
           <Sparkles strokeWidth={1.5} className="w-3 h-3 text-purple-400" />
-          <span className="text-xs font-medium text-purple-400r">AI Analysis</span>
+          <span className="text-xs font-medium text-purple-400">AI Analysis</span>
         </div>
         <button
           onClick={analyzeWithAI}
           disabled={isLoading}
-          className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium text-zinc-400 hover:text-white hover:bg-white/5 transition-all"
+          className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium text-fg-tertiary hover:text-fg-bright hover:bg-fill transition-all"
         >
           {isLoading ? (
             <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
@@ -701,14 +698,14 @@ function AIExplainTab({
         {aiResponse && <div className="space-y-0">{renderMarkdown(aiResponse)}</div>}
 
         {isLoading && !aiResponse && (
-          <div className="flex items-center gap-3 text-zinc-500 text-xs">
+          <div className="flex items-center gap-3 text-fg-muted text-xs">
             <Loader2 strokeWidth={1.5} className="w-3.5 h-3.5 animate-spin text-purple-400" />
             <span>Analyzing execution plan...</span>
           </div>
         )}
 
         {isLoading && aiResponse && (
-          <div className="flex items-center gap-2 mt-2 text-zinc-600 text-xs">
+          <div className="flex items-center gap-2 mt-2 text-fg-subtle text-xs">
             <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
             <span>Still generating...</span>
           </div>
@@ -768,12 +765,12 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
   // Empty state
   if (input === null) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-zinc-500 bg-[#080808] p-12 text-center">
-        <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center mb-4">
-          <Activity strokeWidth={1.5} className="w-6 h-6 text-zinc-600" />
+      <div className="h-full flex flex-col items-center justify-center text-fg-muted bg-sunken p-12 text-center">
+        <div className="w-12 h-12 rounded-xl bg-fill flex items-center justify-center mb-4">
+          <Activity strokeWidth={1.5} className="w-6 h-6 text-fg-subtle" />
         </div>
-        <h3 className="text-xs font-medium text-zinc-300 mb-1">No execution plan</h3>
-        <p className="text-xs text-zinc-600 max-w-[240px]">
+        <h3 className="text-xs font-medium text-fg-secondary mb-1">No execution plan</h3>
+        <p className="text-xs text-fg-subtle max-w-[240px]">
           Run a SELECT query to see its execution plan and performance insights.
         </p>
       </div>
@@ -784,39 +781,39 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
   const tabs = input.kind === "tree" ? TREE_TABS : POSTGRES_TABS;
 
   return (
-    <div className="h-full flex flex-col bg-[#080808]">
+    <div className="h-full flex flex-col bg-sunken">
       {/* Header Stats */}
-      <div className="px-4 py-3 border-b border-white/5 bg-[#0a0a0a]">
+      <div className="px-4 py-3 border-b border-hairline bg-surface">
         <div className="flex items-center justify-between">
           {/* Quick stats */}
           {input.kind === "tree" ? (
             <div className="flex items-center gap-2">
-              <Layers strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
-              <span className="text-xs font-medium text-zinc-200">{countTreeNodes(input.root)}</span>
-              <span className="text-xs text-zinc-600">nodes</span>
+              <Layers strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+              <span className="text-xs font-medium text-fg">{countTreeNodes(input.root)}</span>
+              <span className="text-xs text-fg-subtle">nodes</span>
             </div>
           ) : (
             <div className="flex items-center gap-6">
               <div className="flex items-center gap-2">
                 <Clock strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
-                <span className="text-xs font-medium text-zinc-200">{formatTime(analysis?.executionTime || 0)}</span>
-                <span className="text-xs text-zinc-600">execution</span>
+                <span className="text-xs font-medium text-fg">{formatTime(analysis?.executionTime || 0)}</span>
+                <span className="text-xs text-fg-subtle">execution</span>
               </div>
               <div className="flex items-center gap-2">
-                <TrendingUp className="w-3 h-3 text-zinc-500" />
-                <span className="text-xs font-medium text-zinc-400">{formatNumber(analysis?.totalRows || 0)}</span>
-                <span className="text-xs text-zinc-600">rows</span>
+                <TrendingUp className="w-3 h-3 text-fg-muted" />
+                <span className="text-xs font-medium text-fg-tertiary">{formatNumber(analysis?.totalRows || 0)}</span>
+                <span className="text-xs text-fg-subtle">rows</span>
               </div>
               <div className="flex items-center gap-2">
-                <HardDrive strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
-                <span className="text-xs font-medium text-zinc-400">{formatNumber(analysis?.totalCost || 0)}</span>
-                <span className="text-xs text-zinc-600">cost</span>
+                <HardDrive strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                <span className="text-xs font-medium text-fg-tertiary">{formatNumber(analysis?.totalCost || 0)}</span>
+                <span className="text-xs text-fg-subtle">cost</span>
               </div>
             </div>
           )}
 
           {/* Tabs */}
-          <div className="flex items-center gap-1 bg-white/5 rounded-lg p-0.5">
+          <div className="flex items-center gap-1 bg-fill rounded-lg p-0.5">
             {tabs.map((tab) => (
               <button
                 key={tab}
@@ -826,8 +823,8 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                   activeTab === tab
                     ? tab === "ai"
                       ? "bg-purple-500/20 text-purple-300"
-                      : "bg-white/10 text-zinc-200"
-                    : "text-zinc-500 hover:text-zinc-300",
+                      : "bg-fill-strong text-fg"
+                    : "text-fg-muted hover:text-fg-secondary",
                 )}
               >
                 {tab === "insights" && <Zap strokeWidth={1.5} className="w-3 h-3 inline mr-1" />}
@@ -858,7 +855,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
             {/* Warnings */}
             {analysis && analysis.warnings.length > 0 && (
               <div className="space-y-2">
-                <h3 className="text-xs font-medium text-zinc-500r mb-2">Performance Issues</h3>
+                <h3 className="text-xs font-medium text-fg-muted mb-2">Performance Issues</h3>
                 {analysis.warnings.map((warning, idx) => (
                   <div
                     key={idx}
@@ -902,7 +899,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                       >
                         {warning.title}
                       </h4>
-                      <p className="text-xs text-zinc-500 mt-0.5 leading-relaxed">{warning.description}</p>
+                      <p className="text-xs text-fg-muted mt-0.5 leading-relaxed">{warning.description}</p>
                     </div>
                   </div>
                 ))}
@@ -917,7 +914,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                 </div>
                 <div>
                   <h4 className="text-xs font-medium text-emerald-300">Query looks good</h4>
-                  <p className="text-xs text-zinc-500">No obvious performance issues detected.</p>
+                  <p className="text-xs text-fg-muted">No obvious performance issues detected.</p>
                 </div>
               </div>
             )}
@@ -925,20 +922,20 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
             {/* Metrics Grid */}
             <div className="grid grid-cols-3 gap-2">
               {analysis?.insights.map((insight, idx) => (
-                <div key={idx} className="p-3 rounded-lg bg-white/[0.02] border border-white/5">
+                <div key={idx} className="p-3 rounded-lg bg-fill-subtle border border-hairline">
                   <div className="flex items-center gap-2 mb-1">
                     <StatusBadge status={insight.status} />
-                    <span className="text-[0.625rem] text-zinc-500r font-medium">{insight.label}</span>
+                    <span className="text-[0.625rem] text-fg-muted font-medium">{insight.label}</span>
                   </div>
-                  <span className="text-xs font-medium text-zinc-200">{insight.value}</span>
+                  <span className="text-xs font-medium text-fg">{insight.value}</span>
                 </div>
               ))}
             </div>
 
             {/* Plan tree preview */}
             <div>
-              <h3 className="text-xs font-medium text-zinc-500r mb-2">Execution Plan</h3>
-              <div className="rounded-lg border border-white/5 bg-white/[0.01] p-2">
+              <h3 className="text-xs font-medium text-fg-muted mb-2">Execution Plan</h3>
+              <div className="rounded-lg border border-hairline bg-fill-subtle p-2">
                 {rootPlan && analysis && <PlanNode node={rootPlan} maxTime={analysis.executionTime || 1} />}
               </div>
             </div>
@@ -947,7 +944,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
 
         {activeTab === "tree" && (
           <div className="p-4">
-            <div className="rounded-lg border border-white/5 bg-white/[0.01] p-2">
+            <div className="rounded-lg border border-hairline bg-fill-subtle p-2">
               {input.kind === "tree" && <TreeNodeView node={input.root} />}
               {input.kind !== "tree" && rootPlan && analysis && (
                 <PlanNode node={rootPlan} maxTime={analysis.executionTime || 1} />
@@ -958,7 +955,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
 
         {activeTab === "raw" && (
           <div className="p-4">
-            <pre className="text-xs font-mono text-zinc-400 bg-white/[0.02] rounded-lg p-4 overflow-auto border border-white/5">
+            <pre className="text-xs font-mono text-fg-tertiary bg-fill-subtle rounded-lg p-4 overflow-auto border border-hairline">
               {JSON.stringify(input.kind === "tree" ? input.raw : postgresPlan, null, 2)}
             </pre>
           </div>

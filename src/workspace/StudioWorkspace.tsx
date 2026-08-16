@@ -22,15 +22,59 @@ import { cn } from "@/lib/utils";
 import { quoteLiteral } from "@/lib/sql/values";
 
 /**
- * Scoped CSS for studio's dark theme.
- * When embedded in a host app that uses different CSS variable formats
- * (e.g. OKLCH instead of hex), studio injects its own scoped styles
- * to ensure correct rendering. Uses data-studio-workspace attribute
- * for high-specificity scoping without affecting the host app.
+ * Scoped CSS for the shadcn token set studio's primitives read.
+ *
+ * A host app may express these in a different format (OKLCH rather than hex), so
+ * studio restates them for its own subtree, scoped by `data-studio-workspace` to
+ * get the specificity without touching the host.
+ *
+ * BOTH palettes, keyed off the same `dark` class everything else here follows.
+ * Light is the base and dark overrides it, so a host that has not opted into dark
+ * gets a light studio — matching what `useEffectiveTheme()` reports and what the
+ * `--studio-*` tokens resolve to. Pinning this block to dark, as it used to be,
+ * produced the one thing worse than either theme: dark chrome around a light
+ * editor, light charts and a light diagram.
  */
 const STUDIO_SCOPED_CSS = `
 [data-studio-workspace] {
-  /* Dark theme — monochrome (black/white/gray) */
+  /* Light theme — monochrome (white/black/gray) */
+  --background: #ffffff;
+  --foreground: #09090b;
+  --card: #ffffff;
+  --card-foreground: #09090b;
+  --popover: #ffffff;
+  --popover-foreground: #09090b;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #52525b;
+  --accent: #f4f4f5;
+  --accent-foreground: #18181b;
+  --destructive: #dc2626;
+  --destructive-foreground: #fafafa;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #71717a;
+  --radius: 0.5rem;
+  --chart-1: #18181b;
+  --chart-2: #3f3f46;
+  --chart-3: #52525b;
+  --chart-4: #71717a;
+  --chart-5: #a1a1aa;
+
+  /* Font — Geist (inherited from host or fallback to system) */
+  font-family: var(--font-geist-sans, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "rlig" 1, "calt" 1;
+  letter-spacing: -0.011em;
+}
+/* Dark — the values this block carried before it learned a second palette.
+   Higher specificity than the base rule, so the class alone decides. */
+.dark [data-studio-workspace],
+[data-studio-workspace].dark {
   --background: #09090b;
   --foreground: #fafafa;
   --card: #09090b;
@@ -50,19 +94,11 @@ const STUDIO_SCOPED_CSS = `
   --border: #27272a;
   --input: #27272a;
   --ring: #d4d4d8;
-  --radius: 0.5rem;
   --chart-1: #e4e4e7;
   --chart-2: #a1a1aa;
   --chart-3: #71717a;
   --chart-4: #52525b;
   --chart-5: #3f3f46;
-
-  /* Font — Geist (inherited from host or fallback to system) */
-  font-family: var(--font-geist-sans, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: "rlig" 1, "calt" 1;
-  letter-spacing: -0.011em;
 }
 [data-studio-workspace] *,
 [data-studio-workspace] *::before,
@@ -291,10 +327,11 @@ export function StudioWorkspace({
   return (
     <div
       data-studio-workspace=""
-      className={cn(
-        "dark flex h-full w-full bg-[#050505] text-zinc-100 overflow-hidden font-sans select-none",
-        className,
-      )}
+      // No `dark` class here. The host owns the theme — its <html> carries the
+      // class, `useEffectiveTheme()` reads it, and the tokens resolve from it.
+      // Pinning it here made the chrome dark while everything that consults the
+      // host went light, in a light host only.
+      className={cn("flex h-full w-full bg-canvas text-fg overflow-hidden font-sans select-none", className)}
     >
       <ResizablePanelGroup id="workspace-main" orientation="horizontal" className="h-full">
         {/* Sizes are strings on purpose: react-resizable-panels 4 reads a bare
@@ -324,7 +361,7 @@ export function StudioWorkspace({
         </ResizablePanel>
         <ResizableHandle className="hidden md:flex w-1 bg-transparent hover:bg-blue-500/30 transition-colors" />
         <ResizablePanel id="workspace-body" defaultSize="78">
-          <div className="flex-1 flex flex-col min-w-0 h-full bg-[#0a0a0a]">
+          <div className="flex-1 flex flex-col min-w-0 h-full bg-surface">
             {/* No desktop/mobile headers — platform provides its own */}
 
             <StudioTabBar
@@ -390,7 +427,7 @@ export function StudioWorkspace({
                         </div>
                       </div>
                     </ResizablePanel>
-                    <ResizableHandle className="h-1 bg-white/5 hover:bg-blue-500/20" />
+                    <ResizableHandle className="h-1 bg-fill hover:bg-blue-500/20" />
                     <ResizablePanel id="workspace-editor-bottom" defaultSize="60" minSize="20">
                       <BottomPanel
                         mode={queryExec.bottomPanelMode}
@@ -514,24 +551,23 @@ export function StudioWorkspace({
 
       {/* Unlimited Query Warning */}
       <AlertDialog open={queryExec.unlimitedWarningOpen} onOpenChange={queryExec.setUnlimitedWarningOpen}>
-        <AlertDialogContent className="bg-[#111] border-white/5 max-w-sm p-0 gap-0 overflow-hidden">
+        <AlertDialogContent className="bg-overlay border-hairline max-w-sm p-0 gap-0 overflow-hidden">
           <div className="px-6 pt-6 pb-4">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-red-500/10 flex items-center justify-center shrink-0">
                 <AlertTriangle strokeWidth={1.5} className="w-5 h-5 text-amber-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <AlertDialogTitle className="text-xs font-medium text-zinc-100 mb-1">
-                  Load all results?
-                </AlertDialogTitle>
-                <AlertDialogDescription className="text-xs text-zinc-500 leading-relaxed">
-                  This may slow down your browser. Max <span className="text-zinc-400">100K</span> rows will be loaded.
+                <AlertDialogTitle className="text-xs font-medium text-fg mb-1">Load all results?</AlertDialogTitle>
+                <AlertDialogDescription className="text-xs text-fg-muted leading-relaxed">
+                  This may slow down your browser. Max <span className="text-fg-tertiary">100K</span> rows will be
+                  loaded.
                 </AlertDialogDescription>
               </div>
             </div>
           </div>
           <div className="px-6 pb-6 flex gap-2">
-            <AlertDialogCancel className="flex-1 h-9 bg-white/5 border-0 text-zinc-400 text-xs font-medium hover:bg-white/10 hover:text-zinc-200">
+            <AlertDialogCancel className="flex-1 h-9 bg-fill border-0 text-fg-tertiary text-xs font-medium hover:bg-fill-strong hover:text-fg">
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction

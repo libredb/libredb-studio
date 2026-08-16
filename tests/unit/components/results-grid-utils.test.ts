@@ -11,11 +11,11 @@ import { describeWarning, formatCellValue } from "@/components/results-grid/util
 
 describe("formatCellValue parity", () => {
   test("null renders the NULL marker", () => {
-    expect(formatCellValue(null)).toEqual({ display: "NULL", className: "text-zinc-600 italic" });
+    expect(formatCellValue(null)).toEqual({ display: "NULL", className: "text-fg-subtle italic" });
   });
 
   test("undefined renders the NULL marker", () => {
-    expect(formatCellValue(undefined)).toEqual({ display: "NULL", className: "text-zinc-600 italic" });
+    expect(formatCellValue(undefined)).toEqual({ display: "NULL", className: "text-fg-subtle italic" });
   });
 
   test("object compact-stringifies on a single line", () => {
@@ -56,20 +56,20 @@ describe("formatCellValue parity", () => {
   });
 
   test("plain string renders as-is", () => {
-    expect(formatCellValue("hello world")).toEqual({ display: "hello world", className: "text-zinc-300" });
-    expect(formatCellValue("")).toEqual({ display: "", className: "text-zinc-300" });
+    expect(formatCellValue("hello world")).toEqual({ display: "hello world", className: "text-fg-secondary" });
+    expect(formatCellValue("")).toEqual({ display: "", className: "text-fg-secondary" });
   });
 
   test("JSON-parseable string keeps its raw string display in the grid", () => {
     // The grid cell must not re-serialize or reformat a JSON string — the
     // detail sheet is where json-kind values get the pretty treatment (#96).
-    expect(formatCellValue('{"a": 1}')).toEqual({ display: '{"a": 1}', className: "text-zinc-300" });
-    expect(formatCellValue("[1, 2]")).toEqual({ display: "[1, 2]", className: "text-zinc-300" });
+    expect(formatCellValue('{"a": 1}')).toEqual({ display: '{"a": 1}', className: "text-fg-secondary" });
+    expect(formatCellValue("[1, 2]")).toEqual({ display: "[1, 2]", className: "text-fg-secondary" });
   });
 
   test("pretty-printed JSON string display survives byte-for-byte", () => {
     const pretty = '{\n  "id": "1",\n  "name": "Ada"\n}';
-    expect(formatCellValue(pretty)).toEqual({ display: pretty, className: "text-zinc-300" });
+    expect(formatCellValue(pretty)).toEqual({ display: pretty, className: "text-fg-secondary" });
   });
 });
 

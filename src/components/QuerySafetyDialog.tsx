@@ -205,19 +205,19 @@ export function QuerySafetyDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-[#111] border border-white/10 rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
+      <div className="bg-overlay border border-hairline-strong rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-hairline">
           <div className="flex items-center gap-2">
             <ShieldAlert strokeWidth={1.5} className="w-3.5 h-3.5 text-amber-400" />
-            <span className="text-xs font-medium text-zinc-200">Query Safety Check</span>
+            <span className="text-xs font-medium text-fg">Query Safety Check</span>
           </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-zinc-500">
+          <button onClick={onClose} className="p-1 rounded hover:bg-fill text-fg-muted">
             <X strokeWidth={1.5} className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        <div className="px-5 py-3 bg-[#0a0a0a] border-b border-white/5">
-          <pre className="text-xs font-mono text-zinc-400 whitespace-pre-wrap max-h-24 overflow-auto">
+        <div className="px-5 py-3 bg-surface border-b border-hairline">
+          <pre className="text-xs font-mono text-fg-tertiary whitespace-pre-wrap max-h-24 overflow-auto">
             {query.length > 300 ? query.substring(0, 300) + "..." : query}
           </pre>
         </div>
@@ -233,7 +233,7 @@ export function QuerySafetyDialog({
               <AlertTriangle strokeWidth={1.5} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-400" />
               <div>
                 <span className="text-xs font-medium text-amber-400">Part of this statement could not be read</span>
-                <p className="text-xs text-zinc-400 mt-0.5">
+                <p className="text-xs text-fg-tertiary mt-0.5">
                   A quoted, commented or bracketed run in it never closes (or its closing quote sits behind a backslash,
                   which dialects read differently), so nothing written after that point could be checked. It may hide a
                   write, which is why you are being asked.
@@ -243,7 +243,7 @@ export function QuerySafetyDialog({
           )}
 
           {isAnalyzing && (
-            <div className="flex items-center justify-center gap-2 py-8 text-zinc-500">
+            <div className="flex items-center justify-center gap-2 py-8 text-fg-muted">
               <Loader2 strokeWidth={1.5} className="w-5 h-5 animate-spin" />
               <span className="text-xs">Analyzing query safety...</span>
             </div>
@@ -259,7 +259,7 @@ export function QuerySafetyDialog({
                 <RiskIcon className={cn("w-5 h-5", risk.color)} />
                 <div>
                   <span className={cn("text-xs font-medium", risk.color)}>{risk.label}</span>
-                  <p className="text-xs text-zinc-400 mt-0.5">{analysis.summary}</p>
+                  <p className="text-xs text-fg-tertiary mt-0.5">{analysis.summary}</p>
                 </div>
               </div>
 
@@ -277,8 +277,8 @@ export function QuerySafetyDialog({
                             : "bg-blue-500/5 border-blue-500/20",
                       )}
                     >
-                      <p className="font-medium text-zinc-300">{w.message}</p>
-                      <p className="text-zinc-500 mt-0.5">{w.detail}</p>
+                      <p className="font-medium text-fg-secondary">{w.message}</p>
+                      <p className="text-fg-muted mt-0.5">{w.detail}</p>
                     </div>
                   ))}
                 </div>
@@ -286,36 +286,36 @@ export function QuerySafetyDialog({
 
               {analysis.affectedRows && analysis.affectedRows !== "none" && (
                 <div className="text-xs">
-                  <span className="text-zinc-500">Affected rows: </span>
-                  <span className="text-zinc-300 font-mono">{analysis.affectedRows}</span>
+                  <span className="text-fg-muted">Affected rows: </span>
+                  <span className="text-fg-secondary font-mono">{analysis.affectedRows}</span>
                 </div>
               )}
 
               {analysis.cascadeEffects && analysis.cascadeEffects !== "none" && (
                 <div className="text-xs">
-                  <span className="text-zinc-500">Cascade effects: </span>
-                  <span className="text-zinc-300">{analysis.cascadeEffects}</span>
+                  <span className="text-fg-muted">Cascade effects: </span>
+                  <span className="text-fg-secondary">{analysis.cascadeEffects}</span>
                 </div>
               )}
 
               {analysis.recommendation && (
-                <div className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
-                  <p className="text-xs font-medium text-zinc-500 mb-1">Recommendation</p>
-                  <p className="text-xs text-zinc-300">{analysis.recommendation}</p>
+                <div className="bg-surface rounded-lg p-3 border border-hairline">
+                  <p className="text-xs font-medium text-fg-muted mb-1">Recommendation</p>
+                  <p className="text-xs text-fg-secondary">{analysis.recommendation}</p>
                 </div>
               )}
             </div>
           )}
 
           {!isAnalyzing && !analysis && rawResponse && !error && (
-            <div className="text-xs text-zinc-400 whitespace-pre-wrap">{rawResponse}</div>
+            <div className="text-xs text-fg-tertiary whitespace-pre-wrap">{rawResponse}</div>
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-white/5 bg-[#0a0a0a]">
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-hairline bg-surface">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-white/5 text-zinc-400 text-xs font-medium hover:bg-white/10 transition-colors"
+            className="px-4 py-2 rounded-lg bg-fill text-fg-tertiary text-xs font-medium hover:bg-fill-strong transition-colors"
           >
             <span>Cancel</span>
           </button>

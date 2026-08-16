@@ -165,15 +165,15 @@ export function DataProfiler({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-[#111] border border-white/10 rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col overflow-hidden">
+      <div className="bg-overlay border border-hairline-strong rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-hairline">
           <div className="flex items-center gap-2">
             <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="text-xs font-medium text-zinc-200">Data Profiler</span>
-            <span className="text-xs text-zinc-500 font-mono">{tableName}</span>
+            <span className="text-xs font-medium text-fg">Data Profiler</span>
+            <span className="text-xs text-fg-muted font-mono">{tableName}</span>
           </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-zinc-500">
+          <button onClick={onClose} className="p-1 rounded hover:bg-fill text-fg-muted">
             <X strokeWidth={1.5} className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -181,7 +181,7 @@ export function DataProfiler({
         {/* Content */}
         <div className="flex-1 overflow-auto p-5 space-y-4">
           {isLoading && (
-            <div className="flex items-center justify-center gap-2 py-12 text-zinc-500">
+            <div className="flex items-center justify-center gap-2 py-12 text-fg-muted">
               <Loader2 strokeWidth={1.5} className="w-5 h-5 animate-spin" />
               <span className="text-xs">Profiling {tableName}...</span>
             </div>
@@ -198,17 +198,17 @@ export function DataProfiler({
             <>
               {/* Summary Stats */}
               <div className="grid grid-cols-3 gap-3">
-                <div className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
-                  <p className="text-xs font-medium text-zinc-500r">Total Rows</p>
-                  <p className="text-xs font-medium text-zinc-200 mt-1">{profile.totalRows.toLocaleString()}</p>
+                <div className="bg-surface rounded-lg p-3 border border-hairline">
+                  <p className="text-xs font-medium text-fg-muted">Total Rows</p>
+                  <p className="text-xs font-medium text-fg mt-1">{profile.totalRows.toLocaleString()}</p>
                 </div>
-                <div className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
-                  <p className="text-xs font-medium text-zinc-500r">Columns</p>
-                  <p className="text-xs font-medium text-zinc-200 mt-1">{profile.columns.length}</p>
+                <div className="bg-surface rounded-lg p-3 border border-hairline">
+                  <p className="text-xs font-medium text-fg-muted">Columns</p>
+                  <p className="text-xs font-medium text-fg mt-1">{profile.columns.length}</p>
                 </div>
-                <div className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
-                  <p className="text-xs font-medium text-zinc-500r">Avg Null %</p>
-                  <p className="text-xs font-medium text-zinc-200 mt-1">
+                <div className="bg-surface rounded-lg p-3 border border-hairline">
+                  <p className="text-xs font-medium text-fg-muted">Avg Null %</p>
+                  <p className="text-xs font-medium text-fg mt-1">
                     {profile.columns.length > 0
                       ? Math.round(profile.columns.reduce((sum, c) => sum + c.nullPercent, 0) / profile.columns.length)
                       : 0}
@@ -219,21 +219,21 @@ export function DataProfiler({
 
               {/* Column Profiles */}
               <div className="space-y-2">
-                <h3 className="text-xs font-medium text-zinc-400r">Column Profiles</h3>
+                <h3 className="text-xs font-medium text-fg-tertiary">Column Profiles</h3>
                 {profile.columns.map((col) => (
-                  <div key={col.name} className="bg-[#0a0a0a] rounded-lg p-3 border border-white/5">
+                  <div key={col.name} className="bg-surface rounded-lg p-3 border border-hairline">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <Hash strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
-                        <span className="text-xs font-medium text-zinc-200">{col.name}</span>
-                        {col.type && <span className="text-xs text-zinc-500 font-mono">{col.type}</span>}
+                        <span className="text-xs font-medium text-fg">{col.name}</span>
+                        {col.type && <span className="text-xs text-fg-muted font-mono">{col.type}</span>}
                         {sensitiveColumnNames.has(col.name) && (
                           <span title="Sensitive column - values masked">
                             <Lock strokeWidth={1.5} className="w-3 h-3 text-purple-400" />
                           </span>
                         )}
                       </div>
-                      <span className="text-xs text-zinc-500">{col.distinctCount.toLocaleString()} distinct</span>
+                      <span className="text-xs text-fg-muted">{col.distinctCount.toLocaleString()} distinct</span>
                     </div>
 
                     {col.error ? (
@@ -242,7 +242,7 @@ export function DataProfiler({
                       <>
                         {/* Null bar */}
                         <div className="flex items-center gap-2 mb-1.5">
-                          <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                          <div className="flex-1 h-1.5 bg-overlay rounded-full overflow-hidden">
                             <div
                               className={cn(
                                 "h-full rounded-full transition-all",
@@ -276,9 +276,9 @@ export function DataProfiler({
                               const rule = sensitiveColumnNames.get(col.name);
                               const display = rule ? maskValue(col.minValue, rule) : col.minValue.substring(0, 30);
                               return (
-                                <span className="text-zinc-500">
+                                <span className="text-fg-muted">
                                   min:{" "}
-                                  <span className={cn("font-mono", rule ? "text-zinc-500 italic" : "text-zinc-400")}>
+                                  <span className={cn("font-mono", rule ? "text-fg-muted italic" : "text-fg-tertiary")}>
                                     {display}
                                   </span>
                                 </span>
@@ -289,9 +289,9 @@ export function DataProfiler({
                               const rule = sensitiveColumnNames.get(col.name);
                               const display = rule ? maskValue(col.maxValue, rule) : col.maxValue.substring(0, 30);
                               return (
-                                <span className="text-zinc-500">
+                                <span className="text-fg-muted">
                                   max:{" "}
-                                  <span className={cn("font-mono", rule ? "text-zinc-500 italic" : "text-zinc-400")}>
+                                  <span className={cn("font-mono", rule ? "text-fg-muted italic" : "text-fg-tertiary")}>
                                     {display}
                                   </span>
                                 </span>
@@ -309,8 +309,8 @@ export function DataProfiler({
                                 <span
                                   key={i}
                                   className={cn(
-                                    "text-xs px-1.5 py-0.5 bg-zinc-800 rounded font-mono",
-                                    rule ? "text-zinc-500 italic" : "text-zinc-400",
+                                    "text-xs px-1.5 py-0.5 bg-overlay rounded font-mono",
+                                    rule ? "text-fg-muted italic" : "text-fg-tertiary",
                                   )}
                                 >
                                   {display}
@@ -330,11 +330,11 @@ export function DataProfiler({
                 <div className="bg-cyan-500/5 border border-cyan-500/10 rounded-lg p-4">
                   <div className="flex items-center gap-2 mb-2">
                     <Sparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />
-                    <span className="text-xs font-medium text-cyan-400r">AI Analysis</span>
+                    <span className="text-xs font-medium text-cyan-400">AI Analysis</span>
                     {isAiLoading && <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin text-cyan-400" />}
                   </div>
                   {aiSummary && (
-                    <div className="text-xs text-zinc-400 leading-relaxed whitespace-pre-wrap">{aiSummary}</div>
+                    <div className="text-xs text-fg-tertiary leading-relaxed whitespace-pre-wrap">{aiSummary}</div>
                   )}
                 </div>
               )}

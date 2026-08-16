@@ -71,10 +71,17 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
 
   return (
     <div className="flex min-h-[100dvh] bg-background">
-      {/* Left Panel - Branding (hidden on mobile) */}
-      <div className="hidden lg:flex lg:w-1/2 xl:w-[55%] relative overflow-hidden">
-        {/* Base background matching app zinc-950 */}
-        <div className="absolute inset-0 bg-zinc-950" />
+      {/*
+        Left Panel - Branding (hidden on mobile).
+
+        Pinned dark with a nested `dark` class, which re-declares the token
+        variables for this subtree only: the panel is a designed dark hero — a
+        deep gradient, a dot grid at 4% white, a glow, and a heading that is
+        literally `text-white` — and following the theme would put white type on a
+        white ground. The sign-in half beside it follows the theme normally.
+      */}
+      <div className="dark hidden lg:flex lg:w-1/2 xl:w-[55%] relative overflow-hidden">
+        <div className="absolute inset-0 bg-surface" />
         <div className="absolute inset-0 bg-gradient-to-b from-blue-950/20 via-transparent to-cyan-950/10" />
 
         {/* Dot grid pattern */}
@@ -91,7 +98,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
         <div className="absolute bottom-1/3 right-10 w-64 h-64 bg-cyan-500/[0.05] rounded-full blur-3xl" />
 
         {/* Right edge separator */}
-        <div className="absolute right-0 top-0 bottom-0 w-px bg-white/[0.06]" />
+        <div className="absolute right-0 top-0 bottom-0 w-px bg-fill-strong" />
 
         {/* Content */}
         <div className="relative z-10 flex flex-col p-12 xl:p-16 w-full overflow-y-auto">
@@ -102,7 +109,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
             rel="noopener noreferrer"
             className="flex items-center gap-3 group w-fit"
           >
-            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-white/[0.06] border border-white/[0.08] group-hover:bg-white/[0.10] group-hover:border-white/[0.12] transition-all duration-200">
+            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-fill-strong border border-hairline-strong group-hover:bg-fill-strong group-hover:border-hairline-strong transition-all duration-200">
               <LibreDBLogo className="h-9 w-9 text-blue-400" />
             </div>
             <span className="text-xl font-semibold text-white tracking-tight group-hover:text-blue-400 transition-colors duration-200">
@@ -120,7 +127,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
                   cloud-native teams
                 </span>
               </h1>
-              <p className="text-lg text-zinc-400 leading-relaxed">
+              <p className="text-lg text-fg-tertiary leading-relaxed">
                 Query, explore, and manage all your databases from a single AI-powered interface. Zero install — deploy
                 with Docker in seconds.
               </p>
@@ -130,14 +137,14 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
               {features.map((feature) => (
                 <div
                   key={feature.title}
-                  className="flex gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/[0.05] pointer-events-none select-none"
+                  className="flex gap-3 p-3 rounded-xl bg-fill border border-hairline pointer-events-none select-none"
                 >
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 border border-blue-500/10">
                     <feature.icon className="h-4 w-4 text-blue-400" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-zinc-200">{feature.title}</p>
-                    <p className="text-xs text-zinc-500 mt-0.5">{feature.desc}</p>
+                    <p className="text-sm font-medium text-fg">{feature.title}</p>
+                    <p className="text-xs text-fg-muted mt-0.5">{feature.desc}</p>
                   </div>
                 </div>
               ))}
@@ -147,12 +154,12 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
           {/* Bottom: DB badges + Community */}
           <div className="space-y-6 mt-auto">
             <div className="space-y-3">
-              <p className="text-xs text-zinc-600 uppercase tracking-widest font-medium">Supported Databases</p>
+              <p className="text-xs text-fg-subtle uppercase tracking-widest font-medium">Supported Databases</p>
               <div className="flex flex-wrap gap-2">
                 {["PostgreSQL", "MySQL", "MongoDB", "Oracle", "SQL Server"].map((db) => (
                   <span
                     key={db}
-                    className="text-xs px-3 py-1.5 rounded-full bg-white/[0.04] text-zinc-500 border border-white/[0.05] font-medium"
+                    className="text-xs px-3 py-1.5 rounded-full bg-fill text-fg-muted border border-hairline font-medium"
                   >
                     {db}
                   </span>
@@ -177,7 +184,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
           >
             <div className="relative">
               <div className="absolute -inset-2 rounded-full bg-blue-500/20 blur-lg" />
-              <div className="relative flex h-20 w-20 items-center justify-center rounded-2xl bg-zinc-900 border border-white/[0.08] shadow-lg shadow-blue-500/10 group-hover:border-blue-500/20 transition-all duration-200">
+              <div className="relative flex h-20 w-20 items-center justify-center rounded-2xl bg-raised border border-hairline-strong shadow-lg shadow-blue-500/10 group-hover:border-blue-500/20 transition-all duration-200">
                 <LibreDBLogo className="h-12 w-12 text-blue-400" />
               </div>
             </div>

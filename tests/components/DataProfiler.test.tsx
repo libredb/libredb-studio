@@ -159,8 +159,8 @@ describe("DataProfiler", () => {
     const props = createDefaultProps({ onClose });
     const { container } = render(<DataProfiler {...props} />);
 
-    // The close button is in the header with text-zinc-500 class
-    const closeButton = container.querySelector("button.text-zinc-500");
+    // The close button is in the header with text-fg-muted token
+    const closeButton = container.querySelector("button.text-fg-muted");
     expect(closeButton).not.toBeNull();
 
     fireEvent.click(closeButton!);
@@ -346,8 +346,8 @@ describe("DataProfiler", () => {
     expect(view.queryByText("Bob")).not.toBeNull();
     expect(view.queryByText("Carol")).not.toBeNull();
 
-    // Chips should have the bg-zinc-800 + rounded + font-mono classes
-    const chips = container.querySelectorAll("span.bg-zinc-800.rounded.font-mono");
+    // Chips should have the bg-overlay + rounded + font-mono classes
+    const chips = container.querySelectorAll("span.bg-overlay.rounded.font-mono");
     expect(chips.length).toBeGreaterThanOrEqual(8); // 3 + 3 + 2 sample values
   });
 
@@ -619,7 +619,7 @@ describe("DataProfiler", () => {
 
     // Find the Columns summary card and verify its value
     // The summary grid has 3 cards; the Columns card contains "3"
-    const summaryCards = container.querySelectorAll(".bg-\\[\\#0a0a0a\\]");
+    const summaryCards = container.querySelectorAll(".bg-surface");
     const columnsCard = Array.from(summaryCards).find((card) => card.textContent?.includes("Columns"));
     expect(columnsCard).not.toBeNull();
     expect(columnsCard!.textContent).toContain("3");

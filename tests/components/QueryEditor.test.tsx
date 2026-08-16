@@ -429,8 +429,8 @@ describe("QueryEditor", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
     await waitFor(() => {
       const linesButton = queryByText("Lines")!.closest("button");
-      // Default state should have line numbers enabled (text-zinc-300 class)
-      expect(linesButton?.className).toContain("text-zinc-300");
+      // Default state should have line numbers enabled (text-fg-secondary token)
+      expect(linesButton?.className).toContain("text-fg-secondary");
     });
   });
 
@@ -439,8 +439,8 @@ describe("QueryEditor", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
     await waitFor(() => {
       const linesButton = queryByText("Lines")!.closest("button");
-      // Should read false from localStorage and show disabled state (text-zinc-500)
-      expect(linesButton?.className).toContain("text-zinc-500");
+      // Should read false from localStorage and show disabled state (text-fg-muted)
+      expect(linesButton?.className).toContain("text-fg-muted");
     });
   });
 
@@ -483,8 +483,8 @@ describe("QueryEditor", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
     await waitFor(() => {
       const linesButton = queryByText("Lines")!.closest("button");
-      // Enabled state should have text-zinc-300
-      expect(linesButton?.className).toContain("text-zinc-300");
+      // Enabled state should have text-fg-secondary
+      expect(linesButton?.className).toContain("text-fg-secondary");
     });
   });
 
@@ -493,8 +493,8 @@ describe("QueryEditor", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
     await waitFor(() => {
       const linesButton = queryByText("Lines")!.closest("button");
-      // Disabled state should have text-zinc-500
-      expect(linesButton?.className).toContain("text-zinc-500");
+      // Disabled state should have text-fg-muted
+      expect(linesButton?.className).toContain("text-fg-muted");
     });
   });
 

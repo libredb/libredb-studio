@@ -54,7 +54,7 @@ export function StudioTabBar({
     <div
       role="tablist"
       aria-label="Editor tabs"
-      className="hidden md:flex h-10 bg-[#0d0d0d] border-b border-white/5 items-center px-2 gap-1 overflow-x-auto no-scrollbar"
+      className="hidden md:flex h-10 bg-raised border-b border-hairline items-center px-2 gap-1 overflow-x-auto no-scrollbar"
     >
       {tabs.map((tab, index) => (
         // Non-semantic wrapper: role="tab" lives on the name button below so
@@ -66,8 +66,8 @@ export function StudioTabBar({
           className={cn(
             "h-8 flex items-center px-3 gap-2 rounded-t-md transition-all cursor-pointer min-w-[120px] max-w-[200px] group relative border-t-2",
             activeTabId === tab.id
-              ? "bg-[#141414] text-zinc-100 border-blue-500"
-              : "text-zinc-500 hover:bg-white/5 border-transparent",
+              ? "bg-overlay text-fg border-blue-500"
+              : "text-fg-muted hover:bg-fill border-transparent",
           )}
         >
           {editingTabId === tab.id ? (
@@ -102,7 +102,7 @@ export function StudioTabBar({
                   }, 0);
                 }}
                 onClick={(e) => e.stopPropagation()}
-                className="text-xs font-medium bg-transparent border-b border-blue-500 outline-none w-full text-zinc-100"
+                className="text-xs font-medium bg-transparent border-b border-blue-500 outline-none w-full text-fg"
               />
             </>
           ) : (
@@ -132,7 +132,7 @@ export function StudioTabBar({
             <button
               type="button"
               aria-label={`Close ${tab.name}`}
-              className="ml-auto opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-white shrink-0 cursor-pointer"
+              className="ml-auto opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-fg-bright shrink-0 cursor-pointer"
               onClick={(e) => {
                 // Closing removes this button from the DOM; without an explicit
                 // handoff, keyboard focus falls back to the document body.
@@ -151,7 +151,7 @@ export function StudioTabBar({
       <button
         type="button"
         aria-label="New tab"
-        className="text-zinc-500 cursor-pointer hover:text-white mx-2"
+        className="text-fg-muted cursor-pointer hover:text-fg-bright mx-2"
         onClick={onAddTab}
       >
         <Plus strokeWidth={1.5} className="w-3.5 h-3.5" />

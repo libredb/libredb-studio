@@ -57,7 +57,7 @@ export function RowDetailSheet({
       if (maskingActive && pattern && value != null && value !== undefined && !revealedFields.has(field)) {
         return {
           text: maskValueByPattern(value, pattern),
-          className: "text-zinc-500 italic",
+          className: "text-fg-muted italic",
           preserveWhitespace: false,
           isMasked: true,
         };
@@ -93,10 +93,10 @@ export function RowDetailSheet({
 
   return (
     <Sheet open={isOpen} onOpenChange={onClose}>
-      <SheetContent side="bottom" className="h-[85vh] bg-[#0a0a0a] border-t border-white/10 rounded-t-3xl">
-        <SheetHeader className="pb-4 border-b border-white/5">
+      <SheetContent side="bottom" className="h-[85vh] bg-surface border-t border-hairline-strong rounded-t-3xl">
+        <SheetHeader className="pb-4 border-b border-hairline">
           <div className="flex items-center justify-between">
-            <SheetTitle className="text-zinc-100 flex items-center gap-2">
+            <SheetTitle className="text-fg flex items-center gap-2">
               <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
                 <FileJson strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
               </div>
@@ -105,7 +105,7 @@ export function RowDetailSheet({
             <Button
               variant="outline"
               size="sm"
-              className="h-8 text-xs border-white/10 hover:bg-white/5"
+              className="h-8 text-xs border-hairline-strong hover:bg-fill"
               onClick={copyAllAsJson}
             >
               {copiedField === "__all__" && (
@@ -129,10 +129,10 @@ export function RowDetailSheet({
               const isLongValue = text.length > 50;
 
               return (
-                <div key={field} className="group p-3 rounded-lg hover:bg-white/5 transition-colors">
+                <div key={field} className="group p-3 rounded-lg hover:bg-fill transition-colors">
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs text-zinc-500 mb-1 font-mono flex items-center gap-1">
+                      <p className="text-xs text-fg-muted mb-1 font-mono flex items-center gap-1">
                         {field}
                         {isMasked && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 text-purple-400" />}
                       </p>
@@ -166,7 +166,7 @@ export function RowDetailSheet({
                         onClick={() => copyValue(field, row[field])}
                       >
                         {copiedField === field && <Check strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-400" />}
-                        {copiedField !== field && <Copy strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-500" />}
+                        {copiedField !== field && <Copy strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-muted" />}
                       </Button>
                     </div>
                   </div>

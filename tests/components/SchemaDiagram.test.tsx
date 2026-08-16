@@ -156,7 +156,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { SchemaDiagram } from "@/components/SchemaDiagram";
-import { exportViewportImage, svgDataUrlToBlob } from "@/components/schema-diagram/export";
+import { EXPORT_BACKGROUND, exportViewportImage, svgDataUrlToBlob } from "@/components/schema-diagram/export";
 import { FkEdge } from "@/components/schema-diagram/FkEdge";
 import {
   createHighlightStore,
@@ -1060,7 +1060,7 @@ describe("SchemaDiagram", () => {
       const productsInner = productsNode.querySelector(".border-blue-500\\/60");
       expect(productsInner).toBeNull();
       // Products should have default border
-      const productsDefault = productsNode.querySelector(".border-white\\/10");
+      const productsDefault = productsNode.querySelector(".border-hairline-strong");
       expect(productsDefault).not.toBeNull();
     });
   });
@@ -1116,7 +1116,10 @@ describe("SchemaDiagram", () => {
       // root must be the viewport's PARENT while the fit-all transform lives
       // on the viewport child.
       expect(capturedEl.classList.contains("react-flow__viewport")).toBe(false);
-      expect(options.backgroundColor).toBe("#050505");
+      // The exported file carries no page behind it, so the capture paints its
+      // own ground — and it must be the ground of the theme the diagram was
+      // read in. No `dark` class on the document here, so this is light.
+      expect(options.backgroundColor).toBe("#f4f4f5");
       // Desired scale is 2 for sharp output; capPixelRatio clamps it against
       // browser canvas limits for huge diagrams (mocked bounds are small).
       expect(options.scale).toBe(2);
@@ -1174,6 +1177,43 @@ describe("SchemaDiagram", () => {
 
       spy.restore();
       URL.revokeObjectURL = originalRevokeObjectURL;
+    });
+
+    test("PNG export in dark mode captures on the dark ground", async () => {
+      // Pinned dark, a light-mode export came out as white table cards with
+      // dark text on a near-black field; pinned light, the dark mode would
+      // come out inverted the other way. Both grounds have to be reachable.
+      const spy = spyOnDownloads();
+      document.documentElement.classList.add("dark");
+
+      try {
+        const props = createDefaultProps();
+        const { container } = render(<SchemaDiagram {...props} />);
+        const view = within(container);
+
+        const pngButton = view.getByText("PNG").closest("button")!;
+        await act(async () => {
+          fireEvent.click(pngButton);
+          await new Promise((r) => setTimeout(r, 20));
+        });
+
+        const [, options] = mockSnapdom.mock.calls[0] as unknown as [HTMLElement, Record<string, unknown>];
+        expect(options.backgroundColor).toBe("#050505");
+      } finally {
+        document.documentElement.classList.remove("dark");
+        spy.restore();
+      }
+    });
+
+    test("SVG export injects the ground of the theme it was exported from", async () => {
+      // snapdom only applies backgroundColor when rasterizing, so for SVG the
+      // ground is a <rect> this code injects — a separate path that has to
+      // follow the theme too.
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>users</text></svg>';
+      const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+
+      expect(await svgDataUrlToBlob(dataUrl, EXPORT_BACKGROUND.light).text()).toContain('fill="#f4f4f5"');
+      expect(await svgDataUrlToBlob(dataUrl, EXPORT_BACKGROUND.dark).text()).toContain('fill="#050505"');
     });
 
     test("failed PNG export surfaces a destructive toast instead of failing silently", async () => {

@@ -45,7 +45,7 @@ export function ResultCard({
     <button
       type="button"
       onClick={onSelect}
-      className="w-full text-left bg-[#0d0d0d] border border-white/5 rounded-xl p-4 active:scale-[0.98] transition-all cursor-pointer hover:border-white/10 hover:bg-[#111]"
+      className="w-full text-left bg-raised border border-hairline rounded-xl p-4 active:scale-[0.98] transition-all cursor-pointer hover:border-hairline-strong hover:bg-overlay"
     >
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -56,15 +56,15 @@ export function ResultCard({
             <p
               className={cn(
                 "text-xs font-medium truncate",
-                maskingActive && sensitiveColumns?.has(primaryColumn) ? "text-zinc-500 italic" : "text-zinc-100",
+                maskingActive && sensitiveColumns?.has(primaryColumn) ? "text-fg-muted italic" : "text-fg",
               )}
             >
               {displayPrimary}
             </p>
-            {idValue != null && <p className="text-xs text-zinc-500 font-mono">#{String(idValue)}</p>}
+            {idValue != null && <p className="text-xs text-fg-muted font-mono">#{String(idValue)}</p>}
           </div>
         </div>
-        <ChevronRight strokeWidth={1.5} className="w-3.5 h-3.5 text-zinc-600" />
+        <ChevronRight strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-subtle" />
       </div>
 
       <div className="space-y-2">
@@ -72,11 +72,11 @@ export function ResultCard({
           const pattern = sensitiveColumns?.get(field);
           const isMasked = maskingActive && pattern && row[field] != null && row[field] !== undefined;
           const displayValue = isMasked ? maskValueByPattern(row[field], pattern) : formatCellValue(row[field]).display;
-          const className = isMasked ? "text-zinc-500 italic" : formatCellValue(row[field]).className;
+          const className = isMasked ? "text-fg-muted italic" : formatCellValue(row[field]).className;
 
           return (
             <div key={field} className="flex items-center justify-between text-xs">
-              <span className="text-zinc-500 truncate mr-2">
+              <span className="text-fg-muted truncate mr-2">
                 {field}
                 {isMasked && <Lock strokeWidth={1.5} className="w-2.5 h-2.5 inline ml-1 text-purple-400" />}
               </span>
@@ -85,7 +85,7 @@ export function ResultCard({
           );
         })}
         {fields.length > previewFields.length + 2 && (
-          <p className="text-xs text-zinc-600 text-center pt-1">
+          <p className="text-xs text-fg-subtle text-center pt-1">
             +{fields.length - previewFields.length - 2} more fields
           </p>
         )}

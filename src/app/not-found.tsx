@@ -2,11 +2,11 @@ import Link from "next/link";
 
 export default function NotFound() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-white">
+    <div className="flex min-h-screen items-center justify-center bg-surface text-fg">
       <div className="max-w-md text-center px-6">
-        <div className="text-6xl font-bold text-zinc-700 mb-4">404</div>
+        <div className="text-6xl font-bold text-fg-faint mb-4">404</div>
         <h1 className="text-xl font-semibold mb-2">Page Not Found</h1>
-        <p className="text-zinc-400 mb-6 text-sm">The page you are looking for does not exist or has been moved.</p>
+        <p className="text-fg-tertiary mb-6 text-sm">The page you are looking for does not exist or has been moved.</p>
         <div className="flex gap-3 justify-center">
           <Link
             href="/"
@@ -16,7 +16,7 @@ export default function NotFound() {
           </Link>
           <Link
             href="/login"
-            className="px-5 py-2.5 border border-zinc-700 hover:border-zinc-500 text-zinc-300 rounded-lg text-sm font-medium transition-colors"
+            className="px-5 py-2.5 border border-edge hover:border-edge-hover text-fg-secondary rounded-lg text-sm font-medium transition-colors"
           >
             Sign In
           </Link>
