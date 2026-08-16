@@ -668,6 +668,11 @@ export function useQueryExecution({
    * The Cancel button belongs to a tab, so cancelling has to name the tab too;
    * with a single hook-wide controller it stopped whichever run started last,
    * which is not necessarily the one the user is looking at.
+   *
+   * NEVER hand this to an `onClick` directly. React passes the MouseEvent into
+   * the first slot, `tabId` reads it as a tab that holds no run, and the button
+   * silently cancels nothing — the type checker permits it, because an optional
+   * parameter still satisfies `() => void`. Wrap it: `() => cancelQuery()`.
    */
   const cancelQuery = useCallback(
     async (tabId?: string) => {

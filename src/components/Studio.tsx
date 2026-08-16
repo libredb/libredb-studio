@@ -467,7 +467,7 @@ export default function Studio() {
               onSaveQuery={() => setIsSaveQueryModalOpen(true)}
               onClearQuery={() => tabMgr.updateCurrentTab({ query: "" })}
               onExecuteQuery={() => queryExec.executeQuery()}
-              onCancelQuery={queryExec.cancelQuery}
+              onCancelQuery={() => queryExec.cancelQuery()}
               onBeginTransaction={() => txn.handleTransaction("begin")}
               onCommitTransaction={() => txn.handleTransaction("commit")}
               onRollbackTransaction={() => txn.handleTransaction("rollback")}
@@ -585,7 +585,7 @@ export default function Studio() {
                           editingEnabled={editingEnabled}
                           onSaveQuery={() => setIsSaveQueryModalOpen(true)}
                           onExecuteQuery={() => queryExec.executeQuery()}
-                          onCancelQuery={queryExec.cancelQuery}
+                          onCancelQuery={() => queryExec.cancelQuery()}
                           onBeginTransaction={() => txn.handleTransaction("begin")}
                           onCommitTransaction={() => txn.handleTransaction("commit")}
                           onRollbackTransaction={() => txn.handleTransaction("rollback")}

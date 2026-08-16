@@ -1326,6 +1326,30 @@ describe("Studio", () => {
     expect(mockCancelQuery).toHaveBeenCalled();
   });
 
+  /*
+   * Both cancel handlers are wired straight to a button's `onClick`, and React
+   * hands a click handler its MouseEvent as the first argument. `cancelQuery`
+   * reads that first slot as a tab id, and an event object is truthy, so it
+   * names a tab that holds no run: the fetch is never aborted, `/api/db/cancel`
+   * is never sent, and the button reports nothing. TypeScript cannot catch it —
+   * an optional parameter still satisfies `() => void`.
+   *
+   * So what these call sites owe is ARITY, not merely delegation. Calling the
+   * captured prop with no arguments — as the delegation tests above do — passes
+   * either way; the argument has to be supplied here for the assertion to mean
+   * anything.
+   */
+  test("cancel handlers forward no arguments to cancelQuery", () => {
+    render(<Studio />);
+    const clickEvent = { type: "click", preventDefault: () => {} };
+
+    act(() => (capturedQueryToolbarProps.onCancelQuery as (e: unknown) => void)(clickEvent));
+    expect(mockCancelQuery.mock.calls.at(-1)).toEqual([]);
+
+    act(() => (capturedMobileHeaderProps.onCancelQuery as (e: unknown) => void)(clickEvent));
+    expect(mockCancelQuery.mock.calls.at(-1)).toEqual([]);
+  });
+
   test("QueryToolbar transaction callbacks delegate to handleTransaction", () => {
     render(<Studio />);
     act(() => (capturedQueryToolbarProps.onBeginTransaction as () => void)());
