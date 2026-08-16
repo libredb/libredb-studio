@@ -438,8 +438,16 @@ function HeroStatusBanner({
         <div className="absolute bottom-0 right-1/4 w-48 h-48 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative flex flex-col md:flex-row gap-6 items-center">
-          {/* Left: Radial Health Gauge */}
-          <div className="relative flex-shrink-0">
+          {/*
+            Left: Radial Health Gauge.
+
+            `pb-4` is the strip the LIVE badge sits in. The gauge box is 160px and
+            the ring's outer edge lands at y=152 (outerRadius 90% of an 80px
+            radius), so a badge pinned inside the box overlapped the ring and read
+            as clipped. The padding gives it somewhere to be that is below the
+            ring without a negative offset the card's `overflow-hidden` could cut.
+          */}
+          <div className="relative flex-shrink-0 pb-4">
             <div className="w-[160px] h-[160px]">
               <ResponsiveContainer width="100%" height="100%">
                 <RadialBarChart
@@ -454,15 +462,16 @@ function HeroStatusBanner({
                 </RadialBarChart>
               </ResponsiveContainer>
             </div>
-            {/* Center overlay */}
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
+            {/* Center overlay — pinned to the CHART box, not the padded wrapper,
+                so the badge's strip does not pull the reading off centre. */}
+            <div className="absolute inset-x-0 top-0 h-[160px] flex flex-col items-center justify-center">
               <span className="text-3xl font-bold tabular-nums" style={{ color: gaugeColor }}>
                 {animatedScore}%
               </span>
               <span className="text-xs text-fg-muted uppercase tracking-wider">Health</span>
             </div>
-            {/* LIVE badge */}
-            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
+            {/* LIVE badge — in the padding below the ring, clear of the stroke. */}
+            <div className="absolute bottom-0 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
               <motion.div
                 className="w-2 h-2 rounded-full bg-emerald-500"
                 animate={{ scale: [1, 1.05, 1], opacity: [0.7, 1, 0.7] }}
