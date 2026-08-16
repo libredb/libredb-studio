@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, afterEach, beforeEach } from "bun:test";
+import { describe, test, expect, mock, afterEach } from "bun:test";
 import { AuthConfigError } from "@/lib/auth-errors";
 
 // auth.ts imports `cookies` from next/headers at module load; stub it so the
@@ -11,32 +11,34 @@ mock.module("next/headers", () => ({
   headers: async () => ({ get: () => null }),
 }));
 
-const { signJWT, resetJwtSecretCache } = await import("@/lib/auth");
+const { signJWT } = await import("@/lib/auth");
 
-// NOTE ON ORDERING: getJwtSecret() memoizes the first *successful* result in a module-level
-// cache. The throwing cases below never cache, so they are safe in any order — but the
-// dev-fallback success case must run LAST, otherwise its cached key would mask the throws.
-// The cache is cleared before each case rather than assumed empty: `tests/run-core.sh` gives
-// this file its own process, but `bun run test` does not, and under that command an earlier
-// file's successful sign left a key here that answered before the guard could throw.
+// ORDER-INDEPENDENT BY CONSTRUCTION: the dev-fallback success case runs FIRST, so a
+// successful secret read is always behind us by the time the guards are exercised.
+// signJWT re-reads JWT_SECRET on every call, so there is nothing to carry over. If a
+// module-level memo is ever reintroduced in auth.ts, the two throwing cases below fail
+// immediately - here, and under `bun run test`, where every file shares one process and
+// any earlier signature would otherwise answer before the guard could throw.
 describe("auth JWT_SECRET config guard", () => {
   const origSecret = process.env.JWT_SECRET;
   const origNodeEnv = process.env.NODE_ENV;
 
-  beforeEach(() => {
-    resetJwtSecretCache();
-  });
-
   afterEach(() => {
     setEnv("JWT_SECRET", origSecret);
     setEnv("NODE_ENV", origNodeEnv);
-    resetJwtSecretCache();
   });
 
   function setEnv(key: string, value: string | undefined): void {
     if (value === undefined) delete (process.env as Record<string, string>)[key];
     else (process.env as Record<string, string>)[key] = value;
   }
+
+  test("uses the dev fallback (no throw) when JWT_SECRET is missing outside production", async () => {
+    delete (process.env as Record<string, string>).JWT_SECRET;
+    (process.env as Record<string, string>).NODE_ENV = "development";
+
+    await expect(signJWT({ role: "admin", username: "admin" })).resolves.toBeString();
+  });
 
   test("throws AuthConfigError when JWT_SECRET is missing in production", async () => {
     delete (process.env as Record<string, string>).JWT_SECRET;
@@ -52,11 +54,14 @@ describe("auth JWT_SECRET config guard", () => {
     await expect(signJWT({ role: "admin", username: "admin" })).rejects.toThrow(AuthConfigError);
   });
 
-  // Must run last — this is the only case that populates the memoized cache.
-  test("uses the dev fallback (no throw) when JWT_SECRET is missing outside production", async () => {
-    delete (process.env as Record<string, string>).JWT_SECRET;
-    (process.env as Record<string, string>).NODE_ENV = "development";
+  test("signs with the current JWT_SECRET after a rotation, without a restart", async () => {
+    (process.env as Record<string, string>).JWT_SECRET = "a".repeat(32);
+    (process.env as Record<string, string>).NODE_ENV = "production";
+    const before = await signJWT({ role: "admin", username: "admin" });
 
-    await expect(signJWT({ role: "admin", username: "admin" })).resolves.toBeString();
+    (process.env as Record<string, string>).JWT_SECRET = "b".repeat(32);
+    const after = await signJWT({ role: "admin", username: "admin" });
+
+    expect(after.split(".")[2]).not.toBe(before.split(".")[2]);
   });
 });
