@@ -97,6 +97,33 @@ export type AgentRunWorkflowType =
 export const DEFAULT_AGENT_WORKFLOW_TYPE: AgentRunWorkflowType = "investigation";
 
 /**
+ * WHERE a run's workflow came from: the server classified the objective into it, or
+ * a person picked it.
+ *
+ * Not a second way to say what the workflow IS — nothing downstream branches on this,
+ * and `selectAgentTools` never sees it. It exists because the surface owes the user a
+ * different sentence in each case. A workflow the user chose needs no explanation; a
+ * workflow inferred from their objective needs both the claim ("opened as Optimize")
+ * and the way out of it ("change"), and that affordance has to survive a page reload,
+ * which is only possible if the provenance is on the run rather than in the rail's
+ * memory of the request it sent.
+ */
+export type AgentRunWorkflowSource = "inferred" | "chosen";
+
+/**
+ * Where a workflow came from when nothing said, and — like `DEFAULT_AGENT_WORKFLOW_TYPE`
+ * — a READING of history rather than a fallback.
+ *
+ * A header written before this field folds to `"chosen"` because there was no
+ * classifier then: the client sent an explicit `workflowType` on every open request,
+ * so those runs genuinely did carry a workflow somebody picked. Folding them to
+ * `"inferred"` would offer their readers a "change" affordance against a
+ * classification that never ran, and would credit a decision to a model that made
+ * none.
+ */
+export const DEFAULT_AGENT_WORKFLOW_SOURCE: AgentRunWorkflowSource = "chosen";
+
+/**
  * Which workflows can hand a user an answer — and therefore which ones auto-execute
  * is a meaningful setting for.
  *
@@ -615,6 +642,19 @@ export interface AgentRunRecord {
    * value, and no reader has to know which generation of writer produced its run.
    */
   readonly workflowType: AgentRunWorkflowType;
+  /**
+   * Whether the workflow above was inferred from the objective or picked by a person.
+   *
+   * On the record for the reason `mode` and `workflowType` are — a reader that
+   * rehydrates after a reload must see what the run was opened with — though the
+   * consequence is narrower: nothing the run DOES depends on it, only what the
+   * surface says about it.
+   *
+   * Required here and optional on the ledger header, the same compatibility story the
+   * two fields above have. A header written before the field folds to `"chosen"`;
+   * `DEFAULT_AGENT_WORKFLOW_SOURCE` carries the reasoning.
+   */
+  readonly workflowSource: AgentRunWorkflowSource;
   /**
    * Whether this run may hand its answer's statement to the editor to be RUN there,
    * subject to the gate in `auto-execute.ts`.

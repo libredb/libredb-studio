@@ -5,7 +5,7 @@ import { isAgentModelCapability } from "@/lib/agent/capability-labels";
 // Type-only, so nothing of the probe — or of the AI SDK it runs — reaches this bundle.
 import type { AgentModelCapability } from "@/lib/agent/capability-probe";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
-import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
+import type { AgentRunMode, AgentRunWorkflowSource, AgentRunWorkflowType } from "@/lib/agent/types";
 import { foldLedgerEntries, parseLedgerLine, type AgentRunTimeline } from "./timeline";
 
 /**
@@ -37,6 +37,17 @@ export interface AgentRunStartInput {
    * request rather than a setting — nothing the browser sends later can change it.
    */
   readonly workflowType?: AgentRunWorkflowType;
+  /**
+   * HOW that workflow was decided — the server read it out of the objective, or a
+   * person named it. Optional here as it is in the route, where absent means the
+   * caller named it.
+   *
+   * It changes nothing about what the run DOES; `selectAgentTools` never sees it. It
+   * is sent because the surface owes the user a different sentence in each case, and
+   * because that sentence has to survive a reload, which only a field on the run
+   * record can do.
+   */
+  readonly workflowSource?: AgentRunWorkflowSource;
   /**
    * Whether the run may also run its answer in the caller's editor. A request, like
    * the two above: the server PERSISTS it on the run record, and nothing sent later

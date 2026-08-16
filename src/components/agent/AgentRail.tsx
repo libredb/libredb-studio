@@ -1,7 +1,17 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Bot, Loader2, PencilLine, Play, Square, TableProperties, TriangleAlert } from "lucide-react";
+import {
+  Bot,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  PencilLine,
+  Play,
+  Square,
+  TableProperties,
+  TriangleAlert,
+} from "lucide-react";
 import { CopyButton } from "@/components/copy-button";
 import { renderProse } from "@/components/rich-text";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -16,11 +26,19 @@ import {
 } from "@/lib/agent/execution-policy";
 import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
+  DEFAULT_AGENT_WORKFLOW_TYPE,
   type AgentChartSpec,
   type AgentRunMode,
   type AgentRunStatus,
+  type AgentRunWorkflowSource,
   type AgentRunWorkflowType,
 } from "@/lib/agent/types";
+/*
+  Type-only, and deliberately so: `workflow-classifier.ts` imports the AI SDK and the
+  model adapter, so a value import would pull the server's model stack into this
+  bundle. The same rule `use-agent-run.ts` follows for the capability probe.
+*/
+import type { AgentWorkflowClassification } from "@/lib/agent/workflow-classifier";
 import type { DatabaseType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
@@ -148,6 +166,56 @@ const WORKFLOW_LABELS: Readonly<Record<AgentRunWorkflowType, string>> = {
   operations: "Operate",
   "data-analysis": "Analyze",
 };
+
+/**
+ * What the user selected on the workflow axis: one of the five, or the server's
+ * reading of the objective they wrote.
+ *
+ * `"automatic"` is the DEFAULT, and it is not a sixth workflow — no run ever opens for
+ * it. It is the absence of a decision, resolved into one of the five by
+ * `POST /api/agent/classify` at the moment Start is pressed, which is the earliest
+ * moment the objective exists to read.
+ */
+type AgentWorkflowChoice = AgentRunWorkflowType | "automatic";
+
+/**
+ * How long this browser waits for `POST /api/agent/classify` before opening the run
+ * without a classification.
+ *
+ * Stated here rather than imported from `workflow-classifier.ts`, which is a server
+ * module: importing it would pull the AI SDK into this bundle, and the two numbers are
+ * bounds on different things anyway — that one bounds a model call, this one bounds a
+ * request and its response.
+ *
+ * Deliberately longer than the server's own ceiling (8 seconds, and stated in that
+ * module) so it never preempts it: a classification the server is still within its
+ * bound to produce must not be thrown away by the client. What this catches is the case
+ * the server's bound cannot reach at all — a response that never arrives, from a proxy
+ * holding the connection, a dropped socket, or a server restarted mid-request. Without
+ * it the rail would sit on "Reading your objective" indefinitely with Start disabled.
+ */
+const CLASSIFY_REQUEST_TIMEOUT_MS = 15_000;
+
+/** Whether a value the classify route returned is a workflow this build knows. */
+const isWorkflowType = (value: unknown): value is AgentRunWorkflowType =>
+  typeof value === "string" && Object.hasOwn(WORKFLOW_LABELS, value);
+
+/**
+ * The terms of the auto-execute consent, as ONE sentence-run rather than as JSX prose:
+ * the figures are interpolated and a formatter is free to reflow JSX text around them,
+ * which is how "500-row limit" becomes "500 -row limit" without anyone touching the
+ * copy. This is the sentence a user consents to, so it is written and rendered as
+ * written.
+ *
+ * It takes the workflow rather than reading a selection, because there is no longer a
+ * selection to read at the moment it is shown: the consent step is reached with a
+ * workflow already decided — by the classifier or by the user under Advanced — and the
+ * bounds it names are that workflow's own.
+ */
+function autoExecuteTerms(workflowType: AgentRunWorkflowType): string {
+  const budget = AGENT_WORKFLOW_BUDGETS[workflowType];
+  return `The run always produces its answer on its own read-only path, bounded to ${budget.policy.budgets.maxResultRows} rows and ${budget.policy.budgets.statementTimeoutMs / 1000} seconds. Tick this and it will also put that statement in your editor and run it there — on the connection the run was opened on, at the editor's ${AGENT_HANDOVER_BUDGET.maxResultRows}-row limit and with no time limit. It is the same database-enforced read-only session either way, so writes and DDL are refused by the engine rather than by reading the statement. Statements whose plan reads as expensive, or which the run measured as slow, are put in the editor without being run.`;
+}
 
 /** A run that is over cannot be asked for anything, so nothing is offered for it. */
 const LIVE_STATUSES: ReadonlySet<AgentRunStatus> = new Set<AgentRunStatus>(["queued", "running"]);
@@ -525,15 +593,56 @@ export function AgentRail({
   prefill = null,
 }: AgentRailProps) {
   const [mode, setMode] = useState<AgentRunMode>("planning");
-  const [workflowType, setWorkflowType] = useState<AgentRunWorkflowType>("investigation");
+  /**
+   * The workflow axis, which is now a choice the user need not make: Automatic until
+   * they say otherwise, and the five are one disclosure away.
+   */
+  const [workflowChoice, setWorkflowChoice] = useState<AgentWorkflowChoice>("automatic");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [objective, setObjective] = useState("");
   /**
-   * Whether the run may also run its answer in the editor. Sent at start and never
-   * afterwards: the server decides it from the request that OPENS the run and no
-   * later request may widen it, so a control that moved mid-run would be offering a
-   * change nothing would honour.
+   * The classify request is in flight. Its own flag rather than `run.isBusy`: no run
+   * exists yet, and the hook reports on runs.
    */
+  const [classifying, setClassifying] = useState(false);
+  /**
+   * A start that is decided but not made, waiting on the one consent this surface asks
+   * for. Null in every other state, so the consent step exists exactly while a start is
+   * held.
+   *
+   * Consent is asked BEFORE the run opens rather than after, which is what keeps
+   * `src/lib/agent/types.ts`'s invariant intact: every widening decision is made by the
+   * request that opens the run, and no later request may widen it.
+   */
+  const [pendingStart, setPendingStart] = useState<{
+    readonly workflowType: AgentRunWorkflowType;
+    readonly source: AgentRunWorkflowSource;
+    readonly outcome: AgentWorkflowClassification["outcome"];
+    readonly objective: string;
+    /**
+     * Whether opening this run has to STOP one first. Carried on the held start rather
+     * than done at the click that decided the workflow: a start held at the consent
+     * step is one the user can still abandon, and cancelling before they answered
+     * would destroy the open run for a replacement that is never opened.
+     */
+    readonly replacesOpenRun: boolean;
+  } | null>(null);
+  /** The consent step's own tick, reset every time that step is entered. */
   const [autoExecute, setAutoExecute] = useState(false);
+  /**
+   * Whether the classification this rail made for the run it is following succeeded.
+   *
+   * Only the WORDING depends on this — "read from your objective" against "could not be
+   * classified" — and only this rail can know it: the outcome describes the classifier
+   * call, not the run, and the run record is identical either way. Whether the sentence
+   * is owed at all is a fact about the run and is read off the run's own header
+   * (`run.timeline.workflowSource`), so a rail that did not make the reading still says
+   * the workflow was inferred; it simply cannot say the reading failed, and states the
+   * provenance the record does carry.
+   */
+  const [inferredOutcome, setInferredOutcome] = useState<AgentWorkflowClassification["outcome"]>("classified");
+  /** Whether the way out of an inferred workflow is currently unfolded. */
+  const [changeOpen, setChangeOpen] = useState(false);
   /** An ask that arrived while the user was typing, waiting for them to take it. */
   const [offeredObjective, setOfferedObjective] = useState<string | null>(null);
   const run = useAgentRun();
@@ -547,24 +656,17 @@ export function AgentRail({
     so the two halves of the meter cannot disagree; before any run exists both read
     the default the fold takes for a ledger with no header.
   */
-  const meterBudget = AGENT_WORKFLOW_BUDGETS[run.timeline.workflowType];
-
   /*
-    The ceilings a run STARTED NOW would carry, which is what the auto-execute copy
-    is about — the workflow the buttons show, not the one a finished run had. The
-    meter above reads the other one for the opposite reason, and the two are kept
-    apart here rather than shared.
+    Before any run exists there is no header to read, so the pre-start line states the
+    ceilings of the workflow the user NAMED — and under Automatic it states nothing at
+    all, because there is no such workflow yet. Any specific figure shown while the
+    workflow is still the classifier's to decide would be a claim this rail cannot
+    keep: a run it opens as `data-analysis` is bounded quite differently from the
+    investigation these figures default to.
   */
-  const selectedBudget = AGENT_WORKFLOW_BUDGETS[workflowType];
-
-  /*
-    The terms of the checkbox below, as ONE sentence-run rather than as JSX prose:
-    the figures are interpolated and a formatter is free to reflow JSX text around
-    them, which is how "500-row limit" becomes "500 -row limit" without anyone
-    touching the copy. This is the sentence a user consents to, so it is written and
-    rendered as written.
-  */
-  const autoExecuteTerms = `The run always produces its answer on its own read-only path, bounded to ${selectedBudget.policy.budgets.maxResultRows} rows and ${selectedBudget.policy.budgets.statementTimeoutMs / 1000} seconds. Tick this and it will also put that statement in your editor and run it there — on the connection the run was opened on, at the editor's ${AGENT_HANDOVER_BUDGET.maxResultRows}-row limit and with no time limit. It is the same database-enforced read-only session either way, so writes and DDL are refused by the engine rather than by reading the statement. Statements whose plan reads as expensive, or which the run measured as slow, are put in the editor without being run.`;
+  const preStartWorkflow = run.runId === null && workflowChoice !== "automatic" ? workflowChoice : null;
+  const meterBudget = AGENT_WORKFLOW_BUDGETS[preStartWorkflow ?? run.timeline.workflowType];
+  const showBudgetLimits = run.runId !== null || preStartWorkflow !== null;
 
   /*
     The sheet is a mobile presentation, and the breakpoint has to be read rather than
@@ -621,8 +723,12 @@ export function AgentRail({
     appliedPrefillId.current = prefill.id;
 
     // Applied either way: the workflow is a visible control holding nothing the user
-    // typed, and one click puts it back.
-    setWorkflowType(prefill.workflowType);
+    // typed, and one click puts it back. A shortcut names the workflow it means, so it
+    // is an explicit CHOICE — the run it starts is not classified — and the disclosure
+    // is unfolded with it, because a choice made on the user's behalf behind a closed
+    // panel is one they cannot see or undo.
+    setWorkflowChoice(prefill.workflowType);
+    setAdvancedOpen(true);
 
     /*
       An objective the user is typing is theirs. It is not overwritten — and it is not
@@ -652,11 +758,32 @@ export function AgentRail({
     if (isMobileViewport()) onSheetOpenChange?.(true);
   }, [prefill, objective, onSheetOpenChange]);
 
-  const canStart = connectionId !== null && objective.trim().length > 0 && !run.isBusy;
+  /**
+   * A start that has been asked for and has not opened a run yet: its classification is
+   * in flight, or the consent step is holding it.
+   *
+   * Both axes are frozen for exactly this window, and that is a correctness rule rather
+   * than a nicety. `handleStart` is asynchronous — it awaits the classification, which
+   * the server may spend seconds on — and everything it calls afterwards is the closure
+   * of the render the click happened in. A mode switched underneath it would therefore
+   * be discarded in silence: the open request would carry the mode that was pressed
+   * while the rail displayed the other one, opening a tool-carrying agent run under a
+   * rail showing Plan — the toolless mode, and a deliberate narrowing. The mirror case
+   * is worse still: the consent step, which by construction exists only in agent mode,
+   * would be raised over a rail in plan mode, which is the class of mismatch
+   * `AGENT_WORKFLOW_PRESENTS_ANSWER` was written to end and which shipped once already.
+   *
+   * Frozen rather than re-read, because the alternative is a start whose meaning
+   * changes after it was asked for. The window closes on its own, and Cancel leaves it
+   * immediately.
+   */
+  const startHeld = classifying || pendingStart !== null;
+
+  const canStart = connectionId !== null && objective.trim().length > 0 && !run.isBusy && !startHeld;
 
   /*
     Whether a hand-over is a thing this rail may promise at all — three conditions, and
-    the checkbox, the start request and the delivery below all read this one value.
+    the consent step, the start request and the delivery below all read this one value.
 
     Agent mode and a workflow that is offered `present_answer` are the server's own
     rule: a run with no such tool has nothing to hand over, and the route refuses the
@@ -670,7 +797,8 @@ export function AgentRail({
     cannot perform is not offered, which is the rule the stop control and the hydration
     affordances already follow.
   */
-  const canHandOver = mode === "agent" && AGENT_WORKFLOW_PRESENTS_ANSWER[workflowType] && onRunStatement !== undefined;
+  const canHandOver = (candidate: AgentRunWorkflowType): boolean =>
+    mode === "agent" && AGENT_WORKFLOW_PRESENTS_ANSWER[candidate] && onRunStatement !== undefined;
 
   /**
    * The connection this run was opened on, kept for as long as the rail follows it.
@@ -684,21 +812,198 @@ export function AgentRail({
    */
   const openedOn = useRef<{ readonly id: string; readonly name: string | null } | null>(null);
 
-  const handleStart = () => {
-    if (connectionId === null || !canStart) return;
+  /**
+   * The objective the OPEN run was opened with.
+   *
+   * Kept because the box is emptied the moment the server opens a run (below), and
+   * "change" has to re-ask the same question against another workflow. Reading the
+   * textarea then would re-ask an empty one, or worse, whatever the user has begun
+   * typing since.
+   */
+  const openedObjective = useRef("");
+
+  /*
+    Opening the run, once every decision it carries has been made.
+
+    Both axes are always sent. They are independent (#325): a planning run of a query
+    optimization is an ordinary thing to ask for, and sending the workflow only in
+    agent mode made the rail unable to express one. `workflowSource` goes with them
+    because the surface owes the user a different sentence in each case, and the run
+    record is the only place that survives a reload.
+
+    The hand-over setting is resolved through `canHandOver` one last time rather than
+    taken from the tick alone: the host's runner can move between the consent step and
+    this call, and `true` on a run that cannot present an answer is refused outright by
+    the route. The mode axis cannot move — it is frozen from the click that started this
+    sequence until the run opens or the user abandons it (see the mode buttons below) —
+    because this function is the closure of the render the click happened in, and a mode
+    switched underneath it would open a run in one mode while the rail showed the other.
+
+    A run being REPLACED is stopped here, at the moment its replacement is actually
+    being opened, and not at the click that chose the new workflow. That click may still
+    be abandoned at the consent step, and a cancellation fired there would end the open
+    run for a replacement that never arrives — with the objective box already emptied,
+    leaving the user nothing to re-ask with. `run.cancel()` is the same ask the Stop
+    control makes, awaited so the DELETE is sent before `start` aborts the controller
+    that carries it.
+  */
+  const beginRun = async (decided: {
+    readonly workflowType: AgentRunWorkflowType;
+    readonly source: AgentRunWorkflowSource;
+    readonly outcome: AgentWorkflowClassification["outcome"];
+    readonly objective: string;
+    readonly autoExecute: boolean;
+    readonly replacesOpenRun: boolean;
+  }): Promise<void> => {
+    if (connectionId === null) return;
+    if (decided.replacesOpenRun) await run.cancel();
     openedOn.current = { id: connectionId, name: connectionName };
-    // Both axes, always. They are independent (#325): a planning run of a query
-    // optimization is an ordinary thing to ask for, and sending the workflow only in
-    // agent mode made the rail unable to express one.
-    // The setting is sent only where it can be honoured, and the checkbox's own
-    // state is not the authority: a user who ticks it on Analyze and then switches to
-    // Investigate would otherwise send `true` on a run that cannot present an answer,
-    // which the route now refuses outright — a rejected start rather than the silent
-    // no-op the hidden control implies. The same applies to a host that loses its
-    // runner between the tick and the start. Resolved from the same value the control
-    // is rendered from, so what is offered and what is sent are one decision.
-    const handsOver = canHandOver && autoExecute;
-    void run.start({ mode, workflowType, autoExecute: handsOver, objective: objective.trim(), connectionId });
+    openedObjective.current = decided.objective;
+    /*
+      What has already been delivered is about the run that is ending here, and the
+      two effects below key that on the run id changing. They may not SEE it change:
+      a server is free to name the new run what it named the last one, and a start is
+      no longer made synchronously inside the click — the classification comes first,
+      so `start`'s own `setRunId(null)` may be batched away with the id that follows
+      it. Cleared here, where a new run is known to be beginning, rather than inferred
+      from a render that may never happen. Both effects still reconcile their own
+      marker, so this is a reset and not a second source of truth.
+    */
+    shownAnswerRunId.current = null;
+    shownAnswers.current.clear();
+    handedOverRunId.current = null;
+    handedOver.current.clear();
+    setChangeOpen(false);
+    setInferredOutcome(decided.outcome);
+    void run.start({
+      mode,
+      workflowType: decided.workflowType,
+      workflowSource: decided.source,
+      autoExecute: canHandOver(decided.workflowType) && decided.autoExecute,
+      objective: decided.objective,
+      connectionId,
+    });
+  };
+
+  /**
+   * The server's reading of the objective, or the fallback it is designed to reach.
+   *
+   * Every failure lands on the same answer — a refused request, a body that is not
+   * JSON, a workflow id this build does not know, and the route's own `unclassified`
+   * outcome all resolve to an investigation marked unclassified. That is the
+   * classifier's own contract (`workflow-classifier.ts`: never throws, never blocks a
+   * run), held again here because the network between it and this component can fail
+   * in ways it cannot: a start that a transient model failure made impossible would be
+   * strictly worse than a run the user can see was not classified.
+   *
+   * Which is why this request carries a ceiling of its own. The server bounds the model
+   * call so that no model failure can block a start; a browser `fetch` has no default
+   * timeout at all, so without one here a response that is never delivered — a proxy
+   * holding the connection, a suspended socket, a server restarted mid-request — would
+   * leave Start disabled and this rail unable to open any run until the page is
+   * reloaded. That is the very failure the server's bound exists to prevent,
+   * reintroduced in front of the same button. An abort lands in the `catch` below, so
+   * it reaches the fallback every other failure reaches.
+   */
+  const classifyObjective = async (text: string): Promise<AgentWorkflowClassification> => {
+    try {
+      const res = await fetch("/api/agent/classify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ objective: text }),
+        signal: AbortSignal.timeout(CLASSIFY_REQUEST_TIMEOUT_MS),
+      });
+      const body = (await res.json()) as { workflowType?: unknown; outcome?: unknown };
+      if (res.ok && body.outcome === "classified" && isWorkflowType(body.workflowType)) {
+        return { workflowType: body.workflowType, outcome: "classified" };
+      }
+    } catch {
+      // Falls through to the same answer every other failure reaches.
+    }
+    return { workflowType: DEFAULT_AGENT_WORKFLOW_TYPE, outcome: "unclassified" };
+  };
+
+  /*
+    The one step between a decided workflow and an open run.
+
+    It exists for exactly one workflow and one mode, and `canHandOver` is what says so:
+    `data-analysis` is the only workflow offered `present_answer`, agent mode is the
+    only mode with tools at all, and a host with no runner cannot perform the hand-over
+    whatever the run decides. Everything else opens uninterrupted, because there is
+    nothing to consent TO — a checkbox offered where the tool is not is the mismatch
+    `AGENT_WORKFLOW_PRESENTS_ANSWER` was written to end, and it shipped once already.
+  */
+  const hold = (decided: {
+    readonly workflowType: AgentRunWorkflowType;
+    readonly source: AgentRunWorkflowSource;
+    readonly outcome: AgentWorkflowClassification["outcome"];
+    readonly objective: string;
+    readonly replacesOpenRun: boolean;
+  }): void => {
+    if (canHandOver(decided.workflowType)) {
+      setAutoExecute(false);
+      setPendingStart(decided);
+      return;
+    }
+    void beginRun({ ...decided, autoExecute: false });
+  };
+
+  /*
+    Start, as the small state machine the design asks for: idle -> classifying ->
+    consent? -> starting.
+
+    An explicit choice under Advanced SKIPS the classification entirely, and that is a
+    requirement rather than an optimisation: it spends no latency and no model tokens
+    on a decision that has already been made, and it means the user who knows exactly
+    what they want never depends on the least reliable component in the path.
+  */
+  const handleStart = async (): Promise<void> => {
+    if (connectionId === null || !canStart) return;
+    const asked = objective.trim();
+
+    if (workflowChoice !== "automatic") {
+      hold({
+        workflowType: workflowChoice,
+        source: "chosen",
+        outcome: "classified",
+        objective: asked,
+        replacesOpenRun: false,
+      });
+      return;
+    }
+
+    setClassifying(true);
+    const classification = await classifyObjective(asked);
+    setClassifying(false);
+    hold({ ...classification, source: "inferred", objective: asked, replacesOpenRun: false });
+  };
+
+  /*
+    The way out of a workflow the server chose (§5 of the design).
+
+    An open run's workflow cannot be edited — there is deliberately no parameter through
+    which a workflow could arrive twice — so this cancels the run and opens another one.
+    Both consequences are stated in the copy beside the control rather than discovered:
+    the cancellation is observed between turns, so it is not instant, and the run that
+    opens is a new run with a new id while the cancelled one stays in the ledger.
+
+    Stopping the open run is `beginRun`'s to do, not this function's, and the ordering
+    is the point: this click may still raise the consent step, and a user who abandons
+    it there must be left with the run they had. Cancelling here ended that run for a
+    replacement that was then never opened — and since the objective box is emptied the
+    moment a run opens, the question it was asking was gone too, leaving nothing to
+    start again with.
+  */
+  const handleChangeWorkflow = (next: AgentRunWorkflowType): void => {
+    setWorkflowChoice(next);
+    setChangeOpen(false);
+    hold({
+      workflowType: next,
+      source: "chosen",
+      outcome: "classified",
+      objective: openedObjective.current,
+      replacesOpenRun: true,
+    });
   };
 
   /*
@@ -1019,9 +1324,12 @@ export function AgentRail({
               data-testid={`agent-mode-${candidate}`}
               aria-label={`${MODE_LABELS[candidate]} mode`}
               aria-pressed={mode === candidate}
+              // Frozen while a start is held; see `startHeld` for why this is the axis
+              // that must not move under an asynchronous start.
+              disabled={startHeld}
               onClick={() => setMode(candidate)}
               className={cn(
-                "px-2 py-0.5 rounded text-xs font-normal transition-colors",
+                "px-2 py-0.5 rounded text-xs font-normal transition-colors disabled:opacity-40 disabled:hover:bg-transparent",
                 mode === candidate ? "bg-blue-500/15 text-blue-300" : "text-zinc-500 hover:bg-white/5",
               )}
             >
@@ -1029,33 +1337,6 @@ export function AgentRail({
             </button>
           ))}
         </div>
-      </div>
-
-      {/*
-        The second axis, in both modes. It was agent-only until review pointed out
-        that this made the rail unable to open a planning run of a query
-        optimization — a perfectly ordinary request, and one the epic's independent
-        axes exist to allow. Toollessness decides which TOOLS a run gets, not what
-        the run is about, and the server states the objective's framing in either
-        mode (`WORKFLOW_OBJECTIVES`).
-      */}
-      <div className="flex items-center gap-1 px-3 py-1.5 border-b border-white/5 shrink-0">
-        {(Object.keys(WORKFLOW_LABELS) as AgentRunWorkflowType[]).map((candidate) => (
-          <button
-            key={candidate}
-            type="button"
-            data-testid={`agent-workflow-${candidate}`}
-            aria-label={`${WORKFLOW_LABELS[candidate]} workflow`}
-            aria-pressed={workflowType === candidate}
-            onClick={() => setWorkflowType(candidate)}
-            className={cn(
-              "px-2 py-0.5 rounded text-xs font-normal transition-colors",
-              workflowType === candidate ? "bg-blue-500/15 text-blue-300" : "text-zinc-500 hover:bg-white/5",
-            )}
-          >
-            {WORKFLOW_LABELS[candidate]}
-          </button>
-        ))}
       </div>
 
       <div className="p-3 border-b border-white/5 shrink-0">
@@ -1100,74 +1381,80 @@ export function AgentRail({
         )}
 
         {/*
-          Auto-execute (§2.6). The copy is the control: "auto-mode" transfers no
-          responsibility because it names no bound, so this one names all three —
-          the bound the run keeps for its own read, the bound the editor keeps (500
-          rows), and the bound being given up (the statement timeout). It also says
-          what the run does INSTEAD when its gate declines, because a user who finds
-          the statement sitting unrun has to be able to read that as the feature
-          working rather than as the feature failing.
+          The second axis, folded away (§4 of the inference design).
 
-          Every figure is read from the same constants the enforcement reads — the
-          workflow's own policy for the run's side, `AGENT_HANDOVER_BUDGET` for the
-          replay's — so a ceiling changed in one place cannot leave a promise here
-          that nothing keeps.
+          It is offered in BOTH modes and all five are still here: toollessness decides
+          which TOOLS a run gets, not what the run is about, and the server frames the
+          objective by workflow in either mode (`WORKFLOW_OBJECTIVES`). What changed is
+          only who decides and when — the row used to sit ABOVE the objective, asking
+          the user to classify a question they had not written yet.
 
-          The sentence about writes was the #373 review's security finding and is now
-          a statement about the engine rather than about a text check: the replay is
-          served by `POST /api/agent/runs/[runId]/handover`, which runs it through
-          `queryReadOnly` under the same `readOnly: true` open the run itself used. It
-          used to reach the ordinary editor route, where a `SELECT` calling a VOLATILE
-          function that writes would have succeeded — so "writes and DDL are refused
-          either way" was not true of the half this checkbox buys.
+          A plain button with `aria-expanded` and `aria-controls` rather than the
+          `ui/collapsible` primitive: nothing in this app imports that file, the rail's
+          own toggles are all bare buttons, and the disclosure is one boolean. The
+          pattern is `VisualExplain`'s, which is this repo's existing answer for exactly
+          this shape.
         */}
-        {/*
-          Offered ONLY where the run could hand something over, and where this host
-          could carry the hand-over out — `canHandOver`, which is also what the start
-          request reads, so the control, the request and the prompt cannot disagree.
-          It used to render for all five workflows in both modes, which promised a
-          hand-over four of them have no tool to perform and had the server tell those
-          models to inspect the plan of an answer they could not present.
-        */}
-        {canHandOver && (
-          <div className="mt-2">
-            <label htmlFor="agent-auto-execute" className="flex items-start gap-2 cursor-pointer">
-              <input
-                id="agent-auto-execute"
-                data-testid="agent-auto-execute"
-                type="checkbox"
-                checked={autoExecute}
-                disabled={runOpen}
-                onChange={(e) => setAutoExecute(e.target.checked)}
-                className="mt-0.5 rounded border-white/20 bg-zinc-900/50 disabled:opacity-40"
-              />
-              <span data-testid="agent-auto-execute-label" className="text-xs text-zinc-300">
-                Also run the final answer in my editor
-              </span>
-            </label>
-            <p data-testid="agent-auto-execute-terms" className="mt-1 text-[0.625rem] text-zinc-500">
-              {autoExecuteTerms}
-            </p>
-            {/*
-            One more sentence where the engine changes what a long read costs, in the
-            words the budget meter already uses for the same fact: SQLite does not
-            preempt a statement over its timeout, so the editor's missing time limit
-            is a different promise there than it is on PostgreSQL.
-          */}
-            {connectionType === "sqlite" && (
-              <p data-testid="agent-auto-execute-sqlite" className="mt-1 text-[0.625rem] text-amber-400/70">
-                On SQLite a read is not interrupted when it runs long: it blocks other writers and this application
-                until it finishes.
-              </p>
+        <div className="mt-2">
+          <button
+            type="button"
+            data-testid="agent-advanced-toggle"
+            aria-expanded={advancedOpen}
+            aria-controls="agent-advanced"
+            onClick={() => setAdvancedOpen((open) => !open)}
+            className="flex items-center gap-1 px-1 py-0.5 -ml-1 rounded text-[0.625rem] text-zinc-500 hover:bg-white/5 hover:text-zinc-300 transition-colors"
+          >
+            {advancedOpen ? (
+              <ChevronDown strokeWidth={1.5} className="w-3 h-3" aria-hidden="true" />
+            ) : (
+              <ChevronRight strokeWidth={1.5} className="w-3 h-3" aria-hidden="true" />
             )}
-            {runOpen && (
-              <p data-testid="agent-auto-execute-frozen" className="mt-1 text-[0.625rem] text-zinc-600">
-                This is decided when the run is opened and stays what it was: a later request cannot widen a run the
-                server already holds.
+            Advanced
+            <span data-testid="agent-workflow-choice" className="text-zinc-400">
+              {workflowChoice === "automatic" ? "Automatic" : WORKFLOW_LABELS[workflowChoice]}
+            </span>
+          </button>
+          {advancedOpen && (
+            <div id="agent-advanced" className="mt-1">
+              <div className="flex flex-wrap items-center gap-1">
+                {/*
+                  Automatic is first and is not a sixth workflow: it is the absence of a
+                  choice, and the server reads the objective to resolve it. Choosing any
+                  of the other five skips that call entirely.
+                */}
+                {(["automatic", ...(Object.keys(WORKFLOW_LABELS) as AgentRunWorkflowType[])] as const).map(
+                  (candidate) => (
+                    <button
+                      key={candidate}
+                      type="button"
+                      data-testid={`agent-workflow-${candidate}`}
+                      aria-label={
+                        candidate === "automatic" ? "Automatic workflow" : `${WORKFLOW_LABELS[candidate]} workflow`
+                      }
+                      aria-pressed={workflowChoice === candidate}
+                      // Frozen with the mode axis, and for the same reason: a start
+                      // already asked for must not change meaning while it is held.
+                      disabled={startHeld}
+                      onClick={() => setWorkflowChoice(candidate)}
+                      className={cn(
+                        "px-2 py-0.5 rounded text-xs font-normal transition-colors disabled:opacity-40 disabled:hover:bg-transparent",
+                        workflowChoice === candidate
+                          ? "bg-blue-500/15 text-blue-300"
+                          : "text-zinc-500 hover:bg-white/5",
+                      )}
+                    >
+                      {candidate === "automatic" ? "Automatic" : WORKFLOW_LABELS[candidate]}
+                    </button>
+                  ),
+                )}
+              </div>
+              <p data-testid="agent-advanced-note" className="mt-1 text-[0.625rem] text-zinc-600">
+                Automatic reads your objective on the server and opens the run for the workflow it names. Naming one
+                yourself skips that reading entirely.
               </p>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
 
         {connectionId === null && (
           <p data-testid="agent-unresolvable-connection" className="mt-2 text-xs text-amber-400/80">
@@ -1187,6 +1474,171 @@ export function AgentRail({
           <p data-testid="agent-failure-reason" className="mt-2 text-[0.625rem] text-rose-300">
             {describeFailureReason(run.timeline.failureReason)}
           </p>
+        )}
+
+        {/*
+          The classification, while it is happening. It is one bounded model call in
+          front of a button the user just pressed, so the wait is said rather than left
+          as a button that did nothing.
+        */}
+        {classifying && (
+          <p data-testid="agent-classifying" className="mt-2 flex items-center gap-1 text-[0.625rem] text-zinc-500">
+            <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" aria-hidden="true" />
+            Reading your objective to choose a workflow.
+          </p>
+        )}
+
+        {/*
+          The consent step (§2.6, and §"Why the consent step is placed there").
+
+          It replaces the pre-start checkbox entirely. That checkbox rendered wherever
+          the workflow happened to be `data-analysis`, which is a state the user could
+          leave without the tick leaving with them — and, before #373, a state four
+          workflows could reach at all. Consent asked HERE cannot drift from the run it
+          is about: the workflow is already decided, and the very next thing that
+          happens is the request that opens the run with it.
+
+          It is still consent given at OPEN time, which is what `src/lib/agent/types.ts`
+          requires of every widening decision: no run exists yet.
+
+          The copy is the control. "Auto-mode" transfers no responsibility because it
+          names no bound, so this names all three — the bound the run keeps for its own
+          read, the bound the editor keeps, and the bound being given up — and says what
+          the run does INSTEAD when its gate declines, because a user who finds the
+          statement sitting unrun has to be able to read that as the feature working.
+          Every figure comes from the constants the enforcement reads.
+        */}
+        {pendingStart !== null && (
+          <div
+            data-testid="agent-consent"
+            className="mt-2 rounded border border-blue-400/30 bg-blue-500/5 p-2 space-y-1"
+          >
+            <p data-testid="agent-consent-workflow" className="text-xs text-zinc-300">
+              This run will open as {WORKFLOW_LABELS[pendingStart.workflowType]}, which answers with a result.
+            </p>
+            <label htmlFor="agent-auto-execute" className="flex items-start gap-2 cursor-pointer">
+              <input
+                id="agent-auto-execute"
+                data-testid="agent-auto-execute"
+                type="checkbox"
+                checked={autoExecute}
+                onChange={(e) => setAutoExecute(e.target.checked)}
+                className="mt-0.5 rounded border-white/20 bg-zinc-900/50"
+              />
+              <span data-testid="agent-auto-execute-label" className="text-xs text-zinc-300">
+                Also run the final answer in my editor
+              </span>
+            </label>
+            <p data-testid="agent-auto-execute-terms" className="text-[0.625rem] text-zinc-500">
+              {autoExecuteTerms(pendingStart.workflowType)}
+            </p>
+            {/*
+              One more sentence where the engine changes what a long read costs, in the
+              words the budget meter already uses for the same fact: SQLite does not
+              preempt a statement over its timeout, so the editor's missing time limit is
+              a different promise there than it is on PostgreSQL.
+            */}
+            {connectionType === "sqlite" && (
+              <p data-testid="agent-auto-execute-sqlite" className="text-[0.625rem] text-amber-400/70">
+                On SQLite a read is not interrupted when it runs long: it blocks other writers and this application
+                until it finishes.
+              </p>
+            )}
+            <p data-testid="agent-consent-frozen" className="text-[0.625rem] text-zinc-600">
+              This is decided by the request that opens the run and stays what it was: a later request cannot widen a
+              run the server already holds.
+            </p>
+            <div className="flex items-center gap-1 pt-0.5">
+              <button
+                type="button"
+                data-testid="agent-consent-open"
+                onClick={() => {
+                  setPendingStart(null);
+                  void beginRun({ ...pendingStart, autoExecute });
+                }}
+                className="px-2 py-1 rounded text-xs bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 transition-colors"
+              >
+                Open
+              </button>
+              {/* Cancel opens nothing: the objective stays in the box, and Start is live again. */}
+              <button
+                type="button"
+                data-testid="agent-consent-cancel"
+                onClick={() => setPendingStart(null)}
+                className="px-2 py-1 rounded text-xs text-zinc-400 hover:bg-white/5 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/*
+          What the run was opened AS, and the way out of it (§5 of the design).
+
+          Shown only for a workflow the SERVER read out of the objective, because only
+          that one is a claim the user did not make. An `unclassified` reading is said as
+          what it is rather than presented as a verdict: the run investigates because
+          nothing could be established, which is a different sentence from "this is an
+          investigation".
+
+          Both the claim and the label are read off the RUN — its header carries the
+          provenance (`workflowSource`) and the workflow it was actually opened for —
+          rather than off the request this rail sent. That is what makes the affordance
+          a fact about the run instead of a memory of a click: a rail that reloads, or a
+          second surface that joins the stream, folds the same two values and says the
+          same thing. Only the reading's outcome is this rail's own, because the record
+          does not carry it (`inferredOutcome`).
+        */}
+        {run.runId !== null && run.timeline.workflowSource === "inferred" && (
+          <div data-testid="agent-opened-as" className="mt-2 text-[0.625rem] text-zinc-500">
+            <p>
+              {inferredOutcome === "classified"
+                ? `Opened as ${WORKFLOW_LABELS[run.timeline.workflowType]}, read from your objective.`
+                : `Opened as ${WORKFLOW_LABELS[run.timeline.workflowType]}: your objective could not be classified, so the run investigates rather than being told what it is for.`}
+              {runOpen && (
+                <button
+                  type="button"
+                  data-testid="agent-opened-as-change"
+                  aria-expanded={changeOpen}
+                  aria-controls="agent-change-workflow"
+                  onClick={() => setChangeOpen((open) => !open)}
+                  className="ml-1 px-1 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-white/5 transition-colors"
+                >
+                  change
+                </button>
+              )}
+            </p>
+            {runOpen && changeOpen && (
+              <div id="agent-change-workflow" className="mt-1">
+                {/*
+                  Said before the click, not discovered after it. A run's workflow cannot
+                  be edited — there is no parameter through which one could arrive twice —
+                  so changing it is two acts, and both of their consequences are the
+                  user's to weigh.
+                */}
+                <p data-testid="agent-change-workflow-terms" className="text-zinc-500">
+                  Changing it stops this run and opens a new one. Stopping is observed between turns, so it is not
+                  instant: the run ends at its next checkpoint. The new run gets a new id, and this one stays in the
+                  ledger with everything it recorded.
+                </p>
+                <div className="mt-1 flex flex-wrap items-center gap-1">
+                  {(Object.keys(WORKFLOW_LABELS) as AgentRunWorkflowType[]).map((candidate) => (
+                    <button
+                      key={candidate}
+                      type="button"
+                      data-testid={`agent-change-workflow-${candidate}`}
+                      aria-label={`Stop this run and open a new ${WORKFLOW_LABELS[candidate]} run`}
+                      onClick={() => handleChangeWorkflow(candidate)}
+                      className="px-2 py-0.5 rounded text-xs font-normal text-zinc-500 hover:bg-white/5 transition-colors"
+                    >
+                      {WORKFLOW_LABELS[candidate]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
         <div className="mt-2 flex items-center justify-between gap-2">
@@ -1215,10 +1667,10 @@ export function AgentRail({
               type="button"
               data-testid="agent-start"
               disabled={!canStart}
-              onClick={handleStart}
+              onClick={() => void handleStart()}
               className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 disabled:opacity-40 disabled:hover:bg-blue-500/15 transition-colors"
             >
-              {run.isBusy ? (
+              {run.isBusy || classifying ? (
                 <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
               ) : (
                 <Play strokeWidth={1.5} className="w-3 h-3" />
@@ -1328,25 +1780,45 @@ export function AgentRail({
         gauges as exact.
       */}
       <div data-testid="agent-budget" className="px-3 py-2 border-b border-white/5 shrink-0 space-y-1.5">
-        {run.timeline.budget.map((gauge) => (
-          <div key={gauge.id} data-testid={`agent-budget-${gauge.id}`}>
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs text-zinc-500">{gauge.label}</span>
-              <span className="font-mono text-[0.625rem] text-zinc-400">{readGauge(gauge)}</span>
+        {/*
+          The gauges measure a run, so they wait for one. Before any run exists they
+          would read a full set of zeroes against the DEFAULT workflow's ceilings, which
+          under Automatic is a workflow nobody has chosen and the classifier may not
+          pick.
+        */}
+        {run.runId !== null &&
+          run.timeline.budget.map((gauge) => (
+            <div key={gauge.id} data-testid={`agent-budget-${gauge.id}`}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-zinc-500">{gauge.label}</span>
+                <span className="font-mono text-[0.625rem] text-zinc-400">{readGauge(gauge)}</span>
+              </div>
+              <div className="mt-1 h-0.5 rounded-full bg-white/5">
+                <div
+                  data-testid={`agent-budget-${gauge.id}-bar`}
+                  className="h-full rounded-full bg-blue-400/60"
+                  style={{ width: `${gaugeFraction(gauge)}%` }}
+                />
+              </div>
             </div>
-            <div className="mt-1 h-0.5 rounded-full bg-white/5">
-              <div
-                data-testid={`agent-budget-${gauge.id}-bar`}
-                className="h-full rounded-full bg-blue-400/60"
-                style={{ width: `${gaugeFraction(gauge)}%` }}
-              />
-            </div>
-          </div>
-        ))}
-        <p data-testid="agent-budget-limits" className="pt-0.5 text-[0.625rem] text-zinc-600">
-          Each statement gets {seconds(meterBudget.policy.budgets.statementTimeoutMs)} s, each drive{" "}
-          {(meterBudget.runDeadlineMs / 60_000).toFixed(1)} min and at most {meterBudget.maxModelTurns} model turns.
-        </p>
+          ))}
+        {/*
+          Withheld while the workflow is the classifier's to decide: these are per
+          workflow, and `data-analysis` and `investigation` are not close. A figure shown
+          before the workflow is known would be a claim this rail cannot keep, and the
+          user would read it as the bound their run will get.
+        */}
+        {showBudgetLimits ? (
+          <p data-testid="agent-budget-limits" className="pt-0.5 text-[0.625rem] text-zinc-600">
+            Each statement gets {seconds(meterBudget.policy.budgets.statementTimeoutMs)} s, each drive{" "}
+            {(meterBudget.runDeadlineMs / 60_000).toFixed(1)} min and at most {meterBudget.maxModelTurns} model turns.
+          </p>
+        ) : (
+          <p data-testid="agent-budget-unknown" className="pt-0.5 text-[0.625rem] text-zinc-600">
+            Every ceiling below is per workflow, and Automatic decides the workflow from your objective when the run
+            opens — so the figures are stated once the run has one, and by the run&apos;s own record.
+          </p>
+        )}
         {/*
           The reserve, stated where the ceilings are. Without it a run that ends short
           of every figure above reads as one that gave up; it was asked to stop, and

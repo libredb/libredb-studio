@@ -145,6 +145,13 @@ run_group "Group 0h: Agent end-to-end investigation" \
 run_group "Group 0i: Agent capability gate" \
   tests/isolated/agent-capability-gate.test.ts
 
+# Group 0j: The workflow classifier. Its own group, NOT part of 0f: it mocks
+# @/lib/agent/model-adapter and the `ai` package, and mock.module is process-wide
+# — 0f holds the model adapter's own suite, so sharing its process would hand that
+# suite the stub written here instead of the module it is testing.
+run_group "Group 0j: Agent workflow classifier" \
+  tests/isolated/agent-workflow-classifier.test.ts
+
 # Group 1: Studio (isolated — mocks almost every child component)
 run_group "Group 1/6: Studio" \
   tests/components/Studio.test.tsx

@@ -42,6 +42,7 @@ interface FakeRun {
   runId: string;
   mode: string;
   workflowType: string;
+  workflowSource: string;
   autoExecute: boolean;
   status: string;
   actor: { sessionId: string; role: string };
@@ -57,6 +58,9 @@ function fakeRun(overrides: Partial<FakeRun> = {}): FakeRun {
     // The store's default, so a body naming no workflow still produces a record
     // carrying one — which is what the route echoes back.
     workflowType: "investigation",
+    // The store's default too: a header written by a body that named no source
+    // describes a workflow its caller sent explicitly.
+    workflowSource: "chosen",
     // The store's default too: absent means off, so a body that asked for nothing
     // opens a run that hands nothing anywhere.
     autoExecute: false,
@@ -75,6 +79,7 @@ const mockStart = mock(
   async (input: {
     mode: string;
     workflowType?: string;
+    workflowSource?: string;
     autoExecute?: boolean;
     actor: FakeRun["actor"];
     connectionId: string;
@@ -243,6 +248,7 @@ describe("POST /api/agent/runs", () => {
       status: string;
       mode: string;
       workflowType: string;
+      workflowSource: string;
       autoExecute: boolean;
     }>(res);
 
@@ -252,6 +258,7 @@ describe("POST /api/agent/runs", () => {
       status: "queued",
       mode: "agent",
       workflowType: "investigation",
+      workflowSource: "chosen",
       autoExecute: false,
     });
     // No `workflowType` reaches the service when the body named none: the store's
@@ -382,6 +389,58 @@ describe("POST /api/agent/runs", () => {
     expect(res.status).toBe(400);
     expect(mockStart).not.toHaveBeenCalled();
   });
+
+  test("a body that names no workflow source reaches the service without the field at all", async () => {
+    // Same reason as `workflowType` and `autoExecute`: the store's default is the one
+    // place "nobody said" becomes an answer, and a request written before the field
+    // existed must still reach the store as exactly that request.
+    const res = await POST(startRequest(VALID_BODY));
+    const body = await parseResponseJSON<{ workflowSource: string }>(res);
+
+    expect(body.workflowSource).toBe("chosen");
+    expect(mockStart).toHaveBeenCalledWith({
+      mode: "agent",
+      actor: { sessionId: "ada", role: "user" },
+      connectionId: "seed:sales",
+      objective: "why is checkout slow",
+    });
+  });
+
+  test("an inferred workflow source is persisted, and the response echoes what was PERSISTED", async () => {
+    const res = await POST(startRequest({ ...VALID_BODY, workflowSource: "inferred" }));
+    const body = await parseResponseJSON<{ workflowSource: string }>(res);
+
+    expect(res.status).toBe(202);
+    expect(body.workflowSource).toBe("inferred");
+    expect(mockStart).toHaveBeenCalledWith({
+      mode: "agent",
+      workflowSource: "inferred",
+      actor: { sessionId: "ada", role: "user" },
+      connectionId: "seed:sales",
+      objective: "why is checkout slow",
+    });
+  });
+
+  test("both workflow sources this server records are accepted", async () => {
+    for (const workflowSource of ["inferred", "chosen"]) {
+      const res = await POST(startRequest({ ...VALID_BODY, workflowSource }));
+      expect(res.status, workflowSource).toBe(202);
+    }
+  });
+
+  test.each([["guessed"], [7], [null], [{}]])(
+    "a workflow source of %p is refused rather than defaulted",
+    async (value) => {
+      // The field is the record of how the run's workflow was decided, and the rail
+      // reads it back to decide whether to offer "change". A value this server does
+      // not record, quietly folded to `"chosen"`, would have the surface tell the user
+      // they picked a workflow they never saw.
+      const res = await POST(startRequest({ ...VALID_BODY, workflowSource: value }));
+
+      expect(res.status).toBe(400);
+      expect(mockStart).not.toHaveBeenCalled();
+    },
+  );
 
   test("the run is driven without the caller waiting for it", async () => {
     await POST(startRequest(VALID_BODY));

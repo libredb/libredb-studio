@@ -181,6 +181,31 @@ describe("AgentRunStore — opening a run", () => {
     expect((await storeAt(dataDir).store.read(record.runId))?.record.autoExecute).toBe(true);
   });
 
+  test("opens as an explicitly chosen workflow when nothing said where the workflow came from", async () => {
+    const { store } = storeAt();
+
+    const record = await store.openRun(OPEN_INPUT);
+
+    // Absent means chosen, and that is a reading rather than a fallback: a caller
+    // that sends a workflow without saying otherwise sent the one it was told.
+    expect(record.workflowSource).toBe("chosen");
+  });
+
+  test.each(["inferred", "chosen"] as const)(
+    "records the workflow source %p on the run, where a resumed drive reads it back",
+    async (workflowSource) => {
+      const dataDir = freshDataDir();
+      const { store } = storeAt(dataDir);
+
+      const record = await store.openRun({ ...OPEN_INPUT, workflowSource });
+
+      expect(record.workflowSource).toBe(workflowSource);
+      // Re-read through a second store over the same files: the "change" affordance
+      // is keyed on this, and it must survive the process that opened the run.
+      expect((await storeAt(dataDir).store.read(record.runId))?.record.workflowSource).toBe(workflowSource);
+    },
+  );
+
   test("reads back nothing for a run that was never opened", async () => {
     const { store } = storeAt();
     expect(await store.read("arun_00000000000000000000000000000000")).toBeNull();
