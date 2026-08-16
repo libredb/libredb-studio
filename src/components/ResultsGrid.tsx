@@ -3,12 +3,16 @@
 import React, { useMemo, useState, useRef, useCallback, useEffect } from "react";
 import { QueryResult } from "@/lib/types";
 import {
+  type ColumnDef,
+  type SortingState,
+  columnResizingFeature,
+  columnSizingFeature,
+  columnVisibilityFeature,
+  createSortedRowModel,
   flexRender,
-  getCoreRowModel,
-  useReactTable,
-  getSortedRowModel,
-  SortingState,
-  ColumnDef,
+  rowSortingFeature,
+  tableFeatures,
+  useTable,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
@@ -37,6 +41,29 @@ export interface CellChange {
 const CLEAR_FILTER_LABEL = "Clear filter";
 const EMPTY_RESULT_HINT = "The operation was successful, but the result set is currently empty.";
 const ENGINE_WARNINGS_LABEL = "The engine reported:";
+
+/**
+ * TanStack Table 9 does not ship every feature to every table: each one is
+ * opted into here, and only the opted-in features contribute code, state slices
+ * and typed options. That is the point of the v8 -> v9 redesign, so this grid
+ * declares exactly what it uses and nothing else:
+ *
+ * - `rowSortingFeature` + `sortedRowModel` - the sortable column headers
+ * - `columnSizingFeature` + `columnResizingFeature` - the drag-to-resize handles
+ *   (resizing builds on sizing, and the library validates that pairing)
+ * - `columnVisibilityFeature` - `row.getVisibleCells()` in the row renderer
+ *
+ * Declared at module scope rather than inside the component because the object
+ * is the table's static shape: rebuilding it per render would rebuild the
+ * feature set on every keystroke.
+ */
+const tableFeatureSet = tableFeatures({
+  columnResizingFeature,
+  columnSizingFeature,
+  columnVisibilityFeature,
+  rowSortingFeature,
+  sortedRowModel: createSortedRowModel(),
+});
 
 interface ResultsGridProps {
   result: QueryResult;
@@ -190,7 +217,7 @@ export function ResultsGrid({
     setActiveFilterCol(null);
   }, []);
 
-  const columns = useMemo<ColumnDef<Record<string, unknown>>[]>(() => {
+  const columns = useMemo<ColumnDef<typeof tableFeatureSet, Record<string, unknown>>[]>(() => {
     return result.fields.map((field) => ({
       accessorKey: field,
       header: ({ column }) => {
@@ -409,15 +436,14 @@ export function ResultsGrid({
     revealCell,
   ]);
 
-  const table = useReactTable({
+  const table = useTable({
+    features: tableFeatureSet,
     data: filteredRows,
     columns,
     state: {
       sorting,
     },
     onSortingChange: setSorting,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
     columnResizeMode: "onChange",
   });
 
