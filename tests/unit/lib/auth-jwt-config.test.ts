@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, afterEach } from "bun:test";
+import { describe, test, expect, mock, afterEach, beforeEach } from "bun:test";
 import { AuthConfigError } from "@/lib/auth-errors";
 
 // auth.ts imports `cookies` from next/headers at module load; stub it so the
@@ -11,20 +11,26 @@ mock.module("next/headers", () => ({
   headers: async () => ({ get: () => null }),
 }));
 
-const { signJWT } = await import("@/lib/auth");
+const { signJWT, resetJwtSecretCache } = await import("@/lib/auth");
 
-// NOTE ON ORDERING: getJwtSecret() memoizes the first *successful* result in a
-// module-level cache. The throwing cases below never cache, so they are safe in
-// any order — but the dev-fallback success case must run LAST, otherwise its
-// cached key would mask the throws. This file runs in its own process (see
-// tests/run-core.sh), so the cache starts empty.
+// NOTE ON ORDERING: getJwtSecret() memoizes the first *successful* result in a module-level
+// cache. The throwing cases below never cache, so they are safe in any order — but the
+// dev-fallback success case must run LAST, otherwise its cached key would mask the throws.
+// The cache is cleared before each case rather than assumed empty: `tests/run-core.sh` gives
+// this file its own process, but `bun run test` does not, and under that command an earlier
+// file's successful sign left a key here that answered before the guard could throw.
 describe("auth JWT_SECRET config guard", () => {
   const origSecret = process.env.JWT_SECRET;
   const origNodeEnv = process.env.NODE_ENV;
 
+  beforeEach(() => {
+    resetJwtSecretCache();
+  });
+
   afterEach(() => {
     setEnv("JWT_SECRET", origSecret);
     setEnv("NODE_ENV", origNodeEnv);
+    resetJwtSecretCache();
   });
 
   function setEnv(key: string, value: string | undefined): void {

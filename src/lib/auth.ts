@@ -16,6 +16,17 @@ function jwtSecret(): Uint8Array {
   return _jwtSecret;
 }
 
+/**
+ * Test seam. The memo above is module-level and only ever holds a SUCCESSFUL read, so a suite
+ * that shares one process cannot observe the throwing cases once any earlier file has signed a
+ * token: the cached key answers before `getJwtSecret` is ever called again. That is what made
+ * `tests/unit/lib/auth-jwt-config.test.ts` pass alone and fail under `bun run test`, and its own
+ * header note ("this file runs in its own process") was the workaround rather than the fix.
+ */
+export function resetJwtSecretCache(): void {
+  _jwtSecret = null;
+}
+
 export type Role = "admin" | "user";
 
 export interface UserPayload {
