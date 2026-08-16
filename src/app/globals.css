@@ -208,17 +208,16 @@
   }
 
   /*
-   * The scrollbar thumb is the one control with no token of its own: it has to
-   * stay legible against the editor ground in both themes, which the hairline
-   * ramp is too faint to do. Derived from the fill ramp instead, doubled.
+   * The thumb has a token pair of its own — see the note in theme.css for why
+   * neither the hairline ramp nor the text ramp could stand in for it.
    */
   .editor-scrollbar::-webkit-scrollbar-thumb {
-    background: var(--studio-fg-subtle);
+    background: var(--studio-scrollbar);
     border-radius: 10px;
   }
 
   .editor-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: var(--studio-fg-muted);
+    background: var(--studio-scrollbar-hover);
   }
 
   /* Monaco Execution Highlight */

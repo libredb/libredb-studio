@@ -54,6 +54,17 @@
   --studio-fill: rgb(9 9 11 / 0.05);
   --studio-fill-strong: rgb(9 9 11 / 0.09);
 
+  /*
+   * ── Scrollbar ──────────────────────────────────────────────────────────
+   * Its own pair rather than a ramp step. The thumb has to stay legible over
+   * the editor ground in both themes: the hairlines are far too faint, and the
+   * text ramp — the first thing tried — is too loud, so in dark it turned a
+   * chrome detail into the brightest thing on a quiet panel. These are the
+   * values the editor already used, kept exactly.
+   */
+  --studio-scrollbar: #d4d4d8;
+  --studio-scrollbar-hover: #a1a1aa;
+
   /* ── Text ramp ────────────────────────────────────────────────────────── */
   --studio-fg-bright: #09090b;
   --studio-fg: #18181b;
@@ -84,6 +95,10 @@
   --studio-fill-subtle: rgb(255 255 255 / 0.02);
   --studio-fill: rgb(255 255 255 / 0.05);
   --studio-fill-strong: rgb(255 255 255 / 0.1);
+
+  /* ── Scrollbar ────────────────────────────────────────────────────────── */
+  --studio-scrollbar: #262626;
+  --studio-scrollbar-hover: #404040;
 
   /* ── Text ramp ────────────────────────────────────────────────────────── */
   --studio-fg-bright: #ffffff;
