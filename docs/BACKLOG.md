@@ -345,6 +345,69 @@ Done when Tauri's dependency tree offers `glib >= 0.20` and the lock is updated,
 dismissed with this reasoning recorded on it. Re-check on each Tauri upgrade — a one-line
 `cargo tree -i glib` in `desktop/src-tauri/` answers it.
 
+### P2. TypeScript 7 is unreachable until it ships a programmatic API
+
+`typescript@7.0.2` is on npm `latest` and is the native Go port. The published tarball contains no
+`lib/typescript.js`: its exports map resolves `require("typescript")` to `lib/version.cjs`, which
+returns `{version, versionMajorMinor}` and nothing else. Two of the six mandatory gates call the
+compiler API directly, so both break at runtime while `bun run typecheck` passes and reports nothing:
+
+- `bun run lint` — `@typescript-eslint/typescript-estree` requires `typescript` in 19 files, and
+  every published `typescript-eslint` (8.67.0 and its canaries) caps the peer at
+  `typescript: ">=4.8.4 <6.1.0"`. There is no v9 line.
+- `bun run build:lib` — tsup's `dts: true` pipeline calls `ts.parseJsonConfigFileContent`.
+
+`bun run build` additionally refuses unless `experimental.useTypeScriptCli` is set. Two smaller
+blockers wait behind those: TS 7 removes `baseUrl`, which `tsconfig.lib.json` relies on to resolve
+the `@/*` alias for tsup's declaration bundler, and the `plugins: [{ "name": "next" }]` tsserver
+entry has no host on 7.0. knip 6.x is unaffected — it is on oxc-parser with no TypeScript dependency.
+
+Upstream, typescript-eslint's tracking issue (#10940) is labelled "blocked by external API" and has a
+second, independent blocker: ESLint has no asynchronous-parser support, which a tsgo backend needs.
+Microsoft promises the stable API in 7.1.
+
+Done when TS 7.1 ships that API **and** a `typescript-eslint` release admits `typescript: ^7`. The
+whole check is one line: `npm view typescript-eslint peerDependencies.typescript`. Do not reach for
+the `npm:@typescript/typescript6` alias workaround in the meantime — it keeps TS 6 under the name
+`typescript` for every gate that matters, so it buys a faster ad-hoc `tsc` and a package.json that
+misreports its own compiler.
+
+### P3. The ESLint 10 config carries a compat shim for eslint-config-next
+
+`eslint.config.mjs` wraps `eslint-config-next`'s two configs in `@eslint/compat`'s
+`fixupConfigRules`. ESLint 10 removed the deprecated rule-context methods; eslint-config-next 16.3.1
+still depends on `eslint-plugin-react ^7.37.0`, whose newest release (7.37.5, April 2025) calls
+`context.getFilename()` and declares `eslint: "... || ^9.7"`. Without the wrapper, loading any of its
+rules throws `TypeError: contextOrFilename.getFilename is not a function` before a file is linted.
+eslint-config-next's own peer range (`eslint: ">=9.0.0"`) does not express this, so nothing catches it
+short of running the linter.
+
+Done when eslint-config-next depends on an eslint-plugin-react that declares `eslint: ^10`, at which
+point the two `fixupConfigRules(...)` calls become bare spreads and `@eslint/compat` leaves
+`devDependencies`. Check with `npm view eslint-plugin-react peerDependencies.eslint`.
+
+### P4. Four dependency majors deferred out of the 2026-08 bump
+
+Raised by Dependabot, closed unmerged, and each a decision rather than a bump. Recorded here so the
+decision survives whether or not the bot re-raises them under the `bun` ecosystem:
+
+- **`@tanstack/react-table` 8 -> 9, `framer-motion` 12 -> 13, `eslint` 9 -> 10** — done; this entry
+  covers only what was left behind.
+- **`ioredis` 5 -> 6** — the Redis provider maps `SCAN`/`INFO`/`SLOWLOG`/`CLIENT LIST` onto the
+  SQL-oriented interface, so a client major needs the provider triad re-verified against a live
+  server, not a type-check.
+- **`oracledb` 6 -> 7** — thick/thin mode and the prebuilt binaries are what the Docker image and the
+  AppImage build depend on; check those before the API.
+- **`react-day-picker` 9 -> 10** and **`lucide-react` 0.562 -> 1.31** — UI-visible, and lucide's 1.0
+  is its first stable major, so icon names are the risk.
+- **`@types/node` 25 -> 26** — deferred for a reason worth stating: the runtime images are on Node 26
+  (#380) but `engines.node` still declares `>=24.0.0`. Typing against 26 would let code compile that
+  breaks on the floor the package advertises. Decide the floor first, then move the types to match
+  it.
+
+`@zumer/snapdom` is pinned exactly (`2.15.0`, no caret) on purpose — see the ER-diagram export work
+— and is not part of this list.
+
 ---
 
 ## Documentation
