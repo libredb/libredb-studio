@@ -241,7 +241,7 @@ function QuotedBlock({
     <div className={className}>
       <pre
         className={cn(
-          "overflow-x-auto rounded bg-black/40 p-1.5 font-mono text-[0.625rem] whitespace-pre-wrap",
+          "overflow-x-auto rounded bg-sunken p-1.5 font-mono text-[0.625rem] whitespace-pre-wrap",
           tone === "loud" ? "text-fg-secondary" : "text-fg-tertiary",
         )}
       >
@@ -474,7 +474,7 @@ function PlanStatementCard({
           {/* Model and engine text, listed rather than spliced into the sentence above. */}
           <ul className="mt-0.5 flex flex-wrap gap-1">
             {unknown.map((name) => (
-              <li key={name} className="rounded bg-black/40 px-1 py-0.5 font-mono text-amber-200">
+              <li key={name} className="rounded bg-sunken px-1 py-0.5 font-mono text-amber-200">
                 {name}
               </li>
             ))}
@@ -1072,7 +1072,7 @@ export function AgentRail({
           onChange={(e) => setObjective(e.target.value)}
           maxLength={AGENT_MAX_OBJECTIVE_LENGTH}
           rows={3}
-          className="mt-1 w-full resize-none rounded bg-black/40 border border-hairline-strong px-2 py-1.5 text-xs text-fg placeholder:text-fg-subtle focus:outline-none focus:border-blue-500/40"
+          className="mt-1 w-full resize-none rounded bg-sunken border border-hairline-strong px-2 py-1.5 text-xs text-fg placeholder:text-fg-subtle focus:outline-none focus:border-blue-500/40"
           placeholder="Why is checkout slow?"
         />
 
