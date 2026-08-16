@@ -25,7 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { DiagramActionsContext, type DiagramActions } from "./schema-diagram/diagram-context";
 import { FkEdge } from "./schema-diagram/FkEdge";
 import { TableNode } from "./schema-diagram/TableNode";
-import { exportViewportImage } from "./schema-diagram/export";
+import { EXPORT_BACKGROUND, exportViewportImage } from "./schema-diagram/export";
 import { buildGraph, graphSignature, type FkFlowEdge, type TableFlowNode } from "./schema-diagram/graph";
 import { createHighlightStore, HighlightStoreProvider } from "./schema-diagram/highlight-store";
 import { buildElkGraph, applyLayout } from "./schema-diagram/layout";
@@ -287,7 +287,9 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
         // nodes report their measured dimensions during that window, and
         // bounds must include them.
         const bounds = getNodesBounds(nodesRef.current);
-        await exportViewportImage(format, { viewport, bounds });
+        // The file carries no page behind it, so it takes the ground of the
+        // theme the diagram is being read in.
+        await exportViewportImage(format, { viewport, bounds, background: EXPORT_BACKGROUND[mode] });
       } catch (error) {
         console.error(`Failed to export ${format.toUpperCase()}:`, error);
         toast({
