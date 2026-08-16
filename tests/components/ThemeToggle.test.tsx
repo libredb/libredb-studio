@@ -110,15 +110,31 @@ describe("ThemeToggle", () => {
     expect(screen.getByRole("button").getAttribute("aria-label")).toBe("Switch to light theme");
   });
 
+  /**
+   * And the icon names the same thing. It shipped naming the CURRENT theme while
+   * the label named the destination, so the button a sighted user saw and the
+   * button a screen reader announced were two different controls.
+   */
+  test("the icon names the same destination the label does", () => {
+    withTheme("dark");
+    const { unmount } = render(<ThemeToggle />);
+    expect(screen.getByRole("button").querySelector("svg")?.getAttribute("class")).toContain("lucide-sun");
+    unmount();
+
+    withTheme("light");
+    render(<ThemeToggle />);
+    expect(screen.getByRole("button").querySelector("svg")?.getAttribute("class")).toContain("lucide-moon");
+  });
+
   test("accepts a className so the header can place it", () => {
     render(<ThemeToggle className="mr-1" />);
     expect(screen.getByRole("button").className).toContain("mr-1");
   });
 
   /**
-   * The icon is the resolved theme, which the server cannot know. Rendering it
-   * before hydration would emit an icon the client may immediately replace — so
-   * the first paint is a same-size placeholder, and the box never reflows.
+   * The icon follows the resolved theme, which the server cannot know. Rendering
+   * it before hydration would emit an icon the client may immediately replace —
+   * so the first paint is a same-size placeholder, and the box never reflows.
    */
   test("holds the icon's space until hydration instead of guessing", () => {
     render(<ThemeToggle />);

@@ -48,7 +48,13 @@ export function ThemeToggle({ className }: { className?: string }) {
   // earlier build wrote — is dark, which is also the provider's default.
   const current = theme === "light" ? "light" : "dark";
   const next = current === "dark" ? "light" : "dark";
-  const Icon = current === "dark" ? Moon : Sun;
+  // The DESTINATION, like the label beside it. A sun in a dark header is an
+  // offer; a moon in a dark header is a status readout on a control whose only
+  // job is to change something. The two must not disagree — the icon is what a
+  // sighted user reads and the label is what a screen reader announces, and a
+  // toggle that shows a moon while announcing "switch to light theme" describes
+  // two different buttons.
+  const Icon = next === "dark" ? Moon : Sun;
 
   /*
    * EVERYTHING that depends on the resolved theme has to wait for hydration, not
