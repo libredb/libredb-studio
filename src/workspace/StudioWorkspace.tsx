@@ -22,15 +22,59 @@ import { cn } from "@/lib/utils";
 import { quoteLiteral } from "@/lib/sql/values";
 
 /**
- * Scoped CSS for studio's dark theme.
- * When embedded in a host app that uses different CSS variable formats
- * (e.g. OKLCH instead of hex), studio injects its own scoped styles
- * to ensure correct rendering. Uses data-studio-workspace attribute
- * for high-specificity scoping without affecting the host app.
+ * Scoped CSS for the shadcn token set studio's primitives read.
+ *
+ * A host app may express these in a different format (OKLCH rather than hex), so
+ * studio restates them for its own subtree, scoped by `data-studio-workspace` to
+ * get the specificity without touching the host.
+ *
+ * BOTH palettes, keyed off the same `dark` class everything else here follows.
+ * Light is the base and dark overrides it, so a host that has not opted into dark
+ * gets a light studio — matching what `useEffectiveTheme()` reports and what the
+ * `--studio-*` tokens resolve to. Pinning this block to dark, as it used to be,
+ * produced the one thing worse than either theme: dark chrome around a light
+ * editor, light charts and a light diagram.
  */
 const STUDIO_SCOPED_CSS = `
 [data-studio-workspace] {
-  /* Dark theme — monochrome (black/white/gray) */
+  /* Light theme — monochrome (white/black/gray) */
+  --background: #ffffff;
+  --foreground: #09090b;
+  --card: #ffffff;
+  --card-foreground: #09090b;
+  --popover: #ffffff;
+  --popover-foreground: #09090b;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #52525b;
+  --accent: #f4f4f5;
+  --accent-foreground: #18181b;
+  --destructive: #dc2626;
+  --destructive-foreground: #fafafa;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #71717a;
+  --radius: 0.5rem;
+  --chart-1: #18181b;
+  --chart-2: #3f3f46;
+  --chart-3: #52525b;
+  --chart-4: #71717a;
+  --chart-5: #a1a1aa;
+
+  /* Font — Geist (inherited from host or fallback to system) */
+  font-family: var(--font-geist-sans, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "rlig" 1, "calt" 1;
+  letter-spacing: -0.011em;
+}
+/* Dark — the values this block carried before it learned a second palette.
+   Higher specificity than the base rule, so the class alone decides. */
+.dark [data-studio-workspace],
+[data-studio-workspace].dark {
   --background: #09090b;
   --foreground: #fafafa;
   --card: #09090b;
@@ -50,19 +94,11 @@ const STUDIO_SCOPED_CSS = `
   --border: #27272a;
   --input: #27272a;
   --ring: #d4d4d8;
-  --radius: 0.5rem;
   --chart-1: #e4e4e7;
   --chart-2: #a1a1aa;
   --chart-3: #71717a;
   --chart-4: #52525b;
   --chart-5: #3f3f46;
-
-  /* Font — Geist (inherited from host or fallback to system) */
-  font-family: var(--font-geist-sans, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: "rlig" 1, "calt" 1;
-  letter-spacing: -0.011em;
 }
 [data-studio-workspace] *,
 [data-studio-workspace] *::before,
@@ -291,7 +327,11 @@ export function StudioWorkspace({
   return (
     <div
       data-studio-workspace=""
-      className={cn("dark flex h-full w-full bg-canvas text-fg overflow-hidden font-sans select-none", className)}
+      // No `dark` class here. The host owns the theme — its <html> carries the
+      // class, `useEffectiveTheme()` reads it, and the tokens resolve from it.
+      // Pinning it here made the chrome dark while everything that consults the
+      // host went light, in a light host only.
+      className={cn("flex h-full w-full bg-canvas text-fg overflow-hidden font-sans select-none", className)}
     >
       <ResizablePanelGroup id="workspace-main" orientation="horizontal" className="h-full">
         {/* Sizes are strings on purpose: react-resizable-panels 4 reads a bare
