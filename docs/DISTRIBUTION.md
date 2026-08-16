@@ -1173,7 +1173,7 @@ pin or editing a channel entry is always a human commit.
 | 0 | Core registries, published directly by release CI | GitHub Releases, GHCR, Docker Hub, npm |
 | 1 | Packaged formats owned by this repo, CI-published | Helm, Homebrew tap, Snap, .deb/.rpm, desktop AppImage |
 | 2 | LibreDB-owned copies and listings, bumped by hand | Railway, Koyeb button, Fly.io config, Render Blueprint, Unraid CA template |
-| 3 | Upstream community catalogs, bumped via PR | CapRover official, Dokploy, Cosmos, Kubero, Sealos |
+| 3 | Upstream community catalogs, bumped via PR | CapRover official, Dokploy, Cosmos, Kubero, Sealos, TrueNAS SCALE |
 | 4 | Partner or curated catalogs (not self-serve) | Rancher partner charts, Koyeb catalog, DO, winget, Chocolatey, Flathub |
 
 **Categories** (`category` on every channel) are the business-facing buckets rendered in
