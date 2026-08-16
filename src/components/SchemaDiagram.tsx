@@ -443,7 +443,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
                     placeholder="Filter tables..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-7 pr-2 py-1.5 bg-fill border border-hairline-strong rounded text-xs text-fg-secondary placeholder-zinc-600 focus:outline-none focus:border-blue-500/50"
+                    className="w-full pl-7 pr-2 py-1.5 bg-fill border border-hairline-strong rounded text-xs text-fg-secondary placeholder:text-fg-subtle focus:outline-none focus:border-blue-500/50"
                   />
                 </div>
 
