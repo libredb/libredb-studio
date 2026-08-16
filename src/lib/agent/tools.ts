@@ -488,12 +488,45 @@ const chartSpecSchema = z.strictObject({
  * them itself. A model-supplied statement would let an answer hand the user a
  * statement that produced something other than the result on screen.
  */
+/**
+ * A nested object a model may have sent as a STRING of JSON, read back once.
+ *
+ * Measured 2026-08-16: `qwen3.8` called `present_answer` three times with a correct artifact id
+ * and a correct chart spec — right type, right x, right y, columns spelled as the result spells
+ * them — and every call was refused as `INVALID_TOOL_INPUT`, because it had serialized the nested
+ * object rather than nesting it:
+ *
+ *     {"artifact": "67fb…", "presentation": "{\"kind\": \"chart\", \"spec\": {…}}"}
+ *
+ * The run then reported without an answer and was scored `no-answer`, so what a reader saw was a
+ * model that would not present — while its own closing prose said the presentation "is being
+ * persistently rejected despite conforming to the declared shape". It was.
+ *
+ * Read ONCE and never recursively: this accepts a serialization the model chose, it does not
+ * invent a second encoding. The parsed value still goes through the same schema, so a string
+ * holding the wrong shape is refused exactly as the object would have been — nothing is admitted
+ * here that would not have been admitted written properly.
+ */
+const jsonObjectOrString = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((value) => {
+    if (typeof value !== "string") return value;
+    try {
+      return JSON.parse(value);
+    } catch {
+      // Left as the string it was: the schema below refuses it, and reporting a parse failure
+      // here would replace the contract's own wording with this function's.
+      return value;
+    }
+  }, schema);
+
 const presentAnswerSchema = z.strictObject({
   artifact: z.string().min(1),
-  presentation: z.discriminatedUnion("kind", [
-    z.strictObject({ kind: z.literal("table") }),
-    z.strictObject({ kind: z.literal("chart"), spec: chartSpecSchema }),
-  ]),
+  presentation: jsonObjectOrString(
+    z.discriminatedUnion("kind", [
+      z.strictObject({ kind: z.literal("table") }),
+      z.strictObject({ kind: z.literal("chart"), spec: chartSpecSchema }),
+    ]),
+  ),
 });
 
 /** ONE presentation, rendered as the object the schema above accepts. */

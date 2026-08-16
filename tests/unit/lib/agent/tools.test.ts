@@ -426,6 +426,94 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
   });
 
   /*
+    Measured 2026-08-16 against a real Ollama endpoint: `qwen3.8` could not finish a
+    data-analysis run, and the reason was an ENCODING rather than a capability. Kept as its own
+    group because the fix belongs to the tool's input contract and to nothing else.
+  */
+  describe("a presentation the model serialized instead of nesting", () => {
+    const analysis = (over: Partial<AgentToolContext> = {}) => harness({ workflowType: "data-analysis", ...over });
+
+    /** A read this run took, plus the ledger entries and the one citing claim a report needs. */
+    const readAndCite = async (context: AgentToolContext) => {
+      const outcome = await runReadQueryTool(context, { sql: "SELECT id FROM orders" });
+      if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
+      const events: AgentRunEvent[] = [
+        { kind: "statement-drafted", atMs: 1, stepId: "step_1", sql: "SELECT id FROM orders", rationale: "r" },
+        { kind: "tool-completed", atMs: 2, stepId: "step_1", artifact: outcome.artifact },
+      ];
+      const claims = [
+        {
+          claim: "orders has rows",
+          evidence: [{ source: "artifact" as const, correlationId: outcome.artifact.correlationId }],
+        },
+      ];
+      return { artifact: outcome.artifact, events, input: { claims } };
+    };
+
+    /*
+      Measured 2026-08-16: `qwen3.8` called `present_answer` three times with a correct artifact id
+      and a correct chart spec, and every call was refused as `INVALID_TOOL_INPUT` because it had
+      SERIALIZED the nested object rather than nesting it. The run reported without an answer and
+      was scored `no-answer`, so what a reader saw was a model that would not present — while its
+      own closing prose said the presentation "is being persistently rejected despite conforming to
+      the declared shape". It was conforming; the encoding was the only thing wrong.
+    */
+    test("accepts a presentation the model serialized, because the content was never the problem", async () => {
+      const h = analysis();
+      const outcome = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+      if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
+      const events: AgentRunEvent[] = [
+        { kind: "statement-drafted", atMs: 1, stepId: "step_1", sql: "SELECT id FROM orders", rationale: "r" },
+        { kind: "tool-completed", atMs: 2, stepId: "step_1", artifact: outcome.artifact },
+      ];
+
+      const answer = presentAnswerTool(
+        h.context,
+        { runId: h.context.runId, events, autoExecute: false },
+        { artifact: outcome.artifact.correlationId, presentation: JSON.stringify({ kind: "table" }) },
+      );
+
+      expect(answer.kind).toBe("answered");
+    });
+
+    test("still refuses a serialized presentation of the wrong shape: the schema is not relaxed", async () => {
+      const h = analysis();
+      const outcome = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+      if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
+      const events: AgentRunEvent[] = [
+        { kind: "tool-completed", atMs: 2, stepId: "step_1", artifact: outcome.artifact },
+      ];
+
+      const answer = presentAnswerTool(
+        h.context,
+        { runId: h.context.runId, events, autoExecute: false },
+        { artifact: outcome.artifact.correlationId, presentation: JSON.stringify({ kind: "spreadsheet" }) },
+      );
+
+      expect(answer.kind).toBe("unavailable");
+      if (answer.kind !== "unavailable") return;
+      expect(answer.reasonCode).toBe("INVALID_TOOL_INPUT");
+    });
+
+    test("refuses a string that is not JSON at all, in the contract's own words", async () => {
+      const h = analysis();
+      const outcome = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+      if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
+      const events: AgentRunEvent[] = [
+        { kind: "tool-completed", atMs: 2, stepId: "step_1", artifact: outcome.artifact },
+      ];
+
+      const answer = presentAnswerTool(
+        h.context,
+        { runId: h.context.runId, events, autoExecute: false },
+        { artifact: outcome.artifact.correlationId, presentation: "a table please" },
+      );
+
+      expect(answer.kind).toBe("unavailable");
+    });
+  });
+
+  /*
     The two readings that matter most, and the two the contract skipped.
 
     A description and a set of opening rules are read by a model that is not yet
