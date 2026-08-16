@@ -1984,6 +1984,58 @@ describe("useQueryExecution", () => {
       expect(mockToastError).not.toHaveBeenCalled();
     });
 
+    /**
+     * Supersession is per TAB. A single hook-wide controller made a Run in one
+     * tab abort the query in another — and because that abort read as
+     * "superseded" it cleared no flags and raised no toast, so the other tab sat
+     * on "Executing…" for ever with no result and no error.
+     */
+    test("running in a second tab leaves the first tab's query alone", async () => {
+      const calls = installDeferredFetch();
+      const { params } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT 1", "tab-1");
+      });
+      await flush();
+      act(() => {
+        result.current.executeQuery("SELECT 2", "tab-2");
+      });
+      await flush();
+
+      expect(mainCalls(calls)).toHaveLength(2);
+      // Tab 1's request is untouched — it is a different tab's work.
+      expect(mainCalls(calls)[0].init.signal?.aborted).toBe(false);
+      expect(mainCalls(calls)[1].init.signal?.aborted).toBe(false);
+    });
+
+    test("cancelling one tab does not stop another tab's query", async () => {
+      const calls = installDeferredFetch();
+      const { params } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT 1", "tab-1");
+      });
+      await flush();
+      act(() => {
+        result.current.executeQuery("SELECT 2", "tab-2");
+      });
+      await flush();
+
+      await act(async () => {
+        await result.current.cancelQuery("tab-2");
+      });
+
+      expect(mainCalls(calls)[0].init.signal?.aborted).toBe(false);
+      expect(mainCalls(calls)[1].init.signal?.aborted).toBe(true);
+
+      // The server-side cancel names tab 2's query, not the last one started.
+      const cancelCall = calls.find((c) => c.url.includes("/api/db/cancel"));
+      expect(cancelCall?.body.queryId).toBe(mainCalls(calls)[1].body.queryId);
+    });
+
     test("a superseded run does not disarm the cancel button of the run that replaced it", async () => {
       const calls = installDeferredFetch();
       const { params } = statefulParams();

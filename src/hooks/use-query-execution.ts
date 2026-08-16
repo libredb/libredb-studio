@@ -86,8 +86,17 @@ export function useQueryExecution({
   fetchSchema,
   queryEditorRef,
 }: UseQueryExecutionParams) {
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const activeQueryIdRef = useRef<string | null>(null);
+  /**
+   * The run in flight for each tab, keyed by tab id.
+   *
+   * Per TAB, not per hook. Tabs execute independently — `executeQuery` targets
+   * whichever `targetTabId` it is given — so a single controller made every new
+   * run abort whatever was running anywhere. Starting a query in tab B killed
+   * tab A's, and because A's abort then read as "superseded" it cleared no flags
+   * and raised no toast: tab A sat on "Executing…" forever, with no result and
+   * no error. Keying the map by tab is what keeps one tab's Run out of another's.
+   */
+  const runsRef = useRef(new Map<string, { controller: AbortController; queryId: string }>());
 
   // Latest-value refs. `executeQuery` reads these at call time only, so keeping
   // them out of its dependency list makes the callback identity stable across a
@@ -102,8 +111,15 @@ export function useQueryExecution({
   activeTabIdRef.current = activeTabId;
 
   // Nothing this hook started should outlive it: a fetch left running after the
-  // studio unmounts resolves into a setState on a component that is gone.
-  useEffect(() => () => abortControllerRef.current?.abort(), []);
+  // studio unmounts resolves into a setState on a component that is gone. Every
+  // tab's run, not just the last one started.
+  useEffect(() => {
+    const runs = runsRef.current;
+    return () => {
+      for (const run of runs.values()) run.controller.abort();
+      runs.clear();
+    };
+  }, []);
 
   const [safetyCheckQuery, setSafetyCheckQuery] = useState<string | null>(null);
   const [unlimitedWarningOpen, setUnlimitedWarningOpen] = useState(false);
@@ -208,22 +224,25 @@ export function useQueryExecution({
       const startTime = Date.now();
       // Set up abort controller for query cancellation.
       //
-      // A new run supersedes whatever is still in flight. Without the abort the
-      // older request keeps streaming and its late response overwrites the newer
-      // one on the same tab — the user runs A, then B, and reads A's rows under
-      // B's statement.
-      abortControllerRef.current?.abort();
+      // A new run supersedes the one still in flight ON THIS TAB. Without the
+      // abort the older request keeps streaming and its late response overwrites
+      // the newer one — the user runs A, then B, and reads A's rows under B's
+      // statement. Scoped to `targetTabId` so a run in another tab is left alone.
+      runsRef.current.get(targetTabId)?.controller.abort();
       const abortController = new AbortController();
-      abortControllerRef.current = abortController;
       const queryId = `q-${Date.now()}-${newHistoryId()}`;
-      activeQueryIdRef.current = queryId;
+      runsRef.current.set(targetTabId, { controller: abortController, queryId });
 
       /**
-       * A newer run has taken this tab over. Idle (`null`) is deliberately NOT
-       * superseded: the background EXPLAIN outlives its own query, and its plan
-       * is still the right plan for the results on screen.
+       * A newer run has taken THIS TAB over. An absent entry is deliberately NOT
+       * superseded: the run finished and cleared itself, and the background
+       * EXPLAIN outlives its own query — its plan is still the right plan for the
+       * results on screen.
        */
-      const isSuperseded = () => activeQueryIdRef.current !== null && activeQueryIdRef.current !== queryId;
+      const isSuperseded = () => {
+        const active = runsRef.current.get(targetTabId);
+        return active !== undefined && active.queryId !== queryId;
+      };
 
       /** Write to the tab this run owns — and only while it still owns it. */
       const commitToTab = (update: (tab: QueryTab) => QueryTab) => {
@@ -533,14 +552,12 @@ export function useQueryExecution({
         }
         toast({ title, description: errorMessage, variant: "destructive" });
       } finally {
-        // Only the run that still owns the refs may clear them. A run that was
-        // superseded finishes AFTER its replacement started, and blanking the
-        // refs here would leave the newer query with no controller and no id —
-        // a Cancel button that aborts nothing and a server-side cancel that is
-        // never sent.
+        // Only the run that still owns this tab's slot may clear it. A superseded
+        // run finishes AFTER its replacement started, and deleting the entry here
+        // would leave the newer query with no controller and no id — a Cancel
+        // button that aborts nothing and a server-side cancel that is never sent.
         if (!isSuperseded()) {
-          abortControllerRef.current = null;
-          activeQueryIdRef.current = null;
+          runsRef.current.delete(targetTabId);
         }
       }
     },
@@ -645,29 +662,40 @@ export function useQueryExecution({
     [activeConnection, activeTabId, tabs, currentTab, setTabs, toast],
   );
 
-  // Cancel running query
-  const cancelQuery = useCallback(async () => {
-    // Abort the fetch request
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
+  /**
+   * Cancel the run on one tab — the active one unless a caller names another.
+   *
+   * The Cancel button belongs to a tab, so cancelling has to name the tab too;
+   * with a single hook-wide controller it stopped whichever run started last,
+   * which is not necessarily the one the user is looking at.
+   */
+  const cancelQuery = useCallback(
+    async (tabId?: string) => {
+      const targetTabId = tabId ?? activeTabIdRef.current;
+      const run = runsRef.current.get(targetTabId);
+      if (!run) return;
 
-    // Also cancel on the server side
-    if (activeQueryIdRef.current && activeConnection) {
-      try {
-        await fetch("/api/db/cancel", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...buildConnectionPayload(activeConnection),
-            queryId: activeQueryIdRef.current,
-          }),
-        });
-      } catch {
-        logger.warn("Query cancellation request failed", { route: "use-query-execution" });
+      run.controller.abort();
+
+      // Also cancel on the server side: aborting the fetch drops the response,
+      // it does not stop the statement the engine is still executing.
+      if (activeConnection) {
+        try {
+          await fetch("/api/db/cancel", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...buildConnectionPayload(activeConnection),
+              queryId: run.queryId,
+            }),
+          });
+        } catch {
+          logger.warn("Query cancellation request failed", { route: "use-query-execution" });
+        }
       }
-    }
-  }, [activeConnection]);
+    },
+    [activeConnection],
+  );
 
   // Load More handler
   const handleLoadMore = useCallback(() => {
