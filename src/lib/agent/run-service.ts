@@ -94,7 +94,11 @@ export type AgentRunNarrativeEvent = Extract<
       // Which result IS the answer: a decision about a read already on the ledger,
       // reaching nothing and settling no step, like the three above it.
       | "answer-composed"
-      | "closing-statement";
+      | "closing-statement"
+      // The plan run's own deliverable. It reaches no database and settles no step —
+      // a planning model holds no tool — so it is narrative in exactly the sense the
+      // entries above it are: what the run has already established, written down.
+      | "plan-statement-drafted";
   }
 >;
 

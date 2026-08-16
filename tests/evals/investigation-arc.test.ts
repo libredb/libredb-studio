@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
+import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
+import { DEPARTMENTS, type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
 import { answersProse, callsTool, reportOn } from "../isolated/fixtures/agent-scripted-model";
 import { chatToolCallStream } from "../isolated/fixtures/agent-transport";
+import { CASES, openCaseRun, summarise } from "./real-model";
 
 /**
  * The canonical investigation, on both Phase 1 engines (#330 T1).
@@ -23,6 +25,9 @@ let consoleSpy: ReturnType<typeof spyOn<Console, "log">>;
 beforeEach(() => {
   // The audited execution layer writes one JSON line per operation to stdout.
   consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+  // What a plan run may be handed outlives the run that read it (#384), so each
+  // scenario states its own starting point instead of inheriting the last one's.
+  forgetHeldSnapshots();
 });
 
 afterEach(() => {
@@ -94,16 +99,63 @@ describe("an investigation that answers, on both reference engines", () => {
   });
 });
 
+/*
+  WHAT A PLAN RUN SENDS CHANGED ON 2026-08-15, deliberately.
+
+  These tests asserted `drive.statements).toEqual([])` — a plan run reaches no
+  database at all. The plan-mode grounding design
+  (`docs/superpowers/specs/2026-08-15-plan-mode-sql-generator-design.md`, item 1)
+  moved that on the owner's decision, because it made the safe mode's usefulness
+  conditional on having already used the unsafe one: a plan run knew this database
+  only when an agent run had read it in this same process.
+
+  So the assertions below moved from `statements` to `modelStatements`, which is the
+  narrower promise the product actually makes: the server's own catalog reads are
+  subtracted, and a statement of the MODEL'S would still show up. Nothing of the
+  user's is run, nothing is written, and the model still has no tools.
+*/
 describe("a planning run is judged by what planning mode can produce", () => {
-  test("a plan in prose reaches the ledger and counts as answered", async () => {
+  /*
+    What a plan run has to PRODUCE changed with the same design (item 5 and item 6):
+    the deliverable is a statement, and the verdict stops accepting prose that has
+    neither a statement nor an explicit refusal in it. So the drives below answer the
+    way the contract now asks, and the run that answers in generic prose is asserted
+    to fail — which is the defect these evals exist to catch.
+  */
+  const A_STATEMENT = ["```postgres\n", "SELECT * FROM employees\n```\n\nIt holds one row per person."];
+
+  test("a drafted statement reaches the ledger and counts as answered", async () => {
+    const run = await open("postgres", { mode: "planning" });
+
+    const drive = await run.drive([answersProse(...A_STATEMENT)]);
+
+    // #341 F1: planning was mute by construction until `closing-statement` existed.
+    // `context-captured` joined it when plan mode began reading its own inventory,
+    // and `plan-statement-drafted` when the statement became a fact about the run.
+    expect(drive.kinds).toEqual([
+      "run-started",
+      "context-captured",
+      "closing-statement",
+      "plan-statement-drafted",
+      "run-finished",
+    ]);
+    expect(drive.modelStatements).toEqual([]);
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
+  });
+
+  test("a plan run that lectures instead of drafting is recorded as unanswered", async () => {
+    // The 2026-08-15 defect end to end: grounded, talkative, and carrying nothing the
+    // user can run. Every field on this ledger called it answered until `no-statement`.
     const run = await open("postgres", { mode: "planning" });
 
     const drive = await run.drive([answersProse("First I would ", "read the employees table.")]);
 
-    // #341 F1: planning was mute by construction until `closing-statement` existed.
-    expect(drive.kinds).toEqual(["run-started", "closing-statement", "run-finished"]);
-    expect(drive.statements).toEqual([]);
-    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
+    expect(drive.kinds).toEqual(["run-started", "context-captured", "closing-statement", "run-finished"]);
+    expect(drive.verdict).toEqual({
+      outcome: "unanswered",
+      verifier: "agent-planning.1",
+      unmet: ["no-statement"],
+    });
   });
 
   test("a planning run that says nothing is recorded as unanswered", async () => {
@@ -111,8 +163,152 @@ describe("a planning run is judged by what planning mode can produce", () => {
 
     const drive = await run.drive([answersProse("")]);
 
-    expect(drive.kinds).toEqual(["run-started", "run-finished"]);
+    // Grounded and still mute: being given the schema is not being given an answer,
+    // which is what keeps the verdict a measurement of what the run PRODUCED.
+    expect(drive.kinds).toEqual(["run-started", "context-captured", "run-finished"]);
     expect(drive.verdict.unmet).toEqual(["no-plan"]);
+  });
+
+  /*
+    The scenario #384 exists for, end to end: an agent run reads this connection's
+    catalog through the audited path, and the plan run that follows is given what it
+    read — every table by name, and no catalog read of its own.
+
+    Still here after the grounding design because it is now the FREE FAST PATH rather
+    than the only path: what it saves is the capture, and that is what the ledger
+    assertion below measures. The plan run still reads the engine's own estimated
+    statistics, on this path as on every other, because what a model may conclude has
+    to depend on what it was shown and not on which process read a catalog first.
+
+    Both runs are opened before either is driven, which is what makes the ORDER the
+    thing under test: the plan run is grounded by the reading, not by having been
+    opened after it.
+  */
+  test("a plan run on a connection this deployment has already read plans against its real tables", async () => {
+    const reader = await open("postgres");
+    const planner = await open("postgres", { mode: "planning" });
+
+    const reading = await reader.drive([answersProse("Nothing to add.")]);
+    const drive = await planner.drive([answersProse(...A_STATEMENT)]);
+
+    expect(reading.statements).toHaveLength(3);
+    // No capture, and no catalog re-read: the inventory was given for free. The one
+    // statement it did send is the statistics read, which no hold carries.
+    expect(drive.kinds).toEqual(["run-started", "closing-statement", "plan-statement-drafted", "run-finished"]);
+    expect(drive.modelStatements).toEqual([]);
+    expect(drive.statements).toHaveLength(1);
+    expect(drive.statements[0]).toContain("pg_stats");
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
+
+    const transcript = drive.transcripts[0] ?? "";
+    for (const table of DEPARTMENTS) expect(transcript).toContain(table);
+    expect(transcript).toContain("so this run did not have to read it again");
+  });
+
+  /*
+    What replaced "a plan run on a connection nothing has read". A cold PostgreSQL
+    connection is no longer the ungrounded case — the run reads its own catalog — so
+    the case that still ships is the engine this server cannot ground at all: the
+    dialects `CATALOG_COMPOSERS` does not serve. The MySQL preset carries no
+    `queryReadOnly`, exactly as the real provider does not, so a run that tried to
+    read one here would die on the fixture rather than pass quietly.
+  */
+  test("a plan run on an engine this server cannot ground says so instead of inventing tables", async () => {
+    const run = await open("mysql", { mode: "planning" });
+
+    // And its refusal is an ANSWER: an ungrounded run has no other correct output,
+    // so a verdict that failed it would push the model toward inventing table names
+    // to pass — which is the very output the ungrounded rules forbid.
+    const drive = await run.drive([
+      answersProse("NO STATEMENT: ", "this run was given no inventory of this database."),
+    ]);
+
+    expect(drive.statements).toEqual([]);
+    expect(drive.kinds).not.toContain("context-captured");
+    expect(drive.kinds).not.toContain("plan-statement-drafted");
+    expect(drive.transcripts[0] ?? "").toContain("No schema inventory is available to this run");
+    expect(drive.transcripts[0] ?? "").toContain("on this mysql connection");
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
+  });
+
+  test("a plan run on a cold PostgreSQL connection reads its own inventory and names real tables", async () => {
+    // The case the design exists for: nothing held, nothing in the ledger — a
+    // restarted process, a second replica, or a user who has never run agent mode.
+    const run = await open("postgres", { mode: "planning" });
+
+    const drive = await run.drive([answersProse("I would begin with the engineering table.")]);
+
+    expect(drive.kinds).toContain("context-captured");
+    expect(drive.modelStatements).toEqual([]);
+    const transcript = drive.transcripts[0] ?? "";
+    for (const table of DEPARTMENTS) expect(transcript).toContain(table);
+    expect(transcript).toContain("read from this database by this run");
+  });
+});
+
+/*
+  What the real-model eval's `planning-grounded` case can catch, pinned the way
+  `empty-result-detection.test.ts` pins its own case: with the case object the live
+  job uses, and a scripted model where the live one goes.
+
+  The case is the only measurement of whether a REAL model uses an inventory it was
+  handed, so what it can detect must not be established by reading it. Two things
+  are asserted — that opening the case grounds its run at all, and that its bar
+  separates a plan naming a real table from one naming none.
+*/
+describe("the planning-grounded case can fail on the defect it was written for", () => {
+  const planningCase = CASES.find((entry) => entry.name === "planning-grounded");
+  if (!planningCase) throw new Error("no eval case named planning-grounded");
+
+  const openCase = async (): Promise<EvalRun> => {
+    const run = await openCaseRun(planningCase);
+    runs.push(run);
+    return run;
+  };
+
+  test("opening the case grounds its run, without the case sending anything itself", async () => {
+    const run = await openCase();
+
+    const drive = await run.drive([answersProse("I would start with the engineering table.")]);
+
+    // The warm-up read the catalog, so the case's own run re-read none of it: it
+    // sent nothing of the model's, and only the statistics read the hold cannot
+    // carry.
+    expect(drive.modelStatements).toEqual([]);
+    expect(drive.statements).toHaveLength(1);
+    expect(drive.transcripts[0] ?? "").toContain("so this run did not have to read it again");
+  });
+
+  test("a plan naming no real table is scored unanswered, and one naming a real table is not", async () => {
+    // Both drives draft a statement, so BOTH clear the ledger's own bar and what is
+    // left under test is the case's judge: `summarise` applies the case's bar only
+    // over a run the verdict already accepted, so a lecture here would report
+    // `no-statement` and measure nothing about naming.
+    const naming = await openCase();
+    const named = await naming.drive([answersProse("```postgres\n", "SELECT * FROM engineering\n```")]);
+    expect(summarise(planningCase, named).verdict).toBe("answered");
+
+    const vague = await openCase();
+    const generic = await vague.drive([answersProse("```postgres\nSELECT relname FROM pg_class\n```")]);
+    expect(summarise(planningCase, generic).verdict).toBe("unanswered (plan-names-no-real-table)");
+  });
+
+  /*
+    Prose is not an identifier. A model writing "the Engineering table", or quoting
+    the name as SQL uppercases it, has named the table this bar is about — and a
+    judge that missed it would report the defect against a run that did exactly what
+    it was supposed to, which is worse than having no bar.
+  */
+  test("the bar reads a table name the way a sentence writes it, not the way the catalog stores it", async () => {
+    const run = await openCase();
+
+    const drive = await run.drive([
+      answersProse(
+        "```postgres\nSELECT 1\n```\n\nI would start with the Engineering table, then ENGINEERING's indexes.",
+      ),
+    ]);
+
+    expect(summarise(planningCase, drive).verdict).toBe("answered");
   });
 });
 

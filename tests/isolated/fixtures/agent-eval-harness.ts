@@ -76,6 +76,20 @@ export interface EvalEnginePreset {
    * relations come out of parsing it (`context-snapshot.ts`).
    */
   readonly catalogReads: readonly string[];
+  /**
+   * Fragments that identify a statement as one of the SERVER'S own grounding reads,
+   * in any order and in any number.
+   *
+   * A planning drive also reaches the database since the grounding design of
+   * 2026-08-15, so `[]` is no longer what a plan run sends. It is a marker SET rather
+   * than an ordered prefix like `catalogReads`, because how many grounding statements
+   * a plan run sends depends on which of three paths grounded it — its own ledger, the
+   * inventory this process already held, or a fresh capture — and a prefix assertion
+   * would be pinning which path ran rather than what the MODEL asked for. Whether a
+   * plan run was grounded at all is asserted on its ledger and its transcript, where
+   * it is visible directly.
+   */
+  readonly groundingReads: readonly string[];
   /** What the scripted engine answers a catalog read with, so a snapshot can be built. */
   readonly catalogAnswer: (sql: string) => QueryResult | null;
   /**
@@ -138,16 +152,80 @@ const SQLITE_DDL_ROWS = DEPARTMENTS.map((table) => ({
   sql: `CREATE TABLE ${table} (id INTEGER PRIMARY KEY, name TEXT)`,
 }));
 
+/**
+ * What PostgreSQL's statistics read returns here — and it returns a row for every
+ * table, analysed or not, because the composed read LEFT JOINs `pg_stats` onto
+ * `pg_class`.
+ *
+ * Only `engineering` has been analysed. The other seven arrive with `reltuples` of
+ * -1, which is PostgreSQL 14+ for "never counted" and NOT for "empty", and with no
+ * `pg_stats` row at all. That asymmetry is the fixture's whole point: absence is the
+ * normal case, and a plan run that reads silence as zero is the defect the grounding
+ * design is emphatic about.
+ */
+// Annotated rather than inferred: the two branches disagree in the type of every
+// statistics column — which is the fixture's point — so inference narrows the whole
+// list to the analysed branch's shape and the unanalysed rows stop assigning.
+const PG_STATISTICS_ROWS: readonly Record<string, unknown>[] = DEPARTMENTS.flatMap<Record<string, unknown>>((table) =>
+  table === "engineering"
+    ? [
+        {
+          table_schema: "public",
+          table_name: table,
+          estimated_rows: 41,
+          column_name: "name",
+          n_distinct: -0.5,
+          null_frac: 0.25,
+        },
+      ]
+    : [
+        {
+          table_schema: "public",
+          table_name: table,
+          estimated_rows: -1,
+          column_name: null,
+          n_distinct: null,
+          null_frac: null,
+        },
+      ],
+);
+
+/**
+ * SQLite's `sqlite_stat1`, the same way: one row per table from the LEFT JOIN, and a
+ * `stat` string only where an index was analysed. `engineering` carries "41 21" — 41
+ * rows, 21 rows per equal prefix of that index — and every other table carries a NULL
+ * `stat`, which is what `ANALYZE` leaves behind for a table with no index at all.
+ */
+const SQLITE_STAT_ROWS: readonly Record<string, unknown>[] = DEPARTMENTS.map((table) =>
+  table === "engineering"
+    ? { table_name: table, index_name: "engineering_name_idx", stat: "41 21" }
+    : { table_name: table, index_name: null, stat: null },
+);
+
 export const EVAL_ENGINES: Readonly<Record<EvalEngine, EvalEnginePreset>> = Object.freeze({
   postgres: {
     connection: { id: "conn_eval", name: "Company (PostgreSQL)", type: "postgres", createdAt: new Date(0) },
     capabilities: POSTGRES_CAPABILITIES,
     catalogReads: ["information_schema.columns", "information_schema.table_constraints", "pg_index"],
+    groundingReads: ["information_schema.columns", "information_schema.table_constraints", "pg_index", "pg_stats"],
     catalogAnswer: (sql) => {
       if (sql.includes("information_schema.columns")) {
         return result(PG_COLUMN_ROWS, ["table_schema", "table_name", "column_name", "data_type", "is_nullable"]);
       }
       if (sql.includes("information_schema.table_constraints")) return result([], ["table_name"]);
+      // Before `pg_index`: the statistics read joins `pg_class` to `pg_stats` and
+      // mentions neither, but a future composition that did would otherwise be
+      // answered with the index inventory and silently produce no statistics.
+      if (sql.includes("pg_stats")) {
+        return result(PG_STATISTICS_ROWS, [
+          "table_schema",
+          "table_name",
+          "estimated_rows",
+          "column_name",
+          "n_distinct",
+          "null_frac",
+        ]);
+      }
       if (sql.includes("pg_index")) return result([], ["tablename"]);
       return null;
     },
@@ -157,8 +235,22 @@ export const EVAL_ENGINES: Readonly<Record<EvalEngine, EvalEnginePreset>> = Obje
     connection: { id: "conn_eval", name: "Company (SQLite)", type: "sqlite", createdAt: new Date(0) },
     capabilities: SQLITE_CAPABILITIES,
     catalogReads: ["sqlite_master", "sqlite_master"],
+    // `sqlite_stat1` covers BOTH statistics statements — the availability probe and
+    // the read itself — because both name it, and the probe reads it out of
+    // `sqlite_master` rather than from the table.
+    groundingReads: ["sqlite_master", "sqlite_stat1"],
     catalogAnswer: (sql) => {
       if (!sql.includes("sqlite_master")) return null;
+      // Statistics first, since both of its statements also name `sqlite_master`.
+      // The probe asks whether the table exists at all and the read joins it, so the
+      // join is what tells them apart: this preset is a database that HAS been
+      // analysed, and the never-analysed case is expressed in `schema-stats.test.ts`
+      // against a live engine rather than here.
+      if (sql.includes("sqlite_stat1")) {
+        return sql.includes("JOIN")
+          ? result(SQLITE_STAT_ROWS, ["table_name", "index_name", "stat"])
+          : result([{ name: "sqlite_stat1" }], ["name"]);
+      }
       // The index inventory narrows on `type = 'index'`; the object read does not.
       return sql.includes("'index'")
         ? result([], ["name", "tbl_name", "sql"])
@@ -183,6 +275,10 @@ export const EVAL_ENGINES: Readonly<Record<EvalEngine, EvalEnginePreset>> = Obje
     connection: { id: "conn_eval", name: "Company (MySQL)", type: "mysql", createdAt: new Date(0) },
     capabilities: { ...POSTGRES_CAPABILITIES, explainFormat: "mysql-json", defaultPort: 3306 },
     catalogReads: [],
+    // None, and that is the honest limit rather than an omission: grounding is served
+    // for the dialects `CATALOG_COMPOSERS` covers, so a run here — plan or agent —
+    // reads no catalog and no statistics at all.
+    groundingReads: [],
     catalogAnswer: () => null,
     servesReadOnlyStatements: false,
   },
@@ -464,7 +560,10 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
       kinds: view.record.events.map((event) => event.kind),
       events: view.record.events,
       statements: sent,
-      modelStatements: withoutCatalogReads(sent, mode === "agent" ? engine.catalogReads : []),
+      modelStatements:
+        mode === "agent"
+          ? withoutCatalogReads(sent, engine.catalogReads)
+          : withoutGroundingReads(sent, engine.groundingReads),
       transcripts: transcripts(),
       verdict: verifyRunGoal(view.record),
     };
@@ -507,6 +606,25 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
  * nothing at all. A drive that reused its run's recorded inventory reads no catalog,
  * which is why the expected prefix is only consumed while it matches.
  */
+/**
+ * The same subtraction for a drive that is not in agent mode.
+ *
+ * A planning drive reaches the database too since the grounding design of
+ * 2026-08-15, so `[]` is no longer what one sends and attributing its grounding reads
+ * to the MODEL would make every planning eval assert the opposite of what it means.
+ *
+ * By marker rather than by ordered prefix, because how many statements a plan run's
+ * grounding costs depends on which of three paths grounded it — its own ledger, the
+ * inventory this process already held, or a fresh capture — and a prefix would pin
+ * which path ran. The cost is that a MODEL statement naming one of these catalogs
+ * would be subtracted too; a planning model has no tools and sends none, so there is
+ * no such statement to lose, and whether a drive was grounded at all is asserted on
+ * its ledger and its transcript where it is visible directly.
+ */
+function withoutGroundingReads(sent: readonly string[], groundingReads: readonly string[]): readonly string[] {
+  return sent.filter((sql) => !groundingReads.some((marker) => sql.includes(marker)));
+}
+
 function withoutCatalogReads(sent: readonly string[], catalogReads: readonly string[]): readonly string[] {
   let index = 0;
   while (index < catalogReads.length && sent[index]?.includes(catalogReads[index] ?? "")) index += 1;

@@ -43,19 +43,25 @@
 
 import type { Role } from "@/lib/auth";
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
-import type { AgentChartSpec, TableSchema } from "@/lib/types";
+import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
+import type { AgentChartSpec, DatabaseType, TableSchema } from "@/lib/types";
 import type { AgentGoalShortfall, AgentGoalVerifierId } from "./goal-verifier";
+import type { PlanStatementIdentifiers } from "./plan-statement";
 import type { AgentPlanSummary } from "./plan-summary";
 import type { AgentTableProfile } from "./table-profile";
 
 /**
- * Which surface a run drives. Planning is toolless: it must perform zero database
- * operations, which is why it is NOT one of the policy layer's execution modes and
- * never reaches the pipeline.
+ * Which surface a run drives. Planning is TOOLLESS — the model is handed no tool at
+ * all — which is why it is not one of the policy layer's execution modes and why no
+ * statement of the model's ever reaches the pipeline.
  *
- * Stated as the obligation it is, not as something already enforced — the tool
- * layer that has to select an empty set for this mode does not exist at this
- * commit. It is the requirement that layer will be tested against.
+ * It used to say "zero database operations", and the grounding design of 2026-08-15
+ * made that false rather than merely imprecise: the SERVER now reads this connection's
+ * catalog and its estimated statistics before the first turn, because a plan mode
+ * that had seen no schema produced the plan it would have produced for any database
+ * in the world. What the mode still promises, unchanged, is the narrower and more
+ * useful claim — it runs no statement of the user's, writes nothing, and hands every
+ * statement it drafts to the user to run themselves.
  */
 export type AgentRunMode = "planning" | "agent";
 
@@ -389,6 +395,49 @@ export type AgentRunEvent =
        */
       readonly kind: "closing-statement";
       readonly text: string;
+    })
+  | (AgentRunEventBase & {
+      /**
+       * The one statement a PLAN run drafted, and what could be checked about it
+       * without running it (the plan-mode SQL-generator design of 2026-08-15, item 5;
+       * `docs/BACKLOG.md` B44).
+       *
+       * Not `statement-drafted`, and the difference is not cosmetic. That entry
+       * belongs to a STEP: an agent run drafts through a tool, so its statement
+       * arrives with a `stepId` that ties it to the invocation and the outcome that
+       * followed, and a resumed run replays it. A plan run is toolless — its whole
+       * output is prose — so its statement has no step, was never invoked, and never
+       * will be by this runtime. Recording it under a kind that promises a step would
+       * make every reader of the ledger look for an invocation that cannot exist.
+       *
+       * It exists at all because the ledger is the only thing that outlives the drive.
+       * Until this kind, plan mode's deliverable was read out of a markdown fence in
+       * the BROWSER (#389): it worked when the model fenced its SQL, offered nothing
+       * when it did not, and left the verdict with nothing to tell a statement and a
+       * four-paragraph lecture apart.
+       *
+       * Everything here is what the SERVER established, never what the model said
+       * about its own work — the same rule `plan-comparison` and `answer-composed`
+       * follow. And two of the fields are deliberately narrow claims:
+       *
+       *  - `readOnly` is the shared statement guard's verdict, nothing more. A `false`
+       *    is a MARK and not a block — the owner ruled that the user is the one who
+       *    runs the statement — and a `true` is not a safety claim: that guard's own
+       *    docblock says it means only that that layer found nothing.
+       *  - `identifiers` distinguishes "checked, and these names are not in the
+       *    inventory" from "there was no inventory to check against", because an empty
+       *    unknown list is a claim. Even the checked form is not permission to run: an
+       *    inventory records what EXISTS, not what the user's role may select from.
+       */
+      readonly kind: "plan-statement-drafted";
+      /** The statement as the model wrote it, verbatim, fence removed. */
+      readonly sql: string;
+      /** The engine it was written for — the connection this drive was given. */
+      readonly dialect: DatabaseType;
+      readonly readOnly: boolean;
+      /** The guard's own reason, present exactly when `readOnly` is false. */
+      readonly guardViolation?: AgentStatementViolation;
+      readonly identifiers: PlanStatementIdentifiers;
     })
   | (AgentRunEventBase & {
       /**

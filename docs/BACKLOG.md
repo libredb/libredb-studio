@@ -710,9 +710,12 @@ asks for one.
 
 ### C5. Dependabot raises version updates but cannot raise security ones
 
-`.github/dependabot.yml` now groups weekly version updates across npm/bun, GitHub
-Actions and both Dockerfiles, which is what the original entry asked for. What it
-cannot do is the other half: Dependabot's Bun support covers **version updates
+`.github/dependabot.yml` now groups weekly version updates across Bun, GitHub
+Actions and both Dockerfiles, which is what the original entry asked for. Bun is
+its own `package-ecosystem`, not part of `npm` - the config shipped in #375 said
+`npm`, whose updater cannot see `bun.lock`, so five bot pull requests bumped
+`package.json` alone and died on `--frozen-lockfile`. What Dependabot still
+cannot do is the other half: its Bun support covers **version updates
 only** - security updates are not implemented upstream for this ecosystem. So an
 advisory against a package Bun resolves still reaches nobody automatically; Trivy
 and `bun audit` remain the only things that see it, and acting on one is still a
@@ -1889,3 +1892,22 @@ experiment.
 
 Done when the documented behaviour and the schema agree, whichever way is chosen, with a test
 covering a config that sets `roles` only in `defaults`.
+
+### B43. Nine copy call sites outside the agent rail fail silently on plain HTTP
+
+`navigator.clipboard` is a secure-context API: over plain HTTP on any host but loopback it is
+`undefined`, and this product ships that way on several distribution channels — the trap already
+recorded for `crypto.randomUUID` in `use-query-execution.ts`. `src/components/copy-button.tsx`
+(#389) handles it by falling back to `document.execCommand("copy")` and reporting a failure of both,
+but it is used only by the agent rail. Every other copy in the app reaches the API unguarded — nine
+call sites across seven components: `TableItem.tsx`, `RowDetailSheet.tsx` (three: one per field, two
+on the whole-row path), `CodeGenerator.tsx`, `TestDataGenerator.tsx`, `DataImportModal.tsx`,
+`StudioMobileHeader.tsx` and `QueryEditor.tsx`.
+
+Four of the seven claim a success nobody observed, in the same statement that starts the write:
+`CodeGenerator`, `TestDataGenerator` and `RowDetailSheet` flip a label, and `TableItem` raises a
+`toast.success`. On those channels the user is told the copy worked and finds out when they paste.
+
+Done when every copy in the app goes through `CopyButton` (or its `writeToClipboard`), with a test
+per site that the label does not claim success when the write was refused.
+

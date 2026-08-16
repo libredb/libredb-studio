@@ -694,7 +694,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
         {/* X-Axis Selector */}
         {chartType !== "pie" && (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-fg-subtler">X-Axis</span>
+            <span className="text-xs text-fg-subtle">X-Axis</span>
             <Select value={xAxis} onValueChange={setXAxis}>
               <SelectTrigger className="h-7 w-[140px] text-xs bg-fill border-hairline-strong">
                 <SelectValue placeholder="Select field" />
@@ -715,7 +715,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
 
         {/* Y-Axis Selector (for pie, this becomes the value field) */}
         <div className="flex items-center gap-2">
-          <span className="text-xs text-fg-subtler">{chartType === "pie" ? "Value" : "Y-Axis"}</span>
+          <span className="text-xs text-fg-subtle">{chartType === "pie" ? "Value" : "Y-Axis"}</span>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-7 text-xs bg-fill border-hairline-strong gap-1">
@@ -742,7 +742,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
         {/* Scatter Y-axis */}
         {chartType === "scatter" && (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-fg-subtler">Y</span>
+            <span className="text-xs text-fg-subtle">Y</span>
             <Select value={scatterY} onValueChange={setScatterY}>
               <SelectTrigger className="h-7 w-[120px] text-xs bg-fill border-hairline-strong">
                 <SelectValue placeholder="Y field" />
@@ -763,7 +763,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
         {/* Histogram buckets */}
         {chartType === "histogram" && (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-fg-subtler">Buckets</span>
+            <span className="text-xs text-fg-subtle">Buckets</span>
             <Select value={String(histogramBuckets)} onValueChange={(v) => setHistogramBuckets(Number(v))}>
               <SelectTrigger className="h-7 w-[70px] text-xs bg-fill border-hairline-strong">
                 <SelectValue />
@@ -782,7 +782,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
         {/* Aggregation */}
         {chartType !== "scatter" && chartType !== "histogram" && chartType !== "pie" && (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-fg-subtler">Agg</span>
+            <span className="text-xs text-fg-subtle">Agg</span>
             <Select value={aggregation} onValueChange={(v) => setAggregation(v as AggregationType)}>
               <SelectTrigger className="h-7 w-[80px] text-xs bg-fill border-hairline-strong">
                 <SelectValue />
@@ -801,7 +801,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
         {/* Date Grouping */}
         {analysis.dateFields.length > 0 && chartType !== "scatter" && chartType !== "histogram" && (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-fg-subtler">Group</span>
+            <span className="text-xs text-fg-subtle">Group</span>
             <Select
               value={dateGrouping || "none"}
               onValueChange={(v) => setDateGrouping(v === "none" ? "" : (v as DateGrouping))}
@@ -1085,6 +1085,9 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                   cx="50%"
                   cy="50%"
                   outerRadius="70%"
+                  // `PieSliceLabel` defaults `percent` to 0, which is the same
+                  // guard recharts 3 made necessary by typing it optional — an
+                  // absent value would otherwise render the label "name (NaN%)".
                   label={<PieSliceLabel ink={viz.ink} />}
                   labelLine={{ stroke: viz.grid }}
                 >

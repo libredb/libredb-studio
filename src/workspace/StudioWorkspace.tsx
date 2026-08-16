@@ -293,8 +293,10 @@ export function StudioWorkspace({
       data-studio-workspace=""
       className={cn("dark flex h-full w-full bg-canvas text-fg overflow-hidden font-sans select-none", className)}
     >
-      <ResizablePanelGroup id="workspace-main" direction="horizontal" className="h-full">
-        <ResizablePanel defaultSize={22} minSize={15} maxSize={35} className="hidden md:block">
+      <ResizablePanelGroup id="workspace-main" orientation="horizontal" className="h-full">
+        {/* Sizes are strings on purpose: react-resizable-panels 4 reads a bare
+            number as pixels and a unitless string as a percentage. */}
+        <ResizablePanel id="workspace-sidebar" defaultSize="22" minSize="15" maxSize="35" className="hidden md:block">
           <Sidebar
             connections={conn.connections}
             activeConnection={conn.activeConnection}
@@ -318,7 +320,7 @@ export function StudioWorkspace({
           />
         </ResizablePanel>
         <ResizableHandle className="hidden md:flex w-1 bg-transparent hover:bg-blue-500/30 transition-colors" />
-        <ResizablePanel defaultSize={78}>
+        <ResizablePanel id="workspace-body" defaultSize="78">
           <div className="flex-1 flex flex-col min-w-0 h-full bg-surface">
             {/* No desktop/mobile headers — platform provides its own */}
 
@@ -346,8 +348,8 @@ export function StudioWorkspace({
               {/* Editor area — no mobile database/schema tab panels in embedded mode (no MobileNav to switch to them) */}
               <div className="h-full">
                 <div className="h-full">
-                  <ResizablePanelGroup id="workspace-editor" direction="vertical">
-                    <ResizablePanel defaultSize={40} minSize={20}>
+                  <ResizablePanelGroup id="workspace-editor" orientation="vertical">
+                    <ResizablePanel id="workspace-editor-top" defaultSize="40" minSize="20">
                       <div className="h-full flex flex-col">
                         <QueryToolbar
                           activeConnection={conn.activeConnection}
@@ -386,7 +388,7 @@ export function StudioWorkspace({
                       </div>
                     </ResizablePanel>
                     <ResizableHandle className="h-1 bg-fill hover:bg-blue-500/20" />
-                    <ResizablePanel defaultSize={60} minSize={20}>
+                    <ResizablePanel id="workspace-editor-bottom" defaultSize="60" minSize="20">
                       <BottomPanel
                         mode={queryExec.bottomPanelMode}
                         onSetMode={queryExec.setBottomPanelMode}

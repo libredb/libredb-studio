@@ -42,9 +42,23 @@ const WORKFLOWS: readonly AgentRunWorkflowType[] = [
   "data-analysis",
 ];
 
-// ─── Gate 1: planning performs zero database operations ─────────────────────
+// ─── Gate 1: the planning MODEL is handed no tool ───────────────────────────
 
-describe("GATE — planning mode performs zero database operations", () => {
+/*
+  This gate was "planning mode performs zero database operations" until 2026-08-15,
+  and its assertions are unchanged — but its NAME was a wider claim than they ever
+  checked, and the plan-mode grounding design
+  (`docs/superpowers/specs/2026-08-15-plan-mode-sql-generator-design.md`) made the
+  wider claim false: the SERVER now reads this connection's catalog before a planning
+  run's first turn.
+
+  What these two tests actually pin is the half that did not move and must not: the
+  MODEL is handed no tool, in any workflow, so nothing it says can reach a database.
+  Grounding is the server's own call, and a plan run still runs no statement of the
+  user's — asserted where a run can be observed, in `tests/evals/plan-grounding.test.ts`
+  and `tests/isolated/agent-investigation.test.ts`.
+*/
+describe("GATE — the planning model is handed no tool, in any workflow", () => {
   test("no workflow gives a planning run a single tool", () => {
     // Not "filtered to nothing": there is nothing to filter. A tool it is never
     // offered is a database reach it can never make.

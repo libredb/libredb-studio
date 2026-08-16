@@ -245,6 +245,8 @@ run_group "Group 14/16: DataCharts" \
 
 # Group 15: All remaining files (safe together)
 run_group "Group 15/16: Remaining components" \
+  tests/components/copy-button.test.tsx \
+  tests/components/rich-text.test.tsx \
   tests/components/QueryEditor.test.tsx \
   tests/components/QuerySafetyDialog.test.tsx \
   tests/components/QueryHistory.test.tsx \
@@ -268,6 +270,12 @@ run_group "Group 15/16: Remaining components" \
   tests/components/monitoring/QueriesTab.test.tsx \
   tests/components/monitoring/PerformanceTab.test.tsx \
   tests/components/monitoring/OverviewTab.test.tsx
+
+# Group 18: ui/resizable (isolated — installs a global DOMRect that
+#           react-resizable-panels 4 needs, and is the one suite that renders
+#           the real library instead of mocking @/components/ui/resizable)
+run_group "Group 18: ui/resizable" \
+  tests/components/ui/resizable.test.tsx
 
 # Group 17: StudioWorkspace (isolated — mocks the same child families as Studio:
 #           sidebar, QueryEditor, studio/index, SchemaDiagram, DataProfiler,

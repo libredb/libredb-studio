@@ -38,6 +38,7 @@
  * claims RESTED on, which is a fact about the run.
  */
 
+import { readPlanStatement } from "./plan-draft";
 import type { AgentReportClaim, AgentRunEvent, AgentRunMode, AgentRunRecord, AgentRunWorkflowType } from "./types";
 
 /**
@@ -90,6 +91,30 @@ export type AgentGoalShortfall =
   | "empty-evidence"
   /** A planning run left no prose at all — the mute run of #341 F1. */
   | "no-plan"
+  /**
+   * A planning run talked, and produced neither a statement nor a refusal.
+   *
+   * The mode's own artifact, and the reason this shortfall exists is a measurement.
+   * A live run on 2026-08-15 was asked what the popular films were, against a
+   * PostgreSQL connection holding the `dvdrental` sample database, and answered with
+   * a four-step generic investigation plan that would have read identically against
+   * any database in the world. Every field on this ledger called it answered, because
+   * the only thing planning was asked for was non-empty prose — so the mode's central
+   * defect was invisible to the one component built to see runs that finish without
+   * answering.
+   *
+   * Deliberately NOT folded into `no-plan`. A run that said nothing and a run that
+   * said a great deal and delivered nothing are different facts about a drive, they
+   * have different causes, and the sentence a reader is owed differs: only the second
+   * one is a model that answered the wrong question well.
+   *
+   * The two endings that satisfy it are the two the mode is FOR — a drafted statement,
+   * or an explicit `NO STATEMENT:` refusal naming what the inventory lacks — so this
+   * cannot fail a run that did its job, including the one that honestly could not.
+   * `operations` planning is exempt at the rule rather than here: its deliverable is
+   * prose by decision, and it has no statement contract to fall short of.
+   */
+  | "no-statement"
   /**
    * A query-optimization run never compared two plans, and recommended no index
    * either.
@@ -213,11 +238,43 @@ function restsOnlyOnEmptyResults(claims: readonly AgentReportClaim[], events: re
   return cited.length > 0 && cited.every((rowCount) => rowCount === 0);
 }
 
-/** Planning produced its whole output, or it produced nothing. */
+/**
+ * The plan bar: the run spoke, and what it said was its deliverable rather than a
+ * lecture about how one would find it.
+ *
+ * **Two bars in one rule, because plan mode has two deliverables.** Every workflow but
+ * `operations` is asked for a statement (`PLAN_DELIVERABLES` in `investigation.ts`),
+ * and `operations` is asked for prose — it reads no schema and composes no SQL, so
+ * holding it to a statement would fail every run that did exactly what the workflow is
+ * for. That exemption is read off the workflow type here rather than duplicated as a
+ * second rule, so the two halves of one decision cannot drift.
+ *
+ * **Speaking is checked first, and its shortfall dominates**, the way the composed
+ * templates put the baseline first: telling a mute run that it drafted no statement
+ * would name the smaller of two problems, and `no-plan` and `no-statement` are kept
+ * apart precisely so a reader can tell a run that said nothing from a run that said
+ * plenty.
+ *
+ * **Both legitimate endings satisfy it.** A `plan-statement-drafted` entry is the
+ * server's own reading of the closing prose (work item 5), and an explicit
+ * `NO STATEMENT:` refusal is the honest ending when the inventory does not support the
+ * question — a run on an engine this server cannot ground has no other correct output,
+ * and failing it would push the model toward inventing table names to pass.
+ *
+ * The refusal is read with `readPlanStatement` rather than by searching the text for
+ * the marker, so this agrees with the extractor about what a refusal IS — a marker
+ * inside a fenced block is a statement's own text, not a refusal — and the verdict
+ * stays a pure fold over the ledger: that reader touches no clock, model or database.
+ */
 function verifyPlanningGoal(run: VerifiableAgentRun): readonly AgentGoalShortfall[] {
-  const spoke = run.events.some((event) => event.kind === "closing-statement" && event.text.length > 0);
-  if (spoke) return [];
-  return run.status === "cancelled" ? ["cancelled"] : ["no-plan"];
+  const closing = run.events.flatMap((event) =>
+    event.kind === "closing-statement" && event.text.length > 0 ? [event.text] : [],
+  );
+  if (closing.length === 0) return run.status === "cancelled" ? ["cancelled"] : ["no-plan"];
+  if (run.workflowType === "operations") return [];
+  if (run.events.some((event) => event.kind === "plan-statement-drafted")) return [];
+  if (closing.some((text) => readPlanStatement(text).kind === "refusal")) return [];
+  return run.status === "cancelled" ? ["cancelled"] : ["no-statement"];
 }
 
 /** An investigation answered when it composed claims that rest on something it read. */

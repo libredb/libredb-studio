@@ -7,21 +7,30 @@
 # into a handful of pull requests a week, split only where the split changes how
 # a reviewer reads them: what ships versus what does not.
 #
-# Bun is supported through the `npm` ecosystem - Dependabot treats it as part of
-# `npm_and_yarn` and understands `bun.lock`. Only version updates work today;
-# Bun security updates are not implemented upstream, which is why the security
-# side still runs through Trivy and `bun audit`.
+# Bun is its own ecosystem (`package-ecosystem: "bun"`), NOT part of `npm`. The
+# `npm` ecosystem covers npm, pnpm and Yarn - internally Dependabot calls it
+# `npm_and_yarn` - so its updater looks for package-lock.json, pnpm-lock.yaml or
+# yarn.lock, and cannot see `bun.lock` at all. Configuring bun under `npm` is what
+# shipped in #375, and the result was five pull requests that bumped
+# `package.json` alone - every CI job then died in its first step on
+# `error: lockfile had changes, but lockfile is frozen`. That internal name was
+# the tell twice over: the compatibility badge in those pull request bodies said
+# `package-manager=npm_and_yarn`, and the branches were called
+# `dependabot/npm_and_yarn/...`. Only version updates work today; Bun security
+# updates are not implemented upstream, which is why the security side still runs
+# through Trivy and `bun audit`.
 #
 # CI installs with `bun install --frozen-lockfile` (scripts/ci-install.sh), so a
 # pull request whose `bun.lock` does not match its `package.json` fails loudly
 # rather than resolving around the difference. That is the safety net behind
-# every group below.
+# every group below - and it worked exactly as designed above; the bug was the
+# ecosystem name, never the gate.
 
 version: 2
 
 updates:
-  # ---------------------------------------------------------------- npm / bun
-  - package-ecosystem: "npm"
+  # ---------------------------------------------------------------------- bun
+  - package-ecosystem: "bun"
     directory: "/"
     schedule:
       interval: "weekly"
@@ -43,6 +52,15 @@ updates:
     # rather than a bump. The fan-out is bounded: nine majors are outstanding as
     # of 2026-08-15 across ~1170 installed packages, and open-pull-requests-limit
     # caps how many wait at once.
+    #
+    # UNVERIFIED under `bun`: the options reference lists `dependency-type`
+    # inside `groups` for bundler, composer, mix, maven, npm and pip - bun is not
+    # named. The published schema does not restrict it per ecosystem, so this
+    # config is valid either way and cannot break the Actions or Docker blocks
+    # below. If the first bun run ignores it, both groups match everything and
+    # the production/development split collapses into one pull request; the fix
+    # is then to separate them with `patterns` instead. Cosmetic either way -
+    # check the grouping on the first run before assuming it took.
     groups:
       # What ships. Kept separate from tooling because a reviewer weighs these
       # against "does the editor still work in a browser", not "does lint pass".

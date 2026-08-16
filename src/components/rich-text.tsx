@@ -1,4 +1,7 @@
 import type { ReactNode } from "react";
+import { PencilLine } from "lucide-react";
+import { CopyButton } from "@/components/copy-button";
+import { isQueryFenceTag } from "@/lib/sql/fence-tags";
 
 /**
  * Renders the inline markup an LLM emits — `**bold**` and `` `code` `` — as React nodes.
@@ -57,6 +60,72 @@ const HEADING_LINE = /^(#{1,6})\s+(.*)$/;
 const BULLET_LINE = /^\s*[-*]\s+(.*)$/;
 
 /**
+ * A fence line: three backticks, and whatever the model called the block.
+ *
+ * The info string may hold no backtick, and that restriction is doing real work rather
+ * than following the spec for its own sake. CommonMark forbids it so that a whole fence
+ * written on ONE line — ```` ```sql SELECT 1``` ```` — is not read as an opener; without
+ * the rule, that single line opens a block nothing closes and the entire rest of the
+ * plan is swallowed into it. One malformed line would take the whole output with it, so
+ * such a line is left as the ordinary prose it renders as today.
+ */
+const FENCE_LINE = /^\s*```([^`]*)$/;
+
+export interface ProseOptions {
+  /**
+   * Puts a fenced statement into the host's editor. Absent where the host has no
+   * editor to put one in, and the control is then not rendered — the rule every
+   * affordance in the agent rail follows.
+   */
+  readonly onApplySql?: (sql: string) => void;
+}
+
+/**
+ * One fenced block: the model's text as typed, and what a reader may do with it.
+ *
+ * The controls sit UNDER the block rather than floating over its corner. A plan's SQL
+ * is often wider than the rail, so the block scrolls sideways; a control pinned inside
+ * it would sit on top of the text a user is reading, and one pinned outside the scroll
+ * would drift away from it.
+ */
+function CodeBlock({
+  code,
+  tag,
+  onApplySql,
+}: {
+  readonly code: string;
+  readonly tag: string | undefined;
+  readonly onApplySql: ((sql: string) => void) | undefined;
+}) {
+  return (
+    <div className="mt-1">
+      {/*
+        `bg-sunken`, not the `bg-black/40` this replaced: a fenced block is a
+        RECESSED surface, not a scrim. A translucent black stays black over a
+        light page, which would leave the one dark rectangle on the card.
+      */}
+      <pre className="overflow-x-auto rounded bg-sunken p-1.5 font-mono text-[0.625rem] text-fg-secondary whitespace-pre">
+        {code}
+      </pre>
+      <div className="mt-0.5 flex items-center gap-1">
+        {onApplySql !== undefined && isQueryFenceTag(tag) && (
+          <button
+            type="button"
+            data-testid="prose-code-apply"
+            onClick={() => onApplySql(code)}
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] text-fg-tertiary hover:bg-fill hover:text-fg transition-colors"
+          >
+            <PencilLine strokeWidth={1.5} className="w-3 h-3" />
+            Apply to editor
+          </button>
+        )}
+        <CopyButton text={code} testId="prose-code-copy" />
+      </div>
+    </div>
+  );
+}
+
+/**
  * Renders a block of model prose (#373 review).
  *
  * Measured in plan mode against a live model: the closing statement came back as
@@ -71,9 +140,16 @@ const BULLET_LINE = /^\s*[-*]\s+(.*)$/;
  *    as React nodes so that escaping is structural. There is no `dangerouslySetInnerHTML`
  *    on this path and no markdown library that could produce one.
  *  - **Only what the models actually emit**, which is headings, bullets, bold,
- *    paragraphs and inline code. Not a markdown engine: no links, no images, no tables,
- *    no fenced blocks, no ordered lists. Anything else stays the characters the model
+ *    paragraphs, inline code and fenced blocks. Not a markdown engine: no links, no
+ *    images, no tables, no ordered lists. Anything else stays the characters the model
  *    typed, which is the honest rendering of text this build does not interpret.
+ *  - **A fenced block is verbatim, and it is the reason this reads fences at all**
+ *    (#389). Plan mode is toolless, so its entire output is one of these blocks, and a
+ *    plan worth having contains SQL. Without fence handling that SQL arrived as
+ *    paragraphs of literal backticks with its whitespace collapsed — unreadable, and
+ *    with no way to get it into the editor. Nothing inside a fence is read as prose:
+ *    a `-` there is a minus sign and a `*` is a star, because that is what the model
+ *    typed and a code block is the one place markup must not be interpreted.
  *  - **Every heading renders at ONE level**, whatever the hash count. The heading
  *    outline of the page belongs to the application; a model's hash count is a claim
  *    about the structure of its own answer, not about this document, and letting it
@@ -83,10 +159,12 @@ const BULLET_LINE = /^\s*[-*]\s+(.*)$/;
  * boundary visible, because prose being READABLE must not make it look like the
  * application speaking.
  */
-export function renderProse(text: string): ReactNode[] {
+export function renderProse(text: string, options: ProseOptions = {}): ReactNode[] {
   const blocks: ReactNode[] = [];
   let bullets: string[] = [];
   let key = 0;
+  /** The fence being collected, or null outside one. */
+  let fence: { readonly tag: string | undefined; readonly lines: string[] } | null = null;
 
   const closeList = (): void => {
     if (bullets.length === 0) return;
@@ -107,7 +185,35 @@ export function renderProse(text: string): ReactNode[] {
     bullets = [];
   };
 
+  const closeFence = (): void => {
+    if (fence === null) return;
+    const code = fence.lines.join("\n");
+    // A fence with nothing in it is not a code block, for the same reason a heading
+    // with nothing after it is not a heading: it would render an empty box offering a
+    // copy of nothing.
+    if (code.trim().length > 0) {
+      blocks.push(<CodeBlock key={key} code={code} tag={fence.tag} onApplySql={options.onApplySql} />);
+      key += 1;
+    }
+    fence = null;
+  };
+
   for (const line of text.split("\n")) {
+    const marker = FENCE_LINE.exec(line);
+    if (fence !== null) {
+      // Inside a fence NOTHING is prose — including a line that looks like a bullet or
+      // a heading — so this branch comes before every other reading of the line.
+      if (marker === null) fence.lines.push(line);
+      else closeFence();
+      continue;
+    }
+    if (marker !== null) {
+      closeList();
+      const tag = marker[1].trim().toLowerCase();
+      fence = { tag: tag.length === 0 ? undefined : tag, lines: [] };
+      continue;
+    }
+
     const bullet = BULLET_LINE.exec(line);
     if (bullet !== null) {
       bullets.push(bullet[1]);
@@ -144,5 +250,9 @@ export function renderProse(text: string): ReactNode[] {
   }
 
   closeList();
+  // A fence the model never closed still renders what it holds: a run cut off at its
+  // turn limit or its deadline ends mid-block, and the statement it had written by then
+  // is the half the user came for.
+  closeFence();
   return blocks;
 }

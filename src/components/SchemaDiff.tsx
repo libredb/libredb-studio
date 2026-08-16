@@ -171,7 +171,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-hairline bg-surface flex-wrap">
         <GitCompare strokeWidth={1.5} className="w-3.5 h-3.5 text-rose-400" />
-        <span className="text-xs font-medium text-fg-tertiaryr">Schema Diff</span>
+        <span className="text-xs font-medium text-fg-tertiary">Schema Diff</span>
 
         <div className="h-4 w-px bg-fill-strong" />
 

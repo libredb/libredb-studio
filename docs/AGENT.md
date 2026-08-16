@@ -38,8 +38,12 @@ Three properties frame everything below, and each of them is load-bearing rather
   require `queryReadOnly` (`src/lib/db/factory.ts`, `PROFILE_ACQUISITION`). Everything else about
   the three acquisitions is identical: the same `readOnly: true` open, the same optional
   least-privilege `agentUser`, and the same profiled cache, so neither an operations run nor an
-  editor replay is ever handed the editor's writable pool. Plan mode is toolless and reaches no
-  database, so no engine restriction applies to it.
+  editor replay is ever handed the editor's writable pool. **Plan mode takes the same acquisition
+  for its own grounding** — the server reads the catalog and the engine's estimated statistics
+  before the model's first turn — so the same engine restriction decides whether a plan run can be
+  grounded. It does not decide whether a plan run may START: a plan run on any other engine begins,
+  is told no inventory could be read for that connection type, and acquires nothing. The model is
+  toolless in either case, so nothing it writes reaches a database.
 
 This document describes what the runtime *does*. The security matrix rows that cover it are 3.4 and
 3.5 in [`docs/SECURITY.md`](./SECURITY.md) — both marked **Partial**, with the reasons stated there;
@@ -145,10 +149,13 @@ product of the two (#325).
 
 The mode is HOW a run executes:
 
-- **`planning`** — the model reasons about the objective and produces a plan. Its tool set is
-  **empty**, so a planning run performs zero database operations. This is decided on the server from
-  the run's persisted mode; a client-supplied tool list has no way in, because there is no parameter
-  for one.
+- **`planning`** — the model reasons about the objective and produces a statement the user runs
+  themselves. Its tool set is **empty**, and that is decided on the server from the run's persisted
+  mode; a client-supplied tool list has no way in, because there is no parameter for one. The
+  server does read this connection's catalog and its estimated statistics before the first turn —
+  see [What a plan run knows](#what-a-plan-run-knows) — so the mode's property is not "it reaches
+  no database" and never really was: **a planning run runs no statement of the user's, writes
+  nothing, and hands every statement it drafts to the user to run themselves.**
 - **`agent`** — the model receives the read-class tools below and investigates.
 
 The mode is fixed when the run is opened. A later request cannot widen a planning run, and the
@@ -170,6 +177,12 @@ Two properties are worth stating, because both are easy to assume the other way 
   system prompt states the workflow's objective in **both** modes and its tool rules only where there
   are tools, so a planning run of a query optimization — "how would you make this faster?" — is an
   ordinary thing to ask for. The rail offers the workflow control in both modes for the same reason.
+  What the workflow does decide in planning is the **deliverable**: `PLAN_DELIVERABLES` in
+  `investigation.ts` is a total record over the workflow types, naming the statement each plan is
+  asked for — the rewritten statement for a query optimization, the statement that measures the
+  concern for an assessment — with `operations` the one member whose deliverable is prose, because
+  that workflow composes no SQL and captures no schema. Being total is the point: adding a workflow
+  stops the file compiling until someone decides what a plan of it should produce.
 - **The field is required on the record and optional on the ledger header.** The fold always
   produces a workflow type, so every reader has one and none has to know which generation of writer
   produced its run. A header without one folds to `investigation`, and that is a READING rather than
@@ -209,10 +222,14 @@ The middle case is why this is a comparison and not a bare "has a seed id". The 
 database would investigate the seed and report on it as though it were the one on screen.
 
 A run emits a closed set of **semantic events**, and they are the whole of what the UI renders:
-`run-started`, `context-captured`, `statement-drafted`, `tool-invoked`, `tool-completed`,
-`tool-refused`, `report-composed`, `closing-statement`, `run-finished`, plus the four a single
-workflow's own tool writes — `plan-comparison`, `recommendation`, `table-profiled` and
+`run-started`, `context-captured`, `statement-drafted`, `plan-statement-drafted`, `tool-invoked`,
+`tool-completed`, `tool-refused`, `report-composed`, `closing-statement`, `run-finished`, plus the
+four a single workflow's own tool writes — `plan-comparison`, `recommendation`, `table-profiled` and
 `answer-composed`.
+
+**`plan-statement-drafted` is planning mode's own**, and is deliberately not `statement-drafted`:
+that kind promises a `stepId` tying a draft to the tool invocation that sent it, and a toolless run
+has none. See [The statement a plan run drafts](#the-statement-a-plan-run-drafts).
 
 **`closing-statement` is the model's closing prose, and it is deliberately not a report.** It carries
 no citations and claims none, which is why it has its own kind rather than a lenient
@@ -239,6 +256,136 @@ is the successful ending — planning is toolless, `compose_report` does not exi
 once the plan is written is the only way a good planning run can end. The rail therefore words that
 one ending per mode (#350); every other ending is a shortfall in either mode, because a planning run
 that ran out of time produced no plan either.
+
+### What a plan run knows
+
+**A plan run grounds itself.** Before the model's first turn the server reads this connection's
+catalog and the engine's own estimated statistics, through the same audited, read-only, budgeted
+path an agent run's `inspect_schema` takes. The model is handed no tool and reads nothing further.
+
+That is a deliberate change of the contract, made on 2026-08-15, and it retired a sentence this
+document carried for two milestones: *"a plan run reaches no database."* That sentence was never the
+property the mode sells. It was a **proxy** for it, and it stopped being true. The property itself is
+unchanged and is what to hold this mode to:
+
+> **A plan run runs no statement of the user's, writes nothing, and hands every statement it drafts
+> to the user to run themselves.**
+
+Reading a catalog is what the sidebar already does on every connect. What no plan run does — before
+or after the change — is execute a statement anyone asked for, modify anything, or apply its own
+output.
+
+The change exists because the previous arrangement (#384) grounded a plan run only from
+`heldSnapshotForConnection`, an in-process LRU that only a prior **agent** run on the same connection
+in the same process could fill. So the safe mode was useful only to someone who had already used the
+unsafe one, and was blind after any restart and on any second replica. Asked on 2026-08-15 how it
+would assess a real six-table SQLite database before a release, a live run answered that it could not
+reach the live environment and produced an inspection plan that would have read identically against
+any database in the world.
+
+What a grounded plan run is given, and where each part comes from:
+
+- **The inventory and its relations**, from the cheapest of three sources, in this order: the run's
+  **own ledger** (a resumed drive re-derives the `context-captured` inventory it already recorded and
+  reads nothing); the **process hold** (`context-snapshot.ts`, keyed by `connectionIdentity` —
+  the engine, host, port, database, service/instance and role, hashed, never the password — accepted
+  only if it fingerprints as itself, newest reading wins by `capturedAtMs`, bounded to the 16 most
+  recently used connections); or a **capture**, which reads the catalog and records `context-captured` on the
+  plan run's own ledger — so the next drive of that run takes the first path. Both messages are
+  fenced as `UNTRUSTED_CONTENT`, exactly as in agent mode.
+- **A preface saying who read it**, because the two cases are different facts: read by this run
+  before its first turn, or read by an earlier run on this connection. Both prefaces then say the
+  same true thing rather than the old "this run has read nothing" — no statement of the user's was
+  run, nothing was written, and the model has no tools.
+- **Estimated statistics** (`src/lib/agent/schema-stats.ts`), read on **every** grounded path
+  including the two free ones. That is deliberate: what the model may conclude must not depend on
+  which process happened to have read a catalog first. They are read from what the engine already
+  holds — `pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite — so no column
+  is scanned and no value is read out of any row. `AgentColumnProfile`'s "counts only" rule is
+  untouched. Statistics are **not** folded into the snapshot: an estimate is not schema, and the
+  snapshot's fingerprint is its identity, so an `ANALYZE` would otherwise change the identity of a
+  schema nobody changed.
+
+**The statistics are estimates, and the text says so at every point it could be mistaken for a
+measurement.** A number reaching the model is labelled the engine's own estimate; `pg_stats.n_distinct`
+is a ratio when it is negative, and is converted only where there is a row estimate to convert it
+against and then labelled derived; PostgreSQL's two spellings of "I do not know" (`reltuples` of `-1`,
+never counted since PG14; `n_distinct` of `0`) become absence rather than a number. A table nobody has
+`ANALYZE`d is **listed as having no statistics** rather than omitted, because a model shown silence
+reads it as an empty table. SQLite has `sqlite_stat1` only after an explicit `ANALYZE`, offers no null
+fraction at all, and writes no row for a table with no index — so on that engine even the row estimate
+is available only for indexed tables, and the packed text states that limit once rather than implying
+coverage it does not have.
+
+**A plan run that cannot be grounded is told so**, in the server's own voice and without naming a tool
+it does not have, and its rules then steer it to the refusal path rather than to generic advice. That
+happens on any engine outside PostgreSQL and SQLite, and whenever the catalog read is itself refused.
+
+**An `operations` plan is ungrounded by decision**, not by failure: that objective is about what the
+engine reports about itself rather than about what its tables contain, so a catalog read would spend
+the run's statements on an inventory the plan has no use for. It is the one workflow whose plan
+deliverable is prose.
+
+Three consequences worth stating plainly, because each is easy to assume the other way round:
+
+1. **A plan run costs statements now.** Grounding is catalog reads plus one statistics read (two on
+   SQLite: the `sqlite_stat1` availability probe has to be its own statement, because SQLite resolves
+   table names at prepare time). They come out of the same per-run statement budget every other read
+   does, and they are audited the same way. The ledger-reuse path saves the catalog reads and
+   deliberately does **not** save the statistics read.
+2. **A plan run now writes `context-captured` to its own ledger**, which it never did before, and
+   holds the reading in the process for the next run on that connection. Grounding therefore survives
+   a restart. The deferral that recorded the opposite ("a plan run's grounding does not survive a
+   restart, because the inventory is held in memory") is closed and deleted from `docs/BACKLOG.md`.
+3. **The schema is never egressed anywhere it was not already going.** The same table and column
+   names an agent run's prompt carries reach the same model, for a connection the same user can open
+   an agent run on. The statistics add estimated row counts, null fractions and distinct counts to
+   that set — engine estimates about the shape of the data, never a value out of it.
+
+### The statement a plan run drafts
+
+The deliverable is one runnable statement, not a lecture. The rules ask for it in a single fenced
+block tagged with the connection's canonical type-id (`postgres`, `sqlite`), rationale after the
+block, and no table or column name that is not in the inventory. A run that cannot answer from the
+inventory takes the other legitimate ending: a line beginning `NO STATEMENT:` saying exactly what is
+missing and asking the one question that would unblock it. That marker is a convention in the
+**output**, not a tool, which is what lets a toolless mode make its two outcomes mechanically
+distinguishable.
+
+The server reads that block out of the closing prose (`src/lib/agent/plan-statement.ts`) and records
+it as a **`plan-statement-drafted`** event carrying the SQL, the connection's dialect, whether the
+statement is read-only, and what the identifier check found. It is its own event kind rather than
+`statement-drafted` because that kind promises a `stepId` tying a draft to a tool invocation, and a
+toolless run has none. Recording it closed the deferral that had the rail reading a plan's SQL out of
+a markdown fence rather than out of the ledger.
+
+The server's reader and the browser's renderer have to agree about which block is a statement, and
+both dimensions of that agreement are now enforced rather than asserted: the CommonMark fence rule
+(no backtick in an info string) is spelled out in both, and which info strings name a query language
+is one shared predicate, `isQueryFenceTag` in `src/lib/sql/fence-tags.ts`. Until 2026-08-15 only the
+first half was shared, and the reader took the first fenced block whatever its tag — so a run that
+opened with a ```text illustration recorded the illustration as its deliverable.
+
+#389's fence reading stays as the fallback for code blocks in prose that are not the run's
+deliverable — but it is **withheld on the closing entry a statement was read out of**. That prose
+holds the statement, so leaving the per-block control there would put an unmarked "Apply to editor"
+directly above the marked one: `renderProse` is handed text and knows nothing of the guard's verdict,
+so it cannot label what it is applying. The card is the only hand-off; the block still copies.
+
+Two checks run before it is offered anywhere, and neither is more than it says:
+
+- **Identifiers.** Every table name the statement reads is compared against the captured inventory,
+  and unknown names are recorded on the event. The reader is a reader, not a parser: it prefers a miss
+  to a false alarm, so an empty unknown list means "nothing recognised was missing", never "the
+  statement is sound". Nothing here checks **columns**. A run with no inventory records
+  `no-inventory` rather than an empty list, because an empty list is a claim that every table exists.
+- **Read-only classification**, through the existing statement guard (`inspectAgentStatement`). A
+  statement that is not read-only is **not blocked** — the owner ruled on that — but it is marked, on
+  the event and visibly in the rail, so that hand-off never quietly gives a user a `DELETE`.
+
+**A statement validated against the inventory is not a statement that will run.** The inventory
+records what EXISTS in this database, not what the user's role is permitted to read, and the model is
+told so in its own rules for the same reason it is stated here.
 
 ## Durability and resume
 
@@ -915,7 +1062,7 @@ The other half is that obeying the injected text changes nothing about what the 
 is refused by the statement guard before the database, a tool the run was never offered does not
 exist for it, and a claim citing something the run never read cannot be composed. Each is asserted
 against the deciding function in `tests/unit/agent-policy-gates.test.ts`, which states the four
-policy gates by name — planning performs zero database operations, nothing above risk class 1 can
+policy gates by name — the planning model is handed no tool in any workflow, nothing above risk class 1 can
 execute, a settled step is never executed twice, and every final finding carries a citation.
 
 **One open risk, found by these fixtures and recorded as B29.** An identifier the model quotes back
@@ -1127,10 +1274,11 @@ as it working, and the next paragraph is about the difference.
 So the state is not a dead end and no longer claims to be. It says the model cannot drive an AGENT run
 and which capabilities the probe could not establish; that plan mode needs no tools and **may** still
 work, offering a control that SELECTS that mode and starts nothing; and that a different model is what
-buys a run that reads the database. Offering is honest and deciding is not — the same rule T1's
-shortcut follows, for the same reason: a click that spent model budget would be a different feature.
-What plan mode cannot do is left plainly stated rather than implied, because a toolless run reaches no
-database and a user pointed at it deserves to know that before they ask.
+buys a run that investigates the database itself. Offering is honest and deciding is not — the same
+rule T1's shortcut follows, for the same reason: a click that spent model budget would be a different
+feature. What plan mode cannot do is left plainly stated rather than implied: the model there holds no
+tool, so it cannot follow one reading with another, and what it drafts is a statement the user runs
+themselves. A user pointed at that mode deserves to know it before they ask.
 
 **The offer is an invitation, not a guarantee, and it is withdrawn where the probe contradicts it.**
 Admission without probing is not proof of compatibility: the gate skips planning because planning
@@ -1169,7 +1317,7 @@ build until somebody decides what "answered" means for it.
 
 | Mode | Rule (`agent-planning.1` / `agent-investigation.1`) | Unmet when it fails |
 | --- | --- | --- |
-| `planning` | The run left non-empty closing prose. That mode is toolless and can never cite evidence, so judging it by the investigation rule would fail every planning run that did its job. | `no-plan` |
+| `planning` | The run left non-empty closing prose, **and** that prose was its deliverable: a drafted statement on the ledger, or an explicit `NO STATEMENT:` refusal. That mode is toolless and can never cite evidence, so judging it by the investigation rule would fail every planning run that did its job — but prose alone was how a generic lecture scored `answered` for as long as it did. `operations` planning is exempt: its plan deliverable is prose by decision. | `no-plan`, `no-statement` |
 | `agent` (investigation) | The run composed at least one claim, **and** the claims do not rest entirely on empty results. | `no-report`, `empty-evidence` |
 | `agent` (query-optimization) | The baseline above, **and** either a plan comparison on the ledger or an index recommendation citing a plan this run read. `agent-query-optimization.2`. | the above, plus `no-plan-comparison`, `no-plan-evidence` |
 | `agent` (database-assessment) | The baseline above, **and** a table profiled. `agent-database-assessment.1`. | the above, plus `no-table-profile` |
@@ -1316,14 +1464,14 @@ model passed the capability probe**; for anybody else the answer is that there i
 | What the panel did | What a run does instead | Where that is established |
 | --- | --- | --- |
 | **Any AI at all, for an EMBEDDED user** — one working panel and one exported component, which is less than "both tabs worked". The embedded shell rendered both TABS regardless of `features.ai`, and only Autopilot was behind them: `AIAutopilotPanel` had no feature gate, so a libredb-platform user had a fully working Autopilot panel posting to `/api/db/monitoring` and `/api/ai/autopilot` on the HOST's origin. The NL2SQL tab rendered an EMPTY PANE under the default `features.ai: false` — the shell passed `isOpen={features.ai ? isNL2SQLOpen : false}` and the panel returns `null` when it is not open — so what an embedded host lost there is `NL2SQLPanel` itself, exported from `@libredb/studio/components` for a host to mount on its own, plus the tab for a host that had switched `features.ai` on. | Nothing. The rail lives in the standalone shell only; the package carries no agent surface, `WorkspaceFeatures` deliberately gained no agent field, and no package entry point transitively imports `src/lib/agent`. For an embedded user every "what a run does instead" cell below is false, because there is no run. | The removal itself (`5bbea51`, which deletes the export, both render arms and the flag), read against the code it deleted: `git show 5bbea51^:src/workspace/StudioWorkspace.tsx` (the two `features.ai ?` props), `git show 5bbea51^:src/components/NL2SQLPanel.tsx` (`if (!isOpen) return null`), `git show 5bbea51^:src/workspace/types.ts` (`DEFAULT_WORKSPACE_FEATURES.ai: false`); `tests/unit/agent-package-boundary.test.ts`; [The surface in the app](#the-surface-in-the-app). |
-| **A TOOLLESS model drove both panels.** Each posted a prompt and rendered what came back, so any configured model produced an answer — including one that cannot call a tool, which is what a small local `ollama` model usually is. | An agent run is refused before it opens: the start path probes the model, and an established incapability is a `422` naming what could not be established. What such a model can still drive is planning mode, which is toolless by contract and therefore reaches no database at all. | `src/lib/agent/capability-gate.ts`; `tests/isolated/agent-capability-gate.test.ts`; [What a refused model looks like in the app](#what-a-refused-model-looks-like-in-the-app). |
-| **One click that RAN the model's SQL.** NL2SQL's Run and Autopilot's Execute pushed model-authored SQL — including DDL — straight into the studio's execution path. | The rail hands a statement to the **editor** and never runs it: an explicit "Apply to editor" on a drafted statement or a recommendation. Nothing in the runtime executes a proposed statement. | `src/components/agent/timeline.ts` — the `statement-drafted` and `recommendation` entries carry `applySql`; `tests/evals/query-optimization.test.ts` — the recommendation is recorded and no `CREATE INDEX` reaches the database. |
+| **A TOOLLESS model drove both panels.** Each posted a prompt and rendered what came back, so any configured model produced an answer — including one that cannot call a tool, which is what a small local `ollama` model usually is. | An agent run is refused before it opens: the start path probes the model, and an established incapability is a `422` naming what could not be established. What such a model can still drive is planning mode, which is toolless by contract: the model there is handed no tool, runs no statement of the user's, writes nothing, and drafts a statement for the user to run themselves. | `src/lib/agent/capability-gate.ts`; `tests/isolated/agent-capability-gate.test.ts`; [What a refused model looks like in the app](#what-a-refused-model-looks-like-in-the-app). |
+| **One click that RAN the model's SQL.** NL2SQL's Run and Autopilot's Execute pushed model-authored SQL — including DDL — straight into the studio's execution path. | The rail hands a statement to the **editor** and never runs it: an explicit "Apply to editor" on a drafted statement, a recommendation, or a plan run's drafted statement. Nothing in the runtime executes a proposed statement. A plan run's statement is offered through its own card rather than the shared control, because that card is also what marks a statement the guard did not classify as read-only and names the tables the inventory does not hold — the marking and the offer have to arrive together. | `src/components/agent/timeline.ts` — the `statement-drafted` and `recommendation` entries carry `applySql`, and `plan-statement-drafted` deliberately does not; `src/components/agent/AgentRail.tsx` — the plan statement card; `tests/evals/query-optimization.test.ts` — the recommendation is recorded and no `CREATE INDEX` reaches the database. |
 | **Proposed a statement the run never sent.** NL2SQL's product was a statement, whatever the model wrote. | Only `recommend_change` proposes an unexecuted statement; it accepts `index` or `rewrite`, the statement must match the card it is filed under, and it belongs to the `query-optimization` workflow. An investigation — what a plain-English question opens — cannot propose anything. | `src/lib/agent/tools.ts` (`recommendationSchema`, `matchesCard`, `QUERY_OPTIMIZATION_TOOLS`); `tests/evals/legacy-surface-coverage.test.ts`. |
 | **Read live monitoring.** Autopilot's whole input came from `/api/db/monitoring`: slow queries, index usage, table statistics, cache and connection metrics. | **Restored, and bounded.** `inspect_operations` reads the same provider methods under the `db.operations.read` descriptor, and it reaches ONE workflow: a run opened to Operate. An investigation or an assessment is still offered nothing that reads monitoring, so "the agent can read monitoring" is only true of that workflow. The two deferrals that tracked this — the monitoring half of the M2 tooling entry, and the assessment's missing monitor snapshot — are closed and removed from the backlog. | `src/lib/agent/tools.ts`; `tests/evals/legacy-surface-coverage.test.ts` — the members and the operations they may name are asserted as a set, so a monitoring member under ANY name has to land there; `tests/evals/operations.test.ts` — the arc, on an engine that answers no statement. |
 | **A free-form markdown report**, opening with a performance score out of 100 and closing with configuration advice. | A report is claims, each citing an artifact this run read or the snapshot it captured, verified against the run's own ledger before it is recorded. A number cited to nothing cannot be reported — the citation is what is checked, never the claim's text, so a fabricated score citing a real artifact would be accepted. | `src/lib/agent/tools.ts` (`composeReportTool`); `tests/evals/legacy-surface-coverage.test.ts` — an invented correlation id is refused and the run ends `unanswered (no-report)`. |
 | **Maintenance tasks** — `VACUUM`, `ANALYZE`, reindexing — in the same report. | Nothing proposes them: the `change` card has two members and neither is maintenance. It stays where it was before the panels — the monitoring surface, and the user's own editor. | `src/lib/agent/tools.ts` (`recommendationSchema`). |
 | **Multi-turn conversation.** NL2SQL replayed the whole exchange on every request, so "and how many in the second one?" was answerable. | A run's objective is fixed when it starts and no ledger event records a later question. A follow-up is a NEW run: it re-reads the catalog and knows nothing the first one established. | `src/app/api/agent/runs/route.ts`; `src/lib/agent/types.ts` (`AgentRunEvent`); `tests/evals/legacy-surface-coverage.test.ts`. |
-| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes SQL for **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is refused rather than guessed at. Nothing refuses the run at its start, so a run opened on another engine begins, captures no schema, and is told no schema inventory can be read for that connection type. **The `operations` workflow is the exception and runs on every engine**, because it composes no SQL at all: it captures no schema by design and is told so in the server's own voice instead. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`); `tests/unit/lib/agent/context-snapshot.test.ts` — a `mysql` connection reaches no database; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`. |
+| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes SQL for **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is refused rather than guessed at. Nothing refuses the run at its start, so a run opened on another engine begins, captures no schema, and is told no schema inventory can be read for that connection type. **This is the same limit on plan mode's grounding**, in both directions: a plan run is grounded on PostgreSQL and SQLite and ungrounded anywhere else, where it is told so and steered to the `NO STATEMENT:` refusal rather than left to produce generic advice. **The `operations` workflow is the exception and runs on every engine**, because it composes no SQL at all: it captures no schema by design and is told so in the server's own voice instead. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`); `tests/unit/lib/agent/context-snapshot.test.ts` — a `mysql` connection reaches no database; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`; `tests/evals/plan-grounding.test.ts` — a `mysql` plan run runs no statement and says it is ungrounded. |
 
 One of these has since been restored under its own workflow (the monitoring row, which closed both
 deferrals that tracked it), and the first row is Phase 1's own boundary rather than a defect (B21 is
@@ -1590,6 +1738,8 @@ src/lib/agent/
 ├── deadline.ts           # the wall-clock deadline and the timeout clamp
 ├── repair-ledger.ts      # the bounded repair loop and its statement fingerprint
 ├── context-snapshot.ts   # the schema snapshot and task-aware packing
+├── schema-stats.ts       # the engine's ESTIMATED statistics, and the text that says they are
+├── plan-statement.ts     # a plan run's drafted statement: read from the prose, then checked
 ├── model-adapter.ts      # resolved LLM config → an SDK model; SDK errors → our error classes
 ├── provider-registry.ts  # provider kind → adapter (total over the settings surface's union)
 ├── goal-verifier.ts      # did this run ANSWER? a pure fold over the ledger, per workflow
@@ -1668,7 +1818,9 @@ declared-target allowlist, the statement guard and the role's own grants are the
   is hidden while a run's result is shown.
 
 The next six were found by driving the product against a live model in a browser, which is the only
-way any of them could have been found: every one of them passes every gate.
+way any of them could have been found: every one of them passes every gate. The two after them were
+found later, by other routes, and are listed here because they are the same kind of thing — a defect
+no gate in this repository objects to.
 
 - **B36** — a follow-up question is answered as if it were the first. Runs carry no memory of each
   other, and neither the surface nor the model says so — the model picks a plausible referent and
@@ -1686,6 +1838,9 @@ way any of them could have been found: every one of them passes every gate.
   development build needs it, so the login page never hydrates. Production is unaffected.
 - **B41** — `defaults` in a seed config does not merge `roles`, though the documentation says the
   block is merged into every connection.
+- **B43** — every copy control outside the agent rail reaches `navigator.clipboard` unguarded, and it
+  is a secure-context API: nine call sites across seven components, four of which claim success — by
+  a label or a toast — in the same statement that starts a write nobody observed.
 
 ## Related documentation
 

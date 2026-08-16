@@ -19,6 +19,8 @@ import {
   planTableProfile,
   presentAnswerTool,
   profileTableTool,
+  readCatalogForGrounding,
+  readStatementForGrounding,
   recommendChangeTool,
   runReadQueryTool,
   selectAgentTools,
@@ -1375,6 +1377,77 @@ describe("inspectSchemaTool — the server composes the catalog statement", () =
   });
 });
 
+/*
+  The one call that may reach a database outside agent mode, and the boundary that
+  keeps it narrow (plan-mode grounding design, 2026-08-15).
+
+  The mode gate used to enforce two different things with one check: "a planning
+  run's MODEL cannot invoke a tool" — which still holds and is asserted above — and
+  "a planning run performs no database operation at all", which the owner decided to
+  change, because it left the safe mode able to plan only against a schema the unsafe
+  mode had already read in this same process. Grounding is the SERVER's work: the
+  statement is composed here, the model is handed no tools, and everything that makes
+  the call safe is the path it already went through.
+*/
+describe("the grounding seam — the server's own read, outside agent mode", () => {
+  test("a planning run's grounding read completes, and it is the server's composed statement", async () => {
+    const h = harness({ mode: "planning" });
+
+    const outcome = await readCatalogForGrounding(h.context, { kind: "columns" });
+
+    expect(outcome.kind).toBe("completed");
+    expect(h.queryReadOnly.mock.calls[0][0]).toContain("information_schema.columns");
+  });
+
+  test("the model-facing tool is still refused in the same mode, which is the whole boundary", async () => {
+    const h = harness({ mode: "planning" });
+
+    const outcome = await inspectSchemaTool(h.context, { kind: "columns" });
+
+    if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+    expect(outcome.reasonCode).toBe("MODE_HAS_NO_TOOLS");
+    expect(h.acquireProvider).not.toHaveBeenCalled();
+  });
+
+  test("the statistics inventory is composable by the server and is not a kind the model may ask for", async () => {
+    const grounded = harness();
+    const asked = harness();
+
+    const groundedOutcome = await readCatalogForGrounding(grounded.context, { kind: "statistics" });
+    const askedOutcome = await inspectSchemaTool(asked.context, { kind: "statistics" });
+
+    expect(groundedOutcome.kind).toBe("completed");
+    expect(grounded.queryReadOnly.mock.calls[0][0]).toContain("reltuples");
+    // Not a policy denial and not a database error: the argument is one the model's
+    // own tool schema does not offer, so it never becomes a statement.
+    if (askedOutcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${askedOutcome.kind}`);
+    expect(askedOutcome.reasonCode).toBe("INVALID_TOOL_INPUT");
+    expect(asked.acquireProvider).not.toHaveBeenCalled();
+  });
+
+  test("a grounding statement the server composed runs in planning mode too", async () => {
+    const h = harness({ mode: "planning" });
+
+    const outcome = await readStatementForGrounding(h.context, {
+      sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'",
+      label: "statistics availability",
+    });
+
+    expect(outcome.kind).toBe("completed");
+    // Still audited, still budgeted: the seam relaxes the mode check and nothing else.
+    expect(h.tracker.usage("run-1").executedStatements).toBe(1);
+  });
+
+  test("a grounding read is still bounded by the run's policy, so a scope allowlist denies it", async () => {
+    const h = harness({ mode: "planning", scope: createTargetScope("conn-1", { schemas: ["public"] }) });
+
+    const outcome = await readCatalogForGrounding(h.context, { kind: "columns", schema: "secrets" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
+    expect(outcome.refusal).toEqual({ class: "policy-denied", reasonCode: "TARGET_OUT_OF_SCOPE" });
+  });
+});
+
 describe("inspectPlanTool — the estimating variant only", () => {
   test("composes the estimating EXPLAIN for the connection's dialect", async () => {
     const h = harness();
@@ -2688,6 +2761,29 @@ describe("present_answer records which result IS the answer, and how to show it"
     expect(AGENT_TOOL_DEFINITIONS.present_answer.description).toContain(AGENT_ANSWER_CONTRACT);
   });
 
+  /*
+    Driven live on 2026-08-15, twice, on both engines: "Show me the average salary by
+    department as a chart" and "Draw a bar chart of rental volume per month" were both
+    answered with a TABLE. The data carried a category and a number in each case, so
+    nothing refused the chart — the model simply chose the other one.
+
+    Reading the contract explains why. It defends the table ("that is a complete
+    answer, not a lesser one"), which is deliberate and stays: a single number charted
+    is worse than a single number. But it never said when a chart IS right, and it
+    never mentioned the objective. A model reading the list found a permission and no
+    pull the other way.
+
+    So the asymmetry is the defect, and the fix is one sentence rather than a rule
+    engine: the model decides, and now it decides knowing what was asked. #350's
+    lesson — a behaviour nobody states is a behaviour live runs do not have.
+  */
+  test("the contract says when a chart is right, not only when a table is", () => {
+    expect(AGENT_ANSWER_CONTRACT).toContain("asks for a chart");
+    // The table's defence stays: it is what stops a single number being charted to
+    // look like more than it is.
+    expect(AGENT_ANSWER_CONTRACT).toContain("complete answer, not a lesser one");
+  });
+
   test("the description shows both presentations, and its own schema accepts them", () => {
     // The `AGENT_EVIDENCE_CONTRACT` pattern: the example and the parser come from one
     // piece of code, so a description offering a shape the schema refuses fails here
@@ -2898,7 +2994,7 @@ describe("present_answer records which result IS the answer, and how to show it"
 
       if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
       expect(outcome.answer.handover).toBe("applied");
-      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+      expect(outcome.answer.handoverWarning).toContain("holds no plan for that exact statement");
     });
 
     /**
@@ -2921,7 +3017,7 @@ describe("present_answer records which result IS the answer, and how to show it"
 
       if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
       expect(outcome.answer.handover).toBe("applied");
-      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+      expect(outcome.answer.handoverWarning).toContain("holds no plan for that exact statement");
     });
 
     test("an answer that carries an optimizer hint is not licensed by the unhinted plan", () => {
@@ -2936,7 +3032,7 @@ describe("present_answer records which result IS the answer, and how to show it"
 
       if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
       expect(outcome.answer.handover).toBe("applied");
-      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+      expect(outcome.answer.handoverWarning).toContain("holds no plan for that exact statement");
     });
 
     test("a hinted answer is not licensed by the plan of the identically hinted statement either", () => {
@@ -2954,7 +3050,7 @@ describe("present_answer records which result IS the answer, and how to show it"
 
       if (outcome.kind !== "answered") throw new Error(`expected an answer, got ${outcome.kind}`);
       expect(outcome.answer.handover).toBe("applied");
-      expect(outcome.answer.handoverWarning).toContain("no plan it could weigh");
+      expect(outcome.answer.handoverWarning).toContain("holds no plan for that exact statement");
     });
 
     test("an ordinary comment is still trivia, so the join still absorbs one", () => {
@@ -3348,7 +3444,9 @@ describe("present_answer records which result IS the answer, and how to show it"
 
     if (outcome.kind !== "answered") throw new Error("expected an answer");
     expect(outcome.answer.handover).toBe("applied");
-    expect(outcome.answer.handoverWarning).toContain("full table read");
+    // The reading that refused, not a list of the readings that might have (#387
+    // review): this plan scans, and that is what the sentence says.
+    expect(outcome.answer.handoverWarning).toContain("reads the whole table");
     // Never a silent skip: the model is told too, because it is what writes the
     // report the user reads next to the statement sitting there unrun.
     expect(outcome.modelText).toContain("Not run for you");

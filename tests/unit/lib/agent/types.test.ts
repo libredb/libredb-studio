@@ -166,6 +166,18 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
   // A planning run's whole output is one of these, and it round-trips as plainly as
   // the rest — prose is already the most inert thing a ledger can hold.
   "closing-statement": { kind: "closing-statement", atMs: 8, text: "Start with the salary index." },
+  // A plan run's deliverable, and as inert as everything else here: the statement as
+  // text, the engine it was written for, and what the server could check about it
+  // without running it. `guardViolation` is absent because this draft is a read —
+  // the field is present exactly when `readOnly` is false.
+  "plan-statement-drafted": {
+    kind: "plan-statement-drafted",
+    atMs: 8,
+    sql: "SELECT total FROM orders",
+    dialect: "postgres",
+    readOnly: true,
+    identifiers: { kind: "checked", unknownTables: [] },
+  },
   "run-finished": { kind: "run-finished", atMs: 8, status: "succeeded" },
 };
 

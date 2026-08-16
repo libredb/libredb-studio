@@ -113,7 +113,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
 
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-[0.625rem] font-medium text-blue-400er">
+                    <span className="px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-[0.625rem] font-medium text-blue-400">
                       {q.connectionType}
                     </span>
                     {q.tags?.map((tag) => (

@@ -259,7 +259,7 @@ export function TestDataGenerator({
         {/* Controls */}
         <div className="px-5 py-3 border-b border-hairline bg-surface flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-fg-mutedr font-medium">Rows:</span>
+            <span className="text-xs text-fg-muted font-medium">Rows:</span>
             <div className="flex items-center gap-1">
               {[5, 10, 25, 50, 100].map((n) => (
                 <button

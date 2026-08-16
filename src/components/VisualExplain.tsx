@@ -670,7 +670,7 @@ function AIExplainTab({
       <div className="flex items-center justify-between px-4 py-2 border-b border-hairline bg-surface">
         <div className="flex items-center gap-2">
           <Sparkles strokeWidth={1.5} className="w-3 h-3 text-purple-400" />
-          <span className="text-xs font-medium text-purple-400r">AI Analysis</span>
+          <span className="text-xs font-medium text-purple-400">AI Analysis</span>
         </div>
         <button
           onClick={analyzeWithAI}
@@ -855,7 +855,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
             {/* Warnings */}
             {analysis && analysis.warnings.length > 0 && (
               <div className="space-y-2">
-                <h3 className="text-xs font-medium text-fg-mutedr mb-2">Performance Issues</h3>
+                <h3 className="text-xs font-medium text-fg-muted mb-2">Performance Issues</h3>
                 {analysis.warnings.map((warning, idx) => (
                   <div
                     key={idx}
@@ -925,7 +925,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                 <div key={idx} className="p-3 rounded-lg bg-fill-subtle border border-hairline">
                   <div className="flex items-center gap-2 mb-1">
                     <StatusBadge status={insight.status} />
-                    <span className="text-[0.625rem] text-fg-mutedr font-medium">{insight.label}</span>
+                    <span className="text-[0.625rem] text-fg-muted font-medium">{insight.label}</span>
                   </div>
                   <span className="text-xs font-medium text-fg">{insight.value}</span>
                 </div>
@@ -934,7 +934,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
 
             {/* Plan tree preview */}
             <div>
-              <h3 className="text-xs font-medium text-fg-mutedr mb-2">Execution Plan</h3>
+              <h3 className="text-xs font-medium text-fg-muted mb-2">Execution Plan</h3>
               <div className="rounded-lg border border-hairline bg-fill-subtle p-2">
                 {rootPlan && analysis && <PlanNode node={rootPlan} maxTime={analysis.executionTime || 1} />}
               </div>

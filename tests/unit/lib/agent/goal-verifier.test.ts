@@ -81,6 +81,46 @@ function reportCiting(
 
 const closing: AgentRunEvent = { kind: "closing-statement", atMs: 40, text: "I would start with the orders table." };
 
+/**
+ * The three endings a plan run can have, since the deliverable became a statement
+ * (the plan-mode SQL-generator design of 2026-08-15).
+ *
+ * `lecture` is the defect itself, kept verbatim in shape: prose that would read
+ * identically against any database in the world, which every field on the ledger
+ * called an answer until the `no-statement` shortfall existed.
+ */
+const closingWithStatement: AgentRunEvent = {
+  kind: "closing-statement",
+  atMs: 40,
+  text: "```postgres\nSELECT title FROM film\n```\n\nRead from `film` because it holds the titles.",
+};
+
+const statementDrafted: AgentRunEvent = {
+  kind: "plan-statement-drafted",
+  atMs: 41,
+  sql: "SELECT title FROM film",
+  dialect: "postgres",
+  readOnly: true,
+  identifiers: { kind: "checked", unknownTables: [] },
+};
+
+const closingRefusing: AgentRunEvent = {
+  kind: "closing-statement",
+  atMs: 40,
+  text: "NO STATEMENT: the inventory holds no rental history.\n\nWhich table records rentals?",
+};
+
+const lecture: AgentRunEvent = {
+  kind: "closing-statement",
+  atMs: 40,
+  text: [
+    "1. Start by listing the tables in the database.",
+    "2. Inspect the columns of the ones that look relevant.",
+    "3. Check the foreign keys to understand how they join.",
+    "4. Then write a query that answers the question.",
+  ].join("\n"),
+};
+
 function run(
   mode: AgentRunMode,
   status: AgentRunRecord["status"],
@@ -201,12 +241,52 @@ describe("an agent run that finished without answering says so", () => {
 });
 
 describe("a planning run is judged by what planning mode can produce", () => {
-  test("a plan in prose is an answer", () => {
+  test("a plan run that drafted a statement is an answer", () => {
     // Planning is toolless by contract, so it can never cite evidence. Judging it
     // by the investigation rule would fail every planning run that did its job.
-    const verdict = verifyRunGoal(run("planning", "succeeded", [closing]));
+    // What it CAN produce, since the 2026-08-15 design, is the statement itself.
+    const verdict = verifyRunGoal(run("planning", "succeeded", [closingWithStatement, statementDrafted]));
 
     expect(verdict).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
+  });
+
+  test("an explicit NO STATEMENT: refusal is an answer too", () => {
+    // The mode's second legitimate ending: the inventory does not support the
+    // question, and saying so is the honest outcome rather than a failure.
+    const verdict = verifyRunGoal(run("planning", "succeeded", [closingRefusing]));
+
+    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
+  });
+
+  test("a four-paragraph lecture with neither outcome is unanswered, however long it is", () => {
+    // The defect this rule exists for: a live run on 2026-08-15 answered a question
+    // about a real database with a generic inspection plan and scored `answered`,
+    // because prose of any length passed.
+    const verdict = verifyRunGoal(run("planning", "succeeded", [lecture]));
+
+    expect(verdict).toEqual({ outcome: "unanswered", verifier: "agent-planning.1", unmet: ["no-statement"] });
+  });
+
+  test("a lecture and a mute run are not conflated", () => {
+    // Two different facts about a run, and the sentences a reader gets differ: one
+    // said nothing at all, the other said a great deal and delivered nothing.
+    expect(verifyRunGoal(run("planning", "succeeded", [lecture])).unmet).toEqual(["no-statement"]);
+    expect(verifyRunGoal(run("planning", "succeeded", [])).unmet).toEqual(["no-plan"]);
+  });
+
+  test("an operations plan keeps the prose rule, because it has no statement contract", () => {
+    // `PLAN_DELIVERABLES.operations` is prose: the workflow reads no schema and
+    // composes no SQL, so requiring a statement of it would fail every run that did
+    // exactly what the workflow is for.
+    const verdict = verifyRunGoal(run("planning", "succeeded", [lecture], "operations"));
+
+    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
+  });
+
+  test("a cancelled plan run that got as far as prose still reports the cancellation", () => {
+    // A user's stop is not a defect of the run, so it is substituted for the missing
+    // statement rather than reported as one.
+    expect(verifyRunGoal(run("planning", "cancelled", [lecture])).unmet).toEqual(["cancelled"]);
   });
 
   test("a planning run that said nothing is unanswered", () => {
@@ -650,9 +730,14 @@ describe("the verifier registry", () => {
     // Mode decides before the workflow does, for the same reason it does in
     // `selectAgentTools`: a toolless run can never be held to a bar that requires
     // evidence, so a workflow type must not be a way to impose one on it.
+    // Each workflow is given the ending ITS deliverable asks for — a statement
+    // everywhere but `operations`, whose plan deliverable is prose by decision — so
+    // this asserts which RULE judged the run rather than re-asserting the bar.
     for (const workflowType of Object.keys(AGENT_WORKFLOW_GOALS) as AgentRunWorkflowType[]) {
-      const verdict = verifyRunGoal(run("planning", "succeeded", [closing], workflowType));
-      expect(verdict).toEqual({ outcome: "answered", verifier: AGENT_PLANNING_VERIFIER, unmet: [] });
+      const events =
+        workflowType === "operations" ? [lecture] : ([closingWithStatement, statementDrafted] as AgentRunEvent[]);
+      const verdict = verifyRunGoal(run("planning", "succeeded", events, workflowType));
+      expect(verdict, workflowType).toEqual({ outcome: "answered", verifier: AGENT_PLANNING_VERIFIER, unmet: [] });
     }
   });
 

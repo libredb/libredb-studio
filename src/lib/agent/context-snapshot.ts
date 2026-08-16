@@ -8,8 +8,8 @@
  * window on tables the task is not about. This module does neither.
  *
  *  - **Every read goes through the T6 catalog tool.** `captureContextSnapshot`
- *    calls `inspectSchemaTool`, which composes the statement server-side and drives
- *    it through `executeAuditedOperation` under the read-only execution profile. So
+ *    calls `readCatalogForGrounding`, which composes the statement server-side and
+ *    drives it through `executeAuditedOperation` under the read-only profile. So
  *    a snapshot costs statements out of the run's budget, is audited line by line,
  *    and is refused by the same policy as any other read. There is no faster path
  *    and deliberately no seam for one.
@@ -26,6 +26,13 @@
  * The fingerprint is a function of the inventory and nothing else — not of the
  * reading time, not of the connection — so two identical builds agree and a changed
  * schema does not.
+ *
+ * A captured inventory is also HELD for its connection, in this process, and that is
+ * one of the three places a planning run's grounding can come from (#384). It was the
+ * ONLY one until 2026-08-15, which is what made plan mode blind after a restart and
+ * on a second replica; a plan run now captures its own inventory when neither its
+ * ledger nor this hold has one, and fills the hold in turn. The model stays toolless
+ * on every one of those paths. See `holdSnapshotForConnection`.
  *
  * That is what makes the REFRESH free. A capture is recorded in the run's ledger
  * with the inventory attached, so a later drive — including one that resumed after
@@ -44,10 +51,17 @@
 import { createHash } from "node:crypto";
 import type { AgentCatalogKind } from "./composed-sql";
 import { parseSqliteIndexDdl, parseSqliteTableDdl } from "./sqlite-ddl";
-import { type AgentToolContext, inspectSchemaTool } from "./tools";
+import { type AgentToolContext, readCatalogForGrounding } from "./tools";
 import type { AgentContextSnapshot, AgentRunEvent } from "./types";
 import { fenceUntrustedContent } from "./untrusted-content";
-import type { ColumnSchema, DatabaseType, ForeignKeySchema, IndexSchema, TableSchema } from "@/lib/types";
+import type {
+  ColumnSchema,
+  DatabaseConnection,
+  DatabaseType,
+  ForeignKeySchema,
+  IndexSchema,
+  TableSchema,
+} from "@/lib/types";
 
 /** Why a run has no snapshot. Both are states the run continues from, not failures. */
 export type AgentContextUnavailableCode =
@@ -290,10 +304,16 @@ export function reusableSnapshot(events: readonly AgentRunEvent[], connectionId:
  *
  * Runs before the first model turn of a drive that has no recorded inventory to
  * reuse. It costs one statement per catalog kind out of the run's budget, which is
- * why the result is persisted rather than re-read, and why a planning run — which
- * has no tools and must perform zero database operations — never reaches it:
- * `inspectSchemaTool` refuses on the run's persisted mode before anything is
- * composed.
+ * why the result is persisted rather than re-read.
+ *
+ * PLANNING RUNS REACH THIS TOO, since the plan-mode grounding design of 2026-08-15.
+ * Until then a planning run was refused here by the mode gate in `tools.ts` and was
+ * left scavenging whatever inventory this process happened to hold, which made the
+ * safe mode's usefulness conditional on having already used the unsafe one. What has
+ * NOT changed is the property the mode actually sells: this is a catalog read, no
+ * statement of the user's is run, nothing is written, and the model is still handed
+ * no tools — `readCatalogForGrounding` is the server's own call, and
+ * `selectAgentTools` still yields an empty set for the mode.
  */
 export async function captureContextSnapshot(context: AgentToolContext): Promise<AgentContextCapture> {
   const plan = CATALOG_PLANS[context.connection.type];
@@ -308,7 +328,7 @@ export async function captureContextSnapshot(context: AgentToolContext): Promise
   const rows = new Map<AgentCatalogKind, readonly Record<string, unknown>[]>();
 
   for (const kind of plan.kinds) {
-    const outcome = await inspectSchemaTool(context, { kind });
+    const outcome = await readCatalogForGrounding(context, { kind });
     if (outcome.kind !== "completed") return unavailable("CATALOG_READ_REFUSED", outcome.modelText);
     const artifact = context.artifacts.get(outcome.artifact.correlationId, nowMs);
     if (artifact === undefined) {
@@ -330,6 +350,147 @@ export async function captureContextSnapshot(context: AgentToolContext): Promise
       tables,
     },
   };
+}
+
+// ============================================================================
+// What this process has already read
+// ============================================================================
+
+/**
+ * The inventories this PROCESS has already read, one per connection (#384).
+ *
+ * It exists to spare a second reading of a catalog this process has already read.
+ * That was originally stated as existing FOR planning mode, which could read no
+ * catalog of its own and was otherwise reduced to writing the plan it would write
+ * about any database in the world — what live runs on 2026-08-15 actually produced.
+ * Since the plan-mode grounding design of that date a plan run captures its own
+ * inventory when this holds none, so the hold is a fast path rather than the only
+ * path, and it is filled by both modes.
+ *
+ * Three properties are what make that safe rather than merely cheap:
+ *
+ *  - **Nothing here ever reads a database.** Entries arrive only from
+ *    `captureContextSnapshot`, which goes through the T6 catalog tool; this module
+ *    adds no second path to an engine.
+ *  - **An entry is refused unless its identity is the one its own inventory
+ *    produces**, exactly as `reusableSnapshot` refuses a ledger entry. A snapshot
+ *    that fingerprints as something else is not held at all, so a reader never has
+ *    to decide whether to trust one.
+ *  - **It is keyed by connection**, which is the same boundary the run loop already
+ *    enforces (`RUN_CONNECTION_MISMATCH`). Everyone who can open a run on a
+ *    connection can read its catalog through that run anyway. What the key does NOT
+ *    carry is the database that connection currently points at, or its dialect: a
+ *    connection record re-pointed at another database while keeping its id would be
+ *    served the old inventory here. That is recorded as `docs/BACKLOG.md` B45 rather
+ *    than left for a reader to find, and it matters more now that a plan run both
+ *    fills this and reads it.
+ *
+ * What it deliberately is NOT: durable. This is process memory, like the run-scoped
+ * artifact store and for the same reason. Losing it on a restart no longer costs a
+ * plan run its grounding — it costs one catalog read, because the run captures its
+ * own — so what a miss buys is a statement, not the difference between a grounded
+ * plan and a blind one.
+ */
+const HELD_SNAPSHOT_LIMIT = 16;
+
+const heldSnapshots = new Map<string, AgentContextSnapshot>();
+
+/**
+ * The fields that decide WHICH database a reading came from, and whose view of it.
+ *
+ * The hold used to be keyed on the connection id alone (`docs/BACKLOG.md` B45). Neither
+ * the key nor the snapshot carried any database identity — `AgentContextSnapshot` holds
+ * an id, a fingerprint, a time and the tables — so a connection record re-pointed at
+ * another database while keeping its id was served the old one's inventory until the
+ * entry aged out or the process restarted. Editing a saved connection to aim at staging
+ * instead of production is an ordinary thing to do, and the id does not change when you
+ * do it.
+ *
+ * It mattered before the plan-mode grounding work and it matters more after it: what the
+ * hold serves is now the ground a drafted statement is VALIDATED against, so a statement
+ * checked against another database's tables comes back with no unknown names — the card
+ * reports "checked" for a check performed against the wrong catalog. That is the exact
+ * class of claim this whole design item exists to stop making.
+ *
+ * Over-keying is deliberately the safe direction. A miss costs ONE catalog read, because
+ * a plan run captures its own inventory when the hold has nothing for it; a false hit
+ * costs a confident answer about a database nobody looked at. So the user fields are in
+ * here too — a least-privilege role sees a different catalog — while the password is
+ * not: rotating a credential does not change which database this is.
+ *
+ * Hashed rather than concatenated because `connectionString` can carry a password, and a
+ * process-lifetime map should not hold one as a key.
+ */
+export function connectionIdentity(connection: DatabaseConnection): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        connection.id,
+        connection.type,
+        connection.host ?? "",
+        connection.port ?? "",
+        connection.database ?? "",
+        connection.connectionString ?? "",
+        connection.serviceName ?? "",
+        connection.instanceName ?? "",
+        connection.user ?? "",
+        connection.agentUser ?? "",
+      ]),
+    )
+    .digest("hex");
+}
+
+/**
+ * Holds one connection's inventory for later reuse. Bounded, newest reading kept.
+ *
+ * Two things happen here and they are deliberately not the same thing, because the
+ * callers differ in age. A fresh CAPTURE is always the newest reading of a
+ * connection there is; a resumed run's LEDGER REUSE carries whatever that run read
+ * when it started, which may be hours older than what another run has since held.
+ *
+ *  - **Which reading is kept is decided by `capturedAtMs`**, so a resumed run cannot
+ *    walk the whole process back to its own older schema and ground every later plan
+ *    run on it. Nothing would observe that regression: both inventories are
+ *    internally valid, and neither is a lie about the database it came from.
+ *  - **Where the connection sits in the bound is decided by USE**, so re-holding it
+ *    moves it to the end of the insertion order whichever reading won. A connection a
+ *    resumed run is actively working on must not age out under sixteen connections
+ *    read once each.
+ *
+ * Found by review on #384, which had one `delete`/`set` doing both jobs at once.
+ */
+export function holdSnapshotForConnection(snapshot: AgentContextSnapshot, identity: string): void {
+  if (fingerprintTables(snapshot.tables) !== snapshot.fingerprint) return;
+  const held = heldSnapshots.get(identity);
+  const newest = held !== undefined && held.capturedAtMs > snapshot.capturedAtMs ? held : snapshot;
+  // Deleted before it is set, so the connection's place in the eviction order below
+  // is refreshed even on the path where the reading it arrived with was the older one.
+  heldSnapshots.delete(identity);
+  heldSnapshots.set(identity, newest);
+  for (const oldest of heldSnapshots.keys()) {
+    if (heldSnapshots.size <= HELD_SNAPSHOT_LIMIT) break;
+    heldSnapshots.delete(oldest);
+  }
+}
+
+/**
+ * The inventory this process holds for a connection, or `null` when it holds none.
+ *
+ * Keyed on `connectionIdentity` and not on the connection id: a record re-pointed at
+ * another database keeps its id, and being served the previous database's tables is a
+ * miss this layer cannot detect afterwards (B45).
+ */
+export function heldSnapshotForConnection(identity: string): AgentContextSnapshot | null {
+  return heldSnapshots.get(identity) ?? null;
+}
+
+/**
+ * Empties the hold. For tests, which must be able to express the cold process —
+ * the one a plan run finds after a restart, and the case a grounded run must not
+ * be mistaken for.
+ */
+export function forgetHeldSnapshots(): void {
+  heldSnapshots.clear();
 }
 
 // ============================================================================

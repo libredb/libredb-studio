@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
+import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_REPORT_RESERVE_TURNS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import {
@@ -25,7 +26,7 @@ import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptor
 import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { LLMAuthError } from "@/lib/llm/types";
-import type { DatabaseConnection, QueryResult } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
 import {
   type Turn,
   answersProse,
@@ -217,6 +218,36 @@ const modelStatements = (spy: ReturnType<typeof mock>, captured = CONTEXT_READS)
   return all.slice(captured);
 };
 
+/**
+ * The statements a drive sent that are NOT the server's own grounding reads.
+ *
+ * The instrument for plan mode's actual promise since the grounding design of
+ * 2026-08-15: the mode may read this connection's catalog, and may run nothing else.
+ * Written as "which statements do not belong here" rather than as a count, because a
+ * count passes just as happily for a run that sent something entirely different.
+ *
+ * Every needle is a fragment only a server-composed catalog or statistics read
+ * contains, on this suite's PostgreSQL connection.
+ */
+const GROUNDING_READ_MARKERS = [
+  "information_schema.columns",
+  "information_schema.table_constraints",
+  "pg_index",
+  "pg_stats",
+] as const;
+
+const userStatements = (spy: ReturnType<typeof mock>): string[] =>
+  spy.mock.calls
+    .map((call) => String(call[0]))
+    .filter((sql) => !GROUNDING_READ_MARKERS.some((marker) => sql.includes(marker)));
+
+/** The system prompt of one turn, which is where a run's rules are stated. */
+const rulesOfTurn = (turn: Turn): string => {
+  const messages = (turn.body.messages ?? []) as { role?: string; content?: unknown }[];
+  const system = messages.find((message) => message.role === "system");
+  return typeof system?.content === "string" ? system.content : "";
+};
+
 function invocationsOf(events: readonly AgentRunEvent[]): string[] {
   return events.filter((event) => event.kind === "tool-invoked").map((event) => event.stepId);
 }
@@ -241,6 +272,10 @@ let consoleSpy: ReturnType<typeof spyOn<Console, "log">>;
 
 beforeEach(() => {
   consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+  // The inventories a process holds outlive a run by design (#384), so every test
+  // here starts from the cold process. Without this a planning test would be
+  // grounded or not depending on which agent test ran before it.
+  forgetHeldSnapshots();
 });
 
 afterEach(() => {
@@ -629,8 +664,32 @@ describe("the model is told what a citation IS, not only that it must cite (#350
 
 // ─── planning mode ──────────────────────────────────────────────────────────
 
-describe("planning mode performs zero database operations", () => {
-  test("no tool is offered, no provider is acquired, and the prose is returned", async () => {
+/*
+  THE INVARIANT THIS BLOCK PINS MOVED, deliberately, on 2026-08-15.
+
+  It used to be "planning mode performs zero database operations", and every test in
+  it asserted that no provider was ever acquired. `docs/superpowers/specs/
+  2026-08-15-plan-mode-sql-generator-design.md` changed that on the owner's decision,
+  for a reason a live run made concrete: a plan run could only be about a real
+  database when an AGENT run had already read one on the same connection in the same
+  process, so the safe mode's usefulness was conditional on having used the unsafe
+  one. Asked about a real six-table database, plan mode named none of them.
+
+  What the product actually sells is narrower than "reaches nothing", and it is what
+  these tests assert now:
+
+   - a planning run runs NO STATEMENT OF THE USER'S. It reads the catalog — which is
+     what the sidebar does on every connect — and nothing else.
+   - the MODEL stays toolless. Grounding is the server's work, not a capability
+     handed to the model, so the tool set on every planning turn is still empty.
+   - nothing is written, and every statement it drafts is handed to the user to run.
+
+  `userStatements` below is the instrument: it fails loudly on any statement that is
+  not one of the server's own grounding reads, so a future change that let a planning
+  run send something of the model's cannot pass by asserting a count.
+*/
+describe("planning mode runs no statement of the user's", () => {
+  test("the model is handed no tools, only the server's catalog reads are sent, and the prose is returned", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "planning");
     const script = scriptedModel(answersProse("First ", "look at the index."));
@@ -642,11 +701,51 @@ describe("planning mode performs zero database operations", () => {
     });
 
     expect(script.turns[0]?.body.tools).toBeUndefined();
-    expect(b.acquireProvider).not.toHaveBeenCalled();
-    expect(b.queryReadOnly).not.toHaveBeenCalled();
+    expect(userStatements(b.queryReadOnly)).toEqual([]);
     expect(result.status).toBe("succeeded");
     expect(result.stopReason).toBe("model-stopped");
     expect(result.text).toBe("First look at the index.");
+  });
+
+  /*
+    The one workflow a plan run is NOT grounded for, and the one place that is a
+    decision rather than a shortfall. An operations objective is about what the engine
+    reports about itself — sessions, locks, waits, configuration — so a catalog read
+    would spend the run's statements on an inventory the plan has no use for. The
+    grounding design of 2026-08-15 lists `operations` as the row whose plan deliverable
+    stays prose for exactly this reason.
+
+    Its sentence is its own rather than the agent mode's, because
+    `OPERATIONS_CONTEXT_NOTE` tells the model to take readings with `inspect_operations`
+    and a planning run has no tools at all: naming one it does not have is the #350
+    failure. Both halves are asserted, since the note being merely PRESENT would pass
+    just as well with the wrong one of the two.
+  */
+  test("an operations plan is given its own note, reads no catalog, and is told of no tool", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning", "operations");
+    const script = scriptedModel(answersProse("I would read the wait events."));
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(script.turns[0]?.transcript).toContain(
+      "an operations objective is about what the engine reports about ITSELF",
+    );
+    expect(script.turns[0]?.transcript).not.toContain("inspect_operations");
+    expect(script.turns[0]?.body.tools).toBeUndefined();
+    // Not grounded, and not partially grounded either: no statement of any kind was
+    // sent, so neither the catalog nor the statistics were read.
+    expect(b.queryReadOnly).not.toHaveBeenCalled();
+    expect(b.acquireProvider).not.toHaveBeenCalled();
+    expect(kindsOf(await eventsOf(b.store, run.runId))).not.toContain("context-captured");
+    // And the rules say it has seen nothing, rather than pointing at an inventory
+    // that was never read.
+    expect(rulesOfTurn(script.turns[0] as Turn)).toContain("No schema inventory is available to this run");
+    expect(result.status).toBe("succeeded");
   });
 
   /*
@@ -727,7 +826,9 @@ describe("planning mode performs zero database operations", () => {
     expect(result.status).toBe("cancelled");
     expect(result.stopReason).toBe("cancelled");
     expect(result.turns).toBe(1);
-    expect(b.acquireProvider).not.toHaveBeenCalled();
+    // The refused tool call reached nothing: the only statements this run sent are
+    // the server's own grounding reads, taken before the first turn.
+    expect(userStatements(b.queryReadOnly)).toEqual([]);
   });
 
   test("a tool the run was never offered is refused without reaching the database", async () => {
@@ -741,10 +842,567 @@ describe("planning mode performs zero database operations", () => {
       resources: b.resources,
     });
 
-    expect(b.acquireProvider).not.toHaveBeenCalled();
+    // Nothing of the model's reached a database, and no step was ever invoked: the
+    // grounding reads are the SERVER's, so they settle no step and enter no ledger
+    // as a tool call.
+    expect(userStatements(b.queryReadOnly)).toEqual([]);
     expect(invocationsOf(await eventsOf(b.store, run.runId))).toEqual([]);
     expect(script.turns[1]?.transcript).toContain("run_read_query");
     expect(result.status).toBe("succeeded");
+  });
+
+  /*
+    #384, and the grounding design that followed it.
+
+    The defect that produced this block was measured on 2026-08-15. Asked how it
+    would assess a real six-table database, a plan run answered "without direct
+    access to the live environment … I cannot execute live queries or run
+    diagnostics directly" and named not one table. Nothing was wrong with the
+    sentence — the run genuinely had nothing — and that is the point: a plan that
+    would read identically against any database in the world is not a plan about
+    this one.
+
+    #384 answered it by handing a plan run the inventory an agent run on the same
+    connection had already read. That path survives here as the FREE FAST PATH — it
+    costs no capture, and these tests still assert the "somebody else read this"
+    wording it makes true — but it is no longer the only way a plan run is grounded.
+    The cold process is covered in the T8 block at the end of this file, where a plan
+    run reads its own.
+  */
+  describe("a plan run reasons about THIS database when the process has already read it", () => {
+    /** The system prompt, which is where a planning run's rules are stated. */
+    const rulesOf = (turn: Turn): string => {
+      const messages = (turn.body.messages ?? []) as { role?: string; content?: unknown }[];
+      const system = messages.find((message) => message.role === "system");
+      return typeof system?.content === "string" ? system.content : "";
+    };
+
+    /** A catalog that answers with two related tables, so the inventory has real names. */
+    const catalog = async (sql: string): Promise<QueryResult> => {
+      if (sql.includes("information_schema.columns")) {
+        return queryResult({
+          rows: [
+            {
+              table_schema: "public",
+              table_name: "orders",
+              column_name: "id",
+              data_type: "integer",
+              is_nullable: "NO",
+            },
+            {
+              table_schema: "public",
+              table_name: "orders",
+              column_name: "customer_id",
+              data_type: "integer",
+              is_nullable: "NO",
+            },
+            {
+              table_schema: "public",
+              table_name: "customers",
+              column_name: "id",
+              data_type: "integer",
+              is_nullable: "NO",
+            },
+          ],
+          fields: ["table_schema", "table_name", "column_name", "data_type", "is_nullable"],
+          rowCount: 3,
+        });
+      }
+      if (sql.includes("table_constraints")) {
+        return queryResult({
+          rows: [
+            {
+              table_schema: "public",
+              table_name: "orders",
+              column_name: "customer_id",
+              referenced_schema: "public",
+              referenced_table: "customers",
+              referenced_column: "id",
+            },
+          ],
+          fields: ["table_schema", "table_name", "column_name", "referenced_table", "referenced_column"],
+          rowCount: 1,
+        });
+      }
+      return queryResult({ rows: [], fields: [], rowCount: 0 });
+    };
+
+    /** One agent run, which is what puts this connection's inventory in the process. */
+    const readTheCatalogOnce = async (b: Boot): Promise<void> => {
+      const run = await startRun(b, "agent");
+      const script = scriptedModel(answersProse("understood"));
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+      });
+    };
+
+    test("it is shown the real tables and their relations, fenced, and still sends nothing", async () => {
+      const reader = boot(freshDataDir(), { answer: catalog });
+      await readTheCatalogOnce(reader);
+
+      const b = boot(freshDataDir(), { answer: catalog });
+      const run = await startRun(b, "planning");
+      const script = scriptedModel(answersProse("a plan"));
+
+      const result = await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+      });
+
+      const transcript = script.turns[0]?.transcript ?? "";
+      expect(transcript).toContain("orders");
+      expect(transcript).toContain("customers");
+      // The relations block, so a plan can name a join and not only a table.
+      expect(transcript).toContain("customer_id");
+      // Database-derived text reaches the model fenced here exactly as in agent
+      // mode: table names are writable by whoever can write to the database.
+      expect(transcript).toContain(UNTRUSTED_CONTENT_BEGIN);
+      // And the mode's own bar is untouched: the model has no tools, and nothing of
+      // the user's or the model's was sent.
+      expect(script.turns[0]?.body.tools).toBeUndefined();
+      expect(userStatements(b.queryReadOnly)).toEqual([]);
+      // The fast path really is free of the CAPTURE: the inventory came from what
+      // this process had already read, so no catalog was re-read and no capture was
+      // recorded. (The estimated statistics are read on every grounded path, which
+      // is why this asserts on the ledger rather than on the statement count.)
+      expect(kindsOf(await eventsOf(b.store, run.runId))).not.toContain("context-captured");
+      expect(b.queryReadOnly.mock.calls.map((call) => String(call[0]))).toEqual([
+        expect.stringContaining("pg_stats") as unknown as string,
+      ]);
+      expect(result.status).toBe("succeeded");
+    });
+
+    /*
+      The prompt half, which is not optional (#350): a rule the model is not told is
+      a rule live runs fail. An inventory handed over and never mentioned in the
+      rules is a window full of schema and a plan that ignores it.
+    */
+    test("it is told the inventory is somebody else's reading, and what it may not conclude from it", async () => {
+      const reader = boot(freshDataDir(), { answer: catalog });
+      await readTheCatalogOnce(reader);
+
+      const b = boot(freshDataDir(), { answer: catalog });
+      const run = await startRun(b, "planning");
+      const script = scriptedModel(answersProse("a plan"));
+
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+      });
+
+      const rules = rulesOf(script.turns[0] as Turn);
+      expect(rules).toContain("A schema inventory for this database is in this conversation");
+      expect(rules).toContain("read by an EARLIER run on this connection rather than by this one");
+      // What the sentence may NOT claim any more: this run did read the estimated
+      // statistics beside the inventory, so "this run has sent nothing to any
+      // database" — true while the hold was a plan run's only source (#384) — would
+      // now be a false self-description. The promise that survives is the narrower,
+      // true one.
+      expect(rules).not.toContain("sent nothing to any database");
+      expect(rules).toContain("no statement of the user's was run");
+      expect(rules).toContain("Name the real tables");
+      // What the numbers beside it are NOT. The inventory says what exists; the
+      // statistics block says roughly how much of it there is, and a model told the
+      // second without being told what an estimate is worth quotes one as a fact.
+      expect(rules).toContain("every number there is the engine's own estimate");
+      expect(rules).toContain("never one you may treat as empty or small");
+      // The workflow framing still applies to a plan of one.
+      expect(rules).toContain("You have no tools in this mode");
+      // The preface the inventory arrives under says the same thing in the messages.
+      expect(script.turns[0]?.transcript).toContain("so this run did not have to read it again");
+      expect(script.turns[0]?.transcript).not.toContain("This run has read nothing");
+    });
+
+    /*
+      The honest-limits half of the design (item 6): grounding is served for the
+      dialects `CATALOG_COMPOSERS` covers — PostgreSQL and SQLite — and on any other
+      engine the run is ungrounded and must KNOW it. This used to be reachable by
+      simply not having read the catalog; since a plan run reads its own, the engine
+      is what makes it reachable, and it is the case that still ships.
+    */
+    test("a run on an engine this server cannot ground is told so rather than left to invent a schema", async () => {
+      const b = boot(freshDataDir(), { answer: catalog });
+      const run = await startRun(b, "planning");
+      const script = scriptedModel(answersProse("a plan"));
+
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: { ...b.resources, connection: { ...CONNECTION, type: "mongodb" } },
+      });
+
+      const rules = rulesOf(script.turns[0] as Turn);
+      expect(rules).toContain("No schema inventory is available to this run");
+      expect(rules).toContain("invent no table or column names");
+      expect(rules).not.toContain("A schema inventory for this database is in this conversation");
+      // Nothing was shown to it either — no packed inventory reaches a run that has
+      // none, so there is nothing for it to mistake for one. (The fence markers
+      // themselves are in every run's rules, which is why the header is what this
+      // looks for.)
+      expect(script.turns[0]?.transcript).not.toContain("table(s) read at epoch");
+      // It is told WHICH engine, in the server's own voice and without naming a tool
+      // it does not have (#350).
+      expect(script.turns[0]?.transcript).toContain("on this mongodb connection");
+      expect(script.turns[0]?.transcript).not.toContain("inspect_schema");
+      expect(b.acquireProvider).not.toHaveBeenCalled();
+    });
+
+    /*
+      An inventory is held for the connection it describes, and a plan run reads the
+      connection its own record names. This is the same boundary the loop already
+      enforces on the resources it is driven with, seen from the other side.
+    */
+    test("an inventory read for another connection does not ground this one", async () => {
+      const reader = boot(freshDataDir(), { answer: catalog });
+      await readTheCatalogOnce(reader);
+
+      // A second connection with a schema of its own. The run on it must be grounded
+      // in ITS catalog: the held reading for `conn_1` is not merely unpreferred here,
+      // it must not appear at all.
+      const otherCatalog = async (sql: string): Promise<QueryResult> =>
+        sql.includes("information_schema.columns")
+          ? queryResult({
+              rows: [
+                {
+                  table_schema: "public",
+                  table_name: "invoices",
+                  column_name: "id",
+                  data_type: "integer",
+                  is_nullable: "NO",
+                },
+              ],
+              fields: ["table_schema", "table_name", "column_name", "data_type", "is_nullable"],
+              rowCount: 1,
+            })
+          : queryResult({ rows: [], fields: [], rowCount: 0 });
+
+      const other = boot(freshDataDir(), { answer: otherCatalog });
+      const run = await other.service.start({
+        mode: "planning",
+        actor: ACTOR,
+        connectionId: "conn_2",
+        objective: OBJECTIVE,
+      });
+      const script = scriptedModel(answersProse("a plan"));
+
+      await runInvestigation(run.runId, {
+        service: other.service,
+        model: await modelOver(script.fetch),
+        resources: {
+          ...other.resources,
+          connection: { ...CONNECTION, id: "conn_2" },
+          scope: createTargetScope("conn_2"),
+        },
+      });
+
+      // Grounded, and grounded in its own database: the reading it was given is one
+      // it took itself, and the other connection's tables are nowhere in its window.
+      expect(rulesOf(script.turns[0] as Turn)).toContain(
+        "A schema inventory for this database is in this conversation",
+      );
+      expect(script.turns[0]?.transcript).toContain("invoices");
+      expect(script.turns[0]?.transcript).not.toContain("customers");
+    });
+  });
+
+  /*
+    Item 3 of `docs/superpowers/specs/2026-08-15-plan-mode-sql-generator-design.md`:
+    what a plan run is asked to PRODUCE.
+
+    Grounding a plan run fixes what it knows; it does not fix what it hands back. The
+    contract it was given until 2026-08-15 — "answer with a plan in prose: what you
+    would inspect, in what order, and what each step would establish" — asks for a
+    lecture, and a lecture is what the live run of that date produced against a real
+    six-table database. Grounding it without rewriting this would have produced the
+    same numbered inspection plan with real table names in it.
+
+    So the deliverable is now ONE runnable statement, or an explicit refusal, and both
+    halves are asserted here because the failure mode is the same either way: a run
+    that answers with generic advice as though advice were an answer.
+  */
+  describe("a plan run is asked for a statement, not for a lecture", () => {
+    /** Every workflow the contract knows, total by typecheck rather than by hand. */
+    const EVERY_WORKFLOW = Object.keys({
+      investigation: 0,
+      "query-optimization": 0,
+      "database-assessment": 0,
+      operations: 0,
+      "data-analysis": 0,
+    } satisfies Record<AgentRunWorkflowType, number>) as AgentRunWorkflowType[];
+
+    /** The rules of a plan run of one workflow, on this suite's PostgreSQL connection. */
+    const planRulesFor = async (workflowType: AgentRunWorkflowType): Promise<string> => {
+      const b = boot(freshDataDir());
+      const run = await startRun(b, "planning", workflowType);
+      const script = scriptedModel(answersProse("a plan"));
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+      });
+      return rulesOfTurn(script.turns[0] as Turn);
+    };
+
+    test("a grounded plan is asked for one runnable statement, fenced and tagged with this engine", async () => {
+      const rules = await planRulesFor("investigation");
+
+      expect(rules).toContain("Produce ONE runnable statement");
+      // The deliverable of THIS workflow, not a generic "some SQL": the record is what
+      // makes a plan of an optimization ask for a rewrite and a plan of an
+      // investigation ask for the answer.
+      expect(rules).toContain("the statement that answers the question");
+      // The fence and its tag are stated exactly, because the UI reads the statement
+      // back out of the fence (#389) and a tag it does not recognise costs the user
+      // the editor hand-off. `postgres` is the canonical type-id, which is the tag
+      // `rich-text.tsx` accepts.
+      expect(rules).toContain("fenced block tagged `postgres`");
+      // Rationale AFTER the statement, so the deliverable is the first thing in the
+      // answer rather than the conclusion of an essay.
+      expect(rules).toContain("Put the rationale AFTER the statement");
+      expect(rules).toContain("Use no table name and no column name that is not in that inventory");
+      // The honest limit of item 6: an inventory records what EXISTS, not what this
+      // user's role may select from, so a validated statement is not a statement that
+      // will run.
+      expect(rules).toContain("not a statement that is certain to run");
+      // And the refusal path is stated on the grounded side too: an inventory that
+      // does not reach the objective is the ordinary case, not an error.
+      expect(rules).toContain("NO STATEMENT:");
+    });
+
+    test("an ungrounded plan is told to refuse with NO STATEMENT: rather than invent one", async () => {
+      const b = boot(freshDataDir());
+      const run = await startRun(b, "planning");
+      const script = scriptedModel(answersProse("a plan"));
+
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        // The engine decides it: grounding is served for the dialects
+        // `CATALOG_COMPOSERS` covers, and on anything else the run has no inventory
+        // at all.
+        resources: { ...b.resources, connection: { ...CONNECTION, type: "mongodb" } },
+      });
+
+      const rules = rulesOfTurn(script.turns[0] as Turn);
+      expect(rules).toContain("No schema inventory is available to this run");
+      expect(rules).toContain("invent no table or column names");
+      expect(rules).toContain("begin a line with `NO STATEMENT:`");
+      // The defect this whole change exists to remove, named in the rules so the model
+      // cannot mistake generic advice for a permitted answer.
+      expect(rules).toContain("A general inspection plan is not an answer here");
+      // It is NOT asked for a statement it cannot write: telling a run to produce one
+      // and to refuse in the same breath is how a model splits the difference and
+      // invents a schema.
+      expect(rules).not.toContain("Produce ONE runnable statement");
+    });
+
+    test("an operations plan is not given the statement contract at all", async () => {
+      const rules = await planRulesFor("operations");
+
+      // The one row of the design's deliverable table that is prose, and it is a
+      // decision rather than a shortfall: an operations objective is about what the
+      // engine reports about itself, so there is no schema to write a statement
+      // against and no statement to write.
+      expect(rules).toContain("There is no statement to write here");
+      expect(rules).not.toContain("Produce ONE runnable statement");
+      expect(rules).not.toContain("NO STATEMENT:");
+      // And it still knows it has no inventory, which is what stops it inventing one.
+      expect(rules).toContain("No schema inventory is available to this run");
+    });
+
+    /*
+      The record is TOTAL over `AgentRunWorkflowType`, the same way
+      `WORKFLOW_OBJECTIVES` and `WORKFLOW_TOOL_RULES` are, so a workflow added to the
+      union stops `investigation.ts` compiling until someone decides what a plan of it
+      produces. The compiler enforces that a key exists; this asserts that the key is
+      worth having — that every workflow's plan rules actually name a deliverable
+      rather than falling through to a shared sentence.
+    */
+    test("every workflow's plan names what that plan is to produce", async () => {
+      const expected: Readonly<Record<AgentRunWorkflowType, string>> = {
+        investigation: "the statement that answers the question",
+        "query-optimization": "the rewritten statement",
+        "database-assessment": "the statement that measures the quality concern",
+        "data-analysis": "the statement that produces the answer",
+        // Prose, by decision. Its deliverable sentence is what it says instead.
+        operations: "the readings you would take",
+      };
+
+      for (const workflowType of EVERY_WORKFLOW) {
+        expect(await planRulesFor(workflowType)).toContain(expected[workflowType]);
+      }
+    });
+  });
+
+  /*
+    Item 5 of the same design: the statement a plan run drafts becomes a FACT on the
+    ledger rather than something the browser parses back out of markdown.
+
+    It mattered because the ledger is the only thing that outlives the drive. #389's
+    "Apply to editor" control reads SQL out of a fence in the browser — it works when
+    the model fences its SQL and silently offers nothing when it does not — so plan
+    mode's entire deliverable was recorded nowhere and could be checked by nothing
+    (`docs/BACKLOG.md` B44).
+
+    What is asserted here is the wiring and, as carefully, its limits: an unknown
+    table is RECORDED and the statement is still offered, a write is MARKED and still
+    offered, and a run with no inventory says it checked nothing rather than reporting
+    that everything checked out. The extraction and validation rules themselves are
+    pinned in `tests/unit/lib/agent/plan-statement.test.ts`.
+  */
+  describe("the statement a plan run drafts becomes a ledger fact", () => {
+    /** A catalog with two real tables, so "unknown" means something in these runs. */
+    const catalog = async (sql: string): Promise<QueryResult> =>
+      sql.includes("information_schema.columns")
+        ? queryResult({
+            rows: [
+              { table_schema: "public", table_name: "film", column_name: "title", data_type: "text" },
+              { table_schema: "public", table_name: "actor", column_name: "name", data_type: "text" },
+            ],
+            fields: ["table_schema", "table_name", "column_name", "data_type"],
+            rowCount: 2,
+          })
+        : queryResult({ rows: [], fields: [], rowCount: 0 });
+
+    /*
+      The tag is a parameter because it is a CLAIM: a block tagged for one engine is not
+      a deliverable on a connection of another, and the reader rejects it rather than
+      relabelling it (#396 review). The default matches the default connection; a test
+      on a different engine passes a tag that does not contradict it.
+    */
+    const fenced = (sql: string, tag = "postgres"): string =>
+      ["Here is the statement.", "", `\`\`\`${tag}`, sql, "```"].join("\n");
+
+    /** The drafted-statement entry of a run's ledger, or undefined when it wrote none. */
+    const draftedIn = (events: readonly AgentRunEvent[]): AgentRunEvent | undefined =>
+      events.find((event) => event.kind === "plan-statement-drafted");
+
+    const planWith = async (
+      closing: string,
+      options: { readonly workflowType?: AgentRunWorkflowType; readonly type?: DatabaseType } = {},
+    ): Promise<readonly AgentRunEvent[]> => {
+      const b = boot(freshDataDir(), { answer: catalog });
+      const run = await startRun(b, "planning", options.workflowType);
+      const script = scriptedModel(answersProse(closing));
+
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources:
+          options.type === undefined
+            ? b.resources
+            : { ...b.resources, connection: { ...CONNECTION, type: options.type } },
+      });
+
+      return eventsOf(b.store, run.runId);
+    };
+
+    test("a statement fenced in the closing prose is recorded with the engine it was written for", async () => {
+      const events = await planWith(fenced("SELECT title FROM film;"));
+
+      expect(draftedIn(events)).toMatchObject({
+        kind: "plan-statement-drafted",
+        sql: "SELECT title FROM film;",
+        dialect: "postgres",
+        readOnly: true,
+        identifiers: { kind: "checked", unknownTables: [] },
+      });
+      // Beside the prose, not instead of it: the closing statement is still the run's
+      // own output and still what the rail renders.
+      expect(kindsOf(events)).toContain("closing-statement");
+    });
+
+    /*
+      The case the design names: a hallucinated table must not reach the user's editor
+      as though it were sound. It is recorded rather than dropped, because the run did
+      draft it and hiding that would leave a user wondering why plan mode said nothing.
+    */
+    test("a table the inventory does not hold is recorded on the statement, which is still kept", async () => {
+      const drafted = draftedIn(await planWith(fenced("SELECT * FROM film JOIN payments ON true")));
+
+      expect(drafted).toMatchObject({
+        readOnly: true,
+        identifiers: { kind: "checked", unknownTables: ["payments"] },
+      });
+    });
+
+    /*
+      The owner's decision, wired: a write is MARKED, not blocked. What the mark is for
+      is the rail — "Apply to editor" must never silently hand a user a DELETE — and
+      the run itself still executed nothing.
+    */
+    test("a write is marked with the guard's own reason rather than dropped", async () => {
+      const drafted = draftedIn(await planWith(fenced("DELETE FROM film")));
+
+      expect(drafted).toMatchObject({ readOnly: false, guardViolation: "NON_READ_STATEMENT" });
+    });
+
+    /*
+      An ungrounded run checked no identifier, and its entry says so. Recording an
+      empty unknown-table list would claim every table this statement names exists in
+      an inventory this run never read — the precision this repository's standing
+      defect class keeps claiming.
+    */
+    test("a run with no inventory records that it checked nothing, not that nothing was wrong", async () => {
+      // Tagged `sql`, which names no engine: a `postgres` tag here would be the model
+      // writing for one database while connected to another, and is refused as such.
+      const drafted = draftedIn(await planWith(fenced("SELECT * FROM anything", "sql"), { type: "mongodb" }));
+
+      expect(drafted).toMatchObject({ dialect: "mongodb", identifiers: { kind: "no-inventory" } });
+    });
+
+    /*
+      The tag is the model saying which engine it wrote for, and the recorder stamps the
+      event with the CONNECTION's engine. Taking a block that names another one would
+      file the model's MySQL as PostgreSQL and report the run as answered (#396 review).
+    */
+    test("a block tagged for another engine is not recorded as this run's statement", async () => {
+      const events = await planWith(fenced("SELECT * FROM film", "mysql"));
+
+      expect(draftedIn(events)).toBeUndefined();
+    });
+
+    test("an explicit refusal drafts no statement, and is not recorded as one", async () => {
+      const events = await planWith("NO STATEMENT: nothing in the inventory records payments.");
+
+      expect(draftedIn(events)).toBeUndefined();
+      expect(kindsOf(events)).toContain("closing-statement");
+    });
+
+    test("prose with no fenced block records no statement", async () => {
+      expect(draftedIn(await planWith("I would begin by inspecting the indexes."))).toBeUndefined();
+    });
+
+    /*
+      The one workflow whose plan deliverable is prose. A fenced block there is
+      illustration rather than the run's deliverable — the contract never asked it for
+      a statement — so recording one would put a statement on the ledger that no
+      contract asked for. #389's per-block control still offers it in the rail.
+    */
+    test("an operations plan records no statement, whatever it fences", async () => {
+      expect(draftedIn(await planWith(fenced("SELECT 1"), { workflowType: "operations" }))).toBeUndefined();
+    });
+
+    test("an agent run's closing prose is not a plan statement, however it is fenced", async () => {
+      const b = boot(freshDataDir(), { answer: catalog });
+      const run = await startRun(b, "agent");
+      const script = scriptedModel(answersProse(fenced("SELECT title FROM film")));
+
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: b.resources,
+      });
+
+      // An agent run drafts its statements through a tool, where each one is already a
+      // `statement-drafted` entry tied to the step that ran it. A second reading of its
+      // prose would record a statement the run never asked to run.
+      expect(draftedIn(await eventsOf(b.store, run.runId))).toBeUndefined();
+    });
   });
 
   test("no workflow may present an answer yet, so an agent run calling it is told there is no such tool", async () => {
@@ -1761,7 +2419,20 @@ describe("the run reads its schema context through the catalog tool", () => {
     );
   });
 
-  test("a planning run captures nothing and reaches no database", async () => {
+  /*
+    The case the whole grounding design exists for: the COLD PROCESS. Nothing is
+    held, nothing is in the ledger, and this is what a plan run met after every
+    restart, on every second replica, and for every user who had not already run
+    agent mode on this connection. It used to be told it had seen nothing; it now
+    reads its own catalog, server-side, before the first turn.
+
+    This test asserted the opposite until 2026-08-15 ("a planning run captures
+    nothing and reaches no database"). It is rewritten rather than deleted because
+    the owner moved the invariant deliberately — see `docs/superpowers/specs/
+    2026-08-15-plan-mode-sql-generator-design.md`, item 1 — and what replaces it is
+    the narrower promise the product actually makes.
+  */
+  test("a planning run on a cold process captures its own context, and still sends no statement of the user's", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "planning");
     const script = scriptedModel(answersProse("I would start with the index."));
@@ -1772,11 +2443,22 @@ describe("the run reads its schema context through the catalog tool", () => {
       resources: b.resources,
     });
 
-    expect(b.acquireProvider).not.toHaveBeenCalled();
-    expect(kindsOf(await eventsOf(b.store, run.runId))).not.toContain("context-captured");
-    // Not merely skipped for cost: a planning run is never even TOLD that a schema
-    // inventory was unavailable, because it was never going to read one.
+    // Grounded from nothing: the same three composed catalog reads an agent run
+    // takes, recorded in the ledger so a later drive of this run reuses them.
+    expect(modelStatements(b.queryReadOnly)).toEqual([expect.stringContaining("pg_stats") as unknown as string]);
+    expect(userStatements(b.queryReadOnly)).toEqual([]);
+    expect(kindsOf(await eventsOf(b.store, run.runId))).toContain("context-captured");
+    // The model is told the reading was its own run's, and is told it in the
+    // server's own voice: never in the capture's words, which send a model to
+    // `inspect_schema` — a tool this mode does not have, so naming it would be the
+    // #350 failure exactly.
     expect(script.turns[0]?.transcript).not.toContain("inspect_schema");
+    expect(script.turns[0]?.transcript).toContain("read from this database by this run");
+    expect(rulesOfTurn(script.turns[0] as Turn)).toContain(
+      "A schema inventory for this database is in this conversation",
+    );
+    // And no tools, on the turn that was given all of it.
+    expect(script.turns[0]?.body.tools).toBeUndefined();
   });
 
   test("a catalog the run cannot read leaves the run going, and says what to do instead", async () => {

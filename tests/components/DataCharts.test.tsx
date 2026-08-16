@@ -23,7 +23,39 @@ mock.module("recharts", () => ({
   Area: () => null,
   Bar: () => null,
   Line: () => null,
-  Pie: () => null,
+  // Recharts renders `label` once per slice and happy-dom cannot drive that, so
+  // it is driven here with both shapes recharts 3 can pass: a computed percent,
+  // and no percent at all (the type is optional as of v3).
+  //
+  // Both ACCEPTED shapes are covered. A function is called; an element is cloned
+  // with the slice's props, which is what recharts itself does — this app passes
+  // an element (`<PieSliceLabel>`) so the label can be a real `<text fill=ink>`
+  // rather than a string recharts would paint in the slice's own colour.
+  Pie: (props: Record<string, unknown>) => {
+    const label = props.label;
+    const slices = [{ name: "alpha", percent: 0.25 }, { name: "beta" }];
+
+    if (typeof label === "function") {
+      const render = label as (p: { name: string; percent?: number }) => string;
+      return React.createElement(
+        "div",
+        { "data-testid": "mock-pie-labels" },
+        render(slices[0]),
+        " | ",
+        render(slices[1]),
+      );
+    }
+    if (React.isValidElement(label)) {
+      return React.createElement(
+        "div",
+        { "data-testid": "mock-pie-labels" },
+        ...slices.map((slice, index) =>
+          React.cloneElement(label as React.ReactElement<Record<string, unknown>>, { ...slice, key: index }),
+        ),
+      );
+    }
+    return null;
+  },
   Scatter: () => null,
   Cell: () => null,
   RadialBar: () => null,
@@ -429,6 +461,21 @@ describe("DataCharts", () => {
     await waitFor(() => {
       expect(queryByTestId("mock-pie-chart")).not.toBeNull();
     });
+  });
+
+  test("pie slice labels carry a percentage, and stay readable when recharts omits it", async () => {
+    const { queryByText, queryByTestId } = render(React.createElement(DataCharts, { result: mockNumericResult }));
+    fireEvent.click(queryByText("Pie")!);
+    await waitFor(() => {
+      expect(queryByTestId("mock-pie-labels")).not.toBeNull();
+    });
+
+    const labels = queryByTestId("mock-pie-labels")!.textContent ?? "";
+    expect(labels).toContain("alpha (25%)");
+    // recharts 3 types `percent` as optional. Arithmetic on undefined yields
+    // NaN, which reaches the user as the literal label "beta (NaN%)".
+    expect(labels).toContain("beta (0%)");
+    expect(labels).not.toContain("NaN");
   });
 
   test("switches to scatter and histogram", async () => {

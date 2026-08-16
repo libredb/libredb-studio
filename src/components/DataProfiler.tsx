@@ -199,15 +199,15 @@ export function DataProfiler({
               {/* Summary Stats */}
               <div className="grid grid-cols-3 gap-3">
                 <div className="bg-surface rounded-lg p-3 border border-hairline">
-                  <p className="text-xs font-medium text-fg-mutedr">Total Rows</p>
+                  <p className="text-xs font-medium text-fg-muted">Total Rows</p>
                   <p className="text-xs font-medium text-fg mt-1">{profile.totalRows.toLocaleString()}</p>
                 </div>
                 <div className="bg-surface rounded-lg p-3 border border-hairline">
-                  <p className="text-xs font-medium text-fg-mutedr">Columns</p>
+                  <p className="text-xs font-medium text-fg-muted">Columns</p>
                   <p className="text-xs font-medium text-fg mt-1">{profile.columns.length}</p>
                 </div>
                 <div className="bg-surface rounded-lg p-3 border border-hairline">
-                  <p className="text-xs font-medium text-fg-mutedr">Avg Null %</p>
+                  <p className="text-xs font-medium text-fg-muted">Avg Null %</p>
                   <p className="text-xs font-medium text-fg mt-1">
                     {profile.columns.length > 0
                       ? Math.round(profile.columns.reduce((sum, c) => sum + c.nullPercent, 0) / profile.columns.length)
@@ -219,7 +219,7 @@ export function DataProfiler({
 
               {/* Column Profiles */}
               <div className="space-y-2">
-                <h3 className="text-xs font-medium text-fg-tertiaryr">Column Profiles</h3>
+                <h3 className="text-xs font-medium text-fg-tertiary">Column Profiles</h3>
                 {profile.columns.map((col) => (
                   <div key={col.name} className="bg-surface rounded-lg p-3 border border-hairline">
                     <div className="flex items-center justify-between mb-2">
@@ -330,7 +330,7 @@ export function DataProfiler({
                 <div className="bg-cyan-500/5 border border-cyan-500/10 rounded-lg p-4">
                   <div className="flex items-center gap-2 mb-2">
                     <Sparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />
-                    <span className="text-xs font-medium text-cyan-400r">AI Analysis</span>
+                    <span className="text-xs font-medium text-cyan-400">AI Analysis</span>
                     {isAiLoading && <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin text-cyan-400" />}
                   </div>
                   {aiSummary && (

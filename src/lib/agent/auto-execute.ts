@@ -129,40 +129,99 @@ export type AgentAutoExecuteDecision =
  * writers and this application until it finishes. So a `mixed` plan passes on
  * PostgreSQL and does not pass here: any `SCAN` is a full read of a table whose size
  * nothing in the plan states.
+ *
+ * It answers WHICH reading refused rather than whether one did (#387 review). The five
+ * are distinguishable and this function has always known which applied; it used to
+ * collapse them into a boolean, and the sentence built from that then offered three of
+ * them as alternatives for the reader to pick from. Everywhere else this timeline says
+ * what happened, so a menu was the odd one out — and it hides the one a user most needs,
+ * because "the estimate is 4320000 against a ceiling of 50000" can be argued with and
+ * "possibly expensive" cannot.
  */
-function planIsSafe(plan: AgentAutoExecutePlan | undefined): boolean {
-  if (plan === undefined) return false;
-  if (plan.summary.uninterpretedStep === true) return false;
+type PlanRefusal =
+  | "no-plan"
+  | "unverified-dialect"
+  | "unreadable-step"
+  | "unreadable-access"
+  | "reads-whole-table"
+  | "no-estimate"
+  | "over-ceiling";
+
+/**
+ * `unknown` and `full-scan` are separated here, and the first attempt at this grouped
+ * them (#388 review). They are not the same reading: `full-scan` means at least one
+ * relation is read end to end, and `unknown` means the reading could not tell
+ * (`plan-summary.ts`). Calling the second one a whole-table read is a specific claim
+ * about a plan nobody managed to interpret — which is worse than the menu this
+ * replaced, because a reader can act on "or" and cannot act on a confident wrong
+ * reason. The same applies to a dialect with no rule: a plan IS held, so "no plan" is
+ * false; what is missing is a way to weigh it.
+ */
+function planRefusal(plan: AgentAutoExecutePlan | undefined): PlanRefusal | null {
+  if (plan === undefined) return "no-plan";
+  if (plan.summary.uninterpretedStep === true) return "unreadable-step";
   if (plan.format === "postgres-json") {
-    if (plan.summary.access !== "index" && plan.summary.access !== "mixed") return false;
-    return plan.summary.estimatedCost !== undefined && plan.summary.estimatedCost <= AGENT_AUTO_EXECUTE_MAX_PLAN_COST;
+    if (plan.summary.access === "unknown") return "unreadable-access";
+    if (plan.summary.access !== "index" && plan.summary.access !== "mixed") return "reads-whole-table";
+    if (plan.summary.estimatedCost === undefined) return "no-estimate";
+    return plan.summary.estimatedCost <= AGENT_AUTO_EXECUTE_MAX_PLAN_COST ? null : "over-ceiling";
   }
-  if (plan.format === "sqlite-queryplan") return plan.summary.access === "index";
-  return false;
+  // SQLite carries no cost at all, so `access` is the whole reading: anything wholly
+  // indexed passes, an unreadable plan says so, and everything else reads a table whose
+  // size nothing in the plan states.
+  if (plan.format === "sqlite-queryplan") {
+    if (plan.summary.access === "index") return null;
+    return plan.summary.access === "unknown" ? "unreadable-access" : "reads-whole-table";
+  }
+  return "unverified-dialect";
+}
+
+/**
+ * The refusal in the reader's terms. A total record, so a refusal added later cannot
+ * ship without words — the rule `SHORTFALL_SENTENCES` follows in the timeline.
+ */
+const PLAN_REFUSAL_TEXT: Readonly<Record<PlanRefusal, string>> = Object.freeze({
+  "no-plan": "this run holds no plan for that exact statement, so there was nothing to weigh",
+  "unverified-dialect":
+    "this server has no rule for weighing a plan from this database, and reading it by another engine's rule would be a claim about a plan nobody has looked at",
+  "unreadable-step":
+    "the plan carried a step this server could not read, and a reading it cannot interpret is not a reading that it is cheap",
+  "unreadable-access":
+    "this server could not tell from the plan how the statement reaches its rows, and said nothing must not read as said it was cheap",
+  "reads-whole-table": "the plan reads the whole table rather than reaching its rows through an index",
+  "no-estimate": "the engine returned a plan with no cost in it, so there was no number to weigh",
+  "over-ceiling": "the plan is too expensive",
+});
+
+/** The cost case earns its numbers: a ceiling nobody can see is a ceiling nobody can argue with. */
+function planRefusalText(refusal: PlanRefusal, plan: AgentAutoExecutePlan | undefined): string {
+  if (refusal !== "over-ceiling" || plan?.summary.estimatedCost === undefined) return PLAN_REFUSAL_TEXT[refusal];
+  return `${PLAN_REFUSAL_TEXT[refusal]} — the engine estimates ${plan.summary.estimatedCost}, against a ceiling of ${AGENT_AUTO_EXECUTE_MAX_PLAN_COST}`;
 }
 
 /**
  * The refusal sentences, in the register the timeline already speaks in: what was
  * not done, why, and whose the statement now is.
  */
-const CONDITION_WARNINGS: Readonly<Record<Exclude<AgentAutoExecuteCondition, "measured-slow">, string>> = Object.freeze(
-  {
-    "not-executed":
-      "Not run for you: this run never executed this exact statement itself, so this one is yours to run.",
-    "plan-risky":
-      "Not run for you: the plan for this statement reads as a full table read, or the engine gave this server no plan it could weigh, or the plan carried a step this server could not read, so this one is yours to run.",
-  },
-);
+const NOT_EXECUTED_WARNING =
+  "Not run for you: this run never executed this exact statement itself, so this one is yours to run.";
 
 /** Decides the `handover` an `answer-composed` event records. */
 export function evaluateAutoExecute(input: AgentAutoExecuteInput): AgentAutoExecuteDecision {
   // In condition order, so a refusal names the first thing that failed rather than
   // whichever check happened to be written last.
   if (!input.executedStatements.includes(input.sql)) {
-    return { handover: "applied", condition: "not-executed", warning: CONDITION_WARNINGS["not-executed"] };
+    return { handover: "applied", condition: "not-executed", warning: NOT_EXECUTED_WARNING };
   }
-  if (!planIsSafe(input.plan)) {
-    return { handover: "applied", condition: "plan-risky", warning: CONDITION_WARNINGS["plan-risky"] };
+  const refusal = planRefusal(input.plan);
+  if (refusal !== null) {
+    return {
+      handover: "applied",
+      condition: "plan-risky",
+      // `condition` stays as it was: it is recorded on the ledger and read back by
+      // runs older than this change. What got more specific is what a reader sees.
+      warning: `Not run for you: ${planRefusalText(refusal, input.plan)}, so this one is yours to run.`,
+    };
   }
   if (input.elapsedMs > AGENT_AUTO_EXECUTE_MAX_ELAPSED_MS) {
     return {

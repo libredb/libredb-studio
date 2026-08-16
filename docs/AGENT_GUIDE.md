@@ -74,7 +74,7 @@ You choose three things before pressing Start, and two of them are controls in t
 
 | Button | What it means |
 | --- | --- |
-| **Plan** | The model reasons about your objective and writes an approach. It has **no tools**, so it performs zero database operations. This is what a run opens in. |
+| **Plan** | The model writes **one statement** that answers your objective, for you to run yourself. It has **no tools**: it runs no statement of yours, writes nothing, and applies nothing. The server reads your schema for it first, so the statement names your real tables — see [What a Plan run knows about your database](#what-a-plan-run-knows-about-your-database). This is what a run opens in. |
 | **Agent** | The model is given the read-only tools and investigates: it drafts statements, reads results, and finishes by composing a report whose claims cite what it read. |
 
 **2. The workflow — what the run is for** (`AgentRail.tsx:433-448`, labels at `AgentRail.tsx:94-98`):
@@ -112,6 +112,66 @@ investigated. The rail says so rather than offering a Start that must fail:
 > *"… cannot be rebuilt on the server: its settings live in this browser. A run re-resolves its
 > connection there after a restart, so it can only investigate a connection the server holds too."*
 > (`AgentRail.tsx:492-498`)
+
+### What a Plan run knows about your database
+
+**A Plan run runs no statement of yours, writes nothing, and hands every statement it drafts to you
+to run yourself.** That is the promise of the mode, and it is the one to hold it to.
+
+What it is **not** is "a Plan run never touches your database". It used to be described that way, and
+that stopped being true on 2026-08-15. Before the model's first turn, the server reads your schema
+for it — the catalog, plus what the engine already estimates about its own tables — the same reading
+the sidebar takes when you connect. Nothing the model writes goes anywhere: it holds no tool, and
+once the run has been given that reading, nothing further is read for it.
+
+You no longer have to run an Agent run first. That was the old arrangement, and it meant the safe
+mode only worked for people who had already used the other one — and stopped working after every
+restart. A Plan run now reads what it needs itself, from whichever of these is cheapest: what it
+already recorded on an earlier drive of the same run, what this server read for another run on the
+same connection, or a fresh reading.
+
+What the Plan run is shown:
+
+- **Your tables, columns, keys and relations**, so the statement names your real tables and the real
+  joins between them.
+- **The engine's estimated statistics** — roughly how many rows a table holds, how often a column is
+  null, roughly how many distinct values it has. These come from what PostgreSQL and SQLite already
+  keep (`pg_class`/`pg_stats`, `sqlite_stat1`); **nothing is counted and no value in any row is
+  read**. They are what lets a plan choose which table to drive a join from.
+
+Every one of those numbers is an **estimate**, and the run is told to treat it as one. They can be
+badly out of date, and a table nobody has `ANALYZE`d has none at all — such a table is shown as
+having **no statistics**, never as empty. On SQLite the statistics exist only after you have run
+`ANALYZE`, there is no null fraction at all, and a table with no index gets no row estimate either.
+
+**Two engines only.** Grounding works on **PostgreSQL and SQLite**. On any other connection a Plan
+run says plainly that no inventory could be read for it, and is asked to refuse rather than to invent
+table names. **Operate** is the one workflow with no grounding by choice, on any engine: it asks the
+engine about itself rather than about your tables, so there is nothing to ground against, and its
+plan is prose rather than a statement.
+
+**The statement it drafts, and what is checked.** The run finishes with one fenced statement and a
+short rationale. The rail shows it on its own card with a **Copy** and an **Apply to editor** — the
+run never runs it. Two things are checked first and both are shown to you:
+
+- **Tables it names that your schema does not have.** They are listed beside the statement. Nothing
+  checks its *columns*, so an unflagged statement is one where nothing recognised was missing, not
+  one that is known to be correct.
+- **Whether it only reads.** A statement that writes is not withheld — sometimes writing one is
+  exactly what you asked for — but it is **marked**, on the card and in the button's own
+  screen-reader label, so that Apply is never a quiet handover of a `DELETE`. Read the mark as what
+  it says: the guard did not classify this as a bounded read, and its reason is shown. That check
+  deliberately over-refuses — text two dialects would read differently is refused whole, and so are
+  PostgreSQL's `#>`/`#>>` operators — so a marked statement is one nothing established to be a read,
+  which is not the same as one established to write.
+
+**A statement built from your real table names is still not a statement guaranteed to run.** The
+inventory records what exists in the database, not what your role is permitted to read.
+
+**When it cannot answer**, the run says so instead of guessing: the rail shows a *No statement
+drafted* card with what was missing and the one question that would unblock it. That is a successful
+ending for this mode, not a failure. A Plan run that instead lectures — a numbered list of things it
+would look at, with no statement and no refusal — is marked **unanswered**.
 
 ---
 
@@ -227,6 +287,8 @@ yet. A run's steps appear here as they are recorded."*
 | `Answer composed` | The run named one stored result as its answer and said how to show it — as a table, or as a chart of a named type. A chart's caption is the model's own prose and is shown quoted; the columns never appear in the application's own sentence, because they are engine text |
 | `Report composed` | How many claims, each citing evidence |
 | `Closing statement` | The model's closing prose. It cites nothing and claims nothing — a Plan run's whole output, an Agent run's aside |
+| `Statement drafted` / `Statement drafted — not classified as a read` | Plan mode: the one statement the run wrote, on its own card — the SQL verbatim, any table it names that your schema does not have, and **Apply to editor**. The second headline is a statement the guard did not classify as read-only, and its reason is shown beside it: that can mean the statement writes, and it can equally mean the guard could not settle the text. Nothing runs either |
+| `No statement drafted` | A Plan run that could not answer from your schema, with what was missing. A legitimate ending, not a failure |
 | `Stop requested` | You pressed Stop; *"the run takes no further database step; work already in hand, such as a report, still finishes"* |
 
 **Wording the application chose and text that came from elsewhere never share a line.** Headlines
@@ -371,6 +433,7 @@ whole vocabulary (`SHORTFALL_SENTENCES`, `timeline.ts:335-343`):
 | `no-report` | "The run finished without composing a cited report, so nothing it found was written down." |
 | `empty-evidence` | "Every result the report cited came back empty, so the answer rests on nothing." |
 | `no-plan` | "The run produced no plan at all." |
+| `no-statement` | "The run described how it would approach the question and never wrote the statement, and it did not say what was missing either." |
 | `no-plan-comparison` | "No before-and-after plan comparison was recorded, and no index was recommended: a query optimization rests on one or the other." |
 | `no-plan-evidence` | "The index was recommended without citing a plan this run read, so nothing the engine said backs it." |
 | `no-table-profile` | "No table was profiled, so the state of the data was never established." |
@@ -391,10 +454,12 @@ claims also carries the `no-report` shortfall (`verifyInvestigationGoal`, `goal-
 the sentence you actually read is the shortfall one — *"The run finished without composing a cited
 report, so nothing it found was written down."* The stop sentence for that ending, *"The model
 stopped without composing a cited report."*, is what a run whose ledger carries **no verdict at all**
-shows. In **Plan** mode the same ending is not a shortfall at all — a plan run that spoke has met its
-bar (`verifyPlanningGoal`, `goal-verifier.ts:163-166`) — so its own wording is what appears: *"The
-model finished its plan and stopped. Planning mode has no tools, so it composed no report."*, which
-is how a good Plan run ends.
+shows. In **Plan** mode the same ending is not a shortfall by itself — that mode has no report to
+compose — so its own wording is what appears: *"The model finished its plan and stopped. Planning
+mode has no tools, so it composed no report."*, which is how a good Plan run ends. It is not enough
+to have spoken, though: `verifyPlanningGoal` asks for the mode's actual deliverable, so a run that
+stopped after a lecture — no statement drafted and no `NO STATEMENT:` refusal — carries the
+`no-statement` shortfall, and that sentence wins over the ending one exactly as above.
 
 And when the run failed for a reason that is not about the answer at all, that sentence wins over
 both, and also appears next to the Start button so you can fix it before starting another
@@ -576,8 +641,11 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   ClickHouse, Druid and Couchbase an Agent-mode run cannot read anything. It also covers the bundled
   **LibreDB sample** connection, whose provider implements no `queryReadOnly`
   (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded
-  connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode is unaffected:
-  it is toolless and reaches no database, so it works on every connection.
+  connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode still opens on
+  every connection — the model is toolless there, so no profile has to be acquired for it — but its
+  **grounding** takes the same path and therefore the same two engines. On any other connection a
+  Plan run starts, says no inventory could be read for it, and is asked to refuse rather than to
+  invent table names.
 - **It never executes a recommendation**, and never applies one to your editor by itself. The single
   exception anywhere in the rail is auto-execute, which is off unless the run was opened with it, and
   which covers only the answer's own statement under the three conditions above.

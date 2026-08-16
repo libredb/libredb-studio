@@ -16,6 +16,7 @@
 import { describe, test, expect } from "bun:test";
 import { foldLedgerEntries, parseLedgerLine } from "@/components/agent/timeline";
 import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
+import { PLAN_NO_STATEMENT_MARKER } from "@/lib/agent/plan-draft";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
 import { DEFAULT_AGENT_WORKFLOW_TYPE } from "@/lib/agent/types";
 
@@ -168,6 +169,350 @@ describe("foldLedgerEntries", () => {
     expect(closing?.detail).toBeUndefined();
     expect(closing?.tone).toBe("progress");
     expect(view.items.at(-1)?.detail).toBe("The model stopped without composing a cited report.");
+  });
+
+  /*
+    A plan run's drafted statement, as the timeline reads it (item 5 of the plan-mode
+    SQL-generator design of 2026-08-15). The statement CARD is item 7; what is pinned
+    here is the honesty of the line the fold produces in the meantime, because every
+    sentence in it is a claim about a statement the user may be about to run.
+  */
+  describe("a plan run's drafted statement", () => {
+    const drafted = (entry: AgentLedgerEntry) => foldLedgerEntries([OPENED, entry]).items.at(-1);
+
+    test("a read of known tables is reported without claiming it will run", () => {
+      const item = drafted(
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 8,
+            sql: "SELECT title FROM film",
+            dialect: "postgres",
+            readOnly: true,
+            identifiers: { kind: "checked", unknownTables: [] },
+          },
+        }),
+      );
+
+      expect(item?.headline).toBe("Statement drafted");
+      expect(item?.detail).toContain("had no objection, which is not a promise about what it does");
+      // The limit item 6 of the design says must be stated wherever the claim is made:
+      // an inventory records what exists, not what this user's role may select from.
+      expect(item?.detail).toContain("not what your role is permitted to read");
+      // No hand-off from this entry yet: the statement card that can mark a write as a
+      // write is item 7, and an "Apply to editor" control here would run ahead of it.
+      expect(item?.applySql).toBeUndefined();
+    });
+
+    test("a guard objection is marked in the headline, with the guard's own reason", () => {
+      const item = drafted(
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 8,
+            sql: "DELETE FROM film",
+            dialect: "postgres",
+            readOnly: false,
+            guardViolation: "NON_READ_STATEMENT",
+            identifiers: { kind: "checked", unknownTables: [] },
+          },
+        }),
+      );
+
+      expect(item?.headline).toBe("Statement drafted — not classified as a read");
+      expect(item?.detail).toContain("NON_READ_STATEMENT");
+      expect(item?.detail).toContain("marked, not blocked");
+    });
+
+    /*
+      `readOnly` is `inspectAgentStatement(sql) === null` and nothing more, and four of
+      that guard's six objections say only that it could not READ the text: unclosed
+      spans, a run two dialects disagree about, a second statement, and no statement at
+      all. Its own header records that it over-refuses legitimate reads on purpose —
+      PostgreSQL's `#>`/`#>>` jsonb operators among them.
+
+      So the headline states the CLASSIFICATION and never the effect. A pure jsonb read
+      announced as "not a read" is the overstatement this repository is repeatedly
+      caught in, and it would be made about the one statement on this surface a user is
+      most likely to act on.
+    */
+    test("an objection the guard could not classify is not announced as a write", () => {
+      const item = drafted(
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 8,
+            sql: "SELECT payload #>> '{a,b}' FROM events",
+            dialect: "postgres",
+            readOnly: false,
+            guardViolation: "DIALECT_AMBIGUOUS_TEXT",
+            identifiers: { kind: "checked", unknownTables: [] },
+          },
+        }),
+      );
+
+      expect(item?.headline).toBe("Statement drafted — not classified as a read");
+      expect(`${item?.headline} ${item?.detail}`).not.toContain("change or delete");
+      expect(item?.detail).toContain("DIALECT_AMBIGUOUS_TEXT");
+    });
+
+    /*
+      The names are COUNTED and not spoken: they are model and engine text, and the
+      rule this whole fold follows is that untrusted content never enters a sentence
+      the user reads as the application speaking.
+    */
+    test("names the inventory does not hold are counted, not quoted into the app's sentence", () => {
+      const item = drafted(
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 8,
+            sql: "SELECT * FROM payments",
+            dialect: "postgres",
+            readOnly: true,
+            identifiers: { kind: "checked", unknownTables: ["payments"] },
+          },
+        }),
+      );
+
+      expect(item?.detail).toContain("1 name(s) it uses are not in the inventory this run read");
+      expect(item?.detail).not.toContain("payments");
+    });
+
+    test("a run with no inventory says nothing was checked, rather than that nothing was wrong", () => {
+      const item = drafted(
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 8,
+            sql: "SELECT 1",
+            dialect: "mongodb",
+            readOnly: true,
+            identifiers: { kind: "no-inventory" },
+          },
+        }),
+      );
+
+      expect(item?.detail).toContain("were not checked at all");
+    });
+
+    /*
+      Item 7: the statement itself has to REACH the surface, or the card cannot show
+      it. The fold carries the ledger's own record — the text, the guard's verdict and
+      what the identifier check found — rather than a rendering of it, because the
+      card decides how a write is marked and the fold decides nothing about pixels.
+    */
+    test("the ledger's own record is carried to the surface, verbatim", () => {
+      const item = drafted(
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 8,
+            sql: "DELETE FROM film WHERE id = 1",
+            dialect: "postgres",
+            readOnly: false,
+            guardViolation: "NON_READ_STATEMENT",
+            identifiers: { kind: "checked", unknownTables: ["payments"] },
+          },
+        }),
+      );
+
+      expect(item?.planStatement).toEqual({
+        sql: "DELETE FROM film WHERE id = 1",
+        readOnly: false,
+        guardViolation: "NON_READ_STATEMENT",
+        identifiers: { kind: "checked", unknownTables: ["payments"] },
+      });
+      // Still no `applySql`, and that stays deliberate: that field drives the rail's
+      // shared hydration control, whose "Apply to editor" carries no mark at all. The
+      // card offers this statement through its OWN control, whose accessible name says
+      // what the statement is.
+      expect(item?.applySql).toBeUndefined();
+    });
+
+    test("a read carries no guard reason, because there was no objection to carry", () => {
+      const item = drafted(
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 8,
+            sql: "SELECT title FROM film",
+            dialect: "sqlite",
+            readOnly: true,
+            identifiers: { kind: "no-inventory" },
+          },
+        }),
+      );
+
+      expect(item?.planStatement?.readOnly).toBe(true);
+      expect(item?.planStatement?.guardViolation).toBeUndefined();
+      expect(item?.planStatement?.identifiers).toEqual({ kind: "no-inventory" });
+    });
+  });
+
+  /*
+    The OTHER legitimate ending of a plan run (item 7 of the plan-mode SQL-generator
+    design of 2026-08-15): the run says the schema does not support the question, on a
+    line beginning with the marker its rules gave it.
+
+    The marker is a PROTOCOL token, not something the model was writing for a reader,
+    so it is stripped here and the rail renders the rest as its own card. What is
+    pinned below is mostly the reading's deference to the ledger: the browser is not
+    allowed to decide that a run refused when the SERVER recorded a statement for it,
+    because the server's reader is fence-aware and this one is not.
+  */
+  describe("a plan run's refusal", () => {
+    const PLANNING_OPENED: AgentLedgerEntry = { ...OPENED, mode: "planning" };
+
+    /** The closing entry itself, which is the second item of every ledger below. */
+    const closing = (text: string, ...rest: readonly AgentLedgerEntry[]) =>
+      foldLedgerEntries([
+        PLANNING_OPENED,
+        event({ kind: "event", event: { kind: "closing-statement", atMs: 8, text } }),
+        ...rest,
+      ]).items[1];
+
+    test("the marker becomes a refusal entry, and never reaches the user as text", () => {
+      const item = closing("NO STATEMENT: there is no table holding rentals.\n\nWhich table records them?");
+
+      expect(item?.planRefusal).toBe(true);
+      expect(item?.headline).toBe("No statement drafted");
+      // The model's own words survive in full; only the token is gone.
+      expect(item?.prose).toBe("there is no table holding rentals.\n\nWhich table records them?");
+      expect(item?.prose).not.toContain("NO STATEMENT");
+    });
+
+    test("the marker is read the way the SERVER reads it, or the two would disagree about the same run", () => {
+      // The characters themselves, from the module that defines them. A second
+      // spelling in the browser is a spelling that drifts, and the drift would show
+      // as a run whose ledger says "refused" while the rail shows a closing statement.
+      const item = closing(`${PLAN_NO_STATEMENT_MARKER} nothing here has a price.`);
+
+      expect(item?.planRefusal).toBe(true);
+      expect(item?.prose).toBe("nothing here has a price.");
+    });
+
+    /*
+      The marker INSIDE a fenced block is that block's text, not the run's refusal —
+      the server's reader ignores everything between fences, so a run like this records
+      no statement AND no refusal, and the verdict scores it `no-statement`. The browser
+      used a fence-blind regex and called it a successful refusal, so the same run was
+      reported two different ways by two different readers. It now asks the server's
+      reader (#396 review).
+
+      Note the block is tagged `text`: that is what makes this survive the ledger check
+      above. A query-tagged block would have recorded a statement and never reached the
+      refusal path at all, which is why the earlier "only consulted when no statement
+      was recorded" argument did not close the hole.
+    */
+    test("a marker inside a fenced block is that block's text, not the run's refusal", () => {
+      const item = closing(
+        ["Here is the shape of a refusal:", "", "```text", "NO STATEMENT: example", "```"].join("\n"),
+      );
+
+      expect(item?.planRefusal).toBeUndefined();
+      expect(item?.headline).not.toBe("No statement drafted");
+    });
+
+    test("a lower-cased marker still refuses, matching the server's own reading", () => {
+      const item = closing("no statement: I cannot see a customers table.");
+
+      expect(item?.planRefusal).toBe(true);
+      expect(item?.prose).toBe("I cannot see a customers table.");
+    });
+
+    test("a closing statement with no marker is a closing statement", () => {
+      const item = closing("Start with the salary index.");
+
+      expect(item?.planRefusal).toBeUndefined();
+      expect(item?.headline).toBe("Closing statement");
+      expect(item?.prose).toBe("Start with the salary index.");
+    });
+
+    /*
+      The case the naive reading would get wrong. The server's reader ignores
+      everything inside a fence, so a statement quoting the marker is still a
+      statement — and it RECORDED one. The browser defers to that rather than
+      overruling it, and the prose keeps every character the model wrote.
+    */
+    test("a run whose ledger holds a statement is not re-read as a refusal", () => {
+      const text = "```sql\nSELECT 'NO STATEMENT: not this one'\n```";
+      const item = closing(
+        text,
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 9,
+            sql: "SELECT 'NO STATEMENT: not this one'",
+            dialect: "postgres",
+            readOnly: true,
+            identifiers: { kind: "checked", unknownTables: [] },
+          },
+        }),
+      );
+
+      expect(item?.planRefusal).toBeUndefined();
+      expect(item?.headline).toBe("Closing statement");
+      expect(item?.prose).toBe(text);
+    });
+
+    /*
+      The real ledger shape, and the one no test had: a plan run's closing prose HOLDS
+      the fenced statement, and `recordPlanStatement` writes the drafted event from it
+      immediately afterwards. So the same SQL reaches the rail twice — once as a fenced
+      block inside the prose, where #389's per-block "Apply to editor" carries no mark
+      at all, and once in the statement card that marks it.
+
+      The unmarked control is the silent hand-off the design's item 4 exists to
+      prevent, so the fold tells the surface which closing entry the run's deliverable
+      was already offered from. The card is the marked hand-off; the prose keeps its
+      copy controls and loses only the editor button it could not label honestly.
+    */
+    test("the closing prose a statement was read out of is flagged, so its blocks are not offered unmarked", () => {
+      const item = closing(
+        "```postgres\nDELETE FROM film WHERE rental_count = 0\n```\n\nIt removes the unrented titles.",
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 9,
+            sql: "DELETE FROM film WHERE rental_count = 0",
+            dialect: "postgres",
+            readOnly: false,
+            guardViolation: "NON_READ_STATEMENT",
+            identifiers: { kind: "checked", unknownTables: [] },
+          },
+        }),
+      );
+
+      expect(item?.planStatementRecorded).toBe(true);
+    });
+
+    test("a plan run that drafted nothing keeps the fence reading #389 gave it", () => {
+      // The fallback is unchanged where there is no card to defer to: a run whose
+      // ledger records no statement has nothing else offering its blocks.
+      expect(closing("```postgres\nSELECT 1\n```")?.planStatementRecorded).toBeUndefined();
+    });
+
+    test("an agent run's closing statement is never read as a plan refusal", () => {
+      // Only a PLAN run has this contract. An agent run's closing prose is the model
+      // talking, and the marker is not a token it was given.
+      const item = foldLedgerEntries([
+        OPENED,
+        event({ kind: "event", event: { kind: "closing-statement", atMs: 8, text: "NO STATEMENT: nothing to add." } }),
+      ]).items.at(-1);
+
+      expect(item?.planRefusal).toBeUndefined();
+      expect(item?.prose).toBe("NO STATEMENT: nothing to add.");
+    });
   });
 
   test("the app's own lines carry no prose, so nothing else is rendered as the model's", () => {
@@ -1243,6 +1588,7 @@ describe("an ending says whether the run ANSWERED, not only how it stopped (B24)
       "no-report",
       "empty-evidence",
       "no-plan",
+      "no-statement",
       "no-plan-comparison",
       "no-plan-evidence",
       "no-table-profile",

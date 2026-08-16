@@ -1,6 +1,7 @@
 import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentGoalShortfall } from "@/lib/agent/goal-verifier";
 import type { AgentPlanAccess, AgentPlanSummary } from "@/lib/agent/plan-summary";
+import { readPlanStatement } from "@/lib/agent/plan-draft";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
 import {
   type AgentChartSpec,
@@ -49,6 +50,24 @@ import {
  */
 
 export type AgentTimelineTone = "neutral" | "progress" | "refused" | "done";
+
+type PlanStatementEvent = Extract<AgentRunEvent, { kind: "plan-statement-drafted" }>;
+
+/**
+ * What a surface needs to render the statement a PLAN run drafted, taken from the
+ * ledger's own record of it (item 7 of the plan-mode SQL-generator design of
+ * 2026-08-15).
+ *
+ * A `Pick` of the event rather than a shape written out again: every field here is a
+ * claim the SERVER made about the statement — the guard's verdict, what the identifier
+ * check found — and a second declaration is a place where the rail could come to say
+ * something the run never established.
+ *
+ * It carries the SQL and the findings and no rendering decision at all. How a write is
+ * marked, and in what words, is the card's question (`AgentRail`), because that is
+ * where the marking has to survive a screen reader as well as a colour.
+ */
+export type AgentPlanStatementView = Pick<PlanStatementEvent, "sql" | "readOnly" | "guardViolation" | "identifiers">;
 
 export interface AgentTimelineItem {
   /** Stable within one render, unique even when two entries share a timestamp. */
@@ -126,6 +145,42 @@ export interface AgentTimelineItem {
     readonly kind: Exclude<Extract<AgentRunEvent, { kind: "answer-composed" }>["handover"], "none">;
     readonly sql: string;
   };
+  /**
+   * The statement a PLAN run drafted, when this entry is the ledger's record of one.
+   *
+   * Deliberately NOT `applySql`, which is the field the shared hydration control
+   * reads: that control's "Apply to editor" carries no mark, and the one thing this
+   * entry may not do is put a `DELETE` one unremarkable click from the user's editor.
+   * A surface that renders this field renders the mark with it, or it renders neither.
+   */
+  readonly planStatement?: AgentPlanStatementView;
+  /**
+   * Set on the closing entry of a plan run that produced no statement and SAID SO —
+   * the `NO STATEMENT:` outcome its rules define (item 3 of the design).
+   *
+   * A flag rather than the words, because the words are the model's and are already in
+   * `prose`. What this says is that the entry is that outcome, so a surface can present
+   * it as the ending it is instead of as a closing statement that happens to begin
+   * oddly. The marker itself is stripped out of `prose` before it gets here: it is a
+   * protocol token the model was instructed to emit, not something it wrote for a
+   * reader.
+   */
+  readonly planRefusal?: true;
+  /**
+   * Set on the closing entry of a plan run whose ledger records a drafted statement:
+   * the run's deliverable is already offered, MARKED, from the card below this entry.
+   *
+   * The prose this flag sits on is the text the statement was read out of, so the same
+   * SQL is in both places. #389's per-block "Apply to editor" inside the prose carries
+   * no mark, no accessible name and no colour — it was written for a mode that had no
+   * ledger record to mark from — so a surface rendering this entry withholds it and
+   * lets the card be the hand-off. That is the whole point of item 4 of the design:
+   * the user must never be handed a statement unlabelled when the run knows what it
+   * found in it.
+   *
+   * Only the editor control goes. The block still renders and still copies.
+   */
+  readonly planStatementRecorded?: true;
 }
 
 /**
@@ -298,6 +353,82 @@ const HANDOVER_SENTENCES: Readonly<Record<Extract<AgentRunEvent, { kind: "answer
     "auto-executed":
       "This run handed the statement to your editor to run: it ran on your connection, under the editor's own limits, and what it did with it is visible there rather than here.",
   });
+
+/**
+ * The refusal marker a plan run's rules give the model, as this layer has to spell it.
+ *
+ * Deliberately a second spelling of `PLAN_NO_STATEMENT_MARKER`, and not an import.
+ * That module reads the shared SQL grammar and the statement guard to do its other
+ * job, and this file is browser code whose stated rule is that it takes TYPES from the
+ * runtime modules and values from two frozen constant modules only. The duplication is
+ * the same trade `plan-statement.ts` itself records for the fence pattern it shares
+ * with `rich-text.tsx`, and it is pinned rather than trusted:
+ * `tests/unit/components/agent-timeline.test.ts` builds its text out of the exported
+ * constant, so a marker changed on the server and not here fails that test.
+ *
+ * Case-insensitive for the same reason the server's reader is: the rules ask for
+ * capitals, and a run that refused correctly in every other respect should not lose
+ * its refusal to a lower-case letter.
+ */
+const PLAN_REFUSAL_MARKER = /^[ \t]*NO STATEMENT:[ \t]*/im;
+
+/**
+ * The model's own words with the marker taken off, or `null` when the run did not
+ * refuse.
+ *
+ * Whether this IS a refusal is asked of `readPlanStatement` — the same fence-aware
+ * reader the server records the ledger with — and not of the regex below (#396 review).
+ * An earlier version decided it here and argued the two could not disagree because this
+ * one is consulted only when the ledger holds no statement. The argument had a hole:
+ * a closing ` ```text ` block containing the marker records no statement either, so the
+ * regex called it a refusal, the browser showed a successful ending, and the verdict
+ * called the same run `no-statement`. One reader cannot disagree with itself.
+ *
+ * The regex survives for the DISPLAY step only. Once the shared reader has ruled, this
+ * strips the token so the user reads the run's own words rather than a protocol marker;
+ * everything else — what is missing, the question asked back — is left exactly as it
+ * arrived, because that is the whole content of this outcome. In the one case where a
+ * fenced marker precedes a real one it strips the wrong occurrence, which is a cosmetic
+ * slip in text still shown in full, not a run reported as something it was not.
+ */
+function readPlanRefusal(prose: string | undefined): string | null {
+  if (prose === undefined || readPlanStatement(prose).kind !== "refusal") return null;
+  return prose.replace(PLAN_REFUSAL_MARKER, "");
+}
+
+/**
+ * What the shared statement guard said about a plan run's draft, in the app's words.
+ *
+ * Neither half claims more than the server established. "No objection" is exactly
+ * that — the guard's own contract says a clean reading means only that THAT layer
+ * found nothing — and an objection is a MARK rather than a refusal, because the owner
+ * ruled that a plan run's statement stays the user's to run.
+ */
+function guardSentence(readOnly: boolean, violation: PlanStatementEvent["guardViolation"]): string {
+  return readOnly
+    ? "The statement guard read this as a bounded read and had no objection, which is not a promise about what it does."
+    : `The statement guard did not read this as a bounded read (${violation}). It is marked, not blocked: running it is your decision.`;
+}
+
+/**
+ * What could be checked about the names the statement used — and, as carefully, what
+ * that check does not amount to.
+ *
+ * The names themselves are model and engine text, so they are counted rather than
+ * spoken here: this is the app's own sentence, and untrusted content belongs in a
+ * quoted block. The last clause is the design's item 6 said where the claim is made —
+ * an inventory records what EXISTS, not what a role may select from — so no reader
+ * takes "every table exists" for "this will run".
+ */
+function identifierSentence(identifiers: PlanStatementEvent["identifiers"]): string {
+  if (identifiers.kind === "no-inventory") {
+    return "No schema inventory was read for this run, so the names it used were not checked at all.";
+  }
+  const unknown = identifiers.unknownTables.length;
+  return unknown === 0
+    ? "Every table it names is in the inventory this run read — which records what exists, not what your role is permitted to read."
+    : `${unknown} name(s) it uses are not in the inventory this run read, so it may not run as written.`;
+}
 
 /**
  * The honesty an operational reading owes its reader, for the same reason the plan
@@ -478,6 +609,8 @@ const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
   "no-report": "The run finished without composing a cited report, so nothing it found was written down.",
   "empty-evidence": "Every result the report cited came back empty, so the answer rests on nothing.",
   "no-plan": "The run produced no plan at all.",
+  "no-statement":
+    "The run described how it would approach the question and never wrote the statement, and it did not say what was missing either.",
   "no-plan-comparison":
     "No before-and-after plan comparison was recorded, and no index was recommended: a query optimization rests on one or the other.",
   "no-plan-evidence":
@@ -651,6 +784,41 @@ function describeEvent(
         // which is the field for the application's sentences, and the surface rendered
         // a plan run's entire markdown answer into one paragraph of literal characters.
         prose: event.text,
+      };
+    case "plan-statement-drafted":
+      return {
+        tone: "progress",
+        // The mark rides in the HEADLINE, not only in the detail: a statement the
+        // guard would not pass reaching the editor unnoticed is the one failure this
+        // entry exists to prevent.
+        //
+        // "not CLASSIFIED as a read" and never "not a read", because `readOnly` is
+        // `inspectAgentStatement(sql) === null` and four of that guard's six
+        // objections say only that it could not read the text — an unclosed span, a
+        // run two dialects disagree about, a second statement, no statement at all —
+        // while its own header records that it over-refuses legitimate reads on
+        // purpose (`#>`/`#>>`, dollar quotes, a bare non-reserved keyword). Announcing
+        // a jsonb read as a write would be this surface claiming a precision the
+        // server never established, about the one statement a user is most likely to
+        // act on. The reason travels in the detail, where a reader can weigh it.
+        headline: event.readOnly ? "Statement drafted" : "Statement drafted — not classified as a read",
+        // The app's own words about the app's own checks, and only the app's: the
+        // guard's reason is this repository's own closed vocabulary, while the table
+        // names are model and engine text and are therefore COUNTED rather than
+        // spoken. The statement itself is in the closing prose beside this entry.
+        detail: `${guardSentence(event.readOnly, event.guardViolation)} ${identifierSentence(event.identifiers)}`,
+        // The ledger's own record, carried whole so the card can show the statement
+        // AND what was found about it in one place (item 7). Still no `applySql`: that
+        // field drives the shared hydration control, whose "Apply to editor" says
+        // nothing about what it is applying, and a write reaching the editor unmarked
+        // is the one failure this entry exists to prevent. The card offers the
+        // statement through a control whose accessible name carries the mark.
+        planStatement: {
+          sql: event.sql,
+          readOnly: event.readOnly,
+          ...(event.guardViolation === undefined ? {} : { guardViolation: event.guardViolation }),
+          identifiers: event.identifiers,
+        },
       };
     default:
       return {
@@ -837,6 +1005,17 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
   const captures = new Map<string, number>();
 
   /*
+    The two facts the closing pass below needs, gathered in the same walk rather than
+    by scanning the items again: which entries are closing statements, and whether the
+    SERVER read a statement out of this run at all. Both of that pass's decisions turn
+    on the second one. A run that has a statement is not a run that refused, whatever
+    its prose happens to contain — and it is a run whose closing prose HOLDS the
+    statement, which is what the card below that entry is already offering.
+  */
+  const closings: { readonly index: number; readonly mode: AgentRunMode }[] = [];
+  let drafted = false;
+
+  /*
     What an ending MEANS depends on this (#350), so it is folded like the status is
     and read from whichever of the two entries carries it — the header a run is
     opened with, or the `run-started` event, since a stream can be joined after the
@@ -876,7 +1055,9 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
       } else if (event.kind === "run-finished") {
         status = event.status;
         failureReason = event.reason ?? null;
-      } else if (event.kind === "context-captured") captures.set(event.fingerprint, event.tableCount);
+      } else if (event.kind === "closing-statement") closings.push({ index: items.length, mode });
+      else if (event.kind === "plan-statement-drafted") drafted = true;
+      else if (event.kind === "context-captured") captures.set(event.fingerprint, event.tableCount);
       else if (event.kind === "statement-drafted") statementsByStep.set(event.stepId, event.sql);
       else if (event.kind === "report-composed") claims = event.claims;
       else if (event.kind === "tool-completed") {
@@ -901,6 +1082,48 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
     // timestamp (a resumed run replaying a step), and React needs distinct keys.
     items.push({ id: `entry-${index}`, ...describeEntry(entry, mode, stopRequested) });
   });
+
+  /*
+    What a plan run's closing entry IS, decided after the walk rather than during it
+    (item 7 of the plan-mode SQL-generator design of 2026-08-15). Two outcomes, and
+    the ledger's statement event settles which:
+
+     - it recorded one, so this prose is the text that statement was read out of. The
+       entry is flagged, and the surface stops offering the blocks inside it through a
+       control that cannot say what it is applying — the card below does that with the
+       mark on it.
+     - it recorded none, so the run may have taken its other legitimate ending and
+       said `NO STATEMENT:`.
+
+    Afterwards because both decisions need the whole ledger: the statement event is
+    written immediately AFTER the closing statement it was read out of, so neither is
+    knowable at the moment that entry is folded. And they need the run's MODE, because
+    only a plan run's contract gives either fact any meaning — an agent run's closing
+    prose was never asked for the token and never has a card beneath it.
+
+    The ledger decides, and this pass only presents: where the server recorded a
+    statement nothing is re-read, so the fence-aware reader on the server and the
+    line-wise one here cannot end up describing the same run differently.
+  */
+  for (const { index, mode: at } of closings) {
+    // The mode as it stood at THAT entry, which is the same reading the entry's own
+    // wording was folded with, rather than the mode a later line might have set.
+    if (at !== "planning") continue;
+    const item = items[index];
+    if (drafted) {
+      // The prose the statement was read OUT of, so the deliverable is in this text
+      // as well as on the card below it. The surface is told, because the per-block
+      // control inside prose cannot say what it is applying.
+      items[index] = { ...item, planStatementRecorded: true };
+      continue;
+    }
+    const refused = readPlanRefusal(item.prose);
+    if (refused === null) continue;
+    // The headline is the app's own account of the ending, and it is a different
+    // ending: "Closing statement" over a run that says it could not answer reads as
+    // an answer the reader has to find in the text.
+    items[index] = { ...item, headline: "No statement drafted", prose: refused, planRefusal: true };
+  }
 
   const budgets = AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets;
   return {
