@@ -3,29 +3,17 @@ import { cookies, headers } from "next/headers";
 import { logger } from "@/lib/logger";
 import { getJwtSecret } from "@/lib/config/auth-env";
 
-// getJwtSecret throws AuthConfigError lazily (at sign/verify time), so the login
-// route can turn it into a clear on-screen 503 instead of a misleading
-// "Invalid email or password".
-// Lazy-initialized to prevent module-level crash if JWT_SECRET is misconfigured.
-// A module-level throw would crash ALL modules that import auth.ts.
-let _jwtSecret: Uint8Array | null = null;
-function jwtSecret(): Uint8Array {
-  if (!_jwtSecret) {
-    _jwtSecret = getJwtSecret();
-  }
-  return _jwtSecret;
-}
-
-/**
- * Test seam. The memo above is module-level and only ever holds a SUCCESSFUL read, so a suite
- * that shares one process cannot observe the throwing cases once any earlier file has signed a
- * token: the cached key answers before `getJwtSecret` is ever called again. That is what made
- * `tests/unit/lib/auth-jwt-config.test.ts` pass alone and fail under `bun run test`, and its own
- * header note ("this file runs in its own process") was the workaround rather than the fix.
- */
-export function resetJwtSecretCache(): void {
-  _jwtSecret = null;
-}
+// getJwtSecret is called per sign/verify rather than at module load, so a
+// misconfigured JWT_SECRET surfaces as an AuthConfigError the login route can turn
+// into a clear on-screen 503 instead of a misleading "Invalid email or password" —
+// and never as a module-level throw, which would crash every importer of auth.ts.
+//
+// The result is deliberately NOT memoized. The reader is stateless (auth-env.ts), a
+// TextEncoder pass is nothing next to the HMAC that follows, and the other consumers
+// (oidc.ts, drive-token.ts, storage/encryption.ts) all call it fresh. A module-level
+// cache would hold only SUCCESSFUL reads, so any earlier signature in the process
+// would answer before the guard ran — silently unobservable in production and, in a
+// shared-process test run, the reason the config-guard cases could not fail.
 
 export type Role = "admin" | "user";
 
@@ -39,12 +27,12 @@ export async function signJWT(payload: UserPayload) {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("24h")
-    .sign(jwtSecret());
+    .sign(getJwtSecret());
 }
 
 export async function verifyJWT(token: string) {
   try {
-    const { payload } = await jwtVerify(token, jwtSecret());
+    const { payload } = await jwtVerify(token, getJwtSecret());
     return payload as unknown as UserPayload;
   } catch (error) {
     if (error instanceof Error) {

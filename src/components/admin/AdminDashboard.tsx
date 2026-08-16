@@ -34,18 +34,18 @@ export default function AdminDashboard({ children }: AdminDashboardProps) {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 flex flex-col">
-      <header className="border-b border-white/5 bg-zinc-950">
+    <div className="min-h-screen bg-surface flex flex-col">
+      <header className="border-b border-hairline bg-surface">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3 flex items-center justify-between">
           <div className="space-y-0.5">
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-100">Admin Dashboard</h1>
-            <p className="text-xs text-zinc-500">Manage your application and infrastructure.</p>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-fg">Admin Dashboard</h1>
+            <p className="text-xs text-fg-muted">Manage your application and infrastructure.</p>
           </div>
           <div className="flex gap-2">
             <Button
               variant="outline"
               size="sm"
-              className="border-white/10 text-zinc-400 hover:text-zinc-100"
+              className="border-hairline-strong text-fg-tertiary hover:text-fg"
               onClick={() => router.push("/")}
             >
               <ArrowLeft className="mr-2 h-3.5 w-3.5" />
@@ -64,7 +64,7 @@ export default function AdminDashboard({ children }: AdminDashboardProps) {
         </div>
       </header>
 
-      <div className="border-b border-white/5 bg-zinc-950">
+      <div className="border-b border-hairline bg-surface">
         <div className="mx-auto max-w-7xl px-4 sm:px-6">
           <nav
             aria-label="Admin sections"
@@ -83,7 +83,9 @@ export default function AdminDashboard({ children }: AdminDashboardProps) {
                     // h-11 row; the nav's overflow-x-auto then scrolls instead of wrapping.
                     "flex flex-1 items-center justify-center gap-2 px-3 sm:px-4 h-11 border-b-2 text-xs sm:text-sm whitespace-nowrap transition-colors",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400/60",
-                    isActive ? "border-blue-400 text-blue-400" : "border-transparent text-zinc-500 hover:text-zinc-300",
+                    isActive
+                      ? "border-blue-400 text-blue-400"
+                      : "border-transparent text-fg-muted hover:text-fg-secondary",
                   )}
                 >
                   <Icon className="h-4 w-4" strokeWidth={1.5} />

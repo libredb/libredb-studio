@@ -54,17 +54,17 @@ export function QueryToolbar({
       )}
 
       {/* Desktop Query Toolbar */}
-      <div className="hidden md:flex items-center justify-between px-4 py-1.5 bg-[#0a0a0a] border-b border-white/5">
+      <div className="hidden md:flex items-center justify-between px-4 py-1.5 bg-surface border-b border-hairline">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 px-2 py-0.5 rounded bg-blue-500/5 border border-blue-500/10">
             <Terminal strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
             <span className="text-xs font-medium text-blue-400">Query</span>
           </div>
-          <div className="h-4 w-px bg-white/5" />
+          <div className="h-4 w-px bg-fill" />
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
+            className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-2"
             onClick={onSaveQuery}
           >
             <Save strokeWidth={1.5} className="w-3 h-3" /> Save
@@ -93,7 +93,7 @@ export function QueryToolbar({
 
         {/* Transaction Controls + Playground + Import + Edit */}
         {activeConnection && metadata?.capabilities.queryLanguage === "sql" && (
-          <div className="flex items-center gap-1 ml-2 pl-2 border-l border-white/10">
+          <div className="flex items-center gap-1 ml-2 pl-2 border-l border-hairline-strong">
             {transactionActive ? (
               <>
                 <span className="text-[0.625rem] font-medium text-amber-400 px-1.5 py-0.5 bg-amber-500/10 rounded border border-amber-500/20 mr-1">
@@ -120,7 +120,7 @@ export function QueryToolbar({
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-1"
+                className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-1"
                 onClick={onBeginTransaction}
                 disabled={playgroundMode}
               >
@@ -135,7 +135,7 @@ export function QueryToolbar({
                 "h-7 text-xs font-medium gap-1",
                 playgroundMode
                   ? "text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20"
-                  : "text-zinc-500 hover:text-white",
+                  : "text-fg-muted hover:text-fg-bright",
               )}
               onClick={onTogglePlayground}
               disabled={transactionActive}
@@ -153,7 +153,7 @@ export function QueryToolbar({
                   "h-7 text-xs font-medium gap-1",
                   editingEnabled
                     ? "text-amber-400 bg-amber-500/10 hover:bg-amber-500/20"
-                    : "text-zinc-500 hover:text-white",
+                    : "text-fg-muted hover:text-fg-bright",
                 )}
                 onClick={onToggleEditing}
                 title="Enable inline data editing"
@@ -166,7 +166,7 @@ export function QueryToolbar({
             <Button
               size="sm"
               variant="ghost"
-              className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-1"
+              className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-1"
               onClick={onImport}
               title="Import data from CSV/JSON"
             >

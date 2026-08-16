@@ -26,6 +26,7 @@ charts/libredb-studio/
     ├── deployment.yaml        # App Deployment (checksum restart, emptyDir, probes)
     ├── service.yaml           # ClusterIP / NodePort / LoadBalancer
     ├── ingress.yaml           # Optional Ingress (nginx/traefik)
+    ├── route.yaml             # Optional Gateway API HTTPRoute (default off)
     ├── configmap.yaml         # Non-sensitive env vars (PORT, storage, LLM, OIDC)
     ├── seed-configmap.yaml    # Optional seed-connections config (rendered when enabled)
     ├── secret.yaml            # Sensitive env vars (JWT, passwords, API keys)
@@ -366,6 +367,33 @@ helm install libredb libredb/libredb-studio \
   --set autoscaling.enabled=true \
   --set podDisruptionBudget.enabled=true
 ```
+
+### Gateway API instead of an Ingress
+```bash
+helm install libredb libredb/libredb-studio \
+  --set secrets.jwtSecret=$(openssl rand -base64 32) \
+  --set secrets.adminPassword="$ADMIN_PASSWORD" \
+  --set route.main.enabled=true \
+  --set "route.main.parentRefs[0].name=traefik-gateway" \
+  --set "route.main.parentRefs[0].namespace=traefik" \
+  --set "route.main.parentRefs[0].sectionName=websecure" \
+  --set "route.main.hostnames[0]=libredb.example.com"
+```
+
+`route` is a map of route names, so several routes can attach the same Service to different
+Gateways or listeners; `main` renders as `<fullname>`, any other name as `<fullname>-<name>`.
+Two constraints are enforced rather than documented:
+
+- An enabled route **must** set `parentRefs` or the render fails, naming the route at fault. The
+  chart cannot default it - the Gateway to attach to is specific to each cluster's Gateway API
+  install - and an HTTPRoute attached to no Gateway is accepted by the API server while routing
+  nothing, so the failure replaces an install that succeeds with the app unreachable.
+- `kind` accepts only `HTTPRoute` (schema-enforced): only an HTTPRoute-shaped body is rendered,
+  so any other kind would emit a manifest the API server rejects.
+
+`route.labels` and `route.annotations` are shared across every enabled route, which makes
+`labels` and `annotations` reserved key names directly under `route` rather than route names. A
+per-route entry wins on a key collision; the chart's own labels win over both.
 
 ### External Secrets (Vault / ESO)
 ```bash

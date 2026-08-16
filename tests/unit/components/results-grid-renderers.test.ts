@@ -85,8 +85,8 @@ describe("getRenderer", () => {
 
 describe("renderCompact", () => {
   test("nullRenderer renders the NULL marker for any input", () => {
-    expect(nullRenderer.renderCompact(null)).toEqual({ display: "NULL", className: "text-zinc-600 italic" });
-    expect(nullRenderer.renderCompact(undefined)).toEqual({ display: "NULL", className: "text-zinc-600 italic" });
+    expect(nullRenderer.renderCompact(null)).toEqual({ display: "NULL", className: "text-fg-subtle italic" });
+    expect(nullRenderer.renderCompact(undefined)).toEqual({ display: "NULL", className: "text-fg-subtle italic" });
   });
 
   test("jsonRenderer compact-stringifies objects and arrays on a single line", () => {
@@ -102,13 +102,13 @@ describe("renderCompact", () => {
 
   test("jsonRenderer keeps a JSON string's raw display in the grid", () => {
     const pretty = '{\n  "id": 1\n}';
-    expect(jsonRenderer.renderCompact(pretty)).toEqual({ display: pretty, className: "text-zinc-300" });
+    expect(jsonRenderer.renderCompact(pretty)).toEqual({ display: pretty, className: "text-fg-secondary" });
   });
 
   test("scalarRenderer keeps the status-string coloring", () => {
     expect(scalarRenderer.renderCompact("active")).toEqual({ display: "active", className: "text-emerald-500/90" });
     expect(scalarRenderer.renderCompact("disabled")).toEqual({ display: "disabled", className: "text-rose-500/90" });
-    expect(scalarRenderer.renderCompact("plain")).toEqual({ display: "plain", className: "text-zinc-300" });
+    expect(scalarRenderer.renderCompact("plain")).toEqual({ display: "plain", className: "text-fg-secondary" });
   });
 });
 
@@ -122,12 +122,12 @@ describe("renderDetail", () => {
     // "object" took the JSON.stringify branch) and "NULL" for undefined.
     expect(nullRenderer.renderDetail(null)).toEqual({
       text: "null",
-      className: "text-zinc-600 italic",
+      className: "text-fg-subtle italic",
       preserveWhitespace: false,
     });
     expect(nullRenderer.renderDetail(undefined)).toEqual({
       text: "NULL",
-      className: "text-zinc-600 italic",
+      className: "text-fg-subtle italic",
       preserveWhitespace: false,
     });
   });
@@ -147,7 +147,7 @@ describe("renderDetail", () => {
     const obj = { a: 1, b: [1, 2] };
     expect(jsonRenderer.renderDetail(obj)).toEqual({
       text: JSON.stringify(obj, null, 2),
-      className: "text-zinc-300",
+      className: "text-fg-secondary",
       preserveWhitespace: true,
     });
     expect(jsonRenderer.renderDetail([1, 2]).text).toBe("[\n  1,\n  2\n]");
@@ -165,7 +165,7 @@ describe("renderDetail", () => {
     const bigInt = '{"n":9007199254740993}';
     expect(jsonRenderer.renderDetail(bigInt)).toEqual({
       text: bigInt,
-      className: "text-zinc-300",
+      className: "text-fg-secondary",
       preserveWhitespace: true,
     });
     // Same for representations stringify would normalize (1.50 -> 1.5).

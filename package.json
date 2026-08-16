@@ -72,7 +72,8 @@
         "types": "./dist/security.d.ts",
         "default": "./dist/security.js"
       }
-    }
+    },
+    "./styles.css": "./dist/styles.css"
   },
   "bin": {
     "libredb-studio": "bin/studio.js"
@@ -102,9 +103,9 @@
   "scripts": {
     "dev": "node scripts/copy-monaco.mjs && next dev",
     "build": "node scripts/copy-monaco.mjs && next build",
-    "build:lib": "tsup",
-    "attw": "rm -rf .attw && bun pm pack --quiet --destination .attw && attw .attw/*.tgz --profile node16",
-    "prepublishOnly": "tsup && bun run attw",
+    "build:lib": "tsup && node scripts/copy-theme.mjs",
+    "attw": "rm -rf .attw && bun pm pack --quiet --destination .attw && attw .attw/*.tgz --profile node16 --exclude-entrypoints styles.css",
+    "prepublishOnly": "bun run build:lib && bun run attw",
     "start": "next start",
     "format": "biome format .",
     "format:fix": "biome format --write .",

@@ -181,6 +181,7 @@ Studio ships both as a standalone app and as the `@libredb/studio` npm package c
 
 - **`src/workspace/`** — `StudioWorkspace.tsx` is the embeddable shell. Its adapter hooks (`hooks/use-connection-adapter`, `hooks/use-query-adapter`) let the host (standalone or platform) supply connections and query execution, so the same UI runs in both contexts.
 - **`src/exports/`** — barrel modules (`components.ts`, `providers.ts`, `workspace.ts`, `types.ts`) that define the package's public surface; `package.json` `exports`/`main`/`module` point at the tsup `dist/` output.
+- **`src/styles/theme.css`** — the semantic colour tokens every exported component resolves through, shipped as `dist/styles.css` (`exports["./styles.css"]`) because `globals.css` is not packaged. A host imports it once: `import "@libredb/studio/styles.css"`. `build:lib` is `tsup && node scripts/copy-theme.mjs` in that order — tsup cleans `dist/`, so the copy has to follow it. See [`docs/ui/theming.md`](ui/theming.md).
 - Platform integration rules (Tailwind tokens, Lucide stroke widths, chunk scanning) live in `CLAUDE.md`.
 
 ### 4.7. Standalone Boot Flow (`src/instrumentation.ts`)

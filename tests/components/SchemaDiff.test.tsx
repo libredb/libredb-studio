@@ -529,7 +529,7 @@ describe("SchemaDiff", () => {
       fireEvent.click(getByText("users"));
 
       const usersBtn = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("users"));
-      expect(usersBtn?.className).toContain("bg-white/10");
+      expect(usersBtn?.className).toContain("bg-fill-strong");
     });
   });
 

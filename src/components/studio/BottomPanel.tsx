@@ -62,24 +62,24 @@ function ChartDashboardLazy({ result }: { result: QueryResult | null }) {
 
   if (savedCharts.length === 0) {
     return (
-      <div className="h-full flex flex-col items-center justify-center bg-[#080808] text-zinc-500 gap-2">
+      <div className="h-full flex flex-col items-center justify-center bg-sunken text-fg-muted gap-2">
         <LayoutDashboard strokeWidth={1.5} className="w-10 h-10 opacity-30" />
         <p className="text-xs">No saved charts yet</p>
-        <p className="text-xs text-zinc-600">Save charts from the Charts tab to display them here</p>
+        <p className="text-xs text-fg-subtle">Save charts from the Charts tab to display them here</p>
       </div>
     );
   }
 
   return (
-    <div className="h-full overflow-auto bg-[#080808] p-4">
+    <div className="h-full overflow-auto bg-sunken p-4">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {savedCharts.map((chart) => (
-          <div key={chart.id} className="bg-[#0d0d0d] border border-white/10 rounded-lg p-3">
+          <div key={chart.id} className="bg-raised border border-hairline-strong rounded-lg p-3">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-zinc-300">{chart.name}</span>
-              <span className="text-xs text-zinc-600">{chart.chartType}</span>
+              <span className="text-xs font-medium text-fg-secondary">{chart.name}</span>
+              <span className="text-xs text-fg-subtle">{chart.chartType}</span>
             </div>
-            <div className="text-xs text-zinc-500">
+            <div className="text-xs text-fg-muted">
               {chart.xAxis && <span>X: {chart.xAxis}</span>}
               {chart.yAxis?.length > 0 && <span className="ml-2">Y: {chart.yAxis.join(", ")}</span>}
             </div>
@@ -88,7 +88,7 @@ function ChartDashboardLazy({ result }: { result: QueryResult | null }) {
                 <DataCharts result={result} />
               </div>
             ) : (
-              <div className="mt-2 h-[100px] flex items-center justify-center text-zinc-600 text-xs">
+              <div className="mt-2 h-[100px] flex items-center justify-center text-fg-subtle text-xs">
                 Execute a query to see chart
               </div>
             )}
@@ -201,63 +201,63 @@ export function BottomPanel({
       key: "results",
       label: "Results",
       icon: <LayoutGrid strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-blue-400 border-blue-500 bg-white/5",
+      activeClass: "text-blue-400 border-blue-500 bg-fill",
     },
     {
       key: "explain",
       label: "Explain",
       icon: <Zap strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-amber-400 border-amber-500 bg-white/5",
+      activeClass: "text-amber-400 border-amber-500 bg-fill",
     },
     {
       key: "history",
       label: "History",
       icon: <Clock strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-emerald-400 border-emerald-500 bg-white/5",
+      activeClass: "text-emerald-400 border-emerald-500 bg-fill",
     },
     {
       key: "saved",
       label: "Saved",
       icon: <Bookmark strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-purple-400 border-purple-500 bg-white/5",
+      activeClass: "text-purple-400 border-purple-500 bg-fill",
     },
     {
       key: "charts",
       label: "Charts",
       icon: <BarChart3 strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-cyan-400 border-cyan-500 bg-white/5",
+      activeClass: "text-cyan-400 border-cyan-500 bg-fill",
     },
     {
       key: "pivot",
       label: "Pivot",
       icon: <Columns3 strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-orange-400 border-orange-500 bg-white/5",
+      activeClass: "text-orange-400 border-orange-500 bg-fill",
     },
     {
       key: "docs",
       label: "Docs",
       icon: <FileText strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-teal-400 border-teal-500 bg-white/5",
+      activeClass: "text-teal-400 border-teal-500 bg-fill",
     },
     {
       key: "schemadiff",
       label: "Diff",
       icon: <GitCompare strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-rose-400 border-rose-500 bg-white/5",
+      activeClass: "text-rose-400 border-rose-500 bg-fill",
     },
     {
       key: "dashboard",
       label: "Dashboard",
       icon: <LayoutDashboard strokeWidth={1.5} className="w-3 h-3" />,
-      activeClass: "text-indigo-400 border-indigo-500 bg-white/5",
+      activeClass: "text-indigo-400 border-indigo-500 bg-fill",
     },
   ];
 
   const visibleTabs = metadata?.capabilities.explainFormat ? tabs : tabs.filter((tab) => tab.key !== "explain");
 
   return (
-    <div className="h-full flex flex-col bg-[#080808]">
-      <div className="h-9 bg-[#0a0a0a] border-b border-white/5 flex items-center justify-between px-2">
+    <div className="h-full flex flex-col bg-sunken">
+      <div className="h-9 bg-surface border-b border-hairline flex items-center justify-between px-2">
         <div className="flex items-center h-full gap-1">
           {visibleTabs.map((tab) => (
             <button
@@ -266,7 +266,7 @@ export function BottomPanel({
               onClick={() => onSetMode(tab.key)}
               className={cn(
                 "h-full px-3 text-xs font-medium transition-all border-b-2 flex items-center gap-2",
-                mode === tab.key ? tab.activeClass : "text-zinc-500 border-transparent hover:text-zinc-300",
+                mode === tab.key ? tab.activeClass : "text-fg-muted border-transparent hover:text-fg-secondary",
               )}
             >
               {tab.icon} {tab.label}
@@ -276,7 +276,7 @@ export function BottomPanel({
 
         {displayedResult && mode === "results" && (
           <div className="flex items-center gap-1">
-            <span className="text-xs font-mono text-zinc-500 mr-2">
+            <span className="text-xs font-mono text-fg-muted mr-2">
               {displayedResult.rowCount} rows • {displayedResult.executionTime}ms
             </span>
             {!hydratedHere && (
@@ -285,12 +285,12 @@ export function BottomPanel({
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 text-xs font-medium text-zinc-500 hover:text-white gap-2"
+                    className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-2"
                   >
                     <Download strokeWidth={1.5} className="w-3 h-3" /> Export
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="bg-[#0d0d0d] border-white/10 text-zinc-300">
+                <DropdownMenuContent align="end" className="bg-raised border-hairline-strong text-fg-secondary">
                   <DropdownMenuItem onClick={() => onExportResults("csv")} className="text-xs cursor-pointer">
                     Export as CSV
                   </DropdownMenuItem>
@@ -324,13 +324,13 @@ export function BottomPanel({
             <span className="font-mono text-[0.625rem]">{agentArtifact.operationId}</span>{" "}
             {/* The audit correlation id: what joins these rows to the audit line for
                 the statement that produced them. */}
-            <span className="font-mono text-[0.625rem] text-zinc-500">{agentArtifact.correlationId}</span> — read-only
+            <span className="font-mono text-[0.625rem] text-fg-muted">{agentArtifact.correlationId}</span> — read-only
           </span>
           <button
             type="button"
             data-testid="agent-provenance-dismiss"
             onClick={onDismissAgentArtifact}
-            className="p-1 rounded text-zinc-400 hover:bg-white/5 hover:text-zinc-200 transition-colors"
+            className="p-1 rounded text-fg-tertiary hover:bg-fill hover:text-fg transition-colors"
             aria-label="Dismiss the agent result"
           >
             <X strokeWidth={1.5} className="w-3 h-3" />
@@ -408,7 +408,7 @@ export function BottomPanel({
             onDiscardChanges={onDiscardChanges}
           />
         ) : (
-          <div className="h-full flex flex-col items-center justify-center opacity-20 bg-[#0a0a0a]">
+          <div className="h-full flex flex-col items-center justify-center opacity-20 bg-surface">
             <Terminal strokeWidth={1.5} className="w-12 h-12 mb-4" />
             <p className="text-xs font-medium">Execute a query or check history</p>
             <p className="text-xs mt-2">Ready to query</p>

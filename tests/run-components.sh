@@ -28,7 +28,7 @@ FAIL=0
 # was added. Verify with `grep -c '^run_group ' tests/run-components.sh`, which is how
 # the third drift was caught (#331 T5): 26 was declared while 27 calls existed, so the
 # green summary line reported a group count no run had.
-TOTAL_GROUPS=28
+TOTAL_GROUPS=30
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -283,6 +283,16 @@ run_group "Group 18: ui/resizable" \
 #           QuerySafetyDialog, plus the workspace adapter hooks)
 run_group "Group 17: StudioWorkspace" \
   tests/components/StudioWorkspace.test.tsx
+
+# Groups 18 and 19: the two theme files. Each mocks `next-themes` — process-wide,
+# and with a DIFFERENT shape (one replaces `useTheme`, the other `ThemeProvider`),
+# so they cannot share a process with each other, nor with anything that reaches
+# the real next-themes through ui/sonner.
+run_group "Group 18: ThemeToggle" \
+  tests/components/ThemeToggle.test.tsx
+
+run_group "Group 19: ThemeProvider" \
+  tests/components/ThemeProvider.test.tsx
 
 # Summary
 echo ""

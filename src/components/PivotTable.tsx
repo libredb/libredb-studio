@@ -146,20 +146,20 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
       <div className="h-full flex flex-col items-center justify-center opacity-30">
         <Columns3 strokeWidth={1.5} className="w-8 h-8 mb-3" />
         <p className="text-xs font-medium">Pivot Table</p>
-        <p className="text-xs text-zinc-500 mt-1">Execute a query to create pivot tables</p>
+        <p className="text-xs text-fg-muted mt-1">Execute a query to create pivot tables</p>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col bg-[#080808]">
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-white/5 bg-[#0a0a0a] flex-wrap">
+    <div className="h-full flex flex-col bg-sunken">
+      <div className="flex items-center gap-3 px-4 py-2 border-b border-hairline bg-surface flex-wrap">
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-zinc-500 font-medium">Rows:</span>
+          <span className="text-xs text-fg-muted font-medium">Rows:</span>
           <select
             value={rowField || ""}
             onChange={(e) => setRowField(e.target.value || null)}
-            className="bg-[#111] border border-white/10 rounded px-2 py-1 text-xs text-zinc-300 outline-none"
+            className="bg-overlay border border-hairline-strong rounded px-2 py-1 text-xs text-fg-secondary outline-none"
           >
             <option value="">Select...</option>
             {fields.map((f) => (
@@ -171,11 +171,11 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
         </div>
 
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-zinc-500 font-medium">Columns:</span>
+          <span className="text-xs text-fg-muted font-medium">Columns:</span>
           <select
             value={colField || ""}
             onChange={(e) => setColField(e.target.value || null)}
-            className="bg-[#111] border border-white/10 rounded px-2 py-1 text-xs text-zinc-300 outline-none"
+            className="bg-overlay border border-hairline-strong rounded px-2 py-1 text-xs text-fg-secondary outline-none"
           >
             <option value="">None</option>
             {fields
@@ -189,11 +189,11 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
         </div>
 
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-zinc-500 font-medium">Values:</span>
+          <span className="text-xs text-fg-muted font-medium">Values:</span>
           <select
             value={valueField || ""}
             onChange={(e) => setValueField(e.target.value || null)}
-            className="bg-[#111] border border-white/10 rounded px-2 py-1 text-xs text-zinc-300 outline-none"
+            className="bg-overlay border border-hairline-strong rounded px-2 py-1 text-xs text-fg-secondary outline-none"
           >
             <option value="">Count</option>
             {fields
@@ -215,7 +215,7 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
                 "px-1.5 py-0.5 rounded text-xs font-medium transition-colors",
                 aggFunction === fn
                   ? "bg-blue-500/20 text-blue-400 border border-blue-500/20"
-                  : "text-zinc-600 hover:text-zinc-400",
+                  : "text-fg-subtle hover:text-fg-tertiary",
               )}
             >
               {AGG_LABELS[fn]}
@@ -229,7 +229,7 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
               const sql = generateSQL();
               if (sql) onLoadQuery(sql);
             }}
-            className="ml-auto flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-zinc-500 hover:text-blue-400 hover:bg-blue-500/10 transition-colors"
+            className="ml-auto flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-fg-muted hover:text-blue-400 hover:bg-blue-500/10 transition-colors"
           >
             <ArrowRight strokeWidth={1.5} className="w-3 h-3" /> Generate SQL
           </button>
@@ -239,15 +239,15 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
       <div className="flex-1 overflow-auto">
         {pivotData && pivotData.pivotRows.length > 0 && (
           <table className="w-full text-xs font-mono">
-            <thead className="sticky top-0 z-10 bg-[#0d0d0d]">
+            <thead className="sticky top-0 z-10 bg-raised">
               <tr>
-                <th className="text-left px-3 py-2 text-zinc-500 border-b border-r border-white/5 font-mediumr">
+                <th className="text-left px-3 py-2 text-fg-muted border-b border-r border-hairline font-mediumr">
                   {rowField}
                 </th>
                 {pivotData.colKeys.map((ck) => (
                   <th
                     key={ck}
-                    className="text-right px-3 py-2 text-zinc-500 border-b border-r border-white/5 font-medium"
+                    className="text-right px-3 py-2 text-fg-muted border-b border-r border-hairline font-medium"
                   >
                     {ck === "__all__" ? `${AGG_LABELS[aggFunction]}(${valueField || "*"})` : ck}
                   </th>
@@ -256,10 +256,10 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
             </thead>
             <tbody>
               {pivotData.pivotRows.map((row, i) => (
-                <tr key={i} className="hover:bg-blue-500/[0.03] border-b border-white/5">
-                  <td className="px-3 py-1.5 text-zinc-300 border-r border-white/5 font-medium">{row.rowKey}</td>
+                <tr key={i} className="hover:bg-blue-500/[0.03] border-b border-hairline">
+                  <td className="px-3 py-1.5 text-fg-secondary border-r border-hairline font-medium">{row.rowKey}</td>
                   {pivotData.colKeys.map((ck) => (
-                    <td key={ck} className="px-3 py-1.5 text-right text-amber-500/90 border-r border-white/5">
+                    <td key={ck} className="px-3 py-1.5 text-right text-amber-500/90 border-r border-hairline">
                       {row.values.get(ck) || "0"}
                     </td>
                   ))}
@@ -277,7 +277,7 @@ export function PivotTable({ result, onLoadQuery, databaseType }: PivotTableProp
       </div>
 
       {pivotData && (
-        <div className="px-4 py-1.5 border-t border-white/5 bg-[#0a0a0a] text-xs text-zinc-500 font-mono">
+        <div className="px-4 py-1.5 border-t border-hairline bg-surface text-xs text-fg-muted font-mono">
           {`${pivotData.pivotRows.length} groups • ${pivotData.colKeys.length} columns • ${AGG_LABELS[aggFunction]} aggregation`}
         </div>
       )}

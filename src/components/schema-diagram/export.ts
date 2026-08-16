@@ -6,7 +6,19 @@ import { getViewportForBounds, type Rect, type Viewport } from "@xyflow/react";
 export const MAX_CANVAS_SIDE = 16_384;
 export const MAX_CANVAS_AREA = 268_435_456;
 
-const EXPORT_BACKGROUND = "#050505";
+/**
+ * The ground painted behind an exported diagram, per theme.
+ *
+ * An exported file has no page under it, so the capture has to carry its own
+ * ground — and it has to be the ground of the theme the diagram was drawn in.
+ * Left pinned dark, a light-mode export came out as white table cards with dark
+ * text on a near-black field. Same reasoning as the charts' `exportBackground`;
+ * these values match `--studio-canvas`, which is what the diagram sits on.
+ */
+export const EXPORT_BACKGROUND = {
+  dark: "#050505",
+  light: "#f4f4f5",
+} as const;
 const EXPORT_PADDING = 32;
 // Desired capture sharpness; capPixelRatio clamps it for huge diagrams.
 const EXPORT_SCALE = 2;
@@ -22,19 +34,16 @@ export function capPixelRatio(width: number, height: number, desired: number): n
 
 /**
  * Decodes an SVG data URL (snapdom's capture) into a downloadable Blob.
- * snapdom only applies backgroundColor when rasterizing, so the dark canvas
+ * snapdom only applies backgroundColor when rasterizing, so the canvas
  * background is injected here - without it the SVG renders on white.
  */
-export function svgDataUrlToBlob(dataUrl: string): Blob {
+export function svgDataUrlToBlob(dataUrl: string, background: string = EXPORT_BACKGROUND.dark): Blob {
   const prefixMatch = /^data:image\/svg\+xml[^,]*,/.exec(dataUrl);
   if (!prefixMatch) {
     throw new Error("Not an SVG data URL");
   }
   const svg = decodeURIComponent(dataUrl.slice(prefixMatch[0].length));
-  const withBackground = svg.replace(
-    /(<svg[^>]*>)/,
-    `$1<rect width="100%" height="100%" fill="${EXPORT_BACKGROUND}"/>`,
-  );
+  const withBackground = svg.replace(/(<svg[^>]*>)/, `$1<rect width="100%" height="100%" fill="${background}"/>`);
   return new Blob([withBackground], { type: "image/svg+xml;charset=utf-8" });
 }
 
@@ -79,6 +88,8 @@ function downloadBlob(filename: string, blob: Blob): void {
 export interface ExportViewportOptions {
   viewport: HTMLElement;
   bounds: Rect;
+  /** Ground for the captured file. Defaults to dark, the theme studio starts in. */
+  background?: string;
 }
 
 /**
@@ -93,7 +104,7 @@ export interface ExportViewportOptions {
  * every stylesheet and Monaco's cross-origin CDN stylesheet makes that throw.
  */
 export async function exportViewportImage(format: "png" | "svg", options: ExportViewportOptions): Promise<void> {
-  const { viewport, bounds } = options;
+  const { viewport, bounds, background = EXPORT_BACKGROUND.dark } = options;
   const layout = computeExportLayout(bounds);
   const scale = capPixelRatio(layout.width, layout.height, EXPORT_SCALE);
   const { snapdom } = await import("@zumer/snapdom");
@@ -119,7 +130,7 @@ export async function exportViewportImage(format: "png" | "svg", options: Export
   let capture: { toBlob(opts: { type: "png" }): Promise<Blob | null>; url: string };
   try {
     capture = await snapdom(pane, {
-      backgroundColor: EXPORT_BACKGROUND,
+      backgroundColor: background,
       scale,
       embedFonts: false,
     });
@@ -136,6 +147,6 @@ export async function exportViewportImage(format: "png" | "svg", options: Export
     }
     downloadBlob(buildExportFilename("png"), blob);
   } else {
-    downloadBlob(buildExportFilename("svg"), svgDataUrlToBlob(capture.url));
+    downloadBlob(buildExportFilename("svg"), svgDataUrlToBlob(capture.url, background));
   }
 }

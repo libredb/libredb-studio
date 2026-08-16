@@ -87,7 +87,17 @@ describe("renderInline", () => {
   test("applies the bold styling class the components rely on", () => {
     const { container } = render(<div>{renderInline("**x**")}</div>);
 
-    expect(container.querySelector("strong")?.className).toBe("text-zinc-200");
+    // A theme token, not a literal: emphasis has to stay readable on either
+    // ground, and `text-fg` is the top of the text ramp in both palettes.
+    expect(container.querySelector("strong")?.className).toBe("text-fg");
+  });
+
+  test("inline code carries the fill and text tokens, so it reads in both themes", () => {
+    const { container } = render(<div>{renderInline("`orders`")}</div>);
+
+    const code = container.querySelector("code")?.className ?? "";
+    expect(code).toContain("bg-fill");
+    expect(code).toContain("text-fg-secondary");
   });
 });
 

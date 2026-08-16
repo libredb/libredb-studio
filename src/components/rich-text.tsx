@@ -31,11 +31,11 @@ export function renderInline(text: string): ReactNode[] {
 
     nodes.push(
       match[1] === undefined ? (
-        <code key={key} className="rounded bg-white/5 px-1 font-mono text-[0.9em] text-zinc-300">
+        <code key={key} className="rounded bg-fill px-1 font-mono text-[0.9em] text-fg-secondary">
           {match[2]}
         </code>
       ) : (
-        <strong key={key} className="text-zinc-200">
+        <strong key={key} className="text-fg">
           {match[1]}
         </strong>
       ),
@@ -99,7 +99,12 @@ function CodeBlock({
 }) {
   return (
     <div className="mt-1">
-      <pre className="overflow-x-auto rounded bg-black/40 p-1.5 font-mono text-[0.625rem] text-zinc-300 whitespace-pre">
+      {/*
+        `bg-sunken`, not the `bg-black/40` this replaced: a fenced block is a
+        RECESSED surface, not a scrim. A translucent black stays black over a
+        light page, which would leave the one dark rectangle on the card.
+      */}
+      <pre className="overflow-x-auto rounded bg-sunken p-1.5 font-mono text-[0.625rem] text-fg-secondary whitespace-pre">
         {code}
       </pre>
       <div className="mt-0.5 flex items-center gap-1">
@@ -108,7 +113,7 @@ function CodeBlock({
             type="button"
             data-testid="prose-code-apply"
             onClick={() => onApplySql(code)}
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] text-zinc-400 hover:bg-white/5 hover:text-zinc-200 transition-colors"
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] text-fg-tertiary hover:bg-fill hover:text-fg transition-colors"
           >
             <PencilLine strokeWidth={1.5} className="w-3 h-3" />
             Apply to editor
@@ -170,7 +175,7 @@ export function renderProse(text: string, options: ProseOptions = {}): ReactNode
         {bullets.map((item, index) => (
           // Position IS the identity here: the list is rebuilt whole from one string,
           // so there is no reordering for an index key to get wrong.
-          <li key={index} className="text-xs leading-relaxed text-zinc-400">
+          <li key={index} className="text-xs leading-relaxed text-fg-tertiary">
             {renderInline(item)}
           </li>
         ))}
@@ -226,7 +231,7 @@ export function renderProse(text: string, options: ProseOptions = {}): ReactNode
       // empty landmark in front of a screen reader.
       if (title.length > 0) {
         blocks.push(
-          <h4 key={key} className="mt-2 text-xs font-medium text-zinc-300">
+          <h4 key={key} className="mt-2 text-xs font-medium text-fg-secondary">
             {renderInline(title)}
           </h4>,
         );
@@ -237,7 +242,7 @@ export function renderProse(text: string, options: ProseOptions = {}): ReactNode
 
     if (line.trim().length === 0) continue;
     blocks.push(
-      <p key={key} className="text-xs leading-relaxed text-zinc-400">
+      <p key={key} className="text-xs leading-relaxed text-fg-tertiary">
         {renderInline(line)}
       </p>,
     );

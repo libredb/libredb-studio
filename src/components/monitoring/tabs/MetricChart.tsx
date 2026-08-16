@@ -2,6 +2,8 @@
 
 import React from "react";
 import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
+import { useEffectiveTheme } from "@/hooks/use-effective-theme";
+import { chartTooltipStyle } from "@/lib/charts/palette";
 
 interface MetricChartProps {
   data: { timestamp: number; value: number }[];
@@ -11,6 +13,9 @@ interface MetricChartProps {
 }
 
 export function MetricChart({ data, color, title, unit = "" }: MetricChartProps) {
+  // Before the early return below: a hook may not sit behind a conditional.
+  const mode = useEffectiveTheme();
+
   if (data.length < 2) {
     return (
       <div className="h-[120px] flex items-center justify-center text-xs text-muted-foreground">
@@ -55,12 +60,9 @@ export function MetricChart({ data, color, title, unit = "" }: MetricChartProps)
             // `.toFixed` off the absent case throws and takes the tooltip down.
             labelFormatter={(label) => formatTime(Number(label))}
             formatter={(value) => [typeof value === "number" ? `${value.toFixed(1)}${unit}` : "—", title]}
-            contentStyle={{
-              backgroundColor: "#111",
-              border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: 8,
-              fontSize: 11,
-            }}
+            // Shared with the admin charts so the next theme change reaches all of
+            // them; only the type scale is this chart's own.
+            contentStyle={{ ...chartTooltipStyle(mode), fontSize: 11 }}
           />
           <Area
             type="monotone"

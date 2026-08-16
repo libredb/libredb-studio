@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.35 \
+  --version 0.1.36 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -442,18 +442,20 @@ helm uninstall libredb
 | `service.type` | Service type | `ClusterIP` |
 | `service.port` | Service port | `80` |
 | `ingress.enabled` | Enable Ingress | `false` |
-| `route.main.enabled` | bool | `false` | Enables or disables the route |
-| `route.main.additionalRules` | list | `[]` |  |
-| `route.main.annotations` | object | `{}` |  |
-| `route.main.apiVersion` | string | `"gateway.networking.k8s.io/v1"` | Set the route apiVersion, e.g. gateway.networking.k8s.io/v1 or gateway.networking.k8s.io/v1alpha2 |
-| `route.main.filters`| list | `[]` |  |
-| `route.main.hostnames` | list | `[]` |  |
-| `route.main.httpsRedirect` | bool | `false` |  |
-| `route.main.kind` | string | `"HTTPRoute"` | Set the route kind |
-| `route.main.labels` | object | `{}` |  |
-| `route.main.matches[0].path.type` | string | `"PathPrefix"` |  |
-| `route.main.matches[0].path.value` | string | `"/"` |  |
-| `route.main.parentRefs` | list | `[]` |  |
+| `route.labels` | Labels added to every enabled route (a per-route label with the same key wins); `labels` is therefore a reserved key name and cannot be a route name | `{}` |
+| `route.annotations` | Annotations added to every enabled route (a per-route annotation with the same key wins); reserved key name, as `route.labels` | `{}` |
+| `route.main.enabled` | Enables or disables the route | `false` |
+| `route.main.additionalRules` | Additional custom rules appended to `spec.rules` | `[]` |
+| `route.main.annotations` | Annotations for this route only | `{}` |
+| `route.main.apiVersion` | Route apiVersion, e.g. `gateway.networking.k8s.io/v1` or `gateway.networking.k8s.io/v1alpha2` | `gateway.networking.k8s.io/v1` |
+| `route.main.filters` | Filters applied to requests matching this rule | `[]` |
+| `route.main.hostnames` | Hostnames for the route | `[]` |
+| `route.main.httpsRedirect` | Redirect to HTTPS (HTTP 301) instead of routing to the Service | `false` |
+| `route.main.kind` | Route kind; only `HTTPRoute` is supported (schema-enforced) | `HTTPRoute` |
+| `route.main.labels` | Labels for this route only | `{}` |
+| `route.main.matches[0].path.type` | Path match type | `PathPrefix` |
+| `route.main.matches[0].path.value` | Path match value | `/` |
+| `route.main.parentRefs` | Gateways to attach to; required when the route is enabled (rendering fails without it, since it cannot be defaulted) | `[]` |
 | `autoscaling.enabled` | Enable HPA (ignored with SQLite storage: single-writer) | `false` |
 | `autoscaling.minReplicas` | Min replicas | `2` |
 | `autoscaling.maxReplicas` | Max replicas | `10` |

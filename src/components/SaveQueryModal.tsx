@@ -35,19 +35,19 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="bg-[#0d0d0d] border-white/10 text-zinc-300 sm:max-w-[425px]">
+      <DialogContent className="bg-raised border-hairline-strong text-fg-secondary sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle className="text-white flex items-center gap-2">
+          <DialogTitle className="text-fg flex items-center gap-2">
             <Bookmark strokeWidth={1.5} className="w-5 h-5 text-blue-500" /> Save Query
           </DialogTitle>
-          <DialogDescription className="text-zinc-500">
+          <DialogDescription className="text-fg-muted">
             Give your query a name and description to find it easily later.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4 py-4">
           <div className="grid gap-2">
-            <Label htmlFor="name" className="text-xs font-medium text-zinc-500">
+            <Label htmlFor="name" className="text-xs font-medium text-fg-muted">
               Name
             </Label>
             <Input
@@ -55,11 +55,11 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Monthly Active Users"
-              className="bg-white/5 border-white/10 focus:ring-blue-500/20"
+              className="bg-fill border-hairline-strong focus:ring-blue-500/20"
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="description" className="text-xs font-medium text-zinc-500">
+            <Label htmlFor="description" className="text-xs font-medium text-fg-muted">
               Description
             </Label>
             <Textarea
@@ -67,11 +67,11 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="What does this query do?"
-              className="bg-white/5 border-white/10 focus:ring-blue-500/20 min-h-[80px]"
+              className="bg-fill border-hairline-strong focus:ring-blue-500/20 min-h-[80px]"
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="tags" className="text-xs font-medium text-zinc-500 flex items-center gap-2">
+            <Label htmlFor="tags" className="text-xs font-medium text-fg-muted flex items-center gap-2">
               <Tag strokeWidth={1.5} className="w-3 h-3" /> Tags (comma separated)
             </Label>
             <Input
@@ -79,13 +79,13 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
               value={tagsInput}
               onChange={(e) => setTagsInput(e.target.value)}
               placeholder="reports, analytics, users"
-              className="bg-white/5 border-white/10 focus:ring-blue-500/20"
+              className="bg-fill border-hairline-strong focus:ring-blue-500/20"
             />
           </div>
           <div className="mt-2">
-            <Label className="text-xs font-medium text-zinc-500 mb-2 block">Preview</Label>
-            <div className="bg-[#050505] p-3 rounded-md border border-white/5 max-h-[100px] overflow-y-auto">
-              <pre className="text-xs font-mono text-zinc-500 italic whitespace-pre-wrap break-words">
+            <Label className="text-xs font-medium text-fg-muted mb-2 block">Preview</Label>
+            <div className="bg-canvas p-3 rounded-md border border-hairline max-h-[100px] overflow-y-auto">
+              <pre className="text-xs font-mono text-fg-muted italic whitespace-pre-wrap break-words">
                 {defaultQuery}
               </pre>
             </div>
@@ -93,7 +93,7 @@ export function SaveQueryModal({ isOpen, onClose, onSave, defaultQuery }: SaveQu
         </div>
 
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} className="text-zinc-400">
+          <Button variant="ghost" onClick={onClose} className="text-fg-tertiary">
             Cancel
           </Button>
           <Button

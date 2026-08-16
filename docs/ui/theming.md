@@ -8,38 +8,84 @@ LibreDB Studio uses a modern theming architecture built on:
 
 - **Tailwind CSS v4** - CSS-first configuration with `@theme` directive
 - **shadcn/ui** - Accessible component library with CSS variable theming
-- **CSS Custom Properties** - Light and dark variable sets defined in `globals.css`
+- **CSS Custom Properties** - Light and dark variable sets, in two layers: the shadcn
+  variables in `globals.css` and studio's own semantic tokens in `src/styles/theme.css`
 
-> **Note:** Studio currently ships **dark-mode only**. The `.dark` class is applied
-> statically on the `<body>` element in `src/app/layout.tsx`, so the light-mode variables
-> defined in `:root` are present but not reachable at runtime. There is no theme toggle yet
-> (see [Switching Themes](#switching-themes)). The light-mode values are documented below for
-> when runtime switching is added.
+Studio is **dark-first with a runtime light theme**: `next-themes` writes the `dark` class,
+the toggle in the header flips it, and the choice persists under the `libredb-theme` storage
+key. Dark is the default and the server-rendered assumption.
 
 ## Architecture
 
 ### Theme Configuration Flow
 
 ```
-globals.css
-    │
-    ├── :root (Light mode variables)
-    ├── .dark (Dark mode variables)
-    │
-    └── @theme inline
-            │
-            └── Maps CSS variables to Tailwind utilities
-                    │
-                    └── bg-background, text-foreground, etc.
+globals.css                       src/styles/theme.css   (shipped as dist/styles.css)
+    │                                     │
+    ├── :root (shadcn light)              ├── :root (studio light tokens)
+    ├── .dark (shadcn dark)               ├── .dark  (studio dark tokens)
+    │                                     │
+    └── @theme inline                     └── @theme inline
+            │                                     │
+            └── bg-background, …                  └── bg-surface, text-fg-muted,
+                                                     border-hairline, …
 ```
 
 ### File Structure
 
 ```
 src/
-└── app/
-    └── globals.css          # Theme configuration (single source of truth)
+├── app/
+│   └── globals.css          # shadcn variables + app-level global rules; imports theme.css
+├── styles/
+│   └── theme.css            # studio's semantic tokens — the only place a surface colour is written
+├── components/
+│   ├── theme-provider.tsx   # next-themes provider (class attribute, storageKey libredb-theme)
+│   └── theme-toggle.tsx     # two-state dark ↔ light control
+└── hooks/
+    └── use-effective-theme.ts  # the theme in force, for canvases that cannot read CSS
 ```
+
+### The studio token layer
+
+The shadcn variables cover the primitives; studio's own chrome — panels, rails, grids, the
+editor frame — is written in the semantic tokens of `src/styles/theme.css`. Two ramps:
+
+| Ramp | Tokens (recessed → elevated / brightest → faintest) |
+|------|-----------------------------------------------------|
+| Surface | `canvas` · `sunken` · `surface` · `raised` · `overlay` (plus `panel`, the translucent card ground) |
+| Text | `fg-bright` · `fg` · `fg-secondary` · `fg-tertiary` · `fg-muted` · `fg-subtle` · `fg-faint` |
+
+Alongside them: `hairline` / `hairline-strong` for structural rules, `edge` / `edge-hover` for
+the border of a control the user is meant to see, and `fill-subtle` / `fill` / `fill-strong`
+for hover, selected and inset grounds. They are consumed as ordinary utilities —
+`bg-surface`, `text-fg-muted`, `border-hairline`.
+
+In dark, elevation means lighter; in light it means whiter, and the text ramp inverts around
+`fg-muted` (zinc-500), the one value that reads on both grounds. The dark values reproduce the
+literals the components carried before the layer existed, so **moving a component onto a token
+must be a no-op in dark** — any visible dark-mode change is a bug unless it is deliberate and
+called out.
+
+### Surfaces that cannot read CSS
+
+Monaco, Recharts and the `@xyflow` ER diagram paint their own canvas from a JS palette, so they
+cannot resolve a token. They read `useEffectiveTheme()` instead, which observes the `dark`
+class on `<html>` rather than calling `useTheme()` — that class is where next-themes writes
+studio's choice *and* where an embedding host writes its own, so one source answers both
+deployments and an embedded studio needs no provider to follow along.
+
+### Embedding
+
+`globals.css` is not packaged, so an app consuming `@libredb/studio` must import the tokens
+itself or every `var(--studio-*)` resolves to nothing:
+
+```ts
+import "@libredb/studio/styles.css";
+```
+
+See [`docs/TOOLCHAIN.md`](../TOOLCHAIN.md) for how that file is staged into `dist/` and what
+guards it.
 
 ## CSS Variables
 
@@ -100,25 +146,23 @@ LibreDB Studio uses a dark-first design with the following color palette (based 
 
 ### Switching Themes
 
-> **Current state:** there is **no runtime theme switching**. Dark mode is forced by hardcoding
-> the `dark` class on `<body>` in `src/app/layout.tsx`:
->
-> ```tsx
-> <body className={`${geistSans.variable} ${geistMono.variable} antialiased dark font-sans`}>
-> ```
->
-> The `next-themes` package is present in `package.json` but is **not wired up** — there is no
-> `<ThemeProvider>` in the layout and no toggle component.
-
-To add a runtime light/dark toggle, you would wrap the app in `next-themes`' `ThemeProvider`
-(`attribute="class"`) instead of hardcoding the class, then add a toggle that flips the theme:
+The layout wraps the app in `next-themes`' provider:
 
 ```tsx
-// Not yet implemented — illustrative only
-<ThemeProvider attribute="class" defaultTheme="dark">
+<ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} storageKey="libredb-theme">
   {children}
 </ThemeProvider>
 ```
+
+Two states only, dark and light — `enableSystem` is off, so there is no third "system" entry in
+the cycle. The storage key is deliberately studio's own rather than next-themes' default
+`theme`: `enableSystem={false}` does not sanitize a *stored* `"system"`, it writes it to the
+class list verbatim, so a key that a previous system-enabled build could have written is a key
+that can hand the document a `class="system"` and no palette at all.
+
+Anything that renders differently per theme must be guarded against hydration mismatch — the
+server has no document to read, so `useEffectiveTheme()` answers `"dark"` there and the toggle
+renders a neutral label until it has hydrated.
 
 ## Tailwind v4 Integration
 
@@ -219,11 +263,12 @@ Ensure `@theme inline` maps your variables:
 }
 ```
 
-### Step 3: Test in Dark Mode
+### Step 3: Test in Both Themes
 
-Since Studio runs dark-mode only today, edit and verify the `.dark` variable set. If you also
-maintain the `:root` (light) values for a future toggle, keep them in sync — but only the
-`.dark` set is rendered at runtime.
+Both variable sets are rendered at runtime, so a new colour is only half-added until it has a
+value in each. Verify with the header toggle, not by reasoning about the values: a token that
+is legible in dark and 2:1 against a white ground is a token that ships an unreadable light
+theme.
 
 ## Component-Specific Theming
 
@@ -300,11 +345,16 @@ shadcn/ui buttons use theme variables automatically:
 2. Verify the `@theme inline` mapping exists
 3. Ensure you're using the correct class name (`bg-card` not `bg-[--card]`)
 
-### Dark Mode Not Working
+### A Theme Does Not Take Effect
 
-1. Check that the `dark` class is present on `<body>` in `src/app/layout.tsx` (it is hardcoded there)
-2. Ensure variables are defined in the `.dark {}` selector in `globals.css`
-3. Confirm `@theme inline` maps the variable to a `--color-*` utility
+1. Check the `dark` class on `<html>` — `next-themes` toggles it there; if it never changes, the
+   `<ThemeProvider>` is missing or a stored value is being written verbatim (see
+   [Switching Themes](#switching-themes))
+2. Ensure the variable is defined in **both** the `:root` and `.dark` selectors — a token that
+   exists in one palette only silently resolves to nothing in the other
+3. Confirm `@theme inline` maps the variable to a `--color-*` utility. `inline` is required: a
+   plain `@theme` resolves the value at build time and freezes whichever palette was in scope
+4. Embedded in a host app: confirm the host imports `@libredb/studio/styles.css`
 
 ### Build Errors
 

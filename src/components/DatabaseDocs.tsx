@@ -128,33 +128,33 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
     return text.split("\n").map((line, i) => {
       if (line.startsWith("## "))
         return (
-          <h2 key={i} className="text-xs font-medium text-zinc-200 mt-4 mb-2">
+          <h2 key={i} className="text-xs font-medium text-fg mt-4 mb-2">
             {line.slice(3)}
           </h2>
         );
       if (line.startsWith("### "))
         return (
-          <h3 key={i} className="text-xs font-medium text-zinc-300 mt-3 mb-1">
+          <h3 key={i} className="text-xs font-medium text-fg-secondary mt-3 mb-1">
             {line.slice(4)}
           </h3>
         );
       if (line.startsWith("- ")) {
         return (
-          <li key={i} className="text-xs text-zinc-400 ml-4 leading-relaxed">
+          <li key={i} className="text-xs text-fg-tertiary ml-4 leading-relaxed">
             {renderInline(line.slice(2))}
           </li>
         );
       }
       if (line.match(/^\d+\.\s/)) {
         return (
-          <li key={i} className="text-xs text-zinc-400 ml-4 leading-relaxed list-decimal">
+          <li key={i} className="text-xs text-fg-tertiary ml-4 leading-relaxed list-decimal">
             {renderInline(line)}
           </li>
         );
       }
       if (line.trim()) {
         return (
-          <p key={i} className="text-xs text-zinc-400 leading-relaxed">
+          <p key={i} className="text-xs text-fg-tertiary leading-relaxed">
             {renderInline(line)}
           </p>
         );
@@ -164,14 +164,14 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
   };
 
   return (
-    <div className="h-full flex flex-col bg-[#080808]">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-[#0a0a0a]">
+    <div className="h-full flex flex-col bg-sunken">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-hairline bg-surface">
         <div className="flex items-center gap-2">
           <div className="p-1 rounded bg-teal-500/10">
             <FileText strokeWidth={1.5} className="w-3 h-3 text-teal-400" />
           </div>
           <span className="text-xs font-medium text-teal-400">Database Docs</span>
-          <span className="text-[0.625rem] text-zinc-500 font-mono">{schema.length} tables</span>
+          <span className="text-[0.625rem] text-fg-muted font-mono">{schema.length} tables</span>
         </div>
         <div className="flex items-center gap-1.5">
           <button
@@ -188,21 +188,21 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
           </button>
           <button
             onClick={exportMarkdown}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/5 text-zinc-400 text-xs font-medium hover:bg-white/10 transition-colors"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-fill text-fg-tertiary text-xs font-medium hover:bg-fill-strong transition-colors"
           >
             <Download strokeWidth={1.5} className="w-3 h-3" /> Export MD
           </button>
         </div>
       </div>
 
-      <div className="px-4 py-2 border-b border-white/5 bg-[#0a0a0a]">
+      <div className="px-4 py-2 border-b border-hairline bg-surface">
         <div className="relative">
-          <Search strokeWidth={1.5} className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500" />
+          <Search strokeWidth={1.5} className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-fg-muted" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search tables or columns..."
-            className="w-full bg-[#111] border border-white/10 rounded-lg pl-7 pr-3 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-teal-500/30"
+            className="w-full bg-overlay border border-hairline-strong rounded-lg pl-7 pr-3 py-1.5 text-xs text-fg placeholder:text-fg-subtle outline-none focus:border-teal-500/30"
           />
         </div>
       </div>
@@ -223,23 +223,23 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
           </div>
         )}
 
-        <h3 className="text-xs font-medium text-zinc-400">Table Reference</h3>
+        <h3 className="text-xs font-medium text-fg-tertiary">Table Reference</h3>
         {filteredSchema.map((table) => (
-          <div key={table.name} className="bg-[#0a0a0a] border border-white/5 rounded-lg overflow-hidden">
+          <div key={table.name} className="bg-surface border border-hairline rounded-lg overflow-hidden">
             <div className="px-3 py-2 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-zinc-200">{table.name}</span>
+                <span className="text-xs font-medium text-fg">{table.name}</span>
                 {table.rowCount !== undefined && (
-                  <span className="text-xs text-zinc-500 font-mono">{table.rowCount.toLocaleString()} rows</span>
+                  <span className="text-xs text-fg-muted font-mono">{table.rowCount.toLocaleString()} rows</span>
                 )}
               </div>
-              <span className="text-xs text-zinc-600">{table.columns?.length || 0} columns</span>
+              <span className="text-xs text-fg-subtle">{table.columns?.length || 0} columns</span>
             </div>
             {table.columns && table.columns.length > 0 && (
-              <div className="border-t border-white/5">
+              <div className="border-t border-hairline">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr className="text-zinc-500">
+                    <tr className="text-fg-muted">
                       <th className="text-left px-3 py-1 font-normal">Column</th>
                       <th className="text-left px-3 py-1 font-normal">Type</th>
                       <th className="text-left px-3 py-1 font-normal">PK</th>
@@ -248,13 +248,13 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
                   </thead>
                   <tbody>
                     {table.columns.map((col) => (
-                      <tr key={col.name} className="border-t border-white/[0.03] hover:bg-white/[0.02]">
-                        <td className="px-3 py-1 text-zinc-300 font-mono">{col.name}</td>
-                        <td className="px-3 py-1 text-zinc-500 font-mono">{col.type}</td>
+                      <tr key={col.name} className="border-t border-hairline hover:bg-fill-subtle">
+                        <td className="px-3 py-1 text-fg-secondary font-mono">{col.name}</td>
+                        <td className="px-3 py-1 text-fg-muted font-mono">{col.type}</td>
                         <td className="px-3 py-1">
                           {col.isPrimary && <span className="text-amber-400 text-[0.625rem] font-medium">PK</span>}
                         </td>
-                        <td className="px-3 py-1 text-zinc-600">{col.nullable !== false ? "Yes" : "No"}</td>
+                        <td className="px-3 py-1 text-fg-subtle">{col.nullable !== false ? "Yes" : "No"}</td>
                       </tr>
                     ))}
                   </tbody>

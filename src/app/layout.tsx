@@ -8,6 +8,7 @@ import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 import type { Metadata } from "next";
 import "./globals.css";
+import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 
 export const metadata: Metadata = {
@@ -34,12 +35,17 @@ export default function RootLayout({
     // before React hydrates. It suppresses attribute/text mismatches on THESE nodes
     // alone — real hydration bugs inside {children} are still reported.
     <html lang="en" suppressHydrationWarning>
-      <body
-        suppressHydrationWarning
-        className={`${GeistSans.variable} ${GeistMono.variable} antialiased dark font-sans`}
-      >
-        {children}
-        <Toaster position="bottom-right" theme="dark" />
+      {/*
+        The `dark` class used to be written here, which pinned standalone studio to
+        one theme. It is now owned by ThemeProvider, which writes it onto <html>
+        (`attribute="class"`) and restores the user's choice before paint.
+      */}
+      <body suppressHydrationWarning className={`${GeistSans.variable} ${GeistMono.variable} antialiased font-sans`}>
+        <ThemeProvider>
+          {children}
+          {/* No `theme` prop: Toaster reads next-themes itself, so it follows. */}
+          <Toaster position="bottom-right" />
+        </ThemeProvider>
       </body>
     </html>
   );

@@ -28,7 +28,7 @@ const ColumnRow = memo(function ColumnRow({ column, isFk, hasSourceHandle, hasTa
 
   return (
     <div
-      className="relative flex items-center justify-between px-2 py-1 text-xs hover:bg-white/5 rounded transition-colors"
+      className="relative flex items-center justify-between px-2 py-1 text-xs hover:bg-fill rounded transition-colors"
       title={tooltip}
     >
       {hasSourceHandle && (
@@ -56,19 +56,21 @@ const ColumnRow = memo(function ColumnRow({ column, isFk, hasSourceHandle, hasTa
         ) : isFk ? (
           <Link2 strokeWidth={1.5} className="w-2.5 h-2.5 text-blue-400" />
         ) : column.type.toLowerCase().includes("int") ? (
-          <Hash strokeWidth={1.5} className="w-2.5 h-2.5 text-zinc-500" />
+          <Hash strokeWidth={1.5} className="w-2.5 h-2.5 text-fg-muted" />
         ) : (
-          <Type strokeWidth={1.5} className="w-2.5 h-2.5 text-zinc-500" />
+          <Type strokeWidth={1.5} className="w-2.5 h-2.5 text-fg-muted" />
         )}
         <span
-          className={column.isPrimary ? "text-yellow-500/90 font-medium" : isFk ? "text-blue-400/80" : "text-zinc-400"}
+          className={
+            column.isPrimary ? "text-yellow-500/90 font-medium" : isFk ? "text-blue-400/80" : "text-fg-tertiary"
+          }
         >
           {column.name}
         </span>
       </div>
       <div className="flex items-center gap-1">
         {column.nullable === false && <span className="text-[0.5rem] text-red-500/60">NN</span>}
-        <span className="text-[0.625rem] text-zinc-600 font-mono uppercase">{column.type}</span>
+        <span className="text-[0.625rem] text-fg-subtle font-mono uppercase">{column.type}</span>
       </div>
     </div>
   );
@@ -94,11 +96,11 @@ export const TableNode = memo(function TableNode({ id, data }: NodeProps<TableFl
 
   return (
     <div
-      className={`bg-[#0d0d0d] border rounded-lg overflow-hidden min-w-[200px] shadow-2xl transition-all ${
-        highlighted ? "border-blue-500/60 ring-1 ring-blue-500/30" : "border-white/10"
+      className={`bg-raised border rounded-lg overflow-hidden min-w-[200px] shadow-2xl transition-all ${
+        highlighted ? "border-blue-500/60 ring-1 ring-blue-500/30" : "border-hairline-strong"
       }`}
     >
-      <div className="relative bg-blue-600/10 px-3 py-2 border-b border-white/5 flex items-center gap-2">
+      <div className="relative bg-blue-600/10 px-3 py-2 border-b border-hairline flex items-center gap-2">
         <Handle
           type="target"
           position={Position.Left}
@@ -114,8 +116,8 @@ export const TableNode = memo(function TableNode({ id, data }: NodeProps<TableFl
           style={{ opacity: 0, right: -5 }}
         />
         <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
-        <span className="text-xs font-medium text-zinc-100">{table.name}</span>
-        <span className="text-[0.625rem] text-zinc-600 ml-auto">{table.columns?.length || 0} cols</span>
+        <span className="text-xs font-medium text-fg">{table.name}</span>
+        <span className="text-[0.625rem] text-fg-subtle ml-auto">{table.columns?.length || 0} cols</span>
       </div>
       {!compact && (
         <div className="p-1">
@@ -131,7 +133,7 @@ export const TableNode = memo(function TableNode({ id, data }: NodeProps<TableFl
           {hiddenCount > 0 && (
             <button
               type="button"
-              className="w-full text-left px-2 py-1 text-[0.625rem] text-zinc-500 hover:text-zinc-300 transition-colors"
+              className="w-full text-left px-2 py-1 text-[0.625rem] text-fg-muted hover:text-fg-secondary transition-colors"
               onClick={() => toggleExpand(table.name)}
             >
               +{hiddenCount} more

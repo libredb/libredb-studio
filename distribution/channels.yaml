@@ -532,7 +532,7 @@ channels:
   - id: truenas-scale
     name: TrueNAS SCALE community apps catalog
     short_name: TrueNAS SCALE apps
-    status: pending
+    status: live
     category: paas-catalogs
     platforms: [container]
     runtime: channel_supplied
@@ -544,16 +544,18 @@ channels:
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/278
       first_pr: https://github.com/truenas/apps/pull/5501
+      catalog: https://apps.truenas.com/catalog/libredb-studio_community/
       upstream_repo: https://github.com/truenas/apps
       docs: docs/DISTRIBUTION.md
     pin:
-      strategy: none
-      note: PR truenas/apps#5501 is open (fork yusuf-gundogdu/apps, branch add-libredb-studio), so nothing
-        is listed yet. On merge, flip to live and add a remote_file pin on
-        https://raw.githubusercontent.com/truenas/apps/master/ix-dev/community/libredb-studio/ix_values.yaml
-        with extract 'ghcr\.io/libredb/libredb-studio\s+tag:\s*(\d+\.\d+\.\d+)' - the container_utils_image
-        tag is a different repository and must not be matched. The user installs on their own TrueNAS box,
-        so the platform is container, not cloud.
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/truenas/apps/master/ix-dev/community/libredb-studio/ix_values.yaml
+      extract: 'ghcr\.io/libredb/libredb-studio\s+tag:\s*(\d+\.\d+\.\d+)'
+      note: Merged in truenas/apps#5501 (14 Aug 2026); live in the TrueNAS SCALE community catalog. The pin
+        reads the ghcr repo and tag in ix-dev/community/libredb-studio/ix_values.yaml (the maintainer-edited
+        source a bump PR touches) - the container_utils_image tag is a different repository and must not be
+        matched. The built catalog also renders under trains/community/libredb-studio/<version>/. The user
+        installs on their own TrueNAS box, so the platform is container, not cloud.
 
   - id: casaos
     name: CasaOS App Store

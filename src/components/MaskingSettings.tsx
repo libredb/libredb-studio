@@ -178,8 +178,8 @@ export function MaskingSettings() {
 
           {/* Role Permissions */}
           <div className="space-y-3">
-            <h3 className="text-xs font-medium text-zinc-300">Role Permissions</h3>
-            <div className="grid gap-3 rounded-lg border border-white/10 p-4">
+            <h3 className="text-xs font-medium text-fg-secondary">Role Permissions</h3>
+            <div className="grid gap-3 rounded-lg border border-hairline-strong p-4">
               {/* Admin Row */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -188,7 +188,10 @@ export function MaskingSettings() {
                   </Badge>
                 </div>
                 <div className="flex items-center gap-6">
-                  <label htmlFor="masking-admin-can-toggle" className="flex items-center gap-2 text-xs text-zinc-400">
+                  <label
+                    htmlFor="masking-admin-can-toggle"
+                    className="flex items-center gap-2 text-xs text-fg-tertiary"
+                  >
                     <Switch
                       id="masking-admin-can-toggle"
                       aria-label="Admin can toggle"
@@ -197,7 +200,10 @@ export function MaskingSettings() {
                     />
                     Can toggle
                   </label>
-                  <label htmlFor="masking-admin-can-reveal" className="flex items-center gap-2 text-xs text-zinc-400">
+                  <label
+                    htmlFor="masking-admin-can-reveal"
+                    className="flex items-center gap-2 text-xs text-fg-tertiary"
+                  >
                     <Switch
                       id="masking-admin-can-reveal"
                       aria-label="Admin can reveal"
@@ -216,7 +222,7 @@ export function MaskingSettings() {
                   </Badge>
                 </div>
                 <div className="flex items-center gap-6">
-                  <label htmlFor="masking-user-can-toggle" className="flex items-center gap-2 text-xs text-zinc-400">
+                  <label htmlFor="masking-user-can-toggle" className="flex items-center gap-2 text-xs text-fg-tertiary">
                     <Switch
                       id="masking-user-can-toggle"
                       aria-label="User can toggle"
@@ -225,7 +231,7 @@ export function MaskingSettings() {
                     />
                     Can toggle
                   </label>
-                  <label htmlFor="masking-user-can-reveal" className="flex items-center gap-2 text-xs text-zinc-400">
+                  <label htmlFor="masking-user-can-reveal" className="flex items-center gap-2 text-xs text-fg-tertiary">
                     <Switch
                       id="masking-user-can-reveal"
                       aria-label="User can reveal"
@@ -242,24 +248,24 @@ export function MaskingSettings() {
           {/* Masking Patterns */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-medium text-zinc-300">Masking Patterns</h3>
+              <h3 className="text-xs font-medium text-fg-secondary">Masking Patterns</h3>
               <Button variant="outline" size="sm" className="h-7 text-xs" onClick={openNewDialog}>
                 <Plus strokeWidth={1.5} className="w-3 h-3 mr-1" />
                 Add Pattern
               </Button>
             </div>
-            <div className="max-h-[400px] overflow-y-auto rounded-lg border border-white/5 editor-scrollbar">
+            <div className="max-h-[400px] overflow-y-auto rounded-lg border border-hairline editor-scrollbar">
               <div className="space-y-2 p-1">
                 {config.patterns.map((pattern) => (
                   <div
                     key={pattern.id}
-                    className="flex items-center justify-between gap-3 rounded-lg border border-white/5 bg-[#0a0a0a] p-3"
+                    className="flex items-center justify-between gap-3 rounded-lg border border-hairline bg-surface p-3"
                   >
                     <div className="flex items-center gap-3 flex-1 min-w-0">
                       <Switch checked={pattern.enabled} onCheckedChange={(v) => togglePatternEnabled(pattern.id, v)} />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-medium text-zinc-200">{pattern.name}</span>
+                          <span className="text-xs font-medium text-fg">{pattern.name}</span>
                           {pattern.isBuiltin && (
                             <Badge variant="secondary" className="text-[0.625rem] h-4 px-1">
                               builtin
@@ -269,14 +275,14 @@ export function MaskingSettings() {
                             {pattern.maskType}
                           </Badge>
                         </div>
-                        <p className="text-xs text-zinc-500 font-mono truncate mt-0.5">
+                        <p className="text-xs text-fg-muted font-mono truncate mt-0.5">
                           {pattern.columnPatterns.join(", ")}
                         </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => openEditDialog(pattern)}>
-                        <Pencil strokeWidth={1.5} className="w-3 h-3 text-zinc-500" />
+                        <Pencil strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                       </Button>
                       {!pattern.isBuiltin && (
                         <Button
@@ -297,8 +303,8 @@ export function MaskingSettings() {
 
           {/* Preview */}
           <div className="space-y-3">
-            <h3 className="text-xs font-medium text-zinc-300">Preview</h3>
-            <div className="rounded-lg border border-white/5 bg-[#0a0a0a] p-4 space-y-2">
+            <h3 className="text-xs font-medium text-fg-secondary">Preview</h3>
+            <div className="rounded-lg border border-hairline bg-surface p-4 space-y-2">
               {config.patterns
                 .filter((p) => p.enabled)
                 .slice(0, 5)
@@ -308,9 +314,9 @@ export function MaskingSettings() {
                   return (
                     <div key={pattern.id} className="flex items-center gap-2 text-xs font-mono">
                       <Lock strokeWidth={1.5} className="w-3 h-3 text-purple-400 shrink-0" />
-                      <span className="text-zinc-500 w-24 truncate">{pattern.name}:</span>
-                      <span className="text-zinc-600 line-through">{preview.sample}</span>
-                      <span className="text-zinc-400 mx-1">&rarr;</span>
+                      <span className="text-fg-muted w-24 truncate">{pattern.name}:</span>
+                      <span className="text-fg-subtle line-through">{preview.sample}</span>
+                      <span className="text-fg-tertiary mx-1">&rarr;</span>
                       <span className="text-purple-300">{masked}</span>
                     </div>
                   );
@@ -319,7 +325,7 @@ export function MaskingSettings() {
           </div>
 
           {/* Actions */}
-          <div className="flex items-center justify-end gap-3 pt-2 border-t border-white/5">
+          <div className="flex items-center justify-end gap-3 pt-2 border-t border-hairline">
             <Button variant="outline" size="sm" onClick={handleReset}>
               <RotateCcw className="w-3 h-3 mr-1" />
               Reset Defaults
@@ -340,7 +346,7 @@ export function MaskingSettings() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <label htmlFor="masking-pattern-name" className="text-xs font-medium text-zinc-300">
+              <label htmlFor="masking-pattern-name" className="text-xs font-medium text-fg-secondary">
                 Name
               </label>
               <Input
@@ -351,7 +357,7 @@ export function MaskingSettings() {
               />
             </div>
             <div className="space-y-2">
-              <label htmlFor="masking-mask-type" className="text-xs font-medium text-zinc-300">
+              <label htmlFor="masking-mask-type" className="text-xs font-medium text-fg-secondary">
                 Mask Type
               </label>
               <Select value={editMaskType} onValueChange={(v) => setEditMaskType(v as MaskType)}>
@@ -369,7 +375,7 @@ export function MaskingSettings() {
             </div>
             {editMaskType === "custom" && (
               <div className="space-y-2">
-                <label htmlFor="masking-custom-mask" className="text-xs font-medium text-zinc-300">
+                <label htmlFor="masking-custom-mask" className="text-xs font-medium text-fg-secondary">
                   Custom Mask String
                 </label>
                 <Input
@@ -381,23 +387,23 @@ export function MaskingSettings() {
               </div>
             )}
             <div className="space-y-2">
-              <label htmlFor="masking-column-patterns" className="text-xs font-medium text-zinc-300">
+              <label htmlFor="masking-column-patterns" className="text-xs font-medium text-fg-secondary">
                 Column Patterns (one per line)
               </label>
               <textarea
                 id="masking-column-patterns"
-                className="w-full h-32 bg-[#0a0a0a] border border-white/10 rounded-md px-3 py-2 text-xs font-mono text-zinc-200 focus:outline-none focus:ring-1 focus:ring-purple-500/50 resize-none"
+                className="w-full h-32 bg-surface border border-hairline-strong rounded-md px-3 py-2 text-xs font-mono text-fg focus:outline-none focus:ring-1 focus:ring-purple-500/50 resize-none"
                 value={editColumnPatterns}
                 onChange={(e) => setEditColumnPatterns(e.target.value)}
                 placeholder={"email\ne_mail\nuser_email"}
               />
-              <p className="text-xs text-zinc-500">
+              <p className="text-xs text-fg-muted">
                 Each line is matched against column names (case-insensitive). Supports regex.
               </p>
             </div>
             {/* Preview */}
-            <div className="rounded-lg border border-white/5 bg-[#0a0a0a] p-3">
-              <p className="text-xs text-zinc-500 mb-1">Preview:</p>
+            <div className="rounded-lg border border-hairline bg-surface p-3">
+              <p className="text-xs text-fg-muted mb-1">Preview:</p>
               <p className="text-xs font-mono text-purple-300">
                 {getPreviewMasked(editMaskType, editMaskType === "custom" ? editCustomMask : undefined)}
               </p>

@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { GitHubRepoLink } from "@/components/github-repo-link";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 interface StudioDesktopHeaderProps {
   activeConnection: DatabaseConnection | null;
@@ -32,17 +33,17 @@ export function StudioDesktopHeader({
   const router = useRouter();
 
   return (
-    <header className="hidden md:flex h-14 border-b border-white/5 items-center justify-between px-4 bg-[#0a0a0a]/80 backdrop-blur-xl sticky top-0 z-30">
+    <header className="hidden md:flex h-14 border-b border-hairline items-center justify-between px-4 bg-surface/80 backdrop-blur-xl sticky top-0 z-30">
       <div className="flex items-center gap-3">
         <div className="p-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
           <Database strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
         </div>
         <div>
-          <h1 className="text-xs font-medium text-zinc-200 truncate max-w-[120px]">
+          <h1 className="text-xs font-medium text-fg truncate max-w-[120px]">
             {activeConnection ? activeConnection.name : "Quick Access"}
           </h1>
           {activeConnection && (
-            <p className="text-xs text-zinc-500 font-mono uppercase leading-none mt-0.5">
+            <p className="text-xs text-fg-muted font-mono uppercase leading-none mt-0.5">
               {activeConnection.type}
               {activeConnection.environment && activeConnection.environment !== "other" && (
                 <span className="ml-1 font-medium" style={{ color: activeConnection.color || "#22c55e" }}>
@@ -63,7 +64,7 @@ export function StudioDesktopHeader({
       <div className="flex items-center gap-2">
         {connectionPulse && (
           <div
-            className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white/5 mr-2"
+            className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-fill mr-2"
             title={`Connection: ${connectionPulse}`}
           >
             <div
@@ -74,7 +75,7 @@ export function StudioDesktopHeader({
                 connectionPulse === "error" && "bg-red-500",
               )}
             />
-            <span className="text-xs font-medium text-zinc-500">
+            <span className="text-xs font-medium text-fg-muted">
               {connectionPulse === "healthy" ? "Online" : connectionPulse === "degraded" ? "Slow" : "Error"}
             </span>
           </div>
@@ -83,7 +84,7 @@ export function StudioDesktopHeader({
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 px-3 text-xs font-medium gap-2 text-zinc-500 hover:text-purple-400 hover:bg-purple-500/10"
+          className="h-7 px-3 text-xs font-medium gap-2 text-fg-muted hover:text-purple-400 hover:bg-purple-500/10"
           onClick={() => router.push("/monitoring")}
         >
           <Gauge strokeWidth={1.5} className="w-3 h-3" /> Monitoring
@@ -92,11 +93,11 @@ export function StudioDesktopHeader({
         {user && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-8 gap-2 hover:bg-white/5 px-2">
+              <Button variant="ghost" size="sm" className="h-8 gap-2 hover:bg-fill px-2">
                 <User strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56 bg-[#0d0d0d] border-white/10 text-zinc-300">
+            <DropdownMenuContent align="end" className="w-56 bg-raised border-hairline-strong text-fg-secondary">
               {isAdmin && (
                 <DropdownMenuItem onClick={() => router.push("/admin")} className="cursor-pointer">
                   <Settings strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Admin Dashboard
@@ -105,7 +106,7 @@ export function StudioDesktopHeader({
               <DropdownMenuItem onClick={() => router.push("/monitoring")} className="cursor-pointer">
                 <Gauge strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Monitoring
               </DropdownMenuItem>
-              <div className="border-t border-white/5 my-1" />
+              <div className="border-t border-hairline my-1" />
               <DropdownMenuItem onClick={onLogout} className="text-red-400 cursor-pointer">
                 <LogOut strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Logout
               </DropdownMenuItem>
@@ -114,10 +115,12 @@ export function StudioDesktopHeader({
         )}
         <Settings
           strokeWidth={1.5}
-          className="w-3.5 h-3.5 text-zinc-400 cursor-pointer hover:text-white transition-colors mx-2"
+          className="w-3.5 h-3.5 text-fg-tertiary cursor-pointer hover:text-fg-bright transition-colors mx-2"
         />
-        <GitHubRepoLink className="text-zinc-400 hover:text-white mr-2" />
-        <span className="text-xs text-zinc-500 font-mono">v{process.env.NEXT_PUBLIC_APP_VERSION}</span>
+        {/* Renders nothing when a host (platform) owns the theme — see ThemeToggle. */}
+        <ThemeToggle className="mr-1" />
+        <GitHubRepoLink className="text-fg-tertiary hover:text-fg-bright mr-2" />
+        <span className="text-xs text-fg-muted font-mono">v{process.env.NEXT_PUBLIC_APP_VERSION}</span>
       </div>
     </header>
   );

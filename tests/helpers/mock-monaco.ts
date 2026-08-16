@@ -63,7 +63,14 @@ export function setupRechartssMock() {
       XAxis: () => null,
       YAxis: () => null,
       CartesianGrid: () => null,
-      Tooltip: () => null,
+      // Surfaces `contentStyle` so a test can check which palette the chart handed
+      // the tooltip — recharts inline-styles it, so there is no class to assert on.
+      Tooltip: ({ contentStyle }: { contentStyle?: Record<string, unknown> }) =>
+        React.createElement("div", {
+          "data-testid": "mock-tooltip",
+          "data-bg": contentStyle?.backgroundColor as string | undefined,
+          "data-color": contentStyle?.color as string | undefined,
+        }),
       Legend: () => null,
       PolarAngleAxis: () => null,
     };

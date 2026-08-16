@@ -54,7 +54,7 @@ export function StatsBar({
   const warningDetail = warnings.map(describeWarning).join("\n");
 
   return (
-    <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-[#0a0a0a] text-xs text-zinc-500 font-mono">
+    <div className="flex items-center justify-between px-4 py-2 border-b border-hairline bg-surface text-xs text-fg-muted font-mono">
       <div className="flex items-center gap-4">
         <span className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/50" />
@@ -92,7 +92,7 @@ export function StatsBar({
               size="sm"
               className={cn(
                 "h-6 px-2 text-xs font-medium gap-1",
-                effectiveMaskingEnabled ? "text-purple-400 bg-purple-500/10" : "text-zinc-500",
+                effectiveMaskingEnabled ? "text-purple-400 bg-purple-500/10" : "text-fg-muted",
               )}
               onClick={onToggleMasking}
               title={effectiveMaskingEnabled ? "Show sensitive data" : "Mask sensitive data"}
@@ -131,16 +131,16 @@ export function StatsBar({
           </div>
         )}
 
-        <span className="hidden sm:flex px-2 py-0.5 rounded bg-white/5 border border-white/5">
+        <span className="hidden sm:flex px-2 py-0.5 rounded bg-fill border border-hairline">
           EXEC TIME: {result.executionTime || "0ms"}
         </span>
 
-        <div className="flex md:hidden items-center bg-white/5 rounded-lg p-0.5">
+        <div className="flex md:hidden items-center bg-fill rounded-lg p-0.5">
           <button
             onClick={() => onSetViewMode("card")}
             className={cn(
               "p-1.5 rounded transition-all",
-              viewMode === "card" ? "bg-blue-600 text-white" : "text-zinc-500",
+              viewMode === "card" ? "bg-blue-600 text-white" : "text-fg-muted",
             )}
           >
             <LayoutGrid strokeWidth={1.5} className="w-3.5 h-3.5" />
@@ -149,7 +149,7 @@ export function StatsBar({
             onClick={() => onSetViewMode("table")}
             className={cn(
               "p-1.5 rounded transition-all",
-              viewMode === "table" ? "bg-blue-600 text-white" : "text-zinc-500",
+              viewMode === "table" ? "bg-blue-600 text-white" : "text-fg-muted",
             )}
           >
             <Table2 strokeWidth={1.5} className="w-3.5 h-3.5" />
@@ -170,13 +170,13 @@ export function LoadMoreFooter({ hasMore, onLoadMore, isLoadingMore }: LoadMoreF
   if (!hasMore) return null;
 
   return (
-    <div className="flex items-center justify-center py-3 border-t border-white/5 bg-[#0a0a0a]">
+    <div className="flex items-center justify-center py-3 border-t border-hairline bg-surface">
       <Button
         variant="outline"
         size="sm"
         onClick={onLoadMore}
         disabled={isLoadingMore}
-        className="h-8 px-4 text-xs border-white/10 hover:bg-white/5"
+        className="h-8 px-4 text-xs border-hairline-strong hover:bg-fill"
       >
         {isLoadingMore && (
           <>

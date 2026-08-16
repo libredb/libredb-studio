@@ -49,7 +49,7 @@ export const FkEdge = memo(function FkEdge({
       {highlight === "highlighted" && (
         <EdgeLabelRenderer>
           <div
-            className="absolute bg-[#0d0d0d]/80 border border-white/10 rounded px-1 text-[0.5625rem] text-zinc-400 pointer-events-none"
+            className="absolute bg-raised/80 border border-hairline-strong rounded px-1 text-[0.5625rem] text-fg-tertiary pointer-events-none"
             style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
           >
             {heuristic ? "1:N?" : "1:N"}

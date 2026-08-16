@@ -121,7 +121,7 @@ export interface AgentRailProps {
 }
 
 const TONE_CLASSES: Readonly<Record<AgentTimelineTone, string>> = {
-  neutral: "bg-zinc-600",
+  neutral: "bg-fg-subtle",
   progress: "bg-blue-400",
   refused: "bg-amber-400",
   done: "bg-emerald-400",
@@ -241,8 +241,8 @@ function QuotedBlock({
     <div className={className}>
       <pre
         className={cn(
-          "overflow-x-auto rounded bg-black/40 p-1.5 font-mono text-[0.625rem] whitespace-pre-wrap",
-          tone === "loud" ? "text-zinc-300" : "text-zinc-400",
+          "overflow-x-auto rounded bg-sunken p-1.5 font-mono text-[0.625rem] whitespace-pre-wrap",
+          tone === "loud" ? "text-fg-secondary" : "text-fg-tertiary",
         )}
       >
         {text}
@@ -291,7 +291,7 @@ function HydrationControls({
           type="button"
           data-testid={`${testIdPrefix}apply-statement`}
           onClick={() => onApply(sql)}
-          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] text-zinc-400 hover:bg-white/5 hover:text-zinc-200 transition-colors"
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] text-fg-tertiary hover:bg-fill hover:text-fg transition-colors"
         >
           <PencilLine strokeWidth={1.5} className="w-3 h-3" />
           Apply to editor
@@ -302,7 +302,7 @@ function HydrationControls({
           type="button"
           data-testid={`${testIdPrefix}show-result`}
           onClick={() => onShow(artifactId, chartSpec)}
-          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] text-zinc-400 hover:bg-white/5 hover:text-zinc-200 transition-colors"
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] text-fg-tertiary hover:bg-fill hover:text-fg transition-colors"
         >
           <TableProperties strokeWidth={1.5} className="w-3 h-3" />
           Show result
@@ -344,7 +344,10 @@ function ProseBlock({
 }) {
   const apply = statementCarded ? undefined : onApplySql;
   return (
-    <div data-testid="agent-prose" className={cn("space-y-1 border-l border-white/10 pl-2 text-zinc-400", className)}>
+    <div
+      data-testid="agent-prose"
+      className={cn("space-y-1 border-l border-hairline-strong pl-2 text-fg-tertiary", className)}
+    >
       {renderProse(text, apply === undefined ? {} : { onApplySql: apply })}
       {/*
         And the plan as a whole, in the markdown the model wrote rather than in the
@@ -445,7 +448,7 @@ function PlanStatementCard({
       data-read-only={draft.readOnly ? "true" : "false"}
       className={cn(
         "mt-1 ml-3.5 rounded border p-1.5",
-        draft.readOnly ? "border-white/10" : "border-amber-400/50 bg-amber-500/5",
+        draft.readOnly ? "border-hairline-strong" : "border-amber-400/50 bg-amber-500/5",
       )}
     >
       {!draft.readOnly && (
@@ -471,7 +474,7 @@ function PlanStatementCard({
           {/* Model and engine text, listed rather than spliced into the sentence above. */}
           <ul className="mt-0.5 flex flex-wrap gap-1">
             {unknown.map((name) => (
-              <li key={name} className="rounded bg-black/40 px-1 py-0.5 font-mono text-amber-200">
+              <li key={name} className="rounded bg-sunken px-1 py-0.5 font-mono text-amber-200">
                 {name}
               </li>
             ))}
@@ -491,8 +494,8 @@ function PlanStatementCard({
             aria-label={applyStatementName(draft)}
             onClick={() => onApply(draft.sql)}
             className={cn(
-              "flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] transition-colors hover:bg-white/5",
-              draft.readOnly ? "text-zinc-400 hover:text-zinc-200" : "text-amber-300",
+              "flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] transition-colors hover:bg-fill",
+              draft.readOnly ? "text-fg-tertiary hover:text-fg" : "text-amber-300",
             )}
           >
             <PencilLine strokeWidth={1.5} className="w-3 h-3" />
@@ -505,7 +508,7 @@ function PlanStatementCard({
         one (item 6 of the design). An inventory records what exists; whether this
         session may read it is the engine's answer, given when the statement runs.
       */}
-      <p data-testid="agent-plan-statement-caveat" className="mt-1 text-[0.625rem] text-zinc-600">
+      <p data-testid="agent-plan-statement-caveat" className="mt-1 text-[0.625rem] text-fg-subtle">
         The run executed nothing. What was checked is what this run read of the schema, which records what exists rather
         than what your role is permitted to read.
       </p>
@@ -999,12 +1002,12 @@ export function AgentRail({
   }, []);
 
   const content = (
-    <div className="flex flex-col h-full min-h-0 bg-[#0a0a0a] text-zinc-100">
-      <div className="flex items-center justify-between gap-2 px-3 h-9 border-b border-white/5 shrink-0">
+    <div className="flex flex-col h-full min-h-0 bg-surface text-fg">
+      <div className="flex items-center justify-between gap-2 px-3 h-9 border-b border-hairline shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <Bot strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
-          <span className="text-xs font-medium text-zinc-300">Agent</span>
-          {connectionName !== null && <span className="text-xs text-zinc-600 truncate">on {connectionName}</span>}
+          <span className="text-xs font-medium text-fg-secondary">Agent</span>
+          {connectionName !== null && <span className="text-xs text-fg-subtle truncate">on {connectionName}</span>}
         </div>
         {/*
           Two toggle buttons rather than a labelled `role="group"`: the jsx-a11y gate
@@ -1022,7 +1025,7 @@ export function AgentRail({
               onClick={() => setMode(candidate)}
               className={cn(
                 "px-2 py-0.5 rounded text-xs font-normal transition-colors",
-                mode === candidate ? "bg-blue-500/15 text-blue-300" : "text-zinc-500 hover:bg-white/5",
+                mode === candidate ? "bg-blue-500/15 text-blue-300" : "text-fg-muted hover:bg-fill",
               )}
             >
               {MODE_LABELS[candidate]}
@@ -1039,7 +1042,7 @@ export function AgentRail({
         the run is about, and the server states the objective's framing in either
         mode (`WORKFLOW_OBJECTIVES`).
       */}
-      <div className="flex items-center gap-1 px-3 py-1.5 border-b border-white/5 shrink-0">
+      <div className="flex items-center gap-1 px-3 py-1.5 border-b border-hairline shrink-0">
         {(Object.keys(WORKFLOW_LABELS) as AgentRunWorkflowType[]).map((candidate) => (
           <button
             key={candidate}
@@ -1050,7 +1053,7 @@ export function AgentRail({
             onClick={() => setWorkflowType(candidate)}
             className={cn(
               "px-2 py-0.5 rounded text-xs font-normal transition-colors",
-              workflowType === candidate ? "bg-blue-500/15 text-blue-300" : "text-zinc-500 hover:bg-white/5",
+              workflowType === candidate ? "bg-blue-500/15 text-blue-300" : "text-fg-muted hover:bg-fill",
             )}
           >
             {WORKFLOW_LABELS[candidate]}
@@ -1058,8 +1061,8 @@ export function AgentRail({
         ))}
       </div>
 
-      <div className="p-3 border-b border-white/5 shrink-0">
-        <label htmlFor="agent-objective" className="text-xs text-zinc-500">
+      <div className="p-3 border-b border-hairline shrink-0">
+        <label htmlFor="agent-objective" className="text-xs text-fg-muted">
           What should the run investigate?
         </label>
         <textarea
@@ -1069,7 +1072,7 @@ export function AgentRail({
           onChange={(e) => setObjective(e.target.value)}
           maxLength={AGENT_MAX_OBJECTIVE_LENGTH}
           rows={3}
-          className="mt-1 w-full resize-none rounded bg-black/40 border border-white/10 px-2 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-blue-500/40"
+          className="mt-1 w-full resize-none rounded bg-sunken border border-hairline-strong px-2 py-1.5 text-xs text-fg placeholder:text-fg-subtle focus:outline-none focus:border-blue-500/40"
           placeholder="Why is checkout slow?"
         />
 
@@ -1081,8 +1084,8 @@ export function AgentRail({
           saying so.
         */}
         {offeredObjective !== null && (
-          <p data-testid="agent-prefill-offer" className="mt-2 text-[0.625rem] text-zinc-500">
-            Suggested: <span className="text-zinc-400">{offeredObjective}</span>
+          <p data-testid="agent-prefill-offer" className="mt-2 text-[0.625rem] text-fg-muted">
+            Suggested: <span className="text-fg-tertiary">{offeredObjective}</span>
             <button
               type="button"
               data-testid="agent-prefill-offer-apply"
@@ -1092,7 +1095,7 @@ export function AgentRail({
                 prefilledObjective.current = offeredObjective;
                 setOfferedObjective(null);
               }}
-              className="ml-1 px-1 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-white/5 transition-colors"
+              className="ml-1 px-1 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-fill transition-colors"
             >
               Replace
             </button>
@@ -1139,13 +1142,13 @@ export function AgentRail({
                 checked={autoExecute}
                 disabled={runOpen}
                 onChange={(e) => setAutoExecute(e.target.checked)}
-                className="mt-0.5 rounded border-white/20 bg-zinc-900/50 disabled:opacity-40"
+                className="mt-0.5 rounded border-edge bg-panel disabled:opacity-40"
               />
-              <span data-testid="agent-auto-execute-label" className="text-xs text-zinc-300">
+              <span data-testid="agent-auto-execute-label" className="text-xs text-fg-secondary">
                 Also run the final answer in my editor
               </span>
             </label>
-            <p data-testid="agent-auto-execute-terms" className="mt-1 text-[0.625rem] text-zinc-500">
+            <p data-testid="agent-auto-execute-terms" className="mt-1 text-[0.625rem] text-fg-muted">
               {autoExecuteTerms}
             </p>
             {/*
@@ -1161,7 +1164,7 @@ export function AgentRail({
               </p>
             )}
             {runOpen && (
-              <p data-testid="agent-auto-execute-frozen" className="mt-1 text-[0.625rem] text-zinc-600">
+              <p data-testid="agent-auto-execute-frozen" className="mt-1 text-[0.625rem] text-fg-subtle">
                 This is decided when the run is opened and stays what it was: a later request cannot widen a run the
                 server already holds.
               </p>
@@ -1190,12 +1193,12 @@ export function AgentRail({
         )}
 
         <div className="mt-2 flex items-center justify-between gap-2">
-          <span data-testid="agent-run-id" className="font-mono text-[0.625rem] text-zinc-600 truncate">
+          <span data-testid="agent-run-id" className="font-mono text-[0.625rem] text-fg-subtle truncate">
             {run.runId ?? ""}
           </span>
           {/* Folded from the ledger, so it says what the durable record says. */}
           {run.runId !== null && (
-            <span data-testid="agent-run-status" className="text-xs text-zinc-500">
+            <span data-testid="agent-run-status" className="text-xs text-fg-muted">
               {run.timeline.status}
             </span>
           )}
@@ -1262,7 +1265,7 @@ export function AgentRail({
           a summary above its detail, and the alternative is a browser that either parses
           the server's sentence apart or renders `missing` decoratively.
 
-          The small print is `text-zinc-400` rather than `text-zinc-500`, which computes
+          The small print is `text-fg-tertiary` rather than `text-fg-muted`, which computes
           to 3.98:1 on this panel's `#0a0a0a` under the alert's own tint — short of WCAG
           AA at a size the large-text allowance does not cover (#100, #331 T4 review).
         */}
@@ -1275,7 +1278,7 @@ export function AgentRail({
             <p className="text-xs text-red-300">This model cannot drive an agent run.</p>
             {modelRefusal.missing.length > 0 && (
               <div data-testid="agent-model-refusal-missing" className="flex flex-wrap items-center gap-1">
-                <span className="text-[0.625rem] text-zinc-400">The probe could not establish:</span>
+                <span className="text-[0.625rem] text-fg-tertiary">The probe could not establish:</span>
                 {modelRefusal.missing.map((capability) => (
                   <span key={capability} className="px-1 py-0.5 rounded bg-red-500/10 text-[0.625rem] text-red-200/90">
                     {describeAgentCapability(capability)}
@@ -1283,10 +1286,10 @@ export function AgentRail({
                 ))}
               </div>
             )}
-            <p data-testid="agent-model-refusal-report" className="text-[0.625rem] text-zinc-400">
+            <p data-testid="agent-model-refusal-report" className="text-[0.625rem] text-fg-tertiary">
               {modelRefusal.message}
             </p>
-            <p data-testid="agent-model-refusal-action" className="text-[0.625rem] text-zinc-400">
+            <p data-testid="agent-model-refusal-action" className="text-[0.625rem] text-fg-tertiary">
               {refusalActionText(planModeOffered, streamingDisproved)}
             </p>
             {/*
@@ -1299,7 +1302,7 @@ export function AgentRail({
                 type="button"
                 data-testid="agent-model-refusal-use-planning"
                 onClick={() => setMode("planning")}
-                className="px-1.5 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-white/5 transition-colors"
+                className="px-1.5 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-fill transition-colors"
               >
                 Switch to Plan mode
               </button>
@@ -1327,14 +1330,14 @@ export function AgentRail({
         and the caveat below names all three rather than leaving a user to read the
         gauges as exact.
       */}
-      <div data-testid="agent-budget" className="px-3 py-2 border-b border-white/5 shrink-0 space-y-1.5">
+      <div data-testid="agent-budget" className="px-3 py-2 border-b border-hairline shrink-0 space-y-1.5">
         {run.timeline.budget.map((gauge) => (
           <div key={gauge.id} data-testid={`agent-budget-${gauge.id}`}>
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs text-zinc-500">{gauge.label}</span>
-              <span className="font-mono text-[0.625rem] text-zinc-400">{readGauge(gauge)}</span>
+              <span className="text-xs text-fg-muted">{gauge.label}</span>
+              <span className="font-mono text-[0.625rem] text-fg-tertiary">{readGauge(gauge)}</span>
             </div>
-            <div className="mt-1 h-0.5 rounded-full bg-white/5">
+            <div className="mt-1 h-0.5 rounded-full bg-fill">
               <div
                 data-testid={`agent-budget-${gauge.id}-bar`}
                 className="h-full rounded-full bg-blue-400/60"
@@ -1343,7 +1346,7 @@ export function AgentRail({
             </div>
           </div>
         ))}
-        <p data-testid="agent-budget-limits" className="pt-0.5 text-[0.625rem] text-zinc-600">
+        <p data-testid="agent-budget-limits" className="pt-0.5 text-[0.625rem] text-fg-subtle">
           Each statement gets {seconds(meterBudget.policy.budgets.statementTimeoutMs)} s, each drive{" "}
           {(meterBudget.runDeadlineMs / 60_000).toFixed(1)} min and at most {meterBudget.maxModelTurns} model turns.
         </p>
@@ -1352,13 +1355,13 @@ export function AgentRail({
           of every figure above reads as one that gave up; it was asked to stop, and
           the report it composed is the point of asking.
         */}
-        <p data-testid="agent-budget-reserve" className="text-[0.625rem] text-zinc-600">
+        <p data-testid="agent-budget-reserve" className="text-[0.625rem] text-fg-subtle">
           The last {AGENT_REPORT_RESERVE_TURNS} model turns and the last {seconds(AGENT_REPORT_RESERVE_MS)} s are kept
           back for the report: whichever it reaches first, the run is asked once to stop and report what it has
           established. So a run that ends short of these figures was asked to stop rather than having given up, and its
           claims still cite what it read. A plan run is never asked, having no report to compose.
         </p>
-        <p data-testid="agent-budget-caveats" className="text-[0.625rem] text-zinc-600">
+        <p data-testid="agent-budget-caveats" className="text-[0.625rem] text-fg-subtle">
           Every ceiling is per drive, so a run resumed after a restart starts each of them again and these totals can
           read past a single drive's ceiling. What is counted comes from the run's ledger, which records less than the
           server charges: the schema capture's catalog reads are not itemized, a statement that failed at the database
@@ -1376,17 +1379,17 @@ export function AgentRail({
       >
         <ol data-testid="agent-timeline" aria-live="polite" className="p-2 space-y-1">
           {run.timeline.items.length === 0 && (
-            <li data-testid="agent-timeline-empty" className="p-2 text-xs text-zinc-600">
+            <li data-testid="agent-timeline-empty" className="p-2 text-xs text-fg-subtle">
               No activity yet. A run's steps appear here as they are recorded.
             </li>
           )}
           {run.timeline.items.map((item) => (
-            <li key={item.id} data-testid="agent-timeline-item" className="rounded p-2 hover:bg-white/5">
+            <li key={item.id} data-testid="agent-timeline-item" className="rounded p-2 hover:bg-fill">
               <div className="flex items-center gap-2">
                 <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", TONE_CLASSES[item.tone])} />
-                <span className="text-xs text-zinc-300">{item.headline}</span>
+                <span className="text-xs text-fg-secondary">{item.headline}</span>
               </div>
-              {item.detail !== undefined && <p className="mt-0.5 pl-3.5 text-xs text-zinc-500">{item.detail}</p>}
+              {item.detail !== undefined && <p className="mt-0.5 pl-3.5 text-xs text-fg-muted">{item.detail}</p>}
               {/*
                 Prose the MODEL wrote, rendered with the structure it wrote it in
                 (#373 review). Measured in plan mode against a live model: the closing
@@ -1526,7 +1529,7 @@ export function AgentRail({
           bound belongs to the run's rows, not to its report.
         */}
         {onShowArtifact !== undefined && run.timeline.items.some((item) => item.artifactId !== undefined) && (
-          <p data-testid="agent-report-retention" className="px-3 pb-2 text-[0.625rem] text-zinc-600">
+          <p data-testid="agent-report-retention" className="px-3 pb-2 text-[0.625rem] text-fg-subtle">
             A run&apos;s stored rows are released when the run ends, so a result can be shown only while its run is
             still going.
           </p>
@@ -1541,20 +1544,20 @@ export function AgentRail({
           and says so rather than looking checked.
         */}
         {run.timeline.report !== null && (
-          <section data-testid="agent-report" className="border-t border-white/5 p-2 space-y-2">
-            <h2 className="px-1 text-xs font-medium text-zinc-300">Report</h2>
+          <section data-testid="agent-report" className="border-t border-hairline p-2 space-y-2">
+            <h2 className="px-1 text-xs font-medium text-fg-secondary">Report</h2>
             {run.timeline.report.claims.map((claim) => (
-              <div key={claim.id} data-testid="agent-report-claim" className="rounded p-2 hover:bg-white/5">
+              <div key={claim.id} data-testid="agent-report-claim" className="rounded p-2 hover:bg-fill">
                 <QuotedBlock text={claim.quoted} testId="agent-report-claim-copy" tone="loud" />
                 <ul className="mt-1 space-y-1">
                   {claim.citations.map((citation) => (
                     <li key={citation.id} data-testid="agent-report-citation" className="pl-1.5 text-xs">
-                      <span className={citation.resolved ? "text-zinc-400" : "text-amber-400/80"}>
+                      <span className={citation.resolved ? "text-fg-tertiary" : "text-amber-400/80"}>
                         {citation.label}
                       </span>
-                      <span className="ml-1 text-zinc-600">{citation.detail}</span>
+                      <span className="ml-1 text-fg-subtle">{citation.detail}</span>
                       {citation.locator !== undefined && (
-                        <span className="ml-1 font-mono text-[0.625rem] text-zinc-500">{citation.locator}</span>
+                        <span className="ml-1 font-mono text-[0.625rem] text-fg-muted">{citation.locator}</span>
                       )}
                       {citation.quoted !== undefined && (
                         <QuotedBlock text={citation.quoted} testId="agent-citation-quoted-copy" className="mt-0.5" />
@@ -1587,7 +1590,7 @@ export function AgentRail({
         <SheetContent
           side="bottom"
           data-testid="agent-rail-sheet"
-          className="md:hidden h-[85vh] p-0 gap-0 bg-[#0a0a0a] border-t border-white/10 rounded-t-3xl overflow-hidden"
+          className="md:hidden h-[85vh] p-0 gap-0 bg-surface border-t border-hairline-strong rounded-t-3xl overflow-hidden"
         >
           <SheetHeader className="sr-only">
             <SheetTitle>Agent</SheetTitle>

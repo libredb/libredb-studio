@@ -388,10 +388,35 @@ describe("VisualExplain", () => {
     });
   });
 
+  /*
+   * Asserted on the FIRST request's own signal, never on a spy over
+   * `AbortController.prototype.abort`.
+   *
+   * That spy is global: it counts every abort anywhere in the process, including
+   * the other components this test group runs alongside — AgentRail creates its
+   * own controllers. Both a total and a delta across the click failed
+   * intermittently on full-suite runs (measured at 2 in 4 on `main`), because a
+   * foreign abort landing inside the window moved the number. A signal belongs to
+   * exactly one request, so nothing else can touch it.
+   */
   test("clicking Re-analyze after a completed run aborts the previous controller", async () => {
     const user = userEvent.setup();
-    globalThis.fetch = mockFetchStreamMulti("First analysis result.") as unknown as typeof fetch;
-    const abortSpy = spyOn(AbortController.prototype, "abort");
+    const signals: (AbortSignal | undefined)[] = [];
+    const encoder = new TextEncoder();
+    const fetchMock = mock((_url: string, init?: RequestInit) => {
+      signals.push(init?.signal ?? undefined);
+      return Promise.resolve({
+        ok: true,
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode("First analysis result."));
+            controller.close();
+          },
+        }),
+        json: () => Promise.resolve({}),
+      });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     try {
       const { queryByText } = render(<VisualExplain plan={samplePlan} query="SELECT 1" />);
@@ -401,18 +426,25 @@ describe("VisualExplain", () => {
       await waitFor(() => {
         expect(queryByText("Re-analyze")).not.toBeNull();
       });
-      expect(abortSpy).not.toHaveBeenCalled();
+      expect(signals).toHaveLength(1);
+      expect(signals[0]?.aborted).toBe(false);
 
       // abortControllerRef.current is already set from the first run, so this second
       // invocation exercises the "abort previous request" branch before issuing a new fetch.
       await user.click(queryByText("Re-analyze")!);
 
       await waitFor(() => {
-        expect(abortSpy).toHaveBeenCalledTimes(1);
-        expect((globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls.length).toBe(2);
+        // The first run's signal is aborted, and a second request went out with a
+        // signal of its own — the two halves of "supersede, then re-issue".
+        expect(signals[0]?.aborted).toBe(true);
+        expect(signals).toHaveLength(2);
+        expect(signals[1]?.aborted).toBe(false);
       });
     } finally {
-      abortSpy.mockRestore();
+      // The component aborts its live request on unmount; leaving the mock in
+      // place lets that happen against this test's own fetch rather than a
+      // neighbour's.
+      cleanup();
     }
   });
 
@@ -460,7 +492,7 @@ describe("VisualExplain", () => {
 
     const nonSqlPre = Array.from(pres).find((pre) => pre.textContent?.includes("plain block content"));
     expect(nonSqlPre).not.toBeUndefined();
-    expect(nonSqlPre!.className).toContain("bg-white/[0.02]");
+    expect(nonSqlPre!.className).toContain("bg-fill-subtle");
 
     const strongEl = Array.from(container.querySelectorAll("strong")).find((el) => el.textContent === "Important");
     expect(strongEl).not.toBeUndefined();
@@ -745,13 +777,13 @@ describe("VisualExplain", () => {
       },
     ];
     const { container } = render(<VisualExplain plan={unknownPlan} />);
-    // Unknown type uses Database icon with text-zinc-500
+    // Unknown type uses Database icon with text-fg-muted
     // Need to find the icon inside the node icon wrapper (p-1 rounded div)
-    const iconWrappers = container.querySelectorAll(".bg-white\\/5");
-    // The node icon container has bg-white/5 for non-scan types
+    const iconWrappers = container.querySelectorAll(".bg-fill");
+    // The node icon container has bg-fill for non-scan types
     let foundZincIcon = false;
     iconWrappers.forEach((wrapper) => {
-      const icon = wrapper.querySelector(".text-zinc-500");
+      const icon = wrapper.querySelector(".text-fg-muted");
       if (icon) foundZincIcon = true;
     });
     expect(foundZincIcon).toBe(true);

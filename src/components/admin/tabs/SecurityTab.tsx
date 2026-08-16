@@ -28,24 +28,24 @@ export function SecurityTab() {
   return (
     <div className="space-y-6">
       <Tabs defaultValue="masking">
-        <TabsList className="bg-transparent border-b border-white/5 rounded-none p-0 h-10 w-full justify-start">
+        <TabsList className="bg-transparent border-b border-hairline rounded-none p-0 h-10 w-full justify-start">
           <TabsTrigger
             value="masking"
-            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-zinc-500 text-xs px-4"
+            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-fg-muted text-xs px-4"
           >
             <EyeOff className="h-3.5 w-3.5" />
             {MASKING_TAB_LABEL}
           </TabsTrigger>
           <TabsTrigger
             value="access"
-            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-zinc-500 text-xs px-4"
+            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-fg-muted text-xs px-4"
           >
             <Lock className="h-3.5 w-3.5" />
             {ACCESS_TAB_LABEL}
           </TabsTrigger>
           <TabsTrigger
             value="thresholds"
-            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-zinc-500 text-xs px-4"
+            className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-fg-muted text-xs px-4"
           >
             <Activity className="h-3.5 w-3.5" />
             {THRESHOLDS_TAB_LABEL}
@@ -71,55 +71,55 @@ export function SecurityTab() {
 function AccessSummary() {
   return (
     <div className="grid gap-6 md:grid-cols-2">
-      <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-5 space-y-3">
-        <h3 className="text-sm font-bold text-zinc-300 flex items-center gap-2">
+      <div className="rounded-xl border border-hairline bg-panel p-5 space-y-3">
+        <h3 className="text-sm font-bold text-fg-secondary flex items-center gap-2">
           <Lock className="h-4 w-4 text-blue-400" />
           {ACCESS_CARD_TITLE}
         </h3>
         <div className="space-y-3 text-sm">
           <div className="flex items-center justify-between">
-            <span className="text-zinc-500">Authentication</span>
-            <span className="text-zinc-300">Environment Variable (RBAC)</span>
+            <span className="text-fg-muted">Authentication</span>
+            <span className="text-fg-secondary">Environment Variable (RBAC)</span>
           </div>
-          <Separator className="bg-white/5" />
+          <Separator className="bg-fill" />
           <div className="flex items-center justify-between">
-            <span className="text-zinc-500">API Security</span>
+            <span className="text-fg-muted">API Security</span>
             <div className="flex items-center gap-1.5">
-              <KeyRound className="h-3 w-3 text-zinc-500" />
-              <span className="text-zinc-300">JWT / HTTP-only Cookie</span>
+              <KeyRound className="h-3 w-3 text-fg-muted" />
+              <span className="text-fg-secondary">JWT / HTTP-only Cookie</span>
             </div>
           </div>
-          <Separator className="bg-white/5" />
+          <Separator className="bg-fill" />
           <div className="flex items-center justify-between">
-            <span className="text-zinc-500">Admin Access</span>
+            <span className="text-fg-muted">Admin Access</span>
             <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">ENABLED</Badge>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-zinc-500">User Access</span>
+            <span className="text-fg-muted">User Access</span>
             <Badge className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">ENABLED</Badge>
           </div>
         </div>
       </div>
 
-      <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-5 space-y-3">
-        <h3 className="text-sm font-bold text-zinc-300">Connection Security</h3>
+      <div className="rounded-xl border border-hairline bg-panel p-5 space-y-3">
+        <h3 className="text-sm font-bold text-fg-secondary">Connection Security</h3>
         <div className="space-y-3 text-sm">
           <div className="flex items-center justify-between">
-            <span className="text-zinc-500">SSL/TLS</span>
+            <span className="text-fg-muted">SSL/TLS</span>
             <Badge variant="secondary" className="text-xs">
               {SUPPORTED_LABEL}
             </Badge>
           </div>
-          <Separator className="bg-white/5" />
+          <Separator className="bg-fill" />
           <div className="flex items-center justify-between">
-            <span className="text-zinc-500">SSH Tunnel</span>
+            <span className="text-fg-muted">SSH Tunnel</span>
             <Badge variant="secondary" className="text-xs">
               {SUPPORTED_LABEL}
             </Badge>
           </div>
-          <Separator className="bg-white/5" />
+          <Separator className="bg-fill" />
           <div className="flex items-center justify-between">
-            <span className="text-zinc-500">Data Masking</span>
+            <span className="text-fg-muted">Data Masking</span>
             <Badge variant="secondary" className="text-xs">
               {CONFIGURABLE_LABEL}
             </Badge>
@@ -169,12 +169,12 @@ function ThresholdSettings() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-xl border border-white/5 bg-zinc-900/50 p-5">
-        <h3 className="text-sm font-bold text-zinc-300 mb-4 flex items-center gap-2">
+      <div className="rounded-xl border border-hairline bg-panel p-5">
+        <h3 className="text-sm font-bold text-fg-secondary mb-4 flex items-center gap-2">
           <Activity className="h-4 w-4 text-blue-400" />
           {THRESHOLDS_CARD_TITLE}
         </h3>
-        <p className="text-xs text-zinc-500 mb-6">{THRESHOLDS_DESCRIPTION}</p>
+        <p className="text-xs text-fg-muted mb-6">{THRESHOLDS_DESCRIPTION}</p>
 
         <div className="space-y-6">
           {thresholds.map((threshold, index) => {
@@ -185,8 +185,8 @@ function ThresholdSettings() {
             return (
               <div key={threshold.metric} className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-zinc-300">{threshold.label}</span>
-                  <span className="text-xs text-zinc-600 uppercase font-bold">
+                  <span className="text-sm font-medium text-fg-secondary">{threshold.label}</span>
+                  <span className="text-xs text-fg-subtle uppercase font-bold">
                     {threshold.direction === "above" ? "Alert when above" : "Alert when below"}
                   </span>
                 </div>
@@ -195,7 +195,7 @@ function ThresholdSettings() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <span className={`text-xs font-bold ${colors.warn}`}>Warning</span>
-                      <span className="text-xs font-mono text-zinc-400">
+                      <span className="text-xs font-mono text-fg-tertiary">
                         {threshold.warning}
                         {isPercent ? "%" : ""}
                       </span>
@@ -212,7 +212,7 @@ function ThresholdSettings() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <span className={`text-xs font-bold ${colors.crit}`}>Critical</span>
-                      <span className="text-xs font-mono text-zinc-400">
+                      <span className="text-xs font-mono text-fg-tertiary">
                         {threshold.critical}
                         {isPercent ? "%" : ""}
                       </span>
@@ -227,14 +227,14 @@ function ThresholdSettings() {
                   </div>
                 </div>
 
-                {index < thresholds.length - 1 && <Separator className="bg-white/5" />}
+                {index < thresholds.length - 1 && <Separator className="bg-fill" />}
               </div>
             );
           })}
         </div>
 
-        <div className="flex items-center justify-end gap-2 mt-6 pt-4 border-t border-white/5">
-          <Button variant="ghost" size="sm" className="text-zinc-500 hover:text-zinc-300" onClick={handleReset}>
+        <div className="flex items-center justify-end gap-2 mt-6 pt-4 border-t border-hairline">
+          <Button variant="ghost" size="sm" className="text-fg-muted hover:text-fg-secondary" onClick={handleReset}>
             <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
             {RESET_LABEL}
           </Button>

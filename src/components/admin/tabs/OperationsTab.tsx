@@ -183,9 +183,9 @@ export function OperationsTab() {
   if (connections.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center p-12 text-center">
-        <Database className="h-12 w-12 text-zinc-700 mb-4" />
-        <h3 className="text-lg font-semibold text-zinc-300 mb-2">No Database Connections</h3>
-        <p className="text-zinc-500 text-sm">Please add a database connection from the editor first.</p>
+        <Database className="h-12 w-12 text-fg-faint mb-4" />
+        <h3 className="text-lg font-semibold text-fg-secondary mb-2">No Database Connections</h3>
+        <p className="text-fg-muted text-sm">Please add a database connection from the editor first.</p>
       </div>
     );
   }
@@ -195,13 +195,13 @@ export function OperationsTab() {
       {/* Connection Selector */}
       <div className="flex items-center justify-between">
         <Select value={selectedConnection?.id || ""} onValueChange={handleConnectionChange}>
-          <SelectTrigger className="w-full sm:w-[280px] bg-zinc-900/50 border-white/10 text-zinc-300">
+          <SelectTrigger className="w-full sm:w-[280px] bg-panel border-hairline-strong text-fg-secondary">
             <SelectValue placeholder="Select connection">
               {selectedConnection ? (
                 <div className="flex items-center gap-2">
                   <Database className="h-4 w-4 flex-shrink-0" />
                   <span className="truncate">{selectedConnection.name}</span>
-                  <span className="text-xs text-zinc-500 hidden sm:inline">({selectedConnection.type})</span>
+                  <span className="text-xs text-fg-muted hidden sm:inline">({selectedConnection.type})</span>
                 </div>
               ) : (
                 "Select connection"
@@ -223,7 +223,7 @@ export function OperationsTab() {
         <Button
           variant="ghost"
           size="sm"
-          className="h-8 text-zinc-500 hover:text-zinc-300"
+          className="h-8 text-fg-muted hover:text-fg-secondary"
           onClick={refresh}
           disabled={loading}
         >
@@ -241,12 +241,12 @@ export function OperationsTab() {
         <div>
           <div className="flex items-center gap-2 mb-3">
             <ShieldAlert className="h-4 w-4 text-blue-400" />
-            <h3 className="text-sm font-bold text-zinc-300">Global Operations</h3>
+            <h3 className="text-sm font-bold text-fg-secondary">Global Operations</h3>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Analyze */}
             {canRun("analyze") && (
-              <div className="p-4 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+              <div className="p-4 rounded-xl border border-hairline bg-fill-subtle hover:bg-fill transition-colors">
                 <div className="flex items-start justify-between mb-3">
                   <div className="w-8 h-8 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center">
                     <Zap className="w-4 h-4 text-yellow-500" />
@@ -254,7 +254,7 @@ export function OperationsTab() {
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-xs border-white/10 hover:bg-yellow-500/10 hover:text-yellow-500"
+                    className="h-7 text-xs border-hairline-strong hover:bg-yellow-500/10 hover:text-yellow-500"
                     onClick={() => handleRunMaintenance("analyze")}
                     disabled={!!actionLoading || !selectedConnection}
                   >
@@ -262,8 +262,8 @@ export function OperationsTab() {
                     Run Analyze
                   </Button>
                 </div>
-                <h4 className="text-sm font-bold text-zinc-200 mb-1">Update Statistics</h4>
-                <p className="text-xs text-zinc-500 leading-relaxed">
+                <h4 className="text-sm font-bold text-fg mb-1">Update Statistics</h4>
+                <p className="text-xs text-fg-muted leading-relaxed">
                   Updates query planner statistics for all tables.
                 </p>
               </div>
@@ -271,7 +271,7 @@ export function OperationsTab() {
 
             {/* Vacuum */}
             {canRun("vacuum") && (
-              <div className="p-4 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+              <div className="p-4 rounded-xl border border-hairline bg-fill-subtle hover:bg-fill transition-colors">
                 <div className="flex items-start justify-between mb-3">
                   <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
                     <HardDrive className="w-4 h-4 text-blue-500" />
@@ -279,7 +279,7 @@ export function OperationsTab() {
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-xs border-white/10 hover:bg-blue-500/10 hover:text-blue-500"
+                    className="h-7 text-xs border-hairline-strong hover:bg-blue-500/10 hover:text-blue-500"
                     onClick={() => handleRunMaintenance("vacuum")}
                     disabled={!!actionLoading || !selectedConnection}
                   >
@@ -287,14 +287,14 @@ export function OperationsTab() {
                     Run Vacuum
                   </Button>
                 </div>
-                <h4 className="text-sm font-bold text-zinc-200 mb-1">Reclaim Space</h4>
-                <p className="text-xs text-zinc-500 leading-relaxed">Removes dead rows and returns space to the OS.</p>
+                <h4 className="text-sm font-bold text-fg mb-1">Reclaim Space</h4>
+                <p className="text-xs text-fg-muted leading-relaxed">Removes dead rows and returns space to the OS.</p>
               </div>
             )}
 
             {/* Reindex */}
             {canRun("reindex") && (
-              <div className="p-4 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+              <div className="p-4 rounded-xl border border-hairline bg-fill-subtle hover:bg-fill transition-colors">
                 <div className="flex items-start justify-between mb-3">
                   <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
                     <RefreshCw className="w-4 h-4 text-purple-500" />
@@ -302,7 +302,7 @@ export function OperationsTab() {
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-xs border-white/10 hover:bg-purple-500/10 hover:text-purple-500"
+                    className="h-7 text-xs border-hairline-strong hover:bg-purple-500/10 hover:text-purple-500"
                     onClick={() => handleRunMaintenance("reindex")}
                     disabled={!!actionLoading || !selectedConnection}
                   >
@@ -310,8 +310,8 @@ export function OperationsTab() {
                     Run Reindex
                   </Button>
                 </div>
-                <h4 className="text-sm font-bold text-zinc-200 mb-1">Rebuild Indexes</h4>
-                <p className="text-xs text-zinc-500 leading-relaxed">Reconstructs all indexes in the database.</p>
+                <h4 className="text-sm font-bold text-fg mb-1">Rebuild Indexes</h4>
+                <p className="text-xs text-fg-muted leading-relaxed">Reconstructs all indexes in the database.</p>
               </div>
             )}
 
@@ -332,38 +332,40 @@ export function OperationsTab() {
       {/* Tables + Sessions Split */}
       <div className="grid gap-6 md:grid-cols-2">
         {/* Table Operations */}
-        <div className="rounded-xl border border-white/5 bg-zinc-900/50">
-          <div className="p-4 border-b border-white/5 flex items-center justify-between">
+        <div className="rounded-xl border border-hairline bg-panel">
+          <div className="p-4 border-b border-hairline flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Table2 className="w-4 h-4 text-blue-400" />
-              <span className="text-xs font-bold text-zinc-300">Tables ({tables.length})</span>
+              <span className="text-xs font-bold text-fg-secondary">Tables ({tables.length})</span>
             </div>
             <Input
               placeholder="Filter..."
               value={tableSearch}
               onChange={(e) => setTableSearch(e.target.value)}
-              className="w-[140px] h-7 text-xs bg-zinc-900 border-white/10"
+              className="w-[140px] h-7 text-xs bg-raised border-hairline-strong"
             />
           </div>
           <div className="max-h-[350px] overflow-y-auto">
             {loading && tables.length === 0 ? (
               <div className="p-4 space-y-2">
                 {[...Array(5)].map((_, i) => (
-                  <Skeleton key={i} className="h-10 w-full bg-zinc-800" />
+                  <Skeleton key={i} className="h-10 w-full bg-overlay" />
                 ))}
               </div>
             ) : filteredTables.length === 0 ? (
-              <div className="p-8 text-center text-zinc-600 text-sm">No tables found.</div>
+              <div className="p-8 text-center text-fg-subtle text-sm">No tables found.</div>
             ) : (
-              <div className="divide-y divide-white/5">
+              <div className="divide-y divide-hairline">
                 {filteredTables.map((table) => (
                   <div
                     key={`${table.schemaName}.${table.tableName}`}
-                    className="group flex items-center justify-between px-4 py-2 hover:bg-white/[0.03] transition-colors"
+                    className="group flex items-center justify-between px-4 py-2 hover:bg-fill transition-colors"
                   >
                     <div className="min-w-0">
-                      <div className="text-sm font-medium text-zinc-300 truncate max-w-[160px]">{table.tableName}</div>
-                      <div className="flex items-center gap-2 text-xs text-zinc-500">
+                      <div className="text-sm font-medium text-fg-secondary truncate max-w-[160px]">
+                        {table.tableName}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-fg-muted">
                         <span className="font-mono">{table.rowCount.toLocaleString()} rows</span>
                         <span>-</span>
                         <span className="font-mono">{table.tableSize}</span>
@@ -379,7 +381,7 @@ export function OperationsTab() {
                         <Button
                           size="icon"
                           variant="ghost"
-                          className="w-7 h-7 text-zinc-500 hover:text-yellow-500"
+                          className="w-7 h-7 text-fg-muted hover:text-yellow-500"
                           title="Analyze"
                           onClick={() => handleRunMaintenance("analyze", table.tableName)}
                           disabled={!!actionLoading}
@@ -395,7 +397,7 @@ export function OperationsTab() {
                         <Button
                           size="icon"
                           variant="ghost"
-                          className="w-7 h-7 text-zinc-500 hover:text-blue-500"
+                          className="w-7 h-7 text-fg-muted hover:text-blue-500"
                           title="Vacuum"
                           onClick={() => handleRunMaintenance("vacuum", table.tableName)}
                           disabled={!!actionLoading}
@@ -416,36 +418,32 @@ export function OperationsTab() {
         </div>
 
         {/* Session Manager */}
-        <div className="rounded-xl border border-white/5 bg-zinc-900/50">
-          <div className="p-4 border-b border-white/5">
+        <div className="rounded-xl border border-hairline bg-panel">
+          <div className="p-4 border-b border-hairline">
             <div className="flex items-center gap-2 mb-3">
               <Users className="w-4 h-4 text-green-400" />
-              <span className="text-xs font-bold text-zinc-300">Sessions ({sessions.length})</span>
+              <span className="text-xs font-bold text-fg-secondary">Sessions ({sessions.length})</span>
             </div>
             <div className="grid grid-cols-4 gap-2">
-              <div className="rounded-lg bg-white/[0.03] p-2 text-center">
-                <div className="text-lg font-bold text-zinc-200 tabular-nums">{activeCount}</div>
-                <div className="text-[0.625rem] text-zinc-500 uppercase font-bold">Active</div>
+              <div className="rounded-lg bg-fill p-2 text-center">
+                <div className="text-lg font-bold text-fg tabular-nums">{activeCount}</div>
+                <div className="text-[0.625rem] text-fg-muted uppercase font-bold">Active</div>
               </div>
-              <div className="rounded-lg bg-white/[0.03] p-2 text-center">
-                <div className="text-lg font-bold text-zinc-200 tabular-nums">{idleCount}</div>
-                <div className="text-[0.625rem] text-zinc-500 uppercase font-bold">Idle</div>
+              <div className="rounded-lg bg-fill p-2 text-center">
+                <div className="text-lg font-bold text-fg tabular-nums">{idleCount}</div>
+                <div className="text-[0.625rem] text-fg-muted uppercase font-bold">Idle</div>
               </div>
-              <div className="rounded-lg bg-white/[0.03] p-2 text-center">
-                <div
-                  className={`text-lg font-bold tabular-nums ${idleInTxCount > 0 ? "text-yellow-400" : "text-zinc-200"}`}
-                >
+              <div className="rounded-lg bg-fill p-2 text-center">
+                <div className={`text-lg font-bold tabular-nums ${idleInTxCount > 0 ? "text-yellow-400" : "text-fg"}`}>
                   {idleInTxCount}
                 </div>
-                <div className="text-[0.625rem] text-zinc-500 uppercase font-bold">In TX</div>
+                <div className="text-[0.625rem] text-fg-muted uppercase font-bold">In TX</div>
               </div>
-              <div className="rounded-lg bg-white/[0.03] p-2 text-center">
-                <div
-                  className={`text-lg font-bold tabular-nums ${waitingCount > 0 ? "text-orange-400" : "text-zinc-200"}`}
-                >
+              <div className="rounded-lg bg-fill p-2 text-center">
+                <div className={`text-lg font-bold tabular-nums ${waitingCount > 0 ? "text-orange-400" : "text-fg"}`}>
                   {waitingCount}
                 </div>
-                <div className="text-[0.625rem] text-zinc-500 uppercase font-bold">Wait</div>
+                <div className="text-[0.625rem] text-fg-muted uppercase font-bold">Wait</div>
               </div>
             </div>
           </div>
@@ -453,34 +451,34 @@ export function OperationsTab() {
             {loading && sessions.length === 0 ? (
               <div className="p-4 space-y-2">
                 {[...Array(4)].map((_, i) => (
-                  <Skeleton key={i} className="h-10 w-full bg-zinc-800" />
+                  <Skeleton key={i} className="h-10 w-full bg-overlay" />
                 ))}
               </div>
             ) : sessions.length === 0 ? (
-              <div className="p-8 text-center text-zinc-600 text-sm">No active sessions found.</div>
+              <div className="p-8 text-center text-fg-subtle text-sm">No active sessions found.</div>
             ) : (
               <Table>
                 <TableHeader>
-                  <TableRow className="border-white/5 hover:bg-transparent">
-                    <TableHead className="text-xs text-zinc-500 font-bold uppercase w-[60px]">PID</TableHead>
-                    <TableHead className="text-xs text-zinc-500 font-bold uppercase">User</TableHead>
-                    <TableHead className="text-xs text-zinc-500 font-bold uppercase">State</TableHead>
-                    <TableHead className="text-xs text-zinc-500 font-bold uppercase hidden md:table-cell">
+                  <TableRow className="border-hairline hover:bg-transparent">
+                    <TableHead className="text-xs text-fg-muted font-bold uppercase w-[60px]">PID</TableHead>
+                    <TableHead className="text-xs text-fg-muted font-bold uppercase">User</TableHead>
+                    <TableHead className="text-xs text-fg-muted font-bold uppercase">State</TableHead>
+                    <TableHead className="text-xs text-fg-muted font-bold uppercase hidden md:table-cell">
                       Query
                     </TableHead>
-                    <TableHead className="text-xs text-zinc-500 font-bold uppercase">Time</TableHead>
-                    <TableHead className="text-right text-xs text-zinc-500 font-bold uppercase w-10">Act</TableHead>
+                    <TableHead className="text-xs text-fg-muted font-bold uppercase">Time</TableHead>
+                    <TableHead className="text-right text-xs text-fg-muted font-bold uppercase w-10">Act</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {sessions.map((session) => (
-                    <TableRow key={session.pid} className="group border-white/5 hover:bg-white/[0.03]">
-                      <TableCell className="font-mono text-xs text-zinc-400 py-2">{session.pid}</TableCell>
+                    <TableRow key={session.pid} className="group border-hairline hover:bg-fill">
+                      <TableCell className="font-mono text-xs text-fg-tertiary py-2">{session.pid}</TableCell>
                       <TableCell className="py-2">
-                        <span className="text-xs text-zinc-300 truncate max-w-[80px] block">{session.user}</span>
+                        <span className="text-xs text-fg-secondary truncate max-w-[80px] block">{session.user}</span>
                       </TableCell>
                       <TableCell className="py-2">{getStateBadge(session.state)}</TableCell>
-                      <TableCell className="font-mono text-xs text-zinc-500 hidden md:table-cell py-2">
+                      <TableCell className="font-mono text-xs text-fg-muted hidden md:table-cell py-2">
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -510,7 +508,7 @@ export function OperationsTab() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-6 w-6 text-zinc-600 hover:text-red-500 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
+                          className="h-6 w-6 text-fg-subtle hover:text-red-500 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
                           onClick={() => handleKillClick(session)}
                           disabled={killingPid === session.pid}
                         >
@@ -532,18 +530,15 @@ export function OperationsTab() {
 
       {/* Operation Log */}
       {operationLog.length > 0 && (
-        <div className="rounded-xl border border-white/5 bg-zinc-900/50">
-          <div className="p-4 border-b border-white/5 flex items-center gap-2">
-            <Clock className="w-4 h-4 text-zinc-500" />
-            <span className="text-xs font-bold text-zinc-300">Operation Log (this session)</span>
+        <div className="rounded-xl border border-hairline bg-panel">
+          <div className="p-4 border-b border-hairline flex items-center gap-2">
+            <Clock className="w-4 h-4 text-fg-muted" />
+            <span className="text-xs font-bold text-fg-secondary">Operation Log (this session)</span>
           </div>
-          <div className="max-h-[200px] overflow-y-auto divide-y divide-white/5">
+          <div className="max-h-[200px] overflow-y-auto divide-y divide-hairline">
             {operationLog.map((entry) => (
-              <div
-                key={entry.id}
-                className="flex items-center gap-3 px-4 py-2 text-xs hover:bg-white/[0.03] transition-colors"
-              >
-                <span className="text-zinc-600 font-mono text-xs w-[50px] shrink-0">
+              <div key={entry.id} className="flex items-center gap-3 px-4 py-2 text-xs hover:bg-fill transition-colors">
+                <span className="text-fg-subtle font-mono text-xs w-[50px] shrink-0">
                   {entry.timestamp.toLocaleTimeString([], {
                     hour: "2-digit",
                     minute: "2-digit",
@@ -551,18 +546,18 @@ export function OperationsTab() {
                 </span>
                 <Badge
                   variant="outline"
-                  className="text-[0.625rem] font-bold w-[70px] justify-center shrink-0 border-white/10"
+                  className="text-[0.625rem] font-bold w-[70px] justify-center shrink-0 border-hairline-strong"
                 >
                   {entry.type}
                 </Badge>
-                <span className="text-zinc-400 font-mono truncate">{entry.target}</span>
+                <span className="text-fg-tertiary font-mono truncate">{entry.target}</span>
                 <div className="ml-auto flex items-center gap-2 shrink-0">
                   {entry.result === "success" ? (
                     <CheckCircle2 className="w-3 h-3 text-emerald-500" />
                   ) : (
                     <XCircle className="w-3 h-3 text-red-500" />
                   )}
-                  <span className="text-zinc-600 font-mono text-xs">{entry.duration}ms</span>
+                  <span className="text-fg-subtle font-mono text-xs">{entry.duration}ms</span>
                 </div>
               </div>
             ))}
@@ -572,18 +567,18 @@ export function OperationsTab() {
 
       {/* Kill Session Confirmation Dialog */}
       <AlertDialog open={!!confirmKill} onOpenChange={() => setConfirmKill(null)}>
-        <AlertDialogContent className="bg-zinc-950 border-white/10">
+        <AlertDialogContent className="bg-surface border-hairline-strong">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-zinc-100">Terminate Session?</AlertDialogTitle>
-            <AlertDialogDescription className="text-zinc-400">
+            <AlertDialogTitle className="text-fg">Terminate Session?</AlertDialogTitle>
+            <AlertDialogDescription className="text-fg-tertiary">
               Are you sure you want to terminate session{" "}
-              <span className="font-mono font-bold text-zinc-200">{confirmKill?.pid}</span>
+              <span className="font-mono font-bold text-fg">{confirmKill?.pid}</span>
               ?
               <br />
               <br />
-              User: <span className="font-medium text-zinc-300">{confirmKill?.user}</span>
+              User: <span className="font-medium text-fg-secondary">{confirmKill?.user}</span>
               <br />
-              State: <span className="font-medium text-zinc-300">{confirmKill?.state}</span>
+              State: <span className="font-medium text-fg-secondary">{confirmKill?.state}</span>
               <br />
               <br />
               This action will forcefully end the connection and may cause data loss if the session has uncommitted
@@ -591,7 +586,7 @@ export function OperationsTab() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="border-white/10 text-zinc-400">Cancel</AlertDialogCancel>
+            <AlertDialogCancel className="border-hairline-strong text-fg-tertiary">Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirmKill} className="bg-red-600 text-white hover:bg-red-500">
               Terminate
             </AlertDialogAction>

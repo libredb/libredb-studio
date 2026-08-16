@@ -650,10 +650,16 @@ describe("AgentRail", () => {
   });
 
   /**
-   * Small print is print (#100). `text-zinc-500` on this rail's `#0a0a0a`, under the
-   * alert's own `bg-red-500/5`, computes to 3.98:1 against WCAG AA's 4.5:1 — measured
-   * from the installed Tailwind 4 palette, not estimated — and this text is 10px, so
-   * the large-text allowance does not apply. `text-zinc-400` is 7.33:1.
+   * Small print is print (#100). `text-fg-muted` — zinc-500 in the dark palette — on
+   * this rail's `bg-surface` (#0a0a0a), under the alert's own `bg-red-500/5`, computes
+   * to 3.98:1 against WCAG AA's 4.5:1 — measured from the installed Tailwind 4 palette,
+   * not estimated — and this text is 10px, so the large-text allowance does not apply.
+   * `text-fg-tertiary` (zinc-400) is 7.33:1.
+   *
+   * Stated in token names on purpose: asserting the old literal would pass trivially
+   * now that no component carries it, and the guard would silently stop guarding.
+   * The dark palette is the binding case — light puts the same zinc-500 on a near-white
+   * ground, where it clears AA.
    */
   test("the refusal's small print is not written in a colour that fails AA", async () => {
     globalThis.fetch = mock(async () =>
@@ -668,8 +674,8 @@ describe("AgentRail", () => {
     });
 
     const missing = await findByTestId("agent-model-refusal-missing");
-    expect(missing.querySelector("span")?.className).not.toContain("text-zinc-500");
-    expect(getByTestId("agent-model-refusal-action").className).not.toContain("text-zinc-500");
+    expect(missing.querySelector("span")?.className).not.toContain("text-fg-muted");
+    expect(getByTestId("agent-model-refusal-action").className).not.toContain("text-fg-muted");
   });
 
   /**

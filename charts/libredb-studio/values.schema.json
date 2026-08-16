@@ -330,7 +330,8 @@
           },
           "kind": {
             "type": "string",
-            "description": "Kubernetes resource kind for the route",
+            "description": "Kubernetes resource kind for the route. Only HTTPRoute is supported: the template renders an HTTPRoute-shaped body (path matches), which other route kinds reject",
+            "enum": ["HTTPRoute"],
             "default": "HTTPRoute"
           },
           "parentRefs": {

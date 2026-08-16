@@ -33,7 +33,7 @@ export const jsonRenderer: ValueRenderer = {
     // A JSON string keeps its raw single-line display in the grid; only the
     // detail sheet gives json-kind values the pretty treatment.
     if (typeof value === "string") {
-      return { display: value, className: "text-zinc-300" };
+      return { display: value, className: "text-fg-secondary" };
     }
     return { display: JSON.stringify(value), className: "text-blue-400/80 italic font-light" };
   },
@@ -48,10 +48,10 @@ export const jsonRenderer: ValueRenderer = {
       // otherwise display and copy with silently altered digits. Lossy inputs
       // keep the stored text as-is, whitespace preserved.
       if (stripJsonWhitespace(value) === JSON.stringify(parsed)) {
-        return { text: JSON.stringify(parsed, null, 2), className: "text-zinc-300", preserveWhitespace: true };
+        return { text: JSON.stringify(parsed, null, 2), className: "text-fg-secondary", preserveWhitespace: true };
       }
-      return { text: value, className: "text-zinc-300", preserveWhitespace: true };
+      return { text: value, className: "text-fg-secondary", preserveWhitespace: true };
     }
-    return { text: JSON.stringify(value, null, 2), className: "text-zinc-300", preserveWhitespace: true };
+    return { text: JSON.stringify(value, null, 2), className: "text-fg-secondary", preserveWhitespace: true };
   },
 };

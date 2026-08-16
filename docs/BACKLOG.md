@@ -241,6 +241,62 @@ deprecated against this entry (#288): it becomes real, or goes away in a major, 
 
 ---
 
+## Studio UI and query execution
+
+Both entries below came out of the #384 review, verified against the merged code.
+
+### U1. A very late background EXPLAIN can still land its plan on a newer run's results
+
+#384 scoped every in-flight run to its tab (`src/hooks/use-query-execution.ts`), and the plan a
+background EXPLAIN produces is committed through `commitToTab`, which drops it when the tab has moved
+on. The guard reads the run map: `isSuperseded()` is true only when an entry exists under this tab
+and carries a different query id, so an ABSENT entry counts as not superseded. That is deliberate —
+the EXPLAIN outlives its own query, and once the query has cleared itself the plan is still the right
+plan for the results on screen.
+
+The hole is that `finally` deletes the entry (`:560`). So the sequence run A completes and clears its
+slot, run B starts and completes on the same tab, then A's slow EXPLAIN finally resolves, finds no
+entry, reads as not superseded, and writes A's plan over B's. That is the exact failure the PR set out
+to close, surviving in the one window where the map cannot answer the question. Aborting does not
+cover it either: B only aborts A's controller if A's entry is still present when B starts, and by then
+it is gone.
+
+Narrow — it needs the EXPLAIN to outlast both runs — and not reproduced live; found by reading. But it
+is silent when it happens, and a plan describing the previous statement is worse than no plan.
+
+Done when the plan's ownership is decided by something that outlives the map entry — the run's own id
+compared against the last run to commit to that tab, rather than against the presence of an entry —
+with a test that resolves the EXPLAIN after a second run has finished.
+
+### U2. The rule that catches an arity change on a JSX handler is configured but not aimed at components
+
+`eslint.config.mjs:84` scopes the type-aware layer to `src/app/api/**`, `src/lib/db/**` and
+`src/lib/storage/**`. `@typescript-eslint/no-misused-promises` is already `error` there, and its
+`checksVoidReturn.attributes` default is exactly the check that catches a promise-returning function
+handed to a JSX handler that declares `() => void`.
+
+That is the shape of the defect fixed in #384's final commit: `cancelQuery` gained a `tabId?: string`
+parameter, both call sites in `src/components/Studio.tsx` still passed the function itself to a
+button's `onClick`, React filled the slot with its MouseEvent, and the Cancel button silently stopped
+cancelling. TypeScript permits it — an optional parameter still satisfies `() => void` — and the
+tests could not see it, because they called the captured prop with no arguments.
+
+Measured rather than assumed: extending the layer's `files` to `src/components/Studio.tsx` and
+restoring the defect makes ESLint flag both call sites precisely. It also reports 21 further errors in
+the same file that are not defects, mostly `onX={() => someAsyncThing()}` where nobody awaits and
+nobody needs to — a roughly 10:1 noise ratio in one file. So this is not a scope widening that can be
+merged as-is.
+
+The decision to make: accept the churn (a braced body or a `void` at each benign site, across the
+component tree) in exchange for a mechanical gate on a defect class that is invisible to both the type
+checker and the current tests, or leave the layer narrow and rely on review. Worth costing against the
+whole of `src/components/**` before choosing, since one file's ratio is not the tree's.
+
+Done when the scope is either widened with the benign sites made explicit, or the decision not to is
+recorded here with the number that justified it.
+
+---
+
 ## Authentication and security headers
 
 ### A1. Three copies of the 401 response, with two different shapes
@@ -464,8 +520,10 @@ shipped product, and the entry is deleted then and not before.
 
 ## Chart configuration surface
 
-Both entries were found on 2026-08-14 while reviewing #362, which added the Gateway API
-`HTTPRoute` template. Neither is caused by that change; both are gaps it made visible.
+These were found while reviewing #362, which added the Gateway API `HTTPRoute` template, and its
+follow-up #366. None is caused by those changes; all are gaps they made visible. They share one
+failure shape: configuration the chart accepts that produces an install which succeeds while the
+app stays unreachable.
 
 ### N1. The chart cannot expose the app on OpenShift, where `Route` is the native way in
 
@@ -512,7 +570,40 @@ documented in the chart README's values table, and leaves the app's own default 
 the variable's semantics are three-state (`true` / `false` / unset lets the app decide), so a plain
 boolean value with a `false` default would silently change behaviour for existing installs.
 
+### N3. Subpath deployment is build-time only, which is why #369 is deferred rather than scheduled
+
+[#369](https://github.com/libredb/libredb-studio/issues/369) asks to serve Studio under a path
+prefix on a shared domain — `https://example.com/libredb` next to `https://example.com/grafana`.
+`next.config.ts` sets no `basePath` and no `assetPrefix`, so there is zero support today.
+
+The constraint, recorded so nobody rediscovers it: **Next.js `basePath` is baked at build, not read
+at runtime.** Asset URLs (`/_next/static/...`) are emitted into the HTML and JS at build time and
+there is no supported runtime override, so a `BASE_PATH` env var on the prebuilt
+`ghcr.io/libredb/libredb-studio` image cannot work — the feature has to be a build arg and a
+rebuilt image. A reverse-proxy `StripPrefix` is not a workaround either: the browser asks for
+`/libredb/`, the proxy strips it, the app answers with HTML referencing `/_next/static/...` at the
+root, and that follow-up request no longer matches the `/libredb` router rule. Grafana can do this
+at runtime because it is a Go server templating its own HTML; a statically built Next.js app is
+structurally different.
+
+The surface a build-time implementation touches: roughly 40 `fetch('/api/...')` call sites, roughly
+15 `router.push('/...')`, the cookie `path: "/"` in `src/lib/auth.ts` and
+`src/app/api/auth/oidc/login/route.ts`, OIDC redirect URIs, `src/proxy.ts` matcher, the Docker
+healthcheck `GET /api/db/health`, the chart's ingress and route paths, the npm library surface, the
+E2E suite and the docs of roughly 27 distribution channels. `next/link` and the app-router `router`
+prefix automatically; `fetch`, middleware redirects and cookie paths do not.
+
+Deferred rather than scheduled because the acquisition-relevant PaaS one-click listings hand out
+subdomains, not subpaths, so no shipped channel needs it. Related sharp edge, same silent-no-op
+class as #366: `charts/libredb-studio/values.yaml` already lets a user set
+`ingress.hosts[].paths[].path` to `/libredb`, the install succeeds, and the app is unreachable.
+
+Done when a `BASE_PATH` build arg produces an image reachable under a path prefix — assets, API
+calls, auth cookie and OIDC redirect included — verified against a real path-routing proxy, or when
+the chart refuses a non-root ingress path outright and this entry records that as the answer.
+
 ---
+
 
 ## Security Phase 1 deferrals
 
@@ -1973,4 +2064,3 @@ Four of the seven claim a success nobody observed, in the same statement that st
 
 Done when every copy in the app goes through `CopyButton` (or its `writeToClipboard`), with a test
 per site that the label does not claim success when the write was refused.
-

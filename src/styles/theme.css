@@ -1,0 +1,147 @@
+/*
+ * LibreDB Studio theme layer — the ONLY place a studio surface colour is written.
+ *
+ * This file is shipped in the package (`dist/styles.css`) because
+ * `src/app/globals.css` is not: anything expressed as a global CSS rule reaches
+ * standalone studio only, so a component that resolves its colour through a token
+ * defined here would be colourless wherever the library surface is embedded. An
+ * app consuming `@libredb/studio` imports this file once, after Tailwind:
+ *
+ *   @import "tailwindcss";
+ *   @import "@libredb/studio/styles.css";
+ *
+ * Without it `var(--studio-…)` resolves to nothing, which is invalid at
+ * computed-value time: grounds fall back to transparent and hairlines to
+ * currentColor. Standalone studio is unaffected — globals.css imports it.
+ *
+ * Two ramps, one contract:
+ *
+ *   surface   canvas → sunken → surface → raised → overlay   (recessed → elevated)
+ *   text      fg-bright → fg → fg-secondary → fg-tertiary → fg-muted → fg-subtle
+ *
+ * In dark, elevation means LIGHTER. In light, elevation means WHITER, and the text
+ * ramp inverts around `fg-muted` (zinc-500), which reads correctly on both grounds
+ * and is therefore the hinge the two palettes share.
+ *
+ * The dark values are the literals the components carried before the token layer
+ * existed (`bg-[#0a0a0a]`, `border-white/5`, `text-zinc-500`, …), reproduced
+ * exactly — switching a component to a token must not change how it looks in dark.
+ */
+
+:root {
+  /* ── Surfaces (light) ─────────────────────────────────────────────────── */
+  --studio-canvas: #f4f4f5;
+  --studio-sunken: #f0f0f1;
+  --studio-surface: #fafafa;
+  --studio-raised: #ffffff;
+  --studio-overlay: #ffffff;
+  /* Translucent card ground — the `bg-zinc-900/50` of the dark theme. */
+  --studio-panel: rgb(255 255 255 / 0.6);
+
+  /* ── Hairlines ────────────────────────────────────────────────────────── */
+  --studio-hairline: rgb(9 9 11 / 0.08);
+  --studio-hairline-strong: rgb(9 9 11 / 0.14);
+  /*
+   * Above the hairlines: the edge of a control the user is meant to SEE — a
+   * checkbox, a selected card, an outline button — and the heavier fill that
+   * goes with it. `edge-hover` is its hover step.
+   */
+  --studio-edge: rgb(9 9 11 / 0.22);
+  --studio-edge-hover: rgb(9 9 11 / 0.38);
+
+  /* ── Interactive fills (hover / selected / inset) ─────────────────────── */
+  --studio-fill-subtle: rgb(9 9 11 / 0.025);
+  --studio-fill: rgb(9 9 11 / 0.05);
+  --studio-fill-strong: rgb(9 9 11 / 0.09);
+
+  /*
+   * ── Scrollbar ──────────────────────────────────────────────────────────
+   * Its own pair rather than a ramp step. The thumb has to stay legible over
+   * the editor ground in both themes: the hairlines are far too faint, and the
+   * text ramp — the first thing tried — is too loud, so in dark it turned a
+   * chrome detail into the brightest thing on a quiet panel. These are the
+   * values the editor already used, kept exactly.
+   */
+  --studio-scrollbar: #d4d4d8;
+  --studio-scrollbar-hover: #a1a1aa;
+
+  /* ── Text ramp ────────────────────────────────────────────────────────── */
+  --studio-fg-bright: #09090b;
+  --studio-fg: #18181b;
+  --studio-fg-secondary: #27272a;
+  --studio-fg-tertiary: #3f3f46;
+  --studio-fg-muted: #71717a;
+  --studio-fg-subtle: #a1a1aa;
+  /* Below the ramp: decoration and hints — separator dots, empty-state subtext. */
+  --studio-fg-faint: #d4d4d8;
+}
+
+.dark {
+  /* ── Surfaces (dark) ──────────────────────────────────────────────────── */
+  --studio-canvas: #050505;
+  --studio-sunken: #080808;
+  --studio-surface: #0a0a0a;
+  --studio-raised: #0d0d0d;
+  --studio-overlay: #111111;
+  --studio-panel: rgb(24 24 27 / 0.5);
+
+  /* ── Hairlines ────────────────────────────────────────────────────────── */
+  --studio-hairline: rgb(255 255 255 / 0.05);
+  --studio-hairline-strong: rgb(255 255 255 / 0.1);
+  --studio-edge: rgb(255 255 255 / 0.2);
+  --studio-edge-hover: rgb(255 255 255 / 0.4);
+
+  /* ── Interactive fills ────────────────────────────────────────────────── */
+  --studio-fill-subtle: rgb(255 255 255 / 0.02);
+  --studio-fill: rgb(255 255 255 / 0.05);
+  --studio-fill-strong: rgb(255 255 255 / 0.1);
+
+  /* ── Scrollbar ────────────────────────────────────────────────────────── */
+  --studio-scrollbar: #262626;
+  --studio-scrollbar-hover: #404040;
+
+  /* ── Text ramp ────────────────────────────────────────────────────────── */
+  --studio-fg-bright: #ffffff;
+  --studio-fg: #e4e4e7;
+  --studio-fg-secondary: #d4d4d8;
+  --studio-fg-tertiary: #a1a1aa;
+  --studio-fg-muted: #71717a;
+  --studio-fg-subtle: #52525b;
+  --studio-fg-faint: #3f3f46;
+}
+
+/*
+ * `inline` so the generated utility emits `var(--studio-surface)` rather than the
+ * value resolved at build time — without it every utility would freeze whichever
+ * palette was in scope when Tailwind compiled, and `.dark` would change nothing.
+ *
+ * These are colour tokens, so naming them `text-fg-muted` is safe: the known
+ * tailwind-merge hazard is `text-*` tokens that carry a FONT SIZE, which twMerge
+ * misreads as colours and silently strips. A `text-*` token that really is a
+ * colour is exactly what twMerge expects.
+ */
+@theme inline {
+  --color-canvas: var(--studio-canvas);
+  --color-sunken: var(--studio-sunken);
+  --color-surface: var(--studio-surface);
+  --color-raised: var(--studio-raised);
+  --color-overlay: var(--studio-overlay);
+  --color-panel: var(--studio-panel);
+
+  --color-hairline: var(--studio-hairline);
+  --color-hairline-strong: var(--studio-hairline-strong);
+  --color-edge: var(--studio-edge);
+  --color-edge-hover: var(--studio-edge-hover);
+
+  --color-fill-subtle: var(--studio-fill-subtle);
+  --color-fill: var(--studio-fill);
+  --color-fill-strong: var(--studio-fill-strong);
+
+  --color-fg-bright: var(--studio-fg-bright);
+  --color-fg: var(--studio-fg);
+  --color-fg-secondary: var(--studio-fg-secondary);
+  --color-fg-tertiary: var(--studio-fg-tertiary);
+  --color-fg-muted: var(--studio-fg-muted);
+  --color-fg-subtle: var(--studio-fg-subtle);
+  --color-fg-faint: var(--studio-fg-faint);
+}
