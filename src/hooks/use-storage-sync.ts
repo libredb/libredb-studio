@@ -42,9 +42,27 @@ export function useStorageSync(): StorageSyncState {
   const [syncError, setSyncError] = useState<string | null>(null);
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * The retry timer is NOT the debounce timer.
+   *
+   * They overlap: a push takes as long as the network does, and the user keeps
+   * typing while it is in flight, so by the time a failure comes back the
+   * debounce slot usually holds a fresh 500ms timer for whatever they just
+   * edited. Sharing one ref made the retry clear that timer and put its own
+   * backoff — up to 30s — in its place, so a single failed push could hold a
+   * later, unrelated, perfectly healthy edit off the server for half a minute.
+   */
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingCollectionsRef = useRef<Set<string>>(new Set());
   const retryDelayRef = useRef(RETRY_BASE_MS);
   const serverModeRef = useRef(false);
+  /**
+   * Whether this hook is still mounted. A push that is in flight when the user
+   * navigates away resolves AFTER teardown, and the failure branch would arm a
+   * timer no cleanup can reach — leaving a dead hook retrying, forever, on a
+   * backoff that settles at one request every 30 seconds.
+   */
+  const mountedRef = useRef(true);
 
   // ── Push a collection to server (debounced) ──
   /** Resolves to whether the collection actually reached the server. */
@@ -94,10 +112,14 @@ export function useStorageSync(): StorageSyncState {
         for (const col of failed) {
           pendingCollectionsRef.current.add(col);
         }
-        if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+        // Requeued above regardless, so the write is still recoverable if this
+        // hook mounts again; what must not happen is arming a timer after
+        // teardown, when nothing is left to clear it.
+        if (!mountedRef.current) return;
+        if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
         const delay = retryDelayRef.current;
         retryDelayRef.current = Math.min(delay * 2, RETRY_MAX_MS);
-        debounceTimerRef.current = setTimeout(() => flushPendingRef.current(), delay);
+        retryTimerRef.current = setTimeout(() => flushPendingRef.current(), delay);
       } else {
         retryDelayRef.current = RETRY_BASE_MS;
       }
@@ -202,6 +224,19 @@ export function useStorageSync(): StorageSyncState {
     }
   }, []);
 
+  // ── Lifecycle: one place that owns the timers ──
+  // Assigning `true` rather than relying on the ref's initial value is what makes
+  // a remount (StrictMode's double-invoke, or a real one) work: the ref survives
+  // the teardown that set it false.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
+  }, []);
+
   // ── Initialize: discover storage mode ──
   useEffect(() => {
     let cancelled = false;
@@ -250,12 +285,9 @@ export function useStorageSync(): StorageSyncState {
     }
 
     window.addEventListener("libredb-storage-change", handleStorageChange);
-    return () => {
-      window.removeEventListener("libredb-storage-change", handleStorageChange);
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-      }
-    };
+    // Timers are torn down by the lifecycle effect above, not here: a retry can
+    // be armed after this effect's cleanup has already run.
+    return () => window.removeEventListener("libredb-storage-change", handleStorageChange);
   }, [isServerMode, schedulePush]);
 
   return { isServerMode, isSyncing, isReady, lastSyncedAt, syncError };
