@@ -1,19 +1,35 @@
 {{- $fullName := include "libredb-studio.fullname" . }}
 {{- $namespace := .Release.Namespace -}}
-{{- range $name, $route := .Values.route }}
+{{- /*
+  `labels` and `annotations` directly under `route` are shared across every
+  route rather than route names of their own, so the range below skips them.
+*/ -}}
+{{- $reserved := list "labels" "annotations" -}}
+{{- $routeValues := .Values.route | default dict -}}
+{{- $sharedLabels := deepCopy (get $routeValues "labels" | default dict) -}}
+{{- $sharedAnnotations := deepCopy (get $routeValues "annotations" | default dict) -}}
+{{- range $name, $route := $routeValues }}
+{{- if not (has $name $reserved) }}
 {{- if $route.enabled }}
+{{- if not $route.parentRefs }}
+{{- fail (printf "route.%s is enabled but sets no parentRefs: an HTTPRoute attached to no Gateway is accepted by the API server and routes nothing, so the install would succeed with the app unreachable. parentRefs cannot be defaulted because the Gateway to attach to is specific to this cluster's Gateway API install (its name, namespace and listener). Set route.%s.parentRefs, e.g. --set 'route.%s.parentRefs[0].name=traefik-gateway' --set 'route.%s.parentRefs[0].namespace=traefik' --set 'route.%s.parentRefs[0].sectionName=websecure', or set route.%s.enabled=false" $name $name $name $name $name $name) }}
+{{- end }}
+{{- $labels := merge (dict) (deepCopy ($route.labels | default dict)) (deepCopy $sharedLabels) }}
+{{- $annotations := merge (dict) (deepCopy ($route.annotations | default dict)) (deepCopy $sharedAnnotations) }}
 ---
 apiVersion: {{ $route.apiVersion | default "gateway.networking.k8s.io/v1" }}
 kind: {{ $route.kind | default "HTTPRoute" }}
 metadata:
   name: {{ $fullName }}{{ if ne $name "main" }}-{{ $name }}{{ end }}
   namespace: {{ $namespace }}
+  {{- /*
+    Merged rather than concatenated: a user-supplied label that collides with a
+    chart label would otherwise be emitted as a duplicate YAML mapping key, which
+    the API server rejects. The chart labels win.
+  */}}
   labels:
-    {{- include "libredb-studio.labels" $ | nindent 4 }}
-    {{- with $route.labels }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
-  {{- with $route.annotations }}
+    {{- toYaml (merge (include "libredb-studio.labels" $ | fromYaml) $labels) | nindent 4 }}
+  {{- with $annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
@@ -52,5 +68,6 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}

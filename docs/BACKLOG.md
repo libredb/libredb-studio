@@ -464,8 +464,10 @@ shipped product, and the entry is deleted then and not before.
 
 ## Chart configuration surface
 
-Both entries were found on 2026-08-14 while reviewing #362, which added the Gateway API
-`HTTPRoute` template. Neither is caused by that change; both are gaps it made visible.
+These were found while reviewing #362, which added the Gateway API `HTTPRoute` template, and its
+follow-up #366. None is caused by those changes; all are gaps they made visible. They share one
+failure shape: configuration the chart accepts that produces an install which succeeds while the
+app stays unreachable.
 
 ### N1. The chart cannot expose the app on OpenShift, where `Route` is the native way in
 
@@ -512,7 +514,40 @@ documented in the chart README's values table, and leaves the app's own default 
 the variable's semantics are three-state (`true` / `false` / unset lets the app decide), so a plain
 boolean value with a `false` default would silently change behaviour for existing installs.
 
+### N3. Subpath deployment is build-time only, which is why #369 is deferred rather than scheduled
+
+[#369](https://github.com/libredb/libredb-studio/issues/369) asks to serve Studio under a path
+prefix on a shared domain — `https://example.com/libredb` next to `https://example.com/grafana`.
+`next.config.ts` sets no `basePath` and no `assetPrefix`, so there is zero support today.
+
+The constraint, recorded so nobody rediscovers it: **Next.js `basePath` is baked at build, not read
+at runtime.** Asset URLs (`/_next/static/...`) are emitted into the HTML and JS at build time and
+there is no supported runtime override, so a `BASE_PATH` env var on the prebuilt
+`ghcr.io/libredb/libredb-studio` image cannot work — the feature has to be a build arg and a
+rebuilt image. A reverse-proxy `StripPrefix` is not a workaround either: the browser asks for
+`/libredb/`, the proxy strips it, the app answers with HTML referencing `/_next/static/...` at the
+root, and that follow-up request no longer matches the `/libredb` router rule. Grafana can do this
+at runtime because it is a Go server templating its own HTML; a statically built Next.js app is
+structurally different.
+
+The surface a build-time implementation touches: roughly 40 `fetch('/api/...')` call sites, roughly
+15 `router.push('/...')`, the cookie `path: "/"` in `src/lib/auth.ts` and
+`src/app/api/auth/oidc/login/route.ts`, OIDC redirect URIs, `src/proxy.ts` matcher, the Docker
+healthcheck `GET /api/db/health`, the chart's ingress and route paths, the npm library surface, the
+E2E suite and the docs of roughly 27 distribution channels. `next/link` and the app-router `router`
+prefix automatically; `fetch`, middleware redirects and cookie paths do not.
+
+Deferred rather than scheduled because the acquisition-relevant PaaS one-click listings hand out
+subdomains, not subpaths, so no shipped channel needs it. Related sharp edge, same silent-no-op
+class as #366: `charts/libredb-studio/values.yaml` already lets a user set
+`ingress.hosts[].paths[].path` to `/libredb`, the install succeeds, and the app is unreachable.
+
+Done when a `BASE_PATH` build arg produces an image reachable under a path prefix — assets, API
+calls, auth cookie and OIDC redirect included — verified against a real path-routing proxy, or when
+the chart refuses a non-root ingress path outright and this entry records that as the answer.
+
 ---
+
 
 ## Security Phase 1 deferrals
 
@@ -1973,4 +2008,3 @@ Four of the seven claim a success nobody observed, in the same statement that st
 
 Done when every copy in the app goes through `CopyButton` (or its `writeToClipboard`), with a test
 per site that the label does not claim success when the write was refused.
-

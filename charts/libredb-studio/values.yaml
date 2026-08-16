@@ -284,13 +284,23 @@ ingress:
   #      - libredb.local
 
 route:
+  # -- Labels added to every enabled route (a per-route `labels` entry with the
+  # same key wins). Because `labels` and `annotations` are read as shared
+  # settings here, they are reserved key names and cannot be used as route names.
+  labels: {}
+  # -- Annotations added to every enabled route (a per-route `annotations` entry
+  # with the same key wins). Reserved key name, as `labels` above.
+  annotations: {}
+
   main:
     # -- Enables or disables the route
     enabled: false
 
     # -- Set the route apiVersion, e.g. gateway.networking.k8s.io/v1 or gateway.networking.k8s.io/v1alpha2
     apiVersion: gateway.networking.k8s.io/v1
-    # -- Set the route kind
+    # -- Set the route kind. `HTTPRoute` is the only accepted value (enforced by
+    # values.schema.json): only an HTTPRoute-shaped body is rendered, so any other
+    # kind would produce a manifest the API server rejects.
     kind: HTTPRoute
 
     annotations: {}
@@ -298,8 +308,13 @@ route:
 
     hostnames: []
     # - libredb.local
+    # -- Required whenever this route is enabled: rendering fails without it. It
+    # cannot be defaulted because the Gateway to attach to is specific to each
+    # cluster's Gateway API install (name, namespace and listener).
     parentRefs: []
-    # - name: gateway
+    # - name: traefik-gateway
+    #   namespace: traefik
+    #   sectionName: websecure
 
     matches:
       - path:
