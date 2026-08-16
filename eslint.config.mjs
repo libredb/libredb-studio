@@ -1,17 +1,36 @@
+import { fixupConfigRules } from "@eslint/compat";
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
 import nextTypescript from "eslint-config-next/typescript";
 import tseslint from "typescript-eslint";
 
+// ESLint 10 removed the deprecated rule-context methods (`context.getFilename()`
+// and friends). eslint-config-next 16.3.1 still depends on eslint-plugin-react
+// ^7.37.0, whose newest release (7.37.5, April 2025) calls them - so loading any
+// of its rules under ESLint 10 throws
+// `TypeError: contextOrFilename.getFilename is not a function`
+// before a single file is linted. eslint-config-next's own peerDependency range
+// (`eslint: >=9.0.0`) does not reflect this; the transitive plugin is the real
+// constraint.
+//
+// `fixupConfigRules` is ESLint's own sanctioned shim (@eslint/compat, maintained
+// by the ESLint team) for exactly this case: it wraps each rule so the removed
+// context methods resolve against the modern SourceCode API. It is a no-op for
+// rules that already use the new API, so it stays harmless as plugins catch up.
+//
+// Remove this wrapper once eslint-config-next depends on an eslint-plugin-react
+// that declares `eslint: ^10` - at that point these two lines can go back to a
+// bare spread. Tracked in docs/BACKLOG.md.
 const eslintConfig = defineConfig([
-  ...nextCoreWebVitals,
-  ...nextTypescript,
+  ...fixupConfigRules(nextCoreWebVitals),
+  ...fixupConfigRules(nextTypescript),
   // snap-payload/ is the local snap-build scratch dir (see snap/snapcraft.yaml);
   // desktop/src-tauri/{payload,target,bin}/ are the same kind of scratch for the
   // desktop AppImage build (scripts/build-desktop-appimage.sh stages the whole
   // standalone payload, node_modules included, in there);
   // .claude/ holds agent worktrees whose checkouts (and .next build output)
-  // must not be linted from this checkout;
+  // must not be linted from this checkout, and .loop/ is the same kind of
+  // gitignored agent scratch (maintainer-loop live state and its archives);
   // public/monaco/** is the Monaco AMD bundle staged from node_modules by
   // scripts/copy-monaco.mjs (issue #247) — 16 MB of minified vendor JS that
   // exhausts ESLint's heap, and it only appears once something has built
@@ -26,6 +45,7 @@ const eslintConfig = defineConfig([
     "desktop/src-tauri/target/**",
     "desktop/src-tauri/bin/**",
     ".claude/**",
+    ".loop/**",
     "next-env.d.ts",
   ]),
   {
@@ -50,18 +70,6 @@ const eslintConfig = defineConfig([
       // only ones this project enables), so there is nothing to disable on that side — ESLint is
       // already the sole enforcer.
       "react/no-danger": "error",
-    },
-  },
-  {
-    // src/components/ui/chart.tsx is an upstream shadcn primitive that emits CSS custom
-    // properties (chart colors) from a developer-supplied typed config via
-    // dangerouslySetInnerHTML; it is kept upstream-pure by repository convention (see the
-    // src/components/ui/** overrides in .oxlintrc.json for the same policy) and is referenced
-    // nowhere else in the codebase. Scoped to this one file, not to src/components/ui/**, so a
-    // sink added to any other ui/* file still fails.
-    files: ["src/components/ui/chart.tsx"],
-    rules: {
-      "react/no-danger": "off",
     },
   },
   // Narrow type-aware safety net for the async-heavy code paths (API routes,

@@ -1001,6 +1001,42 @@ describe("ResultsGrid", () => {
     expect(container.querySelector("ul")).toBeNull();
   });
 
+  // ── Sorting actually reorders rows ────────────────────────────────────────
+
+  /**
+   * TanStack Table 9 assembles a table from features that are opted into
+   * explicitly, and a row model that is not registered does not error - the
+   * table simply never applies it. So ResultsGrid dropping
+   * `sortedRowModel: createSortedRowModel()` from its feature set would leave
+   * every sort click updating the header's arrow and accessible name while the
+   * rows below stayed in source order, and every other test here would still
+   * pass: they assert the *indicator*, never the *order*.
+   *
+   * This test reads the rendered order back. Descending is the direction used
+   * because the fixture (Alice, Bob, Charlie) is already in ascending order -
+   * an ascending sort is indistinguishable from no sort at all.
+   */
+  test("sorting reorders the rendered rows, not just the header indicator", () => {
+    const { getAllByRole, container } = render(React.createElement(ResultsGrid, { result: mockResult }));
+
+    // `:not([data-testid])` excludes the mocked ResultCard above, which also
+    // carries data-index; only the desktop table's rows come off the table
+    // instance, and they are the ones the row model orders.
+    const renderedRows = () =>
+      Array.from(container.querySelectorAll("[data-index]:not([data-testid])")).map((row) => row.textContent ?? "");
+
+    expect(renderedRows()).toHaveLength(3);
+    expect(renderedRows()[0]).toContain("Alice");
+
+    fireEvent.click(getAllByRole("button", { name: "name" })[0]);
+    fireEvent.click(getAllByRole("button", { name: "name, sorted ascending" })[0]);
+
+    const descending = renderedRows();
+    expect(descending[0]).toContain("Charlie");
+    expect(descending[1]).toContain("Bob");
+    expect(descending[2]).toContain("Alice");
+  });
+
   // ── A11y semantics (#100): keyboard-reachable interactive elements ────────
 
   describe("a11y semantics", () => {
