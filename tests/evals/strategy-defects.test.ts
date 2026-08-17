@@ -112,6 +112,9 @@ describe("#341 F2: the run investigates competently and finishes without composi
     const drive = await run.drive([
       callsTool("run_read_query", { sql: AGGREGATE, rationale: "count per department" }),
       answersProse("Engineering has the most employees, at 41."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what this scenario is about.
+      answersProse("Engineering has the most employees, at 41."),
     ]);
 
     expect(drive.status).toBe("succeeded");
@@ -124,6 +127,9 @@ describe("#341 F2: the run investigates competently and finishes without composi
 
     const drive = await run.drive([
       callsTool("run_read_query", { sql: AGGREGATE, rationale: "count per department" }),
+      answersProse("Engineering has the most employees, at 41."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what this scenario is about.
       answersProse("Engineering has the most employees, at 41."),
     ]);
 

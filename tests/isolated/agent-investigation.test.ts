@@ -387,6 +387,8 @@ describe("a fresh run drives the investigation arc", () => {
       callsTool("inspect_schema", { schema: "public" }),
       callsTool("inspect_plan", { sql: "SELECT id FROM orders" }, "call_2"),
       answersProse("that is enough"),
+      // Reminded once after a reading, the model narrates again rather than reporting.
+      answersProse("that is enough"),
     );
 
     const result = await runInvestigation(run.runId, {
@@ -433,7 +435,11 @@ describe("a fresh run drives the investigation arc", () => {
   test("arguments the tool schema refuses become a typed answer, not a throw", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b);
-    const script = scriptedModel(callsTool("run_read_query", { sql: 42 }), answersProse("understood"));
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: 42 }),
+      answersProse("understood"),
+      answersProse("understood"),
+    );
 
     const result = await runInvestigation(run.runId, {
       service: b.service,
@@ -466,6 +472,8 @@ describe("a fresh run drives the investigation arc", () => {
       callsTool("run_read_query", { sql: 42 }),
       callsTool("run_read_query", { sql: 42 }, "call_2"),
       answersProse("understood"),
+      // Reminded once after a reading, the model narrates again rather than reporting.
+      answersProse("understood"),
     );
 
     await runInvestigation(run.runId, {
@@ -488,7 +496,11 @@ describe("a fresh run drives the investigation arc", () => {
     // no other assertion here would notice, because the fixture accepts any body.
     const b = boot(freshDataDir());
     const run = await startRun(b);
-    const script = scriptedModel(callsTool("run_read_query", { sql: 42 }), answersProse("understood"));
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: 42 }),
+      answersProse("understood"),
+      answersProse("understood"),
+    );
 
     await runInvestigation(run.runId, {
       service: b.service,
@@ -616,6 +628,8 @@ describe("the model is told what a citation IS, not only that it must cite (#350
     const run = await startRun(b);
     const script = scriptedModel(
       callsTool("run_read_query", { sql: "SELECT id FROM orders", rationale: "size it" }),
+      answersProse("done"),
+      // Reminded once after a reading, the model narrates again rather than reporting.
       answersProse("done"),
     );
 
@@ -1033,7 +1047,11 @@ describe("planning mode runs no statement of the user's", () => {
   test("a tool the run was never offered is refused without reaching the database", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "planning");
-    const script = scriptedModel(callsTool("run_read_query", { sql: "SELECT 1" }), answersProse("understood"));
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT 1" }),
+      answersProse("understood"),
+      answersProse("understood"),
+    );
 
     const result = await runInvestigation(run.runId, {
       service: b.service,
@@ -2443,6 +2461,8 @@ describe("planning mode runs no statement of the user's", () => {
     const script = scriptedModel(
       callsTool("present_answer", { artifact: "corr_1", presentation: { kind: "table" } }),
       answersProse("understood"),
+      // Reminded once after a reading, the model narrates again rather than reporting.
+      answersProse("understood"),
     );
 
     const result = await runInvestigation(run.runId, {
@@ -3171,6 +3191,8 @@ describe("a report may only cite what the run produced", () => {
         claims: [{ claim: "Everything is fine.", evidence: [{ source: "artifact", correlationId: "corr_invented" }] }],
       }),
       answersProse("I cannot support that claim."),
+      // Reminded once after a reading, the model narrates again rather than reporting.
+      answersProse("I cannot support that claim."),
     );
 
     const result = await runInvestigation(run.runId, {
@@ -3599,6 +3621,8 @@ describe("the handover an answer records comes from the run's own setting", () =
       callsTool("run_read_query", { sql: "SELECT id FROM orders", rationale: "the question, in SQL" }),
       presentsTheRead(),
       answersProse("done"),
+      // Reminded once after a reading, the model narrates again rather than reporting.
+      answersProse("done"),
     );
 
     await runInvestigation(run.runId, {
@@ -3643,6 +3667,8 @@ describe("the handover an answer records comes from the run's own setting", () =
       callsTool("run_read_query", { sql: "SELECT id FROM orders", rationale: "the question, in SQL" }),
       presentsTheRead("call_answer_1"),
       presentsTheRead("call_answer_2"),
+      answersProse("done"),
+      // Reminded once after a reading, the model narrates again rather than reporting.
       answersProse("done"),
     );
 
@@ -3734,6 +3760,10 @@ describe("a presentation the model serialized reaches the tool through the SDK",
           JSON.stringify({ artifact: correlationIdIn(turn.transcript), presentation: SERIALIZED_CHART }),
           "call_answer",
         ),
+      answersProse("done"),
+      // Reminded once that a run reports by CALLING compose_report, this model
+      // narrates again: the answer is what this case is about, and it is already on
+      // the ledger by then.
       answersProse("done"),
     );
 

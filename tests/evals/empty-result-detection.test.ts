@@ -171,6 +171,9 @@ describe("the empty-result case can still fail on the defect it was written for"
     const drive = await run.drive([
       callsTool("run_read_query", { sql: COUNT_UNNAMED, rationale: "count them" }),
       answersProse("None of them is missing a name."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what these scenarios assert.
+      answersProse("None of them is missing a name."),
     ]);
 
     expect(summarise(EMPTY, drive).verdict).toBe("unanswered (no-report)");

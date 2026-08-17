@@ -249,6 +249,9 @@ describe("the tools belong to the workflow, not to the model", () => {
         return chatToolCallStream("compare_plans", JSON.stringify({ before: "a", after: "b" }), "call_compare");
       },
       answersProse("There is nothing here I can compare."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what these scenarios assert.
+      answersProse("There is nothing here I can compare."),
     ]);
 
     // Refused by the OFFERED set, before any argument was looked at — and the run

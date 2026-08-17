@@ -329,6 +329,9 @@ describe("an engine that cannot serve a reading", () => {
         expect(turn.transcript).toContain("performance_schema is not enabled");
         return answersProse("This server keeps no slow-query statistics.")(turn);
       },
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating.
+      answersProse("This server keeps no slow-query statistics."),
     ]);
 
     expect(drive.kinds).toEqual(["run-started", "tool-invoked", "tool-refused", "closing-statement", "run-finished"]);

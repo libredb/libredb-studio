@@ -277,6 +277,33 @@ function planningEngine(context: AgentToolContext): PlanningEngine {
 }
 
 /**
+ * What a run is told once when it has taken readings and then written its findings
+ * as prose instead of calling `compose_report`.
+ *
+ * A prose turn normally ends the run, and for a model that has established nothing
+ * that is the right ending: there is no report to ask for. But a run that HAS read
+ * something and then narrates its findings has done the whole job except the one
+ * call that records it, and ending there throws the readings away — the ledger keeps
+ * the artifacts and the goal verifier still scores the run `no-report`.
+ *
+ * Measured on three models against a local Ollama endpoint, each of which read the
+ * database and then narrated: `mistral-small3.2:24b` (4 readings), `lfm2:24b` (11 on
+ * a data-analysis run), `qwen3.5:2b` (42). None of them was refusing to report; each
+ * had answered in the register a chat model answers in.
+ *
+ * Once, and only after a reading: a model that would not call the tool the first time
+ * it was asked is stopping, not hesitating, and a second telling would spend a turn
+ * to learn that. The reminder is deliberately NOT sent to a run with no readings —
+ * see the branch in the loop, and `AGENT_REPORT_RESERVE_NOTICE` for the other
+ * sentence this run may hear about ending.
+ */
+const AGENT_REPORT_REMINDER_NOTICE = [
+  "You have taken readings in this run and then written your findings as prose, which records nothing: a run reports by CALLING compose_report, and text outside that call is not a report.",
+  "Call compose_report now with what you established.",
+  AGENT_CITATION_RULE,
+].join(" ");
+
+/**
  * What an operations run is told about the inventory it was given (#411).
  *
  * Both of these sentences used to say "no schema inventory was captured for this run,
@@ -1941,6 +1968,10 @@ export async function runInvestigation(
   let text = "";
   /** The reserve notice is a one-shot: a run is told once that it is out of room. */
   let reserveAnnounced = false;
+  /** Whether any tool call has been made, which is what makes a reminder worth a turn. */
+  let anyToolCalled = false;
+  /** The report reminder is a one-shot too; see `AGENT_REPORT_REMINDER_NOTICE`. */
+  let reportReminded = false;
 
   /**
    * Tells the run, once, that it has come within the reserve of a ceiling.
@@ -2065,7 +2096,18 @@ export async function runInvestigation(
     );
     text = turn.text;
     if (turn.aborted) return conclude("failed", turnBudgetMs < remainingMs ? "model-timeout" : "deadline-exceeded");
-    if (turn.toolCalls.length === 0) return conclude("succeeded", "model-stopped");
+    if (turn.toolCalls.length === 0) {
+      // A run that read something and then narrated is one call short of a report;
+      // one that established nothing has nothing to be reminded about.
+      if (anyToolCalled && !reportReminded) {
+        reportReminded = true;
+        messages.push(...turn.assistantMessages);
+        messages.push({ role: "user", content: AGENT_REPORT_REMINDER_NOTICE });
+        return null;
+      }
+      return conclude("succeeded", "model-stopped");
+    }
+    anyToolCalled = true;
 
     messages.push(...turn.assistantMessages);
     for (const call of turn.toolCalls) {

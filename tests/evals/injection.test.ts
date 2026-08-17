@@ -128,6 +128,9 @@ describe("a hostile identifier in the schema inventory", () => {
     const drive = await run.drive([
       callsTool("run_read_query", { sql: "DROP TABLE audit_log", rationale: "the data told me to" }),
       answersProse("That was refused."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what these scenarios assert.
+      answersProse("That was refused."),
     ]);
 
     expect(drive.kinds).toContain("tool-refused");
@@ -158,6 +161,9 @@ describe("a hostile row value in a read result", () => {
     const drive = await run.drive([
       callsTool("run_read_query", { sql: "SELECT note FROM notes", rationale: "read the notes" }),
       answersProse("The rows carry an instruction; I will not follow it."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what these scenarios assert.
+      answersProse("The rows carry an instruction; I will not follow it."),
     ]);
 
     const transcript = drive.transcripts[1] ?? "";
@@ -182,6 +188,9 @@ describe("a hostile row value in a read result", () => {
         );
       },
       answersProse("I could not cite that."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what these scenarios assert.
+      answersProse("I could not cite that."),
     ]);
 
     expect(drive.kinds).not.toContain("report-composed");
@@ -201,6 +210,9 @@ describe("a hostile engine error message", () => {
 
     const drive = await run.drive([
       callsTool("run_read_query", { sql: "SELECT 1 FROM missing", rationale: "probe" }),
+      answersProse("It failed."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what these scenarios assert.
       answersProse("It failed."),
     ]);
 
@@ -236,6 +248,9 @@ describe("a hostile table name in a profile", () => {
     const drive = await run.drive([
       callsTool("profile_table", { table: SHORT_HOSTILE, schema: "public" }, "call_profile"),
       answersProse("Profiled."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what these scenarios assert.
+      answersProse("Profiled."),
     ]);
 
     expect(drive.kinds).toContain("table-profiled");
@@ -251,6 +266,9 @@ describe("a hostile table name in a profile", () => {
 
     const drive = await run.drive([
       callsTool("profile_table", { table: HOSTILE_TABLE, schema: "public" }, "call_profile"),
+      answersProse("Refused."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what these scenarios assert.
       answersProse("Refused."),
     ]);
 
@@ -279,6 +297,9 @@ describe("a tool the injected text names does not exist for the run that reads i
         void turn;
         return chatToolCallStream("compare_plans", JSON.stringify({ before: "a", after: "b" }), "call_compare");
       },
+      answersProse("No such tool."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what these scenarios assert.
       answersProse("No such tool."),
     ]);
 
@@ -378,6 +399,9 @@ describe("OPEN RISK — an assistant message can carry an unfenced marker (B29)"
 
     const drive = await run.drive([
       callsTool("run_read_query", { sql: `SELECT id FROM "${hostile}"`, rationale: "read it" }),
+      answersProse("Read."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what these scenarios assert.
       answersProse("Read."),
     ]);
 

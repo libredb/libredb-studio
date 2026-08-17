@@ -155,7 +155,11 @@ describe("a profile can only be aimed at a table the run has inventoried", () =>
   test("a table the schema capture never returned is refused before any database reach", async () => {
     const run = await open("postgres");
 
-    const drive = await run.drive([profiles("secrets"), answersProse("I could not profile that.")]);
+    const drive = await run.drive([
+      profiles("secrets"),
+      answersProse("I could not profile that."),
+      answersProse("I could not profile that."),
+    ]);
 
     expect(drive.modelStatements).toEqual([]);
     expect(drive.transcripts[1]).toContain("not in the schema inventory");
@@ -195,6 +199,9 @@ describe("the tool belongs to the workflow", () => {
         return chatToolCallStream("profile_table", JSON.stringify({ table: "engineering" }), "call_profile");
       },
       answersProse("I cannot profile from here."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what these scenarios assert.
+      answersProse("I cannot profile from here."),
     ]);
 
     expect(drive.transcripts[1]).toContain("There is no tool called");
@@ -229,7 +236,11 @@ describe("a profile that does not settle cleanly", () => {
     });
     runs.push(run);
 
-    const drive = await run.drive([profiles("engineering"), answersProse("That table is gone.")]);
+    const drive = await run.drive([
+      profiles("engineering"),
+      answersProse("That table is gone."),
+      answersProse("That table is gone."),
+    ]);
 
     expect(drive.kinds).toContain("tool-refused");
     expect(drive.kinds).not.toContain("table-profiled");
@@ -254,6 +265,9 @@ describe("a profile that does not settle cleanly", () => {
     const drive = await run.drive([
       profiles("engineering"),
       profiles("engineering"),
+      answersProse("I cannot read it."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what these scenarios assert.
       answersProse("I cannot read it."),
     ]);
 
@@ -283,7 +297,11 @@ describe("a profile that does not settle cleanly", () => {
       "tool-invoked",
     ]);
 
-    const resumed = await run.drive([profiles("engineering"), answersProse("I cannot know.")]);
+    const resumed = await run.drive([
+      profiles("engineering"),
+      answersProse("I cannot know."),
+      answersProse("I cannot know."),
+    ]);
 
     expect(resumed.transcripts[1]).toContain("outcome was never recorded");
     expect(resumed.kinds).not.toContain("table-profiled");

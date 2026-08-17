@@ -433,6 +433,9 @@ describe("what the removed panels did that these runs do not", () => {
         return chatToolCallStream("read_monitoring", JSON.stringify({ slowQueryLimit: 20 }), "call_monitor");
       },
       answersProse("I cannot read live monitoring from here."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what these scenarios assert.
+      answersProse("I cannot read live monitoring from here."),
     ]);
 
     // The transcript is the messages JSON-encoded, so the tool name arrives escaped.
@@ -476,6 +479,9 @@ describe("what the removed panels did that these runs do not", () => {
         );
       },
       answersProse("I cannot support that number."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what these scenarios assert.
+      answersProse("I cannot support that number."),
     ]);
 
     expect(drive.transcripts[2] ?? "").toContain("does not match anything this run produced");
@@ -510,6 +516,9 @@ describe("what the removed panels did that these runs do not", () => {
           "call_recommend",
         );
       },
+      answersProse("I can only report what I read."),
+      // The reminder is sent once after a reading; a model that narrates again is
+      // stopping rather than hesitating, which is what these scenarios assert.
       answersProse("I can only report what I read."),
     ]);
 
