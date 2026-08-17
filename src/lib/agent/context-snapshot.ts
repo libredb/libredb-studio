@@ -53,7 +53,7 @@ import type { AgentCatalogKind } from "./composed-sql";
 import { parseSqliteIndexDdl, parseSqliteTableDdl } from "./sqlite-ddl";
 import { type AgentToolContext, readCatalogForGrounding } from "./tools";
 import type { AgentContextSnapshot, AgentRunEvent } from "./types";
-import { fenceUntrustedContent } from "./untrusted-content";
+import { fenceUntrustedContent, quoteIdentifierForPrompt } from "./untrusted-content";
 import type {
   ColumnSchema,
   DatabaseConnection,
@@ -75,6 +75,20 @@ export type AgentContextCapture =
   | {
       readonly kind: "unavailable";
       readonly reasonCode: AgentContextUnavailableCode;
+      /**
+       * WHY this run has no inventory, in one sentence and with no advice in it.
+       *
+       * Separate from `modelText` because the diagnosis and the way out belong to
+       * different owners: the diagnosis is this module's — it is the only thing that
+       * knows whether the dialect was unserved, the read refused or the rows already
+       * released — while what to DO about it depends on which tools the caller handed
+       * the run. `operations` holds no `inspect_schema`, so a caller for it composes
+       * this half with advice of its own instead of forwarding `modelText`, and #411
+       * found the alternative: substituting a whole sentence of the caller's own threw
+       * the diagnosis away and told an operator "no inventory could be read on this
+       * postgres connection" when the real cause was a denied catalog read.
+       */
+      readonly detail: string;
       /** What the model is told, so it inspects the schema itself instead. */
       readonly modelText: string;
     };
@@ -255,7 +269,7 @@ function fingerprintTables(tables: readonly TableSchema[]): string {
 // ============================================================================
 
 function unavailable(reasonCode: AgentContextUnavailableCode, detail: string): AgentContextCapture {
-  return { kind: "unavailable", reasonCode, modelText: `${detail}\n${FALLBACK_ADVICE}` };
+  return { kind: "unavailable", reasonCode, detail, modelText: `${detail}\n${FALLBACK_ADVICE}` };
 }
 
 /**
@@ -620,11 +634,22 @@ function renderTable(table: TableSchema): string {
  * inside a region the model is told to treat as data. It is a parameter rather than
  * something a caller concatenates because the bound is this function's to keep:
  * anything prepended outside would overrun it silently, by exactly its own length.
+ *
+ * `omissionAdvice` is what to do about the omitted tables, and it is a parameter for
+ * the same reason as the preface plus one that is a correctness matter rather than a
+ * budgeting one. This notice used to end "call inspect_schema with a table selector to
+ * read any of them" unconditionally, and that sentence was already false in plan mode:
+ * a plan run holds no tools at all, so on a database large enough to trigger the
+ * omission it was told to call something it does not have — the #350 failure, in the
+ * one mode that cannot even be answered by a refusal. The tool set belongs to the
+ * caller, so the caller says what can be done about the omission and a caller with no
+ * tool to name says nothing. The omission ITSELF is never optional: a model shown a
+ * silently truncated list believes it has seen the schema.
  */
 export function packContextForTask(
   snapshot: AgentContextSnapshot,
   objective: string,
-  options: { readonly maxChars?: number; readonly preface?: string } = {},
+  options: { readonly maxChars?: number; readonly preface?: string; readonly omissionAdvice?: string } = {},
 ): string {
   const lead = options.preface === undefined ? "" : `${options.preface}\n`;
   const maxChars = (options.maxChars ?? AGENT_CONTEXT_PACK_MAX_CHARS) - lead.length;
@@ -648,10 +673,9 @@ export function packContextForTask(
     return difference !== 0 ? difference : left.name < right.name ? -1 : 1;
   });
 
+  const advice = options.omissionAdvice === undefined ? "" : ` ${options.omissionAdvice}`;
   const close = (body: string, omitted: number): string =>
-    omitted === 0
-      ? body
-      : `${body}\n${omitted} further table(s) omitted as less relevant to this task; call inspect_schema with a table selector to read any of them.`;
+    omitted === 0 ? body : `${body}\n${omitted} further table(s) omitted as less relevant to this task.${advice}`;
 
   let body = header;
   let shown = 0;
@@ -663,4 +687,94 @@ export function packContextForTask(
   }
 
   return `${lead}${fenceUntrustedContent(close(body, ranked.length - shown), source)}`;
+}
+
+/**
+ * The same inventory, packed for an OPERATIONS run: names and indexes, nothing else
+ * (#411).
+ *
+ * The capture is unchanged — it is whole, all-or-nothing, held for the connection and
+ * recorded in the ledger exactly as every other workflow's is, because a partial
+ * capture shared through `holdSnapshotForConnection` would be handed to a later
+ * investigation run as if it were complete. What varies by workflow is the
+ * PRESENTATION, and this is the operations one.
+ *
+ * Why these two fields and not the others. An operations objective is about what the
+ * engine reports about itself, and the engine's own reports are full of schema
+ * identifiers: a lock is held on a relation, an index-stats row names an index, a slow
+ * query names tables. Names and index names are therefore exactly what turns an opaque
+ * string in a reading into a known object. Column types are not what such an objective
+ * asks about, and the relations graph is the most expensive part of the packing and the
+ * least useful one here — so `packRelations` is not called for this workflow at all,
+ * and this renderer carries no columns.
+ *
+ * An index's own columns are left out for the same reason the table's are: they are the
+ * table's columns, and a reading names an index by NAME. Including them would smuggle
+ * the column list back in through the part of the inventory that was kept.
+ *
+ * Not ranked by task relevance, unlike `packContextForTask`. An operations objective
+ * rarely names a table — what it will be about is whatever the engine happens to report
+ * during the run — so scoring the inventory against the objective's words would order it
+ * by a signal that is not there. The snapshot's own name order is what survives, which
+ * is at least stable between drives of the same run.
+ */
+export function packOperationsInventory(
+  snapshot: AgentContextSnapshot,
+  options: { readonly maxChars?: number; readonly preface?: string } = {},
+): string {
+  const lead = options.preface === undefined ? "" : `${options.preface}\n`;
+  const maxChars = (options.maxChars ?? AGENT_CONTEXT_PACK_MAX_CHARS) - lead.length;
+  const source = {
+    label: "schema inventory: names and indexes",
+    operationId: "agent/context-snapshot",
+    reference: snapshot.fingerprint,
+  };
+
+  const header = `Schema inventory for this run — fingerprint ${snapshot.fingerprint}, ${snapshot.tables.length} table(s) read at epoch ${snapshot.capturedAtMs}ms and not re-read since. Names and the indexes on each; no columns and no relations are included.`;
+  if (snapshot.tables.length === 0) {
+    return `${lead}${fenceUntrustedContent(`${header}\nThis database reported no tables.`, source)}`;
+  }
+
+  // Names no tool, in either mode: an operations agent run holds no `inspect_schema`
+  // and a plan run holds nothing at all, so a way out named here would be a way out
+  // neither reader has (#350).
+  const close = (body: string, omitted: number): string =>
+    omitted === 0 ? body : `${body}\n${omitted} further table(s) exist in this database and are not named here.`;
+
+  let body = header;
+  let shown = 0;
+  for (const table of snapshot.tables) {
+    const candidate = `${body}\n${renderOperationsTable(table)}`;
+    if (fenceUntrustedContent(close(candidate, snapshot.tables.length - shown - 1), source).length > maxChars) break;
+    body = candidate;
+    shown += 1;
+  }
+
+  return `${lead}${fenceUntrustedContent(close(body, snapshot.tables.length - shown), source)}`;
+}
+
+/**
+ * One table, as an operations run is shown it: its name, and what is indexed on it.
+ *
+ * Both quoted, and this is the one renderer where the quoting is load-bearing rather
+ * than defensive. In `renderTable` the identifiers are context for SQL the model will
+ * draft, and a name that arrived mangled fails at the engine; here the identifier list
+ * IS the payload, and the run is told in the same breath to match what the engine names
+ * back at it against this list and to invent nothing outside it. Unquoted, a table
+ * named with an embedded newline produces a second line indistinguishable from a real
+ * entry, and an index named `a, b_unique` reads as two indexes — so the run would
+ * recommend action on an object nobody created, cited against a real snapshot
+ * fingerprint. Found by review on #411; `untrusted-content.ts` holds the rule.
+ */
+function renderOperationsTable(table: TableSchema): string {
+  const shown = table.indexes
+    .slice(0, MAX_INDEXES_PER_TABLE)
+    .map((index) => `${quoteIdentifierForPrompt(index.name)}${index.unique ? " unique" : ""}`);
+  const hidden = table.indexes.length - shown.length;
+  if (hidden > 0) shown.push(`+${hidden} more`);
+  const name = quoteIdentifierForPrompt(table.name);
+  // Absence is stated rather than left blank: a table listed with nothing after it
+  // reads as a table whose indexes were not captured, and an operations run asked to
+  // reason about an unused index would not know which of the two it was looking at.
+  return shown.length === 0 ? `${name}: no indexes` : `${name}: indexes ${shown.join(", ")}`;
 }

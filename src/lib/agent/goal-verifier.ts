@@ -60,7 +60,15 @@ export type AgentGoalVerifierId =
   | "agent-query-optimization.1"
   | "agent-query-optimization.2"
   | "agent-database-assessment.1"
+  /**
+   * Kept for the reason `agent-query-optimization.1` is kept: it shipped on `main` and
+   * real runs were measured against it, so a reader of one of those ledgers holds this
+   * type and `.1` still means what it meant — a composed report, with no arm asking
+   * what the report rested on, because at the time nothing else was citable.
+   */
   | "agent-operations.1"
+  /** #411: the same rule plus the reading arm, once the inventory became citable. */
+  | "agent-operations.2"
   /**
    * Tightened under its own id rather than bumped to `.2`, and the reasoning is the
    * reasoning that keeps `agent-query-optimization.1` above (#373 review).
@@ -141,6 +149,20 @@ export type AgentGoalShortfall =
    * is what the workflow is for.
    */
   | "no-table-profile"
+  /**
+   * An operations run reported, and every claim in it rested on the schema inventory
+   * rather than on anything the engine said about itself.
+   *
+   * The template's own artifact, and it exists because #411 made it reachable: the run
+   * gained a citable inventory, so "cite a reading" stopped being enforced by
+   * composition alone. A report about locks or slow queries that cites only the list of
+   * table names has answered from what a database like this one usually looks like,
+   * which is the one thing this workflow's rules forbid in those very words.
+   *
+   * Not folded into `empty-evidence`. That shortfall is about a reading that came back
+   * with nothing, which here is an ANSWER; this one is about no reading at all.
+   */
+  | "no-reading"
   /**
    * A data-analysis run reported its findings and produced nothing to show for them.
    *
@@ -244,9 +266,17 @@ function restsOnlyOnEmptyResults(claims: readonly AgentReportClaim[], events: re
  *
  * **Two bars in one rule, because plan mode has two deliverables.** Every workflow but
  * `operations` is asked for a statement (`PLAN_DELIVERABLES` in `investigation.ts`),
- * and `operations` is asked for prose — it reads no schema and composes no SQL, so
- * holding it to a statement would fail every run that did exactly what the workflow is
- * for. That exemption is read off the workflow type here rather than duplicated as a
+ * and `operations` is asked for prose — it composes no SQL, so holding it to a
+ * statement would fail every run that did exactly what the workflow is for. (It reads a
+ * schema since #411, and since the Operate-statement fix its rules welcome a fenced
+ * reading where the engine expresses one as a statement — but WELCOME is not REQUIRED,
+ * and that distinction is the whole of what this exemption still rests on. Which
+ * engines can express one is not the load-bearing part and should not be guessed at:
+ * a Redis Operate plan was observed writing `INFO memory` and `CLIENT LIST` into a
+ * block tagged `redis`, which that engine's editor runs, so "no SQL engine, therefore
+ * no statement" is an inference this file should not make. What stays true whatever
+ * the engine is that a run which produced no block may have answered its objective
+ * perfectly, and a bar demanding one would fail it.) That exemption is read off the workflow type here rather than duplicated as a
  * second rule, so the two halves of one decision cannot drift.
  *
  * **Speaking is checked first, and its shortfall dominates**, the way the composed
@@ -451,33 +481,47 @@ function verifyDataAnalysisGoal(run: VerifiableAgentRun): readonly AgentGoalShor
  * every run against a healthy server unanswered, which is the same error as demanding
  * an artifact only some valid answers can produce.
  *
- * **Why "the report cites a reading" is not a second arm here, though it IS the rule
- * the model is told.** It cannot fail in this workflow, and an arm that cannot fail
- * is a verdict a user is promised and no run can ever show. `composeReportTool`
+ * **"The report cites a reading" IS an arm here, and it became one in #411.** It was
+ * not, and the argument for leaving it out was sound while it held: `composeReportTool`
  * refuses any claim whose evidence does not name something this run produced, and the
- * only citable things an operations run can produce are `db.operations.read`
- * artifacts: it is offered no other tool that settles a step, and it captures no
- * schema snapshot to cite. So a composed report already IS a report citing a reading,
- * enforced at composition rather than judged afterwards. Writing the arm anyway would
- * have bought its own line coverage from a hand-built ledger no run can produce —
- * the same dead-arm objection that kept the recon template to one arm.
+ * only citable things an operations run could produce were `db.operations.read`
+ * artifacts — it is offered no other tool that settles a step, and it captured no schema
+ * snapshot to cite. A composed report therefore already WAS a report citing a reading,
+ * enforced at composition rather than judged afterwards, and writing the arm anyway
+ * would have bought its own line coverage from a hand-built ledger no run can produce.
  *
- * What is left is therefore real: a run that composed nothing has not answered, and a
- * cancelled one says so instead. Both are written out here rather than borrowed, so
- * that a later change to the baseline's emptiness rule cannot silently arrive through
- * a call this function no longer makes.
+ * #411 removed the second half of that argument: the run now captures an inventory,
+ * `composeReportTool` accepts `{"source":"context-snapshot"}`, and the run is handed the
+ * citation form for it as the preface to its own inventory. So a report resting on the
+ * inventory alone composed, verified and scored `answered` without a single reading
+ * behind it — on the workflow whose entire subject is what the engine says about itself,
+ * and against a bar the model is told in `WORKFLOW_TOOL_RULES` in those very words. The
+ * arm is no longer dead, so the objection to writing it has expired and the arm is
+ * written. `agent-operations` moved to `.2` with it: the rule the id names changed
+ * meaning, and two runs' verdicts sharing one id under two different rules is exactly
+ * what a versioned id exists to prevent.
+ *
+ * An ARTIFACT citation is what satisfies it, not a count of `tool-invoked` events. A run
+ * that took readings and then reported off the inventory has still not rested its report
+ * on what the engine said — and the emptiness exemption above is untouched, because an
+ * empty reading is an artifact this run produced and citing it passes here.
+ *
+ * The other two shortfalls are written out rather than borrowed from the baseline, so
+ * that a later change to its emptiness rule cannot silently arrive through a call this
+ * function no longer makes.
  */
 function verifyOperationsGoal(run: VerifiableAgentRun): readonly AgentGoalShortfall[] {
   const claims = composedClaims(run.events);
   if (claims.length === 0) return run.status === "cancelled" ? ["cancelled"] : ["no-report"];
-  return [];
+  const citesReading = claims.some((claim) => claim.evidence.some((reference) => reference.source === "artifact"));
+  return citesReading ? [] : ["no-reading"];
 }
 
 export const AGENT_WORKFLOW_GOALS: Readonly<Record<AgentRunWorkflowType, AgentWorkflowGoal>> = Object.freeze({
   investigation: { verifier: "agent-investigation.1", verify: verifyInvestigationGoal },
   "query-optimization": { verifier: "agent-query-optimization.2", verify: verifyQueryOptimizationGoal },
   "database-assessment": { verifier: "agent-database-assessment.1", verify: verifyDatabaseAssessmentGoal },
-  operations: { verifier: "agent-operations.1", verify: verifyOperationsGoal },
+  operations: { verifier: "agent-operations.2", verify: verifyOperationsGoal },
   "data-analysis": { verifier: "agent-data-analysis.1", verify: verifyDataAnalysisGoal },
 } satisfies Record<AgentRunWorkflowType, AgentWorkflowGoal>);
 

@@ -36,6 +36,7 @@
  */
 
 import type { AgentContextSnapshot, AgentRunWorkflowType } from "./types";
+import { quoteIdentifierForPrompt } from "./untrusted-content";
 
 /** How much is said about each relation. Never how many are shown. */
 export type AgentErDetail = "minimal" | "medium" | "full";
@@ -51,11 +52,15 @@ export type AgentErDetail = "minimal" | "medium" | "full";
  * a question about WHICH columns join, while how each key is indexed is what an
  * assessment asks and an analysis never does.
  *
- * `operations` answers `minimal` and never uses it: that workflow captures no schema
- * snapshot at all (`investigation.ts` says why), so there is no inventory for a
- * diagram to be drawn from. The entry exists because the record is total, and it
- * names the least-saying level rather than inventing a fourth one for a case that
- * cannot arise.
+ * `operations` answers `minimal` and never uses it, and since #411 the reason is a
+ * packing decision rather than an absence. That workflow DOES capture a schema
+ * snapshot now — the same whole one every other workflow captures — and is shown a
+ * rendering of it that carries table names and their indexes and nothing else, because
+ * an operations objective needs to recognise the objects its readings name and does not
+ * need to know how they join. `investigation.ts` never calls `packRelations` for it, so
+ * nothing here is ever asked for its detail level. The entry exists because the record
+ * is total, and it names the least-saying level rather than inventing a fourth one for
+ * a case that does not arise.
  */
 const WORKFLOW_DETAIL: Readonly<Record<AgentRunWorkflowType, AgentErDetail>> = Object.freeze({
   investigation: "minimal",
@@ -70,32 +75,13 @@ export const erDetailForWorkflow = (workflowType: AgentRunWorkflowType): AgentEr
 /**
  * One identifier, delimited so that nothing inside it can be read as notation.
  *
- * The doubling is the same rule SQL uses for a quoted identifier, and it is what
- * makes a hostile name legible rather than effective: a table called `a" -> "b`
- * renders as `"a"" -> ""b"`, which is one name with quotes in it and not two names
- * with a relation between them.
+ * Declared beside the fence in `untrusted-content.ts` rather than here, since #411
+ * gave the operations inventory the same need: two renderers quoting by two rules is
+ * one rule that can drift, and the drift would be a hostile name that is safe in one
+ * block and effective in the other. The reason it is not merely fenced is stated at
+ * the top of this file.
  */
-const quote = (name: string): string =>
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: catching them is the point
-  `"${name.replace(/["\u0000-\u001f]/g, escapeInIdentifier)}"`;
-
-/**
- * The doubled quote, and every control character as a visible escape.
- *
- * Doubling alone was not enough, and the gap was found by review on #347: both
- * reference engines permit a LINE BREAK inside a quoted identifier, so a table named
- * with an embedded newline produced what looked like an extra relation line inside
- * the fence — defeating the whole "a relation is a line" reading, and the assertion
- * that rested on it. Control characters are therefore rendered as escapes, which
- * keeps the name legible while making it exactly one line.
- */
-function escapeInIdentifier(character: string): string {
-  if (character === '"') return '""';
-  if (character === "\n") return "\\n";
-  if (character === "\r") return "\\r";
-  if (character === "\t") return "\\t";
-  return `\\x${character.charCodeAt(0).toString(16).padStart(2, "0")}`;
-}
+const quote = quoteIdentifierForPrompt;
 
 /**
  * The rendered block's ceiling, in CHARACTERS.
@@ -106,8 +92,15 @@ function escapeInIdentifier(character: string): string {
  */
 export const MAX_ER_CHARS = 2_000;
 
-/** Held back so that adding the last line cannot be what overruns the bound. */
-const OMISSION_RESERVE = 110;
+/**
+ * Held back so that adding the last line cannot be what overruns the bound.
+ *
+ * Measured against the longest notice this function can write — the count, plus
+ * whatever advice the caller supplied — rather than fixed at a literal, because the
+ * advice is now the caller's sentence and a literal would be a reserve that silently
+ * stopped covering the thing it reserves for.
+ */
+const omissionReserve = (advice: string): number => 60 + advice.length;
 
 interface Relation {
   readonly from: string;
@@ -239,7 +232,7 @@ function groupByPair(relations: readonly Relation[]): readonly (readonly Relatio
 export function renderErDiagram(
   snapshot: AgentContextSnapshot,
   detail: AgentErDetail,
-  options: { readonly maxChars?: number } = {},
+  options: { readonly maxChars?: number; readonly omissionAdvice?: string } = {},
 ): string {
   const relations = relationsOf(snapshot);
   const header = `Relations between the ${snapshot.tables.length} table(s) in this inventory, as declared foreign keys.`;
@@ -261,20 +254,30 @@ export function renderErDiagram(
     what a prompt is bounded in. Found by review on #347.
   */
   const maxChars = options.maxChars ?? MAX_ER_CHARS;
+  /*
+    What to do about the omitted relations, said only where it can be done.
+
+    This notice ended `call inspect_schema with kind="relations" for them`
+    unconditionally until #411, and a PLAN run holds no tools at all — so on a schema
+    with more relations than this bound holds, plan mode was being told to call
+    something it does not have, which is the #350 failure in the one mode that cannot
+    discover its mistake by trying the call. The tool set is the caller's knowledge, so
+    the caller supplies the sentence and a caller with no tool to name supplies none.
+    The omission itself is never optional: a silently truncated graph is a model that
+    believes it has seen how the schema joins.
+  */
+  const advice = options.omissionAdvice === undefined ? "" : ` ${options.omissionAdvice}`;
   const kept: string[] = [];
   let size = header.length;
   for (const line of lines) {
     // The omission notice is reserved for, so adding the last line cannot be what
     // pushes the block past its bound.
-    if (size + line.length + 1 + OMISSION_RESERVE > maxChars) break;
+    if (size + line.length + 1 + omissionReserve(advice) > maxChars) break;
     kept.push(line);
     size += line.length + 1;
   }
 
   const omitted = lines.length - kept.length;
-  const tail =
-    omitted === 0
-      ? ""
-      : `\n${omitted} further relation(s) omitted; call inspect_schema with kind="relations" for them.`;
+  const tail = omitted === 0 ? "" : `\n${omitted} further relation(s) omitted.${advice}`;
   return `${header}\n${kept.join("\n")}${tail}`;
 }

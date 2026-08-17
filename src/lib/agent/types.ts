@@ -237,10 +237,27 @@ export type AgentRunFailureReason =
    * this run could never have been permitted on it. A property of the connection the
    * user chose, not a fault of the server — which is why it is not `internal`.
    *
-   * WORKFLOW-CONDITIONAL since the `operations` workflow (#325): that workflow reads
-   * only the curated provider methods every engine implements, under its own
-   * execution profile, so it never asks for a read-only STATEMENT path and can never
-   * end this way. Every other workflow still can, and does, on the same connection.
+   * NARROWER for the `operations` workflow (#325), and narrower is all it is. That
+   * workflow's own reads go through the curated provider methods every engine
+   * implements, under `AGENT_OPERATIONS_PROFILE`, so it never asks for a read-only
+   * STATEMENT path; and since #411 it takes a server-side catalog capture before its
+   * first turn, which does go through `runStatement` under `AGENT_EXECUTION_PROFILE` —
+   * but `captureContextSnapshot` refuses a dialect `CATALOG_PLANS` does not serve BEFORE
+   * acquiring anything, and the two it serves are exactly the two with a read-only
+   * profile. So no ENGINE-shaped acquisition refusal can reach an operations run: on
+   * every engine where one is possible, no acquisition is attempted.
+   *
+   * What can still reach it, and what this reason's text then misdescribes, is an
+   * acquisition refused for a reason that is not the engine at all:
+   * `resolveAgentCredential` throws `ExecutionProfileError` — which `runtime.ts`
+   * classifies here — for an agent credential that is half-configured, sealed under a
+   * key that no longer decrypts, or set alongside a connection string, and it throws on
+   * ANY engine before a provider exists. A PostgreSQL run then tells the user their
+   * engine offers no read-only execution profile when their real problem is a
+   * credential. That is true of every workflow and was true before #411, which only
+   * moved the moment it can happen earlier; it is a defect of this reason's granularity
+   * rather than of the workflow, and it is recorded in `docs/BACKLOG.md` (B47) rather
+   * than fixed inside a comment.
    */
   | "engine-unsupported"
   /** The run's persisted connection no longer resolves on the server. */

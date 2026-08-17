@@ -45,7 +45,7 @@ if it only lists the good news.
 | --- | --- | --- |
 | `POST /api/agent/classify`, **before any run exists** | Your objective, and nothing else. One short completion that asks the model to name one of the five workflows. It fires when you press **Start** with the workflow left on **Automatic**, which is the default; naming a workflow yourself under **Advanced** skips it entirely. See [the classification, before any run](#the-classification-before-any-run) | No — it carries no database content to fence. Your objective is sent as the user message, and the server's instructions tell the model to treat that text as data to classify and never as instructions to it |
 | An **agent run** | Your objective; the schema inventory (table, column, index identifiers and column types); the relations graph (identifiers only); the rows of each read the model performed, up to 200 per read; engine error text; server-written refusals; server-minted ids | Everything derived from the database is wrapped in an untrusted-content fence before it reaches a prompt |
-| An **agent run opened as Operate** | Your objective; **no schema inventory and no relations graph** (a server note replaces them); and the rows of each curated reading — which, for the `sessions` and `slow-queries` kinds, include **other database users' in-flight statement text and their database usernames**. See [the operations workflow](#5a-the-operations-workflow-what-a-curated-reading-sends) | Same fence: every reading's rows are database content and are fenced |
+| An **agent run opened as Operate** | Your objective; on PostgreSQL and SQLite a **schema inventory reduced to table names and index names** (no column names, no column types, no relations graph — and on every other engine not even that, replaced by a server note); in Plan mode the engine's **row-count estimates** for those same tables, and nothing per column; and the rows of each curated reading — which, for the `sessions` and `slow-queries` kinds, include **other database users' in-flight statement text and their database usernames**. See [the operations workflow](#5a-the-operations-workflow-what-a-curated-reading-sends) | Same fence: the inventory and every reading's rows are database content and are fenced |
 | `POST /api/ai/explain` | Your statement, the EXPLAIN plan, the schema context the browser holds, the engine type | No |
 | `POST /api/ai/query-safety` | Your statement, a filtered schema context, the engine type | No |
 | `POST /api/ai/describe-schema` | A schema context. From the **Data Profiler** that context includes a per-column `min=` and `max=`, which are **real column values** | No |
@@ -178,8 +178,18 @@ sends anything.
 ### 1. The system instructions — server text only
 
 `systemPrompt` concatenates the mode's rules, the workflow's tool rules, the workflow's objective
-statement and the shared rules (`investigation.ts:240-243`). Every one of those strings is a
-constant in that file. **Nothing of yours or of your database is in it.**
+statement and the shared rules (`investigation.ts:240-243`). Every one of those strings is written
+in that file. **Nothing of yours or of your database is in it** — not your objective, not a table
+name, not a value.
+
+One field of your connection record *is*: its **engine type**, the canonical type-id (`postgres`,
+`sqlite`, `redis`, …), which a plan run's rules interpolate into server prose. A statement plan
+spends it on the fence tag the deliverable must carry, and since the Operate-engine fix a prose plan
+spends it twice: on the rule that binds the readings it may name to the engine it is planning
+against, and on the fence tag for a reading that engine happens to express as a statement. It is
+a server-side enum with eleven members, so what it discloses is which of eleven engines this
+connection is — never its host, its database name or its credentials, none of which reach a prompt at
+all (see [What never leaves](#what-never-leaves)).
 
 ### 2. Your objective, verbatim
 
@@ -189,12 +199,22 @@ The first user message is the text you typed, unmodified apart from the trim the
 
 ### 3. The schema inventory — identifiers and types, fenced
 
-**Not on an Operate run.** A run whose workflow is `operations` captures no inventory at all and is
-sent a server-written note in its place (`OPERATIONS_CONTEXT_NOTE`, `investigation.ts`), so sections
-3 and 4 below do not happen and no catalog is read. That is a decision rather than a gap: the
-workflow is offered no tool that reads a catalog, and most of the engines it runs on cannot serve one.
+**Less on an Operate run, and it changed in #411.** A run whose workflow is `operations` used to
+capture no inventory at all. It now captures the same whole one every other workflow does — the
+capture is shared between runs through the process hold, so a workflow-shaped partial capture would
+later be handed to an investigation run as if it were complete — and what differs is how much of it
+is packed into a message. Concretely, what leaves the process on an Operate run is **table names and
+index names only** (`packOperationsInventory`, `context-snapshot.ts`): no column names, no column
+types, no foreign keys, and section 4's relations block is not sent at all. Under the same 6000-character
+bound and the same fence, with every identifier quoted inside it. A **Plan**-mode Operate run also gets
+section 6's estimated statistics, and there too the reduction holds: row estimates only, with no
+per-column distinct count or null fraction, so no column name leaves the process on either mode of this
+workflow. On any engine outside PostgreSQL and SQLite the capture answers
+`unavailable` before a provider is acquired, nothing of the schema leaves, and a server-written note
+says so in its place.
 
-On every other workflow, captured once per run by reading the catalog, then packed for the task
+So on an Operate run this section is narrower than what follows and section 4 does not happen. On
+every other workflow, the inventory is captured once per run by reading the catalog, then packed for the task
 (`packContextForTask`, `src/lib/agent/context-snapshot.ts:466-505`). Per table it renders
 (`renderTable`, `context-snapshot.ts:428-441`):
 
@@ -235,7 +255,7 @@ rendered characters — a bound in characters, because a count of edges is not a
 | A table profile (Assess) | Counts, the number of findings, the covered column range — plus the **table name** and the **finding lines** (each `column: code — detail`), both fenced. No value from any column | `tools.ts:1325-1345`, `describeFindings` at `tools.ts:1143-1150` |
 | A curated operational reading (Operate) | A server sentence naming the artifact id, then the **projected rows**, fenced like any other result. What those rows contain is the point: for `sessions` and `slow-queries` they carry **statement text other users are running or have run**, and for `sessions` the **database username, client address and application name of each connected session**. See below | `tools.ts`, `CURATED_READINGS` |
 | A plan comparison (Optimize) | The two statements the run drafted and the server's structural reading of each plan (`full-scan` / `index` / `mixed` / `unknown`, plus whatever estimates the engine reported) | `plan-summary.ts`, restated at `investigation.ts:367-369` |
-| A catalog read that could not be performed | Fixed server advice, and one of two things before it. When no catalog plan exists for the engine, or when the rows the read produced are already gone, it is a **server sentence** that may name the connection's **engine type** ("a mongodb connection") or the catalog kind (`context-snapshot.ts:301-305,315-318`). When the catalog read was itself refused, the sentence forwarded is `inspectSchemaTool`'s **own `modelText`** (`context-snapshot.ts:312`) — which for a policy denial is server text, and for a **database-error refusal is the engine's own message, fenced** (`tools.ts:872-882`). Either way it is wrapped by `unavailable` (`context-snapshot.ts:243-245`) and pushed as a user message (`investigation.ts:743`) |
+| A catalog read that could not be performed | Fixed server advice, and one of two things before it. When no catalog plan exists for the engine, or when the rows the read produced are already gone, it is a **server sentence** that may name the connection's **engine type** ("a mongodb connection") or the catalog kind (`context-snapshot.ts:301-305,315-318`). When the catalog read was itself refused, the sentence forwarded is `inspectSchemaTool`'s **own `modelText`** (`context-snapshot.ts:312`) — which for a policy denial is server text, and for a **database-error refusal is the engine's own message, fenced** (`tools.ts:872-882`). Either way it is wrapped by `unavailable` (`context-snapshot.ts:243-245`) and pushed as a user message. **Except on an Operate run**, where the diagnosis is forwarded (`capture.detail`) and only the fixed ADVICE is replaced, because that advice sends a model to `inspect_schema` — a tool the workflow does not hold. So the same text reaches the prompt on an Operate run, including a fenced engine message, minus the sentence naming a tool that is not there |
 
 ### 5a. The operations workflow: what a curated reading sends
 
@@ -411,7 +431,7 @@ The frozen execution policies are the ceiling on one run's egress, one row per w
 | Bound | Value | What it caps |
 | --- | --- | --- |
 | `maxResultRows` / `maxResultBytes` | 200 rows / 256 KiB | The most one read can return — and therefore the most one tool result can send |
-| `maxStatementsPerRun` | 12-45, by workflow | Reads per drive, catalog reads and repairs included |
+| `maxStatementsPerRun` | 18-45, by workflow | Reads per drive, catalog reads and repairs included |
 | `AGENT_CONTEXT_PACK_MAX_CHARS` | 6000 | The fenced schema inventory |
 | `MAX_ER_CHARS` | 2000 | The fenced relations block |
 | `AGENT_MAX_OBJECTIVE_LENGTH` | 4000 | Your objective |

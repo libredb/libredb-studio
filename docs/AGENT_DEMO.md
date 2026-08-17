@@ -39,13 +39,18 @@ everything. The other four workflows write SQL and need a database-native read-o
 which today only PostgreSQL and SQLite provide; everywhere else the run ends with *"The agent cannot
 run on this database engine: it offers no read-only execution profile."*
 
-**One correction to that reading, and it bites in case 19b.** Grounding is not only engine-dependent
-— it is *workflow*-dependent. A plan-mode **Operate** run is ungrounded by design on every engine,
-PostgreSQL included: an operations objective is not about the schema, so no catalog is read and the
-run's own opening line says *"Because no schema was read, we cannot name specific tables or indexes
-upfront"* on a database it could have read perfectly well. Nothing on screen distinguishes that from
-the ungrounded-engine case (backlog B46), so a room that has just been told "PostgreSQL and SQLite
-are grounded" will read it as a bug.
+**Grounding is engine-dependent and nothing else**, in every workflow. That was not true when this
+script was driven: a plan-mode **Operate** run was then ungrounded by design on every engine,
+PostgreSQL included, and announced *"Because no schema was read, we cannot name specific tables or
+indexes upfront"* on a database it could have read perfectly well — which a room that has just been
+told "PostgreSQL and SQLite are grounded" reads as a bug. #411 removed the exception. Operate is now
+grounded on the same two engines as everything else, with a deliberately smaller inventory — table
+names and the indexes on each, no columns and no relations — because what an operational reading
+needs from the schema is the ability to recognise the identifiers the engine hands back. Cases 19 and
+19b were re-driven on 2026-08-17 against that build: the *"no schema was read"* line is gone on
+PostgreSQL, both plans name real tables and indexes, and the Operate arm of 19b hands back a runnable
+`pg_stat_user_indexes` query with **Apply to editor** on it — which the script had claimed it never
+would.
 
 The last row is honest rather than modest: those four implement the same provider interface the six
 above do, so the same rules should apply — but nobody has started a run on them, so they are not
@@ -242,6 +247,16 @@ The Operate workflow answers from the engine's own statistics rather than by wri
 every provider, including the ones agent mode otherwise cannot reach. The reading has no trouble
 finding it: every objective in this act opened as Operate, and none of them raises a consent step.
 
+**One thing changed under this act since it was driven (#411), and it is worth a sentence on stage.**
+An Operate run on PostgreSQL or SQLite is now handed a schema inventory before its first turn — the
+table names and the indexes on each, and nothing else. It exists so the run can place what the engine
+names back at it: `pg_stat_activity` reports a lock on a relation, an index-stats row names an index,
+a slow query names the tables it reads, and before this those were strings the model could only echo.
+It costs the run nothing — the statement budget was raised to pay for the capture rather than the
+readings being squeezed — and on Redis, MongoDB and the rest it simply does not happen, so case 12b
+below is unaffected. The run still sends no SQL of its own; the inventory is the server's read, taken
+before the model is given a turn.
+
 ### 9. What is happening right now?
 **Agent ·** `Which sessions are active on this server, is anything blocked, and which queries are slowest?` *(opens as Operate)*
 
@@ -431,20 +446,45 @@ name. It has never seen a row — the grounding reads the catalog and the engine
 never a value out of a column.
 
 *Bounds, worth stating before someone finds them:* grounding serves **PostgreSQL and SQLite only**,
-because those are the dialects the catalog composer serves — **and only the four schema workflows.**
-A plan-mode Operate run is ungrounded on every engine by design, PostgreSQL included, because an
-operations objective is not about the schema. On any other engine, or in Operate, a plan run is
-ungrounded and its rules steer it to say so rather than to invent tables. Case 19 is exactly that,
-and it is why the two cases sit next to each other.
+because those are the dialects the catalog composer serves — and that is now the whole bound. When
+this script was driven there was a second one: Operate was ungrounded on every engine by design, so
+grounding depended on the workflow as well. #411 removed it. Re-driven on 2026-08-17, an Operate plan
+on PostgreSQL is grounded like the rest — on a reduced inventory of table names and indexes — and
+names the real objects its readings are about: `public.rental`, `public.payment`, `public.inventory`,
+`idx_title`, `film_fulltext_idx`, with the engine's row estimates quoted beside them and the views
+flagged as carrying no statistics. On SQLite it captured 8 tables and concluded there was no index to
+be unused. On any engine outside those two a plan run of any workflow is ungrounded and its rules
+steer it to say so rather than to invent tables — on Redis the Operate plan says it can name no
+object and proposes `CLIENT LIST`, `INFO` and `SLOWLOG GET`.
+
+*One thing to watch for on stage, because it was there when this script was driven and is not now:*
+a plan-mode Operate run used to name the **wrong engine's** readings with complete confidence — a
+plan on a SQLite connection offering `pg_stat_user_indexes` and `pg_total_relation_size`, a plan on
+a Redis connection offering wait event statistics and a blocking chain dependency tree. Its rules now
+name the engine and bind the readings to it, on the grounded and the ungrounded path alike, so a plan
+that is unsure says what it would want to establish instead of naming a view that does not exist
+there. Nothing changed in Agent mode: an Operate agent run names a reading *kind* and the server
+calls the engine's own interface, so it never had this to get wrong.
 
 ### 19. When the reading is wrong, and what you do about it
 **Plan ·** `What would you check first if this database were slow in production?` *(opens as Operate — the script wanted Optimize)*
 
 This is the misread, and it is a good case *because* it is one. "Slow in production" reads as an
-operations question, so the run opens as plan-mode Operate — which is ungrounded and prose-only by
-design. You get the readings it would take, in order, and what each would settle. You do not get a
-statement, and on a PostgreSQL connection the run says out loud that no schema was read, which looks
-like a defect and is a design decision nothing on screen explains (backlog B46).
+operations question, so the run opens as plan-mode Operate, whose deliverable is prose: the readings
+it would take, in order, and what each would settle.
+
+Re-driven on 2026-08-17, and both of the hedges this case used to carry are settled. On the
+PostgreSQL connection the plan is grounded and names real objects — `public.rental`, `public.payment`
+and `public.inventory`, the indexes `idx_title`, `film_fulltext_idx` and
+`idx_unq_rental_rental_date_inventory_id_customer_id` — and it quotes the engine's own row estimates
+beside them (payment ≈ 14 596, rental ≈ 16 044, film_actor ≈ 5 462) while separately flagging the
+**views**, which carry no statistics at all. The *"no schema was read"* line it used to open with is
+gone. On a SQLite connection the same plan captured 8 tables, named them, and concluded correctly
+that there is no index there to be unused. On Redis it says plainly that it can name no object and
+proposes `CLIENT LIST`, `INFO` and `SLOWLOG GET`.
+
+What stays is the point of the case: an Operate plan answers the operations question it was opened
+for, and that was not the question the room wanted answered.
 
 So correct it on stage, which is the whole point of the case. Either press **change → Optimize** on
 the banner, or open **Advanced** and name Optimize before you Start. Named as Optimize, this
@@ -462,10 +502,34 @@ the better artifact.
 ### 19b. A plan you can actually take with you
 **Plan · Optimize** *(named under Advanced — see below)* · `Which indexes would you check first, and what statement would show me their usage?`
 
-Under **Automatic** this classifies to Operate like case 19, and there is nothing to take with you:
-zero **Apply to editor** buttons, prose only, and the run opening with *"Because no schema was read,
-we cannot name specific tables or indexes upfront"* — on dvdrental. Name **Optimize** under Advanced
-and drive it again. That run is the case:
+Under **Automatic** this classifies to Operate like case 19 — and the Operate arm is now worth driving
+on stage rather than skipping. Re-driven on dvdrental: the run opens as **Operate**, is grounded
+(*"Schema captured, 22 tables"*), and its prose names real indexes off this database — `actor_pkey`,
+`address_pkey`, `film_pkey`, `idx_actor_last_name`, `idx_fk_city_id`. It also closes with a fenced
+statement carrying **Apply to editor**, two of them in that drive:
+
+```sql
+SELECT schemaname, relname AS table_name, indexrelname AS index_name,
+       idx_scan, idx_tup_read, idx_tup_fetch
+FROM pg_stat_user_indexes ORDER BY idx_scan ASC;
+```
+
+This script said until 2026-08-17 that the Operate arm left you with *"nothing to take with you: zero
+Apply to editor buttons, prose only"*. That was false when it was written down and is false on
+screen, and the code has been corrected to match rather than the other way round: an Operate plan's
+deliverable is prose, but where a reading it would take is itself a statement your engine can run —
+and on PostgreSQL a monitoring reading usually is one — writing it out is welcome.
+
+**Do not promise the room that non-SQL engines hand back nothing.** The same objective on Redis was
+driven on 2026-08-17 and the plan opened by saying plainly that it can name no key, then wrote
+`INFO memory`, `CLIENT LIST`, `SLOWLOG GET 10` and `MEMORY USAGE <key>` into a block tagged `redis`
+— which that connection's editor runs, so **Apply to editor** appeared there too. What is engine-
+dependent is whether a reading can be written down at all, not whether the engine speaks SQL. Where
+it cannot be, the plan says the reading in that engine's own terms and produces no block, and that
+is a complete answer rather than a shortfall.
+
+**The case still works, and the contrast is now the sharper one.** Name **Optimize** under Advanced
+and drive the same objective again:
 
 **One** grounded statement — a `pg_stat_user_indexes` read ordered by `idx_scan`, exactly the
 statement the objective deserves — arriving as a code block with three controls. **Apply to editor**
@@ -485,6 +549,15 @@ not in the schema inventory the run captured, and said so. Two different mechani
 questions — *is this a read?* and *does this run know this name exists?* — and the product answers
 both rather than collapsing them. Keeping them apart is what lets the statement be offered at all
 instead of blocked.
+
+**That mark is the whole difference between the two arms, and it is the line to say out loud.** Both
+runs hand you a statement now. Only the named-Optimize one hands you a statement the run was ASKED
+for: it arrives on its own `Statement drafted` card, with the guard's read-only verdict and the
+identifier check attached, recorded on the run's ledger as its deliverable. The Operate arm's block
+was *welcomed*, not asked for — nothing checked it, nothing marked it, and the ledger records no
+statement for that run at all. Naming the workflow is therefore still worth doing for this objective:
+the difference is no longer something against nothing, it is a checked deliverable against an
+unchecked convenience.
 
 Worth saying out loud if a DBA in the room asks how a toolless mode produced a statement: the model
 had no tools and the run executed nothing of yours. Applying is your click, in your editor, on your
@@ -581,8 +654,8 @@ incomplete (B44).
 
 **"Which databases?"** See the table at the top. The short version: Operate works everywhere and was
 driven live on six engines including Redis, which has no SQL at all; the four SQL workflows need
-PostgreSQL or SQLite today; plan mode has no engine limit and is grounded on those same two — for
-every workflow except Operate.
+PostgreSQL or SQLite today; plan mode has no engine limit and is grounded on those same two, in every
+workflow — Operate included since #411, on a reduced inventory of table and index names.
 
 **"What does it cost per question?"** Each workflow has a frozen ceiling on model turns, statements,
 wall clock and database time, and the rail shows the meter live. The figures are the starting point
@@ -599,7 +672,6 @@ would close it, so "not yet" means deferred with a reason, not overlooked.
 | --- | --- | --- |
 | **Foreign keys under a least-privilege role** | The relations read comes back empty and the run reports that no foreign keys exist — a false negative it cannot tell apart from a true one | B44 — reading `pg_constraint` instead of the `information_schema` views, and declining to assert the negative from an empty read |
 | **A verdict that fits an optimization run** | Every Optimize run ends `unanswered`, however good its plans and index recommendation were | B45 — a plan artifact is not an empty result, the same exemption the Operate template already has |
-| **Saying why a plan run is ungrounded** | A plan-mode Operate run on PostgreSQL announces that no schema was read, and nothing distinguishes that from an engine that cannot be read | B46 — one sentence that names the workflow as the reason |
 | **Follow-up questions** | Each run starts fresh, and neither the surface nor the model says so — ask "and how many of those?" and you get a confident answer to a different question | B36 — either carrying the previous run's objective and report into the next as fenced context, or run history |
 | **Causal questions** — "why are sales down?" | Answered from the schema alone, which cannot know which decomposition of a metric is the business one | A per-connection business note, held server-side; sketched in `docs/AGENT_ANALYST_DESIGN.md` §5 |
 | **"This database cannot answer that"** | It does say so, but has to run a throwaway query to be scored as having answered — case 21 spends 5 tool invocations to report that an employees database holds no customer data | B39 — a second arm on the verdict, so a schema-only conclusion counts |

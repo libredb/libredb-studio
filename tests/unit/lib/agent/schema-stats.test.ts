@@ -528,4 +528,68 @@ describe("packSchemaStatistics", () => {
 
     expect(packed).toContain("more column(s) with statistics not shown");
   });
+
+  /*
+    `detail: "rows"`, which exists for the one workflow whose whole context is table
+    names and index names (#411).
+
+    That run is told in the server's own unfenced voice that it has been shown no column,
+    and the default rendering names a column beside every table it has an estimate for —
+    so the block under that sentence made it false, and a column name left the process on
+    a run whose documented egress is identifiers of two kinds. What it needs from the
+    estimates is which table is worth a reading, which is the one thing this rendering
+    keeps. Found by review on #411.
+  */
+  test("row estimates alone, for a reader that has been shown no columns", async () => {
+    const statistics = await statisticsOf(harness("postgres", answerPostgres));
+
+    const packed = packSchemaStatistics(TABLES, statistics, { detail: "rows" });
+
+    expect(packed).toContain("roughly 1000 row(s), estimated");
+    // Absence still says what is unknown, because that is the sentence about SIZE.
+    expect(packed).toContain("public.audit_log: no row estimate recorded; its size is unknown");
+    expect(packed).not.toContain("distinct value(s)");
+    expect(packed).not.toContain("null, estimated");
+  });
+
+  test("not even the count of the columns it withheld", async () => {
+    // "+3 more column(s) with statistics not shown" is a statement about columns, and
+    // this rendering exists so a run told it has been shown none is not shown one.
+    const rows = Array.from({ length: 40 }, (_unused, index) => ({
+      table_schema: "public",
+      table_name: "orders",
+      estimated_rows: 10,
+      column_name: `column_${index}`,
+      n_distinct: 3,
+      null_frac: 0,
+    }));
+    const statistics = await readOf(harness("postgres", async () => result(rows)));
+
+    const packed = packSchemaStatistics(
+      [{ name: "public.orders", columns: [], indexes: [], foreignKeys: [] }],
+      statistics,
+      { detail: "rows" },
+    );
+
+    expect(packed).toContain("public.orders: roughly 10 row(s), estimated");
+    expect(packed).not.toContain("column(s)");
+  });
+
+  test("SQLite's per-column gap is not mentioned to a reader that gets no column either way", async () => {
+    const statistics = await statisticsOf(harness("sqlite", answerSqlite(true)));
+
+    expect(packSchemaStatistics(TABLES, statistics)).toContain("records no per-column distinct count");
+    expect(packSchemaStatistics(TABLES, statistics, { detail: "rows" })).not.toContain("per-column");
+  });
+
+  test("with no statistics at all, a prose reader is not told what not to rest a STATEMENT on", async () => {
+    // The same #350 shape: a rule about an artifact the run cannot produce is a rule it
+    // has to guess at. This workflow writes no statement.
+    const statistics = await statisticsOf(harness("mysql", async () => result([])));
+
+    expect(packSchemaStatistics(TABLES, statistics, { detail: "rows" })).toContain(
+      "rest nothing on how large a table is",
+    );
+    expect(packSchemaStatistics(TABLES, statistics)).toContain("do not write a statement whose correctness depends");
+  });
 });

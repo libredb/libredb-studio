@@ -4,9 +4,15 @@
  *
  * The rail used to ask for the workflow ABOVE the objective textarea — a
  * classification of a question the user had not written yet. The axis itself is
- * load-bearing (`operations` has no SQL tools and no schema inventory, every other
- * workflow is built on SQL), so it cannot be deleted; what moves is who decides it.
- * The user writes the objective, and this module reads it.
+ * load-bearing — `operations` is offered no SQL tool at all and reads the engine's
+ * own reports, where every other workflow is built on a statement — so it cannot be
+ * deleted; what moves is who decides it. The user writes the objective, and this
+ * module reads it.
+ *
+ * That parenthetical used to add "and no schema inventory", which #411 made false:
+ * an operations run on a dialect `CATALOG_PLANS` serves is now handed the names of
+ * this connection's tables and their indexes before its first turn. What separates
+ * the workflows is the tool set, not the grounding.
  *
  * Three properties are load-bearing, and each is a decision rather than an
  * implementation detail:

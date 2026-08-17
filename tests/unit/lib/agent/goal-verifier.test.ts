@@ -529,18 +529,41 @@ describe("an operations run answers on what the ENGINE said about itself", () =>
   test("a report citing a reading this run took is answered", () => {
     const verdict = operations([readingAttempted, reading(READING, 6), reportCiting(ARTIFACT(READING))]);
 
-    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-operations.1", unmet: [] });
+    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-operations.2", unmet: [] });
   });
 
-  test("the citation half of the rule is enforced where it can fail: at composition", () => {
-    // Why this workflow's verifier has no "cited no reading" arm. `composeReportTool`
-    // refuses a claim whose evidence names nothing this run produced, and the only
-    // citable thing an operations run CAN produce is a reading — it is offered no
-    // other tool that settles a step and captures no schema snapshot. So a composed
-    // report already is a report citing a reading, and an arm for the opposite would
-    // be a verdict advertised to users that no run could ever show.
-    expect(AGENT_WORKFLOW_GOALS.operations.verifier).toBe("agent-operations.1");
-    expect(operations([readingAttempted, reading(READING, 6), reportCiting(ARTIFACT(READING))]).unmet).toEqual([]);
+  /*
+    The arm #411 made necessary, and the reason its id moved with it.
+
+    The rule the model is told is "your report must cite at least one reading you took",
+    and until this workflow was grounded that was enforced at composition and could not
+    fail: a reading was the only citable thing an operations run could produce. Then it
+    gained a schema inventory, `composeReportTool` accepts a `context-snapshot` citation,
+    and the run is HANDED that citation form as the preface to its own inventory — so a
+    report about locks resting on the list of table names alone scored `answered` on a run
+    that read nothing about the engine. Both directions are asserted, because an arm that
+    only ever fires would fail every accurate run of the workflow.
+  */
+  test("a report resting only on the schema inventory has not answered", () => {
+    const verdict = operations([contextCaptured, reportCiting(SNAPSHOT)]);
+
+    expect(verdict).toEqual({ outcome: "unanswered", verifier: "agent-operations.2", unmet: ["no-reading"] });
+  });
+
+  test("a reading TAKEN and not cited is not enough either: the report has to rest on it", () => {
+    // The distinction the arm is drawn on. A run that read the engine and then reported
+    // off the inventory has not answered from what the engine said, and counting
+    // `tool-invoked` events would have called it answered.
+    const verdict = operations([readingAttempted, reading(READING, 6), contextCaptured, reportCiting(SNAPSHOT)]);
+
+    expect(verdict.unmet).toEqual(["no-reading"]);
+  });
+
+  test("one cited reading is enough, beside as many inventory citations as the report likes", () => {
+    expect(AGENT_WORKFLOW_GOALS.operations.verifier).toBe("agent-operations.2");
+    expect(operations([contextCaptured, reading(READING, 6), reportCiting(SNAPSHOT, ARTIFACT(READING))]).unmet).toEqual(
+      [],
+    );
   });
 
   test("an EMPTY reading is an answer, not an absence of evidence — the #356 arm", () => {
@@ -555,7 +578,7 @@ describe("an operations run answers on what the ENGINE said about itself", () =>
       reportCiting(ARTIFACT(CORRELATION.empty)),
     ]);
 
-    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-operations.1", unmet: [] });
+    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-operations.2", unmet: [] });
     // And the same ledger judged as an investigation IS empty-evidence, which is what
     // makes the exception a decision rather than an accident.
     expect(

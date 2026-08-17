@@ -300,16 +300,34 @@ function renderColumn(estimate: AgentColumnEstimate, estimatedRows: number | nul
   return parts.length === 0 ? null : `${estimate.column}: ${parts.join(", ")}`;
 }
 
+/**
+ * How much of one table's estimates is rendered.
+ *
+ * `rows` exists for the `operations` workflow (#411), whose whole context is table
+ * names and index names — it is told in the server's own voice that it has been shown
+ * no columns, and a per-column distinct count in the block beside that sentence would
+ * make the sentence false and would leak a column name out of a run whose documented
+ * egress is identifiers of two kinds. What that workflow needs from the statistics is
+ * the one thing `rows` keeps: which table is big enough to be worth a reading. Every
+ * other workflow drafts a statement, and the shape of a statement is what a
+ * distribution decides, so `rows-and-columns` stays the default.
+ */
+export type AgentStatisticsDetail = "rows-and-columns" | "rows";
+
 /** One table's line, including the line that says it has no statistics. */
-function renderTable(name: string, estimate: AgentTableEstimate | undefined): string {
+function renderTable(name: string, estimate: AgentTableEstimate | undefined, detail: AgentStatisticsDetail): string {
   if (estimate === undefined) return `${name}: no statistics recorded for this table; its size is unknown`;
 
   const columns: string[] = [];
-  for (const column of estimate.columns.slice(0, MAX_COLUMNS_PER_TABLE)) {
+  for (const column of detail === "rows" ? [] : estimate.columns.slice(0, MAX_COLUMNS_PER_TABLE)) {
     const rendered = renderColumn(column, estimate.estimatedRows);
     if (rendered !== null) columns.push(rendered);
   }
-  const hidden = estimate.columns.length - Math.min(estimate.columns.length, MAX_COLUMNS_PER_TABLE);
+  // Not even the count of what was withheld, under `rows`: "+3 more column(s)" is a
+  // statement about columns, and that rendering exists so a run told it has been shown
+  // none is not shown one.
+  const hidden =
+    detail === "rows" ? 0 : estimate.columns.length - Math.min(estimate.columns.length, MAX_COLUMNS_PER_TABLE);
   if (hidden > 0) columns.push(`+${hidden} more column(s) with statistics not shown`);
 
   const rows =
@@ -330,23 +348,35 @@ function renderTable(name: string, estimate: AgentTableEstimate | undefined): st
  * Bounded by construction like `packContextForTask`: lines are added while the FENCED
  * result still fits, and what does not fit is NAMED as omitted rather than silently
  * dropped, so a model told nothing about 30 tables asks rather than assumes.
+ *
+ * `detail` is which of two readers is being written for, and `AgentStatisticsDetail`
+ * says why there are two. It governs the unavailable sentence as well as the rendered
+ * lines: a workflow that writes no statement must not be told what not to rest a
+ * statement on, because a rule about an artifact the run cannot produce is a rule it
+ * has to guess at (#350).
  */
 export function packSchemaStatistics(
   tables: readonly TableSchema[],
   statistics: AgentSchemaStatistics,
-  options: { readonly maxChars?: number } = {},
+  options: { readonly maxChars?: number; readonly detail?: AgentStatisticsDetail } = {},
 ): string {
+  const detail = options.detail ?? "rows-and-columns";
   if (statistics.kind === "unavailable") {
     return [
       `No estimated table statistics are available to this run: ${UNAVAILABLE_REASON[statistics.reasonCode]}.`,
-      "So treat every table's size as unknown rather than as small, and do not write a statement whose correctness depends on how large a table is.",
+      detail === "rows"
+        ? "So treat every table's size as unknown rather than as small, and rest nothing on how large a table is."
+        : "So treat every table's size as unknown rather than as small, and do not write a statement whose correctness depends on how large a table is.",
     ].join("\n");
   }
   if (tables.length === 0) {
     return "Estimated table statistics were read for this run, but its inventory carries no tables, so there is nothing to report them against.";
   }
 
-  const dialectNote = statistics.dialect === "sqlite" ? ` ${SQLITE_STATISTICS_LIMIT}` : "";
+  // SQLite's per-column gap is not worth stating to a reader that is being shown no
+  // column either way: it would be the only sentence about columns in a context whose
+  // point is that it carries none.
+  const dialectNote = statistics.dialect === "sqlite" && detail !== "rows" ? ` ${SQLITE_STATISTICS_LIMIT}` : "";
   const lead = `${STATISTICS_PREFACE}${dialectNote}\n`;
   const maxChars = (options.maxChars ?? AGENT_STATISTICS_PACK_MAX_CHARS) - lead.length;
   const source = {
@@ -361,7 +391,7 @@ export function packSchemaStatistics(
   let body = "";
   let shown = 0;
   for (const table of tables) {
-    const line = renderTable(table.name, statistics.byTable.get(table.name));
+    const line = renderTable(table.name, statistics.byTable.get(table.name), detail);
     const candidate = body === "" ? line : `${body}\n${line}`;
     if (fenceUntrustedContent(close(candidate, tables.length - shown - 1), source).length > maxChars) break;
     body = candidate;

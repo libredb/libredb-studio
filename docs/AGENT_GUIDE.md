@@ -185,9 +185,44 @@ having **no statistics**, never as empty. On SQLite the statistics exist only af
 
 **Two engines only.** Grounding works on **PostgreSQL and SQLite**. On any other connection a Plan
 run says plainly that no inventory could be read for it, and is asked to refuse rather than to invent
-table names. **Operate** is the one workflow with no grounding by choice, on any engine: it asks the
-engine about itself rather than about your tables, so there is nothing to ground against, and its
-plan is prose rather than a statement.
+table names. **That is the whole of the rule** — grounding follows the engine and nothing else, in
+every workflow including **Operate**. Operate used to be excluded on the reasoning that it asks the
+engine about itself rather than about your tables; what the reasoning missed is that the engine's
+answers are full of your table and index names — a lock is held on a table, an unused index is named,
+a slow query names the tables it reads — so a run that has never seen the inventory reads all of them
+as strings it cannot place. An Operate plan is therefore grounded on PostgreSQL and SQLite too,
+though with **less** of the inventory than the others: the table names and the indexes on each, and
+no columns and no relations, because those are not what an operational reading asks about. The
+estimated statistics it gets beside them are reduced the same way — row counts, and nothing per
+column. What an Operate plan hands back
+is **prose** — the readings it would take, in what order, and what each would settle — and a grounded
+one is asked to name the real tables and indexes each reading would be about instead of describing
+readings in the abstract.
+
+**Prose does not mean you leave empty-handed.** Where a reading it would take is itself a statement
+your engine can run, the plan writes it out as a code block with **Apply to editor** and **Copy** on
+it, like any other. On PostgreSQL that is the usual case — `pg_stat_activity`, `pg_locks` and
+`pg_stat_user_indexes` are ordinary tables you select from — so an Operate plan on PostgreSQL
+typically hands you a monitoring query you can run on the spot. This is not limited to SQL engines:
+on Redis the same plan wrote `INFO memory`, `CLIENT LIST` and `SLOWLOG GET 10` into a block your
+Redis editor runs. Where a reading genuinely cannot be written down — a server-status call with no
+form the editor accepts — the plan says it in that engine's own terms and gives you no block, which
+is a complete answer rather than a shortfall. What it may put in a block is bounded to what the
+engine reports about **itself**; an Operate plan does not draft queries over your own tables, and the
+statement workflows are where those come from.
+
+Two things that follow, and are worth knowing before you rely on one. The Operate plan's block gets
+**none of the checks** the statement workflows' deliverable gets — no card, no read-only verdict, no
+list of names your schema does not have — because it was welcomed rather than asked for; read it
+before you run it. And the run still never executes anything: applying is your click, in your editor,
+on your connection.
+
+**An Operate plan is also told which engine it is planning against**, grounded or not, and it is
+asked to name only readings that engine actually offers — where it is unsure, to say what it would
+want to establish rather than name a mechanism that does not exist there. That rule is why a plan on
+SQLite no longer offers to read `pg_stat_user_indexes`, and why a plan on Redis no longer offers to
+inspect a lock table Redis has never had. Every other workflow already carried its engine: their
+deliverable is a statement, and the code block it arrives in is tagged with the connection's engine.
 
 **The statement it drafts, and what is checked.** The run finishes with one fenced statement and a
 short rationale. The rail shows it on its own card with a **Copy** and an **Apply to editor** — the
@@ -282,8 +317,14 @@ Two consequences you will notice:
 - **It runs on every engine.** The other workflows need a database-native read-only statement path,
   which only PostgreSQL and SQLite have; this one needs none, so a run opened on MySQL, Oracle, SQL
   Server, MongoDB or Redis works rather than ending `engine-unsupported`.
-- **It has no schema and no free-form SQL.** There is no `inspect_schema` and no `run_read_query`
-  here, and the run is told so in its opening message rather than being left to discover it.
+- **It has no free-form SQL, and its schema is a short list of names.** There is no `inspect_schema`
+  and no `run_read_query` here, and the run is told so in its opening message rather than being left
+  to discover it. What it is given instead — on PostgreSQL and SQLite, where the server can read a
+  catalog — is an inventory of your table names and the indexes on each, and nothing more: no
+  columns, no types, no relations. That is there so the run can recognise what the engine names back
+  at it, since a lock report, an index-stats row and a slow query all come back full of identifiers.
+  On any other engine the run is told plainly that no inventory could be read for that connection and
+  takes its readings anyway.
 
 Two things this workflow will not do, and it says so rather than implying otherwise:
 
@@ -295,11 +336,12 @@ Two things this workflow will not do, and it says so rather than implying otherw
   nothing else, so "kill this session" or "vacuum this table" is stated as a claim in the report
   rather than filed as a recommendation you could apply with one click.
 
-**Answered when** the run composed a report (`verifyOperationsGoal`, `goal-verifier.ts`). Every
-claim in it already cites a reading the run took — `compose_report` refuses a claim whose evidence
-names nothing this run produced, and a reading is the only thing this workflow can produce to cite —
-so the citation is enforced as you write, not judged afterwards. Note what is deliberately **not**
-required: a reading that came back **empty** still counts. No blocked session and no slow query is
+**Answered when** the run composed a report and at least one claim in it cites a reading it took
+(`verifyOperationsGoal`, `goal-verifier.ts`). Every claim cites something the run actually established
+— `compose_report` refuses a claim whose evidence names nothing this run produced — and since the run
+also holds a citable schema inventory, the verdict asks for one citation of a READING on top of that:
+a report about locks that rests only on the list of table names has answered from what a database like
+yours usually looks like. Note what is deliberately **not** required: a reading that came back **empty** still counts. No blocked session and no slow query is
 what a healthy server looks like, and treating that as an absence of evidence would mark an accurate
 report as unanswered.
 
@@ -490,6 +532,7 @@ whole vocabulary (`SHORTFALL_SENTENCES`, `timeline.ts:633-645`):
 | `no-plan-comparison` | "No before-and-after plan comparison was recorded, and no index was recommended: a query optimization rests on one or the other." |
 | `no-plan-evidence` | "The index was recommended without citing a plan this run read, so nothing the engine said backs it." |
 | `no-table-profile` | "No table was profiled, so the state of the data was never established." |
+| `no-reading` | "The report rests only on this database's list of tables, and on no reading of what the engine is doing, so nothing it says was measured on this server." |
 | `no-answer` | "The run reported what it found but never produced an answer to show, so there is nothing to put in front of you." |
 | `answer-uncited` | "The run presented one result as the answer and its report rests on other evidence entirely, so the claims and the picture are not about the same thing." |
 | `cancelled` | "The run was stopped before it could finish." |
@@ -549,13 +592,16 @@ the figures stay the run's.
 | **Investigate** | 36 | 30 | 7.5 min | 90 s |
 | **Optimize** | 36 | 30 | 7.5 min | 90 s |
 | **Assess** | 48 | 45 | 10.5 min | 135 s |
-| **Operations** | 20 | 12 | 5.0 min | 60 s |
+| **Operations** | 20 | 18 | 6.0 min | 80 s |
 | **Analyze** | 60 | 42 | 15.0 min | 180 s |
 
 **These figures are approved and pending live measurement.** They are the starting point a
 measurement confirms or corrects, not numbers read off measured runs. Operations is the small row on
-purpose: it sends no SQL, so it never spends a statement drafting one and never repairs one, and its
-readings come from a closed set of six kinds. Analyze is the large row for the opposite reason: it
+purpose: it sends no SQL of its own, so it never spends a statement drafting one and never repairs
+one, and its readings come from a closed set of six kinds — twelve of its eighteen statements are
+every kind twice, once broad and once narrowed. The other six pay for the schema inventory the server
+reads before the run's first turn, and they were added to the row rather than taken out of it, so
+grounding costs the run no reading. Analyze is the large row for the opposite reason: it
 iterates towards an aggregate rather than repeating a reading, and a `GROUP BY` over a fact table
 costs far more database time than a catalog read.
 

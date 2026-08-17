@@ -641,6 +641,8 @@ const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
   "no-plan-evidence":
     "The index was recommended without citing a plan this run read, so nothing the engine said backs it.",
   "no-table-profile": "No table was profiled, so the state of the data was never established.",
+  "no-reading":
+    "The report rests only on this database's list of tables, and on no reading of what the engine is doing, so nothing it says was measured on this server.",
   "no-answer":
     "The run reported what it found but never produced an answer to show, so there is nothing to put in front of you.",
   "answer-uncited":

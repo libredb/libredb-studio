@@ -2166,27 +2166,29 @@ either by exempting `sql.explain.estimate` from the emptiness arm or by not comp
 this template — with an eval that fails if the run above reads `unanswered`, and with the reason
 recorded next to the operations exemption so the two read as one decision.
 
-### B46. Plan-mode grounding is workflow-dependent, and only the engine-dependent half is ever said
+### B47. `engine-unsupported` is shown for a misconfigured agent credential, on an engine that is supported
 
-`docs/AGENT_DEMO.md` and the design both frame plan-mode grounding as a property of the engine:
-PostgreSQL and SQLite are grounded because `CATALOG_COMPOSERS` serves those dialects, and everything
-else is not. That is true and incomplete. A plan-mode **operations** run reads no catalog on any
-engine — deliberately, and the reason is sound (`src/lib/agent/investigation.ts`,
-`PLANNING_OPERATIONS_CONTEXT_NOTE`: an operations objective is about what the engine reports about
-itself, so a catalog read would spend the run on an inventory the plan has no use for) — and
-`PLANNING_PROSE_RULES` follows it with "There is no statement to write here and no fenced block to
-produce".
+`AgentRunFailureReason`'s `engine-unsupported` is rendered as *"The agent cannot run on this database
+engine: it offers no read-only execution profile."* (`src/components/agent/timeline.ts`). It is the
+classification `src/lib/agent/runtime.ts` gives to any `ExecutionProfileError`, and that error has two
+causes rather than one. The engine-shaped cause is real and the sentence fits it:
+`acquireExecutionProfileProvider` refuses `agent-read-only` for a provider with no `queryReadOnly`.
+The other cause is `resolveAgentCredential`, which throws the same error type — with reason codes
+`AGENT_CREDENTIAL_UNRESOLVABLE` and `AGENT_CREDENTIAL_WITH_CONNECTION_STRING` — for a credential that
+is half-configured, sealed under a key that no longer decrypts, or configured alongside a connection
+string. That check runs before a provider is created, on every engine.
 
-Observed on 2026-08-17: a plan run opened on a PostgreSQL connection announced *"Because no schema
-was read, we cannot name specific tables or indexes upfront"* and offered zero **Apply to editor**
-controls. On PostgreSQL. A user who has been told grounding follows the engine reads that as a
-defect, and there is nothing on screen to correct them: the ungrounded-workflow case is indistinguishable
-from the ungrounded-engine case, which `planningUngroundedNote` does name explicitly.
+So an operator who set `agentUser` and `agentPassword` on a PostgreSQL connection and then rotated the
+secret key is told their engine is unsupported. The one message they get points away from the one
+thing they could fix, and it says something about their database that is false. Found while verifying
+this reason's own doc comment on #411; the comment now states the gap rather than claiming the
+workflow cannot reach it.
 
-Made much more reachable by workflow inference (#407): "what would you check first if this database
-were slow in production?" classifies to operations, so a user who wanted a grounded optimization plan
-lands here without ever having chosen the workflow that costs them the grounding.
+Not made by #411 and not fixed by it. Every workflow could already reach it through
+`acquireExecutionProfileProvider` on the reading path; what #411 changed is that an `operations` run
+can now reach it before its first turn, during the grounding capture, which is the earliest and least
+explicable moment for it to arrive.
 
-Done when a plan run that is ungrounded because of its workflow says so in those terms, distinct from
-the engine sentence, with a test pinning each of the two reasons to its own wording — and when the
-demo script and `docs/AGENT.md` state the workflow half alongside the engine half.
+Done when a credential refusal is classified apart from an engine refusal — the reason codes already
+distinguish them, so this is a branch in `classifyDriveFailure` and a second rail sentence, not new
+information — with a test per cause pinning the sentence a user is shown.

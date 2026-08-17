@@ -63,6 +63,54 @@ function neutralise(text: string): string {
 }
 
 /**
+ * One identifier, delimited so that nothing inside it can be read as notation.
+ *
+ * The companion to the fence rather than a duplicate of it, and the distinction is
+ * the whole reason this exists: the fence says where the SERVER stopped talking, and
+ * says nothing about the shape of what is inside. Every block this module wraps has a
+ * shape a reader is meant to trust — a relation is a line, a table is a line, an
+ * index is one comma-separated item — and a name is free to contain a newline, a
+ * comma or an arrow. So a table literally called `orders -> secrets` produces a line
+ * that reads as a relation nobody has, and a table whose name carries a newline
+ * produces an ENTRY nobody has. Quoting is what makes such a name legible rather than
+ * effective.
+ *
+ * The doubling is the rule SQL itself uses for a quoted identifier, so `a" -> "b`
+ * renders as `"a"" -> ""b"` — one name with quotes in it, not two names with a
+ * relation between them.
+ *
+ * It lives beside the fence rather than in either renderer because both of them need
+ * it and neither owns it: the relations block quotes for its notation, and the
+ * operations inventory quotes because the identifier list IS its payload and the run
+ * is told to match what the engine names back at it against that list.
+ */
+export const quoteIdentifierForPrompt = (name: string): string => `"${[...name].map(escapeInIdentifier).join("")}"`;
+
+/**
+ * One character of an identifier: the doubled quote, every control character as a
+ * visible escape, and anything else unchanged.
+ *
+ * Doubling alone was not enough, and the gap was found by review on #347: both
+ * reference engines permit a LINE BREAK inside a quoted identifier, so a table named
+ * with an embedded newline produced what looked like an extra line inside the fence —
+ * defeating the whole "one line is one object" reading, and the assertion that rested
+ * on it. Control characters are therefore rendered as escapes, which keeps the name
+ * legible while making it exactly one line.
+ *
+ * Applied per code point rather than through a character class, so that this file
+ * carries no literal control byte of its own — a source file with a raw NUL in it is
+ * a defect a formatter will not catch and a reviewer cannot see.
+ */
+function escapeInIdentifier(character: string): string {
+  if (character === '"') return '""';
+  if (character === "\n") return "\\n";
+  if (character === "\r") return "\\r";
+  if (character === "\t") return "\\t";
+  const code = character.charCodeAt(0);
+  return code < 0x20 ? `\\x${code.toString(16).padStart(2, "0")}` : character;
+}
+
+/**
  * Wraps database-derived text for a prompt. The header is neutralised too: a
  * `label` is prose a caller chose, but an operation id or a correlation id could
  * one day be derived from something an engine reported, and a forged marker in the

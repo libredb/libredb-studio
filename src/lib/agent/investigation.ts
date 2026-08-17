@@ -51,6 +51,7 @@ import {
   heldSnapshotForConnection,
   holdSnapshotForConnection,
   packContextForTask,
+  packOperationsInventory,
   reusableSnapshot,
 } from "./context-snapshot";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
@@ -96,6 +97,7 @@ import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
   type AgentContextSnapshot,
   type AgentRunEvent,
+  type AgentRunMode,
   type AgentRunRecord,
   type AgentRunStopReason,
   type AgentRunTerminalStatus,
@@ -233,25 +235,78 @@ export const AGENT_REPORT_RESERVE_NOTICE = [
 ].join(" ");
 
 /**
- * What an operations run is given instead of a schema inventory.
+ * What an operations run is told about the inventory it was given (#411).
+ *
+ * Both of these sentences used to say "no schema inventory was captured for this run,
+ * and none is needed". The second half was a real decision with a real argument — an
+ * operations objective is about what the engine reports about ITSELF — and #411 is the
+ * finding that the argument is true about the QUESTION and false about the evidence:
+ * the engine's own reports are full of schema identifiers. A lock is held on a
+ * relation, an index-stats row names an index, a slow query names tables. A run that
+ * has never seen the inventory reads every one of those as an opaque string.
+ *
+ * So the run is grounded like every other workflow, and what it is TOLD says what it
+ * now has. The half of each sentence that stayed true is kept and is still
+ * load-bearing: an agent-mode operations run holds no tool that sends SQL, and a plan
+ * run holds no tool at all.
+ *
+ * NEITHER claims to be complete, and that is a correction review made on #411 rather
+ * than a hedge. `packOperationsInventory` is bounded at 6000 fenced characters and drops
+ * the tail — roughly 90 tables of ordinary width, which an ordinary production schema
+ * exceeds — so "every table this connection holds" was the server's own unfenced voice
+ * contradicting the fenced block's own omission line, and a model resolves that in
+ * favour of the server. The concrete failure: a run reads `pg_locks`, finds a lock on a
+ * table the packing left out, and concludes the relation is not a table of this database
+ * — a confident false negative on exactly the identifier-recognition job the inventory
+ * exists to do. So both notes describe a bounded list and point at the block for the
+ * count, the way `packContextForTask`'s own header already states a number rather than
+ * promising totality.
  *
  * Server-authored and unfenced, like the other opening messages: nothing a database
- * wrote is in it.
+ * wrote is in it. The inventory itself arrives fenced, in its own message.
  */
 const OPERATIONS_CONTEXT_NOTE =
-  "No schema inventory was captured for this run, and none is needed: this run reads what the engine reports about itself, not what its tables contain. Take the readings you need with inspect_operations. There is no tool here that sends SQL, so nothing is established for you until a reading returns it.";
+  "A schema inventory was read for this run before your first turn: this connection's table names and the indexes on each, and nothing else — no columns and no relations, because an operations objective is about what the engine reports about ITSELF and not about what its tables contain. It is as much of the inventory as fits, and the block itself says how many tables it left unnamed, so a name the engine reports that is missing from it may still be a table of this database. Use it to recognise what the engine names back at you: a lock is held on a relation, an index-stats row names an index, a slow query names tables. Take the readings you need with inspect_operations. There is no tool here that sends SQL, so apart from that inventory nothing is established for you until a reading returns it.";
 
 /**
  * The same workflow, planned rather than run.
  *
- * Its own sentence because `OPERATIONS_CONTEXT_NOTE` names `inspect_operations`, and
- * a planning run has no tools: telling a model to call a tool it does not have is the
- * #350 failure exactly. This is also why an operations plan is not grounded at all —
- * an operations objective is not about the schema, so a catalog read would spend the
- * run's statements on an inventory the plan has no use for.
+ * Its own sentence because `OPERATIONS_CONTEXT_NOTE` names `inspect_operations`, and a
+ * planning run has no tools: telling a model to call a tool it does not have is the
+ * #350 failure exactly, and keeping the two strings apart is what stops one edit to
+ * the agent one from reintroducing it. Nothing here may name a tool at all.
  */
 const PLANNING_OPERATIONS_CONTEXT_NOTE =
-  "No schema inventory was read for this run, and none is needed: an operations objective is about what the engine reports about ITSELF — its sessions, its locks, its waits, its configuration — not about what its tables contain. Nothing about this server has been established for you, so write the plan as the readings you would take and what each would settle.";
+  "A schema inventory for this database is in this conversation: its table names and the indexes on each, and nothing else — an operations objective is about what the engine reports about ITSELF, its sessions, its locks, its waits, its configuration, not about what its tables contain. It is as much of the inventory as fits, and the block itself says how many tables it left unnamed. What the inventory is FOR is the identifiers those reports come back full of: a lock is held on a relation, an index-stats row names an index, a slow query names tables. Write the plan as the readings you would take and what each would settle, and name the real tables and indexes each reading would be about.";
+
+/**
+ * The same two runs on an engine whose catalog this server cannot read.
+ *
+ * `CATALOG_PLANS` serves PostgreSQL and SQLite; on MySQL, MongoDB, Redis and the rest
+ * the capture answers `unavailable` before a provider is acquired, and the run
+ * continues UNGROUNDED — which is the existing behaviour for every other workflow and
+ * is why operations still reaches the engines it exists to reach.
+ *
+ * What may not survive is the old sentence's "and none is needed": a run that could
+ * not be grounded is told exactly that, in the server's own voice.
+ *
+ * The CAUSE is the capture's own `detail` rather than a sentence written here, and
+ * review on #411 is why. A sentence of this file's own could only name the engine, so
+ * an operations run whose catalog read was DENIED — or whose rows were released before
+ * the inventory was built — was told "no inventory could be read on this postgres
+ * connection", which reads as a property of PostgreSQL on a deployment where every
+ * other operations run is grounded, and which threw away the only record of the real
+ * reason. So the diagnosis comes from the module that made it and only the ADVICE is
+ * written here: the capture's own advice names `inspect_schema`, which no operations
+ * run holds in either mode, and that is the #350 failure this pair of strings exists to
+ * avoid. Nothing untrusted is spliced in — `detail` is server prose in every branch but
+ * the refused read, whose engine text arrives already fenced.
+ */
+const operationsUngroundedNote = (detail: string): string =>
+  `${detail} So nothing about this database has been established for you: not one table name and not one index. Take the readings you need with inspect_operations. There is no tool here that sends SQL and none that reads a catalog, so nothing is established for you until a reading returns it.`;
+
+const planningOperationsUngroundedNote = (detail: string): string =>
+  `${detail} So nothing about this database has been established for you: not one table name and not one index. You have no tools and can read nothing further, so write the plan as the readings you would take and what each would settle, and say plainly that you cannot name the objects those readings would be about.`;
 
 /**
  * What a plan run is told when its context could not be established.
@@ -315,9 +370,21 @@ const PLANNING_NO_STATEMENT_RULE = [
  * "the statement that answers the question" when the objective already came with one.
  *
  * `operations` is the exception the owner ruled on, and it is a decision rather than an
- * omission: an operations objective is about what the engine reports about ITSELF, so
- * the run is not grounded, there is no schema to write a statement against, and the
- * statement contract would be a rule its inputs cannot satisfy — the #350 failure.
+ * omission. Two justifications have since been narrowed by what live runs did, and the
+ * row survives both. The first expired with #411: the run IS grounded now, on the
+ * engines whose catalog can be read, so "there is no schema to write a statement
+ * against" is no longer why. The second was "an operational reading is not a statement",
+ * which is true of Redis and MongoDB and false of PostgreSQL, where `pg_stat_activity`
+ * and `pg_stat_user_indexes` are ordinary objects a user selects from — so the rule
+ * built on it (`planningProseStatementRule`) states the condition instead of the
+ * conclusion.
+ *
+ * What is left is why this row is prose and stays prose: no reading of this workflow can
+ * be REQUIRED to be a statement, because the workflow deliberately runs on engines where
+ * none is. Asking for a fenced statement would be a rule this workflow's own subject
+ * matter cannot satisfy on half its engines, which is the #350 failure. So the plan is
+ * judged as prose, is exempt from the planning statement rule, and may fence a statement
+ * where the engine happens to express the reading as one.
  */
 type PlanDeliverable = { readonly kind: "statement"; readonly noun: string } | { readonly kind: "prose" };
 
@@ -422,8 +489,22 @@ const PLANNING_PROVENANCE: Readonly<Record<PlanningGrounding["readBy"], string>>
 const PLANNING_LIMIT_WITHOUT_STATISTICS =
   "It is a record of what exists — not of how many rows anything holds, how large it is, or how fast it runs.";
 
-const PLANNING_LIMIT_WITH_STATISTICS =
-  "Estimated statistics are in the conversation beside it: every number there is the engine's own estimate, it can be badly out of date, and it is ABSENT for a table nobody has analysed — a table listed as having no statistics is one whose size is unknown, never one you may treat as empty or small. Use them to choose the shape of a statement, never as a measurement, and never quote one as a fact about the data.";
+/**
+ * What an estimate IS, said once, and what it is FOR, said per deliverable.
+ *
+ * One string until #411, ending "use them to choose the shape of a statement" — which
+ * was written for the four workflows that write one and was then spliced into the
+ * operations prose rules two clauses before "there is no statement to write here". A
+ * run holding both sentences has to guess which governs, and that is the #350 failure
+ * arrived at by reuse rather than by omission. So the half that is a fact about the
+ * numbers is shared and the half that is a use for them belongs to the deliverable.
+ */
+const PLANNING_STATISTICS_NATURE =
+  "Estimated statistics are in the conversation beside it: every number there is the engine's own estimate, it can be badly out of date, and it is ABSENT for a table nobody has analysed — a table listed as having no statistics is one whose size is unknown, never one you may treat as empty or small. Never quote one as a fact about the data, and never as a measurement.";
+
+const PLANNING_LIMIT_WITH_STATISTICS = `${PLANNING_STATISTICS_NATURE} Use them to choose the shape of the statement.`;
+
+const PLANNING_PROSE_LIMIT_WITH_STATISTICS = `${PLANNING_STATISTICS_NATURE} Use them to choose which table is worth a reading and which reading to take first.`;
 
 function planningSchemaRules(
   grounding: PlanningGrounding,
@@ -466,18 +547,171 @@ const planningNoSchemaRules = (deliverable: { readonly noun: string }): string =
   ].join(" ");
 
 /**
- * What an operations plan is told instead of the statement contract.
+ * What an operations plan is told instead of the statement contract, when it HAS an
+ * inventory (#411).
  *
  * The prose row of the deliverable table, and the reason it is a row rather than a
- * silence: this workflow composes no SQL and is grounded with no schema, so a run of
- * it must be told what it IS to produce, not merely left without the contract the
- * other four are given.
+ * silence: this workflow composes no SQL, so a run of it must be told what it IS to
+ * produce, not merely left without the contract the other four are given.
+ *
+ * The closing sentence is the whole point of grounding it. A plan that lists the
+ * readings it would take without naming what they would be about is the plan that
+ * would read identically against any database in the world — the defect the whole
+ * plan-mode design exists to remove — and the inventory is precisely what makes the
+ * objects nameable.
+ *
+ * Two clauses that a reader will be tempted to shorten, and must not:
+ *
+ *  - The bar is what THIS CONVERSATION showed, not what the inventory block holds. The
+ *    block is bounded and drops its tail, and the statistics beside it are bounded
+ *    separately and driven from the whole snapshot — so a table can be named in one and
+ *    absent from the other. A rule phrased over the inventory alone would forbid a name
+ *    the run was legitimately shown.
+ *  - The statistics clause is the PROSE one. `PLANNING_LIMIT_WITH_STATISTICS` ends by
+ *    telling the reader to shape a statement with the estimates, two clauses before this
+ *    rule says there is no statement to write — one message, two instructions, and
+ *    nothing to say which governs (found by review on #411).
  */
-const PLANNING_PROSE_RULES = [
-  "No schema inventory is available to this run, and this objective needs none: it is about what the engine reports about ITSELF — its sessions, its locks, its waits, its configuration — not about what its tables contain.",
-  "There is no statement to write here and no fenced block to produce, and you must invent no table or column names.",
-  "Answer in prose: the readings you would take, in what order, and what each one would settle.",
-].join(" ");
+/**
+ * Which ENGINE the prose plan is being written for, and what that permits it to name.
+ *
+ * The four workflows that write a statement have carried their engine since #396:
+ * `planningStatementContract` takes the connection type and spends it on the fence tag.
+ * The prose deliverable took no type at all, and `operations` is the only workflow
+ * whose deliverable is prose — so a plan-mode Operate run was the one plan run in the
+ * product that was never told which engine it was planning against.
+ *
+ * What that cost was found by driving the built branch in Chrome after #411, and it is
+ * grounding that made it visible: the plans became specific without becoming right. On
+ * a SQLite connection a grounded plan named the eight real tables of its inventory and
+ * then proposed reading `pg_stat_user_indexes` and `pg_total_relation_size`; on a Redis
+ * connection an ungrounded plan correctly said it could name no object and then
+ * proposed wait event statistics, lock management views and a blocking chain
+ * dependency tree. Redis has no locks and no wait events. The half of the answer the
+ * user would act on was about a different database engine.
+ *
+ * Three constraints shape the wording, and each is a way this sentence could have gone
+ * wrong:
+ *
+ *  - It is about the READINGS, not about the engine's name. Naming the type alone was
+ *    already happening and was measurably not enough: `planningUngroundedNote`
+ *    interpolates "on this redis connection" and the run that proposed lock trees had
+ *    read that sentence.
+ *  - It names NO tool. A plan run holds none at all, so a rule about readings that
+ *    implied one could be taken would be the #350 failure this file keeps being bitten
+ *    by — stated where the mode cannot satisfy it.
+ *  - It promises no catalog of this engine's readings, and deliberately: a per-engine
+ *    list of monitoring views written here would be a second source of truth against
+ *    the kinds `inspect_operations` actually serves, and the two would drift. The rule
+ *    governs what the plan may CLAIM, and the escape hatch — say what you want to
+ *    establish instead — is what a model reaches for when it does not know.
+ *
+ * The type is a server-side enum, so nothing untrusted is spliced into a sentence the
+ * model reads as the server's own; this is the same splice `planningUngroundedNote`
+ * makes.
+ */
+const planningProseEngineRule = (type: DatabaseType): string =>
+  `This database is ${type} and nothing else, so every reading you name must be one a ${type} engine actually offers: name no view, no counter and no statistic that belongs to a different engine, and where you are unsure whether ${type} exposes a reading, say what you would want to establish rather than naming a mechanism this engine does not have.`;
+
+/**
+ * Whether a reading may be written out AS a statement, and what such a statement may
+ * read.
+ *
+ * This replaces a clause that was false and was watched being disobeyed. Both prose
+ * paths used to assert "there is no statement to write here and no fenced block to
+ * produce", and a plan-mode Operate run driven in a browser on 2026-08-17 — Automatic
+ * classification, dvdrental, 22 tables, grounded — closed with a fenced
+ * `pg_stat_user_indexes` read ordered by `idx_scan`, which the rail duly offered as
+ * "Apply to editor". A rule the run visibly disobeys is the #350/#356 failure class:
+ * the code asserts one thing while every live run does another, and the assertion is
+ * the part that is wrong here.
+ *
+ * The premise the clause rested on — an operations reading is not SQL — is engine-
+ * dependent, and the sentence was engine-blind. On PostgreSQL an operational reading
+ * very often IS an ordinary statement: `pg_stat_user_indexes`, `pg_stat_activity` and
+ * `pg_locks` are selectable objects a user can run in the editor. On Redis a reading is
+ * `INFO`, `SLOWLOG GET`, `CLIENT LIST`, and on MongoDB a server-status command; there is
+ * nothing to fence. So the rule states the CONDITION and lets the engine decide.
+ *
+ * What did NOT change, and must not: `PLAN_DELIVERABLES.operations` is still
+ * `{ kind: "prose" }`. This is a permission and never a contract — no `noun`, no
+ * `NO STATEMENT:` marker, no ledger fact (`recordPlanStatement` still records nothing
+ * for this workflow), and no verdict that asks for a block. A plan with no block in it
+ * is a complete answer, which is why that sentence is stated rather than implied: an
+ * engine that expresses no reading as a statement must not read this as a bar it is
+ * failing, or it produces the wrong engine's SQL to clear one.
+ *
+ * The last sentence is the bound that keeps this from becoming a fifth statement
+ * workflow. An operations plan is not a licence to draft a query over the user's data;
+ * what it may fence is what the engine reports about ITSELF. The engine half is
+ * delegated to `planningProseEngineRule`, which already binds every named reading to
+ * this engine — restating it here would be two wordings of one contract, which is how
+ * #350 happened.
+ *
+ * The fence tag is the connection's canonical type-id for the reason
+ * `planningStatementContract` spends it that way: `rich-text.tsx` decides from the tag
+ * whether to offer the editor hand-off (#389), and a tag it does not know costs the user
+ * the button. The two sentences never reach one model — the deliverable picks exactly
+ * one of them — and both interpolate the same server-side enum, so the tag cannot drift
+ * between them.
+ */
+const planningProseStatementRule = (type: DatabaseType): string =>
+  [
+    `A reading is not always prose: where the reading you would take is itself expressible as a statement — on some engines what the engine reports about itself is held in ordinary objects you can select from — write that statement out in a single fenced block tagged \`${type}\`, and the plan is better for it.`,
+    "Where it is not expressible as one, say the reading in this engine's own terms and produce no block: a plan with no block in it is a complete answer here, and no block at all is better than one written for an engine this is not.",
+    "Whatever you do put in a block must READ WHAT THE ENGINE REPORTS ABOUT ITSELF — what is connected to it, what it is spending its time on, what is blocked, where its space and its indexes are going. A statement that reads the user's own tables, their rows and their columns, is not an operational reading and does not belong in this plan.",
+  ].join(" ");
+
+const planningProseRules = (grounding: PlanningGrounding, type: DatabaseType): string =>
+  [
+    "A schema inventory for this database is in this conversation: the tables it holds and the indexes on each, and no columns and no relations. It is as much of the inventory as fits, and the block itself says how many tables it left unnamed.",
+    PLANNING_PROVENANCE[grounding.readBy],
+    grounding.statisticsShown ? PLANNING_PROSE_LIMIT_WITH_STATISTICS : PLANNING_LIMIT_WITHOUT_STATISTICS,
+    "You must name no table and no index that this conversation has not shown you.",
+    "Answer in prose: the readings you would take, in what order, and what each one would settle. Name the real tables and indexes each reading would be about, rather than describing readings in the abstract.",
+    planningProseStatementRule(type),
+    planningProseEngineRule(type),
+  ].join(" ");
+
+/**
+ * The same plan on an engine whose catalog this server cannot read.
+ *
+ * It says what it has not seen rather than that it needed nothing — "and this
+ * objective needs none" was the old wording, and it is exactly the claim #411 found to
+ * be false. A run told it needs no inventory has no reason to say which objects it
+ * cannot name, and naming what it cannot name is the honest half of an ungrounded plan.
+ *
+ * The engine rule is stated HERE too, and this is the path that needs it most rather
+ * than least: a run with no inventory has no real object to be specific about, so the
+ * mechanism it names is the only thing left for it to be specific about. The live Redis
+ * run that proposed a blocking chain dependency tree was this path.
+ *
+ * `planningProseStatementRule` is stated here too, and that is a DECISION rather than
+ * symmetry for its own sake. What "ungrounded" withholds is this DATABASE — not one
+ * table, not one index — and it withholds nothing about the ENGINE: that a MySQL server
+ * has `performance_schema` or a SQL Server one has `sys.dm_exec_requests` is a property
+ * of the product, knowable to a run that has seen no schema at all, and it is knowledge
+ * this path already spends when it names the readings it would take. Withholding the
+ * FENCE while permitting the same reading in prose would be a distinction with nothing
+ * behind it, and it would cost the editor hand-off on exactly the engines that have no
+ * other deliverable — MySQL, SQL Server and ClickHouse are all this path, as is a
+ * PostgreSQL run whose catalog read was refused.
+ *
+ * What that permission may not cross is said in the same breath, because it is the one
+ * thing this path can get wrong that the grounded path cannot: the engine's reporting
+ * objects are not this database's schema, so naming one invents nothing, while naming a
+ * table, an index or a column of the user's invents everything. `pg_stat_activity` is
+ * permitted; the same read filtered on a relation name this run was never shown is not.
+ */
+const planningProseRulesUngrounded = (type: DatabaseType): string =>
+  [
+    "No schema inventory is available to this run, so you have not seen this database at all: not one table name and not one index.",
+    "You must invent no table and no index names.",
+    `The engine's own reporting objects are not covered by that: what a ${type} engine calls its own views and counters is a property of the engine rather than of this database's schema, so naming one invents nothing — naming a table, an index or a column of this user's invents everything.`,
+    "Answer in prose: the readings you would take, in what order, and what each one would settle — and say plainly that you cannot name the objects those readings would be about.",
+    planningProseStatementRule(type),
+    planningProseEngineRule(type),
+  ].join(" ");
 
 /**
  * What each workflow is FOR, said to the model (#330 T3).
@@ -532,7 +766,13 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
     "Grade what you find against completeness, uniqueness, consistency and validity, and say which of the four each finding speaks to.",
   ].join(" "),
   operations: [
-    "You have NO SQL in this run: there is no inspect_schema, no run_read_query and no inspect_plan, and no schema inventory was captured for you. Everything you can read, you read with inspect_operations.",
+    // "and no schema inventory was captured for you" until #411, which captures one.
+    // Hedged rather than stated flatly because these rules are the same for every run
+    // of this workflow while the grounding is not: `CATALOG_PLANS` serves two engines,
+    // and this workflow deliberately runs on the others. The per-run truth is in the
+    // opening note, which is built from what this drive actually established.
+    "You have NO SQL in this run: there is no inspect_schema, no run_read_query and no inspect_plan. Where this engine can be read, a schema inventory of table names and their indexes was captured for you before your first turn and the message opening this run says so; it is there to tell you what the engine names back at you.",
+    "Everything you read, you read with inspect_operations.",
     "Take the readings your objective needs — sessions, slow-queries, table-stats, index-stats, storage, health — one call each, and narrow them with limit or schema rather than asking for everything.",
     // The verifier's rule, in the model's own terms. A rule the model is never told is
     // a rule live runs fail (#350, #356), so the bar and its honest exception are both
@@ -604,18 +844,23 @@ const AUTO_EXECUTE_RULE = [
  * The rules, given what this drive was able to give the run.
  *
  * `schemaKnown` bears on planning alone: agent mode already tells the model about a
- * missing inventory in the capture's own words (`FALLBACK_ADVICE`), and its rules
- * are about the tools either way.
+ * missing inventory in the capture's own words (`FALLBACK_ADVICE`) — except
+ * `operations`, which is handed the capture's diagnosis under a sentence of this file's
+ * own, because the capture's advice names a tool that workflow does not hold — and its
+ * rules are about the tools either way.
  */
 function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, type: DatabaseType): string {
-  // The deliverable decides the branch BEFORE the grounding does, because the prose
-  // workflow is not ungrounded by accident: `establishContext` skips the capture for
-  // it deliberately, so telling it what a run without an inventory should do would
-  // describe a shortfall it does not have.
+  // The deliverable decides WHICH pair of rules, and the grounding decides which of
+  // the pair. Both axes are real since #411: the prose workflow is grounded exactly
+  // where the others are — the engine decides it and nothing else — so a prose run
+  // that was told the grounded sentence on an engine that could not be read would be
+  // pointed at an inventory it does not have.
   const deliverable = PLAN_DELIVERABLES[record.workflowType];
   const planningDeliverableRules =
     deliverable.kind === "prose"
-      ? PLANNING_PROSE_RULES
+      ? grounding.schemaKnown
+        ? planningProseRules(grounding, type)
+        : planningProseRulesUngrounded(type)
       : grounding.schemaKnown
         ? planningSchemaRules(grounding, deliverable, type)
         : planningNoSchemaRules(deliverable);
@@ -652,13 +897,34 @@ const snapshotHandoverText = (fingerprint: string): string =>
   `Cite that inventory in a claim as ${citeSnapshot(fingerprint)}.`;
 
 /**
+ * What to do about the tables the packing left out, said only where it can be done.
+ *
+ * The omission notice is `packContextForTask`'s, and until #411 it ended with this
+ * sentence unconditionally — including in plan mode, which holds no tools at all, and
+ * for an operations run, which holds no `inspect_schema`. A rule stated to a run whose
+ * tool set cannot satisfy it is the #350 failure, so the sentence lives with the
+ * caller that knows its own tool set and is passed in by that caller alone.
+ */
+const INSPECT_SCHEMA_OMISSION_ADVICE = "Call inspect_schema with a table selector to read any of them.";
+
+/** The same sentence for the relations block, whose selector is a kind rather than a table. */
+const INSPECT_SCHEMA_RELATIONS_OMISSION_ADVICE = 'Call inspect_schema with kind="relations" for them.';
+
+/**
  * The packed inventory, with the sentence that says how to cite it in front of it.
  *
  * Handed to `packContextForTask` as its preface rather than concatenated here, so the
  * sentence is INSIDE the bound that function keeps rather than added on top of it.
+ *
+ * Every agent-mode caller of this holds `inspect_schema` — the one workflow that does
+ * not, `operations`, goes through `packOperationsInventory` instead — so the omission
+ * advice is passed here and nowhere else.
  */
 function packSnapshotMessage(snapshot: AgentContextSnapshot, objective: string): string {
-  return packContextForTask(snapshot, objective, { preface: snapshotHandoverText(snapshot.fingerprint) });
+  return packContextForTask(snapshot, objective, {
+    preface: snapshotHandoverText(snapshot.fingerprint),
+    omissionAdvice: INSPECT_SCHEMA_OMISSION_ADVICE,
+  });
 }
 
 /**
@@ -712,9 +978,16 @@ function packPlanningSnapshotMessage(
  * Both call sites get it, the freshly captured snapshot and the one a resumed run
  * reuses. A resumed run that lost the relations would reason about joins it could
  * no longer see.
+ *
+ * `mode` decides whether the omission notice may name a tool, for the same reason the
+ * inventory's does: this block's notice ended "call inspect_schema with
+ * kind=\"relations\" for them" in EVERY mode until #411, and a plan run holds no tools
+ * at all — so a schema with more relations than the bound holds was telling plan mode to
+ * call something it does not have (#350). It reaches only agent mode's callers now.
  */
-function packRelations(snapshot: AgentContextSnapshot, workflowType: AgentRunWorkflowType): string {
-  return fenceUntrustedContent(renderErDiagram(snapshot, erDetailForWorkflow(workflowType)), {
+function packRelations(snapshot: AgentContextSnapshot, workflowType: AgentRunWorkflowType, mode: AgentRunMode): string {
+  const omissionAdvice = mode === "agent" ? INSPECT_SCHEMA_RELATIONS_OMISSION_ADVICE : undefined;
+  return fenceUntrustedContent(renderErDiagram(snapshot, erDetailForWorkflow(workflowType), { omissionAdvice }), {
     label: "schema relations",
     operationId: "agent/context-snapshot",
     reference: snapshot.fingerprint,
@@ -1157,6 +1430,16 @@ export async function runInvestigation(
 
   let contextEstablished = false;
   /**
+   * The one workflow whose inventory is PACKED differently (#411).
+   *
+   * It takes the same context path as every other workflow — its own ledger, the
+   * process-held reading, or a capture — because `holdSnapshotForConnection` shares a
+   * snapshot BETWEEN runs, and an operations-shaped partial capture would later be
+   * handed to an investigation run as if it were whole. The capture stays whole; only
+   * the presentation varies.
+   */
+  const operations = record.workflowType === "operations";
+  /**
    * What this drive was able to put in front of the model, as the planning rules
    * have to describe it. Rebuilt rather than mutated in place so the rules can only
    * ever state a combination this code actually produced.
@@ -1175,7 +1458,10 @@ export async function runInvestigation(
 
   /**
    * A planning run's grounding: the inventory, its relations, and what the engine
-   * estimates about its own tables.
+   * estimates about its own tables. An operations plan gets the inventory and the
+   * estimates and no relations at all (#411) — it can read nothing, ever, so the
+   * estimates are the only sizes it will have, while how its tables join is the one
+   * thing an operational reading never asks.
    *
    * Three sources, cheapest first, and the order is the whole design:
    *
@@ -1210,7 +1496,12 @@ export async function runInvestigation(
     if (snapshot === null) {
       const capture = await captureContextSnapshot(context);
       if (capture.kind === "unavailable") {
-        messages.push({ role: "user", content: planningUngroundedNote(context.connection.type) });
+        messages.push({
+          role: "user",
+          content: operations
+            ? planningOperationsUngroundedNote(capture.detail)
+            : planningUngroundedNote(context.connection.type),
+        });
         return;
       }
       snapshot = capture.snapshot;
@@ -1226,11 +1517,33 @@ export async function runInvestigation(
     // own history. Re-holding a reading that came from the hold is not a no-op either
     // — it moves the connection back to the newest end of the eviction order.
     holdSnapshotForConnection(snapshot, connectionIdentity(context.connection));
-    messages.push({ role: "user", content: packPlanningSnapshotMessage(snapshot, record.objective, readBy) });
-    messages.push({ role: "user", content: packRelations(snapshot, record.workflowType) });
+    if (operations) {
+      // Names and indexes, and NO relations block: the graph is the most expensive
+      // part of the packing and the least useful part of it here (#411). The note
+      // comes first, because it is what says what the fenced block below it is for.
+      messages.push({ role: "user", content: PLANNING_OPERATIONS_CONTEXT_NOTE });
+      messages.push({
+        role: "user",
+        content: packOperationsInventory(snapshot, { preface: PLANNING_SNAPSHOT_PREFACE[readBy] }),
+      });
+    } else {
+      messages.push({ role: "user", content: packPlanningSnapshotMessage(snapshot, record.objective, readBy) });
+      messages.push({ role: "user", content: packRelations(snapshot, record.workflowType, record.mode) });
+    }
 
     const statistics = await readSchemaStatistics(context);
-    messages.push({ role: "user", content: packSchemaStatistics(snapshot.tables, statistics) });
+    // Row estimates only for an operations plan, and this is the same decision as the
+    // packing above rather than a second one. Its whole context is identifiers of two
+    // kinds and it is TOLD so twice over; the default rendering names a column beside
+    // every table it has an estimate for, which would make that sentence false in the
+    // message under it and would leak a column name out of a run whose documented
+    // egress is table and index names. What the estimates are here FOR is which table
+    // is worth a reading, and a row count is all that answers it. Found by review on
+    // #411.
+    messages.push({
+      role: "user",
+      content: packSchemaStatistics(snapshot.tables, statistics, operations ? { detail: "rows" } : {}),
+    });
     grounding = { schemaKnown: true, readBy, statisticsShown: statistics.kind === "read" };
     // What the closing statement will be checked against, taken from the same reading
     // the model was shown: a statement validated against an inventory the model never
@@ -1254,6 +1567,15 @@ export async function runInvestigation(
    * still there, and a narrowed `inspect_schema` is exactly what an overflowing
    * catalog needs.
    *
+   * EVERY workflow reaches here, and that is what #411 changed. `operations` used to
+   * return before any of this on a decision the issue re-opened: an operations
+   * objective is about what the engine reports about ITSELF, so an inventory looked
+   * like dead weight — until workflow inference (#407) began routing objectives here
+   * that a user would expect to be answered against the schema, and until it was
+   * noticed that the engine's own reports are full of schema identifiers. The
+   * exclusion was one early return, and deleting it is the whole change: what remains
+   * workflow-specific is which packing runs, not which path does.
+   *
    * PLANNING now establishes its context the same way, and that is the one line of
    * the contract the plan-mode grounding design of 2026-08-15 deliberately changed.
    * It used to consult `heldSnapshotForConnection` and nothing else (#384), so a plan
@@ -1268,22 +1590,32 @@ export async function runInvestigation(
   const establishContext = async (): Promise<void> => {
     contextEstablished = true;
 
-    // An operations run captures no schema inventory, and this is the one workflow
-    // where that is a decision rather than a failure: the objective is about what the
-    // engine reports about itself, not about what its tables hold. Hoisted above the
-    // mode branch since planning grounds itself, so that the decision is made once —
-    // the two modes differ only in which sentence they are given, because
-    // `OPERATIONS_CONTEXT_NOTE` names a tool a planning run does not have (#350).
-    if (record.workflowType === "operations") {
-      const note = record.mode === "agent" ? OPERATIONS_CONTEXT_NOTE : PLANNING_OPERATIONS_CONTEXT_NOTE;
-      messages.push({ role: "user", content: note });
-      return;
-    }
-
     if (record.mode !== "agent") {
       await establishPlanningContext();
       return;
     }
+
+    /**
+     * The inventory, as THIS workflow is shown it.
+     *
+     * The operations branch is a packing decision and nothing more: the same whole
+     * snapshot, rendered as names and indexes, with no relations block beside it
+     * (#411). It is also why the operations note is pushed here rather than beside the
+     * capture — the note says what the fenced block under it is for, so the two belong
+     * in one place and cannot come apart.
+     */
+    const show = (snapshot: AgentContextSnapshot): void => {
+      if (operations) {
+        messages.push({ role: "user", content: OPERATIONS_CONTEXT_NOTE });
+        messages.push({
+          role: "user",
+          content: packOperationsInventory(snapshot, { preface: snapshotHandoverText(snapshot.fingerprint) }),
+        });
+        return;
+      }
+      messages.push({ role: "user", content: packSnapshotMessage(snapshot, record.objective) });
+      messages.push({ role: "user", content: packRelations(snapshot, record.workflowType, record.mode) });
+    };
 
     const recorded = reusableSnapshot(record.events, record.connectionId);
     if (recorded !== null) {
@@ -1291,14 +1623,19 @@ export async function runInvestigation(
       // fresh process is exactly where the hold is empty, and this is the reading
       // that refills it from what the ledger already proved.
       holdSnapshotForConnection(recorded, connectionIdentity(context.connection));
-      messages.push({ role: "user", content: packSnapshotMessage(recorded, record.objective) });
-      messages.push({ role: "user", content: packRelations(recorded, record.workflowType) });
+      show(recorded);
       return;
     }
 
     const capture = await captureContextSnapshot(context);
     if (capture.kind === "unavailable") {
-      messages.push({ role: "user", content: capture.modelText });
+      // The capture's own words send a model to `inspect_schema`, which an operations
+      // run does not hold: naming a tool the run has not got is the #350 failure, and
+      // this workflow is the one that reaches engines where the capture always fails.
+      messages.push({
+        role: "user",
+        content: operations ? operationsUngroundedNote(capture.detail) : capture.modelText,
+      });
       return;
     }
     const { snapshot } = capture;
@@ -1312,8 +1649,7 @@ export async function runInvestigation(
     // inventory that is durably part of some run's own history, not one this process
     // read and failed to write down.
     holdSnapshotForConnection(snapshot, connectionIdentity(context.connection));
-    messages.push({ role: "user", content: packSnapshotMessage(snapshot, record.objective) });
-    messages.push({ role: "user", content: packRelations(snapshot, record.workflowType) });
+    show(snapshot);
   };
 
   let turns = 0;
@@ -1360,8 +1696,14 @@ export async function runInvestigation(
    *  - an AGENT run, whose statements are drafted through a tool and already carry a
    *    `stepId` tying each one to the call that ran it. Reading its closing prose
    *    again would record a statement it never asked to run.
-   *  - an OPERATIONS plan, the one workflow whose deliverable is prose by decision. It
-   *    was never asked for a statement, so a block in its output is illustration.
+   *  - an OPERATIONS plan, the one workflow whose deliverable is prose by decision. Its
+   *    rules WELCOME a fenced block where the engine expresses the reading as a statement
+   *    (`planningProseStatementRule`), and that changes nothing here: what is welcome is
+   *    not what was asked for, so recording it as this run's drafted statement would file
+   *    a deliverable the contract never named and put it in front of the plan verdict,
+   *    which is prose-judged on purpose. The user still gets the block — #389's fence
+   *    reading in the browser is what offers "Apply to editor", and it is withheld only
+   *    on a closing entry this layer read a statement out of.
    *  - a run that refused, or that fenced nothing. A refusal is an outcome the verdict
    *    reads for itself; it is not a statement, and recording one would be this layer
    *    inventing a deliverable the model declined to write.

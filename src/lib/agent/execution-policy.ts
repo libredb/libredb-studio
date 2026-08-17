@@ -175,6 +175,16 @@ export interface AgentWorkflowBudget {
  */
 function workflowBudget(input: {
   readonly workflowType: AgentRunWorkflowType;
+  /**
+   * Which revision of this workflow's row the version names. Defaults to the first.
+   *
+   * A parameter rather than a literal `1` because the version's whole job is to tie a
+   * recorded decision to the numbers that produced it: a row whose ceilings moved
+   * while its version did not would make a `STATEMENT_BUDGET_EXCEEDED` on a ledger
+   * untraceable, and would make two different budgets share one name. `operations`
+   * moved to `.2` when #411 gave it a catalog capture to pay for.
+   */
+  readonly policyRevision?: number;
   readonly maxModelTurns: number;
   readonly maxStatementsPerRun: number;
   readonly runDeadlineMs: number;
@@ -205,7 +215,7 @@ function workflowBudget(input: {
         `operations` workflow is served under `AGENT_OPERATIONS_PROFILE` and carries
         exactly the same posture.
       */
-      version: `agent-read-only.${input.workflowType}.1`,
+      version: `agent-read-only.${input.workflowType}.${input.policyRevision ?? 1}`,
       /** A bounded data read is risk class 1; nothing above it is registrable at all. */
       maxRiskClass: 1,
       allowedRoles: Object.freeze(["admin", "user"] as const),
@@ -250,17 +260,36 @@ function workflowBudget(input: {
  * - **`database-assessment`, 48 / 45 / 630 s / 135 s.** It profiles many tables, so it
  *   spends many statements on small results; the statement ceiling is what binds it and
  *   the wall clock follows from the turns those statements need.
- * - **`operations`, 20 / 12 / 300 s / 60 s** — the row the decision table does not
+ * - **`operations`, 20 / 18 / 360 s / 80 s** — the row the decision table does not
  *   cover, because this workflow landed after the design was written. It does NOT
- *   inherit an analytical budget, and the reason is what it does: it sends no SQL at
- *   all, so it never drafts a statement, never repairs one, and never iterates towards
- *   an aggregate that came out wrong — which is precisely what the raised analytical
- *   ceilings buy. Its reads are curated readings from a closed set of six kinds
- *   (`sessions`, `slow-queries`, `table-stats`, `index-stats`, `storage`, `health`), so
- *   12 statements is every kind twice — once broad and once narrowed to a schema — and
- *   a run that wanted more would be re-reading a moment rather than learning anything.
- *   The pre-decision wall clock is kept for the same reason: there is no repair loop
- *   here for a longer clock to serve.
+ *   inherit an analytical budget, and the reason is what it does: the MODEL sends no
+ *   SQL at all, so it never drafts a statement, never repairs one, and never iterates
+ *   towards an aggregate that came out wrong — which is precisely what the raised
+ *   analytical ceilings buy. Its reads are curated readings from a closed set of six
+ *   kinds (`sessions`, `slow-queries`, `table-stats`, `index-stats`, `storage`,
+ *   `health`), and twelve of the statements are every kind twice — once broad and once
+ *   narrowed to a schema — which is what the row was sized for before #411.
+ *
+ *   The six the row GAINED pay for the grounding this workflow did not use to get, and
+ *   they were added rather than taken out of the readings on purpose: a ceiling that
+ *   stayed at 12 would have paid for the inventory by silently costing the run a third
+ *   of the readings it exists to take.
+ *
+ *   What grounding actually costs, counted rather than rounded, because this record is
+ *   what a `STATEMENT_BUDGET_EXCEEDED` is traced back to. A catalog capture is three
+ *   statements on PostgreSQL and two on SQLite; `readSchemaStatistics` adds one on
+ *   PostgreSQL and two on SQLite (it probes `sqlite_stat1` before reading it) and runs
+ *   in PLAN mode only. So the worst case before the first turn is FOUR on either engine
+ *   in plan mode, and three in agent mode — which is the mode where the reading ceiling
+ *   is what binds, so 18 − 3 leaves more than the twelve readings the row was sized for.
+ *   Six rather than four is deliberate slack in a row nothing has yet been measured
+ *   against: this is the workflow whose statements come from a closed set, so an
+ *   unexpected extra catalog read is the one cost that could otherwise silence a
+ *   reading. The wall clocks are the same slack in time — at `statementTimeoutMs` of
+ *   10 s, four catalog reads can be 40 s of database time on their own, which is why
+ *   the database ceiling moved at all rather than by a figure derived from the four.
+ *   `maxModelTurns` does not move: grounding is the server's work before the first turn,
+ *   and it costs no turn.
  * - **`data-analysis`, 60 / 42 / 900 s / 180 s** — the largest row, and every one of
  *   its four figures is bought rather than inherited. An analytical run's shape is a
  *   handful of exploratory reads to find the fact table, several attempts at getting
@@ -310,10 +339,11 @@ export const AGENT_WORKFLOW_BUDGETS: Readonly<Record<AgentRunWorkflowType, Agent
   }),
   operations: workflowBudget({
     workflowType: "operations",
+    policyRevision: 2,
     maxModelTurns: 20,
-    maxStatementsPerRun: 12,
-    runDeadlineMs: 300_000,
-    maxTotalRunMs: 60_000,
+    maxStatementsPerRun: 18,
+    runDeadlineMs: 360_000,
+    maxTotalRunMs: 80_000,
   }),
   "data-analysis": workflowBudget({
     workflowType: "data-analysis",

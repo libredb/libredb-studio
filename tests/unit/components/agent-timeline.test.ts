@@ -1635,6 +1635,7 @@ describe("an ending says whether the run ANSWERED, not only how it stopped (B24)
       "no-plan-comparison",
       "no-plan-evidence",
       "no-table-profile",
+      "no-reading",
       "no-answer",
       "cancelled",
     ]) {

@@ -35,7 +35,13 @@ Three properties frame everything below, and each of them is load-bearing rather
   engine can bound one, `agent-handover` sends the statement a run already answered with and takes
   the same gate for the same reason, while `agent-operations` sends no statement at all — it calls
   the curated reporting methods every provider implements — and its acquisition therefore does not
-  require `queryReadOnly` (`src/lib/db/factory.ts`, `PROFILE_ACQUISITION`). Everything else about
+  require `queryReadOnly` (`src/lib/db/factory.ts`, `PROFILE_ACQUISITION`). Since #411 an operations
+  run does take one acquisition of the *other* profile, before its first turn and never during it:
+  the server captures a schema inventory for it under `agent-read-only`, exactly as it does for
+  every other workflow. That cannot narrow the workflow's reach, because `captureContextSnapshot`
+  refuses a dialect `CATALOG_PLANS` does not serve **before** it acquires anything, and the two
+  dialects it serves are the same two that serve the profile — so on every engine where the
+  acquisition could be refused, none is attempted and the run carries on ungrounded. Everything else about
   the three acquisitions is identical: the same `readOnly: true` open, the same optional
   least-privilege `agentUser`, and the same profiled cache, so neither an operations run nor an
   editor replay is ever handed the editor's writable pool. **Plan mode takes the same acquisition
@@ -180,8 +186,15 @@ Two properties are worth stating, because both are easy to assume the other way 
   What the workflow does decide in planning is the **deliverable**: `PLAN_DELIVERABLES` in
   `investigation.ts` is a total record over the workflow types, naming the statement each plan is
   asked for — the rewritten statement for a query optimization, the statement that measures the
-  concern for an assessment — with `operations` the one member whose deliverable is prose, because
-  that workflow composes no SQL and captures no schema. Being total is the point: adding a workflow
+  concern for an assessment — with `operations` the one member whose deliverable is prose, because no
+  reading of that workflow can be REQUIRED to be a statement: it deliberately runs on engines where
+  none is one. Two narrower reasons have been retired by live runs. "That workflow captures no
+  schema" went with #411. "An operational reading is not a statement" went next: it is true of Redis
+  and MongoDB and false of PostgreSQL, where `pg_stat_activity` and `pg_stat_user_indexes` are
+  ordinary objects a user selects from — so a plan of this workflow now MAY fence a statement where
+  the engine expresses the reading as one, while still being judged as prose and still exempt from
+  the planning statement rule. See [What a plan run knows](#what-a-plan-run-knows).
+  Being total is the point: adding a workflow
   stops the file compiling until someone decides what a plan of it should produce.
 - **The field is required on the record and optional on the ledger header.** The fold always
   produces a workflow type, so every reader has one and none has to know which generation of writer
@@ -321,10 +334,85 @@ coverage it does not have.
 it does not have, and its rules then steer it to the refusal path rather than to generic advice. That
 happens on any engine outside PostgreSQL and SQLite, and whenever the catalog read is itself refused.
 
-**An `operations` plan is ungrounded by decision**, not by failure: that objective is about what the
-engine reports about itself rather than about what its tables contain, so a catalog read would spend
-the run's statements on an inventory the plan has no use for. It is the one workflow whose plan
-deliverable is prose.
+**An `operations` plan is grounded exactly where every other plan is**, and since #411 nothing about
+grounding is workflow-dependent: the engine decides it and nothing else. That workflow used to be
+excluded by decision — an operations objective is about what the engine reports about itself, so an
+inventory looked like dead weight — and the exclusion was reversed on the finding that the argument
+is true about the QUESTION and false about the evidence. The engine's own reports come back full of
+schema identifiers: a lock is held on a relation, an index-stats row names an index, a slow query
+names tables. A run that has never seen the inventory reads every one of those as an opaque string.
+
+What stays workflow-specific is what is PACKED, not whether a capture happens. An operations plan is
+shown table names and the indexes on each and **nothing else** — no columns, and no relations block
+at all, because how its tables join is the one thing an operational reading never asks and the
+relations graph is the most expensive part of the packing. It still gets the engine's estimated
+statistics — **row estimates only**, with no per-column distinct counts or null fractions, since a run
+told in the server's own voice that it has been shown no column must not be shown one in the block
+beside that sentence — because it can read nothing further and those estimates are the only sizes it
+will ever have. It remains the one workflow whose plan deliverable is prose, and its prose rule is what
+grounding changed: a grounded operations plan must name the real tables and indexes each reading
+would be about, rather than describing readings in the abstract.
+
+**A prose plan may fence a statement, and on PostgreSQL it usually should.** Both prose paths used to
+assert *"there is no statement to write here and no fenced block to produce"*, and a run driven in a
+browser on 2026-08-17 disobeyed it in the open: an Automatic plan run classified to Operate on
+dvdrental, grounded on 22 tables, closed with a fenced `pg_stat_user_indexes` read ordered by
+`idx_scan`, and the rail offered **Apply to editor** on it. A rule live runs visibly disobey is this
+repository's #350/#356 failure class, and here the rule was the part that was wrong: the premise —
+an operational reading is not SQL — is engine-dependent, and the sentence was engine-blind.
+`pg_stat_activity`, `pg_locks` and `pg_stat_user_indexes` are ordinary objects a user can select
+from; a Redis `INFO`, a `SLOWLOG GET` or a MongoDB server status is not a statement at all. So
+`planningProseStatementRule` states the CONDITION and lets the engine decide: where the reading is
+expressible as a statement, write it in a fenced block tagged with the connection's type-id and the
+plan is better for it; where it is not, say the reading in the engine's own terms and produce no
+block, *"a plan with no block in it is a complete answer here"*. Three properties of that rule are
+deliberate:
+
+- **It is a permission, never a contract.** `PLAN_DELIVERABLES.operations` is still `{ kind: "prose" }`,
+  the plan is still judged as prose, and the [planning statement rule](#whether-the-run-answered) still
+  exempts it. There is no `noun`, no `NO STATEMENT:` marker and no ledger fact —
+  `recordPlanStatement` still records nothing for this workflow, because what is welcome is not what
+  was asked for and a `plan-statement-drafted` entry would file a deliverable the contract never
+  named. The user still gets the block: #389's fence reading in the browser is what offers **Apply to
+  editor**, and it is withheld only on a closing entry the server read a statement out of.
+- **What it may fence is bounded to what the engine reports about ITSELF** — what is connected, what
+  it is spending its time on, what is blocked, where its space and its indexes are going. A statement
+  that reads the user's own tables is not an operational reading, and this is not a fifth statement
+  workflow. The per-engine half is delegated to `planningProseEngineRule` rather than restated, since
+  two wordings of one contract is how #350 happened.
+- **The ungrounded path carries it too, and that is a decision.** What ungrounded withholds is this
+  DATABASE and nothing about the ENGINE: that MySQL has `performance_schema` or SQL Server has
+  `sys.dm_exec_requests` is knowable to a run that has seen no schema, and this path already spends
+  that knowledge naming the readings it would take. Withholding the fence while permitting the same
+  reading in prose would be a distinction with nothing behind it, and it would cost the editor
+  hand-off on exactly the engines that have no other deliverable — MySQL, SQL Server and ClickHouse
+  are all this path, as is a PostgreSQL run whose catalog read was refused. The line it may not cross
+  is said in the same breath: the engine's reporting objects are not this database's schema, so
+  naming one invents nothing, while naming a table, an index or a column of the user's invents
+  everything.
+
+**A prose plan is also told which ENGINE it is planning against, on both paths.** The four workflows
+that write a statement have carried theirs since #396 — the fence tag *is* the connection's type-id —
+so the prose deliverable was the only one that never took a type, and `operations` is the only
+workflow whose deliverable is prose. Grounding made that visible by making these plans specific
+without making them right: driven in a browser after #411, a grounded plan on a **SQLite** connection
+named the eight real tables of its inventory and then proposed reading `pg_stat_user_indexes` and
+`pg_total_relation_size`, and an ungrounded plan on a **Redis** connection correctly said it could
+name no object and then proposed wait event statistics, lock management views and a blocking chain
+dependency tree. So `planningProseEngineRule` states the engine and binds the readings to it: every
+reading the plan names must be one that engine actually offers, and where the model is unsure it is
+to say what it would want to establish instead of naming a mechanism the engine does not have. Three
+things it is deliberately not: it names **no tool**, because a plan run holds none (#350); it is a
+rule about the readings rather than a mention of the engine, because naming the type alone was
+already happening — `planningUngroundedNote` interpolates "on this redis connection" and that run
+still proposed a lock tree; and it carries **no per-engine catalog** of monitoring views, which would
+be a second source of truth against the kinds `inspect_operations` serves.
+
+**Agent mode needs none of this**, and that is a property of its tool rather than an omission. An
+Operate agent run never authors a mechanism: it names a `kind` from a fixed, engine-neutral enum and
+the server calls that engine's own reporting interface, a kind the engine does not serve comes back
+refused in plain words, and its report must cite a reading it actually took. What it can say about
+the engine is therefore bounded by what the engine answered.
 
 Three consequences worth stating plainly, because each is easy to assume the other way round:
 
@@ -371,6 +459,13 @@ deliverable — but it is **withheld on the closing entry a statement was read o
 holds the statement, so leaving the per-block control there would put an unmarked "Apply to editor"
 directly above the marked one: `renderProse` is handed text and knows nothing of the guard's verdict,
 so it cannot label what it is applying. The card is the only hand-off; the block still copies.
+
+**An `operations` plan is the case that fallback now carries on its own.** Its rules welcome a fenced
+reading where the engine expresses one as a statement, and `recordPlanStatement` still skips this
+workflow — so there is no card, no guard verdict and no identifier check on that block, and the
+browser's fence reading is the whole of the hand-off. That is the deliberate consequence of keeping
+the deliverable prose: the two checks below are attached to a statement the contract ASKED for, and
+this one was welcomed rather than asked for.
 
 Two checks run before it is offered anywhere, and neither is more than it says:
 
@@ -625,6 +720,58 @@ restriction this workflow exists to escape. `compare_plans` is left out because 
 `inspect_plan` artifacts this run cannot produce: a tool that could only ever refuse is worse than
 no tool.
 
+**It is grounded, and with a different inventory from every other workflow** (#411). Until then this
+was the one workflow that captured no schema at all, on the reasoning that an operations objective is
+about what the engine reports about ITSELF. That reasoning is right about the question and wrong
+about the evidence: the engine's reports are full of schema identifiers — a lock is held on a
+relation, an index-stats row names an index, a slow query names tables — and a run that has never
+seen the inventory reads all of them as opaque strings. So the exclusion was deleted, and an
+operations run now takes the same context path as every other workflow: its own ledger, the
+process-held reading, or a fresh capture. The capture itself is unchanged and stays **whole**,
+because `holdSnapshotForConnection` shares a reading between runs and an operations-shaped partial
+capture would later be handed to an investigation run as if it were complete.
+
+What differs is the **packing** (`packOperationsInventory`, `context-snapshot.ts`):
+
+- **Names and indexes, and nothing else.** Per table, its name and the names of its indexes with
+  `unique` where it applies — never a column, never an index's column list, and no relations block
+  beside it (`packRelations` is not called for this workflow in either mode). Column types are not
+  what an operational objective asks about, and the relations graph is the most expensive part of the
+  packing and the least useful part of it here.
+- **Not ranked against the objective.** `packContextForTask` orders tables by relevance to the words
+  you typed; an operations objective rarely names a table at all — what it will be about is whatever
+  the engine happens to report during the run — so this renderer keeps the snapshot's own order,
+  which is at least stable between drives of the same run.
+- **A table with no index says so.** `name: no indexes`, never a bare name, because a name with
+  nothing after it reads as a table whose indexes were not captured.
+- **Fenced, quoted, bounded, and honest about what it left out.** The block goes through
+  `fenceUntrustedContent` like every other database-derived text and is bounded by the same 6000
+  characters; tables past the bound are reported as *"N further table(s) exist in this database and
+  are not named here"*, and that notice names **no tool** — an operations agent run has no
+  `inspect_schema` and a plan run has no tools at all, so a way out named there would be a way out
+  neither reader holds (#350). Every identifier is also QUOTED inside the fence
+  (`quoteIdentifierForPrompt`, `untrusted-content.ts`), which matters more here than in the ordinary
+  inventory: there a mangled name fails at the engine when the model drafts SQL with it, whereas here
+  the identifier list *is* the payload and the run is told to match what the engine reports against
+  it — so an unquoted table name carrying a newline, or an index named `a, b_unique`, would add an
+  entry nobody created and the run could recommend action on it.
+- **The opening note claims no completeness, because the block is bounded.** It says the inventory is
+  as much as fits and points at the block for the count. A server sentence promising every table while
+  the fenced block says 33 were left out is a contradiction a model resolves in the server's favour,
+  and the failure it produces is precise: a lock reported on a table the packing dropped reads as a
+  relation this database does not have.
+
+Grounding is engine-dependent here exactly as it is everywhere else: `CATALOG_PLANS` serves
+PostgreSQL and SQLite, and on every other engine the capture answers `unavailable` before a provider
+is acquired and the run continues ungrounded. What it is TOLD then is its own sentence rather than
+the capture's, which would have sent it to `inspect_schema`: it is told that no inventory could be
+read on this connection type, that not one table name and not one index is established for it, and
+that it should take its readings anyway. The run's tool rules and its opening note are deliberately
+different strings — the rules are the same for every run of the workflow and hedge accordingly
+("where this engine can be read"), while the opening note is built from what THIS drive actually
+established. A test pins that the two agree: a grounded run is never handed a sentence saying it has
+no inventory, and an ungrounded one is never handed a sentence saying it has one.
+
 `inspect_operations` takes a **kind** and nothing a model wrote:
 
 | Kind | Provider method | What comes back |
@@ -672,7 +819,7 @@ Four properties carry the template:
   engine reported as it was taken."* A session list is who was connected as the run looked, and
   nothing here measures a trend.
 
-Its goal verifier is `agent-operations.1`: a composed report, resting on what the engine said about
+Its goal verifier is `agent-operations.2`: a composed report, resting on what the engine said about
 itself. **It deliberately does not compose on the investigation baseline**, which is the #356 lesson
 applied rather than repeated: the baseline ends a run `empty-evidence` when every cited result
 returned zero rows, and for an operational reading that is backwards. "No session is blocked", "no
@@ -680,12 +827,22 @@ slow query is recorded", "no index is unused" are answers, and they are the answ
 gives. A run that composed nothing is `no-report`, and a cancelled one says so instead.
 
 The citation half of the rule — *your report must cite a reading you took* — is told to the model in
-`WORKFLOW_TOOL_RULES` and enforced where it can actually fail: at composition. `composeReportTool`
-refuses any claim whose evidence does not name something this run produced, and the only citable
-thing an operations run can produce IS a reading (it is offered no other tool that settles a step and
-captures no schema snapshot). A verifier arm for "cited no reading" would therefore be a verdict
-advertised to users that no run could ever show, which is the same dead-arm objection that kept the
-other templates honest.
+`WORKFLOW_TOOL_RULES`, and until #411 it was enforced where it could actually fail rather than judged
+afterwards: `composeReportTool` refuses any claim whose evidence does not name something this run
+produced, and the only citable thing an operations run could produce WAS a reading (it is offered no
+other tool that settles a step, and it captured no schema snapshot). A verifier arm for "cited no
+reading" would have been a verdict advertised to users that no run could ever show, which is the same
+dead-arm objection that kept the other templates honest.
+
+**Grounding removed the second half of that argument, so the arm exists now.** An operations run
+captures an inventory, `composeReportTool` accepts `{"source":"context-snapshot","fingerprint":…}` as
+evidence, and the run is handed the citation form for it as the preface to its own inventory — so a
+report resting on the inventory alone composed, verified and scored `answered` without a single
+reading behind it, on the workflow whose entire subject is what the engine says about itself. At least
+one claim must therefore cite an ARTIFACT, and a run whose report cites only the inventory is
+`no-reading`. The emptiness exemption above is untouched: an empty reading is an artifact this run
+produced, and citing it passes. The verifier id moved to `agent-operations.2` with the rule, because
+two runs' verdicts sharing one id under two different rules is what a versioned id exists to prevent.
 
 Two limits stated rather than glossed:
 
@@ -1111,14 +1268,28 @@ workflow type is decided once when the run opens and read from the ledger therea
 | `investigation` | 36 | 30 | 450 s | 90 s | `agent-read-only.investigation.1` |
 | `query-optimization` | 36 | 30 | 450 s | 90 s | `agent-read-only.query-optimization.1` |
 | `database-assessment` | 48 | 45 | 630 s | 135 s | `agent-read-only.database-assessment.1` |
-| `operations` | 20 | 12 | 300 s | 60 s | `agent-read-only.operations.1` |
+| `operations` | 20 | 18 | 360 s | 80 s | `agent-read-only.operations.2` |
 | `data-analysis` | 60 | 42 | 900 s | 180 s | `agent-read-only.data-analysis.1` |
 
 **These figures are approved and pending live measurement.** They were approved on 2026-08-14 as the
 starting point a measurement then confirms or corrects; no run has been measured against them yet.
-`operations` is lower than the analytical rows on purpose: it sends no SQL, so it never drafts a
-statement, never repairs one and never iterates towards an aggregate that came out wrong — and its
-reads come from a closed set of six curated kinds, so twelve statements is every kind twice.
+`operations` is lower than the analytical rows on purpose: the **model** sends no SQL, so it never
+drafts a statement, never repairs one and never iterates towards an aggregate that came out wrong —
+and its reads come from a closed set of six curated kinds, so twelve of its statements are every kind
+twice, once broad and once narrowed to a schema.
+
+**The other six pay for #411's grounding**, and they were ADDED rather than taken out of the readings
+on purpose: a ceiling left at 12 would have paid for the inventory by silently costing the run a third
+of the readings it exists to take. Grounding's own cost is smaller than six. A catalog capture is
+three statements on PostgreSQL and two on SQLite, and the statistics read — plan mode only — adds one
+on PostgreSQL and two on SQLite (it probes `sqlite_stat1` before reading it), so the worst case before
+the first turn is four in plan mode and three in agent mode, which is the mode where the reading
+ceiling binds. The remainder is deliberate slack in a row nothing has been measured against yet, and
+the wall clocks are the same slack in time: at a 10 s statement timeout, four catalog reads can be 40 s
+of database time on their own. `maxModelTurns` does not move, because grounding is the server's work
+before the first turn and costs no turn. The policy version moved with the figures, to `agent-read-only.operations.2`: a row whose
+ceilings changed while its version did not would make a `STATEMENT_BUDGET_EXCEEDED` on a ledger
+untraceable to the numbers that produced it.
 
 `data-analysis` is the largest row, and every one of its four figures is bought rather than
 inherited. An analytical run's shape is a handful of exploratory reads to find the fact table,
@@ -1317,11 +1488,11 @@ build until somebody decides what "answered" means for it.
 
 | Mode | Rule (`agent-planning.1` / `agent-investigation.1`) | Unmet when it fails |
 | --- | --- | --- |
-| `planning` | The run left non-empty closing prose, **and** that prose was its deliverable: a drafted statement on the ledger, or an explicit `NO STATEMENT:` refusal. That mode is toolless and can never cite evidence, so judging it by the investigation rule would fail every planning run that did its job — but prose alone was how a generic lecture scored `answered` for as long as it did. `operations` planning is exempt: its plan deliverable is prose by decision. | `no-plan`, `no-statement` |
+| `planning` | The run left non-empty closing prose, **and** that prose was its deliverable: a drafted statement on the ledger, or an explicit `NO STATEMENT:` refusal. That mode is toolless and can never cite evidence, so judging it by the investigation rule would fail every planning run that did its job — but prose alone was how a generic lecture scored `answered` for as long as it did. `operations` planning is exempt: its plan deliverable is prose by decision, and the exemption survives that workflow's rules welcoming a fenced reading — welcome is not required, and a run that produced no block may have answered its objective perfectly, so a bar asking for one would fail it. Which engines can express a reading as a statement is deliberately not the basis: a Redis Operate plan was observed writing `INFO memory` into a block its editor runs. | `no-plan`, `no-statement` |
 | `agent` (investigation) | The run composed at least one claim, **and** the claims do not rest entirely on empty results. | `no-report`, `empty-evidence` |
 | `agent` (query-optimization) | The baseline above, **and** either a plan comparison on the ledger or an index recommendation citing a plan this run read. `agent-query-optimization.2`. | the above, plus `no-plan-comparison`, `no-plan-evidence` |
 | `agent` (database-assessment) | The baseline above, **and** a table profiled. `agent-database-assessment.1`. | the above, plus `no-table-profile` |
-| `agent` (operations) | A composed report. `agent-operations.1`. **Not** composed on the baseline: an empty reading is an answer, so the emptiness clause is dropped. Its claims already cite a reading — `compose_report` refuses uncited claims and a reading is the only citable artifact this workflow can produce — so that half needs no arm of its own. | `no-report`, `cancelled` |
+| `agent` (operations) | A composed report, **and** at least one claim in it citing an artifact this run read. `agent-operations.2`. **Not** composed on the baseline: an empty reading is an answer, so the emptiness clause is dropped — and an empty reading still satisfies the citation arm, because the artifact exists. The arm was added by #411: the run gained a citable schema inventory, so "cite a reading" stopped being enforced by composition alone. See [The operations template](#the-operations-template). | `no-report`, `no-reading`, `cancelled` |
 | `agent` (data-analysis) | The baseline above, **and** an `answer-composed` entry: which result IS the answer, and how to show it — **and at least one claim citing that same artifact**, so the report is about the result it presented. `agent-data-analysis.1`. | the above, plus `no-answer`, `answer-uncited` |
 
 **Why `agent-data-analysis.1` asks for an artifact rather than for a picture.** Every valid answer
@@ -1471,7 +1642,7 @@ model passed the capability probe**; for anybody else the answer is that there i
 | **A free-form markdown report**, opening with a performance score out of 100 and closing with configuration advice. | A report is claims, each citing an artifact this run read or the snapshot it captured, verified against the run's own ledger before it is recorded. A number cited to nothing cannot be reported — the citation is what is checked, never the claim's text, so a fabricated score citing a real artifact would be accepted. | `src/lib/agent/tools.ts` (`composeReportTool`); `tests/evals/legacy-surface-coverage.test.ts` — an invented correlation id is refused and the run ends `unanswered (no-report)`. |
 | **Maintenance tasks** — `VACUUM`, `ANALYZE`, reindexing — in the same report. | Nothing proposes them: the `change` card has two members and neither is maintenance. It stays where it was before the panels — the monitoring surface, and the user's own editor. | `src/lib/agent/tools.ts` (`recommendationSchema`). |
 | **Multi-turn conversation.** NL2SQL replayed the whole exchange on every request, so "and how many in the second one?" was answerable. | A run's objective is fixed when it starts and no ledger event records a later question. A follow-up is a NEW run: it re-reads the catalog and knows nothing the first one established. | `src/app/api/agent/runs/route.ts`; `src/lib/agent/types.ts` (`AgentRunEvent`); `tests/evals/legacy-surface-coverage.test.ts`. |
-| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes SQL for **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is refused rather than guessed at. Nothing refuses the run at its start, so a run opened on another engine begins, captures no schema, and is told no schema inventory can be read for that connection type. **This is the same limit on plan mode's grounding**, in both directions: a plan run is grounded on PostgreSQL and SQLite and ungrounded anywhere else, where it is told so and steered to the `NO STATEMENT:` refusal rather than left to produce generic advice. **The `operations` workflow is the exception and runs on every engine**, because it composes no SQL at all: it captures no schema by design and is told so in the server's own voice instead. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`); `tests/unit/lib/agent/context-snapshot.test.ts` — a `mysql` connection reaches no database; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`; `tests/evals/plan-grounding.test.ts` — a `mysql` plan run runs no statement and says it is ungrounded. |
+| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes SQL for **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is refused rather than guessed at. Nothing refuses the run at its start, so a run opened on another engine begins, captures no schema, and is told no schema inventory can be read for that connection type. **This is the same limit on plan mode's grounding**, in both directions: a plan run is grounded on PostgreSQL and SQLite and ungrounded anywhere else, where it is told so and steered to the `NO STATEMENT:` refusal rather than left to produce generic advice. **The `operations` workflow is the exception and runs on every engine**, because it composes no SQL at all. Since #411 it is grounded under the same engine limit as everything else rather than exempt from grounding: on PostgreSQL and SQLite it is shown an inventory of table names and their indexes, and on every other engine the capture answers `unavailable` before a provider is acquired and the run is told in the server's own voice that no inventory could be read for that connection type — then takes its readings regardless, which is why the engine limit costs it grounding and never the run. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`, `packOperationsInventory`); `tests/unit/lib/agent/context-snapshot.test.ts` — a `mysql` connection reaches no database; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`; `tests/evals/plan-grounding.test.ts` — a `mysql` plan run runs no statement and says it is ungrounded; `tests/evals/operations.test.ts` — `context-captured` on postgres and sqlite, none on mysql. |
 
 One of these has since been restored under its own workflow (the monitoring row, which closed both
 deferrals that tracked it), and the first row is Phase 1's own boundary rather than a defect (B21 is
@@ -1861,11 +2032,13 @@ classifier's real-world agreement rate was measured — and they are the same ki
   an operational reading to the emptiness rule is "precisely backwards" — and that argument applies
   to a plan artifact verbatim. The #356 shape a third time: a rule stated in terms of an artifact
   only one valid answer can produce.
-- **B46** — plan-mode grounding is workflow-dependent while the documentation frames it as
-  engine-dependent. A planning run of the operations workflow reads no catalog by design, on any
-  engine, so it says "no schema was read" on a PostgreSQL connection that a planning run of any
-  other workflow would have read. Inference (#407) makes it far more reachable: an objective about
-  what to check first now classifies to Operate on its own, without anyone choosing it.
+- **B47** — `engine-unsupported` — *"The agent cannot run on this database engine: it offers no
+  read-only execution profile"* — is also what a user is shown when their AGENT CREDENTIAL cannot be
+  resolved, on an engine that is fully supported. `resolveAgentCredential` throws the same
+  `ExecutionProfileError` that a missing `queryReadOnly` throws, before any provider exists and on
+  every engine, and `classifyDriveFailure` cannot tell the two apart though the reason codes already
+  do. Pre-existing for every workflow; #411 only lets an `operations` run reach it during its
+  grounding capture, before the first turn, which is the least explicable moment for it to arrive.
 
 ## Related documentation
 

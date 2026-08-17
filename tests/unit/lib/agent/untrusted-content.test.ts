@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { fenceUntrustedContent, UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
+import {
+  fenceUntrustedContent,
+  quoteIdentifierForPrompt,
+  UNTRUSTED_CONTENT_BEGIN,
+  UNTRUSTED_CONTENT_END,
+} from "@/lib/agent/untrusted-content";
 
 /**
  * The prompt-side firewall for database content (#329 T6).
@@ -100,5 +105,35 @@ describe("fenceUntrustedContent — escape attempts", () => {
 
     expect(fenced).toContain(UNTRUSTED_CONTENT_BEGIN);
     expect(fenced).toContain(UNTRUSTED_CONTENT_END);
+  });
+});
+
+/*
+  The companion to the fence, and the reason it is not the same thing: the fence says
+  where the server stopped talking and says nothing about the SHAPE of what is inside.
+  Every block wrapped by it has a shape a reader trusts — a relation is a line, a table
+  is a line, an index is one comma-separated item — and an identifier is free to contain
+  a newline, a comma or an arrow.
+
+  It lives here rather than in either renderer because both need it: the relations
+  diagram has quoted since #347, and the operations inventory since #411, where review
+  found one hostile table producing a second entry indistinguishable from a real one.
+*/
+describe("quoteIdentifierForPrompt", () => {
+  test("an ordinary name is delimited and otherwise untouched", () => {
+    expect(quoteIdentifierForPrompt("public.orders")).toBe('"public.orders"');
+  });
+
+  test("a quote is doubled, the way SQL doubles it, so the name stays one name", () => {
+    expect(quoteIdentifierForPrompt('a" -> "b')).toBe('"a"" -> ""b"');
+  });
+
+  test("a newline becomes an escape, so a name cannot end a line", () => {
+    expect(quoteIdentifierForPrompt("orders\nsecrets")).toBe('"orders\\nsecrets"');
+    expect(quoteIdentifierForPrompt("orders\nsecrets")).not.toContain("\n");
+  });
+
+  test("a carriage return and a tab are named, and any other control character is shown as its code", () => {
+    expect(quoteIdentifierForPrompt("a\rb\tc\u0007d")).toBe('"a\\rb\\tc\\x07d"');
   });
 });
