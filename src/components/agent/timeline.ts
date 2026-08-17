@@ -13,9 +13,11 @@ import {
   type AgentRunMode,
   type AgentRunStatus,
   type AgentRunStopReason,
+  type AgentRunWorkflowReading,
   type AgentRunWorkflowSource,
   type AgentRunWorkflowType,
   type AgentToolRefusal,
+  DEFAULT_AGENT_WORKFLOW_READING,
   DEFAULT_AGENT_WORKFLOW_SOURCE,
   DEFAULT_AGENT_WORKFLOW_TYPE,
 } from "@/lib/agent/types";
@@ -270,6 +272,16 @@ export interface AgentRunTimeline {
    * inferred run as one the user chose.
    */
   readonly workflowSource: AgentRunWorkflowSource;
+  /**
+   * How that reading went, folded from the same header.
+   *
+   * The surface says a different sentence for a workflow a classifier NAMED and for one
+   * it fell back to, and both of those are different again from a run whose record does
+   * not say. Folded here rather than remembered by the rail that made the request: the
+   * rail's memory dies with the page, and the sentence it leaves behind — a fallback
+   * read back as a verdict — is a claim about the run that its own record contradicts.
+   */
+  readonly workflowReading: AgentRunWorkflowReading;
   /** The run's composed report, or null while it has composed none. */
   readonly report: AgentRunReport | null;
 }
@@ -1064,12 +1076,21 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
   */
   let workflowSource: AgentRunWorkflowSource = DEFAULT_AGENT_WORKFLOW_SOURCE;
 
+  /*
+    And how the reading went, off the same entry and defaulted to
+    `DEFAULT_AGENT_WORKFLOW_READING`: a header that records no outcome is one nothing
+    can be read out of, so it folds to `"unrecorded"` rather than to either of the
+    answers a reader would then state as fact. The rail has a sentence for it.
+  */
+  let workflowReading: AgentRunWorkflowReading = DEFAULT_AGENT_WORKFLOW_READING;
+
   entries.forEach((entry, index) => {
     if (entry.kind === "cancellation-requested") stopRequested = true;
     if (entry.kind === "run-opened") {
       mode = entry.mode;
       workflowType = entry.workflowType ?? DEFAULT_AGENT_WORKFLOW_TYPE;
       workflowSource = entry.workflowSource ?? DEFAULT_AGENT_WORKFLOW_SOURCE;
+      workflowReading = entry.workflowReading ?? DEFAULT_AGENT_WORKFLOW_READING;
     }
     if (entry.kind === "event") {
       const { event } = entry;
@@ -1157,6 +1178,7 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
     failureReason,
     workflowType,
     workflowSource,
+    workflowReading,
     budget: [
       { id: "statements", label: "Statements", used: statements, limit: budgets.maxStatementsPerRun, unit: "count" },
       { id: "database-time", label: "Database time", used: databaseMs, limit: budgets.maxTotalRunMs, unit: "ms" },

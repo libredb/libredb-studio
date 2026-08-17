@@ -38,23 +38,29 @@ The rail is part of the **standalone application only** — the embedded `@libre
 renders no agent surface at all (`src/workspace/StudioWorkspace.tsx`, and
 `tests/unit/agent-package-boundary.test.ts` pins it). Above the `md` breakpoint it is a resizable
 panel beside the editor; below it, the same rail opens as a sheet
-(`AgentRail.tsx:786-807` chooses the presentation, and it is one component instance either way, so
+(`AgentRail.tsx:2241-2264` chooses the presentation, and it is one component instance either way, so
 an objective you are typing survives a window resize).
 
 Three controls elsewhere in the shell open it **carrying the statement in your editor**:
 
 | Control | Where | What it does |
 | --- | --- | --- |
-| "Ask the agent about this query" | Command palette (`src/components/CommandPalette.tsx:134-137`) | Selects the *Investigate* workflow and fills the objective with the editor's statement |
-| "Ask about this query" | Mobile header (`src/components/studio/StudioMobileHeader.tsx:232-242`) | The same, and opens the sheet |
-| "Agent" | Mobile nav (`src/components/Studio.tsx:825`) | Opens the rail and asks nothing |
+| "Ask the agent about this query" | Command palette (`src/components/CommandPalette.tsx:134-137`) | Fills the objective with the editor's statement, and names the *Investigate* workflow for it |
+| "Ask about this query" | Mobile header (`src/components/studio/StudioMobileHeader.tsx:235-245`) | The same, and opens the sheet |
+| "Agent" | Mobile nav (`src/components/Studio.tsx:857-863`) | Opens the rail and asks nothing |
 
-**None of them starts a run.** The shortcut selects a workflow and fills the box; pressing **Start**
+**The two that name a workflow name it under Advanced, and open that panel to show you.** The
+workflow axis is **Automatic** by default (below), so a shortcut that quietly set it would be
+making a choice you could not see. It sets *Investigate* explicitly and unfolds the disclosure, so
+the run it starts is one you named — no classification happens for it, and one click puts the axis
+back to Automatic (`Studio.tsx:276-283`, applied by the rail at `AgentRail.tsx:776-814`).
+
+**None of them starts a run.** The shortcut fills the box; pressing **Start**
 is yours (`src/components/agent/use-agent-prefill.ts`, and the rail's own effect at
-`AgentRail.tsx:268-302`). If you were already typing an objective, the shortcut does not overwrite
+`AgentRail.tsx:776-814`). If you were already typing an objective, the shortcut does not overwrite
 it — it offers the new one on a line reading `Suggested: …` with a **Replace** control beside it
-(`AgentRail.tsx:473-490`). The statement is passed as you wrote it, minus surrounding whitespace;
-nothing is composed around it on your behalf (`Studio.tsx:262-269`).
+(`AgentRail.tsx:1511-1528`). The statement is passed as you wrote it, minus surrounding whitespace;
+nothing is composed around it on your behalf (`Studio.tsx:276-283`).
 
 **If the rail is not there, the server is telling you something.** Visibility is derived rather than
 flagged: the browser asks `GET /api/agent/config` once per mount
@@ -68,18 +74,48 @@ codes are in [`docs/AGENT.md`](./AGENT.md#turning-it-on).
 ## What a run is
 
 A run is **one objective, asked once, against one connection**, recorded as an append-only ledger.
-You choose three things before pressing Start, and two of them are controls in the rail's header:
+There are three things it is decided by, and you only have to answer two of them: the mode is a
+control in the rail's header, the objective is the box, and the **workflow is read off your
+objective unless you say otherwise**.
 
-**1. The mode — how the run executes** (`AgentRail.tsx:405-420`, labels at `AgentRail.tsx:80-83`):
+**1. The mode — how the run executes** (`AgentRail.tsx:1464-1487`, labels at `AgentRail.tsx:149-152`):
 
 | Button | What it means |
 | --- | --- |
 | **Plan** | The model writes **one statement** that answers your objective, for you to run yourself. It has **no tools**: it runs no statement of yours, writes nothing, and applies nothing. The server reads your schema for it first, so the statement names your real tables — see [What a Plan run knows about your database](#what-a-plan-run-knows-about-your-database). This is what a run opens in. |
 | **Agent** | The model is given the read-only tools and investigates: it drafts statements, reads results, and finishes by composing a report whose claims cite what it read. |
 
-**2. The workflow — what the run is for** (`AgentRail.tsx:433-448`, labels at `AgentRail.tsx:94-98`):
-**Investigate**, **Optimize**, **Assess**, **Operate**, **Analyze**. Offered in both modes, because
+**2. The workflow — what the run is for**, and it is **Automatic** unless you say otherwise. Under
+**Advanced** (`AgentRail.tsx:1544-1601`, labels at `AgentRail.tsx:163-169`) the five are all there —
+**Investigate**, **Optimize**, **Assess**, **Operate**, **Analyze** — offered in both modes, because
 "how would you make this faster?" is an ordinary thing to ask a plan for.
+
+**Automatic is what the rail opens on, and it means the server reads your objective.** Pressing
+Start posts the objective to `POST /api/agent/classify`, which asks the model to name one of the
+five; the rail says *"Reading your objective to choose a workflow."* while it waits, and opens the
+run for whatever came back. The row used to sit above the objective box, asking you to classify a
+question you had not written yet.
+
+Three consequences worth knowing before you rely on it:
+
+- **Naming one yourself skips the reading entirely.** No classification request is made, no model
+  tokens are spent on it, and the run opens as the workflow you picked. If you know what you want,
+  Advanced is both faster and cheaper.
+- **A reading that fails does not block the run.** A model error, a timeout, or an answer naming
+  nothing this build serves opens an *Investigate* run and says so — *"your objective could not be
+  classified, so the run investigates rather than being told what it is for"* — rather than
+  presenting the fallback as a decision somebody made.
+- **A workflow you did not choose is stated, with a way out.** A run opened from a reading carries a
+  line under the objective — *"Opened as Optimize, read from your objective."* — with a **change**
+  control beside it while the run is live. Changing it **stops this run and opens a new one**: a
+  run's workflow cannot be edited, and both consequences are written beside the control rather than
+  discovered. If the stop is refused, nothing new is opened and the rail says the run is still
+  going, because two runs on one connection is the outcome that must not happen quietly.
+  (`AgentRail.tsx:1761-1826`.) Your objective is not lost: the new run re-asks the same question,
+  read off the run that was open.
+
+**What leaves your machine for the classification** — your objective, before any run exists — is
+documented in [`docs/AGENT_DATA_FLOW.md`](./AGENT_DATA_FLOW.md#the-classification-before-any-run).
 
 **Analyze** is the one that answers a question about the *data* rather than about the database:
 "which region brought in the most revenue last quarter", "how many orders shipped but were never
@@ -90,20 +126,23 @@ a complete answer there, not a lesser one. What it presents is always a result i
 plan is the engine describing a statement rather than running it, and a table profile is a count
 about a table, so neither can be nominated as the answer — the run can still cite either as evidence
 in its report, and its report has to cite the result it presented, or the run is marked as not having
-answered. It is also the only workflow that offers the auto-execute
-checkbox below, because handing a statement to your editor is part of presenting an answer and the
+answered. It is also the only workflow that asks for the auto-execute
+consent below, because handing a statement to your editor is part of presenting an answer and the
 other four workflows have no answer to present.
 
-**3. The objective** — the box labelled *"What should the run investigate?"*, placeholder *"Why is
-checkout slow?"*, bounded to 4000 characters (`AGENT_MAX_OBJECTIVE_LENGTH` in
-`src/lib/agent/execution-policy.ts:157`). It is **emptied once the server has opened the run**, so
+**3. The objective** — what the run is asked, and what the reading above reads. The box is labelled
+*"What should the run investigate?"*, placeholder *"Why is checkout slow?"*, and it is bounded to
+4000 characters (`AGENT_MAX_OBJECTIVE_LENGTH` in
+`src/lib/agent/execution-policy.ts:410`). It is **emptied once the server has opened the run**, so
 the next question needs no deleting; the question itself is not lost, since the run's header carries
 it and the timeline's first entry quotes it. A start that was *refused* leaves what you typed exactly
 where it was, so retrying is one click rather than one retyping.
 
 Both axes are **fixed when the run opens** and are read from the run's own record for the rest of
-its life (`src/app/api/agent/runs/route.ts:79-88`), so nothing can widen a Plan run into an Agent
-one afterwards.
+its life (`src/app/api/agent/runs/route.ts:35-56`), so nothing can widen a Plan run into an Agent
+one afterwards. The record also carries **how** the workflow was decided and how that reading went,
+which is what lets the rail say the same true sentence about a run after a reload as it said when
+it opened it.
 
 **The connection is the one the shell is on, and it has to be one the server can rebuild.** A run
 stores a connection id and no credential, so a connection that exists only in your browser cannot be
@@ -111,7 +150,7 @@ investigated. The rail says so rather than offering a Start that must fail:
 
 > *"… cannot be rebuilt on the server: its settings live in this browser. A run re-resolves its
 > connection there after a restart, so it can only investigate a connection the server holds too."*
-> (`AgentRail.tsx:492-498`)
+> (`AgentRail.tsx:1604-1610`)
 
 ### What a Plan run knows about your database
 
@@ -183,30 +222,30 @@ and the bar its verdict is judged against.
 ### Investigate
 
 The default. The objective is a question about the database and the model answers it from what it
-establishes (`WORKFLOW_OBJECTIVES.investigation` in `src/lib/agent/investigation.ts:203`). Tools:
+establishes (`WORKFLOW_OBJECTIVES.investigation` in `src/lib/agent/investigation.ts:505`). Tools:
 `inspect_schema`, `run_read_query`, `inspect_plan`, `compose_report`
-(`AGENT_MODE_TOOLS`, `src/lib/agent/tools.ts:402-407`).
+(`AGENT_MODE_TOOLS`, `src/lib/agent/tools.ts:601-606`).
 
 **Answered when** the run composed at least one claim and the claims do not rest entirely on empty
-results (`verifyInvestigationGoal`, `src/lib/agent/goal-verifier.ts:172-173`).
+results (`verifyInvestigationGoal`, `src/lib/agent/goal-verifier.ts:281-284`).
 
 ### Optimize
 
 For a statement that is too slow. The model is told that what matters is *how the engine reaches its
-rows* (`investigation.ts:204-205`), and it is offered two further tools: `compare_plans`, which
+rows* (`investigation.ts:506-507`), and it is offered two further tools: `compare_plans`, which
 takes the ids of two plans the run already inspected, and `recommend_change`, which records one
-index or rewrite (`tools.ts:384-394`).
+index or rewrite (`tools.ts:630-634`).
 
 Two things this workflow will not do, and it says so rather than implying otherwise:
 
 - **Every plan is an estimate.** `EXPLAIN ANALYZE` executes the statement and is policy-denied, so
   the comparison entry carries a sentence the application wrote: *"Estimates only: these plans were
   described, not executed. EXPLAIN ANALYZE is policy-denied because it would run the statement."*
-  (`PLAN_ESTIMATE_CAVEAT`, `timeline.ts:209-210`).
+  (`PLAN_ESTIMATE_CAVEAT`, `timeline.ts:355-357`).
 - **A recommendation is never applied.** Every recommendation entry carries *"Not applied: nothing
-  here runs this statement."* (`NOT_APPLIED_CAVEAT`, `timeline.ts:213`), and the only thing offered
+  here runs this statement."* (`NOT_APPLIED_CAVEAT`, `timeline.ts:359`), and the only thing offered
   is an **Apply to editor** button, which puts the text in your editor and runs nothing
-  (`HydrationControls`, `AgentRail.tsx:176-186`).
+  (`HydrationControls`, `AgentRail.tsx:401-447`).
 
 **Answered when** the Investigate bar is met **and** the change it proposes rests on a plan it read:
 a before/after comparison for a rewrite, or — for an index, whose "after" plan would need the index
@@ -216,7 +255,7 @@ to already exist — the recommendation citing the plan it diagnosed (`verifyQue
 ### Assess
 
 For the state of the data itself — where it is incomplete, inconsistent or surprising
-(`investigation.ts:206-207`). It adds one tool, `profile_table`, and the rule that matters is worth
+(`investigation.ts:508-509`). It adds one tool, `profile_table`, and the rule that matters is worth
 reading before you point it at a table of personal data:
 
 **A profile records counts, never values.** Row counts, present counts, distinct counts, and how
@@ -227,7 +266,7 @@ return real values (`src/lib/agent/table-profile.ts:1-27`). The findings — `hi
 those counts, with stated thresholds; the model may interpret them and cannot invent one.
 
 **Answered when** the Investigate bar is met **and** a table was actually profiled
-(`verifyDatabaseAssessmentGoal`, `goal-verifier.ts:211`).
+(`verifyDatabaseAssessmentGoal`, `goal-verifier.ts:358`).
 
 ### Operate
 
@@ -269,7 +308,7 @@ report as unanswered.
 ## What you see while a run goes
 
 The rail's timeline is a fold over the run's ledger, one line per recorded event
-(`foldLedgerEntries`, `timeline.ts:603-675`). Before anything has happened it says *"No activity
+(`foldLedgerEntries`, `timeline.ts:1018-1189`). Before anything has happened it says *"No activity
 yet. A run's steps appear here as they are recorded."*
 
 | Headline | When |
@@ -293,7 +332,7 @@ yet. A run's steps appear here as they are recorded."*
 
 **Wording the application chose and text that came from elsewhere never share a line.** Headlines
 and details are the application's words; anything from the model, the engine or you is rendered as a
-quoted block, because database content is untrusted input (`timeline.ts:25-36`).
+quoted block, because database content is untrusted input (`timeline.ts:35-40`).
 
 **The one exception is the closing statement, and it is a rendering rather than a mixing.** Models
 write that block as markdown, so it is rendered as markdown — headings, bullets, bold and inline
@@ -319,7 +358,7 @@ Two controls appear under an entry only when there is something to act on **and*
   provenance badge naming the run. It is offered only **while the run is live**: a run's stored rows
   are released when it ends, and the rail says so where the results are listed — *"A run's stored
   rows are released when the run ends, so a result can be shown only while its run is still
-  going."* (`AgentRail.tsx:730-735`).
+  going."* (`AgentRail.tsx:2186-2190`).
 
 **The answer itself is shown without being asked for.** When an `Answer composed` entry arrives, the
 rail opens that result immediately — as the chart the run composed, or as a table — because a run
@@ -333,7 +372,7 @@ At the bottom, once a report exists, a **Report** section lists each claim as th
 prose with its citations under it — `Artifact <id>` with the row count and the statement that
 produced it, or `Schema snapshot <fingerprint>` with the table count. A citation the rail cannot
 resolve in what it has read says so in amber rather than looking checked
-(`UNRESOLVED_DETAIL`, `timeline.ts:556`).
+(`UNRESOLVED_DETAIL`, `timeline.ts:967`).
 
 ---
 
@@ -355,23 +394,37 @@ writes, and no amount of reading the statement would tell you so.
 **It is offered on Analyze alone, and only in Agent mode.** Auto-execute hands over *the answer*, and
 Analyze is the only workflow that produces one — an Investigate, Optimize, Assess or Operate run
 finishes with a report, not with a statement it is nominating as the answer, so there would be
-nothing to hand over. The checkbox therefore appears only when Analyze and Agent are both selected,
-and it disappears if you switch away; a run started after switching is started without the setting
-rather than with a setting that could not be honoured. (The API refuses `autoExecute: true` on the
-other workflows outright, rather than accepting it and quietly doing nothing.)
+nothing to hand over. (The API refuses `autoExecute: true` on the other workflows outright, rather
+than accepting it and quietly doing nothing.)
 
-**The control is the checkbox above Start**, *"Also run the final answer in my editor"*, with the
-terms under it in the words above: what the run keeps for its own read (200 rows, 10 seconds), what
-the editor keeps (the 500-row limit), what is given up (the time limit), and what happens instead
-when the run declines to run it for you. On a SQLite connection one more line appears, because there
-the missing time limit means something different: *"On SQLite a read is not interrupted when it runs
-long: it blocks other writers and this application until it finishes."*
+**You are asked for it after Start, not before it** (`AgentRail.tsx:1655-1737`). Pressing Start on
+an Analyze run in Agent mode — whether you named the workflow or the server read it — raises a
+consent step in place of opening the run:
 
-It is decided when the run is opened and cannot be changed afterwards — the request that opens the
-run is the only place it is set, and it is recorded on the run itself. So the checkbox stops
-responding while a run is open and says why; tick it before you press Start, and start a new run to
-change your mind. (The same field is accepted by `POST /api/agent/runs` as `autoExecute`, absent
-meaning off.)
+> *"This run will open as Analyze on **&lt;your connection&gt;**, which answers with a result."*
+> — then the checkbox *"Also run the final answer in my editor"*, the terms, and **Open** and
+> **Cancel**.
+
+The terms under the checkbox are the words above: what the run keeps for its own read (200 rows, 10
+seconds), what the editor keeps (the 500-row limit), what is given up (the time limit), and what
+happens instead when the run declines to run it for you. On a SQLite connection one more line
+appears, because there the missing time limit means something different: *"On SQLite a read is not
+interrupted when it runs long: it blocks other writers and this application until it finishes."*
+
+Three things about that step, and each of them is why it is there rather than above Start:
+
+- **It exists exactly where the hand-over could happen.** There is no checkbox to find and no state
+  to leave it stranded in: a run that cannot present an answer never raises the step, and a host
+  with no editor to run a statement in is not offered it at all.
+- **The connection it names is the connection the run opens on.** It is taken when you press Start,
+  so selecting another database while the step is up changes neither — the run opens where you
+  asked it to, and the SQLite line stays if that is where you asked.
+- **Cancel opens nothing** and leaves your objective exactly where it was. Nothing has been sent.
+
+It is decided by the request that opens the run and cannot be changed afterwards — it is recorded on
+the run itself, and no later request can widen a run the server already holds. So changing your mind
+means starting another run. (The same field is accepted by `POST /api/agent/runs` as `autoExecute`,
+absent meaning off.)
 
 **The re-run is at the editor's default 500 rows even if you had widened this tab.** "Show unlimited
 rows" is a choice you made about a statement you wrote; a statement the run hands over does not
@@ -418,15 +471,15 @@ The status word — `succeeded`, `failed`, `cancelled` — says how the run ende
 whether you got an answer: a run whose model stopped without composing a report ends `succeeded`,
 and a run that ran out of turns ends `failed`, and neither answered anything. This was not a
 hypothesis; both were observed on live runs, which is why the verdict is a separate field
-(`timeline.ts:452-461`, and [`docs/AGENT.md`](./AGENT.md#whether-the-run-answered) for the mechanism).
+(`timeline.ts:604-631`, and [`docs/AGENT.md`](./AGENT.md#whether-the-run-answered) for the mechanism).
 
 So the last line of a run reads **"Run answered"** or **"Run did not answer"**
-(`answeredHeadline`, `timeline.ts:328-329`). A ledger written before verdicts existed carries none,
+(`answeredHeadline`, `timeline.ts:626-627`). A ledger written before verdicts existed carries none,
 and such a run keeps the status word it always had (`Run succeeded`) rather than being given a
 judgement nobody made.
 
 Under it, when the run fell short, is **one sentence naming what it did not produce**. These are the
-whole vocabulary (`SHORTFALL_SENTENCES`, `timeline.ts:335-343`):
+whole vocabulary (`SHORTFALL_SENTENCES`, `timeline.ts:633-645`):
 
 | The run did not answer because | The sentence you get |
 | --- | --- |
@@ -442,15 +495,15 @@ whole vocabulary (`SHORTFALL_SENTENCES`, `timeline.ts:335-343`):
 | `cancelled` | "The run was stopped before it could finish." |
 
 A run **you** stopped reports `cancelled` rather than the output it was missing: a stop is not a
-defect of the run (`goal-verifier.ts:166,172`).
+defect of the run (`goal-verifier.ts:273,283`).
 
 If the run had no shortfall to report, the line under the verdict says how the loop ended instead
-(`STOP_SENTENCES`, `timeline.ts:267-282`) — for example *"The run reached its step limit before it
+(`STOP_SENTENCES`, `timeline.ts:528-545`) — for example *"The run reached its step limit before it
 finished. What it had gathered is above."*
 
-**The shortfall wins over the ending in both modes** (`describeEnding`, `timeline.ts:305-315`), and
+**The shortfall wins over the ending in both modes** (`describeEnding`, `timeline.ts:604-624`), and
 one ending is where that matters. When the model simply stops, an **Agent** run that composed no
-claims also carries the `no-report` shortfall (`verifyInvestigationGoal`, `goal-verifier.ts:172`), so
+claims also carries the `no-report` shortfall (`verifyInvestigationGoal`, `goal-verifier.ts:283`), so
 the sentence you actually read is the shortfall one — *"The run finished without composing a cited
 report, so nothing it found was written down."* The stop sentence for that ending, *"The model
 stopped without composing a cited report."*, is what a run whose ledger carries **no verdict at all**
@@ -463,7 +516,7 @@ stopped after a lecture — no statement drafted and no `NO STATEMENT:` refusal 
 
 And when the run failed for a reason that is not about the answer at all, that sentence wins over
 both, and also appears next to the Start button so you can fix it before starting another
-(`FAILURE_SENTENCES`, `timeline.ts:189-198`; rendered at `AgentRail.tsx:506-510`): the model
+(`FAILURE_SENTENCES`, `timeline.ts:335-345`; rendered at `AgentRail.tsx:1618-1622`): the model
 provider not being configured or reachable, limiting this key's requests, rejecting the credentials,
 an engine with no read-only execution profile, a connection that no longer resolves, or an internal
 failure whose reason is in the server log.
@@ -473,8 +526,8 @@ failure whose reason is in the server log.
 ## The budget meter's numbers
 
 The meter above the timeline shows **three gauges, and it shows only what the server actually
-enforces and the ledger actually records** (`AgentRail.tsx:662-699`, gauges built in
-`timeline.ts:668-672`):
+enforces and the ledger actually records** (`AgentRail.tsx:1967-2023`, gauges built in
+`timeline.ts:1182-1186`):
 
 | Gauge | Reads | The limit, and where it comes from |
 | --- | --- | --- |
@@ -512,8 +565,13 @@ costs far more database time than a catalog read.
 even though the run itself survives on the server. `docs/AGENT.md` ("Deployment") gives the setting
 for nginx, ingress-nginx and the common PaaS routers.
 
-Before any run is open there is no header to read, and the meter shows the investigation figures —
-the same reading the server takes for a ledger that names no workflow.
+Before any run is open there is no header to read, and what the meter says then depends on whether
+the workflow is decided yet. Name one under **Advanced** and it states that workflow's own ceilings.
+Leave it on **Automatic** and it states none of them — *"Every ceiling below is per workflow, and
+Automatic decides the workflow from your objective when the run opens — so the figures are stated
+once the run has one, and by the run's own record."* An Analyze run is bounded twice as long as an
+Investigate one, so a figure shown before the workflow is known would be a number nothing is
+enforcing. The gauges themselves wait for a run either way.
 
 **There is no token gauge, and its absence is deliberate**: this build enforces no token budget, so
 a figure would mean nothing (`docs/BACKLOG.md` B10).
@@ -526,7 +584,7 @@ partial answer rather than a missing one. The bar does not move when it happens:
 cite something the run read, so a forced report is a cited report or it is no report at all. Nothing
 is asked of a **Plan** run, which has no report tool to call. The meter says this under the ceilings.
 
-Then the caveat, which is the part worth reading twice (`AgentRail.tsx:692-699`):
+Then the caveat, which is the part worth reading twice (`AgentRail.tsx:2018-2023`):
 
 - **Every ceiling is per drive.** A run resumed after a restart starts each of them again, so these
   totals can read past a single drive's ceiling.
@@ -545,7 +603,7 @@ Then the caveat, which is the part worth reading twice (`AgentRail.tsx:692-699`)
 Before an **Agent** run opens, the server asks the configured model to call one trivial tool and
 watches what comes back (`src/lib/agent/capability-probe.ts`). If it establishes that the model
 cannot do the job, the run is refused with `422` and the rail renders a state of its own rather than
-a red error line (`AgentRail.tsx:589-628`):
+a red error line (`AgentRail.tsx:1905-1948`):
 
 - the heading *"This model cannot drive an agent run."*;
 - **The probe could not establish:** one chip per capability, in this build's own labels — *tool
@@ -555,7 +613,7 @@ a red error line (`AgentRail.tsx:589-628`):
 - and what is still worth trying.
 
 That last line has three registers, and which one you get is a fact about what the probe saw
-(`refusalActionText`, `AgentRail.tsx:137-145`). Where nothing the probe observed rules it out, you
+(`refusalActionText`, `AgentRail.tsx:333-345`). Where nothing the probe observed rules it out, you
 are offered **Switch to Plan mode** — because Plan mode is toolless and is never probed, so it is
 reachable with exactly the model that was just refused. The copy says *"may still work"* and not
 *does*: admission without probing is not proof of compatibility. Where the probe **watched** the
@@ -574,7 +632,7 @@ Ollama is a first-class path: `LLM_PROVIDER=ollama` with `LLM_API_URL=http://loc
 reaches the OpenAI-compatible endpoint through the same adapter as the `openai` and `custom` kinds
 (`src/lib/agent/provider-registry.ts:121-132,154-159`), and no key is required — the adapter sends a
 placeholder rather than leaving `apiKey` undefined, so an ambient `OPENAI_API_KEY` cannot leak in
-(`provider-registry.ts:86,105-111`).
+(`provider-registry.ts:86,107,110`).
 
 **The model decides whether a local deployment can run the agent — not the endpoint.** This is
 worth stating precisely, because it is the opposite of what the mechanism suggests. The capability
@@ -623,7 +681,7 @@ Stated plainly, because a surface that hides its edges is the one that surprises
 - **It cannot write.** Every database reach the agent makes goes through the agent's own audited
   pipeline — the policy decision, the audit event and the budget accounting that
   `executeAuditedOperation` performs before the driver is touched
-  (`src/lib/db/operations/execution.ts:129`, reached only from `src/lib/agent/tools.ts:844`) — under
+  (`src/lib/db/operations/execution.ts:129`, reached only from `src/lib/agent/tools.ts:1214`) — under
   a read-only execution profile whose boundary is database-native rather than a parser: a read-only
   transaction on PostgreSQL, `PRAGMA query_only` re-asserted per statement on SQLite. Writes and DDL
   are refused before the database is reached. See [`docs/SECURITY.md`](./SECURITY.md) row 3.4.
@@ -635,9 +693,9 @@ Stated plainly, because a surface that hides its edges is the one that surprises
 - **Agent mode runs on PostgreSQL and SQLite only.** The read-only profile has to be implemented by
   the provider, and only two do: `queryReadOnly` exists on `postgres.ts:870` and `sqlite.ts:397`.
   Acquiring a profiled provider for any other engine raises `PROFILE_UNSUPPORTED_BY_PROVIDER`
-  (`src/lib/db/factory.ts:437`), which the runtime reports as `engine-unsupported`
-  (`src/lib/agent/runtime.ts:199`) — the rail says so in as many words
-  (`src/components/agent/timeline.ts:195`). So on MySQL, Oracle, SQL Server, MongoDB, Redis,
+  (`src/lib/db/factory.ts:473`), which the runtime reports as `engine-unsupported`
+  (`src/lib/agent/runtime.ts:242`) — the rail says so in as many words
+  (`src/components/agent/timeline.ts:341`). So on MySQL, Oracle, SQL Server, MongoDB, Redis,
   ClickHouse, Druid and Couchbase an Agent-mode run cannot read anything. It also covers the bundled
   **LibreDB sample** connection, whose provider implements no `queryReadOnly`
   (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded

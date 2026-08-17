@@ -43,6 +43,7 @@ interface FakeRun {
   mode: string;
   workflowType: string;
   workflowSource: string;
+  workflowReading: string;
   autoExecute: boolean;
   status: string;
   actor: { sessionId: string; role: string };
@@ -61,6 +62,9 @@ function fakeRun(overrides: Partial<FakeRun> = {}): FakeRun {
     // The store's default too: a header written by a body that named no source
     // describes a workflow its caller sent explicitly.
     workflowSource: "chosen",
+    // The store's default too: a header that carries no classifier outcome records
+    // none, which is neither a reading that succeeded nor one that failed.
+    workflowReading: "unrecorded",
     // The store's default too: absent means off, so a body that asked for nothing
     // opens a run that hands nothing anywhere.
     autoExecute: false,
@@ -80,6 +84,7 @@ const mockStart = mock(
     mode: string;
     workflowType?: string;
     workflowSource?: string;
+    workflowReading?: string;
     autoExecute?: boolean;
     actor: FakeRun["actor"];
     connectionId: string;
@@ -249,6 +254,7 @@ describe("POST /api/agent/runs", () => {
       mode: string;
       workflowType: string;
       workflowSource: string;
+      workflowReading: string;
       autoExecute: boolean;
     }>(res);
 
@@ -259,6 +265,7 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       workflowType: "investigation",
       workflowSource: "chosen",
+      workflowReading: "unrecorded",
       autoExecute: false,
     });
     // No `workflowType` reaches the service when the body named none: the store's
@@ -436,6 +443,61 @@ describe("POST /api/agent/runs", () => {
       // not record, quietly folded to `"chosen"`, would have the surface tell the user
       // they picked a workflow they never saw.
       const res = await POST(startRequest({ ...VALID_BODY, workflowSource: value }));
+
+      expect(res.status).toBe(400);
+      expect(mockStart).not.toHaveBeenCalled();
+    },
+  );
+
+  test("a body that names no workflow reading reaches the service without the field at all", async () => {
+    // The third field to follow this rule, and for the third time the same reason: the
+    // store's default is the one place "nobody said" becomes an answer.
+    const res = await POST(startRequest(VALID_BODY));
+    const body = await parseResponseJSON<{ workflowReading: string }>(res);
+
+    expect(body.workflowReading).toBe("unrecorded");
+    expect(mockStart).toHaveBeenCalledWith({
+      mode: "agent",
+      actor: { sessionId: "ada", role: "user" },
+      connectionId: "seed:sales",
+      objective: "why is checkout slow",
+    });
+  });
+
+  test("a failed reading is persisted as one, and the response echoes what was PERSISTED", async () => {
+    const res = await POST(
+      startRequest({ ...VALID_BODY, workflowSource: "inferred", workflowReading: "unclassified" }),
+    );
+    const body = await parseResponseJSON<{ workflowReading: string }>(res);
+
+    expect(res.status).toBe(202);
+    // The point of persisting it: a rail that reloads reads THIS back, and a fallback
+    // read back as a verdict is the one thing the "opened as" sentence may not do.
+    expect(body.workflowReading).toBe("unclassified");
+    expect(mockStart).toHaveBeenCalledWith({
+      mode: "agent",
+      workflowSource: "inferred",
+      workflowReading: "unclassified",
+      actor: { sessionId: "ada", role: "user" },
+      connectionId: "seed:sales",
+      objective: "why is checkout slow",
+    });
+  });
+
+  test("all three workflow readings this server records are accepted", async () => {
+    for (const workflowReading of ["classified", "unclassified", "unrecorded"]) {
+      const res = await POST(startRequest({ ...VALID_BODY, workflowReading }));
+      expect(res.status, workflowReading).toBe(202);
+    }
+  });
+
+  test.each([["read"], [7], [null], [{}]])(
+    "a workflow reading of %p is refused rather than defaulted",
+    async (value) => {
+      // Same rule as the source above: this field decides which of three sentences the
+      // surface says about the run, so an unrecognised value folded into one of them
+      // would have the UI report an outcome nobody recorded.
+      const res = await POST(startRequest({ ...VALID_BODY, workflowReading: value }));
 
       expect(res.status).toBe(400);
       expect(mockStart).not.toHaveBeenCalled();

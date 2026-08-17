@@ -30,6 +30,7 @@ import {
   type AgentChartSpec,
   type AgentRunMode,
   type AgentRunStatus,
+  type AgentRunWorkflowReading,
   type AgentRunWorkflowSource,
   type AgentRunWorkflowType,
 } from "@/lib/agent/types";
@@ -177,6 +178,71 @@ const WORKFLOW_LABELS: Readonly<Record<AgentRunWorkflowType, string>> = {
  * moment the objective exists to read.
  */
 type AgentWorkflowChoice = AgentRunWorkflowType | "automatic";
+
+/**
+ * The connection a start was asked ON, taken at the click and carried from there.
+ *
+ * `connectionId` is a prop: it is the connection the SHELL is on now, and `Studio` moves
+ * it the moment the user selects another database. A start is no longer synchronous —
+ * it waits on a classification, and may then wait on the user answering the consent step
+ * — so reading the prop when the run is finally opened reads whatever is true THEN, not
+ * what was true when Start was pressed. That is a run opened against a different
+ * database from the one the rail displayed, and from the one the consent copy described
+ * ("on the connection the run was opened on"), which is the one promise that copy makes
+ * about where the statement lands.
+ *
+ * So it is snapshotted with the rest of the decision, exactly as the mode and workflow
+ * axes are frozen for the same window (`startHeld`). The engine travels with it because
+ * the consent copy has a sentence that is true of SQLite and of nothing else, and a
+ * warning that disappears while the run still opens on SQLite is the same defect in a
+ * smaller print size.
+ */
+interface AgentStartConnection {
+  readonly id: string;
+  readonly name: string | null;
+  readonly type: DatabaseType | null;
+}
+
+/** One start, entirely decided: nothing below reads a control again. */
+interface AgentDecidedStart {
+  readonly workflowType: AgentRunWorkflowType;
+  readonly source: AgentRunWorkflowSource;
+  /** What the reading produced, or `"unrecorded"` where no reading was made. */
+  readonly reading: AgentRunWorkflowReading;
+  readonly objective: string;
+  readonly connection: AgentStartConnection;
+  /**
+   * Whether opening this run has to STOP one first. Carried on the held start rather
+   * than done at the click that decided the workflow: a start held at the consent
+   * step is one the user can still abandon, and cancelling before they answered
+   * would destroy the open run for a replacement that is never opened.
+   */
+  readonly replacesOpenRun: boolean;
+}
+
+/**
+ * What the rail says about a workflow nobody chose — one sentence per recorded reading,
+ * and three of them because the record has three answers and they are three different
+ * statements.
+ *
+ * A total record rather than a chain of conditionals, which is the rule this file
+ * follows for every union it renders: a reading added to `AgentRunWorkflowReading`
+ * without a sentence here fails to compile instead of falling through to whichever arm
+ * happens to be last.
+ *
+ * The third one is the reason the whole reading is persisted. It is what a rail says
+ * about a run whose header carries a provenance and no outcome — the state a reload
+ * used to resolve by ASSUMING success, so a run whose classification had failed was
+ * read back to the user as "read from your objective". A record that does not say is
+ * said as one that does not say.
+ */
+const OPENED_AS_SENTENCES: Readonly<Record<AgentRunWorkflowReading, (label: string) => string>> = Object.freeze({
+  classified: (label) => `Opened as ${label}, read from your objective.`,
+  unclassified: (label) =>
+    `Opened as ${label}: your objective could not be classified, so the run investigates rather than being told what it is for.`,
+  unrecorded: (label) =>
+    `Opened as ${label}. Nobody here chose it, and this run's record does not say whether your objective was read into it or fallen back from.`,
+} satisfies Record<AgentRunWorkflowReading, (label: string) => string>);
 
 /**
  * How long this browser waits for `POST /api/agent/classify` before opening the run
@@ -617,33 +683,19 @@ export function AgentRail({
    * `src/lib/agent/types.ts`'s invariant intact: every widening decision is made by the
    * request that opens the run, and no later request may widen it.
    */
-  const [pendingStart, setPendingStart] = useState<{
-    readonly workflowType: AgentRunWorkflowType;
-    readonly source: AgentRunWorkflowSource;
-    readonly outcome: AgentWorkflowClassification["outcome"];
-    readonly objective: string;
-    /**
-     * Whether opening this run has to STOP one first. Carried on the held start rather
-     * than done at the click that decided the workflow: a start held at the consent
-     * step is one the user can still abandon, and cancelling before they answered
-     * would destroy the open run for a replacement that is never opened.
-     */
-    readonly replacesOpenRun: boolean;
-  } | null>(null);
+  const [pendingStart, setPendingStart] = useState<AgentDecidedStart | null>(null);
   /** The consent step's own tick, reset every time that step is entered. */
   const [autoExecute, setAutoExecute] = useState(false);
   /**
-   * Whether the classification this rail made for the run it is following succeeded.
+   * A "change" whose cancellation the server did not accept, so no replacement was
+   * opened and the run the user asked to end is still going.
    *
-   * Only the WORDING depends on this — "read from your objective" against "could not be
-   * classified" — and only this rail can know it: the outcome describes the classifier
-   * call, not the run, and the run record is identical either way. Whether the sentence
-   * is owed at all is a fact about the run and is read off the run's own header
-   * (`run.timeline.workflowSource`), so a rail that did not make the reading still says
-   * the workflow was inferred; it simply cannot say the reading failed, and states the
-   * provenance the record does carry.
+   * State rather than a sentence derived from `run.error`: the hook's message says what
+   * the DELETE answered, and what a user needs beside it is what this rail did about it
+   * — which is nothing, deliberately, because opening the replacement anyway is how two
+   * runs end up executing on one connection.
    */
-  const [inferredOutcome, setInferredOutcome] = useState<AgentWorkflowClassification["outcome"]>("classified");
+  const [replaceFailed, setReplaceFailed] = useState(false);
   /** Whether the way out of an inferred workflow is currently unfolded. */
   const [changeOpen, setChangeOpen] = useState(false);
   /** An ask that arrived while the user was typing, waiting for them to take it. */
@@ -782,6 +834,69 @@ export function AgentRail({
    */
   const startHeld = classifying || pendingStart !== null;
 
+  /*
+    The consent step arrives after an asynchronous classification, which means it
+    arrives while the user is looking somewhere else — and, for a user who is not
+    looking at all, it arrived silently: a region inserted below a Start button that
+    became disabled in the same commit, with no role, no announcement and no focus
+    (#407 review, and this repo's own a11y history in #100).
+
+    Two halves, and both are needed:
+
+     - it is a `<section>` with an accessible NAME, so it is a region a screen reader
+       announces and can navigate back to. The name is the sentence naming the workflow
+       and the connection, and the terms are its description, so entering it reads out
+       what is being consented to rather than "group";
+     - focus MOVES into it. That is the announcement for a keyboard user, who otherwise
+       has focus on a control that just went disabled and no way to know two buttons
+       appeared. `tabIndex={-1}` makes the region focusable programmatically and leaves
+       it out of the tab order, which is the pattern for a region you move focus TO
+       rather than through.
+
+    Leaving it puts focus somewhere real rather than on a node about to be removed —
+    `leaveConsent` below decides where, and the two exits need different answers.
+  */
+  const consentRegion = useRef<HTMLElement | null>(null);
+  const startButton = useRef<HTMLButtonElement | null>(null);
+  const objectiveBox = useRef<HTMLTextAreaElement | null>(null);
+  /** Where focus goes when the step closes, recorded by the exit that closed it. */
+  const focusAfterConsent = useRef<"start" | "objective" | null>(null);
+  /*
+    Both directions in one effect, and it has to be an EFFECT rather than a line in each
+    handler: the destination's own disabled state is derived from `pendingStart`, so at
+    the moment a handler runs it still holds the value the handler is about to change.
+    Focusing Start there focuses a button that is still disabled — which does nothing at
+    all, and leaves focus on the region as it is unmounted.
+  */
+  useEffect(() => {
+    if (pendingStart !== null) {
+      consentRegion.current?.focus();
+      return;
+    }
+    const destination = focusAfterConsent.current;
+    if (destination === null) return;
+    focusAfterConsent.current = null;
+    (destination === "start" ? startButton.current : objectiveBox.current)?.focus();
+  }, [pendingStart]);
+
+  /**
+   * Closes the consent step and says where focus lands, which is the half a
+   * `setState(null)` alone leaves undone: the focused node is inside the region about to
+   * be unmounted, so the browser drops focus to the body and a screen-reader user is
+   * left nowhere.
+   *
+   * The destination differs by exit, and neither choice is arbitrary. **Cancel** returns
+   * to Start, the control that raised this and the one that is live again the moment it
+   * is pressed. **Open** cannot: Start is disabled from the instant the run is busy, and
+   * focus on a control that disables under it is focus lost a beat later. So an opened
+   * run lands focus in the objective box, which is enabled, is where the next question
+   * is written, and is beside everything the run is about to say.
+   */
+  const leaveConsent = (to: "start" | "objective"): void => {
+    focusAfterConsent.current = to;
+    setPendingStart(null);
+  };
+
   const canStart = connectionId !== null && objective.trim().length > 0 && !run.isBusy && !startHeld;
 
   /*
@@ -849,18 +964,28 @@ export function AgentRail({
     leaving the user nothing to re-ask with. `run.cancel()` is the same ask the Stop
     control makes, awaited so the DELETE is sent before `start` aborts the controller
     that carries it.
+
+    **And the replacement is opened only if that stop was ACCEPTED.** The ask can be
+    refused — the run may be gone, the server may answer 5xx, the request may never
+    arrive — and awaiting it establishes only that it was made. Opening anyway left the
+    original run executing beside its replacement, on the same connection, spending its
+    own budget, with the rail following the new one and nothing on screen saying the old
+    one was still going: the copy beside "change" promises a cancel-and-replace, and this
+    is what keeps that promise rather than describing it. A stop that failed opens
+    nothing and says so (`replaceFailed`), which leaves the user the run they had and the
+    control that offers to try again.
+
+    Every value it acts on comes off `decided`, including the connection: this function
+    is the closure of the render its `hold` happened in on one path and is called from
+    the LATEST render on the other, and the shell's connection can move under both.
   */
-  const beginRun = async (decided: {
-    readonly workflowType: AgentRunWorkflowType;
-    readonly source: AgentRunWorkflowSource;
-    readonly outcome: AgentWorkflowClassification["outcome"];
-    readonly objective: string;
-    readonly autoExecute: boolean;
-    readonly replacesOpenRun: boolean;
-  }): Promise<void> => {
-    if (connectionId === null) return;
-    if (decided.replacesOpenRun) await run.cancel();
-    openedOn.current = { id: connectionId, name: connectionName };
+  const beginRun = async (decided: AgentDecidedStart & { readonly autoExecute: boolean }): Promise<void> => {
+    if (decided.replacesOpenRun && !(await run.cancel())) {
+      setReplaceFailed(true);
+      return;
+    }
+    setReplaceFailed(false);
+    openedOn.current = { id: decided.connection.id, name: decided.connection.name };
     openedObjective.current = decided.objective;
     /*
       What has already been delivered is about the run that is ending here, and the
@@ -877,14 +1002,17 @@ export function AgentRail({
     handedOverRunId.current = null;
     handedOver.current.clear();
     setChangeOpen(false);
-    setInferredOutcome(decided.outcome);
     void run.start({
       mode,
       workflowType: decided.workflowType,
       workflowSource: decided.source,
+      // Sent on every start, `"unrecorded"` included: the run record is where the
+      // sentence this rail owes is read back from, and a start that says nothing about
+      // its reading is one a reloaded rail cannot describe.
+      workflowReading: decided.reading,
       autoExecute: canHandOver(decided.workflowType) && decided.autoExecute,
       objective: decided.objective,
-      connectionId,
+      connectionId: decided.connection.id,
     });
   };
 
@@ -936,13 +1064,7 @@ export function AgentRail({
     nothing to consent TO — a checkbox offered where the tool is not is the mismatch
     `AGENT_WORKFLOW_PRESENTS_ANSWER` was written to end, and it shipped once already.
   */
-  const hold = (decided: {
-    readonly workflowType: AgentRunWorkflowType;
-    readonly source: AgentRunWorkflowSource;
-    readonly outcome: AgentWorkflowClassification["outcome"];
-    readonly objective: string;
-    readonly replacesOpenRun: boolean;
-  }): void => {
+  const hold = (decided: AgentDecidedStart): void => {
     if (canHandOver(decided.workflowType)) {
       setAutoExecute(false);
       setPendingStart(decided);
@@ -963,13 +1085,19 @@ export function AgentRail({
   const handleStart = async (): Promise<void> => {
     if (connectionId === null || !canStart) return;
     const asked = objective.trim();
+    // Taken HERE, at the click, and carried through both paths below: everything after
+    // this line can happen after the shell has moved to another database.
+    const connection: AgentStartConnection = { id: connectionId, name: connectionName, type: connectionType };
 
     if (workflowChoice !== "automatic") {
       hold({
         workflowType: workflowChoice,
         source: "chosen",
-        outcome: "classified",
+        // No classifier ran, so there is no outcome to record — which is a different
+        // statement from one that ran and succeeded, and the record says which.
+        reading: "unrecorded",
         objective: asked,
+        connection,
         replacesOpenRun: false,
       });
       return;
@@ -978,7 +1106,14 @@ export function AgentRail({
     setClassifying(true);
     const classification = await classifyObjective(asked);
     setClassifying(false);
-    hold({ ...classification, source: "inferred", objective: asked, replacesOpenRun: false });
+    hold({
+      workflowType: classification.workflowType,
+      source: "inferred",
+      reading: classification.outcome,
+      objective: asked,
+      connection,
+      replacesOpenRun: false,
+    });
   };
 
   /*
@@ -998,13 +1133,20 @@ export function AgentRail({
     start again with.
   */
   const handleChangeWorkflow = (next: AgentRunWorkflowType): void => {
+    if (connectionId === null) return;
+    // A new attempt, so the last one's failure notice goes with it rather than standing
+    // over a request that has not been answered yet.
+    setReplaceFailed(false);
     setWorkflowChoice(next);
     setChangeOpen(false);
     hold({
       workflowType: next,
       source: "chosen",
-      outcome: "classified",
+      reading: "unrecorded",
       objective: openedObjective.current,
+      // Snapshotted at this click for the reason `handleStart`'s is: this one can raise
+      // the consent step too, and the shell can move while it stands.
+      connection: { id: connectionId, name: connectionName, type: connectionType },
       replacesOpenRun: true,
     });
   };
@@ -1348,6 +1490,7 @@ export function AgentRail({
         </label>
         <textarea
           id="agent-objective"
+          ref={objectiveBox}
           data-testid="agent-objective"
           value={objective}
           onChange={(e) => setObjective(e.target.value)}
@@ -1510,12 +1653,24 @@ export function AgentRail({
           Every figure comes from the constants the enforcement reads.
         */}
         {pendingStart !== null && (
-          <div
+          <section
+            ref={consentRegion}
+            tabIndex={-1}
+            aria-labelledby="agent-consent-workflow"
+            aria-describedby="agent-consent-terms"
             data-testid="agent-consent"
-            className="mt-2 rounded border border-blue-400/30 bg-blue-500/5 p-2 space-y-1"
+            className="mt-2 rounded border border-blue-400/30 bg-blue-500/5 p-2 space-y-1 focus:outline-none focus:ring-1 focus:ring-blue-400/50"
           >
-            <p data-testid="agent-consent-workflow" className="text-xs text-fg-secondary">
-              This run will open as {WORKFLOW_LABELS[pendingStart.workflowType]}, which answers with a result.
+            {/*
+              The region's own name, and it names the CONNECTION as well as the workflow.
+              The terms below promise the statement will run "on the connection the run
+              was opened on", and that connection is the one this start was asked on
+              rather than whatever the shell is showing when Open is finally pressed — so
+              the sentence says which, and the run opens on exactly that one.
+            */}
+            <p id="agent-consent-workflow" data-testid="agent-consent-workflow" className="text-xs text-fg-secondary">
+              This run will open as {WORKFLOW_LABELS[pendingStart.workflowType]} on{" "}
+              {pendingStart.connection.name ?? "the connection you started it on"}, which answers with a result.
             </p>
             <label htmlFor="agent-auto-execute" className="flex items-start gap-2 cursor-pointer">
               <input
@@ -1530,7 +1685,11 @@ export function AgentRail({
                 Also run the final answer in my editor
               </span>
             </label>
-            <p data-testid="agent-auto-execute-terms" className="text-[0.625rem] text-fg-muted">
+            <p
+              id="agent-consent-terms"
+              data-testid="agent-auto-execute-terms"
+              className="text-[0.625rem] text-fg-muted"
+            >
               {autoExecuteTerms(pendingStart.workflowType)}
             </p>
             {/*
@@ -1538,8 +1697,13 @@ export function AgentRail({
               words the budget meter already uses for the same fact: SQLite does not
               preempt a statement over its timeout, so the editor's missing time limit is
               a different promise there than it is on PostgreSQL.
+
+              Read off the SNAPSHOT, like everything else in this panel: a user who
+              switches to PostgreSQL while the step stands still opens the run on SQLite,
+              and a warning that left with the switch would have been withdrawn from the
+              one run it is true of.
             */}
-            {connectionType === "sqlite" && (
+            {pendingStart.connection.type === "sqlite" && (
               <p data-testid="agent-auto-execute-sqlite" className="text-[0.625rem] text-amber-400/70">
                 On SQLite a read is not interrupted when it runs long: it blocks other writers and this application
                 until it finishes.
@@ -1554,24 +1718,26 @@ export function AgentRail({
                 type="button"
                 data-testid="agent-consent-open"
                 onClick={() => {
-                  setPendingStart(null);
+                  leaveConsent("objective");
                   void beginRun({ ...pendingStart, autoExecute });
                 }}
                 className="px-2 py-1 rounded text-xs bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 transition-colors"
               >
                 Open
               </button>
-              {/* Cancel opens nothing: the objective stays in the box, and Start is live again. */}
+              {/* Cancel opens nothing: the objective stays in the box, and Start is live
+                  again — and takes focus back, since the control that is live again is
+                  the one that raised this. */}
               <button
                 type="button"
                 data-testid="agent-consent-cancel"
-                onClick={() => setPendingStart(null)}
+                onClick={() => leaveConsent("start")}
                 className="px-2 py-1 rounded text-xs text-fg-tertiary hover:bg-fill transition-colors"
               >
                 Cancel
               </button>
             </div>
-          </div>
+          </section>
         )}
 
         {/*
@@ -1583,20 +1749,23 @@ export function AgentRail({
           nothing could be established, which is a different sentence from "this is an
           investigation".
 
-          Both the claim and the label are read off the RUN — its header carries the
-          provenance (`workflowSource`) and the workflow it was actually opened for —
-          rather than off the request this rail sent. That is what makes the affordance
-          a fact about the run instead of a memory of a click: a rail that reloads, or a
-          second surface that joins the stream, folds the same two values and says the
-          same thing. Only the reading's outcome is this rail's own, because the record
-          does not carry it (`inferredOutcome`).
+          The claim, the label AND the outcome are read off the RUN — its header carries
+          the provenance (`workflowSource`), the workflow it was actually opened for, and
+          how the reading that produced it went (`workflowReading`) — rather than off the
+          request this rail sent. That is what makes the affordance a fact about the run
+          instead of a memory of a click: a rail that reloads, or a second surface that
+          joins the stream, folds the same three values and says the same thing.
+
+          The outcome used to be the exception, held in this component alone and
+          defaulting to `"classified"`, so a rail that had not made the reading itself
+          said "read from your objective" about a run whose classification had FAILED.
+          That is the one thing this affordance may not do, and it is why the field is on
+          the record now (#407 review).
         */}
         {run.runId !== null && run.timeline.workflowSource === "inferred" && (
           <div data-testid="agent-opened-as" className="mt-2 text-[0.625rem] text-fg-muted">
             <p>
-              {inferredOutcome === "classified"
-                ? `Opened as ${WORKFLOW_LABELS[run.timeline.workflowType]}, read from your objective.`
-                : `Opened as ${WORKFLOW_LABELS[run.timeline.workflowType]}: your objective could not be classified, so the run investigates rather than being told what it is for.`}
+              {OPENED_AS_SENTENCES[run.timeline.workflowReading](WORKFLOW_LABELS[run.timeline.workflowType])}
               {runOpen && (
                 <button
                   type="button"
@@ -1639,6 +1808,24 @@ export function AgentRail({
                 </div>
               </div>
             )}
+            {/*
+              A change whose stop the server did not accept, said where the control that
+              asked for it is.
+
+              It is the one outcome the copy above does not describe, and leaving it
+              unsaid was the whole defect: the replacement is not opened, so a user
+              reading "Changing it stops this run and opens a new one" against a rail
+              that did neither would conclude the click missed. The run's own message is
+              on the error line above; this says what the RAIL did about it, which is
+              nothing, and why that is the safe answer.
+            */}
+            {replaceFailed && (
+              <p role="alert" data-testid="agent-change-failed" className="mt-1 text-amber-400/80">
+                This run was not stopped, so nothing new was opened: it is still going and still spending its budget.
+                The line above is what the server answered. Ask again, or use Stop and start a new run once it has
+                ended.
+              </p>
+            )}
           </div>
         )}
 
@@ -1666,6 +1853,7 @@ export function AgentRail({
             )}
             <button
               type="button"
+              ref={startButton}
               data-testid="agent-start"
               disabled={!canStart}
               onClick={() => void handleStart()}

@@ -196,6 +196,7 @@ const openedLineFrom = (body: Record<string, unknown>): string =>
     mode: body.mode ?? "planning",
     ...(body.workflowType === undefined ? {} : { workflowType: body.workflowType }),
     ...(body.workflowSource === undefined ? {} : { workflowSource: body.workflowSource }),
+    ...(body.workflowReading === undefined ? {} : { workflowReading: body.workflowReading }),
     actor: { sessionId: "ada", role: "user" },
     connectionId: "seed:sales",
     objective: body.objective ?? "why is checkout slow",
@@ -225,6 +226,46 @@ function mockAgentServer(
 /** The same server, with the classifier answering one fixed body. */
 function mockClassifiedFetch(classification: unknown, lines: readonly string[] = [STARTED_LINE], status = 200) {
   return mockAgentServer(async () => jsonResponse(classification, status), lines);
+}
+
+/**
+ * The same server again, except that it will not stop a run: the DELETE answers `500`.
+ *
+ * A refused stop is the case a "change" has to survive, because the replacement may not
+ * be opened over a run that is still executing.
+ */
+function mockServerRefusingStop(classification: unknown) {
+  let opened: Record<string, unknown> = {};
+  const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url === "/api/agent/classify") return jsonResponse(classification);
+    if (init?.method === "DELETE") return jsonResponse({ error: "the run could not be stopped" }, 500);
+    if (url.endsWith("/stream")) return ndjsonResponse([openedLineFrom(opened), STARTED_LINE]);
+    if (url === "/api/agent/runs" && init?.method === "POST") opened = JSON.parse(String(init.body));
+    return jsonResponse({ runId: "arun_1", status: "queued", mode: "planning" }, 202);
+  });
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  return fetchMock;
+}
+
+/**
+ * A server whose RECORD disagrees with what the rail asked for: the classifier answers
+ * one thing and the ledger header says another.
+ *
+ * That divergence is the only way to tell a surface reading the run from a surface
+ * repeating its own memory of the request it sent — which is exactly what a reload, or a
+ * second surface joining the stream, would be.
+ */
+function mockDivergentServer(classification: unknown, header: Record<string, unknown>) {
+  const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url === "/api/agent/classify") return jsonResponse(classification);
+    if (url.endsWith("/stream")) return ndjsonResponse([openedLineFrom(header), STARTED_LINE]);
+    void init;
+    return jsonResponse({ runId: "arun_1", status: "queued", mode: "planning" }, 202);
+  });
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  return fetchMock;
 }
 
 /** The five workflows live behind the disclosure now, so a test that names one opens it. */
@@ -335,6 +376,7 @@ describe("AgentRail", () => {
       mode: "agent",
       workflowType: "investigation",
       workflowSource: "inferred",
+      workflowReading: "unclassified",
       autoExecute: false,
       objective: "why is checkout slow",
       connectionId: "seed:sales",
@@ -391,6 +433,8 @@ describe("AgentRail", () => {
       workflowType: "operations",
       // Named by the user, so nothing was inferred and nothing was asked of a model.
       workflowSource: "chosen",
+      // And nothing classified anything, so there is no outcome to record.
+      workflowReading: "unrecorded",
       autoExecute: false,
       objective: "what is blocked right now",
       connectionId: "seed:sales",
@@ -425,6 +469,7 @@ describe("AgentRail", () => {
       mode: "agent",
       workflowType: "data-analysis",
       workflowSource: "chosen",
+      workflowReading: "unrecorded",
       autoExecute: false,
       objective: "sales by region today",
       connectionId: "seed:sales",
@@ -459,6 +504,7 @@ describe("AgentRail", () => {
       mode: "agent",
       workflowType: "query-optimization",
       workflowSource: "chosen",
+      workflowReading: "unrecorded",
       autoExecute: false,
       objective: "why is checkout slow",
       connectionId: "seed:sales",
@@ -481,6 +527,7 @@ describe("AgentRail", () => {
       mode: "planning",
       workflowType: "query-optimization",
       workflowSource: "chosen",
+      workflowReading: "unrecorded",
       autoExecute: false,
       objective: "why is checkout slow",
       connectionId: "seed:sales",
@@ -3605,6 +3652,9 @@ describe("AgentRail", () => {
         // The whole point of the field: the surface owes this user a sentence it does
         // not owe one who named the workflow themselves.
         workflowSource: "inferred",
+        // And this is the other half of that sentence: the reading SUCCEEDED, which is
+        // a different claim from the fallback below and is recorded as one.
+        workflowReading: "classified",
         autoExecute: false,
         objective: "why is checkout slow",
         connectionId: "seed:sales",
@@ -3698,6 +3748,223 @@ describe("AgentRail", () => {
       });
 
       expect(view.queryByTestId("agent-opened-as")).toBeNull();
+    });
+
+    /**
+     * What the reading PRODUCED is a fact about the run, and is read off the run's own
+     * header for the reason `workflowSource` is (#407 review).
+     *
+     * It was the one part of the sentence held in this component alone, defaulting to
+     * `"classified"` — so a surface that had not made the reading itself said "read from
+     * your objective" over a run whose classification had failed and fallen back. That
+     * is the fallback presented as a verdict, which is the one thing this affordance may
+     * not do, and it is what a reloaded rail or a second surface would have said every
+     * time.
+     */
+    describe("what the reading produced", () => {
+      test("the record's outcome wins over what this rail's own classify call returned", async () => {
+        // The classifier answered, and answered successfully. The header says the run
+        // was opened on a reading that did NOT: a rail rebuilt from the ledger, which
+        // is all a reload has, must say what the record says.
+        mockDivergentServer(classified("query-optimization"), {
+          workflowType: "investigation",
+          workflowSource: "inferred",
+          workflowReading: "unclassified",
+        });
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+        await startWith(view, "why is checkout slow");
+
+        const header = (await view.findByTestId("agent-opened-as")).textContent ?? "";
+        expect(header).toContain("could not be classified");
+        expect(header).not.toContain("read from your objective");
+      });
+
+      test("a header that records no reading is presented as neither a verdict nor a failure", async () => {
+        // The one header a reader can say nothing certain about: a provenance with no
+        // outcome beside it. Both other sentences would be claims the record does not
+        // make — one credits a classification that may never have succeeded, the other
+        // asserts a failure nobody recorded, and can contradict the workflow beside it.
+        mockDivergentServer(classified("operations"), {
+          workflowType: "operations",
+          workflowSource: "inferred",
+        });
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+        await startWith(view, "what is blocked right now");
+
+        const header = (await view.findByTestId("agent-opened-as")).textContent ?? "";
+        expect(header).toContain("Opened as Operate");
+        expect(header).toContain("does not say");
+        expect(header).not.toContain("could not be classified");
+        expect(header).not.toContain("read from your objective");
+      });
+
+      test("a failed reading is sent to the server, so the run's own record carries it", async () => {
+        // The half that makes the fold above possible: a rail that kept the outcome to
+        // itself would leave every reader after it with a header it cannot describe.
+        const fetchMock = mockClassifiedFetch({ error: "the model endpoint is unreachable" }, [STARTED_LINE], 500);
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+        await startWith(view, "why is checkout slow");
+
+        expect(openRequests(fetchMock)[0]).toMatchObject({
+          workflowSource: "inferred",
+          workflowReading: "unclassified",
+        });
+      });
+    });
+
+    /**
+     * The connection a start was asked ON (#407 review).
+     *
+     * `connectionId` is a prop resolved from the shell's active connection on every
+     * render, and a start is no longer synchronous: it waits on a classification, and
+     * may then wait on the user answering the consent step. The consent step's "Open"
+     * runs in the LATEST render's closure, so a run could open against a database the
+     * rail was no longer displaying — and against one the consent copy had just promised
+     * it would not use.
+     */
+    describe("the connection a start was asked on", () => {
+      test("a run opens on the connection Start was pressed on, not on whatever the shell moved to", async () => {
+        const fetchMock = mockClassifiedFetch(classified("data-analysis"));
+        const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+
+        await startWith(view);
+
+        // The shell moves while the consent step stands, which is an ordinary thing for
+        // a user to do: the rail is beside a database selector.
+        view.rerender(
+          <AgentRail
+            {...DEFAULT_PROPS}
+            connectionId="seed:analytics"
+            connectionName="Analytics"
+            onRunStatement={() => {}}
+          />,
+        );
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
+
+        expect(openRequests(fetchMock)[0].connectionId).toBe("seed:sales");
+      });
+
+      test("the consent copy names that connection, and keeps naming it when the shell moves", async () => {
+        // The copy promises the statement runs "on the connection the run was opened
+        // on", and the SQLite line is true of one engine only. Both have to describe the
+        // run that will actually open, not the rail's surroundings when Open is pressed.
+        mockClassifiedFetch(classified("data-analysis"));
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="sqlite" onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+
+        await startWith(view);
+
+        expect(view.getByTestId("agent-consent-workflow").textContent).toContain("on Sales");
+        expect(view.getByTestId("agent-auto-execute-sqlite")).toBeTruthy();
+
+        view.rerender(
+          <AgentRail
+            {...DEFAULT_PROPS}
+            connectionId="seed:analytics"
+            connectionName="Analytics"
+            connectionType="postgres"
+            onRunStatement={() => {}}
+          />,
+        );
+
+        expect(view.getByTestId("agent-consent-workflow").textContent).toContain("on Sales");
+        expect(view.getByTestId("agent-consent-workflow").textContent).not.toContain("Analytics");
+        expect(view.getByTestId("agent-auto-execute-sqlite")).toBeTruthy();
+      });
+
+      test("a start held by the classification opens on the connection it was asked on too", async () => {
+        // The other held window, and it must answer the same way: the two paths differ
+        // in which render's closure they run in, and a user cannot be expected to know
+        // which one their click took.
+        let release: (() => void) | null = null;
+        const fetchMock = mockAgentServer(
+          () =>
+            new Promise<Response>((resolve) => {
+              release = () => resolve(jsonResponse(classified("operations")));
+            }),
+        );
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+        await startWith(view, "what is blocked right now");
+        view.rerender(<AgentRail {...DEFAULT_PROPS} connectionId="seed:analytics" connectionName="Analytics" />);
+        await act(async () => {
+          release?.();
+        });
+
+        expect(openRequests(fetchMock)[0].connectionId).toBe("seed:sales");
+      });
+    });
+
+    /**
+     * The consent step is announced and takes focus (#407 review, and #100's standing
+     * a11y rules).
+     *
+     * It is inserted after an asynchronous classification, below a Start button that is
+     * disabled in the same commit. Without a name and without focus, a keyboard or
+     * screen-reader user is left on a dead control with no indication that two buttons
+     * and the terms of a consent have appeared below it.
+     */
+    describe("the consent step's announcement", () => {
+      async function consentStep() {
+        mockClassifiedFetch(classified("data-analysis"));
+        const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+        return view;
+      }
+
+      test("it is a named region and takes focus when it appears", async () => {
+        const view = await consentStep();
+
+        const consent = view.getByTestId("agent-consent");
+        // Compared by test id rather than by node: a failed element comparison prints
+        // the whole document, and this file's DOM is large enough to hang the runner.
+        expect(document.activeElement?.getAttribute("data-testid")).toBe("agent-consent");
+        // Its name is the sentence naming the workflow and the connection, so entering
+        // the region reads out what is being consented to rather than "group".
+        expect(consent.getAttribute("aria-labelledby")).toBe("agent-consent-workflow");
+        expect(document.getElementById("agent-consent-workflow")?.textContent).toContain("Analyze");
+        // And the terms describe it, so they are announced with it rather than being
+        // text the user has to go looking for.
+        expect(consent.getAttribute("aria-describedby")).toBe("agent-consent-terms");
+        expect(document.getElementById("agent-consent-terms")?.textContent).toContain("read-only");
+      });
+
+      test("Cancel returns focus to the control that raised it", async () => {
+        const view = await consentStep();
+
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-cancel"));
+        });
+
+        const start = view.getByTestId("agent-start") as HTMLButtonElement;
+        expect(document.activeElement?.getAttribute("data-testid")).toBe("agent-start");
+        // Focus that lands on a disabled control is focus lost a beat later, so this is
+        // half the assertion: Start is live again, which is why it is the destination.
+        expect(start.disabled).toBe(false);
+      });
+
+      test("Open leaves focus on a control that is still there and still enabled", async () => {
+        const view = await consentStep();
+
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
+
+        // NOT Start: it is disabled from the moment the run is busy, and the browser
+        // drops focus to the body when the focused element disables under it.
+        expect(document.activeElement?.getAttribute("data-testid")).toBe("agent-objective");
+        expect((view.getByTestId("agent-start") as HTMLButtonElement).disabled).toBe(true);
+      });
     });
 
     /**
@@ -4038,6 +4305,64 @@ describe("AgentRail", () => {
         // out — the user has lost nothing by looking at the offer and declining it.
         expect(view.getByTestId("agent-opened-as").textContent).toContain("Opened as Optimize");
         expect(view.getByTestId("agent-opened-as-change")).toBeTruthy();
+      });
+
+      /**
+       * A stop that the server did not accept.
+       *
+       * `run.cancel()` used to resolve whatever happened — it caught every failure,
+       * reported it through `error` and returned normally — so awaiting it established
+       * only that the DELETE had been ATTEMPTED. The replacement was then opened
+       * regardless, and the run that was supposed to end kept going beside it: same
+       * connection, its own budget, and a rail that had stopped following it. The copy
+       * beside "change" promises a cancel-and-replace, so this is a promise the code
+       * has to keep rather than describe.
+       */
+      test("a change whose stop the server refused opens nothing, and says the run is still going", async () => {
+        const fetchMock = mockServerRefusingStop(classified("query-optimization"));
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+        await startWith(view, "why is checkout slow");
+        await view.findByTestId("agent-opened-as");
+
+        fireEvent.click(view.getByTestId("agent-opened-as-change"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-change-workflow-operations"));
+        });
+
+        // The ask was made, and refused. Nothing was opened for it.
+        expect(deleteCalls(fetchMock)).toHaveLength(1);
+        expect(openRequests(fetchMock)).toHaveLength(1);
+        // And the user is told, rather than left believing the run they asked to stop
+        // has stopped: the server's own words are on the error line, and this says what
+        // the rail did about them.
+        expect(view.getByTestId("agent-change-failed").textContent).toContain("still going");
+        expect(view.getByTestId("agent-error")).toBeTruthy();
+        // The run they had is the run they still have, way out and all.
+        expect(view.getByTestId("agent-opened-as").textContent).toContain("Opened as Optimize");
+        expect(view.getByTestId("agent-opened-as-change")).toBeTruthy();
+      });
+
+      test("asking again clears the last attempt's failure before the new one is answered", async () => {
+        const fetchMock = mockServerRefusingStop(classified("query-optimization"));
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+        await startWith(view, "why is checkout slow");
+        await view.findByTestId("agent-opened-as");
+
+        fireEvent.click(view.getByTestId("agent-opened-as-change"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-change-workflow-operations"));
+        });
+        expect(view.getByTestId("agent-change-failed")).toBeTruthy();
+
+        fireEvent.click(view.getByTestId("agent-opened-as-change"));
+        fireEvent.click(view.getByTestId("agent-change-workflow-database-assessment"));
+
+        // Cleared at the click and set again only if this attempt fails too: a notice
+        // about the previous ask standing over a request nobody has answered yet reads
+        // as the answer to that one.
+        expect(view.queryByTestId("agent-change-failed")).toBeNull();
+        await act(async () => {});
+        expect(deleteCalls(fetchMock)).toHaveLength(2);
       });
 
       test("a run that is over is not offered a change, because there is nothing to stop", async () => {

@@ -18,7 +18,11 @@ import { foldLedgerEntries, parseLedgerLine } from "@/components/agent/timeline"
 import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { PLAN_NO_STATEMENT_MARKER } from "@/lib/agent/plan-draft";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
-import { DEFAULT_AGENT_WORKFLOW_SOURCE, DEFAULT_AGENT_WORKFLOW_TYPE } from "@/lib/agent/types";
+import {
+  DEFAULT_AGENT_WORKFLOW_READING,
+  DEFAULT_AGENT_WORKFLOW_SOURCE,
+  DEFAULT_AGENT_WORKFLOW_TYPE,
+} from "@/lib/agent/types";
 
 const OPENED: AgentLedgerEntry = {
   kind: "run-opened",
@@ -998,6 +1002,24 @@ describe("foldLedgerEntries — the budget meter", () => {
     // the surface inventing a decision.
     for (const entries of [[OPENED], []]) {
       expect(foldLedgerEntries(entries).workflowSource).toBe(DEFAULT_AGENT_WORKFLOW_SOURCE);
+    }
+  });
+
+  /**
+   * And how that reading went, which is the second half of the same sentence: "read
+   * from your objective" and "could not be classified" are different claims, and only
+   * the run's own header can tell a rail which of them it is entitled to make.
+   */
+  test("a header records what the reading of the objective produced", () => {
+    expect(foldLedgerEntries([{ ...OPENED, workflowReading: "classified" }]).workflowReading).toBe("classified");
+    expect(foldLedgerEntries([{ ...OPENED, workflowReading: "unclassified" }]).workflowReading).toBe("unclassified");
+  });
+
+  test("a header with no reading, and a ledger with no header, both fold to no recorded reading", () => {
+    // Neither of the other two can be read out of an absence: one would present a
+    // fallback as a verdict, the other asserts a failure nobody recorded.
+    for (const entries of [[OPENED], []]) {
+      expect(foldLedgerEntries(entries).workflowReading).toBe(DEFAULT_AGENT_WORKFLOW_READING);
     }
   });
 

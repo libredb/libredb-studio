@@ -189,6 +189,7 @@ const RUN: AgentRunRecord = {
   mode: "agent",
   workflowType: "query-optimization",
   workflowSource: "chosen",
+  workflowReading: "unrecorded",
   autoExecute: false,
   status: "succeeded",
   actor: { sessionId: "sess_1", role: "user" },

@@ -855,6 +855,7 @@ Opens a run and returns immediately; the drive happens in the background.
 | `mode` | string | Yes | `"planning"` or `"agent"`. A planning run's model is handed no tools and the run executes **no statement of yours and writes nothing**; it does not perform zero database operations — since 2026-08-15 the server reads the connection's catalog and the engine's estimated statistics before the first turn, read-only and audited like every other agent read, and on PostgreSQL and SQLite only |
 | `workflowType` | string | No | `"investigation"` (the default), `"query-optimization"`, `"database-assessment"`, `"operations"` or `"data-analysis"`. An unrecognised value is **refused, not defaulted** |
 | `workflowSource` | string | No | How the workflow above was decided: `"inferred"` (a classifier read it off the objective) or `"chosen"` (a person picked it). Absent means `"chosen"`, which is what every request written before there was a classifier did. An unrecognised value is **refused, not defaulted**, because the surface reads this field back to decide whether to tell the user their workflow was inferred and offer to change it |
+| `workflowReading` | string | No | How that decision WENT, as against who made it: `"classified"` (a classifier named this workflow), `"unclassified"` (a classifier was asked and reached its fallback) or `"unrecorded"` (nothing classified anything — what a caller naming its own workflow sends). Absent means `"unrecorded"`. An unrecognised value is **refused, not defaulted**, for the reason `workflowSource` is: the surface reads this field back to choose which of three sentences it says about the run, and a fallback presented as a verdict is the one it may not say |
 | `objective` | string | Yes | Non-empty, at most 4000 characters |
 | `connectionId` | string | Yes | Must resolve **server-side**. An inline `connection` object in the body is refused |
 
@@ -866,13 +867,14 @@ Opens a run and returns immediately; the drive happens in the background.
   "status": "queued",
   "mode": "agent",
   "workflowType": "investigation",
-  "workflowSource": "chosen"
+  "workflowSource": "chosen",
+  "workflowReading": "unrecorded"
 }
 ```
 
-The mode, workflow type and workflow source echoed back are the **persisted** ones, so a caller that
-omitted either workflow field learns what its run actually opened as. All three are fixed for the
-life of the run: no other route accepts any of them. Changing a run's workflow therefore means
+The mode, workflow type, workflow source and workflow reading echoed back are the **persisted**
+ones, so a caller that omitted any of the workflow fields learns what its run actually opened as.
+All four are fixed for the life of the run: no other route accepts any of them. Changing a run's workflow therefore means
 cancelling it and opening a new one — there is deliberately no parameter through which a workflow
 could arrive twice.
 

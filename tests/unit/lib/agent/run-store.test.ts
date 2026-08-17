@@ -206,6 +206,34 @@ describe("AgentRunStore — opening a run", () => {
     },
   );
 
+  test("records no classifier outcome when nothing said how the workflow was read", async () => {
+    const { store } = storeAt();
+
+    const record = await store.openRun(OPEN_INPUT);
+
+    // `"unrecorded"` rather than either of the other two, and it is the only answer
+    // the header supports: a caller that named its own workflow ran no classifier, so
+    // there is no outcome — which is a different fact from one that ran and succeeded
+    // and from one that ran and fell back.
+    expect(record.workflowReading).toBe("unrecorded");
+  });
+
+  test.each(["classified", "unclassified", "unrecorded"] as const)(
+    "records the workflow reading %p on the run, where a resumed drive reads it back",
+    async (workflowReading) => {
+      const dataDir = freshDataDir();
+      const { store } = storeAt(dataDir);
+
+      const record = await store.openRun({ ...OPEN_INPUT, workflowReading });
+
+      expect(record.workflowReading).toBe(workflowReading);
+      // Re-read through a second store over the same files. This is the whole reason
+      // the field exists: the sentence the rail owes about a run it did not open is
+      // read from here, and a rail that reloaded has no other source for it.
+      expect((await storeAt(dataDir).store.read(record.runId))?.record.workflowReading).toBe(workflowReading);
+    },
+  );
+
   test("reads back nothing for a run that was never opened", async () => {
     const { store } = storeAt();
     expect(await store.read("arun_00000000000000000000000000000000")).toBeNull();
