@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { storage } from "@/lib/storage";
 import { QueryHistoryItem } from "@/lib/types";
+import { csvRow } from "@/lib/export/csv";
+import { downloadText } from "@/lib/export/download";
 import {
   CheckCircle2,
   AlertCircle,
@@ -100,32 +102,29 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
 
     if (format === "csv") {
       const headers = ["Executed At", "Status", "Connection", "Tab", "Execution Time (ms)", "Rows", "Query", "Error"];
+      // Every field goes through the shared writer. The query and the error message
+      // used to be the only two that were escaped, so a connection or tab name
+      // holding a comma shifted every column after it for that row.
       const rows = filteredHistory.map((item) =>
-        [
+        csvRow([
           item.executedAt,
           item.status,
           item.connectionName || item.connectionId,
           item.tabName || "",
           item.executionTime,
           item.rowCount || 0,
-          `"${item.query.replace(/"/g, '""')}"`,
-          `"${(item.errorMessage || "").replace(/"/g, '""')}"`,
-        ].join(","),
+          item.query,
+          item.errorMessage || "",
+        ]),
       );
-      content = [headers.join(","), ...rows].join("\n");
+      content = [csvRow(headers), ...rows].join("\n");
       mimeType = "text/csv";
     } else {
       content = JSON.stringify(filteredHistory, null, 2);
       mimeType = "application/json";
     }
 
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = fileName;
-    link.click();
-    URL.revokeObjectURL(url);
+    downloadText(content, mimeType, fileName);
   };
 
   return (

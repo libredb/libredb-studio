@@ -9,7 +9,6 @@ import { QuerySafetyDialog } from "@/components/QuerySafetyDialog";
 import { DataProfiler } from "@/components/DataProfiler";
 import { CodeGenerator } from "@/components/CodeGenerator";
 import { TestDataGenerator } from "@/components/TestDataGenerator";
-import { SchemaDiagram } from "@/components/SchemaDiagram";
 import { SaveQueryModal } from "@/components/SaveQueryModal";
 import { StudioTabBar, QueryToolbar, BottomPanel } from "@/components/studio/index";
 import type { MaskingConfig } from "@/lib/data-masking";
@@ -19,7 +18,16 @@ import { useConnectionAdapter } from "@/workspace/hooks/use-connection-adapter";
 import { useQueryAdapter } from "@/workspace/hooks/use-query-adapter";
 import { type StudioWorkspaceProps, DEFAULT_WORKSPACE_FEATURES } from "@/workspace/types";
 import { cn } from "@/lib/utils";
-import { quoteLiteral } from "@/lib/sql/values";
+import { buildResultExport, type ResultExportFormat } from "@/lib/export/result-export";
+import { downloadText } from "@/lib/export/download";
+
+// The ERD is the largest thing this shell can mount (`@xyflow/react` + the elk layout
+// engine + the snapdom capture), and it is mounted only while `showDiagram` is true.
+// Split for the same reason the bottom panel's heavy views are, and through the same
+// `React.lazy` seam — this shell imports nothing from `next` by construction.
+const SchemaDiagram = React.lazy(() =>
+  import("@/components/SchemaDiagram").then((m) => ({ default: m.SchemaDiagram })),
+);
 
 /**
  * Scoped CSS for the shadcn token set studio's primitives read.
@@ -236,81 +244,22 @@ export function StudioWorkspace({
     [conn.activeConnection, tabMgr.currentTab.query, onSaveQueryProp, toast],
   );
 
-  // === Export results (simplified, no masking) ===
+  // === Export results (shared writers; this shell applies no masking) ===
   const exportResults = useCallback(
-    (format: "csv" | "json" | "sql-insert" | "sql-ddl") => {
+    (format: ResultExportFormat) => {
       if (!tabMgr.currentTab.result) return;
-      const data = tabMgr.currentTab.result.rows;
-      let content = "";
-      let mimeType = "text/plain";
-      let ext: string = format;
-
-      if (format === "csv") {
-        const headers = Object.keys(data[0] || {}).join(",");
-        const rows = data
-          .map((row) =>
-            Object.values(row)
-              .map((val) => `"${val}"`)
-              .join(","),
-          )
-          .join("\n");
-        content = `${headers}\n${rows}`;
-        mimeType = "text/csv";
-        ext = "csv";
-      } else if (format === "json") {
-        content = JSON.stringify(data, null, 2);
-        mimeType = "application/json";
-        ext = "json";
-      } else if (format === "sql-insert") {
-        const tableName = tabMgr.currentTab.name.replace(/^Query[: ]*/, "") || "table_name";
-        const columns = Object.keys(data[0] || {});
-        const lines = data.map((row) => {
-          const values = columns.map((col) => {
-            const val = row[col];
-            if (val === null || val === undefined) return "NULL";
-            if (typeof val === "number" || typeof val === "boolean") return String(val);
-            // The exported file is SQL that runs somewhere later, usually
-            // unattended, and every value in it is data the table held. Quoting is
-            // the connected engine's own: doubling the quote alone would let a
-            // value ending in a backslash close its literal and have the rest of
-            // the file read as statements (#290).
-            return quoteLiteral(String(val), conn.activeConnection?.type);
-          });
-          return `INSERT INTO ${tableName} (${columns.join(", ")}) VALUES (${values.join(", ")});`;
-        });
-        content = lines.join("\n");
-        mimeType = "text/sql";
-        ext = "sql";
-      } else if (format === "sql-ddl") {
-        const tableName = tabMgr.currentTab.name.replace(/^Query[: ]*/, "") || "table_name";
-        const columns = Object.keys(data[0] || {});
-        const colDefs = columns.map((col) => {
-          const sampleVal = data[0]?.[col];
-          let sqlType = "TEXT";
-          if (typeof sampleVal === "number") {
-            sqlType = Number.isInteger(sampleVal) ? "INTEGER" : "NUMERIC";
-          } else if (typeof sampleVal === "boolean") {
-            sqlType = "BOOLEAN";
-          } else if (sampleVal instanceof Date) {
-            sqlType = "TIMESTAMP";
-          }
-          return `  ${col} ${sqlType}`;
-        });
-        content = `CREATE TABLE ${tableName} (\n${colDefs.join(",\n")}\n);`;
-        mimeType = "text/sql";
-        ext = "sql";
-      }
-
-      const fileName = `query_result_export.${ext}`;
-      const blob = new Blob([content], { type: mimeType });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = fileName;
-      link.click();
-      URL.revokeObjectURL(url);
+      const file = buildResultExport(format, {
+        rows: tabMgr.currentTab.result.rows,
+        fields: tabMgr.currentTab.result.fields,
+        tabName: tabMgr.currentTab.name,
+        // Was missing from this callback's dependencies, so a SQL export written
+        // after the host switched connections quoted its literals for whichever
+        // engine happened to be active on the first render.
+        dialect: conn.activeConnection?.type,
+      });
+      downloadText(file.content, file.mimeType, `query_result_export.${file.extension}`);
     },
-    [tabMgr.currentTab],
+    [tabMgr.currentTab, conn.activeConnection?.type],
   );
 
   // === Table click handler ===
@@ -381,7 +330,11 @@ export function StudioWorkspace({
               {/* Schema Diagram overlay */}
               {features.schemaDiagram && (
                 <AnimatePresence>
-                  {showDiagram && <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />}
+                  {showDiagram && (
+                    <React.Suspense fallback={null}>
+                      <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />
+                    </React.Suspense>
+                  )}
                 </AnimatePresence>
               )}
 

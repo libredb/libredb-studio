@@ -12,6 +12,7 @@ import {
 } from "@/lib/types";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { parseConnectionString } from "@/lib/connection-string-parser";
+import { newLocalId } from "@/lib/ids";
 
 /**
  * Whether this editor OWNS a connection field or merely carries it.
@@ -232,7 +233,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     return {
       // First, so a form-owned field always wins; nothing below is preserved.
       ...preservedFields(editConnection),
-      id: editConnection?.id || Math.random().toString(36).substr(2, 9),
+      id: editConnection?.id || newLocalId(),
       name: name || `${type}-connection`,
       type,
       ...(addressedFields.has("host") ? { host } : {}),

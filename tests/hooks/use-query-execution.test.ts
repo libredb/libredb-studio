@@ -1607,6 +1607,64 @@ describe("useQueryExecution", () => {
     expect(tabWithPlan?.explainPlan).toEqual({ format: "postgres-json", raw: { plan: "Seq Scan" } });
   });
 
+  // ── a background EXPLAIN that outlives BOTH runs (docs/BACKLOG.md U1) ──────
+  //
+  // Ownership cannot be read from the in-flight map: the run deletes its own entry
+  // when it settles, so an EXPLAIN resolving after its query finished AND after a
+  // later query finished finds nothing there. Reading an absent entry as "not
+  // superseded" is what let the first run's plan land on the second run's results.
+
+  test("a background EXPLAIN resolving after a later run has finished does not overwrite its plan", async () => {
+    let releaseFirstExplain: () => void = () => {};
+    const firstExplainGate = new Promise<void>((resolve) => {
+      releaseFirstExplain = resolve;
+    });
+    let explainCount = 0;
+
+    mockGlobalFetch({
+      "/api/db/query": async (req) => {
+        const body = (await req.json()) as { sql: string };
+        if (!body.sql.toUpperCase().startsWith("EXPLAIN")) {
+          return { ok: true, json: mockQueryResult };
+        }
+        explainCount += 1;
+        if (explainCount === 1) {
+          // The first run's plan is still in flight while the second run starts,
+          // runs, and finishes.
+          await firstExplainGate;
+          return { ok: true, json: { rows: [{ "QUERY PLAN": { plan: "stale" } }], fields: ["QUERY PLAN"] } };
+        }
+        return { ok: true, json: { rows: [{ "QUERY PLAN": { plan: "current" } }], fields: ["QUERY PLAN"] } };
+      },
+    });
+
+    const snapshots: QueryTab[][] = [];
+    const setTabsMock = mock((fn: unknown) => {
+      if (typeof fn === "function") {
+        snapshots.push(fn([createTab()]));
+      }
+    });
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams({ setTabs: setTabsMock })));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM orders");
+    });
+
+    act(() => releaseFirstExplain());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    const plans = snapshots
+      .map((snapshot) => snapshot[0].explainPlan as { raw?: { plan?: string } } | null | undefined)
+      .filter((plan): plan is { raw?: { plan?: string } } => Boolean(plan));
+    expect(plans.some((plan) => plan.raw?.plan === "current")).toBe(true);
+    expect(plans.some((plan) => plan.raw?.plan === "stale")).toBe(false);
+  });
+
   // ── setTabs updaters preserve non-target tabs ──────────────────────────
 
   test("QUERY_CANCELLED updater preserves non-target tabs", async () => {

@@ -550,12 +550,28 @@ describe("StudioWorkspace", () => {
     renderWorkspace();
     act(() => (capturedBottomPanelProps.onExportResults as (f: string) => void)("csv"));
     expect(mockCreateObjectURL).toHaveBeenCalledTimes(1);
-    expect(mockRevokeObjectURL).toHaveBeenCalledTimes(1);
     const blob = mockCreateObjectURL.mock.calls[0][0] as Blob;
     expect(blob.type).toBe("text/csv");
     const text = await blob.text();
     expect(text).toContain("id,name,ratio,active,created,deleted");
-    expect(text).toContain('"Alice"');
+    // A value is quoted only where RFC 4180 requires it, and NULL is an empty
+    // field rather than the four letters of the word.
+    expect(text).toContain("1,Alice,0.5,true,");
+    expect(text.split("\n")[1].endsWith(",")).toBe(true);
+  });
+
+  // The blob URL outlives the task that started the download: revoking it in the
+  // same task can pull the data out from under a read that has not begun.
+  test("exportResults does not revoke the blob URL before the download is handed off", async () => {
+    withExportResult();
+    renderWorkspace();
+    act(() => (capturedBottomPanelProps.onExportResults as (f: string) => void)("csv"));
+
+    expect(mockRevokeObjectURL).not.toHaveBeenCalled();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(mockRevokeObjectURL).toHaveBeenCalled();
   });
 
   test("exportResults json creates an application/json blob", async () => {
@@ -603,12 +619,14 @@ describe("StudioWorkspace", () => {
     act(() => (capturedBottomPanelProps.onExportResults as (f: string) => void)("sql-insert"));
 
     const blob = mockCreateObjectURL.mock.calls[0][0] as Blob;
+    // The column names are quoted the way the connected dialect spells an
+    // identifier, so an aliased column cannot end the list it sits in either.
     expect(await blob.text()).toBe(
-      "INSERT INTO users (id, path) VALUES (1, 'C:\\\\Users\\\\''); DROP TABLE users; --');",
+      "INSERT INTO users (`id`, `path`) VALUES (1, 'C:\\\\Users\\\\''); DROP TABLE users; --');",
     );
   });
 
-  test("exportResults sql-ddl infers column types from the first row", async () => {
+  test("exportResults sql-ddl infers column types from the first row that carries a value", async () => {
     withExportResult();
     renderWorkspace();
     act(() => (capturedBottomPanelProps.onExportResults as (f: string) => void)("sql-ddl"));
@@ -616,11 +634,14 @@ describe("StudioWorkspace", () => {
     expect(blob.type).toBe("text/sql");
     const text = await blob.text();
     expect(text).toContain("CREATE TABLE users");
-    expect(text).toContain("id INTEGER");
-    expect(text).toContain("ratio NUMERIC");
-    expect(text).toContain("active BOOLEAN");
-    expect(text).toContain("created TIMESTAMP");
-    expect(text).toContain("name TEXT");
+    expect(text).toContain('"id" INTEGER');
+    expect(text).toContain('"ratio" NUMERIC');
+    expect(text).toContain('"active" BOOLEAN');
+    expect(text).toContain('"created" TIMESTAMP');
+    expect(text).toContain('"name" TEXT');
+    // `deleted` is null in row 1 and a string in row 2: the type comes from the
+    // row that actually carries a value, not from row 0.
+    expect(text).toContain('"deleted" TEXT');
   });
 
   test("exportResults does nothing without a result", () => {
@@ -651,10 +672,12 @@ describe("StudioWorkspace", () => {
     act(() => (capturedSidebarProps.onOpenMaintenance as () => void)());
   });
 
-  test("onShowDiagram opens the schema diagram and onClose closes it", () => {
+  // Awaited because the diagram is code-split: opening it resolves a dynamic import
+  // before the component can mount.
+  test("onShowDiagram opens the schema diagram and onClose closes it", async () => {
     const { queryByTestId } = renderWorkspace();
     expect(queryByTestId("schemadiagram")).toBeNull();
-    act(() => (capturedSidebarProps.onShowDiagram as () => void)());
+    await act(async () => (capturedSidebarProps.onShowDiagram as () => void)());
     expect(queryByTestId("schemadiagram")).not.toBeNull();
     act(() => (capturedSchemaDiagramProps.onClose as () => void)());
     expect(queryByTestId("schemadiagram")).toBeNull();

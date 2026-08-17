@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import { logger } from "@/lib/logger";
 
 export interface ProviderMetadata {
   capabilities: ProviderCapabilities;
@@ -61,7 +62,10 @@ export function useProviderMetadata(connection: DatabaseConnection | null): {
         if (lastConnectionId.current === requestedId) setMetadata(data);
       })
       .catch((err) => {
-        console.error("[useProviderMetadata]", err);
+        logger.warn("Provider metadata request failed", {
+          route: "use-provider-metadata",
+          error: err instanceof Error ? err.message : String(err),
+        });
         if (lastConnectionId.current === requestedId) setMetadata(null);
       })
       .finally(() => {

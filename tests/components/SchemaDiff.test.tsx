@@ -198,9 +198,10 @@ mock.module("@/hooks/use-all-connections", () => ({
 
 // ── Imports AFTER mocks ──────────────────────────────────────────────────────
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { render, fireEvent, cleanup, act } from "@testing-library/react";
 import { SchemaDiff } from "@/components/SchemaDiff";
+import { logger } from "@/lib/logger";
 import { mockSchema } from "../fixtures/schemas";
 import { mockPostgresConnection } from "../fixtures/connections";
 
@@ -912,9 +913,10 @@ describe("SchemaDiff", () => {
 
     test("handles fetch error gracefully", async () => {
       const origFetch = globalThis.fetch;
-      const origError = console.error;
-      const mockConsoleError = mock(() => {});
-      console.error = mockConsoleError;
+      // The failure goes to the shared logger, not to `console` — every other
+      // component/hook in this tree reports through it, and a bare console call is
+      // invisible to whatever the operator has wired the logger up to.
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
 
       globalThis.fetch = mock(() =>
         Promise.resolve({
@@ -931,11 +933,11 @@ describe("SchemaDiff", () => {
           fn!("conn:remote-1");
         });
 
-        expect(mockConsoleError).toHaveBeenCalled();
+        expect(warn).toHaveBeenCalled();
         expect(mockSaveSchemaSnapshot).not.toHaveBeenCalled();
       } finally {
         globalThis.fetch = origFetch;
-        console.error = origError;
+        warn.mockRestore();
       }
     });
   });

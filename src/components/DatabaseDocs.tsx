@@ -5,6 +5,7 @@ import { FileText, Loader2, Search, Sparkles, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TableSchema } from "@/lib/types";
 import { renderInline } from "@/components/rich-text";
+import { downloadText } from "@/lib/export/download";
 
 interface DatabaseDocsProps {
   schema: TableSchema[];
@@ -114,13 +115,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
       }
     }
 
-    const blob = new Blob([md], { type: "text/markdown" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "database-docs.md";
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadText(md, "text/markdown", "database-docs.md");
   };
 
   // Simple markdown rendering for AI docs

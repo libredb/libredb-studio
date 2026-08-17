@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
+import { logger } from "@/lib/logger";
 
 interface AuthUser {
   role?: string;
@@ -22,7 +23,10 @@ export function useAuth() {
           setUser(data.user);
         }
       } catch (error) {
-        console.error("Failed to fetch user:", error);
+        logger.warn("Failed to fetch the signed-in user", {
+          route: "use-auth",
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     };
     fetchUser();

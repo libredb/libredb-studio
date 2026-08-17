@@ -258,6 +258,8 @@ src/
     ├── llm/                 # LLM provider module
     ├── editor/              # Monaco completions (SQL + MongoDB)
     ├── schema-diff/         # Diff engine + migration SQL generator
+    ├── export/              # The writers behind every "save this to disk": RFC 4180 CSV,
+    │                        #   the SQL INSERT/DDL forms, and the one blob-download path
     ├── sql/                 # Statement splitter, alias extractor
     ├── seed/                # Seed connections (config, filter, credential resolver) + libredb-sample seeding
     ├── config/              # auth-env.ts — single JWT_SECRET reader (auth.ts, proxy.ts, oidc.ts)

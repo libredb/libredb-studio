@@ -148,8 +148,8 @@ mock.module("@/lib/storage", () => ({
 
 // ---- Now import bun:test, testing-library, and the component ----
 
-import { describe, test, expect, afterEach } from "bun:test";
-import { render, fireEvent, cleanup } from "@testing-library/react";
+import { describe, test, expect, afterEach, beforeAll } from "bun:test";
+import { render, fireEvent, cleanup, act } from "@testing-library/react";
 import React from "react";
 
 import { BottomPanel } from "@/components/studio/BottomPanel";
@@ -215,6 +215,23 @@ function createDefaultProps(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 describe("BottomPanel", () => {
+  /*
+    The panel's heavy views are code-split (`React.lazy` in BottomPanel.tsx), so the
+    FIRST render of each one suspends while its dynamic import resolves. `React.lazy`
+    caches that resolution on the lazy component itself, so mounting each one once here
+    — inside an awaited `act` — is what lets the assertions below stay synchronous and,
+    more importantly, stay independent of the order the tests happen to run in.
+  */
+  beforeAll(async () => {
+    for (const mode of ["charts", "pivot", "docs", "schemadiff", "explain"] as const) {
+      const props = createDefaultProps({ mode });
+      await act(async () => {
+        render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+      });
+    }
+    cleanup();
+  });
+
   afterEach(() => {
     cleanup();
   });

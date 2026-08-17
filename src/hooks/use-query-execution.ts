@@ -12,6 +12,7 @@ import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { shouldRefreshSchema } from "@/lib/query-generators";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { logger } from "@/lib/logger";
+import { newLocalId } from "@/lib/ids";
 import { getExplainStrategy } from "@/lib/explain";
 import { maybeInviteToStar } from "@/lib/community/star-prompt-toast";
 import { buildConnectionPayload } from "./use-connection-payload";
@@ -40,23 +41,6 @@ interface UseQueryExecutionParams {
   playgroundMode: boolean;
   fetchSchema: (conn: DatabaseConnection) => Promise<void>;
   queryEditorRef: RefObject<QueryEditorRef | null>;
-}
-
-/**
- * The id one history entry is filed under.
- *
- * `crypto.getRandomValues` rather than `Math.random`, which a scanner reads as a
- * pseudorandom generator standing where a secure one belongs. Nothing here is a
- * secret — the id names a row in this browser's own query history — but the two cost
- * the same and only one of them has to be argued about in every review.
- *
- * Deliberately NOT `crypto.randomUUID`: it is restricted to secure contexts, and
- * Studio is served over plain HTTP on several of its distribution channels, where it
- * is simply undefined. `getRandomValues` carries no such restriction.
- */
-function newHistoryId(): string {
-  const bytes = crypto.getRandomValues(new Uint32Array(2));
-  return `${bytes[0].toString(36)}${bytes[1].toString(36)}`;
 }
 
 /**
@@ -98,6 +82,21 @@ export function useQueryExecution({
    */
   const runsRef = useRef(new Map<string, { controller: AbortController; queryId: string }>());
 
+  /**
+   * The id of the LAST run started on each tab — which run owns the tab's results.
+   *
+   * Separate from `runsRef` because it has to outlive the entry there. `runsRef` is
+   * about cancellation, so a run deletes its own entry the moment it settles; a
+   * background EXPLAIN outlives its query and asks about ownership afterwards, and
+   * an absent entry cannot answer. Reading absence as "not superseded" was right for
+   * the common case (the plan still describes the results on screen) and wrong for
+   * the one that mattered: run A finishes, run B runs and finishes, then A's slow
+   * EXPLAIN resolves, finds nothing, and writes A's plan over B's results
+   * (docs/BACKLOG.md U1). This map is never cleared per run, so it answers for that
+   * window too.
+   */
+  const lastRunRef = useRef(new Map<string, string>());
+
   // Latest-value refs. `executeQuery` reads these at call time only, so keeping
   // them out of its dependency list makes the callback identity stable across a
   // keystroke — which is what stops the `execute-query` listener below from being
@@ -115,9 +114,11 @@ export function useQueryExecution({
   // tab's run, not just the last one started.
   useEffect(() => {
     const runs = runsRef.current;
+    const lastRuns = lastRunRef.current;
     return () => {
       for (const run of runs.values()) run.controller.abort();
       runs.clear();
+      lastRuns.clear();
     };
   }, []);
 
@@ -230,19 +231,21 @@ export function useQueryExecution({
       // statement. Scoped to `targetTabId` so a run in another tab is left alone.
       runsRef.current.get(targetTabId)?.controller.abort();
       const abortController = new AbortController();
-      const queryId = `q-${Date.now()}-${newHistoryId()}`;
+      const queryId = `q-${Date.now()}-${newLocalId()}`;
       runsRef.current.set(targetTabId, { controller: abortController, queryId });
+      lastRunRef.current.set(targetTabId, queryId);
 
       /**
-       * A newer run has taken THIS TAB over. An absent entry is deliberately NOT
-       * superseded: the run finished and cleared itself, and the background
-       * EXPLAIN outlives its own query — its plan is still the right plan for the
-       * results on screen.
+       * A newer run has taken THIS TAB over.
+       *
+       * Asked of `lastRunRef`, not of the in-flight map: while this run is the
+       * latest one the answer is the same either way, and once it has settled and
+       * removed its own entry only this map still knows whether anything started
+       * after it. That is what lets a background EXPLAIN outlive its own query — its
+       * plan still describes the results on screen — without letting it outlive the
+       * NEXT one (U1).
        */
-      const isSuperseded = () => {
-        const active = runsRef.current.get(targetTabId);
-        return active !== undefined && active.queryId !== queryId;
-      };
+      const isSuperseded = () => lastRunRef.current.get(targetTabId) !== queryId;
 
       /** Write to the tab this run owns — and only while it still owns it. */
       const commitToTab = (update: (tab: QueryTab) => QueryTab) => {
@@ -363,7 +366,7 @@ export function useQueryExecution({
           const errorCode = error.code as string | undefined;
 
           storage.addToHistory({
-            id: newHistoryId(),
+            id: newLocalId(),
             connectionId: activeConnection.id,
             connectionName: activeConnection.name,
             tabName: tabToExec.name,
@@ -389,7 +392,7 @@ export function useQueryExecution({
         // Only add to history for new queries (not load more)
         if (!isLoadMore) {
           storage.addToHistory({
-            id: newHistoryId(),
+            id: newLocalId(),
             connectionId: activeConnection.id,
             connectionName: activeConnection.name,
             tabName: tabToExec.name,
@@ -622,7 +625,7 @@ export function useQueryExecution({
 
         const result = payload.result;
         storage.addToHistory({
-          id: newHistoryId(),
+          id: newLocalId(),
           connectionId: activeConnection.id,
           connectionName: activeConnection.name,
           tabName: tabToExec.name,
@@ -644,7 +647,7 @@ export function useQueryExecution({
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         storage.addToHistory({
-          id: newHistoryId(),
+          id: newLocalId(),
           connectionId: activeConnection.id,
           connectionName: activeConnection.name,
           tabName: tabToExec.name,

@@ -7,13 +7,9 @@ import type { MaskingConfig } from "@/lib/data-masking";
 import type { AgentArtifactHydration } from "@/components/agent/hydration";
 import type { CellChange } from "@/components/ResultsGrid";
 import { ResultsGrid } from "@/components/ResultsGrid";
-import { PivotTable } from "@/components/PivotTable";
-import { DatabaseDocs } from "@/components/DatabaseDocs";
-import { VisualExplain } from "@/components/VisualExplain";
 import { QueryHistory } from "@/components/QueryHistory";
 import { SavedQueries } from "@/components/SavedQueries";
-import { DataCharts } from "@/components/DataCharts";
-import { SchemaDiff } from "@/components/SchemaDiff";
+
 import { resolveExplainPlan } from "@/lib/explain";
 import { cn } from "@/lib/utils";
 import {
@@ -26,6 +22,7 @@ import {
   GitCompare,
   LayoutDashboard,
   LayoutGrid,
+  LoaderCircle,
   Terminal,
   X,
   Zap,
@@ -50,8 +47,52 @@ export type BottomPanelMode =
   | "schemadiff"
   | "dashboard";
 
-// Lazy-loaded chart dashboard
-function ChartDashboardLazy({ result }: { result: QueryResult | null }) {
+/*
+  The panel's heavy views, split out of the first load.
+
+  Each one is already gated on `mode`, so only one of them can be on screen and most
+  sessions never open the others — but a static import puts every one of them, and the
+  libraries they pull in, into the bundle that has to arrive before the editor can be
+  typed in. `DataCharts` alone brings recharts; `VisualExplain` and `SchemaDiff` bring
+  their own trees.
+
+  `React.lazy` rather than `next/dynamic`: this file is reached from BOTH shells, and
+  the embeddable one (`src/workspace/StudioWorkspace.tsx`) deliberately imports nothing
+  from `next` — a `next/dynamic` here would put the framework into the published
+  package's module graph. Next's bundler splits on the dynamic `import()` either way.
+
+  Not split: `ResultsGrid` is the default view and would only trade a chunk for a
+  flash, and `QueryHistory`/`SavedQueries` are small and pull in nothing heavy.
+*/
+const PivotTable = React.lazy(() => import("@/components/PivotTable").then((m) => ({ default: m.PivotTable })));
+const DatabaseDocs = React.lazy(() => import("@/components/DatabaseDocs").then((m) => ({ default: m.DatabaseDocs })));
+const VisualExplain = React.lazy(() =>
+  import("@/components/VisualExplain").then((m) => ({ default: m.VisualExplain })),
+);
+const DataCharts = React.lazy(() => import("@/components/DataCharts").then((m) => ({ default: m.DataCharts })));
+const SchemaDiff = React.lazy(() => import("@/components/SchemaDiff").then((m) => ({ default: m.SchemaDiff })));
+
+/**
+ * What the panel shows while a split view's chunk is on the wire.
+ *
+ * `LoaderCircle`, not `Loader2`: on lucide-react 1.x the latter is a legacy-rename
+ * alias that ships no `@deprecated` tag, so nothing warns while it is alive and the
+ * first signal is a build breaking on the release that drops it (docs/BACKLOG.md P6).
+ * The 21 sites that entry counts are its to migrate; this one starts canonical.
+ */
+function PanelLoading() {
+  return (
+    // `output` rather than a div with role="status": it carries the live region
+    // natively, which is what jsx-a11y's prefer-tag-over-role asks for.
+    <output className="h-full flex items-center justify-center bg-sunken" aria-label="Loading the panel">
+      <LoaderCircle strokeWidth={1.5} className="w-5 h-5 animate-spin text-fg-muted" />
+    </output>
+  );
+}
+
+// The saved-chart dashboard. Its data is read on mount, not its module — the module
+// is split at the import above, along with the `DataCharts` this renders.
+function ChartDashboard({ result }: { result: QueryResult | null }) {
   const [savedCharts, setSavedCharts] = React.useState<
     { id: string; name: string; chartType: string; xAxis: string; yAxis: string[] }[]
   >([]);
@@ -339,81 +380,85 @@ export function BottomPanel({
       )}
 
       <div className="flex-1 overflow-hidden relative">
-        {mode === "pivot" ? (
-          <PivotTable
-            result={currentTab.result}
-            onLoadQuery={(q) => {
-              onLoadQuery(q);
-              onSetMode("results");
-            }}
-            databaseType={activeConnection?.type}
-          />
-        ) : mode === "docs" ? (
-          <DatabaseDocs schema={schema} schemaContext={schemaContext} databaseType={activeConnection?.type} />
-        ) : mode === "history" ? (
-          <QueryHistory
-            refreshTrigger={historyKey}
-            activeConnectionId={activeConnection?.id}
-            onSelectQuery={(q) => {
-              onLoadQuery(q);
-              onSetMode("results");
-            }}
-          />
-        ) : mode === "saved" ? (
-          <SavedQueries
-            refreshTrigger={savedKey}
-            connectionType={activeConnection?.type}
-            onSelectQuery={(q) => {
-              onLoadQuery(q);
-              onSetMode("results");
-            }}
-          />
-        ) : mode === "charts" ? (
-          <DataCharts result={hydratedChart ?? currentTab.result} spec={hydratedChartSpec} />
-        ) : mode === "schemadiff" ? (
-          <SchemaDiff schema={schema} connection={activeConnection} />
-        ) : mode === "dashboard" ? (
-          <ChartDashboardLazy result={currentTab.result} />
-        ) : mode === "explain" ? (
-          <VisualExplain
-            plan={hydratedPlan ?? explainInput}
-            /*
+        {/* One boundary for the whole switch: only one view is ever mounted, and the
+            fallback is what the user sees for the moment a split chunk is in flight. */}
+        <React.Suspense fallback={<PanelLoading />}>
+          {mode === "pivot" ? (
+            <PivotTable
+              result={currentTab.result}
+              onLoadQuery={(q) => {
+                onLoadQuery(q);
+                onSetMode("results");
+              }}
+              databaseType={activeConnection?.type}
+            />
+          ) : mode === "docs" ? (
+            <DatabaseDocs schema={schema} schemaContext={schemaContext} databaseType={activeConnection?.type} />
+          ) : mode === "history" ? (
+            <QueryHistory
+              refreshTrigger={historyKey}
+              activeConnectionId={activeConnection?.id}
+              onSelectQuery={(q) => {
+                onLoadQuery(q);
+                onSetMode("results");
+              }}
+            />
+          ) : mode === "saved" ? (
+            <SavedQueries
+              refreshTrigger={savedKey}
+              connectionType={activeConnection?.type}
+              onSelectQuery={(q) => {
+                onLoadQuery(q);
+                onSetMode("results");
+              }}
+            />
+          ) : mode === "charts" ? (
+            <DataCharts result={hydratedChart ?? currentTab.result} spec={hydratedChartSpec} />
+          ) : mode === "schemadiff" ? (
+            <SchemaDiff schema={schema} connection={activeConnection} />
+          ) : mode === "dashboard" ? (
+            <ChartDashboard result={currentTab.result} />
+          ) : mode === "explain" ? (
+            <VisualExplain
+              plan={hydratedPlan ?? explainInput}
+              /*
               A run's plan travels without the editor's statement. The AI analysis in
               this view posts the query and the plan together, so pairing a hydrated
               plan with whatever happens to be in the editor would ask for an
               explanation of a statement that never produced it; with no query the view
               says so itself instead.
             */
-            query={hydratedPlan === null ? currentTab.query : undefined}
-            schemaContext={schemaContext}
-            databaseType={activeConnection?.type}
-            onLoadQuery={(q) => {
-              onLoadQuery(q);
-              onSetMode("results");
-            }}
-          />
-        ) : displayedResult ? (
-          <ResultsGrid
-            result={displayedResult}
-            onLoadMore={hydratedHere ? undefined : onLoadMore}
-            isLoadingMore={isLoadingMore}
-            maskingEnabled={maskingEnabled}
-            onToggleMasking={onToggleMasking}
-            userRole={userRole}
-            maskingConfig={maskingConfig}
-            editingEnabled={hydratedHere ? false : editingEnabled}
-            pendingChanges={pendingChanges}
-            onCellChange={onCellChange}
-            onApplyChanges={onApplyChanges}
-            onDiscardChanges={onDiscardChanges}
-          />
-        ) : (
-          <div className="h-full flex flex-col items-center justify-center opacity-20 bg-surface">
-            <Terminal strokeWidth={1.5} className="w-12 h-12 mb-4" />
-            <p className="text-xs font-medium">Execute a query or check history</p>
-            <p className="text-xs mt-2">Ready to query</p>
-          </div>
-        )}
+              query={hydratedPlan === null ? currentTab.query : undefined}
+              schemaContext={schemaContext}
+              databaseType={activeConnection?.type}
+              onLoadQuery={(q) => {
+                onLoadQuery(q);
+                onSetMode("results");
+              }}
+            />
+          ) : displayedResult ? (
+            <ResultsGrid
+              result={displayedResult}
+              onLoadMore={hydratedHere ? undefined : onLoadMore}
+              isLoadingMore={isLoadingMore}
+              maskingEnabled={maskingEnabled}
+              onToggleMasking={onToggleMasking}
+              userRole={userRole}
+              maskingConfig={maskingConfig}
+              editingEnabled={hydratedHere ? false : editingEnabled}
+              pendingChanges={pendingChanges}
+              onCellChange={onCellChange}
+              onApplyChanges={onApplyChanges}
+              onDiscardChanges={onDiscardChanges}
+            />
+          ) : (
+            <div className="h-full flex flex-col items-center justify-center opacity-20 bg-surface">
+              <Terminal strokeWidth={1.5} className="w-12 h-12 mb-4" />
+              <p className="text-xs font-medium">Execute a query or check history</p>
+              <p className="text-xs mt-2">Ready to query</p>
+            </div>
+          )}
+        </React.Suspense>
       </div>
     </div>
   );

@@ -243,30 +243,7 @@ deprecated against this entry (#288): it becomes real, or goes away in a major, 
 
 ## Studio UI and query execution
 
-Both entries below came out of the #384 review, verified against the merged code.
-
-### U1. A very late background EXPLAIN can still land its plan on a newer run's results
-
-#384 scoped every in-flight run to its tab (`src/hooks/use-query-execution.ts`), and the plan a
-background EXPLAIN produces is committed through `commitToTab`, which drops it when the tab has moved
-on. The guard reads the run map: `isSuperseded()` is true only when an entry exists under this tab
-and carries a different query id, so an ABSENT entry counts as not superseded. That is deliberate —
-the EXPLAIN outlives its own query, and once the query has cleared itself the plan is still the right
-plan for the results on screen.
-
-The hole is that `finally` deletes the entry (`:560`). So the sequence run A completes and clears its
-slot, run B starts and completes on the same tab, then A's slow EXPLAIN finally resolves, finds no
-entry, reads as not superseded, and writes A's plan over B's. That is the exact failure the PR set out
-to close, surviving in the one window where the map cannot answer the question. Aborting does not
-cover it either: B only aborts A's controller if A's entry is still present when B starts, and by then
-it is gone.
-
-Narrow — it needs the EXPLAIN to outlast both runs — and not reproduced live; found by reading. But it
-is silent when it happens, and a plan describing the previous statement is worse than no plan.
-
-Done when the plan's ownership is decided by something that outlives the map entry — the run's own id
-compared against the last run to commit to that tab, rather than against the presence of an entry —
-with a test that resolves the EXPLAIN after a second run has finished.
+The entry below came out of the #384 review, verified against the merged code.
 
 ### U2. The rule that catches an arity change on a JSX handler is configured but not aimed at components
 

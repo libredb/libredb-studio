@@ -53,6 +53,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { storage } from "@/lib/storage";
 import { chartTheme } from "@/lib/charts/palette";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
+import { downloadBlob } from "@/lib/export/download";
+import { logger } from "@/lib/logger";
 
 type ChartType = "bar" | "line" | "pie" | "area" | "scatter" | "histogram" | "stacked-bar" | "stacked-area";
 
@@ -578,50 +580,49 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
     [savedCharts],
   );
 
-  const exportChart = useCallback(async (format: "png" | "svg") => {
-    if (!chartRef.current) return;
+  const exportChart = useCallback(
+    async (format: "png" | "svg") => {
+      if (!chartRef.current) return;
 
-    if (format === "png") {
-      try {
-        // snapdom lets the browser rasterize a DOM snapshot, so Tailwind 4's
-        // oklch() colors export correctly (html2canvas could not parse them
-        // and failed silently). Fonts stay unembedded: Monaco's cross-origin
-        // CDN stylesheet breaks webfont CSS collection (SecurityError).
-        const { snapdom } = await import("@zumer/snapdom");
-        const capture = await snapdom(chartRef.current, {
-          backgroundColor: viz.exportBackground,
-          scale: 2,
-          embedFonts: false,
-        });
-        const blob = await capture.toBlob({ type: "png" });
-        if (!blob) throw new Error("PNG encoding produced no data");
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.download = `chart_${Date.now()}.png`;
-        link.href = url;
-        link.click();
-        URL.revokeObjectURL(url);
-      } catch (error) {
-        console.error("Failed to export PNG:", error);
-        toast.error("PNG export failed", {
-          description: error instanceof Error ? error.message : String(error),
-        });
+      if (format === "png") {
+        try {
+          // snapdom lets the browser rasterize a DOM snapshot, so Tailwind 4's
+          // oklch() colors export correctly (html2canvas could not parse them
+          // and failed silently). Fonts stay unembedded: Monaco's cross-origin
+          // CDN stylesheet breaks webfont CSS collection (SecurityError).
+          const { snapdom } = await import("@zumer/snapdom");
+          const capture = await snapdom(chartRef.current, {
+            backgroundColor: viz.exportBackground,
+            scale: 2,
+            embedFonts: false,
+          });
+          const blob = await capture.toBlob({ type: "png" });
+          if (!blob) throw new Error("PNG encoding produced no data");
+          downloadBlob(blob, `chart_${Date.now()}.png`);
+        } catch (error) {
+          logger.warn("Chart PNG export failed", {
+            route: "DataCharts",
+            error: error instanceof Error ? error.message : String(error),
+          });
+          toast.error("PNG export failed", {
+            description: error instanceof Error ? error.message : String(error),
+          });
+        }
+      } else {
+        // SVG export - find the SVG element
+        const svgElement = chartRef.current.querySelector("svg");
+        if (svgElement) {
+          const svgData = new XMLSerializer().serializeToString(svgElement);
+          downloadBlob(new Blob([svgData], { type: "image/svg+xml" }), `chart_${Date.now()}.svg`);
+        }
       }
-    } else {
-      // SVG export - find the SVG element
-      const svgElement = chartRef.current.querySelector("svg");
-      if (svgElement) {
-        const svgData = new XMLSerializer().serializeToString(svgElement);
-        const blob = new Blob([svgData], { type: "image/svg+xml" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.download = `chart_${Date.now()}.svg`;
-        link.href = url;
-        link.click();
-        URL.revokeObjectURL(url);
-      }
-    }
-  }, []);
+    },
+    // `viz` is derived from the effective theme, and this list used to be empty:
+    // after a theme toggle the PNG was still painted on the ground the chart was
+    // first rendered on — a light chart exported onto near-black. Same defect the
+    // ERD export fixed in #384, in the surface that comment points at.
+    [viz.exportBackground],
+  );
 
   const toggleYAxis = (field: string) => {
     setYAxis((prev) => {

@@ -13,6 +13,7 @@ import { registerMongoDBCompletionProvider } from "@/lib/editor/mongodb-completi
 import { registerLibreDBLanguage } from "@/lib/editor/libredb-language";
 import { configureMonacoLoader } from "@/lib/editor/monaco-loader";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
+import { logger } from "@/lib/logger";
 
 // Serve Monaco from our own origin rather than @monaco-editor/react's jsdelivr default.
 // Runs at module load so it is in place before the first <Editor> mounts.
@@ -165,7 +166,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       try {
         return JSON.parse(schemaContext);
       } catch (e) {
-        console.error("Failed to parse schema context for editor:", e);
+        logger.warn("Failed to parse the schema context; the editor completes without it", {
+          route: "QueryEditor",
+          error: e instanceof Error ? e.message : String(e),
+        });
         return [];
       }
     }, [schemaContext]);
@@ -236,7 +240,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
         lastSyncedValueRef.current = formatted;
         onChange?.(formatted);
       } catch (e) {
-        console.error("Formatting failed:", e);
+        logger.warn("Statement formatting failed; the editor text is left as written", {
+          route: "QueryEditor",
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
     };
 

@@ -4,6 +4,8 @@ import { useState, useCallback, useEffect, useMemo } from "react";
 import type { DatabaseConnection, TableSchema, QueryTab } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
+import { logger } from "@/lib/logger";
+import { newLocalId } from "@/lib/ids";
 
 const DEFAULT_TAB: QueryTab = {
   id: "default",
@@ -91,7 +93,10 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       setTabs(restoredTabs);
       setActiveTabId(hasActiveTab ? parsed.activeTabId : restoredTabs[0].id);
     } catch (error) {
-      console.error("[useTabManager] Failed to restore workspace tabs:", error);
+      logger.warn("Failed to restore workspace tabs; falling back to a single empty tab", {
+        route: "use-tab-manager",
+        error: error instanceof Error ? error.message : String(error),
+      });
       setTabs([DEFAULT_TAB]);
       setActiveTabId(DEFAULT_TAB.id);
     }
@@ -142,7 +147,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
   );
 
   const addTab = useCallback(() => {
-    const newId = Math.random().toString(36).substring(7);
+    const newId = newLocalId();
     const queryLanguage = metadata?.capabilities.queryLanguage;
     const queryDialect = metadata?.capabilities.queryDialect;
     setTabs((prev) => [
@@ -182,7 +187,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
         ? generateTableQuery(tableName, capabilities)
         : `SELECT * FROM ${tableName} LIMIT 50;`;
 
-      const newId = Math.random().toString(36).substring(7);
+      const newId = newLocalId();
       const newTab: QueryTab = {
         id: newId,
         name: tableName,
@@ -220,7 +225,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
             ? "mongodb"
             : "sql";
 
-      const newId = Math.random().toString(36).substring(7);
+      const newId = newLocalId();
       setTabs((prev) => [
         ...prev,
         {

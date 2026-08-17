@@ -13,7 +13,6 @@ import { DataProfiler } from "@/components/DataProfiler";
 import { CodeGenerator } from "@/components/CodeGenerator";
 import { TestDataGenerator } from "@/components/TestDataGenerator";
 import { CreateTableModal } from "@/components/CreateTableModal";
-import { SchemaDiagram } from "@/components/SchemaDiagram";
 import { SaveQueryModal } from "@/components/SaveQueryModal";
 import {
   StudioMobileHeader,
@@ -24,7 +23,9 @@ import {
 } from "@/components/studio/index";
 import { AgentRail } from "@/components/agent/AgentRail";
 import { DatabaseConnection, SavedQuery } from "@/lib/types";
-import { quoteLiteral } from "@/lib/sql/values";
+import { buildResultExport, type ResultExportFormat } from "@/lib/export/result-export";
+import { downloadText } from "@/lib/export/download";
+import { newLocalId } from "@/lib/ids";
 import { resolveAgentRunConnectionId } from "@/hooks/use-connection-payload";
 import { isMobileViewport } from "@/hooks/use-mobile";
 import { useAgentCapability } from "@/hooks/use-agent-capability";
@@ -63,6 +64,18 @@ import {
   AlertDialogDescription,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+
+/*
+  The ERD, split out of the first load.
+
+  It is the largest thing in this tree — `@xyflow/react`, the elk layout engine and the
+  snapdom capture used for its export — and it is mounted only while `showDiagram` is
+  true, which for most sessions is never. `React.lazy`, not `next/dynamic`, to keep the
+  same seam the bottom panel uses; the diagram is reached from the embeddable shell too.
+*/
+const SchemaDiagram = React.lazy(() =>
+  import("@/components/SchemaDiagram").then((m) => ({ default: m.SchemaDiagram })),
+);
 
 export default function Studio() {
   const queryEditorRef = useRef<QueryEditorRef>(null);
@@ -298,7 +311,7 @@ export default function Studio() {
   const handleSaveQuery = (name: string, description: string, tags: string[]) => {
     if (!conn.activeConnection) return;
     const newSavedQuery: SavedQuery = {
-      id: Math.random().toString(36).substring(7),
+      id: newLocalId(),
       name,
       query: tabMgr.currentTab.query,
       description,
@@ -312,81 +325,25 @@ export default function Studio() {
     toast({ title: "Query Saved", description: `"${name}" has been added to your saved queries.` });
   };
 
-  const exportResults = (format: "csv" | "json" | "sql-insert" | "sql-ddl") => {
+  const exportResults = (format: ResultExportFormat) => {
     if (!tabMgr.currentTab.result) return;
-    const rawData = tabMgr.currentTab.result.rows;
-    const sensitiveColumns = detectSensitiveColumnsFromConfig(tabMgr.currentTab.result.fields, maskingConfig);
-    const data = effectiveMasking
-      ? applyMaskingToRows(rawData, tabMgr.currentTab.result.fields, sensitiveColumns)
-      : rawData;
-    let content = "";
-    let mimeType = "text/plain";
-    let ext: string = format;
+    // The columns the engine declared for THIS result. The writers read every row by
+    // these names rather than by whatever keys row 0 happens to carry, so a row with
+    // a different key order — or a document store's row missing a field entirely —
+    // lands in the right column instead of shifting the rest.
+    const fields = tabMgr.currentTab.result.fields;
+    const sensitiveColumns = detectSensitiveColumnsFromConfig(fields, maskingConfig);
+    const rows = effectiveMasking
+      ? applyMaskingToRows(tabMgr.currentTab.result.rows, fields, sensitiveColumns)
+      : tabMgr.currentTab.result.rows;
 
-    if (format === "csv") {
-      const headers = Object.keys(data[0] || {}).join(",");
-      const rows = data
-        .map((row) =>
-          Object.values(row)
-            .map((val) => `"${val}"`)
-            .join(","),
-        )
-        .join("\n");
-      content = `${headers}\n${rows}`;
-      mimeType = "text/csv";
-      ext = "csv";
-    } else if (format === "json") {
-      content = JSON.stringify(data, null, 2);
-      mimeType = "application/json";
-      ext = "json";
-    } else if (format === "sql-insert") {
-      const tableName = tabMgr.currentTab.name.replace(/^Query[:  ]*/, "") || "table_name";
-      const columns = Object.keys(data[0] || {});
-      const lines = data.map((row) => {
-        const values = columns.map((col) => {
-          const val = row[col];
-          if (val === null || val === undefined) return "NULL";
-          if (typeof val === "number" || typeof val === "boolean") return String(val);
-          // The exported file is SQL that runs somewhere later, usually unattended,
-          // and every value in it is data the table held. Quoting is therefore the
-          // connected engine's own: doubling the quote alone would let a value
-          // ending in a backslash close its literal and have the rest of the file
-          // read as statements (#290).
-          return quoteLiteral(String(val), conn.activeConnection?.type);
-        });
-        return `INSERT INTO ${tableName} (${columns.join(", ")}) VALUES (${values.join(", ")});`;
-      });
-      content = lines.join("\n");
-      mimeType = "text/sql";
-      ext = "sql";
-    } else if (format === "sql-ddl") {
-      const tableName = tabMgr.currentTab.name.replace(/^Query[:  ]*/, "") || "table_name";
-      const columns = Object.keys(data[0] || {});
-      const colDefs = columns.map((col) => {
-        const sampleVal = data[0]?.[col];
-        let sqlType = "TEXT";
-        if (typeof sampleVal === "number") {
-          sqlType = Number.isInteger(sampleVal) ? "INTEGER" : "NUMERIC";
-        } else if (typeof sampleVal === "boolean") {
-          sqlType = "BOOLEAN";
-        } else if (sampleVal instanceof Date) {
-          sqlType = "TIMESTAMP";
-        }
-        return `  ${col} ${sqlType}`;
-      });
-      content = `CREATE TABLE ${tableName} (\n${colDefs.join(",\n")}\n);`;
-      mimeType = "text/sql";
-      ext = "sql";
-    }
-
-    const fileName = `query_result_export.${ext}`;
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = fileName;
-    link.click();
-    URL.revokeObjectURL(url);
+    const file = buildResultExport(format, {
+      rows,
+      fields,
+      tabName: tabMgr.currentTab.name,
+      dialect: conn.activeConnection?.type,
+    });
+    downloadText(file.content, file.mimeType, `query_result_export.${file.extension}`);
   };
 
   const onTableClick = (tableName: string) => {
@@ -507,7 +464,11 @@ export default function Studio() {
 
             <main className="flex-1 overflow-hidden relative">
               <AnimatePresence>
-                {showDiagram && <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />}
+                {showDiagram && (
+                  <React.Suspense fallback={null}>
+                    <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />
+                  </React.Suspense>
+                )}
               </AnimatePresence>
 
               {/* Mobile: Database Tab */}
