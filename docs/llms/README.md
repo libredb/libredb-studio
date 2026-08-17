@@ -13,6 +13,12 @@ One page per model version. Sizes are rows inside it, because `ollama pull qwen3
 is how the size is chosen and because the interesting fact is usually the difference
 between two sizes of the same model.
 
+| | |
+| --- | --- |
+| Setting a local model up | [`setup.md`](setup.md) |
+| How these numbers were produced, and where they stop being safe | [`methodology.md`](methodology.md) |
+| Measuring a model these pages do not cover | [`testing-your-own.md`](testing-your-own.md) |
+
 ## What was measured
 
 Three workflows, one question each, against the embedded SQLite sample:
@@ -26,11 +32,20 @@ Three workflows, one question each, against the embedded SQLite sample:
 Analyze is the hard one and the one that separates models: it is not enough to read
 the data and describe it, the result has to be handed over with `present_answer`.
 
-**Hardware:** Apple M5 Max, 48 GB, macOS in high-power mode. Timings scale with the
-machine; the pass/fail column does not, except where a run is close to the 90-second
-per-turn ceiling. If your machine is slower, prefer a smaller model rather than a
-larger one you will wait on. Power mode alone was measured at 2.8x throughput on this
-machine, and it decided pass from fail for one model.
+**Two caveats worth carrying into every table below.**
+
+**One run per cell.** These models are not deterministic: one captured request
+replayed five times against `mistral-small3.2:24b` produced three tool-calling runs
+and two refusals. A single result is one observation, not a verdict. Where a figure
+was reproduced, the page says so.
+
+**One machine, and a fast one.** Apple M5 Max, 48 GB, macOS in high-power mode. Every
+timing here is a best case, and nothing was measured on a 16 GB laptop. The pass/fail
+column is the transferable part; the seconds are a lower bound. Power mode alone was
+worth 2.8x throughput and decided pass from fail for one model, so check
+`pmset -g | grep powermode` before blaming a model for a timeout.
+
+Both are expanded in [`methodology.md`](methodology.md), with what else is not covered.
 
 ## The short answer
 

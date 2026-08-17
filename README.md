@@ -162,7 +162,8 @@ what comes back, and finishes by composing a report whose every claim cites the 
 Standalone application only: the embedded `@libredb/studio` package carries no agent surface.
 **Guide:** [`docs/AGENT_GUIDE.md`](docs/AGENT_GUIDE.md) · **What leaves the machine:**
 [`docs/AGENT_DATA_FLOW.md`](docs/AGENT_DATA_FLOW.md) · **Behaviour and limits:**
-[`docs/AGENT.md`](docs/AGENT.md)
+[`docs/AGENT.md`](docs/AGENT.md) · **Which local model to run:**
+[`docs/llms/`](docs/llms/README.md)
 
 ### Model-backed helpers
 - **Universal LLM Support**: Defaults to Gemini 2.5 Flash, and serves OpenAI, Ollama and any OpenAI-compatible endpoint (LM Studio, LiteLLM, vLLM).
@@ -827,6 +828,7 @@ extraEnvFrom:
 | [API Docs](docs/API_DOCS.md) | Complete REST API reference |
 | [Agent Guide](docs/AGENT_GUIDE.md) | Using the agent: a run, the three workflows, what "answered" means, the budget meter, and the Ollama path |
 | [Agent Data Flow](docs/AGENT_DATA_FLOW.md) | What leaves the machine, when, and to which model provider — written from call sites |
+| [Local models](docs/llms/README.md) | Which local model can actually drive an agent run, measured across three workflows, one page per model |
 | [Agent Runtime](docs/AGENT.md) | Agent behaviour, bounds, deployment and known limitations |
 | [OIDC SSO](docs/OIDC.md) | SSO setup (Auth0, Keycloak, Okta, Azure AD, Zitadel, Google) + subsystem internals & security model |
 | [Theming Guide](docs/ui/theming.md) | CSS theming, dark mode, and styling customization |
