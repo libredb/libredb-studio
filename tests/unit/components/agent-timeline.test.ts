@@ -18,7 +18,11 @@ import { foldLedgerEntries, parseLedgerLine } from "@/components/agent/timeline"
 import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { PLAN_NO_STATEMENT_MARKER } from "@/lib/agent/plan-draft";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
-import { DEFAULT_AGENT_WORKFLOW_TYPE } from "@/lib/agent/types";
+import {
+  DEFAULT_AGENT_WORKFLOW_READING,
+  DEFAULT_AGENT_WORKFLOW_SOURCE,
+  DEFAULT_AGENT_WORKFLOW_TYPE,
+} from "@/lib/agent/types";
 
 const OPENED: AgentLedgerEntry = {
   kind: "run-opened",
@@ -977,6 +981,45 @@ describe("foldLedgerEntries — the budget meter", () => {
       expect(view.workflowType).toBe(DEFAULT_AGENT_WORKFLOW_TYPE);
       expect(gauge(view, "statements").limit).toBe(budgets.maxStatementsPerRun);
       expect(gauge(view, "database-time").limit).toBe(budgets.maxTotalRunMs);
+    }
+  });
+
+  /**
+   * The provenance travels with the workflow, because the sentence the rail owes the
+   * user depends on it: a workflow somebody picked needs no explanation, one read out
+   * of their objective needs both the claim and the way out of it. Folded here rather
+   * than remembered by whoever sent the open request, so a surface that joins the
+   * stream — or the same surface after a reload — reads the same answer.
+   */
+  test("a header records whether the workflow was inferred or chosen", () => {
+    expect(foldLedgerEntries([{ ...OPENED, workflowSource: "inferred" }]).workflowSource).toBe("inferred");
+    expect(foldLedgerEntries([{ ...OPENED, workflowSource: "chosen" }]).workflowSource).toBe("chosen");
+  });
+
+  test("a header with no source, and a ledger with no header, both fold to a chosen workflow", () => {
+    // The reading that claims the least: no classifier existed when such a header was
+    // written, and offering the way out of a classification that never ran would be
+    // the surface inventing a decision.
+    for (const entries of [[OPENED], []]) {
+      expect(foldLedgerEntries(entries).workflowSource).toBe(DEFAULT_AGENT_WORKFLOW_SOURCE);
+    }
+  });
+
+  /**
+   * And how that reading went, which is the second half of the same sentence: "read
+   * from your objective" and "could not be classified" are different claims, and only
+   * the run's own header can tell a rail which of them it is entitled to make.
+   */
+  test("a header records what the reading of the objective produced", () => {
+    expect(foldLedgerEntries([{ ...OPENED, workflowReading: "classified" }]).workflowReading).toBe("classified");
+    expect(foldLedgerEntries([{ ...OPENED, workflowReading: "unclassified" }]).workflowReading).toBe("unclassified");
+  });
+
+  test("a header with no reading, and a ledger with no header, both fold to no recorded reading", () => {
+    // Neither of the other two can be read out of an absence: one would present a
+    // fallback as a verdict, the other asserts a failure nobody recorded.
+    for (const entries of [[OPENED], []]) {
+      expect(foldLedgerEntries(entries).workflowReading).toBe(DEFAULT_AGENT_WORKFLOW_READING);
     }
   });
 

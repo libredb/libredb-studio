@@ -744,7 +744,7 @@ LLM_API_URL=http://localhost:11434/v1  # For ollama/custom
 
 ### Agent API
 
-Six paths, seven handlers, under `src/app/api/agent/`. They drive the read-only agent runtime — full
+Seven paths, eight handlers, under `src/app/api/agent/`. They drive the read-only agent runtime — full
 behaviour in [`docs/AGENT.md`](AGENT.md), the surface in [`docs/AGENT_GUIDE.md`](AGENT_GUIDE.md), and
 what a run sends to a model provider in [`docs/AGENT_DATA_FLOW.md`](AGENT_DATA_FLOW.md).
 
@@ -756,7 +756,7 @@ Three properties hold across the whole family and are not repeated per route:
   in the run's ledger, and an admin is not exempt. Somebody else's run, a run that does not exist and
   a malformed run id all answer the same `404 { "error": "No such agent run" }` — a `403` would
   confirm the id.
-- **When the server runs no agents, the five run-reaching handlers answer `404`** — after the session
+- **When the server runs no agents, the run-reaching handlers answer `404`** — after the session
   check, so an unauthenticated caller cannot learn whether an agent surface exists. `GET
   /api/agent/config` is the deliberate exception: `{"enabled": false, …}` *is* its answer.
 
@@ -785,6 +785,52 @@ budget. Its ledger half is memoised for a few seconds instead.
 
 ---
 
+#### POST /api/agent/classify
+
+Names the workflow an objective would open as, without opening anything. The surface calls it
+between the user pressing Start and the run being created, so that a run whose workflow nobody chose
+still opens as the right one.
+
+**Authentication:** Required.
+
+**Request:**
+
+```json
+{ "objective": "Why is the orders page slow?" }
+```
+
+`objective` is required, non-empty, and bounded by the same 4000 characters `POST /api/agent/runs`
+applies — an objective this route would classify but that one would refuse is a model call spent on
+a run that cannot open.
+
+**Response (200 OK):**
+
+```json
+{ "workflowType": "query-optimization", "outcome": "classified" }
+```
+
+| Field | Meaning |
+|-------|---------|
+| `workflowType` | One of the five ids `POST /api/agent/runs` accepts |
+| `outcome` | `"classified"` when the model named one of the five; `"unclassified"` when it did not |
+
+**There is no failure response for the classification itself.** A model error, a timeout, an empty
+reply and a reply that is not one of the five ids all answer `200 { "workflowType":
+"investigation", "outcome": "unclassified" }`. The run the user is starting has to open either way,
+so this route never blocks one; `outcome` is what stops a surface from presenting that fallback as a
+verdict.
+
+This route **decides nothing**. The caller remains free to send any workflow it likes to `POST
+/api/agent/runs`, which validates it there as it always has — so skipping this route, or ignoring
+its answer, reaches nothing a caller could not reach without it. It is metered out of the `ai`
+bucket like the run routes, because classification doubles the per-run request count against the
+model provider.
+
+**Refusals:** `400` for a missing, non-string, empty or oversized `objective`; `401` without a
+session; `404` when this server runs no agents.
+
+---
+
 #### POST /api/agent/runs
 
 Opens a run and returns immediately; the drive happens in the background.
@@ -807,19 +853,30 @@ Opens a run and returns immediately; the drive happens in the background.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `mode` | string | Yes | `"planning"` or `"agent"`. A planning run's model is handed no tools and the run executes **no statement of yours and writes nothing**; it does not perform zero database operations — since 2026-08-15 the server reads the connection's catalog and the engine's estimated statistics before the first turn, read-only and audited like every other agent read, and on PostgreSQL and SQLite only |
-| `workflowType` | string | No | `"investigation"` (the default), `"query-optimization"` or `"database-assessment"`. An unrecognised value is **refused, not defaulted** |
+| `workflowType` | string | No | `"investigation"` (the default), `"query-optimization"`, `"database-assessment"`, `"operations"` or `"data-analysis"`. An unrecognised value is **refused, not defaulted** |
+| `workflowSource` | string | No | How the workflow above was decided: `"inferred"` (a classifier read it off the objective) or `"chosen"` (a person picked it). Absent means `"chosen"`, which is what every request written before there was a classifier did. An unrecognised value is **refused, not defaulted**, because the surface reads this field back to decide whether to tell the user their workflow was inferred and offer to change it |
+| `workflowReading` | string | No | How that decision WENT, as against who made it: `"classified"` (a classifier named this workflow), `"unclassified"` (a classifier was asked and reached its fallback) or `"unrecorded"` (nothing classified anything — what a caller naming its own workflow sends). Absent means `"unrecorded"`. An unrecognised value is **refused, not defaulted**, for the reason `workflowSource` is: the surface reads this field back to choose which of three sentences it says about the run, and a fallback presented as a verdict is the one it may not say |
 | `objective` | string | Yes | Non-empty, at most 4000 characters |
 | `connectionId` | string | Yes | Must resolve **server-side**. An inline `connection` object in the body is refused |
 
 **Response (202 Accepted):**
 
 ```json
-{ "runId": "arun_…", "status": "queued", "mode": "agent", "workflowType": "investigation" }
+{
+  "runId": "arun_…",
+  "status": "queued",
+  "mode": "agent",
+  "workflowType": "investigation",
+  "workflowSource": "chosen",
+  "workflowReading": "unrecorded"
+}
 ```
 
-The mode and workflow type echoed back are the **persisted** ones, so a caller that omitted the
-workflow learns which one its run actually opened as. Both are fixed for the life of the run: no
-other route accepts either field.
+The mode, workflow type, workflow source and workflow reading echoed back are the **persisted**
+ones, so a caller that omitted any of the workflow fields learns what its run actually opened as.
+All four are fixed for the life of the run: no other route accepts any of them. Changing a run's workflow therefore means
+cancelling it and opening a new one — there is deliberately no parameter through which a workflow
+could arrive twice.
 
 **Refusals:**
 
@@ -1189,7 +1246,7 @@ single number written here has gone stale every time it was updated:
 
 | Bucket | Applies to | Default |
 |--------|-----------|---------|
-| `ai` | The `/api/ai/*` routes, plus every `/api/agent/*` route except `GET /api/agent/config`: starting a run, driving one, reading one, cancelling one, streaming one, and fetching an artifact | 20 requests / 60 seconds |
+| `ai` | The `/api/ai/*` routes, plus every `/api/agent/*` route except `GET /api/agent/config`: classifying an objective, starting a run, driving one, reading one, cancelling one, streaming one, and fetching an artifact | 20 requests / 60 seconds |
 | `query` | Every database-reaching `/api/db/*` route plus `/api/admin/fleet-health`, together | 120 requests / 60 seconds |
 
 Routing the same workload through a different endpoint does not multiply the budget - the bucket is

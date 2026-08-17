@@ -138,7 +138,15 @@ const DEFAULT_PROPS = {
   connectionName: "Sales",
 };
 
-/** POST /api/agent/runs accepted, then a stream of whatever lines are given. */
+/**
+ * POST /api/agent/runs accepted, then a stream of whatever lines are given — including
+ * the run-opened header, which this one does not build for itself.
+ *
+ * It answers the classify request with the start body, which is not a classification at
+ * all. That is deliberate for the suites that predate this seam: it exercises the path
+ * every failure lands on, an investigation marked unclassified, which is exactly what
+ * those tests asked for before a classifier existed.
+ */
 function mockAgentFetch(
   lines: readonly string[],
   startBody: unknown = { runId: "arun_1", status: "queued", mode: "planning" },
@@ -152,6 +160,118 @@ function mockAgentFetch(
   globalThis.fetch = fetchMock as unknown as typeof fetch;
   return fetchMock;
 }
+
+/**
+ * The one open request out of everything the rail sent.
+ *
+ * Read by URL rather than by position: an Automatic start now sends
+ * `POST /api/agent/classify` first, so `calls[0]` is no longer the run being opened
+ * and a positional read would silently assert against the classification.
+ */
+function startBodyOf(fetchMock: ReturnType<typeof mock>): Record<string, unknown> {
+  const call = (fetchMock.mock.calls as [RequestInfo | URL, RequestInit?][]).find(
+    ([url]) => String(url) === "/api/agent/runs",
+  );
+  return JSON.parse(String(call?.[1]?.body)) as Record<string, unknown>;
+}
+
+/** Every request the rail made to the classifier, in order. */
+const classifyCalls = (fetchMock: ReturnType<typeof mock>): unknown[] =>
+  (fetchMock.mock.calls as [RequestInfo | URL, RequestInit?][]).filter(
+    ([url]) => String(url) === "/api/agent/classify",
+  );
+
+/**
+ * The header a server writes for a run it has just opened: the open request, persisted.
+ *
+ * Built from the request the rail actually made rather than written by hand, because
+ * the rail reads what a run was opened AS off this header — a hand-written one lets a
+ * test assert a sentence the run's own record would not support.
+ */
+const openedLineFrom = (body: Record<string, unknown>): string =>
+  `${JSON.stringify({
+    kind: "run-opened",
+    atMs: 1_000,
+    runId: "arun_1",
+    mode: body.mode ?? "planning",
+    ...(body.workflowType === undefined ? {} : { workflowType: body.workflowType }),
+    ...(body.workflowSource === undefined ? {} : { workflowSource: body.workflowSource }),
+    ...(body.workflowReading === undefined ? {} : { workflowReading: body.workflowReading }),
+    actor: { sessionId: "ada", role: "user" },
+    connectionId: "seed:sales",
+    objective: body.objective ?? "why is checkout slow",
+  })}\n`;
+
+/**
+ * A server that persists what it is sent: the classifier answers however the test says,
+ * and the ledger the rail then follows opens with a header built from the open request
+ * the rail made. The lines given are what FOLLOWS that header.
+ */
+function mockAgentServer(
+  classify: (init?: RequestInit) => Promise<Response>,
+  lines: readonly string[] = [STARTED_LINE],
+) {
+  let opened: Record<string, unknown> = {};
+  const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url === "/api/agent/classify") return classify(init);
+    if (url.endsWith("/stream")) return ndjsonResponse([openedLineFrom(opened), ...lines]);
+    if (url === "/api/agent/runs" && init?.method === "POST") opened = JSON.parse(String(init.body));
+    return jsonResponse({ runId: "arun_1", status: "queued", mode: "planning" }, 202);
+  });
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  return fetchMock;
+}
+
+/** The same server, with the classifier answering one fixed body. */
+function mockClassifiedFetch(classification: unknown, lines: readonly string[] = [STARTED_LINE], status = 200) {
+  return mockAgentServer(async () => jsonResponse(classification, status), lines);
+}
+
+/**
+ * The same server again, except that it will not stop a run: the DELETE answers `500`.
+ *
+ * A refused stop is the case a "change" has to survive, because the replacement may not
+ * be opened over a run that is still executing.
+ */
+function mockServerRefusingStop(classification: unknown) {
+  let opened: Record<string, unknown> = {};
+  const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url === "/api/agent/classify") return jsonResponse(classification);
+    if (init?.method === "DELETE") return jsonResponse({ error: "the run could not be stopped" }, 500);
+    if (url.endsWith("/stream")) return ndjsonResponse([openedLineFrom(opened), STARTED_LINE]);
+    if (url === "/api/agent/runs" && init?.method === "POST") opened = JSON.parse(String(init.body));
+    return jsonResponse({ runId: "arun_1", status: "queued", mode: "planning" }, 202);
+  });
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  return fetchMock;
+}
+
+/**
+ * A server whose RECORD disagrees with what the rail asked for: the classifier answers
+ * one thing and the ledger header says another.
+ *
+ * That divergence is the only way to tell a surface reading the run from a surface
+ * repeating its own memory of the request it sent — which is exactly what a reload, or a
+ * second surface joining the stream, would be.
+ */
+function mockDivergentServer(classification: unknown, header: Record<string, unknown>) {
+  const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url === "/api/agent/classify") return jsonResponse(classification);
+    if (url.endsWith("/stream")) return ndjsonResponse([openedLineFrom(header), STARTED_LINE]);
+    void init;
+    return jsonResponse({ runId: "arun_1", status: "queued", mode: "planning" }, 202);
+  });
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  return fetchMock;
+}
+
+/** The five workflows live behind the disclosure now, so a test that names one opens it. */
+const openAdvanced = (view: { getByTestId: (id: string) => HTMLElement }): void => {
+  fireEvent.click(view.getByTestId("agent-advanced-toggle"));
+};
 
 /**
  * `useIsMobile` reads `window.matchMedia`, so the breakpoint is driven here rather
@@ -249,24 +369,32 @@ describe("AgentRail", () => {
     expect(items[0].textContent).toContain("Run opened in planning mode");
     expect(items[1].textContent).toContain("Run started in planning mode");
 
-    const [startUrl, startInit] = fetchMock.mock.calls[0];
-    expect(startUrl).toBe("/api/agent/runs");
-    expect(JSON.parse(String(startInit?.body))).toEqual({
+    // The classification comes first now, and the open request carries what it said —
+    // here the answer every failure reaches, since this mock is not a classifier.
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/agent/classify");
+    expect(startBodyOf(fetchMock)).toEqual({
       mode: "agent",
       workflowType: "investigation",
+      workflowSource: "inferred",
+      workflowReading: "unclassified",
       autoExecute: false,
       objective: "why is checkout slow",
       connectionId: "seed:sales",
     });
-    expect(fetchMock.mock.calls[1][0]).toBe("/api/agent/runs/arun_1/stream");
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/agent/runs/arun_1/stream");
   });
 
   test("the workflow control is offered in BOTH modes, because the axes are independent", () => {
     // Found by review on #344: an agent-only control made the rail unable to open a
     // planning run of a query optimization, which the epic's independent axes exist
     // to allow.
-    const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+    const { getByTestId } = view;
+    openAdvanced(view);
 
+    // Automatic is what the disclosure opens on: the axis is offered, and unanswered.
+    expect(getByTestId("agent-workflow-automatic").getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(getByTestId("agent-workflow-investigation"));
     expect(getByTestId("agent-workflow-investigation").getAttribute("aria-pressed")).toBe("true");
     expect(getByTestId("agent-workflow-query-optimization").getAttribute("aria-pressed")).toBe("false");
 
@@ -282,7 +410,9 @@ describe("AgentRail", () => {
     // assertion that the new workflow is actually reachable by a user rather than
     // merely present in a type.
     const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
-    const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+    const { getByTestId } = view;
+    openAdvanced(view);
 
     const operate = getByTestId("agent-workflow-operations");
     expect(operate.getAttribute("aria-pressed")).toBe("false");
@@ -298,13 +428,18 @@ describe("AgentRail", () => {
       fireEvent.click(getByTestId("agent-start"));
     });
 
-    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+    expect(startBodyOf(fetchMock)).toEqual({
       mode: "agent",
       workflowType: "operations",
+      // Named by the user, so nothing was inferred and nothing was asked of a model.
+      workflowSource: "chosen",
+      // And nothing classified anything, so there is no outcome to record.
+      workflowReading: "unrecorded",
       autoExecute: false,
       objective: "what is blocked right now",
       connectionId: "seed:sales",
     });
+    expect(classifyCalls(fetchMock)).toHaveLength(0);
   });
 
   test("the Analyze workflow is offered, and starting it asks the server for it", async () => {
@@ -312,7 +447,9 @@ describe("AgentRail", () => {
     // from the label record, so this is what makes the workflow reachable by a user
     // rather than merely present in a type.
     const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
-    const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+    const { getByTestId } = view;
+    openAdvanced(view);
 
     const analyze = getByTestId("agent-workflow-data-analysis");
     expect(analyze.getAttribute("aria-pressed")).toBe("false");
@@ -328,9 +465,11 @@ describe("AgentRail", () => {
       fireEvent.click(getByTestId("agent-start"));
     });
 
-    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+    expect(startBodyOf(fetchMock)).toEqual({
       mode: "agent",
       workflowType: "data-analysis",
+      workflowSource: "chosen",
+      workflowReading: "unrecorded",
       autoExecute: false,
       objective: "sales by region today",
       connectionId: "seed:sales",
@@ -338,7 +477,9 @@ describe("AgentRail", () => {
   });
 
   test("a workflow chosen in one mode survives the switch to the other", () => {
-    const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+    const { getByTestId } = view;
+    openAdvanced(view);
 
     fireEvent.click(getByTestId("agent-workflow-query-optimization"));
     fireEvent.click(getByTestId("agent-mode-agent"));
@@ -348,7 +489,9 @@ describe("AgentRail", () => {
 
   test("the chosen workflow is what the start request asks for", async () => {
     const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
-    const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+    const { getByTestId } = view;
+    openAdvanced(view);
 
     fireEvent.click(getByTestId("agent-mode-agent"));
     fireEvent.click(getByTestId("agent-workflow-query-optimization"));
@@ -357,9 +500,11 @@ describe("AgentRail", () => {
       fireEvent.click(getByTestId("agent-start"));
     });
 
-    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+    expect(startBodyOf(fetchMock)).toEqual({
       mode: "agent",
       workflowType: "query-optimization",
+      workflowSource: "chosen",
+      workflowReading: "unrecorded",
       autoExecute: false,
       objective: "why is checkout slow",
       connectionId: "seed:sales",
@@ -368,7 +513,9 @@ describe("AgentRail", () => {
 
   test("a planning run carries its workflow too — a plan FOR an optimization is still about one", async () => {
     const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
-    const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+    const { getByTestId } = view;
+    openAdvanced(view);
 
     fireEvent.click(getByTestId("agent-workflow-query-optimization"));
     fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
@@ -376,9 +523,11 @@ describe("AgentRail", () => {
       fireEvent.click(getByTestId("agent-start"));
     });
 
-    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+    expect(startBodyOf(fetchMock)).toEqual({
       mode: "planning",
       workflowType: "query-optimization",
+      workflowSource: "chosen",
+      workflowReading: "unrecorded",
       autoExecute: false,
       objective: "why is checkout slow",
       connectionId: "seed:sales",
@@ -462,7 +611,8 @@ describe("AgentRail", () => {
     expect((await findByTestId("agent-error")).textContent).toContain(
       "The agent runtime is not enabled on this server",
     );
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The classification and the refused open. Nothing was followed.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   test("a start that never reaches the server reports that, not a run", async () => {
@@ -547,7 +697,7 @@ describe("AgentRail", () => {
 
     // Not the generic red line, and nothing was followed.
     expect(queryByTestId("agent-error")).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   /**
@@ -702,8 +852,8 @@ describe("AgentRail", () => {
 
     expect(getByTestId("agent-mode-planning").getAttribute("aria-pressed")).toBe("true");
     expect(getByTestId("agent-mode-agent").getAttribute("aria-pressed")).toBe("false");
-    // The refused start, and nothing after it.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The classification and the refused start, and nothing after them.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(queryByTestId("agent-run-id")?.textContent).toBe("");
     // The objective is the user's and the offer did not touch it.
     expect((getByTestId("agent-objective") as HTMLTextAreaElement).value).toBe("why is checkout slow");
@@ -828,7 +978,7 @@ describe("AgentRail", () => {
     });
 
     expect((await findByTestId("agent-error")).textContent).toContain("without naming it");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   // NDJSON over a real connection does not arrive in whole lines. A reader that
@@ -976,7 +1126,7 @@ describe("AgentRail", () => {
       expect((getByTestId("agent-start") as HTMLButtonElement).disabled).toBe(true);
     });
     fireEvent.click(getByTestId("agent-start"));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   /**
@@ -1448,7 +1598,7 @@ describe("AgentRail", () => {
         fireEvent.click(await findByTestId("agent-stop"));
       });
 
-      const [url, init] = fetchMock.mock.calls[2];
+      const [url, init] = fetchMock.mock.calls[3];
       expect(url).toBe("/api/agent/runs/arun_1");
       expect(init?.method).toBe("DELETE");
     });
@@ -1470,7 +1620,7 @@ describe("AgentRail", () => {
       expect(queryByTestId("agent-error")).toBeNull();
       // The status still says what the ledger says, not what the ask hoped for.
       expect((await findByTestId("agent-run-status")).textContent).toBe("running");
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
     });
 
     test("a run whose stop the ledger already records is not asked twice", async () => {
@@ -1552,13 +1702,28 @@ describe("AgentRail", () => {
    * every consumption is read off the run's durable ledger.
    */
   describe("budget meter", () => {
-    // With no run open there is no header to read, so the meter shows the default
-    // workflow's ceilings — the same reading the fold takes for a headerless ledger.
-    test("an untouched meter shows the ceilings this server enforces", () => {
-      const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+    /**
+     * The gauges measure a RUN, so before one exists there is nothing to measure and
+     * nothing is shown. They used to read a full set of zeroes against the default
+     * workflow's ceilings, which under Automatic is a workflow nobody has chosen and
+     * the classifier may not pick — a bound stated before anything could enforce it.
+     */
+    test("the gauges wait for a run rather than reading a workflow nobody chose", async () => {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+      const { getByTestId, queryByTestId, findByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
       const budgets = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
 
-      expect(getByTestId("agent-budget-statements").textContent).toContain(`0 / ${budgets.maxStatementsPerRun}`);
+      expect(queryByTestId("agent-budget-statements")).toBeNull();
+      expect(getByTestId("agent-budget-unknown").textContent).toContain("Automatic decides the workflow");
+
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      expect((await findByTestId("agent-budget-statements")).textContent).toContain(
+        `0 / ${budgets.maxStatementsPerRun}`,
+      );
       expect(getByTestId("agent-budget-database-time").textContent).toContain(
         `0.0 / ${(budgets.maxTotalRunMs / 1_000).toFixed(1)} s`,
       );
@@ -1630,7 +1795,12 @@ describe("AgentRail", () => {
     // each of them again. A meter that read as a per-run total would understate
     // what a run can cost.
     test("the meter states the limits it cannot measure, and that they are per drive", () => {
-      const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+      const { getByTestId } = view;
+      // Stated for a workflow the user NAMED: under Automatic there is no workflow yet
+      // and therefore no ceiling this rail could promise.
+      openAdvanced(view);
+      fireEvent.click(getByTestId("agent-workflow-investigation"));
 
       // The approved investigation figures, written out rather than read back from
       // the constant: a test that renders the constant into its own expectation
@@ -1704,6 +1874,7 @@ describe("AgentRail", () => {
 
       const budget = AGENT_WORKFLOW_BUDGETS["database-assessment"];
       await findByText(`0 / ${budget.policy.budgets.maxStatementsPerRun}`);
+      fireEvent.click(getByTestId("agent-advanced-toggle"));
       fireEvent.click(getByTestId("agent-workflow-operations"));
 
       const limits = getByTestId("agent-budget-limits").textContent ?? "";
@@ -2521,13 +2692,22 @@ describe("AgentRail", () => {
   });
 
   /**
-   * Auto-execute (§2.1, §2.5, §2.6 of `docs/AGENT_ANALYST_DESIGN.md`).
+   * Auto-execute (§2.1, §2.5, §2.6 of `docs/AGENT_ANALYST_DESIGN.md`), which is now
+   * asked for in the consent step rather than beside the objective.
    *
    * The control names the bound it gives up and the one it keeps, because "auto-mode"
    * transfers no responsibility: a checkbox that names no bound cannot be consented
    * to. And the RUN's own record is what the rail acts on — the three-condition gate
    * lives on the server (`auto-execute.ts`), so the browser carries out what the
    * ledger says happened and decides nothing again.
+   *
+   * What moved, and why it is not a rename: the pre-start checkbox sat in a panel the
+   * user could change under it — a workflow switch, a mode switch or a host that lost
+   * its runner all left a tick behind a hidden control. Asked between the decision and
+   * the open request, there is nothing left to drift: the workflow is settled and the
+   * next thing that happens is the request that opens the run with it. It is still
+   * consent given at OPEN time, which is what `src/lib/agent/types.ts` requires of
+   * every widening decision.
    */
   describe("auto-execute", () => {
     /** The statement the answer rests on. Multi-line on purpose: it is handed over verbatim. */
@@ -2562,75 +2742,122 @@ describe("AgentRail", () => {
      * defect this scoping removes.
      */
     function analyze(props: Record<string, unknown> = {}) {
-      // A runner by default, because the control is offered only to a host that has
-      // one: what the checkbox promises is a run in the user's editor, and a host with
-      // no way to run one cannot keep that promise. Tests about a host without a runner
-      // pass `onRunStatement: undefined` explicitly.
+      // A runner by default, because the consent step is offered only to a host that
+      // has one: what the checkbox promises is a run in the user's editor, and a host
+      // with no way to run one cannot keep that promise. Tests about a host without a
+      // runner pass `onRunStatement: undefined` explicitly.
       const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} {...props} />);
-      // Both axes, because the rail opens in PLANNING mode on Investigate and the
-      // control belongs to neither. That the block used to reach the checkbox without
-      // either click is precisely the defect: it rendered in a toolless mode, on a
-      // workflow with no `present_answer`, and offered to run an answer that could
-      // not be composed.
+      // Both axes, because the rail opens in PLANNING mode on Automatic and the consent
+      // step belongs to neither. Naming the workflow here rather than letting the
+      // classifier reach it keeps these tests about the hand-over: an explicit choice
+      // sends no classify request at all.
       fireEvent.click(view.getByTestId("agent-mode-agent"));
+      openAdvanced(view);
       fireEvent.click(view.getByTestId("agent-workflow-data-analysis"));
       return view;
     }
 
+    /** Presses Start, and takes the consent step where one is offered. */
     async function runWith(props: Record<string, unknown>) {
       const view = analyze(props);
       fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
       await act(async () => {
         fireEvent.click(view.getByTestId("agent-start"));
       });
+      if (view.queryByTestId("agent-consent") !== null) {
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
+      }
       return view;
     }
 
-    test("the control is offered on Analyze alone, and in agent mode alone", () => {
-      // The scoping, asserted over EVERY workflow rather than on a sample: the
-      // checkbox used to render for all five in both modes, so ticking it on an
-      // Investigate run promised a hand-over that workflow has no tool to perform
-      // and had the server tell the model to inspect the plan of an answer it could
-      // not present. That is the #350/#356 shape, and this is the test that keeps it
-      // from returning.
-      const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
-      fireEvent.click(view.getByTestId("agent-mode-agent"));
-      for (const workflow of ["investigation", "query-optimization", "database-assessment", "operations"]) {
-        fireEvent.click(view.getByTestId(`agent-workflow-${workflow}`));
-        expect(view.queryByTestId("agent-auto-execute"), workflow).toBeNull();
-      }
-      fireEvent.click(view.getByTestId("agent-workflow-data-analysis"));
-      expect(view.queryByTestId("agent-auto-execute")).not.toBeNull();
+    test("there is no such control before a run is started: it lives in the consent step", () => {
+      // The pre-start checkbox is gone rather than relocated. It rendered wherever the
+      // workflow happened to be Analyze, which is a state the user could leave without
+      // the tick leaving with them.
+      const view = analyze();
 
-      // Planning is toolless whatever the run is for, so there is no `present_answer`
-      // in its empty tool set either.
-      fireEvent.click(view.getByTestId("agent-mode-planning"));
       expect(view.queryByTestId("agent-auto-execute")).toBeNull();
+      expect(view.queryByTestId("agent-auto-execute-terms")).toBeNull();
+      expect(view.queryByTestId("agent-consent")).toBeNull();
     });
 
-    test("a setting ticked on Analyze is not sent after a switch to a workflow that cannot honour it", async () => {
-      // The checkbox's own state is not the authority. Hiding the control leaves the
-      // ticked state behind it, and sending that `true` would now be REFUSED by the
-      // route — a failed start rather than the silent no-op the hidden control
-      // implies. Resolved from the same record the control is rendered from.
+    test.each(["investigation", "query-optimization", "database-assessment", "operations"] as const)(
+      "a %s run is opened uninterrupted, because it has nothing to hand over",
+      async (workflow) => {
+        // The scoping, asserted over EVERY workflow rather than on a sample: the
+        // checkbox used to render for all five in both modes, so ticking it on an
+        // Investigate run promised a hand-over that workflow has no tool to perform
+        // and had the server tell the model to inspect the plan of an answer it could
+        // not present. That is the #350/#356 shape, and this is the test that keeps it
+        // from returning.
+        const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+        const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        openAdvanced(view);
+        fireEvent.click(view.getByTestId(`agent-workflow-${workflow}`));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+
+        expect(view.queryByTestId("agent-consent")).toBeNull();
+        expect(startBodyOf(fetchMock).workflowType).toBe(workflow);
+        expect(startBodyOf(fetchMock).autoExecute).toBe(false);
+      },
+    );
+
+    test("planning is toolless whatever the run is for, so Analyze is opened uninterrupted there too", async () => {
       const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
       const view = analyze();
-      fireEvent.click(view.getByTestId("agent-auto-execute"));
-      fireEvent.click(view.getByTestId("agent-workflow-investigation"));
-      expect(view.queryByTestId("agent-auto-execute")).toBeNull();
+      // Back to the mode the rail opens in, with Analyze still selected.
+      fireEvent.click(view.getByTestId("agent-mode-planning"));
       fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
       await act(async () => {
         fireEvent.click(view.getByTestId("agent-start"));
       });
 
-      const sent = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-      expect(sent.workflowType).toBe("investigation");
-      expect(sent.autoExecute).toBe(false);
+      expect(view.queryByTestId("agent-consent")).toBeNull();
+      expect(startBodyOf(fetchMock).autoExecute).toBe(false);
     });
 
-    test("the control names the bound it gives up, the one it keeps, and what happens instead", () => {
-      const { getByTestId } = analyze();
+    test("a tick is not sent when the host that would run it is gone by the time the run opens", async () => {
+      // The checkbox's own state is not the authority. The MODE can no longer move out
+      // from under a held start — both axes are frozen for exactly that window, and the
+      // "axes are frozen" tests below are where that is pinned — but the host's half of
+      // the promise is a PROP, and an embedding host may withdraw its runner between
+      // the consent step and the open. `true` on a run that cannot present an answer is
+      // refused outright by the route, a failed start rather than the silent no-op the
+      // old hidden control implied, so the setting is resolved once more from the same
+      // three conditions the step was offered on.
+      const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+      const view = analyze();
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
 
+      fireEvent.click(view.getByTestId("agent-auto-execute"));
+      view.rerender(<AgentRail {...DEFAULT_PROPS} />);
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-consent-open"));
+      });
+
+      expect(startBodyOf(fetchMock).mode).toBe("agent");
+      expect(startBodyOf(fetchMock).autoExecute).toBe(false);
+    });
+
+    test("the control names the bound it gives up, the one it keeps, and what happens instead", async () => {
+      const view = analyze();
+      const { getByTestId } = view;
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "sales by region" } });
+      mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      expect(getByTestId("agent-consent-workflow").textContent).toContain("open as Analyze");
       expect(getByTestId("agent-auto-execute-label").textContent).toBe("Also run the final answer in my editor");
       const terms = getByTestId("agent-auto-execute-terms").textContent ?? "";
       // The run's own bounds, read off the same policy the meter reads.
@@ -2652,16 +2879,31 @@ describe("AgentRail", () => {
       // And the connection it names is the run's, not "yours": the server resolves it
       // from the run's own record, so the replay cannot reach another database.
       expect(terms).toContain("on the connection the run was opened on");
+      // And where the decision is made, which is what makes this consent rather than a
+      // preference: the request that opens the run settles it, and no later one widens
+      // a run the server already holds.
+      expect(getByTestId("agent-consent-frozen").textContent).toContain("opens the run");
     });
 
-    test("a SQLite connection is told what a long read there costs; another engine is not", () => {
-      const sqlite = analyze({ connectionType: "sqlite" });
+    /** Reaches the consent step, where the terms are now stated. */
+    async function consentOf(props: Record<string, unknown>) {
+      mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+      const view = analyze(props);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      return view;
+    }
+
+    test("a SQLite connection is told what a long read there costs; another engine is not", async () => {
+      const sqlite = await consentOf({ connectionType: "sqlite" });
       expect(sqlite.getByTestId("agent-auto-execute-sqlite").textContent).toBe(
         "On SQLite a read is not interrupted when it runs long: it blocks other writers and this application until it finishes.",
       );
       cleanup();
 
-      const postgres = analyze({ connectionType: "postgres" });
+      const postgres = await consentOf({ connectionType: "postgres" });
       expect(postgres.queryByTestId("agent-auto-execute-sqlite")).toBeNull();
     });
 
@@ -2673,38 +2915,63 @@ describe("AgentRail", () => {
       await act(async () => {
         fireEvent.click(getByTestId("agent-start"));
       });
-      expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).autoExecute).toBe(false);
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-consent-open"));
+      });
+      expect(startBodyOf(fetchMock).autoExecute).toBe(false);
 
       cleanup();
       const ticked = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
       const second = analyze();
-      fireEvent.click(second.getByTestId("agent-auto-execute"));
       fireEvent.change(second.getByTestId("agent-objective"), { target: { value: "sales by region" } });
       await act(async () => {
         fireEvent.click(second.getByTestId("agent-start"));
       });
-      expect(JSON.parse(String(ticked.mock.calls[0][1]?.body)).autoExecute).toBe(true);
+      fireEvent.click(second.getByTestId("agent-auto-execute"));
+      await act(async () => {
+        fireEvent.click(second.getByTestId("agent-consent-open"));
+      });
+      expect(startBodyOf(ticked).autoExecute).toBe(true);
     });
 
     // The server's own rule: the setting is decided by the request that opens the run
-    // and no later request may widen it. A control that still moved would be offering
-    // a change nothing would honour.
-    test("the setting cannot be changed while a run is open, and is offered again once it is over", async () => {
+    // and no later request may widen it. So there is no control to change once the run
+    // is open — the step that carried it is gone with the decision it made.
+    test("the consent step is gone once the run it decided is open", async () => {
       mockAgentFetch([OPENED_LINE, STARTED_LINE]);
-      const { getByTestId } = await runWith({});
+      const { queryByTestId, findByTestId } = await runWith({});
 
-      await waitFor(() => {
-        expect((getByTestId("agent-auto-execute") as HTMLInputElement).disabled).toBe(true);
-      });
-      expect(getByTestId("agent-auto-execute-frozen").textContent).toContain("decided when the run is opened");
+      await findByTestId("agent-run-status");
+      expect(queryByTestId("agent-consent")).toBeNull();
+      expect(queryByTestId("agent-auto-execute")).toBeNull();
+    });
 
-      cleanup();
-      mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
-      const over = await runWith({});
-      await over.findByTestId("agent-run-status");
-      await waitFor(() => {
-        expect((over.getByTestId("agent-auto-execute") as HTMLInputElement).disabled).toBe(false);
+    // A tick the user gave and then thought better of: Cancel opens nothing at all, and
+    // the objective they wrote is still in the box.
+    test("Cancel in the consent step opens no run and keeps the objective", async () => {
+      const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+      const view = analyze();
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
       });
+
+      fireEvent.click(view.getByTestId("agent-auto-execute"));
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-consent-cancel"));
+      });
+
+      expect(view.queryByTestId("agent-consent")).toBeNull();
+      expect((view.getByTestId("agent-objective") as HTMLTextAreaElement).value).toBe("sales by region");
+      expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/agent/runs")).toBe(false);
+
+      // And the tick does not survive the step it was given in: the next consent step
+      // starts from off, so a hand-over is never carried over from a decision the user
+      // abandoned.
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      expect((view.getByTestId("agent-auto-execute") as HTMLInputElement).checked).toBe(false);
     });
 
     test("an auto-executed answer is placed in the editor AND run there, once, verbatim", async () => {
@@ -2738,29 +3005,39 @@ describe("AgentRail", () => {
      * so any embedding host can be in this state.
      */
     describe("a host with no runner is not offered the promise", () => {
-      test("the checkbox is absent, terms and all, on the workflow that otherwise has it", () => {
-        const view = analyze({ onRunStatement: undefined });
-
-        expect(view.queryByTestId("agent-auto-execute")).toBeNull();
-        expect(view.queryByTestId("agent-auto-execute-terms")).toBeNull();
-      });
-
-      test("a setting ticked while a runner existed is not sent after the host loses it", async () => {
-        // The checkbox's own state is not the authority, exactly as it is not the
-        // authority across a workflow switch: hiding the control leaves the ticked
-        // state behind it, and `true` on a run this host cannot carry out would open a
-        // run whose hand-over nothing here could perform.
+      test("no consent step is reached at all on the workflow that otherwise has one", async () => {
         const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
-        const view = analyze();
-        fireEvent.click(view.getByTestId("agent-auto-execute"));
+        const view = analyze({ onRunStatement: undefined });
         fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
-
-        view.rerender(<AgentRail {...DEFAULT_PROPS} />);
         await act(async () => {
           fireEvent.click(view.getByTestId("agent-start"));
         });
 
-        expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).autoExecute).toBe(false);
+        // Not a step the host is walked through and then denied: the run opens, and the
+        // promise is never made.
+        expect(view.queryByTestId("agent-consent")).toBeNull();
+        expect(view.queryByTestId("agent-auto-execute")).toBeNull();
+        expect(startBodyOf(fetchMock).autoExecute).toBe(false);
+      });
+
+      test("a tick given while a runner existed is not sent after the host loses it", async () => {
+        // The tick is not the authority, exactly as it is not the authority across a
+        // mode switch: `true` on a run this host cannot carry out would open a run whose
+        // hand-over nothing here could perform.
+        const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+        const view = analyze();
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+        fireEvent.click(view.getByTestId("agent-auto-execute"));
+
+        view.rerender(<AgentRail {...DEFAULT_PROPS} />);
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
+
+        expect(startBodyOf(fetchMock).autoExecute).toBe(false);
       });
 
       test("an auto-executed hand-over is never delivered through the apply path instead", async () => {
@@ -2846,6 +3123,10 @@ describe("AgentRail", () => {
         await act(async () => {
           fireEvent.click(view.getByTestId("agent-start"));
         });
+        // Analyze in agent mode asks for the hand-over consent before it opens anything.
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
 
         // The user switches the editor to another database while the run is going.
         view.rerender(
@@ -2885,6 +3166,10 @@ describe("AgentRail", () => {
         await act(async () => {
           fireEvent.click(view.getByTestId("agent-start"));
         });
+        // Analyze in agent mode asks for the hand-over consent before it opens anything.
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
 
         await act(async () => {
           stream.push(answerLine("auto-executed"));
@@ -2907,6 +3192,10 @@ describe("AgentRail", () => {
         fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
         await act(async () => {
           fireEvent.click(view.getByTestId("agent-start"));
+        });
+        // Analyze in agent mode asks for the hand-over consent before it opens anything.
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
         });
 
         view.rerender(
@@ -3292,6 +3581,803 @@ describe("AgentRail", () => {
 
     await waitFor(() => {
       expect(onSheetOpenChange).toHaveBeenCalled();
+    });
+  });
+  /**
+   * Inferred workflow selection
+   * (`docs/superpowers/specs/2026-08-16-agent-workflow-inference-design.md`).
+   *
+   * The axis and all five workflows are unchanged. What these tests pin is who decides
+   * and when:
+   *
+   *  - **The five are one disclosure away and Automatic is the default**, because the
+   *    row used to sit ABOVE the objective, asking the user to classify a question they
+   *    had not written yet.
+   *  - **An explicit choice makes NO classification request.** Not an optimisation: it
+   *    spends no latency and no model tokens, and the user who knows what they want
+   *    never depends on the least reliable component in the path.
+   *  - **The consent step is the only place auto-execute is asked for**, and it exists
+   *    only where the run could actually hand something over.
+   *  - **A fallback is never presented as a verdict.** A classification that failed
+   *    opens an investigation and says that is what happened.
+   */
+  describe("inferred workflow selection", () => {
+    const classified = (workflowType: string) => ({ workflowType, outcome: "classified" });
+
+    /** Every stop the rail asked for, which is how a replaced run ends. */
+    const deleteCalls = (fetchMock: ReturnType<typeof mock>): unknown[] =>
+      (fetchMock.mock.calls as [RequestInfo | URL, RequestInit?][]).filter(([, init]) => init?.method === "DELETE");
+
+    /** Every open request the rail made, oldest first. */
+    const openRequests = (fetchMock: ReturnType<typeof mock>): Record<string, unknown>[] =>
+      (fetchMock.mock.calls as [RequestInfo | URL, RequestInit?][])
+        .filter(([url, init]) => String(url) === "/api/agent/runs" && init?.method === "POST")
+        .map(([, init]) => JSON.parse(String(init?.body)) as Record<string, unknown>);
+
+    async function startWith(view: { getByTestId: (id: string) => HTMLElement }, objective = "sales by region") {
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: objective } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+    }
+
+    test("the five workflows are folded away, and Automatic is what the rail opens on", () => {
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      // Nothing of the row is in the document until the disclosure is opened: a
+      // collapsed panel is not a hidden one that screen readers still walk into.
+      expect(view.queryByTestId("agent-workflow-investigation")).toBeNull();
+      expect(view.getByTestId("agent-advanced-toggle").getAttribute("aria-expanded")).toBe("false");
+      expect(view.getByTestId("agent-workflow-choice").textContent).toBe("Automatic");
+
+      openAdvanced(view);
+      expect(view.getByTestId("agent-advanced-toggle").getAttribute("aria-expanded")).toBe("true");
+      expect(view.getByTestId("agent-workflow-automatic").getAttribute("aria-pressed")).toBe("true");
+      expect(view.getByTestId("agent-workflow-data-analysis").getAttribute("aria-pressed")).toBe("false");
+    });
+
+    test("an Automatic start classifies the objective and opens the run for what came back", async () => {
+      const fetchMock = mockClassifiedFetch(classified("query-optimization"));
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      await startWith(view, "why is checkout slow");
+
+      expect(classifyCalls(fetchMock)).toHaveLength(1);
+      expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toEqual({
+        objective: "why is checkout slow",
+      });
+      expect(openRequests(fetchMock)[0]).toEqual({
+        mode: "planning",
+        workflowType: "query-optimization",
+        // The whole point of the field: the surface owes this user a sentence it does
+        // not owe one who named the workflow themselves.
+        workflowSource: "inferred",
+        // And this is the other half of that sentence: the reading SUCCEEDED, which is
+        // a different claim from the fallback below and is recorded as one.
+        workflowReading: "classified",
+        autoExecute: false,
+        objective: "why is checkout slow",
+        connectionId: "seed:sales",
+      });
+      // And it says what it opened as, in a workflow's own label.
+      expect((await view.findByTestId("agent-opened-as")).textContent).toContain("Opened as Optimize");
+    });
+
+    test("a classification that is not data-analysis opens the run with no consent step at all", async () => {
+      const fetchMock = mockClassifiedFetch(classified("operations"));
+      const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
+      fireEvent.click(view.getByTestId("agent-mode-agent"));
+
+      await startWith(view, "what is blocked right now");
+
+      expect(view.queryByTestId("agent-consent")).toBeNull();
+      expect(openRequests(fetchMock)[0].workflowType).toBe("operations");
+      expect(openRequests(fetchMock)[0].autoExecute).toBe(false);
+    });
+
+    test("a data-analysis classification in agent mode asks for consent, and only then opens", async () => {
+      const fetchMock = mockClassifiedFetch(classified("data-analysis"));
+      const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
+      fireEvent.click(view.getByTestId("agent-mode-agent"));
+
+      await startWith(view);
+
+      // Nothing has opened yet: the classification is a decision the run does not carry
+      // until the user has answered the one question it raised.
+      expect(view.getByTestId("agent-consent")).toBeTruthy();
+      expect(openRequests(fetchMock)).toHaveLength(0);
+
+      fireEvent.click(view.getByTestId("agent-auto-execute"));
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-consent-open"));
+      });
+
+      expect(openRequests(fetchMock)).toHaveLength(1);
+      expect(openRequests(fetchMock)[0]).toMatchObject({
+        mode: "agent",
+        workflowType: "data-analysis",
+        workflowSource: "inferred",
+        autoExecute: true,
+      });
+    });
+
+    test("Cancel in the consent step opens nothing", async () => {
+      const fetchMock = mockClassifiedFetch(classified("data-analysis"));
+      const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
+      fireEvent.click(view.getByTestId("agent-mode-agent"));
+
+      await startWith(view);
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-consent-cancel"));
+      });
+
+      expect(view.queryByTestId("agent-consent")).toBeNull();
+      expect(openRequests(fetchMock)).toHaveLength(0);
+      expect(view.queryByTestId("agent-opened-as")).toBeNull();
+      // Back to idle rather than stuck: the objective is untouched and Start is live.
+      expect((view.getByTestId("agent-start") as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    /**
+     * What a run was opened AS is a fact about the RUN, so it is read off the run's own
+     * header rather than remembered from the request this rail sent. That is the whole
+     * reason `workflowSource` is persisted: a rail that reloads, or a second surface
+     * joining the stream, has no such memory and must say the same thing.
+     */
+    test("the workflow the header names is the one the banner names", async () => {
+      // The rail asked for an investigation here (this server answers the classify
+      // request with something that is not a classification at all), and the run was
+      // opened for operations. The record wins.
+      mockAgentFetch([openedLineFrom({ workflowType: "operations", workflowSource: "inferred" }), STARTED_LINE]);
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      await startWith(view, "what is blocked right now");
+
+      expect((await view.findByTestId("agent-opened-as")).textContent).toContain("Opened as Operate");
+    });
+
+    test("a run the header says was chosen is offered no way out of it", async () => {
+      // Same request, and a header that records a workflow somebody picked. There is
+      // nothing to correct, so there is nothing to say and no "change" to offer.
+      mockAgentFetch([openedLineFrom({ workflowType: "operations" }), STARTED_LINE]);
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      await startWith(view, "what is blocked right now");
+      await waitFor(() => {
+        expect(view.getByTestId("agent-run-status").textContent).toBe("running");
+      });
+
+      expect(view.queryByTestId("agent-opened-as")).toBeNull();
+    });
+
+    /**
+     * What the reading PRODUCED is a fact about the run, and is read off the run's own
+     * header for the reason `workflowSource` is (#407 review).
+     *
+     * It was the one part of the sentence held in this component alone, defaulting to
+     * `"classified"` — so a surface that had not made the reading itself said "read from
+     * your objective" over a run whose classification had failed and fallen back. That
+     * is the fallback presented as a verdict, which is the one thing this affordance may
+     * not do, and it is what a reloaded rail or a second surface would have said every
+     * time.
+     */
+    describe("what the reading produced", () => {
+      test("the record's outcome wins over what this rail's own classify call returned", async () => {
+        // The classifier answered, and answered successfully. The header says the run
+        // was opened on a reading that did NOT: a rail rebuilt from the ledger, which
+        // is all a reload has, must say what the record says.
+        mockDivergentServer(classified("query-optimization"), {
+          workflowType: "investigation",
+          workflowSource: "inferred",
+          workflowReading: "unclassified",
+        });
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+        await startWith(view, "why is checkout slow");
+
+        const header = (await view.findByTestId("agent-opened-as")).textContent ?? "";
+        expect(header).toContain("could not be classified");
+        expect(header).not.toContain("read from your objective");
+      });
+
+      test("a header that records no reading is presented as neither a verdict nor a failure", async () => {
+        // The one header a reader can say nothing certain about: a provenance with no
+        // outcome beside it. Both other sentences would be claims the record does not
+        // make — one credits a classification that may never have succeeded, the other
+        // asserts a failure nobody recorded, and can contradict the workflow beside it.
+        mockDivergentServer(classified("operations"), {
+          workflowType: "operations",
+          workflowSource: "inferred",
+        });
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+        await startWith(view, "what is blocked right now");
+
+        const header = (await view.findByTestId("agent-opened-as")).textContent ?? "";
+        expect(header).toContain("Opened as Operate");
+        expect(header).toContain("does not say");
+        expect(header).not.toContain("could not be classified");
+        expect(header).not.toContain("read from your objective");
+      });
+
+      test("a failed reading is sent to the server, so the run's own record carries it", async () => {
+        // The half that makes the fold above possible: a rail that kept the outcome to
+        // itself would leave every reader after it with a header it cannot describe.
+        const fetchMock = mockClassifiedFetch({ error: "the model endpoint is unreachable" }, [STARTED_LINE], 500);
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+        await startWith(view, "why is checkout slow");
+
+        expect(openRequests(fetchMock)[0]).toMatchObject({
+          workflowSource: "inferred",
+          workflowReading: "unclassified",
+        });
+      });
+    });
+
+    /**
+     * The connection a start was asked ON (#407 review).
+     *
+     * `connectionId` is a prop resolved from the shell's active connection on every
+     * render, and a start is no longer synchronous: it waits on a classification, and
+     * may then wait on the user answering the consent step. The consent step's "Open"
+     * runs in the LATEST render's closure, so a run could open against a database the
+     * rail was no longer displaying — and against one the consent copy had just promised
+     * it would not use.
+     */
+    describe("the connection a start was asked on", () => {
+      test("a run opens on the connection Start was pressed on, not on whatever the shell moved to", async () => {
+        const fetchMock = mockClassifiedFetch(classified("data-analysis"));
+        const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+
+        await startWith(view);
+
+        // The shell moves while the consent step stands, which is an ordinary thing for
+        // a user to do: the rail is beside a database selector.
+        view.rerender(
+          <AgentRail
+            {...DEFAULT_PROPS}
+            connectionId="seed:analytics"
+            connectionName="Analytics"
+            onRunStatement={() => {}}
+          />,
+        );
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
+
+        expect(openRequests(fetchMock)[0].connectionId).toBe("seed:sales");
+      });
+
+      test("the consent copy names that connection, and keeps naming it when the shell moves", async () => {
+        // The copy promises the statement runs "on the connection the run was opened
+        // on", and the SQLite line is true of one engine only. Both have to describe the
+        // run that will actually open, not the rail's surroundings when Open is pressed.
+        mockClassifiedFetch(classified("data-analysis"));
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="sqlite" onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+
+        await startWith(view);
+
+        expect(view.getByTestId("agent-consent-workflow").textContent).toContain("on Sales");
+        expect(view.getByTestId("agent-auto-execute-sqlite")).toBeTruthy();
+
+        view.rerender(
+          <AgentRail
+            {...DEFAULT_PROPS}
+            connectionId="seed:analytics"
+            connectionName="Analytics"
+            connectionType="postgres"
+            onRunStatement={() => {}}
+          />,
+        );
+
+        expect(view.getByTestId("agent-consent-workflow").textContent).toContain("on Sales");
+        expect(view.getByTestId("agent-consent-workflow").textContent).not.toContain("Analytics");
+        expect(view.getByTestId("agent-auto-execute-sqlite")).toBeTruthy();
+      });
+
+      test("a start held by the classification opens on the connection it was asked on too", async () => {
+        // The other held window, and it must answer the same way: the two paths differ
+        // in which render's closure they run in, and a user cannot be expected to know
+        // which one their click took.
+        let release: (() => void) | null = null;
+        const fetchMock = mockAgentServer(
+          () =>
+            new Promise<Response>((resolve) => {
+              release = () => resolve(jsonResponse(classified("operations")));
+            }),
+        );
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+        await startWith(view, "what is blocked right now");
+        view.rerender(<AgentRail {...DEFAULT_PROPS} connectionId="seed:analytics" connectionName="Analytics" />);
+        await act(async () => {
+          release?.();
+        });
+
+        expect(openRequests(fetchMock)[0].connectionId).toBe("seed:sales");
+      });
+    });
+
+    /**
+     * The consent step is announced and takes focus (#407 review, and #100's standing
+     * a11y rules).
+     *
+     * It is inserted after an asynchronous classification, below a Start button that is
+     * disabled in the same commit. Without a name and without focus, a keyboard or
+     * screen-reader user is left on a dead control with no indication that two buttons
+     * and the terms of a consent have appeared below it.
+     */
+    describe("the consent step's announcement", () => {
+      async function consentStep() {
+        mockClassifiedFetch(classified("data-analysis"));
+        const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+        return view;
+      }
+
+      test("it is a named region and takes focus when it appears", async () => {
+        const view = await consentStep();
+
+        const consent = view.getByTestId("agent-consent");
+        // Compared by test id rather than by node: a failed element comparison prints
+        // the whole document, and this file's DOM is large enough to hang the runner.
+        expect(document.activeElement?.getAttribute("data-testid")).toBe("agent-consent");
+        // Its name is the sentence naming the workflow and the connection, so entering
+        // the region reads out what is being consented to rather than "group".
+        expect(consent.getAttribute("aria-labelledby")).toBe("agent-consent-workflow");
+        expect(document.getElementById("agent-consent-workflow")?.textContent).toContain("Analyze");
+        // And the terms describe it, so they are announced with it rather than being
+        // text the user has to go looking for.
+        expect(consent.getAttribute("aria-describedby")).toBe("agent-consent-terms");
+        expect(document.getElementById("agent-consent-terms")?.textContent).toContain("read-only");
+      });
+
+      test("Cancel returns focus to the control that raised it", async () => {
+        const view = await consentStep();
+
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-cancel"));
+        });
+
+        const start = view.getByTestId("agent-start") as HTMLButtonElement;
+        expect(document.activeElement?.getAttribute("data-testid")).toBe("agent-start");
+        // Focus that lands on a disabled control is focus lost a beat later, so this is
+        // half the assertion: Start is live again, which is why it is the destination.
+        expect(start.disabled).toBe(false);
+      });
+
+      test("Open leaves focus on a control that is still there and still enabled", async () => {
+        const view = await consentStep();
+
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
+
+        // NOT Start: it is disabled from the moment the run is busy, and the browser
+        // drops focus to the body when the focused element disables under it.
+        expect(document.activeElement?.getAttribute("data-testid")).toBe("agent-objective");
+        expect((view.getByTestId("agent-start") as HTMLButtonElement).disabled).toBe(true);
+      });
+    });
+
+    /**
+     * The axes are frozen from the click that asked for a start until a run is open or
+     * the user abandons it.
+     *
+     * A start is asynchronous now — it waits on the classification — and everything it
+     * does afterwards was decided by the render the click happened in. A mode switched
+     * during that wait would therefore be discarded in silence, which is the opposite
+     * of what pressing it looks like: the request would carry the mode that was pressed
+     * BEFORE, and the consent step (agent mode only, by construction) could be raised
+     * over a rail displaying Plan.
+     */
+    describe("the axes are frozen while a start is held", () => {
+      test("the mode cannot be switched while the classification is in flight", async () => {
+        let release: (() => void) | null = null;
+        const fetchMock = mockAgentServer(
+          () =>
+            new Promise<Response>((resolve) => {
+              release = () => resolve(jsonResponse(classified("data-analysis")));
+            }),
+        );
+        const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+
+        await startWith(view);
+
+        expect((view.getByTestId("agent-mode-planning") as HTMLButtonElement).disabled).toBe(true);
+        expect((view.getByTestId("agent-mode-agent") as HTMLButtonElement).disabled).toBe(true);
+        // Pressed anyway — a disabled button ignores it, and the mode the start was
+        // asked for is the mode it opens in.
+        fireEvent.click(view.getByTestId("agent-mode-planning"));
+        expect(view.getByTestId("agent-mode-agent").getAttribute("aria-pressed")).toBe("true");
+
+        await act(async () => {
+          release?.();
+        });
+        // The consent step belongs to agent mode, and the rail still shows agent mode.
+        expect(view.getByTestId("agent-consent")).toBeTruthy();
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
+        expect(openRequests(fetchMock)[0]).toMatchObject({ mode: "agent" });
+      });
+
+      test("the workflow axis is frozen with it, and both are live again after Cancel", async () => {
+        const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
+        mockClassifiedFetch(classified("data-analysis"));
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        openAdvanced(view);
+
+        await startWith(view);
+
+        // Held at the consent step: neither axis may move under a start already asked
+        // for, because the answer to that consent is about THIS mode and THIS workflow.
+        expect((view.getByTestId("agent-workflow-operations") as HTMLButtonElement).disabled).toBe(true);
+        expect((view.getByTestId("agent-mode-planning") as HTMLButtonElement).disabled).toBe(true);
+
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-cancel"));
+        });
+
+        expect((view.getByTestId("agent-workflow-operations") as HTMLButtonElement).disabled).toBe(false);
+        expect((view.getByTestId("agent-mode-planning") as HTMLButtonElement).disabled).toBe(false);
+      });
+    });
+
+    /**
+     * The classify request carries a ceiling of its own.
+     *
+     * The server bounds its model call so that no model failure blocks a start; a
+     * browser `fetch` has no default timeout, so a response that never arrives would
+     * strand this rail on "Reading your objective" with Start disabled and no way to
+     * open any run short of reloading the page — reintroducing, in front of the same
+     * button, the exact failure the server's bound exists to prevent.
+     */
+    test("a classify request that is never answered still opens a run", async () => {
+      const realTimeout = AbortSignal.timeout;
+      // Driven at 1ms rather than the rail's own ceiling: what is under test is that a
+      // ceiling is WIRED to this request, not how many seconds it is.
+      AbortSignal.timeout = ((ms: number) => {
+        expect(ms).toBeGreaterThan(0);
+        return realTimeout.call(AbortSignal, 1);
+      }) as typeof AbortSignal.timeout;
+      try {
+        const fetchMock = mockAgentServer(
+          (init) =>
+            // A server that holds the connection and answers nothing, which is what a
+            // proxy or a dropped socket looks like from here. The only thing that ends
+            // it is the ceiling the rail attached to the request — with none, this
+            // promise never settles and the rail never opens a run at all.
+            new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+            }),
+        );
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+        await startWith(view, "why is checkout slow");
+        await waitFor(() => {
+          expect(openRequests(fetchMock)).toHaveLength(1);
+        });
+
+        // The same answer every other classification failure reaches, and the rail is
+        // idle again rather than stuck behind a request nobody will answer.
+        expect(openRequests(fetchMock)[0]).toMatchObject({ workflowType: "investigation" });
+        await waitFor(() => {
+          expect(view.queryByTestId("agent-classifying")).toBeNull();
+        });
+      } finally {
+        AbortSignal.timeout = realTimeout;
+      }
+    });
+
+    test("plan mode never shows a consent step, whatever the classification says", async () => {
+      // Planning is toolless, so `present_answer` is not in its tool set and there is
+      // nothing for the user to consent to. The classification still happens: plan-mode
+      // framing genuinely differs per workflow.
+      const fetchMock = mockClassifiedFetch(classified("data-analysis"));
+      const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
+
+      await startWith(view);
+
+      expect(view.queryByTestId("agent-consent")).toBeNull();
+      expect(openRequests(fetchMock)[0]).toMatchObject({
+        mode: "planning",
+        workflowType: "data-analysis",
+        autoExecute: false,
+      });
+    });
+
+    test("a workflow named under Advanced makes no classification request at all", async () => {
+      const fetchMock = mockClassifiedFetch(classified("data-analysis"));
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+      openAdvanced(view);
+      fireEvent.click(view.getByTestId("agent-workflow-database-assessment"));
+
+      await startWith(view, "how healthy is this database");
+
+      expect(classifyCalls(fetchMock)).toHaveLength(0);
+      expect(openRequests(fetchMock)[0]).toMatchObject({
+        workflowType: "database-assessment",
+        workflowSource: "chosen",
+      });
+      // And a run the user's own choice opened is offered no way out of it: there is
+      // nothing to correct, and "change" would be the rail second-guessing them.
+      expect(view.queryByTestId("agent-opened-as")).toBeNull();
+    });
+
+    test("the wait is said while the classification is in flight", async () => {
+      let release: (() => void) | null = null;
+      mockAgentServer(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = () => resolve(jsonResponse(classified("investigation")));
+          }),
+      );
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      await startWith(view, "why is checkout slow");
+
+      expect(view.getByTestId("agent-classifying")).toBeTruthy();
+      // And Start cannot be pressed a second time into the same wait.
+      expect((view.getByTestId("agent-start") as HTMLButtonElement).disabled).toBe(true);
+
+      await act(async () => {
+        release?.();
+      });
+      expect(view.queryByTestId("agent-classifying")).toBeNull();
+    });
+
+    test("a classification that failed still opens a run, and the header says it could not be read", async () => {
+      // The classifier's own contract is that it never blocks a run. The network in
+      // front of it can fail in ways it cannot, so the same answer is reached here.
+      const fetchMock = mockClassifiedFetch({ error: "the model endpoint is unreachable" }, [STARTED_LINE], 500);
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      await startWith(view, "why is checkout slow");
+
+      expect(openRequests(fetchMock)[0]).toMatchObject({
+        workflowType: "investigation",
+        workflowSource: "inferred",
+      });
+      const header = (await view.findByTestId("agent-opened-as")).textContent ?? "";
+      expect(header).toContain("could not be classified");
+      // The fallback is not presented as a verdict: the run investigates BECAUSE
+      // nothing could be established, which is a different sentence from "this is an
+      // investigation".
+      expect(header).not.toContain("read from your objective");
+    });
+
+    test("a request the classifier never answered is the same fallback, not a broken start", async () => {
+      const fetchMock = mockAgentServer(() => {
+        throw new Error("network down");
+      });
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      await startWith(view, "why is checkout slow");
+
+      expect(openRequests(fetchMock)[0]).toMatchObject({ workflowType: "investigation" });
+      expect((await view.findByTestId("agent-opened-as")).textContent).toContain("could not be classified");
+      // Nothing is reported as an error: the run opened, and the user can see what it
+      // opened as.
+      expect(view.queryByTestId("agent-error")).toBeNull();
+    });
+
+    test("a workflow id this build does not know is not guessed at", async () => {
+      // The route echoes the classifier verbatim, and a newer server could name a
+      // workflow this browser has no label, no budget and no meaning for.
+      const fetchMock = mockClassifiedFetch({ workflowType: "capacity-planning", outcome: "classified" });
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      await startWith(view, "why is checkout slow");
+
+      expect(openRequests(fetchMock)[0]).toMatchObject({ workflowType: "investigation" });
+      expect((await view.findByTestId("agent-opened-as")).textContent).toContain("could not be classified");
+    });
+
+    test("the pre-start ceilings are withheld under Automatic and stated for a workflow the user named", () => {
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+      expect(view.queryByTestId("agent-budget-limits")).toBeNull();
+      expect(view.getByTestId("agent-budget-unknown").textContent).toContain("per workflow");
+
+      openAdvanced(view);
+      fireEvent.click(view.getByTestId("agent-workflow-data-analysis"));
+
+      // The workflow is known now, so the figures are the ones that workflow's runs are
+      // actually held to.
+      const analysis = AGENT_WORKFLOW_BUDGETS["data-analysis"];
+      const limits = view.getByTestId("agent-budget-limits").textContent ?? "";
+      expect(limits).toContain(`${(analysis.runDeadlineMs / 60_000).toFixed(1)} min`);
+      expect(limits).toContain(`${analysis.maxModelTurns} model turns`);
+      expect(view.queryByTestId("agent-budget-unknown")).toBeNull();
+    });
+
+    /**
+     * "change" (§5 of the design).
+     *
+     * An opened run's workflow cannot be edited — there is deliberately no parameter
+     * through which a workflow could arrive twice — so changing it is two acts, and
+     * both of their consequences are stated where the control is rather than
+     * discovered afterwards.
+     */
+    describe("change", () => {
+      async function inferredRun() {
+        const fetchMock = mockClassifiedFetch(classified("query-optimization"));
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+        await startWith(view, "why is checkout slow");
+        await view.findByTestId("agent-opened-as");
+        return { view, fetchMock };
+      }
+
+      test("the two consequences are stated before the click, not after it", async () => {
+        const { view } = await inferredRun();
+
+        fireEvent.click(view.getByTestId("agent-opened-as-change"));
+        const terms = view.getByTestId("agent-change-workflow-terms").textContent ?? "";
+        expect(terms).toContain("stops this run");
+        expect(terms).toContain("not instant");
+        expect(terms).toContain("new id");
+        expect(terms).toContain("stays in the ledger");
+      });
+
+      test("it stops the open run and opens a new one for the workflow the user picked", async () => {
+        const { view, fetchMock } = await inferredRun();
+
+        fireEvent.click(view.getByTestId("agent-opened-as-change"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-change-workflow-operations"));
+        });
+
+        // The same ask the Stop control makes, on the run that was open.
+        expect(
+          (fetchMock.mock.calls as [RequestInfo | URL, RequestInit?][]).some(
+            ([url, init]) => String(url) === "/api/agent/runs/arun_1" && init?.method === "DELETE",
+          ),
+        ).toBe(true);
+        // And a second run, for the workflow the user named, asking the same question
+        // the first one was opened with — the box was emptied when that run opened.
+        expect(openRequests(fetchMock)).toHaveLength(2);
+        expect(openRequests(fetchMock)[1]).toMatchObject({
+          workflowType: "operations",
+          workflowSource: "chosen",
+          objective: "why is checkout slow",
+        });
+        // Nothing is inferred for the second run, so nothing is asked of the model.
+        expect(classifyCalls(fetchMock)).toHaveLength(1);
+        // And it is the user's own choice now, so the way out is not offered again.
+        expect(view.queryByTestId("agent-opened-as")).toBeNull();
+      });
+
+      test("changing to Analyze in agent mode asks for the hand-over consent, as any open does", async () => {
+        const fetchMock = mockClassifiedFetch(classified("query-optimization"));
+        const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        await startWith(view, "why is checkout slow");
+        await view.findByTestId("agent-opened-as");
+
+        fireEvent.click(view.getByTestId("agent-opened-as-change"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-change-workflow-data-analysis"));
+        });
+
+        expect(view.getByTestId("agent-consent")).toBeTruthy();
+        expect(openRequests(fetchMock)).toHaveLength(1);
+
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
+        expect(openRequests(fetchMock)[1]).toMatchObject({
+          workflowType: "data-analysis",
+          workflowSource: "chosen",
+        });
+      });
+
+      test("abandoning the consent step leaves the run that is open exactly as it was", async () => {
+        // The cancellation belongs to the moment a replacement is actually opened. Fired
+        // at the click that chose the workflow, it ended the run for a replacement that
+        // never arrived — and since the objective box is emptied the moment a run opens,
+        // the question was gone too, leaving the user nothing to ask again with.
+        const fetchMock = mockClassifiedFetch(classified("query-optimization"));
+        const view = render(<AgentRail {...DEFAULT_PROPS} onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        await startWith(view, "why is checkout slow");
+        await view.findByTestId("agent-opened-as");
+
+        fireEvent.click(view.getByTestId("agent-opened-as-change"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-change-workflow-data-analysis"));
+        });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-cancel"));
+        });
+
+        expect(deleteCalls(fetchMock)).toHaveLength(0);
+        expect(openRequests(fetchMock)).toHaveLength(1);
+        // Still the run it was, still saying what it opened as, still offering the way
+        // out — the user has lost nothing by looking at the offer and declining it.
+        expect(view.getByTestId("agent-opened-as").textContent).toContain("Opened as Optimize");
+        expect(view.getByTestId("agent-opened-as-change")).toBeTruthy();
+      });
+
+      /**
+       * A stop that the server did not accept.
+       *
+       * `run.cancel()` used to resolve whatever happened — it caught every failure,
+       * reported it through `error` and returned normally — so awaiting it established
+       * only that the DELETE had been ATTEMPTED. The replacement was then opened
+       * regardless, and the run that was supposed to end kept going beside it: same
+       * connection, its own budget, and a rail that had stopped following it. The copy
+       * beside "change" promises a cancel-and-replace, so this is a promise the code
+       * has to keep rather than describe.
+       */
+      test("a change whose stop the server refused opens nothing, and says the run is still going", async () => {
+        const fetchMock = mockServerRefusingStop(classified("query-optimization"));
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+        await startWith(view, "why is checkout slow");
+        await view.findByTestId("agent-opened-as");
+
+        fireEvent.click(view.getByTestId("agent-opened-as-change"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-change-workflow-operations"));
+        });
+
+        // The ask was made, and refused. Nothing was opened for it.
+        expect(deleteCalls(fetchMock)).toHaveLength(1);
+        expect(openRequests(fetchMock)).toHaveLength(1);
+        // And the user is told, rather than left believing the run they asked to stop
+        // has stopped: the server's own words are on the error line, and this says what
+        // the rail did about them.
+        expect(view.getByTestId("agent-change-failed").textContent).toContain("still going");
+        expect(view.getByTestId("agent-error")).toBeTruthy();
+        // The run they had is the run they still have, way out and all.
+        expect(view.getByTestId("agent-opened-as").textContent).toContain("Opened as Optimize");
+        expect(view.getByTestId("agent-opened-as-change")).toBeTruthy();
+      });
+
+      test("asking again clears the last attempt's failure before the new one is answered", async () => {
+        const fetchMock = mockServerRefusingStop(classified("query-optimization"));
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+        await startWith(view, "why is checkout slow");
+        await view.findByTestId("agent-opened-as");
+
+        fireEvent.click(view.getByTestId("agent-opened-as-change"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-change-workflow-operations"));
+        });
+        expect(view.getByTestId("agent-change-failed")).toBeTruthy();
+
+        fireEvent.click(view.getByTestId("agent-opened-as-change"));
+        fireEvent.click(view.getByTestId("agent-change-workflow-database-assessment"));
+
+        // Cleared at the click and set again only if this attempt fails too: a notice
+        // about the previous ask standing over a request nobody has answered yet reads
+        // as the answer to that one.
+        expect(view.queryByTestId("agent-change-failed")).toBeNull();
+        await act(async () => {});
+        expect(deleteCalls(fetchMock)).toHaveLength(2);
+      });
+
+      test("a run that is over is not offered a change, because there is nothing to stop", async () => {
+        mockClassifiedFetch(classified("query-optimization"), [STARTED_LINE, FINISHED_LINE]);
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+        await startWith(view, "why is checkout slow");
+
+        // The statement about what it opened as still stands — it is a fact about the
+        // run — but the way out of it is gone with the run.
+        await waitFor(() => {
+          expect(view.getByTestId("agent-run-status").textContent).toBe("succeeded");
+        });
+        expect(view.getByTestId("agent-opened-as").textContent).toContain("Opened as Optimize");
+        expect(view.queryByTestId("agent-opened-as-change")).toBeNull();
+      });
     });
   });
 });

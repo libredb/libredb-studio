@@ -65,7 +65,11 @@ import {
   type AgentRunMode,
   type AgentRunRecord,
   type AgentRunStatus,
+  type AgentRunWorkflowReading,
+  type AgentRunWorkflowSource,
   type AgentRunWorkflowType,
+  DEFAULT_AGENT_WORKFLOW_READING,
+  DEFAULT_AGENT_WORKFLOW_SOURCE,
   DEFAULT_AGENT_WORKFLOW_TYPE,
 } from "./types";
 
@@ -129,6 +133,21 @@ export type AgentLedgerEntry =
        * asserts against a real pre-change ledger rather than a hand-written one.
        */
       readonly workflowType?: AgentRunWorkflowType;
+      /**
+       * Optional on the READ side for the same reason `workflowType` is: `openRun`
+       * always writes one, and a header written before this field existed folds to
+       * `DEFAULT_AGENT_WORKFLOW_SOURCE` — `"chosen"`, because there was no classifier
+       * then and every such run carried a workflow its caller sent explicitly.
+       */
+      readonly workflowSource?: AgentRunWorkflowSource;
+      /**
+       * Optional on the READ side for the same reason `workflowType` is: `openRun`
+       * always writes one, and a header written before this field existed folds to
+       * `DEFAULT_AGENT_WORKFLOW_READING` — `"unrecorded"`, which is the only reading
+       * such a header supports: it records no classifier outcome, and neither of the
+       * other two answers could be read out of its absence without inventing one.
+       */
+      readonly workflowReading?: AgentRunWorkflowReading;
       /**
        * Optional on the READ side for the same reason `workflowType` is: `openRun`
        * always writes one, and a header written before this field existed folds to
@@ -207,6 +226,10 @@ export interface AgentRunOpenInput {
   readonly mode: AgentRunMode;
   /** Defaults to `DEFAULT_AGENT_WORKFLOW_TYPE`; see `AgentRunWorkflowType`. */
   readonly workflowType?: AgentRunWorkflowType;
+  /** Defaults to `DEFAULT_AGENT_WORKFLOW_SOURCE`; see `AgentRunWorkflowSource`. */
+  readonly workflowSource?: AgentRunWorkflowSource;
+  /** Defaults to `DEFAULT_AGENT_WORKFLOW_READING`; see `AgentRunWorkflowReading`. */
+  readonly workflowReading?: AgentRunWorkflowReading;
   /** Defaults to `false`. Decided at start and never afterwards; see `AgentRunRecord`. */
   readonly autoExecute?: boolean;
   readonly actor: AgentRunActor;
@@ -314,6 +337,8 @@ function foldLedger(runId: string, entries: readonly AgentLedgerEntry[]): AgentR
       runId,
       mode: header.mode,
       workflowType: header.workflowType ?? DEFAULT_AGENT_WORKFLOW_TYPE,
+      workflowSource: header.workflowSource ?? DEFAULT_AGENT_WORKFLOW_SOURCE,
+      workflowReading: header.workflowReading ?? DEFAULT_AGENT_WORKFLOW_READING,
       autoExecute: header.autoExecute ?? false,
       status,
       actor: header.actor,
@@ -357,6 +382,16 @@ export class AgentRunStore {
       // run HAS a workflow type, so there is no "ending that has neither" case whose
       // bytes an omission would keep identical. The compatibility is on the read side.
       workflowType: input.workflowType ?? DEFAULT_AGENT_WORKFLOW_TYPE,
+      // Written unconditionally alongside the workflow it describes: a header that
+      // carried one without the other would leave a reader guessing which generation
+      // of writer produced it, which is the ambiguity the read-side fold exists to
+      // resolve once and for all headers.
+      workflowSource: input.workflowSource ?? DEFAULT_AGENT_WORKFLOW_SOURCE,
+      // And the outcome of the reading that produced it, written for the same reason:
+      // a header carrying a provenance without a reading is the one generation of
+      // writer whose runs a reader can say nothing certain about, and there is no
+      // reason to produce another.
+      workflowReading: input.workflowReading ?? DEFAULT_AGENT_WORKFLOW_READING,
       // Written unconditionally too, and for the stronger reason: an omitted setting
       // and a setting recorded as `false` must be the same run, so that no ledger
       // generation can be read as having permitted something it did not.

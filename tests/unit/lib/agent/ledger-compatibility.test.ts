@@ -112,6 +112,29 @@ describe("a ledger written before autoExecute existed", () => {
   });
 });
 
+describe("a ledger written before workflowSource existed", () => {
+  test("reads as a chosen workflow, because every run written then carried the workflow it was sent", async () => {
+    // The opposite reading to `autoExecute`'s, and deliberately so. Nothing inferred
+    // a workflow when this header was written — the client sent one on every open
+    // request — so `"inferred"` would be inventing a classification that never ran.
+    const view = await foldFixture();
+
+    expect(view?.record.workflowSource).toBe("chosen");
+  });
+});
+
+describe("a ledger written before workflowReading existed", () => {
+  test("records no classifier outcome, rather than being read as one that succeeded or one that failed", async () => {
+    // Both alternatives are claims this header cannot support. `"classified"` would
+    // present a fallback as a verdict — the defect the field was added to end — and
+    // `"unclassified"` asserts a failure nobody recorded, which can contradict the
+    // workflow beside it.
+    const view = await foldFixture();
+
+    expect(view?.record.workflowReading).toBe("unrecorded");
+  });
+});
+
 describe("a ledger written before goalVerdict existed", () => {
   test("still folds, and its ending still reads as the ending it always was", async () => {
     // B24's field is additive for the same reason `workflowType` was: an older

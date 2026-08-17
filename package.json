@@ -218,7 +218,7 @@
     "@testing-library/user-event": "^14.6.4",
     "@types/better-sqlite3": "^9.6.0",
     "@types/bun": "latest",
-    "@types/node": "^25.9.5",
+    "@types/node": "^26.2.0",
     "@types/pg": "^8.21.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",

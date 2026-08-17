@@ -7,6 +7,8 @@ import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
   DEFAULT_AGENT_WORKFLOW_TYPE,
   type AgentRunMode,
+  type AgentRunWorkflowReading,
+  type AgentRunWorkflowSource,
   type AgentRunWorkflowType,
 } from "@/lib/agent/types";
 import { createErrorResponse } from "@/lib/api/errors";
@@ -38,6 +40,18 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
  *    investigation, which is what every run before the field was — and there is no
  *    other route that accepts it, so a run cannot change what it is for after it
  *    has been opened.
+ *  - **The workflow source records how that workflow was decided**, not what it is:
+ *    `"inferred"` when a classifier read it off the objective, `"chosen"` when the
+ *    caller named it. Optional here — absent means the caller named it, which is what
+ *    every run before a classifier existed did — and an unrecognised value is refused
+ *    on the same grounds as the type, because the surface reads this field back to
+ *    decide whether to offer the user a workflow they were never shown.
+ *  - **The workflow reading records how that decision WENT**: `"classified"` when the
+ *    classifier named the workflow, `"unclassified"` when it reached its fallback,
+ *    `"unrecorded"` when nothing classified anything. Optional, absent meaning
+ *    `"unrecorded"`, and unrecognised values refused like the two above. It is here
+ *    rather than in the surface's memory because the fallback and the verdict are
+ *    different sentences and a reloaded rail can only know which it owes from the run.
  *  - **Auto-execute is fixed at start, and that is the reason it is a run field at
  *    all.** It is what the run may hand to the editor to RUN, on a path with none of
  *    the agent's own bounds, so it is decided once by the request that opens the run
@@ -64,6 +78,14 @@ const WORKFLOW_TYPES: ReadonlySet<string> = new Set<AgentRunWorkflowType>([
   "data-analysis",
 ]);
 
+const WORKFLOW_SOURCES: ReadonlySet<string> = new Set<AgentRunWorkflowSource>(["inferred", "chosen"]);
+
+const WORKFLOW_READINGS: ReadonlySet<string> = new Set<AgentRunWorkflowReading>([
+  "classified",
+  "unclassified",
+  "unrecorded",
+]);
+
 function badRequest(message: string): NextResponse {
   return NextResponse.json({ error: message }, { status: 400 });
 }
@@ -87,7 +109,7 @@ export async function POST(req: Request) {
       return badRequest("Request body must be JSON");
     }
 
-    const { mode, workflowType, autoExecute, objective, connectionId } = body;
+    const { mode, workflowType, workflowSource, workflowReading, autoExecute, objective, connectionId } = body;
     if (typeof mode !== "string" || !MODES.has(mode)) {
       return badRequest('mode must be "planning" or "agent"');
     }
@@ -97,6 +119,27 @@ export async function POST(req: Request) {
     // different one is how a user reads a report about work nobody requested.
     if (workflowType !== undefined && (typeof workflowType !== "string" || !WORKFLOW_TYPES.has(workflowType))) {
       return badRequest(`workflowType must be one of ${[...WORKFLOW_TYPES].join(", ")}`);
+    }
+    // Absent means the caller chose the workflow itself, which is what every request
+    // written before there was a classifier did. An unrecognised one is REFUSED for
+    // the same reason as the type above: this field is what the surface reads back to
+    // decide whether to tell the user their run's workflow was inferred and can be
+    // changed, so folding an unknown value into one of the two answers would have the
+    // UI report a decision nobody made.
+    if (workflowSource !== undefined && (typeof workflowSource !== "string" || !WORKFLOW_SOURCES.has(workflowSource))) {
+      return badRequest(`workflowSource must be one of ${[...WORKFLOW_SOURCES].join(", ")}`);
+    }
+    // Absent means no classifier outcome is recorded for this run, which is the truth
+    // for every request that named its own workflow and for every request written
+    // before there was a classifier at all. Refused rather than defaulted for the
+    // third time and the same reason: the surface reads this field back to choose
+    // which sentence it says about the run, and folding an unknown value into one of
+    // the three would have it state an outcome nobody recorded.
+    if (
+      workflowReading !== undefined &&
+      (typeof workflowReading !== "string" || !WORKFLOW_READINGS.has(workflowReading))
+    ) {
+      return badRequest(`workflowReading must be one of ${[...WORKFLOW_READINGS].join(", ")}`);
     }
     // Absent means off. Anything that is not a boolean is REFUSED rather than
     // coerced: `"false"`, `0` and `null` are all truthy or falsy by accident in some
@@ -170,6 +213,12 @@ export async function POST(req: Request) {
       // reaches the store exactly as one written before the field did, and the
       // store's own default is the single place the answer is decided.
       ...(workflowType === undefined ? {} : { workflowType: workflowType as AgentRunWorkflowType }),
+      // Spread for the same reason: absent must reach the store as the request that
+      // predates the field, and the store's default decides what that means.
+      ...(workflowSource === undefined ? {} : { workflowSource: workflowSource as AgentRunWorkflowSource }),
+      // Spread for the same reason again: absent reaches the store as the request that
+      // predates the field, and the store's default decides what that means.
+      ...(workflowReading === undefined ? {} : { workflowReading: workflowReading as AgentRunWorkflowReading }),
       // Spread for the same reason, and it matters more here: the store's `false` is
       // the single place "nobody asked" is turned into an answer.
       ...(autoExecute === undefined ? {} : { autoExecute }),
@@ -197,6 +246,8 @@ export async function POST(req: Request) {
         status: record.status,
         mode: record.mode,
         workflowType: record.workflowType,
+        workflowSource: record.workflowSource,
+        workflowReading: record.workflowReading,
         autoExecute: record.autoExecute,
       },
       { status: 202 },

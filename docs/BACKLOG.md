@@ -2064,3 +2064,93 @@ Four of the seven claim a success nobody observed, in the same statement that st
 
 Done when every copy in the app goes through `CopyButton` (or its `writeToClipboard`), with a test
 per site that the label does not claim success when the write was refused.
+
+### B44. Under the documented least-privilege role no foreign key is visible, and the run then asserts that none exists
+
+Found on 2026-08-17 while re-driving `docs/AGENT_DEMO.md` in a browser. Two halves, and the second
+is the one that reaches a user.
+
+**The read comes back empty.** `composePostgresRelations` (`src/lib/agent/composed-sql.ts`) reads
+`information_schema.table_constraints` / `key_column_usage` / `constraint_column_usage`. PostgreSQL
+restricts those views to constraints on tables the current role owns or holds a privilege on
+*other than* `SELECT`, so the role `docs/AGENT_DEMO.md` prescribes for the agent — `CONNECT`,
+`USAGE`, `SELECT ON ALL TABLES`, `pg_read_all_stats` — sees none of them. Measured on the seeded
+dvdrental as `libredb_agent` (`usesuper = f`): `information_schema.table_constraints` returns **0**
+rows with `constraint_type = 'FOREIGN KEY'`, while `pg_constraint WHERE contype = 'f'` holds **18**.
+The relations graph packed into the run's context is therefore empty for the exact role the product
+tells operators to create.
+
+**The run then asserts the negative.** Asked what tables exist and how they relate, an investigation
+run answered *"There are no declared foreign key constraints between tables in the database"* —
+false, and cited to a schema snapshot that genuinely contained nothing. A zero-row relations read
+cannot distinguish "this database declares no foreign keys" from "this role cannot see the ones it
+declares", and nothing today makes the run say which it means. The neighbouring case survived only
+because the model reconstructed the join path from column names, which is luck, not evidence.
+
+The first half is **B8's rewrite arriving for a second reason**: B8 already plans to leave
+`information_schema` for `pg_constraint` — unnesting `conkey`/`confkey` `WITH ORDINALITY` — to pair a
+composite key's columns and to stop two same-named constraints cross-matching. `pg_constraint` is
+readable by any role with `USAGE` on the schema, so that same rewrite closes this too. What this
+entry changes is B8's severity: it was filed as a **precision** defect on the edges the inventory
+draws, and this makes it a **correctness** defect on whether the inventory has any edges at all.
+
+The second half is a separate decision and does not go away with the rewrite, since any role can
+still be narrower than the database. Done when a run on a `SELECT`-only role reports this database's
+foreign keys, **and** an empty relations read no longer licenses "there are no foreign keys" — the
+run either says it could not see them or says nothing about them, with a test that pins the
+distinction.
+
+### B45. Every optimization run is scored `unanswered / empty-evidence`, including one that produced a correct index
+
+Driven live on 2026-08-17. A query-optimization run compared plans with real PostgreSQL costs,
+recommended a `CREATE INDEX` that is the right index, offered it to the editor — and ended
+*"Run did not answer — Every result the report cited came back empty, so the answer rests on
+nothing."* Every Optimize run in that drive ended the same way.
+
+Two mechanisms compose into it. The plan artifact a run cites is `sql.explain.estimate`, and a plan
+arrives in a single column, so the artifact's summary records `rowCount: 0` — the artifact is
+complete and its row count is meaningless. And `verifyOptimizationGoal` composes on the investigation
+baseline, which carries the `empty-evidence` arm: every cited result returning zero rows ends the run
+unanswered.
+
+**This is structurally the same error the operations template was explicitly exempted from, and the
+exemption's own rationale applies verbatim.** `src/lib/agent/goal-verifier.ts:440-452` argues that
+holding an operational reading to the emptiness rule is "precisely backwards" — "no session is
+blocked" and "no index is unused" are answers, and marking a healthy server's run unanswered is "the
+same error as demanding an artifact only some valid answers can produce" (the #356 family). A plan
+with zero rows in it is the same shape: emptiness is a property of how a plan is returned, not of
+whether the question was answered.
+
+The user-visible cost is worse than a wrong label, because the verdict is the one part of a run a
+sceptical reader trusts most: the product contradicts its own good answer, in its own voice, at the
+end of the run.
+
+Done when an optimization run whose report cites a plan and recommends an index is scored `answered`,
+either by exempting `sql.explain.estimate` from the emptiness arm or by not composing that arm into
+this template — with an eval that fails if the run above reads `unanswered`, and with the reason
+recorded next to the operations exemption so the two read as one decision.
+
+### B46. Plan-mode grounding is workflow-dependent, and only the engine-dependent half is ever said
+
+`docs/AGENT_DEMO.md` and the design both frame plan-mode grounding as a property of the engine:
+PostgreSQL and SQLite are grounded because `CATALOG_COMPOSERS` serves those dialects, and everything
+else is not. That is true and incomplete. A plan-mode **operations** run reads no catalog on any
+engine — deliberately, and the reason is sound (`src/lib/agent/investigation.ts`,
+`PLANNING_OPERATIONS_CONTEXT_NOTE`: an operations objective is about what the engine reports about
+itself, so a catalog read would spend the run on an inventory the plan has no use for) — and
+`PLANNING_PROSE_RULES` follows it with "There is no statement to write here and no fenced block to
+produce".
+
+Observed on 2026-08-17: a plan run opened on a PostgreSQL connection announced *"Because no schema
+was read, we cannot name specific tables or indexes upfront"* and offered zero **Apply to editor**
+controls. On PostgreSQL. A user who has been told grounding follows the engine reads that as a
+defect, and there is nothing on screen to correct them: the ungrounded-workflow case is indistinguishable
+from the ungrounded-engine case, which `planningUngroundedNote` does name explicitly.
+
+Made much more reachable by workflow inference (#407): "what would you check first if this database
+were slow in production?" classifies to operations, so a user who wanted a grounded optimization plan
+lands here without ever having chosen the workflow that costs them the grounding.
+
+Done when a plan run that is ungrounded because of its workflow says so in those terms, distinct from
+the engine sentence, with a test pinning each of the two reasons to its own wording — and when the
+demo script and `docs/AGENT.md` state the workflow half alongside the engine half.

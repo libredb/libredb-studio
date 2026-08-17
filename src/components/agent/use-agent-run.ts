@@ -5,7 +5,12 @@ import { isAgentModelCapability } from "@/lib/agent/capability-labels";
 // Type-only, so nothing of the probe — or of the AI SDK it runs — reaches this bundle.
 import type { AgentModelCapability } from "@/lib/agent/capability-probe";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
-import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
+import type {
+  AgentRunMode,
+  AgentRunWorkflowReading,
+  AgentRunWorkflowSource,
+  AgentRunWorkflowType,
+} from "@/lib/agent/types";
 import { foldLedgerEntries, parseLedgerLine, type AgentRunTimeline } from "./timeline";
 
 /**
@@ -37,6 +42,27 @@ export interface AgentRunStartInput {
    * request rather than a setting — nothing the browser sends later can change it.
    */
   readonly workflowType?: AgentRunWorkflowType;
+  /**
+   * HOW that workflow was decided — the server read it out of the objective, or a
+   * person named it. Optional here as it is in the route, where absent means the
+   * caller named it.
+   *
+   * It changes nothing about what the run DOES; `selectAgentTools` never sees it. It
+   * is sent because the surface owes the user a different sentence in each case, and
+   * because that sentence has to survive a reload, which only a field on the run
+   * record can do.
+   */
+  readonly workflowSource?: AgentRunWorkflowSource;
+  /**
+   * How that reading went, when one was made — and `"unrecorded"` when none was, which
+   * is what a caller naming its own workflow sends. Optional here as it is in the
+   * route, where absent means the same thing.
+   *
+   * It changes nothing about what the run DOES either. It is sent because the sentence
+   * the surface owes differs between a workflow a classifier NAMED and one it fell
+   * back to, and only the run record carries that across a reload.
+   */
+  readonly workflowReading?: AgentRunWorkflowReading;
   /**
    * Whether the run may also run its answer in the caller's editor. A request, like
    * the two above: the server PERSISTS it on the run record, and nothing sent later
@@ -78,8 +104,16 @@ export interface AgentRunFollower {
    * Asks the run to stop. It is an ASK: the run's own loop ends it at its next
    * checkpoint (T7a), so nothing here reports the run as stopped — the ledger
    * does that, through the entry the request writes.
+   *
+   * @returns whether the SERVER ACCEPTED the request, which is a narrower fact than
+   *          the run having stopped and is the only one this call can establish. It
+   *          answers rather than throwing because the Stop control has nothing to do
+   *          with the answer — the failure is already reported through `error` — while
+   *          a caller that stops one run in order to open another must not proceed on
+   *          a stop that did not happen. Resolving unconditionally is what let that
+   *          caller leave two runs executing against the same connection (#407 review).
    */
-  readonly cancel: () => Promise<void>;
+  readonly cancel: () => Promise<boolean>;
 }
 
 interface StartResponse {
@@ -276,8 +310,11 @@ export function useAgentRun(): AgentRunFollower {
     [follow],
   );
 
-  const cancel = useCallback(async (): Promise<void> => {
-    if (runId === null) return;
+  const cancel = useCallback(async (): Promise<boolean> => {
+    // Nothing is open, so nothing was stopped. Answered `false` rather than `true`:
+    // the value is read by a caller deciding whether the run it wanted stopped is
+    // gone, and "there was no run" is not that.
+    if (runId === null) return false;
 
     setIsStopping(true);
     setError(null);
@@ -298,11 +335,15 @@ export function useAgentRun(): AgentRunFollower {
       // Nothing is set on success. The request wrote a ledger entry, and the
       // stream is what delivers it — so what the rail shows is what the durable
       // record says rather than what this call hoped for.
+      return true;
     } catch (cancelError) {
       if (abortRef.current?.signal.aborted !== true) {
         setError(messageFor(cancelError));
         setIsStopping(false);
       }
+      // Including the abort: this component going away is not a stop the server
+      // accepted, and a caller waiting on one is owed the same "no" either way.
+      return false;
     }
   }, [runId]);
 

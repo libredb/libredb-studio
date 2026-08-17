@@ -26,6 +26,7 @@ if it only lists the good news.
 - [The short version](#the-short-version)
 - [Where a request goes](#where-a-request-goes)
 - [When nothing leaves at all](#when-nothing-leaves-at-all)
+- [The classification, before any run](#the-classification-before-any-run)
 - [One agent run, message by message](#one-agent-run-message-by-message)
 - [What comes back, and what is done with it](#what-comes-back-and-what-is-done-with-it)
 - [What #352 added to the boundary](#what-352-added-to-the-boundary)
@@ -42,6 +43,7 @@ if it only lists the good news.
 
 | Surface | What it sends | Fenced? |
 | --- | --- | --- |
+| `POST /api/agent/classify`, **before any run exists** | Your objective, and nothing else. One short completion that asks the model to name one of the five workflows. It fires when you press **Start** with the workflow left on **Automatic**, which is the default; naming a workflow yourself under **Advanced** skips it entirely. See [the classification, before any run](#the-classification-before-any-run) | No — it carries no database content to fence. Your objective is sent as the user message, and the server's instructions tell the model to treat that text as data to classify and never as instructions to it |
 | An **agent run** | Your objective; the schema inventory (table, column, index identifiers and column types); the relations graph (identifiers only); the rows of each read the model performed, up to 200 per read; engine error text; server-written refusals; server-minted ids | Everything derived from the database is wrapped in an untrusted-content fence before it reaches a prompt |
 | An **agent run opened as Operate** | Your objective; **no schema inventory and no relations graph** (a server note replaces them); and the rows of each curated reading — which, for the `sessions` and `slow-queries` kinds, include **other database users' in-flight statement text and their database usernames**. See [the operations workflow](#5a-the-operations-workflow-what-a-curated-reading-sends) | Same fence: every reading's rows are database content and are fenced |
 | `POST /api/ai/explain` | Your statement, the EXPLAIN plan, the schema context the browser holds, the engine type | No |
@@ -97,7 +99,11 @@ Gemini deployment behind a proxy is therefore not configurable (`docs/BACKLOG.md
   (`src/app/api/agent/config/route.ts`).
 - **Opening the rail sends nothing.** A shortcut fills the objective box and starts nothing
   (`src/components/agent/use-agent-prefill.ts`); the first model call happens when you press
-  **Start**.
+  **Start**. Note that the first one is now the **classification**, which happens before a run
+  exists — the section below is about it.
+- **Naming the workflow yourself sends nothing extra.** Choosing one of the five under
+  **Advanced** skips the classification call entirely, so pressing Start then reaches the model
+  exactly once before the run: the capability probe, which carries no text of yours.
 - **A `planning` run runs no statement of yours.** Its tool set is empty, so the model sends nothing
   and asks for nothing (`selectAgentTools`). Since 2026-08-15 the SERVER does read this connection's
   catalog for it, before the first turn and through the same read-only, audited path an agent run
@@ -110,11 +116,56 @@ Gemini deployment behind a proxy is therefore not configurable (`docs/BACKLOG.md
   all and the run is told it has no inventory. Nothing is written, and every statement a plan drafts
   is handed to you to run yourself.
 
-There is one model call the agent makes before the run itself: the **capability probe**, one round
-trip asking the model to call a trivial tool. Its prompt is a fixed server-written string and
-carries nothing of yours (`PROBE_PROMPT`, `src/lib/agent/capability-probe.ts:134`). A positive
-verdict is cached for the life of the process, so it is paid once
-(`src/lib/agent/capability-gate.ts`).
+There are **two** model calls the agent can make before the run itself, and only one of them
+carries nothing of yours:
+
+- the **capability probe**, one round trip asking the model to call a trivial tool. Its prompt is a
+  fixed server-written string and carries nothing of yours (`PROBE_PROMPT`,
+  `src/lib/agent/capability-probe.ts:134`). A positive verdict is cached for the life of the
+  process, so it is paid once (`src/lib/agent/capability-gate.ts`);
+- the **classification**, which sends your objective. It is the section below.
+
+---
+
+## The classification, before any run
+
+**Your objective can leave this machine before a run exists.** Pressing **Start** with the
+workflow left on **Automatic** — the rail's default — posts it to `POST /api/agent/classify`, and
+that route asks the configured model to name one of the five workflows
+(`src/app/api/agent/classify/route.ts`, `classifyAgentWorkflow` in
+`src/lib/agent/workflow-classifier.ts`). It goes to the same provider as everything else on this
+page, through the same `createAgentModel` seam, so nothing about *where* it goes is new.
+
+What it sends, exactly:
+
+| Part | Content |
+| --- | --- |
+| System | A fixed server-written string: what the five workflows are, one line each, and the instruction to answer with one identifier. It ends by telling the model that the text it is given is the user's task, to be treated as data to classify and never as instructions to it (`CLASSIFY_SYSTEM`, `workflow-classifier.ts`) |
+| User | **Your objective, verbatim** — the same text the run's first user message would carry, bounded by the same `AGENT_MAX_OBJECTIVE_LENGTH` the route enforces |
+
+**Nothing of your database is in it.** No catalog is read, no statement is run, no connection is
+touched: there is no run yet, and this call reaches nothing but the model provider. That is also
+why it is not fenced — the fence marks database-derived content, and there is none here.
+
+Four bounds, all of them properties of the code rather than of intent:
+
+- **One call, no tools, no streaming, no retries.** `generateText` with `maxRetries: 0`.
+- **At most 16 output tokens** (`CLASSIFY_MAX_OUTPUT_TOKENS`), because the answer is one
+  identifier.
+- **Eight seconds** (`AGENT_WORKFLOW_CLASSIFY_TIMEOUT_MS`), after which the run opens unclassified;
+  the browser holds a longer ceiling of its own so it never preempts the server's.
+- **It is skipped entirely when you name the workflow yourself** under **Advanced**. That is not an
+  optimisation: an explicit choice spends no model tokens and no latency, and your objective does
+  not leave before the run.
+
+It never blocks a start. Every failure — a model error, a timeout, an empty reply, a reply naming
+no workflow this build serves — opens the run as an unclassified investigation, and the run's own
+record says so (`workflowReading`), so the rail can state the fallback as a fallback rather than as
+a verdict.
+
+**One consequence for an operator counting requests:** with Automatic, a run costs one model
+request more than it used to, and the route is metered out of the same `ai` bucket as the run
+routes for that reason.
 
 ---
 
@@ -372,6 +423,11 @@ oversized read is refused but still paid for at the database.
 
 Every one of these is **per drive**. A run resumed after a restart starts each of them again
 (`docs/BACKLOG.md` B6).
+
+**The classification is outside all of it**, by construction: it happens before a run exists, so
+there is no budget to charge it to. Its own bounds are its 8-second ceiling and its 16-token
+output cap, and what it sends is one objective — see
+[the classification, before any run](#the-classification-before-any-run).
 
 ---
 

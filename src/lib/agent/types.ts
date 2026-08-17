@@ -97,6 +97,80 @@ export type AgentRunWorkflowType =
 export const DEFAULT_AGENT_WORKFLOW_TYPE: AgentRunWorkflowType = "investigation";
 
 /**
+ * WHERE a run's workflow came from: the server classified the objective into it, or
+ * a person picked it.
+ *
+ * Not a second way to say what the workflow IS — nothing downstream branches on this,
+ * and `selectAgentTools` never sees it. It exists because the surface owes the user a
+ * different sentence in each case. A workflow the user chose needs no explanation; a
+ * workflow inferred from their objective needs both the claim ("opened as Optimize")
+ * and the way out of it ("change"), and that affordance has to survive a page reload,
+ * which is only possible if the provenance is on the run rather than in the rail's
+ * memory of the request it sent.
+ */
+export type AgentRunWorkflowSource = "inferred" | "chosen";
+
+/**
+ * Where a workflow came from when nothing said, and — like `DEFAULT_AGENT_WORKFLOW_TYPE`
+ * — a READING of history rather than a fallback.
+ *
+ * A header written before this field folds to `"chosen"` because there was no
+ * classifier then: the client sent an explicit `workflowType` on every open request,
+ * so those runs genuinely did carry a workflow somebody picked. Folding them to
+ * `"inferred"` would offer their readers a "change" affordance against a
+ * classification that never ran, and would credit a decision to a model that made
+ * none.
+ */
+export const DEFAULT_AGENT_WORKFLOW_SOURCE: AgentRunWorkflowSource = "chosen";
+
+/**
+ * What the READING of the objective produced, as against where the workflow came from.
+ *
+ * `workflowSource` says who decided; this says how that decision went. They are two
+ * facts because a classifier that fell back still produced an inferred workflow: the
+ * run genuinely was not asked for by anyone, and it genuinely was not read out of the
+ * objective either. Collapsing them would leave the surface stating one of those as
+ * the other, which is precisely what it may not do — the fallback must be said as a
+ * fallback and never presented as a verdict.
+ *
+ *  - `"classified"` — a classifier read the objective and named this workflow.
+ *  - `"unclassified"` — a classifier was asked and reached its documented fallback: a
+ *    model failure, a timeout, an empty reply, or a reply naming no workflow this
+ *    build serves (`workflow-classifier.ts`).
+ *  - `"unrecorded"` — no classifier outcome is recorded for this run. That is the
+ *    truth for every run somebody CHOSE the workflow of, since nothing classified
+ *    anything, and it is also the only honest answer for a header written before this
+ *    field existed.
+ *
+ * Nothing downstream branches on it; like `workflowSource` it exists so the surface can
+ * say a true sentence about a run it did not itself open.
+ */
+export type AgentRunWorkflowReading = "classified" | "unclassified" | "unrecorded";
+
+/**
+ * What a header that carries no reading means — and the reason it is `"unrecorded"`
+ * rather than either of the other two, which is the whole point of there being three.
+ *
+ * Both alternatives are claims the record cannot support. `"classified"` would present
+ * a fallback as a verdict on every run written by a writer that had a classifier and
+ * did not record its outcome — the exact defect this field was added to end, since a
+ * rail that reloads reads the record and nothing else. `"unclassified"` is the mirror
+ * error and is worse where it is visible: it asserts that a reading FAILED, and it can
+ * contradict the very workflow beside it, saying "your objective could not be
+ * classified, so the run investigates" over a run whose header says `operations`.
+ *
+ * So the absent case is folded to the one answer that is true of it: nothing here
+ * records how the workflow was read. A surface owes such a run a third sentence rather
+ * than one of the two it has, and `AgentRail` writes one.
+ *
+ * Note what this does NOT cost. A ledger written before the classifier existed folds
+ * its SOURCE to `"chosen"` (`DEFAULT_AGENT_WORKFLOW_SOURCE`), and a chosen run is owed
+ * no sentence at all — so on those runs this default is never read, and its whole
+ * reach is the generation of headers that carried a source without a reading.
+ */
+export const DEFAULT_AGENT_WORKFLOW_READING: AgentRunWorkflowReading = "unrecorded";
+
+/**
  * Which workflows can hand a user an answer — and therefore which ones auto-execute
  * is a meaningful setting for.
  *
@@ -615,6 +689,33 @@ export interface AgentRunRecord {
    * value, and no reader has to know which generation of writer produced its run.
    */
   readonly workflowType: AgentRunWorkflowType;
+  /**
+   * Whether the workflow above was inferred from the objective or picked by a person.
+   *
+   * On the record for the reason `mode` and `workflowType` are — a reader that
+   * rehydrates after a reload must see what the run was opened with — though the
+   * consequence is narrower: nothing the run DOES depends on it, only what the
+   * surface says about it.
+   *
+   * Required here and optional on the ledger header, the same compatibility story the
+   * two fields above have. A header written before the field folds to `"chosen"`;
+   * `DEFAULT_AGENT_WORKFLOW_SOURCE` carries the reasoning.
+   */
+  readonly workflowSource: AgentRunWorkflowSource;
+  /**
+   * How the reading that produced that workflow went, when one was made.
+   *
+   * On the record for the reason `workflowSource` is, and it is the same reason twice:
+   * the sentence the surface owes has to survive a reload, and a rail that rehydrates
+   * from the ledger holds no memory of the classify request it never made. Without it
+   * the provenance was durable and its OUTCOME was not, so a reloaded rail read a
+   * fallback back to the user as a verdict.
+   *
+   * Required here and optional on the ledger header, the same compatibility story the
+   * three fields above have. A header written before the field folds to
+   * `"unrecorded"`; `DEFAULT_AGENT_WORKFLOW_READING` carries the reasoning.
+   */
+  readonly workflowReading: AgentRunWorkflowReading;
   /**
    * Whether this run may hand its answer's statement to the editor to be RUN there,
    * subject to the gate in `auto-execute.ts`.
