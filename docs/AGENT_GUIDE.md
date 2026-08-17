@@ -205,7 +205,9 @@ it, like any other. On PostgreSQL that is the usual case — `pg_stat_activity`,
 `pg_stat_user_indexes` are ordinary tables you select from — so an Operate plan on PostgreSQL
 typically hands you a monitoring query you can run on the spot. This is not limited to SQL engines:
 on Redis the same plan wrote `INFO memory`, `CLIENT LIST` and `SLOWLOG GET 10` into a block your
-Redis editor runs. Where a reading genuinely cannot be written down — a server-status call with no
+Redis editor runs, and on MongoDB it wrote `db.currentOp(...)`, `db.serverStatus()`, `db.stats()`
+and a `db.system.profile.find(...)` — four blocks, on an engine that speaks no SQL at all and where
+an Analyze plan correctly refuses to draft anything. Where a reading genuinely cannot be written down — a server-status call with no
 form the editor accepts — the plan says it in that engine's own terms and gives you no block, which
 is a complete answer rather than a shortfall. What it may put in a block is bounded to what the
 engine reports about **itself**; an Operate plan does not draft queries over your own tables, and the

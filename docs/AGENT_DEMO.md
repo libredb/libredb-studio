@@ -34,7 +34,22 @@ inferred from the code.
 **Read the table this way.** Plan mode opens on every engine — it runs no statement of yours on any
 of them — but it is only *grounded* (case 18) on PostgreSQL and SQLite, because only those two
 capture a schema inventory and the engine's own size estimates. Ungrounded, it has nothing to draft
-a statement against and says so instead. Operate reads what the engine reports about itself, so it needs no SQL and reaches
+a statement against and says so instead.
+
+**"Verified" in the Plan column does not mean "useful for the same things", and on an ungrounded
+engine the workflow decides which.** Driven on MongoDB on 2026-08-17: *"Which customers placed the
+most orders? Write me the query"* opened as Analyze and came back with **no statement at all** — the
+`NO STATEMENT:` refusal, in its own words *"This run was given no inventory of this database. What
+collection and field names should I use?"*, and zero **Apply to editor** controls. That is the mode
+working correctly rather than failing: the collections are right there in the sidebar, but the
+sidebar reads them through the provider while grounding reads them through a composed catalog
+statement, which exists for PostgreSQL and SQLite only. The same connection asked *"what would you
+check first if this server were slow"* opened as Operate and handed back four applicable blocks —
+`db.currentOp(...)`, `db.serverStatus()`, `db.stats()`, `db.system.profile.find(...)`. **So on an
+ungrounded engine, Operate is the workflow that still hands you something to run, and the schema
+workflows are the ones that correctly refuse.** Do not promise a room that plan mode is a query
+generator everywhere; it is a query generator where it is grounded, and an honest refusal where it
+is not. Operate reads what the engine reports about itself, so it needs no SQL and reaches
 everything. The other four workflows write SQL and need a database-native read-only statement path,
 which today only PostgreSQL and SQLite provide; everywhere else the run ends with *"The agent cannot
 run on this database engine: it offers no read-only execution profile."*
