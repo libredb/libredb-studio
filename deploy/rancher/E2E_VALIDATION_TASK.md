@@ -272,9 +272,13 @@ Common conventions for every scenario:
 - Add a second ClusterRepo of type Git pointing at the partner-charts fork
   (`https://github.com/yusuf-gundogdu/partner-charts`, branch `add-libredb-studio`).
 - Expect: the catalog card renders (name, icon, description from the PR content).
-- **Known and expected:** that branch still carries chart 0.1.3, whose default install
-  fails on required secrets - do NOT count that as a chart failure; this scenario only
-  previews catalog presentation. Record a screenshot/API dump of the card.
+- Since 2026-08-18 that branch carries chart 0.1.36 (appVersion 0.11.0), so the default
+  install works zero-config there as it does from the live Helm repo. The scenario still
+  only previews catalog presentation - installing from it is S1's job, not this one.
+- **Known and expected:** the card's description line comes from `Chart.yaml`, which
+  still names seven engines while the app-readme names ten. That mismatch is tracked in
+  `CATALOG_LISTING.md`; do NOT report it as a rendering failure. Record a
+  screenshot/API dump of the card.
 
 ## Phase 4 - UI evidence (best effort, do not block the matrix)
 
