@@ -127,7 +127,8 @@ As implemented (the first run surfaced ~1300 findings; the breakdown drove these
     warnings; disabling in oxlint avoids duplicate/contradictory reporting.
   - `no-shadow` (17) - same call as database; shadcn/ui vendored components shadow idiomatically.
   - `no-control-regex` (4) - intentional control-char matching in `logger.ts` log-injection sanitization.
-  - `react/no-unstable-nested-components` - the shadcn calendar + TanStack cell-renderer idiom.
+  - `react/no-unstable-nested-components` - the TanStack cell/header-renderer idiom
+    (`src/components/ResultsGrid.tsx`).
   - `import/no-named-as-default` - the monaco default+named export.
 - Scoped to tests via `overrides` (test idioms): `typescript/no-extraneous-class`, `no-useless-constructor`,
   `no-new` (constructor-throws assertions), `no-constant-binary-expression` (intentional falsy-class test data).

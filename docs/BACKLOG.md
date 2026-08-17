@@ -449,13 +449,16 @@ decision survives whether or not the bot re-raises them under the `bun` ecosyste
 
 - **`@tanstack/react-table` 8 -> 9, `framer-motion` 12 -> 13, `eslint` 9 -> 10** — done; this entry
   covers only what was left behind.
+- **`react-day-picker` 9 -> 10** — resolved by removal, not by upgrade. Its only importer was the
+  vendored `src/components/ui/calendar.tsx`, which nothing imported in turn; both are gone, so there
+  is no major left to take. Re-add the dependency only alongside a component that uses it.
 - **`ioredis` 5 -> 6** — the Redis provider maps `SCAN`/`INFO`/`SLOWLOG`/`CLIENT LIST` onto the
   SQL-oriented interface, so a client major needs the provider triad re-verified against a live
   server, not a type-check.
 - **`oracledb` 6 -> 7** — thick/thin mode and the prebuilt binaries are what the Docker image and the
   AppImage build depend on; check those before the API.
-- **`react-day-picker` 9 -> 10** and **`lucide-react` 0.562 -> 1.31** — UI-visible, and lucide's 1.0
-  is its first stable major, so icon names are the risk.
+- **`lucide-react` 0.562 -> 1.31** — UI-visible, and lucide's 1.0 is its first stable major, so icon
+  names are the risk.
 - **`@types/node` 25 -> 26** — deferred for a reason worth stating: the runtime images are on Node 26
   (#380) but `engines.node` still declares `>=24.0.0`. Typing against 26 would let code compile that
   breaks on the floor the package advertises. Decide the floor first, then move the types to match
@@ -463,6 +466,20 @@ decision survives whether or not the bot re-raises them under the `bun` ecosyste
 
 `@zumer/snapdom` is pinned exactly (`2.15.0`, no caret) on purpose — see the ER-diagram export work
 — and is not part of this list.
+
+### P5. The rest of the unused shadcn primitives keep their dependencies alive
+
+Dropping `react-day-picker` exposed the general case. `knip.json` lists `src/components/ui/**/*.{ts,tsx}`
+as an *entry* glob, so every vendored shadcn file is a root: knip never reports one as unused, and the
+package it imports therefore counts as a used dependency. Roughly twenty primitives under
+`src/components/ui/` have no importer at all, and several are the sole reason a package is installed —
+`carousel` -> `embla-carousel-react`, `form` -> `react-hook-form`, `input-otp` -> `input-otp`, plus
+`@radix-ui/react-accordion`, `-aspect-ratio`, `-avatar`, `-collapsible`, `-hover-card`.
+
+Deciding this is not a bump: either accept the vendored set as a deliberate on-hand library (and say so
+in `CLAUDE.md`, which today says nothing about it), or sweep the orphans and their packages the way
+`calendar.tsx` went. Until then every Dependabot major on one of those packages costs a review for a
+component nothing renders. Reproduce the list with a per-file importer count over `src/components/ui/`.
 
 ---
 

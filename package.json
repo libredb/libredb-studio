@@ -192,7 +192,6 @@
     "oracledb": "^6.10.0",
     "pg": "^8.23.0",
     "react": "^19.2.8",
-    "react-day-picker": "^9.14.0",
     "react-dom": "^19.2.8",
     "react-hook-form": "^7.85.0",
     "react-resizable-panels": "^4.12.2",
