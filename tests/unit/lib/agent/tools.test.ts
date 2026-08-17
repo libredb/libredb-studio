@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { asSchema } from "ai";
+import { z } from "zod";
 import {
   AGENT_WORKFLOW_BUDGETS,
   AGENT_EXECUTION_PROFILE,
@@ -433,21 +435,25 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
   describe("a presentation the model serialized instead of nesting", () => {
     const analysis = (over: Partial<AgentToolContext> = {}) => harness({ workflowType: "data-analysis", ...over });
 
-    /** A read this run took, plus the ledger entries and the one citing claim a report needs. */
-    const readAndCite = async (context: AgentToolContext) => {
+    /**
+     * A read this run took, plus the full ledger `present_answer` reads: the drafted statement
+     * AND the completed artifact. Every test that reaches the schema shares it deliberately,
+     * including the ones expecting a refusal — with a COMPLETE ledger behind them, the only thing
+     * left for the tool to object to is the input, so an `INVALID_TOOL_INPUT` cannot be an
+     * `ANSWER_STATEMENT_UNKNOWN` or an `ANSWER_ARTIFACT_UNKNOWN` wearing the assertion's colours.
+     *
+     * The table-driven passthrough cases below deliberately do NOT use it: they pass an empty
+     * ledger because they assert on `readSerializedPresentation`, which runs before any ledger
+     * guard, and a real read there would buy nothing but time.
+     */
+    const readWithLedger = async (context: AgentToolContext) => {
       const outcome = await runReadQueryTool(context, { sql: "SELECT id FROM orders" });
       if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
       const events: AgentRunEvent[] = [
         { kind: "statement-drafted", atMs: 1, stepId: "step_1", sql: "SELECT id FROM orders", rationale: "r" },
         { kind: "tool-completed", atMs: 2, stepId: "step_1", artifact: outcome.artifact },
       ];
-      const claims = [
-        {
-          claim: "orders has rows",
-          evidence: [{ source: "artifact" as const, correlationId: outcome.artifact.correlationId }],
-        },
-      ];
-      return { artifact: outcome.artifact, events, input: { claims } };
+      return { artifact: outcome.artifact, events };
     };
 
     /*
@@ -460,34 +466,31 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
     */
     test("accepts a presentation the model serialized, because the content was never the problem", async () => {
       const h = analysis();
-      const outcome = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
-      if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
-      const events: AgentRunEvent[] = [
-        { kind: "statement-drafted", atMs: 1, stepId: "step_1", sql: "SELECT id FROM orders", rationale: "r" },
-        { kind: "tool-completed", atMs: 2, stepId: "step_1", artifact: outcome.artifact },
-      ];
+      const { artifact, events } = await readWithLedger(h.context);
 
       const answer = presentAnswerTool(
         h.context,
         { runId: h.context.runId, events, autoExecute: false },
-        { artifact: outcome.artifact.correlationId, presentation: JSON.stringify({ kind: "table" }) },
+        { artifact: artifact.correlationId, presentation: JSON.stringify({ kind: "table" }) },
       );
 
-      expect(answer.kind).toBe("answered");
+      if (answer.kind !== "answered") throw new Error(`expected an answer, got ${answer.kind}`);
+      // Asserted on the RECORDED presentation, not only on the outcome kind: the run that
+      // motivated this reads the presentation back out to render, so an accepted call that
+      // recorded something other than what the model serialized would be the same failure
+      // one layer later.
+      expect(answer.answer.presentation).toEqual({ kind: "table" });
+      expect(answer.answer.artifact.correlationId).toBe(artifact.correlationId);
     });
 
     test("still refuses a serialized presentation of the wrong shape: the schema is not relaxed", async () => {
       const h = analysis();
-      const outcome = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
-      if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
-      const events: AgentRunEvent[] = [
-        { kind: "tool-completed", atMs: 2, stepId: "step_1", artifact: outcome.artifact },
-      ];
+      const { artifact, events } = await readWithLedger(h.context);
 
       const answer = presentAnswerTool(
         h.context,
         { runId: h.context.runId, events, autoExecute: false },
-        { artifact: outcome.artifact.correlationId, presentation: JSON.stringify({ kind: "spreadsheet" }) },
+        { artifact: artifact.correlationId, presentation: JSON.stringify({ kind: "spreadsheet" }) },
       );
 
       expect(answer.kind).toBe("unavailable");
@@ -497,20 +500,72 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
 
     test("refuses a string that is not JSON at all, in the contract's own words", async () => {
       const h = analysis();
-      const outcome = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
-      if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
-      const events: AgentRunEvent[] = [
-        { kind: "tool-completed", atMs: 2, stepId: "step_1", artifact: outcome.artifact },
-      ];
+      const { artifact, events } = await readWithLedger(h.context);
 
       const answer = presentAnswerTool(
         h.context,
         { runId: h.context.runId, events, autoExecute: false },
-        { artifact: outcome.artifact.correlationId, presentation: "a table please" },
+        { artifact: artifact.correlationId, presentation: "a table please" },
       );
 
       expect(answer.kind).toBe("unavailable");
+      if (answer.kind !== "unavailable") return;
+      // The reason code, not merely the refusal: a read that fell back to a default shape
+      // instead of leaving the string alone would still refuse this call, just from a later
+      // guard, and only naming the code tells the two apart.
+      expect(answer.reasonCode).toBe("INVALID_TOOL_INPUT");
     });
+
+    test("reads the serialization ONCE: a doubly-serialized presentation is still refused", async () => {
+      // The read accepts an encoding the model chose; it does not keep unwrapping until
+      // something fits. One read of this leaves a STRING where an object belongs, and the
+      // schema refuses that exactly as it refuses any other wrong shape.
+      const h = analysis();
+      const { artifact, events } = await readWithLedger(h.context);
+
+      const answer = presentAnswerTool(
+        h.context,
+        { runId: h.context.runId, events, autoExecute: false },
+        { artifact: artifact.correlationId, presentation: JSON.stringify(JSON.stringify({ kind: "table" })) },
+      );
+
+      expect(answer.kind).toBe("unavailable");
+      if (answer.kind !== "unavailable") return;
+      expect(answer.reasonCode).toBe("INVALID_TOOL_INPUT");
+    });
+
+    /*
+      The shapes the read has to pass through untouched. A tool's raw input is whatever the model
+      emitted, so it is not necessarily the object this tool's arguments are supposed to be — and
+      the read runs BEFORE the schema, which means it is the one thing here with no contract
+      protecting it. Each of these has to reach the schema unchanged, so that the refusal a caller
+      sees is the contract's and never a crash inside the read.
+
+      `undefined` is in the table because it is the ONLY case that discriminates the read's guard.
+      Measured by mutation: weakening `typeof input !== "object" || input === null` to
+      `input === null` leaves the other four cases byte-identical — `typeof null === "object"`, so
+      the null case is caught either way, and a string or a plain object destructures without
+      complaint whichever guard runs. `undefined` is what the weakened guard lets through, and
+      destructuring it throws `Cannot destructure property 'presentation'` — a crash where the
+      contract's own refusal belongs.
+    */
+    for (const [described, input] of [
+      ["is not an object at all", "present the table"],
+      ["is null", null],
+      ["is undefined", undefined],
+      ["carries no presentation key", { artifact: "corr-real" }],
+      ["carries a presentation that is not a string", { artifact: "corr-real", presentation: 7 }],
+    ] as const) {
+      test(`hands input that ${described} to the schema untouched`, () => {
+        const h = analysis();
+
+        const answer = presentAnswerTool(h.context, { runId: h.context.runId, events: [], autoExecute: false }, input);
+
+        expect(answer.kind).toBe("unavailable");
+        if (answer.kind !== "unavailable") return;
+        expect(answer.reasonCode).toBe("INVALID_TOOL_INPUT");
+      });
+    }
   });
 
   /*
@@ -603,6 +658,107 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       expect(outcome.modelText).not.toContain("statement this layer will run");
     });
   });
+});
+
+/*
+  A tool has TWO contracts, and only one of them is written down deliberately.
+
+  The runtime contract is what `inputSchema.safeParse` refuses. The ADVERTISED contract is the
+  JSON Schema the SDK derives from that same object and puts in front of the model — and the two
+  are derived differently enough to disagree. Measured on this tree over every entry of
+  `AGENT_TOOL_DEFINITIONS`: a `z.preprocess` wrapper produces a `ZodPipe`, and in input mode a
+  `ZodPipe` is not counted as a required key, so `present_answer` refused a call missing
+  `presentation` while advertising `artifact` as its only required key.
+
+  That gap is not a cosmetic one. `present_answer` is a ledger-only tool whose refusal records no
+  event, so a model that OBEYS the advertised contract is refused with `INVALID_TOOL_INPUT`, the
+  run is scored `no-answer`, and the ledger holds nothing that says why — the same invisible
+  failure the serialized-presentation fix above exists to remove, re-created for correct models
+  instead of sloppy ones.
+
+  Asserted over EVERY tool rather than over `present_answer`, because the invariant is what
+  protects the next tool: whatever a future schema is built from, a key the runtime demands has to
+  be a key the model was told to send. Both sets are derived from the schema itself, never listed
+  here, so a new tool joins the assertion by existing — as a no-op for the key-by-key half if it
+  requires nothing (`inspect_schema` is that case today: every field optional, so both sets are
+  empty), which is why the io-pair half below is not redundant with it.
+
+  Two assertions per tool, because neither one alone is the invariant:
+
+  - The KEY-BY-KEY one compares the required keys of the two contracts, and it is the half that
+    names the failure in the reader's own terms ("advertises X but refuses Y"). It reads the top
+    level only, deliberately: a nested issue is a shape complaint about a key that WAS sent, so
+    counting it would report keys the runtime never demanded. The cost is that it sees exactly one
+    level — measured with the old wrapper moved one level down, its two sets agree while the parser
+    really does refuse `outer.inner`.
+  - The IO-PAIR one covers every depth and names nothing. `io: "input"` and `io: "output"` differ
+    only where a transform sits between them, so two identical renderings prove there is no
+    transform ANYWHERE in the tree, nested or not. Measured: on this tree the pair is identical for
+    all nine tools; with the `z.preprocess` wrapper in place exactly one tool's pair differs, and
+    the same wrapper at depth two also differs while the key-by-key half stays green.
+
+    It is a ban on transforms rather than a detector of the dangerous direction, and that is a
+    deliberate over-reach: `.default()` would also trip it, though it errs the safe way (the model
+    is told a key is optional and the parser accepts its omission). No tool schema here uses one.
+    A tool that wants a default should say `.optional()` and apply the fallback in the tool body,
+    where the reader can see it — the alternative is teaching this test to tell the two directions
+    apart, which buys a weaker invariant than "these schemas do not transform".
+*/
+describe("the contract a tool advertises and the contract it enforces are one contract", () => {
+  /** The keys the runtime itself treats as mandatory, read from what it refuses an empty call for. */
+  const refusedWhenMissing = (schema: z.ZodType<unknown>): string[] => {
+    const result = schema.safeParse({});
+    if (result.success) return [];
+    const paths = result.error.issues.filter((issue) => issue.path.length === 1).map((issue) => String(issue.path[0]));
+    return [...new Set(paths)].sort();
+  };
+
+  /** The keys the model is told are mandatory, read from the schema the SDK itself builds. */
+  const advertisedAsRequired = (schema: z.ZodType<unknown>): string[] => {
+    // Through the SDK's own `asSchema` rather than a hand-copied `toJSONSchema` call, so that the
+    // advertised contract this asserts on is the one `declaredTools()` (src/lib/agent/
+    // investigation.ts) hands the model, derived by the same code. Copying the conversion options
+    // out of node_modules/@ai-sdk/provider-utils/src/schema.ts would leave this test green through
+    // exactly the SDK upgrade that reopens the gap.
+    const { jsonSchema } = asSchema(schema) as { jsonSchema: { required?: readonly string[] } };
+    return [...(jsonSchema.required ?? [])].sort();
+  };
+
+  /**
+   * The same schema rendered in both directions. `asSchema` cannot serve this one: it exposes a
+   * single derivation, the input-mode one, and the whole point here is to hold that rendering
+   * against its output-mode counterpart — so the two modes have to be asked for directly.
+   */
+  const ioPair = (schema: z.ZodType<unknown>) => ({
+    input: z.toJSONSchema(schema, { io: "input", target: "draft-7" }),
+    output: z.toJSONSchema(schema, { io: "output", target: "draft-7" }),
+  });
+
+  for (const [name, definition] of Object.entries(AGENT_TOOL_DEFINITIONS)) {
+    test(`${name} advertises every key it refuses a call for omitting`, () => {
+      const refused = refusedWhenMissing(definition.inputSchema);
+      const advertised = advertisedAsRequired(definition.inputSchema);
+      const undeclared = refused.filter((key) => !advertised.includes(key));
+
+      expect(
+        undeclared,
+        `${name} advertises required [${advertised.join(", ")}] but refuses a call omitting [${refused.join(", ")}]: ` +
+          `a model obeying the advertised contract omits ${undeclared.join(", ")} and is refused`,
+      ).toEqual([]);
+    });
+
+    test(`${name} reads the same in input mode and output mode, at every depth`, () => {
+      const { input, output } = ioPair(definition.inputSchema);
+
+      expect(
+        input,
+        `${name}'s schema renders differently for the model than for the parser, so something in it ` +
+          `transforms its input. This does not say which direction the difference runs — a ZodPipe ` +
+          `drops a key the runtime demands, a .default() adds one the runtime does not — so read ` +
+          `the diff before deciding whether it is the dangerous one.`,
+      ).toEqual(output);
+    });
+  }
 });
 
 describe("runReadQueryTool — the allowed path", () => {

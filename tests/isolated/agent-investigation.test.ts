@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
+import { streamText, tool } from "ai";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_REPORT_RESERVE_TURNS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -17,6 +18,7 @@ import { resolveAgentProviderAdapter } from "@/lib/agent/provider-registry";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService, AgentRunServiceError } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
+import { AGENT_TOOL_DEFINITIONS } from "@/lib/agent/tools";
 import type { AgentRunActor, AgentRunEvent, AgentRunRecord, AgentRunWorkflowType } from "@/lib/agent/types";
 import { UNTRUSTED_CONTENT_BEGIN } from "@/lib/agent/untrusted-content";
 import { QueryError } from "@/lib/db/errors";
@@ -2631,5 +2633,143 @@ describe("the handover an answer records comes from the run's own setting", () =
     const transcript = (script.turns.at(-1) as Turn).transcript;
     expect(transcript).toContain("This run has already recorded its answer");
     expect(transcript).toContain("compose_report");
+  });
+});
+
+/*
+  A presentation the model SERIALIZED, driven through the real SDK (#406).
+
+  `tests/unit/lib/agent/tools.test.ts` calls `presentAnswerTool` directly, so every
+  one of its cases enters the tool with whatever object the test wrote. That is not
+  the path a model's arguments take. Between the wire and the tool sits `streamText`,
+  which validates the model's arguments against the SAME `inputSchema`
+  `declaredTools()` handed it — and that schema, correctly, does not accept a string
+  where the presentation object belongs. Measured against `ai@7.0.59`: it throws
+  `InvalidToolInputError` at `doParseToolCall`, CATCHES it, re-parses the raw JSON
+  without a schema and enqueues the tool-call part anyway with `invalid: true`, plus a
+  `tool-error` part and its own `role: "tool"` result message.
+
+  So the serialized presentation reaches `readSerializedPresentation` only because of
+  two properties of `takeTurn` that nothing else names: it pushes every `tool-call`
+  part without consulting `part.invalid` (src/lib/agent/investigation.ts:1042), and it
+  keeps only `role: "assistant"` response messages, discarding the SDK's error result
+  (src/lib/agent/investigation.ts:1069). Hardening the first to
+  `part.invalid !== true` — the shape `capability-probe.ts:279` already uses, so it is
+  a natural edit rather than a hypothetical one — deletes #406's entire behaviour
+  gain: the call is dropped, the turn looks like "the model stopped", and the run is
+  scored with no answer and nothing on the ledger saying why.
+
+  Measured by applying that edit: 7 of this file's 83 tests fail with it, and none of
+  the other six was watching THIS. They all sit on the REFUSAL path — a malformed
+  argument list must come back as a typed `INVALID_TOOL_INPUT`, and an unoffered tool
+  as "no such tool" — where an invalid call being dropped instead of dispatched costs
+  the model its explanation. The success path, where a call the SDK flags is
+  nevertheless one the tool can serve, had no test at all before this one, and it is
+  the only path #406 exists to buy.
+*/
+describe("a presentation the model serialized reaches the tool through the SDK", () => {
+  /*
+    The measured shape, not a simplified one. `qwen3.8` sent a chart spec as a JSON
+    string; a serialized `{ kind: "table" }` would round-trip through one `JSON.parse`
+    without proving the nested spec survives, and the nested object is where a
+    field-by-field re-encoding would have gone wrong.
+  */
+  const SERIALIZED_CHART = JSON.stringify({
+    kind: "chart",
+    spec: { type: "bar", x: "month", y: ["total"], caption: "Orders by month" },
+  });
+
+  const ANSWERABLE = "SELECT month, total FROM orders";
+
+  /** The two-row numeric result a chart can legally show; catalog reads answer as usual. */
+  const bootWithChartableRead = () =>
+    boot(freshDataDir(), {
+      answer: async (sql) =>
+        sql.includes(ANSWERABLE)
+          ? queryResult({
+              rows: [
+                { month: "2026-01", total: 11 },
+                { month: "2026-02", total: 22 },
+              ],
+              fields: ["month", "total"],
+              rowCount: 2,
+            })
+          : queryResult(),
+    });
+
+  test("the run is ANSWERED, and the SDK's own refusal never reaches the transcript", async () => {
+    const b = bootWithChartableRead();
+    const run = await startRun(b, "agent", "data-analysis");
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: ANSWERABLE, rationale: "the question, in SQL" }),
+      (turn: Turn): Response =>
+        chatToolCallStream(
+          "present_answer",
+          JSON.stringify({ artifact: correlationIdIn(turn.transcript), presentation: SERIALIZED_CHART }),
+          "call_answer",
+        ),
+      answersProse("done"),
+    );
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const composed = (await eventsOf(b.store, run.runId)).find((event) => event.kind === "answer-composed");
+    if (composed?.kind !== "answer-composed") throw new Error("the serialized presentation composed no answer");
+    // The spec inside the string, read back whole — not a table fallback, which is
+    // what a presentation the tool failed to understand would have produced.
+    expect(composed.presentation).toEqual({
+      kind: "chart",
+      spec: { type: "bar", x: "month", y: ["total"], caption: "Orders by month" },
+    });
+
+    // And the second dependency, on the turn after the answer: exactly ONE tool
+    // result for that call id — this loop's. The SDK authored one too, and two
+    // results for one `tool_call_id` is a transcript a real endpoint answers with a
+    // 400, which would wedge every later turn of the run rather than this one. The
+    // counterpart of the assertion at the "two results in the transcript" test above,
+    // which measures the same filter on the path where the call is REFUSED.
+    const messages = (script.turns[2]?.body.messages ?? []) as { role?: string; tool_call_id?: string }[];
+    expect(messages.filter((m) => m.role === "tool" && m.tool_call_id === "call_answer")).toHaveLength(1);
+  });
+
+  test("the SDK does mark that call invalid — the fact the dispatch above rests on", async () => {
+    // Driven through `streamText` with the tool declared exactly as `declaredTools()`
+    // declares it, because this is the claim the comment on `readSerializedPresentation`
+    // makes about a dependency this repository does not own. If a future `ai` release
+    // stops flagging the call, this test is where that shows up, and the read at the
+    // call boundary can stop being load-bearing.
+    const definition = AGENT_TOOL_DEFINITIONS.present_answer;
+    const script = scriptedModel(
+      (): Response =>
+        chatToolCallStream(
+          "present_answer",
+          JSON.stringify({ artifact: "corr_1", presentation: SERIALIZED_CHART }),
+          "call_answer",
+        ),
+    );
+
+    const stream = streamText({
+      model: (await modelOver(script.fetch)).model,
+      messages: [{ role: "user", content: OBJECTIVE }],
+      tools: { present_answer: tool({ description: definition.description, inputSchema: definition.inputSchema }) },
+      maxRetries: 0,
+      onError: () => {},
+    });
+
+    const calls: { invalid?: boolean; input: unknown }[] = [];
+    for await (const part of stream.fullStream) {
+      if (part.type === "tool-call") calls.push({ invalid: part.invalid, input: part.input });
+    }
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0] as { invalid?: boolean; input: { presentation?: unknown } };
+    expect(call.invalid).toBe(true);
+    // Unparsed, too: the SDK's fallback re-parse has no schema, so the string arrives
+    // at the tool exactly as the model wrote it. That is what the boundary read reads.
+    expect(typeof call.input.presentation).toBe("string");
   });
 });

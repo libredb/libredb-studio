@@ -488,8 +488,16 @@ const chartSpecSchema = z.strictObject({
  * them itself. A model-supplied statement would let an answer hand the user a
  * statement that produced something other than the result on screen.
  */
+const presentAnswerSchema = z.strictObject({
+  artifact: z.string().min(1),
+  presentation: z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("table") }),
+    z.strictObject({ kind: z.literal("chart"), spec: chartSpecSchema }),
+  ]),
+});
+
 /**
- * A nested object a model may have sent as a STRING of JSON, read back once.
+ * A presentation a model sent as a STRING of JSON, read back once before validation.
  *
  * Measured 2026-08-16: `qwen3.8` called `present_answer` three times with a correct artifact id
  * and a correct chart spec — right type, right x, right y, columns spelled as the result spells
@@ -503,33 +511,50 @@ const chartSpecSchema = z.strictObject({
  * persistently rejected despite conforming to the declared shape". It was.
  *
  * Read ONCE and never recursively: this accepts a serialization the model chose, it does not
- * invent a second encoding. The parsed value still goes through the same schema, so a string
- * holding the wrong shape is refused exactly as the object would have been — nothing is admitted
- * here that would not have been admitted written properly.
+ * invent a second encoding. The value still goes through the same schema, so a string holding the
+ * wrong shape is refused exactly as the object would have been — nothing is admitted here that
+ * would not have been admitted written properly.
+ *
+ * At the CALL BOUNDARY rather than inside the schema, and that placement is the whole of what
+ * makes it safe. Wrapping the field in `z.preprocess` instead would produce a `ZodPipe`, and the
+ * SDK derives the model's copy of the contract from this same object with
+ * `toJSONSchema(schema, { target: 'draft-7', io: 'input' })`
+ * (node_modules/@ai-sdk/provider-utils/src/schema.ts:251, reached from `declaredTools()` in
+ * src/lib/agent/investigation.ts) — where a `ZodPipe` is not counted as a required key. Measured
+ * over every entry of `AGENT_TOOL_DEFINITIONS` with that wrapper in place, `present_answer` was
+ * the ONLY tool whose two contracts disagreed: runtime `[artifact, presentation]` against
+ * advertised `[artifact]`, while all eight others matched exactly. So a model that OBEYED the
+ * advertised contract would send `artifact` alone and be refused — and because this tool is
+ * ledger-only, its refusal records no event and the run is scored `no-answer` with nothing saying
+ * why: the same invisible failure this fix exists to remove, re-created for correct models instead
+ * of sloppy ones. Reading here leaves the advertised schema byte-identical to what it always was.
+ *
+ * That placement puts a dependency between this read and the run loop, and it is worth naming
+ * because it is invisible from here. The SDK validates the model's arguments against this same
+ * strict schema BEFORE any of this runs, and a serialized presentation fails it: measured against
+ * `ai@7.0.59`, `doParseToolCall` throws, the SDK catches it, re-parses the raw JSON without a
+ * schema and enqueues the tool-call part anyway with `invalid: true`. So this function is reached
+ * only because `takeTurn` dispatches every tool-call part without consulting that flag
+ * (src/lib/agent/investigation.ts:1042). Hardening that line to `!part.invalid` would drop the call
+ * before it arrives here and silently undo this fix — and it is a plausible edit rather than an
+ * imagined one, because `capability-probe.ts:279` already treats the flag as meaningful
+ * (`part.invalid !== true`). `tests/isolated/agent-investigation.test.ts` drives the whole path
+ * through the real SDK so that edit fails a test rather than a run.
  */
-const jsonObjectOrString = <T extends z.ZodTypeAny>(schema: T) =>
-  z.preprocess((value) => {
-    if (typeof value !== "string") return value;
-    try {
-      return JSON.parse(value);
-    } catch {
-      // Left as the string it was: the schema below refuses it, and reporting a parse failure
-      // here would replace the contract's own wording with this function's.
-      return value;
-    }
-  }, schema);
+function readSerializedPresentation(input: unknown): unknown {
+  if (typeof input !== "object" || input === null) return input;
+  const { presentation } = input as { presentation?: unknown };
+  if (typeof presentation !== "string") return input;
+  try {
+    return { ...input, presentation: JSON.parse(presentation) };
+  } catch {
+    // Left as the string it was: the schema refuses it, and reporting a parse failure here would
+    // replace the contract's own wording with this function's.
+    return input;
+  }
+}
 
-const presentAnswerSchema = z.strictObject({
-  artifact: z.string().min(1),
-  presentation: jsonObjectOrString(
-    z.discriminatedUnion("kind", [
-      z.strictObject({ kind: z.literal("table") }),
-      z.strictObject({ kind: z.literal("chart"), spec: chartSpecSchema }),
-    ]),
-  ),
-});
-
-/** ONE presentation, rendered as the object the schema above accepts. */
+/** ONE presentation, rendered as the object `presentAnswerSchema` accepts for its `presentation`. */
 const showAs = (presentation: AgentAnswerPresentation): string => JSON.stringify(presentation);
 
 /**
@@ -2573,7 +2598,7 @@ export function presentAnswerTool(
     return unavailable("ANSWER_ALREADY_RECORDED");
   }
 
-  const parsed = parseToolInput(presentAnswerSchema, input);
+  const parsed = parseToolInput(presentAnswerSchema, readSerializedPresentation(input));
   if (!parsed.ok) {
     return {
       kind: "unavailable",
