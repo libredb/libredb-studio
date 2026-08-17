@@ -103,6 +103,13 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       // (get/put/delete/prefix/range), so there is no `UPDATE ... SET` for the
       // inline row editor to emit (issue #269).
       supportsInlineRowEdit: false,
+      // The embedded engine's catalog declares namespaces and columns, and nothing
+      // that references another namespace. There is no foreign key to read (#414).
+      declaresForeignKeys: false,
+      // The catalog namespaces are read from a bounded `kv.range` over 10000 keys and
+      // grouped by their prefix, so the rows are this server's summary of the keys that
+      // scan reached rather than objects the engine declares (#414).
+      tablesAreDerivedGroupings: true,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

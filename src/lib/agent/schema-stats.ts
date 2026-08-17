@@ -47,7 +47,12 @@ import type { DatabaseType, TableSchema } from "@/lib/types";
 
 /** Why a run has no statistics. All four are states the run continues from. */
 export type AgentStatisticsUnavailableCode =
-  /** No verified statistics composition for this engine. The run is ungrounded here. */
+  /**
+   * No verified statistics composition for this engine. The run has no size estimates
+   * here; it may still be grounded in a schema — since #414 that is the ORDINARY case
+   * on the nine engines whose inventory comes from their own provider, where
+   * `schemaKnown` is true and `statisticsShown` is false.
+   */
   | "DIALECT_HAS_NO_STATISTICS"
   /** The engine holds no statistics at all yet: SQLite before its first `ANALYZE`. */
   | "STATISTICS_NEVER_COLLECTED"

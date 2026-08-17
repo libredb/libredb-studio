@@ -21,14 +21,15 @@ import { AgentRunStore } from "@/lib/agent/run-store";
 import { AGENT_TOOL_DEFINITIONS } from "@/lib/agent/tools";
 import type { AgentRunActor, AgentRunEvent, AgentRunRecord, AgentRunWorkflowType } from "@/lib/agent/types";
 import { UNTRUSTED_CONTENT_BEGIN } from "@/lib/agent/untrusted-content";
-import { QueryError } from "@/lib/db/errors";
+import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
+import { KEY_PATTERN_LABELS, TABLE_LABELS } from "../fixtures/provider-labels";
 import { LLMAuthError } from "@/lib/llm/types";
-import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
+import type { ColumnSchema, DatabaseConnection, DatabaseType, QueryResult, TableSchema } from "@/lib/types";
 import {
   type Turn,
   answersProse,
@@ -128,12 +129,29 @@ interface BootOptions {
    * the drive's context capture succeed and take the pool away afterwards.
    */
   readonly acquireFails?: () => Error | undefined;
+  /**
+   * What the provider says when asked to describe its own schema (#414).
+   *
+   * Absent means a `getSchema()` that REJECTS, which is the shape a provider that
+   * cannot describe this database really has: `getSchema` is a required member of
+   * `DatabaseProvider`, so no provider reaching this path is missing it, and the
+   * reachable failure is a rejection. Supplying one is how a run on a dialect with no
+   * catalog plan becomes GROUNDED, which is the case #414 exists for.
+   */
+  readonly describesSchema?: () => Promise<readonly TableSchema[]>;
 }
 
 function boot(dataDir: string, options: BootOptions = {}): Boot {
   const answer = options.answer ?? (async () => queryResult());
   const queryReadOnly = mock((sql: string) => answer(sql));
-  const provider = { queryReadOnly } as unknown as DatabaseProvider;
+  const provider = {
+    queryReadOnly,
+    getSchema:
+      options.describesSchema ??
+      (async (): Promise<readonly TableSchema[]> => {
+        throw new QueryError("this database refused to describe its own schema");
+      }),
+  } as unknown as DatabaseProvider;
   const acquireProvider = mock(async () => {
     const failure = options.acquireFails?.();
     if (failure) throw failure;
@@ -162,6 +180,7 @@ function boot(dataDir: string, options: BootOptions = {}): Boot {
     resources: {
       connection: CONNECTION,
       capabilities: CAPABILITIES,
+      labels: TABLE_LABELS,
       registry: createCanonicalOperationRegistry(),
       scope: createTargetScope("conn_1"),
       tracker,
@@ -1224,11 +1243,399 @@ describe("planning mode runs no statement of the user's", () => {
       // themselves are in every run's rules, which is why the header is what this
       // looks for.)
       expect(script.turns[0]?.transcript).not.toContain("table(s) read at epoch");
-      // It is told WHICH engine, in the server's own voice and without naming a tool
-      // it does not have (#350).
-      expect(script.turns[0]?.transcript).toContain("on this mongodb connection");
+      // It is told WHY, in the capture's own words and without naming a tool it does
+      // not have (#350). Until #414 this note was written by `investigation.ts` and
+      // named the engine ("on this mongodb connection"), because the engine WAS the
+      // reason: `CATALOG_PLANS` refused the dialect before touching anything. Now the
+      // dialect only decides which of two readings is taken, and what this run is told
+      // is the thing that actually stopped it — the same forwarding `operations` has
+      // done since #411, for the reason #411 recorded. What stopped it is a
+      // `getSchema()` that rejected, which is the only shape "this provider cannot
+      // describe the database" has: the method is required on `DatabaseProvider`.
+      expect(script.turns[0]?.transcript).toContain("this database refused to describe its own schema");
       expect(script.turns[0]?.transcript).not.toContain("inspect_schema");
-      expect(b.acquireProvider).not.toHaveBeenCalled();
+      // Since #414 the capture DOES acquire a provider here, under the operations
+      // profile, and asks it to describe itself; this fixture's provider carries only
+      // `queryReadOnly`, so the reading is refused and the run is ungrounded exactly
+      // as it was. What has not changed, and is what this line now pins, is that no
+      // STATEMENT is composed for a dialect no catalog is written for.
+      expect(b.queryReadOnly).not.toHaveBeenCalled();
+    });
+
+    /*
+      #414. A dialect with no catalog plan is no longer refused on the dialect: it asks
+      its PROVIDER for the same inventory, and on nine engines it gets one. Everything
+      the run is then TOLD has to change with it, because four separate sentences were
+      written for the composed path and are false on this one — how the reading was
+      taken, what language to answer in, what an empty relations block means, and what
+      the statistics block's absence means.
+
+      The fixture is deliberately a `mongodb` connection with `queryLanguage: "json"`
+      and `declaresForeignKeys: false`, which is what that provider really declares.
+    */
+    describe("a plan run grounded through the engine's own schema inspection", () => {
+      const column = (name: string): ColumnSchema => ({ name, type: "string", nullable: true, isPrimary: false });
+      const PROVIDER_INVENTORY: readonly TableSchema[] = [
+        { name: "orders", columns: [column("customerId")], indexes: [], foreignKeys: [] },
+        { name: "customers", columns: [column("name")], indexes: [], foreignKeys: [] },
+      ];
+
+      const planOnProvider = async (
+        language: ProviderCapabilities["queryLanguage"],
+      ): Promise<{ readonly rules: string; readonly transcript: string }> => {
+        const b = boot(freshDataDir(), { describesSchema: async () => PROVIDER_INVENTORY });
+        const run = await startRun(b, "planning");
+        const script = scriptedModel(answersProse("a plan"));
+
+        await runInvestigation(run.runId, {
+          service: b.service,
+          model: await modelOver(script.fetch),
+          resources: {
+            ...b.resources,
+            connection: { ...CONNECTION, type: "mongodb" },
+            capabilities: { ...CAPABILITIES, queryLanguage: language, declaresForeignKeys: false },
+          },
+        });
+
+        const turn = script.turns[0] as Turn;
+        return { rules: rulesOf(turn), transcript: turn.transcript };
+      };
+
+      /*
+        The other half of the 2x2. WHO read it and HOW are separate facts, and a run
+        handed a provider-sourced reading out of the process hold has to say both — the
+        `earlier-run` sentence written for the composed path would tell it the server
+        composed a catalog read that never happened.
+      */
+      test("a run handed a provider reading by an earlier run says both who read it and how", async () => {
+        // The first fills the hold; `beforeEach` cleared it, so nothing else can.
+        await planOnProvider("json");
+        const { transcript } = await planOnProvider("json");
+
+        expect(transcript).toContain("by an earlier run on this connection");
+        expect(transcript).toContain("through the engine's own schema inspection");
+        expect(transcript).toContain("so this run did not have to read it again");
+        expect(transcript).not.toContain("a read-only catalog read the server composed");
+        // The bound travels on both arms: it is a property of the reading, not of who
+        // paid for it.
+        expect(transcript).toContain("not proof that nothing else exists");
+      });
+
+      test("it is grounded, and the inventory it was shown is this engine's own", async () => {
+        const { rules, transcript } = await planOnProvider("json");
+
+        expect(rules).toContain("A schema inventory for this database is in this conversation");
+        expect(rules).not.toContain("No schema inventory is available to this run");
+        expect(transcript).toContain("orders");
+        expect(transcript).toContain("customers");
+      });
+
+      /*
+        The preface is the run describing to the model how it came by what it knows,
+        and the composed sentence is false here in both directions: the server wrote no
+        statement, and what it did instead is the reading the sidebar takes. Saying
+        otherwise would be the false self-description this repository keeps finding,
+        stated to the model itself.
+      */
+      test("the preface says the engine described itself, not that the server composed a catalog read", async () => {
+        const { transcript } = await planOnProvider("json");
+
+        expect(transcript).toContain("through the engine's own schema inspection");
+        expect(transcript).toContain("the same reading this product performs when it lists your tables");
+        expect(transcript).not.toContain("a read-only catalog read the server composed");
+      });
+
+      /*
+        The bound nobody had stated. MongoDB stops at 200 collections, Redis scans 1000
+        keys, LibreDB 10000 — so a provider inventory can be a PARTIAL reading carrying
+        a whole-looking table count, and a model told only "here is the inventory" would
+        conclude from a table's absence that it does not exist. The clause also refuses
+        the easier claim that nothing of the data was touched: on this engine the field
+        names are inferred from a sample of the user's own documents.
+      */
+      test("the preface says the reading is bounded and may have sampled rather than enumerated", async () => {
+        const { transcript } = await planOnProvider("json");
+
+        expect(transcript).toContain("infers a table's fields from a sample of its own rows");
+        expect(transcript).toContain("not proof that nothing else exists");
+      });
+
+      /*
+        The deliverable stops assuming SQL. The fence TAG does not move with it — it is
+        the canonical type-id in both arms, because `isQueryFenceTag` is a total record
+        over `DatabaseType` and a draft the model fences as ```javascript records no
+        `plan-statement-drafted` event at all.
+      */
+      test("a json engine is asked for its own language, in a block still tagged with its type-id", async () => {
+        const { rules } = await planOnProvider("json");
+
+        expect(rules).toContain("written in this mongodb database's own query language");
+        expect(rules).toContain("This engine speaks no SQL");
+        expect(rules).toContain("Put it in a single fenced block tagged `mongodb`");
+        // The SQL arm's own opening, which must not also be present: one message with
+        // two contracts in it leaves the model to pick (the #350 failure).
+        expect(rules).not.toContain("Produce ONE runnable statement: the statement that answers the question.");
+        // And the vocabulary warning, because this product records every engine's
+        // inventory under the words table and column.
+        expect(rules).toContain("those are the names of its own objects and of the fields inside them");
+      });
+
+      test("a SQL engine reached the same way still gets the SQL contract, so the LANGUAGE decides and not the path", async () => {
+        const { rules, transcript } = await planOnProvider("sql");
+
+        expect(transcript).toContain("through the engine's own schema inspection");
+        expect(rules).toContain("Produce ONE runnable statement: the statement that answers the question.");
+        expect(rules).not.toContain("This engine speaks no SQL");
+      });
+
+      /*
+        The relations block's empty sentence hedged between "that may be how the schema
+        is" and "the keys may be enforced by the application" — two claims about a
+        database that COULD declare a foreign key and did not. This engine cannot, and
+        the third sentence says so instead of inviting a reader to wonder about a schema
+        decision nobody made.
+      */
+      test("an engine that cannot declare a foreign key is not described as one that declared none", async () => {
+        const { transcript } = await planOnProvider("json");
+
+        expect(transcript).toContain("this engine does not declare foreign keys at all");
+        expect(transcript).not.toContain("That may be how the schema is");
+      });
+
+      /*
+        Statistics: no code changed here, and this pins that the combination reads
+        correctly now that it is the ORDINARY case rather than a rare one. A schema is
+        known, no statistics are, and the two sentences the run is handed agree — the
+        inventory is a record of what exists, and the estimates simply do not exist on
+        this engine.
+      */
+      test("a known schema with no statistics says both things, and neither contradicts the other", async () => {
+        const { rules, transcript } = await planOnProvider("json");
+
+        expect(transcript).toContain("this engine does not hold statistics this run knows how to read");
+        expect(rules).toContain("It is a record of what exists — not of how many rows anything holds");
+        expect(rules).not.toContain("Estimated statistics are in the conversation beside it");
+      });
+
+      /*
+        The RULES' own provenance sentence, which is a second 2x2 over the same two axes
+        as the preface and was left one-dimensional when the preface was made four.
+
+        The consequence was the exact defect #414 exists to close, stated to the model
+        itself: a grounded MongoDB plan run was told in its rules that its inventory came
+        "through the same read-only catalog path the agent mode uses", and in the very
+        next message that it came from the engine's own inspection. Both halves of the
+        first were false there — no catalog statement is composed on this dialect, and
+        agent mode cannot take a read-only path on it at all. Nothing asserted this
+        string, which is why no gate caught it, so all four are pinned here in full.
+      */
+      const PROVENANCE = {
+        composedThisRun:
+          "It was read from the database by this run itself, before your first turn, through the same read-only catalog path the agent mode uses: no statement of the user's was run, nothing was written, and you have no tools and will read nothing further.",
+        composedEarlierRun:
+          "It was read by an EARLIER run on this connection rather than by this one, which is why this run did not have to read it again: no statement of the user's was run, nothing was written, and you have no tools and will read nothing further.",
+        providerThisRun:
+          "It was read from the database by this run itself, before your first turn, through the engine's own schema inspection rather than a catalog statement the server composed — the same reading this product performs when it lists your tables: no statement of the user's was run, nothing was written, and you have no tools and will read nothing further.",
+        providerEarlierRun:
+          "It was read by an EARLIER run on this connection rather than by this one, through the engine's own schema inspection rather than a catalog statement the server composed, which is why this run did not have to read it again: no statement of the user's was run, nothing was written, and you have no tools and will read nothing further.",
+      } as const;
+
+      test("the rules say the engine described itself, and never that a catalog path was taken", async () => {
+        const { rules } = await planOnProvider("json");
+
+        expect(rules).toContain(PROVENANCE.providerThisRun);
+        expect(rules).not.toContain(PROVENANCE.composedThisRun);
+        // The clause that made it false, named on its own: agent mode reaches no
+        // read-only path here at all, so a rule claiming this run took one describes a
+        // path that does not exist on this engine.
+        expect(rules).not.toContain("the same read-only catalog path the agent mode uses");
+      });
+
+      test("a provider reading from an earlier run is described as one in the rules too", async () => {
+        await planOnProvider("json");
+        const { rules } = await planOnProvider("json");
+
+        expect(rules).toContain(PROVENANCE.providerEarlierRun);
+        expect(rules).not.toContain(PROVENANCE.composedEarlierRun);
+      });
+
+      /*
+        And the two arms that were already right, so the correction cannot be applied by
+        deleting the distinction: on PostgreSQL the server really does compose the
+        catalog read, and agent mode really does take the same one.
+      */
+      test("a composed reading keeps its own two sentences", async () => {
+        const first = boot(freshDataDir(), { answer: catalog });
+        const firstRun = await startRun(first, "planning");
+        const firstScript = scriptedModel(answersProse("a plan"));
+        await runInvestigation(firstRun.runId, {
+          service: first.service,
+          model: await modelOver(firstScript.fetch),
+          resources: first.resources,
+        });
+
+        expect(rulesOf(firstScript.turns[0] as Turn)).toContain(PROVENANCE.composedThisRun);
+
+        // The same connection, a second process: the reading is now the hold's.
+        const second = boot(freshDataDir(), { answer: catalog });
+        const secondRun = await startRun(second, "planning");
+        const secondScript = scriptedModel(answersProse("a plan"));
+        await runInvestigation(secondRun.runId, {
+          service: second.service,
+          model: await modelOver(secondScript.fetch),
+          resources: second.resources,
+        });
+
+        expect(rulesOf(secondScript.turns[0] as Turn)).toContain(PROVENANCE.composedEarlierRun);
+      });
+    });
+
+    /*
+      #414, second finding, and it came from a browser rather than from any gate here.
+
+      Plan mode grounded on a seeded local Redis read 17 real key prefixes through the
+      provider — the grounding worked — and then drafted `KEYS user:*` in one run and
+      `ZCARD user:*` in another. Both name a key that does not exist: `user:*` is a
+      GROUPING this server synthesised, by SCANning a bounded slice of the keyspace and
+      collapsing everything before the first colon into one row. The model was handed
+      that under a block headed "Schema inventory for this run — 17 table(s)" and read
+      the sentence correctly.
+
+      Two things are wrong and each is fixed on its own axis. The NOUN comes from the
+      provider's own `ProviderLabels`, which has said "Key Pattern" all along and was
+      only ever shown to the browser. And what a derived grouping IS is said once, where
+      it is true, driven by a capability — because no engine fact could tell a model
+      that these rows are this product's own summary of a bounded reading.
+    */
+    describe("a plan run on an engine whose inventory rows are groupings this server derived", () => {
+      const KEY_PREFIXES: readonly TableSchema[] = [
+        { name: "user:*", columns: [], indexes: [], foreignKeys: [] },
+        { name: "order:*", columns: [], indexes: [], foreignKeys: [] },
+      ];
+
+      /** The sentence, in full: nothing shorter proves the three clauses all arrived. */
+      const DERIVED_GROUPINGS_RULE =
+        "Those key patterns are not objects this database holds, and no statement can be given one as a name: this server derived every row of that inventory itself, by scanning a bounded part of the keyspace and grouping the real key names it found under their common prefix. So name a whole key, or ask for keys by pattern in whatever way this engine offers — a row from that list is neither. And because the scan was bounded, the list is what one reading reached rather than everything this database holds.";
+
+      const planOnKeyspace = async (
+        workflowType?: AgentRunWorkflowType,
+      ): Promise<{
+        readonly rules: string;
+        readonly transcript: string;
+        readonly events: readonly AgentRunEvent[];
+      }> => {
+        const b = boot(freshDataDir(), { describesSchema: async () => KEY_PREFIXES });
+        const run = await startRun(b, "planning", workflowType);
+        const script = scriptedModel(answersProse("a plan"));
+
+        await runInvestigation(run.runId, {
+          service: b.service,
+          model: await modelOver(script.fetch),
+          resources: {
+            ...b.resources,
+            connection: { ...CONNECTION, type: "redis" },
+            capabilities: {
+              ...CAPABILITIES,
+              queryLanguage: "json",
+              declaresForeignKeys: false,
+              tablesAreDerivedGroupings: true,
+            },
+            labels: KEY_PATTERN_LABELS,
+          },
+        });
+
+        const turn = script.turns[0] as Turn;
+        return { rules: rulesOf(turn), transcript: turn.transcript, events: await eventsOf(b.store, run.runId) };
+      };
+
+      test("the fenced inventory counts what this engine actually holds, and never calls them tables", async () => {
+        const { transcript } = await planOnKeyspace();
+
+        expect(transcript).toContain("2 key pattern(s) read at epoch");
+        expect(transcript).not.toContain("table(s) read at epoch");
+      });
+
+      test("the run is told what a derived grouping is, and what a statement may name instead", async () => {
+        const { rules } = await planOnKeyspace();
+
+        expect(rules).toContain(DERIVED_GROUPINGS_RULE);
+      });
+
+      /*
+        The one thing this sentence may NOT do. A rule banning `KEYS` would be engine
+        trivia in a prompt: it goes stale, it says nothing about the next command, and a
+        model that knows what the rows are can choose for itself. The owner deferred a
+        per-engine knowledge base deliberately, and this is the line that keeps this
+        change on the near side of it.
+      */
+      test("it names no command and forbids none", async () => {
+        const { rules } = await planOnKeyspace();
+
+        expect(rules).not.toContain("KEYS");
+        expect(rules).not.toContain("SCAN ");
+        expect(rules).not.toContain("never use");
+      });
+
+      /*
+        And the LEDGER carries it, which is what the timeline reads (#414). The prompt
+        half of this work left the rail saying "Schema captured — 17 tables" over the
+        same keyspace the model had just been told holds key patterns. The rail cannot
+        ask a provider for labels and must not ask the connection — it renders runs
+        resumed long after they ran — so the capture entry records the word it was read
+        under, next to the count it was read with.
+      */
+      test("the capture entry records what the engine calls the rows it read", async () => {
+        const { events } = await planOnKeyspace();
+        const captured = events.find((event) => event.kind === "context-captured");
+
+        if (captured?.kind !== "context-captured") throw new Error("this drive captured no inventory");
+        expect(captured.noun).toEqual({ singular: "key pattern", plural: "key patterns" });
+        expect(captured.tableCount).toBe(2);
+      });
+
+      test("every other sentence about the inventory uses the engine's own noun too", async () => {
+        const { rules, transcript } = await planOnKeyspace();
+
+        expect(rules).toContain("Name the real key patterns, columns and relations it reads");
+        expect(rules).toContain("instead of writing about key patterns in general");
+        expect(transcript).toContain("the same reading this product performs when it lists your key patterns");
+        expect(transcript).toContain("infers a key pattern's fields from a sample of its own rows");
+        expect(transcript).toContain("Whatever relates these key patterns to each other");
+      });
+
+      /*
+        The prose deliverable is the other half of the plan surface and reads the same
+        inventory, so the noun and the nature of the rows have to reach it as well —
+        `operations` is the workflow a user is most likely to open on a Redis connection.
+      */
+      test("an operations plan on the same engine is told both things too", async () => {
+        const { rules, transcript } = await planOnKeyspace("operations");
+
+        expect(rules).toContain(DERIVED_GROUPINGS_RULE);
+        expect(rules).toContain("You must name no key pattern and no index that this conversation has not shown you");
+        expect(transcript).toContain("2 key pattern(s) read at epoch");
+      });
+
+      /*
+        And the control, because a silent change to the PostgreSQL prompt is the most
+        likely damage this work could do. An engine that declares nothing new gets the
+        words it always got, and never the derived-groupings sentence.
+      */
+      test("an engine that declares neither the noun nor the grouping is untouched", async () => {
+        const b = boot(freshDataDir(), { answer: catalog });
+        const run = await startRun(b, "planning");
+        const script = scriptedModel(answersProse("a plan"));
+        await runInvestigation(run.runId, {
+          service: b.service,
+          model: await modelOver(script.fetch),
+          resources: b.resources,
+        });
+
+        const turn = script.turns[0] as Turn;
+        expect(turn.transcript).toContain("table(s) read at epoch");
+        expect(rulesOf(turn)).toContain("Name the real tables, columns and relations it reads");
+        expect(rulesOf(turn)).not.toContain("are not objects this database holds");
+      });
     });
 
     /*
@@ -1546,12 +1953,16 @@ describe("planning mode runs no statement of the user's", () => {
       expect(rules).toContain("the readings you would take");
       expect(rules).not.toContain("A schema inventory for this database is in this conversation");
       // The capture's own diagnosis, forwarded rather than replaced: it is the only
-      // thing that knows WHY, and on this path what it knows is the dialect.
-      expect(script.turns[0]?.transcript).toContain("No schema inventory can be read for a mongodb connection.");
+      // thing that knows WHY. Until #414 what it knew here was the DIALECT; now the
+      // dialect only decides which of the two readings is taken, and what it knows is
+      // that this connection's provider rejected the request to describe the database.
+      expect(script.turns[0]?.transcript).toContain("this database refused to describe its own schema");
       // And never the capture's own ADVICE, which sends a model to a tool no operations
       // run holds in either mode (#350).
       expect(script.turns[0]?.transcript).not.toContain("Use inspect_schema");
-      expect(b.acquireProvider).not.toHaveBeenCalled();
+      // The capture reaches a provider here now, but it composes no statement: the
+      // dialect has no catalog and none is guessed at for it.
+      expect(b.queryReadOnly).not.toHaveBeenCalled();
     });
 
     /*
@@ -1780,7 +2191,9 @@ describe("planning mode runs no statement of the user's", () => {
         expect(rules).toContain("every reading you name must be one a redis engine actually offers");
         expect(rules).not.toContain("inspect_operations");
         // The capture's own diagnosis still reaches the model, unchanged by this rule.
-        expect(transcript).toContain("No schema inventory can be read for a redis connection.");
+        // It names the reading rather than the dialect since #414: Redis takes the
+        // provider path now, and this fixture's `getSchema()` rejects.
+        expect(transcript).toContain("this database refused to describe its own schema");
       });
 
       /*
@@ -1846,9 +2259,20 @@ describe("planning mode runs no statement of the user's", () => {
     const draftedIn = (events: readonly AgentRunEvent[]): AgentRunEvent | undefined =>
       events.find((event) => event.kind === "plan-statement-drafted");
 
+    /*
+      `language` is separate from `type` because the two are separate facts and this
+      suite's fixture proves it: overriding the connection's type to `mongodb` leaves
+      `CAPABILITIES.queryLanguage` at `"sql"`, so a test that only swaps the type is
+      still driving a SQL-speaking engine. What decides whether the validation judges a
+      draft is the capability the provider declares, never the type-id (#414).
+    */
     const planWith = async (
       closing: string,
-      options: { readonly workflowType?: AgentRunWorkflowType; readonly type?: DatabaseType } = {},
+      options: {
+        readonly workflowType?: AgentRunWorkflowType;
+        readonly type?: DatabaseType;
+        readonly language?: ProviderCapabilities["queryLanguage"];
+      } = {},
     ): Promise<readonly AgentRunEvent[]> => {
       const b = boot(freshDataDir(), { answer: catalog });
       const run = await startRun(b, "planning", options.workflowType);
@@ -1857,10 +2281,13 @@ describe("planning mode runs no statement of the user's", () => {
       await runInvestigation(run.runId, {
         service: b.service,
         model: await modelOver(script.fetch),
-        resources:
-          options.type === undefined
-            ? b.resources
-            : { ...b.resources, connection: { ...CONNECTION, type: options.type } },
+        resources: {
+          ...b.resources,
+          ...(options.type === undefined ? {} : { connection: { ...CONNECTION, type: options.type } }),
+          ...(options.language === undefined
+            ? {}
+            : { capabilities: { ...CAPABILITIES, queryLanguage: options.language } }),
+        },
       });
 
       return eventsOf(b.store, run.runId);
@@ -1917,7 +2344,43 @@ describe("planning mode runs no statement of the user's", () => {
       // writing for one database while connected to another, and is refused as such.
       const drafted = draftedIn(await planWith(fenced("SELECT * FROM anything", "sql"), { type: "mongodb" }));
 
-      expect(drafted).toMatchObject({ dialect: "mongodb", identifiers: { kind: "no-inventory" } });
+      // The type is `mongodb` and the CAPABILITIES are still SQL's, which is what makes
+      // this the no-inventory case rather than #414's: the validation asks the
+      // provider's declared language, so this run is a SQL engine with no inventory.
+      expect(drafted).toMatchObject({
+        dialect: "mongodb",
+        guardApplicable: true,
+        identifiers: { kind: "no-inventory" },
+      });
+    });
+
+    /*
+      #414. Both halves of the validation are SQL readers, and grounding plan mode on
+      the engines that speak no SQL made both of them wrong at once on a correct draft:
+      the guard marks every Mongo aggregation `NON_READ_STATEMENT` on its leading word,
+      and the identifier check finds no table keyword in one and would therefore report
+      that every table it names exists. So it declines to judge, and the entry says
+      which check could not reach the draft rather than what it found.
+    */
+    test("a draft on an engine whose statements are not SQL is recorded as unjudged, not as an objection", async () => {
+      const aggregation = 'db.orders.aggregate([{ $group: { _id: "$customerId", n: { $sum: 1 } } }])';
+      const drafted = draftedIn(await planWith(fenced(aggregation, "mongodb"), { type: "mongodb", language: "json" }));
+
+      expect(drafted).toMatchObject({
+        dialect: "mongodb",
+        sql: aggregation,
+        guardApplicable: false,
+        // `false`, because a guard that read nothing established nothing — and no
+        // reason code, because there was no objection to record.
+        readOnly: false,
+        identifiers: { kind: "not-applicable" },
+      });
+      expect(drafted).not.toHaveProperty("guardViolation");
+      // Still recorded, and still the run's deliverable: declining to judge a draft is
+      // not declining to keep it.
+      expect(kindsOf(await planWith(fenced(aggregation, "mongodb"), { type: "mongodb", language: "json" }))).toContain(
+        "plan-statement-drafted",
+      );
     });
 
     /*
@@ -3334,5 +3797,79 @@ describe("a presentation the model serialized reaches the tool through the SDK",
     // Unparsed, too: the SDK's fallback re-parse has no schema, so the string arrives
     // at the tool exactly as the model wrote it. That is what the boundary read reads.
     expect(typeof call.input.presentation).toBe("string");
+  });
+});
+
+/*
+  #414's own bound, and the one invariant whose whole point is that this change did NOT
+  widen agent mode.
+
+  Grounding reached the nine engines the read-only profile refuses, because the schema
+  capture asks for `agent-operations` — a profile whose acquisition does not require
+  `queryReadOnly`. Agent mode's TOOLS are unchanged: `inspect_schema` and
+  `run_read_query` compose SQL and acquire `agent-read-only`, which those engines cannot
+  serve, so a schema-workflow agent run on one of them still stops at its first read.
+
+  What changed is that it now gets FURTHER before stopping: it acquires a provider,
+  spends a statement of its budget on a `db.schema.read`, records a `context-captured`
+  event and takes a model turn, and only then is refused. That sequence is exactly what
+  a future "fix" would be tempted to simplify away, and until now nothing pinned it —
+  the only `engine-unsupported` test injects the error from `resolveConnection`, before
+  grounding happens at all.
+*/
+describe("agent mode is no wider than it was, on an engine grounding now reaches", () => {
+  const column = (name: string): ColumnSchema => ({ name, type: "string", nullable: true, isPrimary: false });
+
+  test("a schema workflow is grounded and still refused at its first read", async () => {
+    // The acquisition the CAPTURE makes is granted — it asks for `agent-operations`,
+    // and MongoDB serves it. Every acquisition after it is the tool path asking for
+    // `agent-read-only`, which is what `factory.ts` refuses on a provider with no
+    // `queryReadOnly`. One fixture, both real behaviours, in the order a live run meets
+    // them.
+    let acquisitions = 0;
+    const b = boot(freshDataDir(), {
+      describesSchema: async () => [{ name: "orders", columns: [column("customerId")], indexes: [], foreignKeys: [] }],
+      acquireFails: () =>
+        ++acquisitions > 1
+          ? new ExecutionProfileError(
+              'Provider type "mongodb" has no database-native read-only execution profile',
+              "PROFILE_UNSUPPORTED_BY_PROVIDER",
+            )
+          : undefined,
+    });
+    const run = await startRun(b, "agent");
+    const script = scriptedModel(
+      // `run_read_query` rather than `inspect_schema`: both are refused, but for
+      // different reasons and only this one reaches the profile. `inspect_schema`
+      // composes a catalog statement per dialect and there is none for MongoDB, so it
+      // is refused before a provider is asked for. The statement tool is where a
+      // schema-workflow agent run really meets the engine limit.
+      callsTool("run_read_query", { sql: "SELECT 1", rationale: "size the collection" }),
+    );
+
+    await expect(
+      runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: {
+          ...b.resources,
+          connection: { ...CONNECTION, type: "mongodb" },
+          capabilities: { ...CAPABILITIES, queryLanguage: "json", declaresForeignKeys: false },
+        },
+      }),
+    ).rejects.toThrow(ExecutionProfileError);
+
+    const events = await eventsOf(b.store, run.runId);
+    // Grounding DID happen — this is the half #414 added, and the half that makes the
+    // refusal below worth pinning rather than obvious.
+    expect(kindsOf(events)).toContain("context-captured");
+    expect(script.turns[0]?.transcript).toContain("orders");
+    // And the run stopped at the model's first read, having composed no statement: the
+    // profile is refused before a provider exists to send one to.
+    expect(invocationsOf(events)).toHaveLength(1);
+    expect(b.queryReadOnly).not.toHaveBeenCalled();
+    // `runtime.ts` is what turns that error into a terminal reason, and the reason it
+    // gives an `ExecutionProfileError` is `engine-unsupported` — pinned where the
+    // classifier lives, in `tests/isolated/agent-runtime.test.ts`.
   });
 });

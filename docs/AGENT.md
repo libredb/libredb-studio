@@ -36,19 +36,24 @@ Three properties frame everything below, and each of them is load-bearing rather
   the same gate for the same reason, while `agent-operations` sends no statement at all — it calls
   the curated reporting methods every provider implements — and its acquisition therefore does not
   require `queryReadOnly` (`src/lib/db/factory.ts`, `PROFILE_ACQUISITION`). Since #411 an operations
-  run does take one acquisition of the *other* profile, before its first turn and never during it:
-  the server captures a schema inventory for it under `agent-read-only`, exactly as it does for
-  every other workflow. That cannot narrow the workflow's reach, because `captureContextSnapshot`
-  refuses a dialect `CATALOG_PLANS` does not serve **before** it acquires anything, and the two
-  dialects it serves are the same two that serve the profile — so on every engine where the
-  acquisition could be refused, none is attempted and the run carries on ungrounded. Everything else about
+  run does take one acquisition before its first turn and never during it, for its schema capture,
+  exactly as every other workflow does — and since #414 **which profile that capture acquires depends
+  on which of its two readings it takes**: `agent-read-only` on the dialects `CATALOG_PLANS` serves,
+  because it composes catalog statements, and `agent-operations` everywhere else, because asking a
+  provider to describe its own schema sends nothing an engine has to plan. That is what lets grounding
+  reach the nine engines the read-only profile refuses, and it still cannot narrow any workflow's
+  reach: the profile whose acquisition would be refused is never the profile that capture asks for. Everything else about
   the three acquisitions is identical: the same `readOnly: true` open, the same optional
   least-privilege `agentUser`, and the same profiled cache, so neither an operations run nor an
-  editor replay is ever handed the editor's writable pool. **Plan mode takes the same acquisition
-  for its own grounding** — the server reads the catalog and the engine's estimated statistics
-  before the model's first turn — so the same engine restriction decides whether a plan run can be
-  grounded. It does not decide whether a plan run may START: a plan run on any other engine begins,
-  is told no inventory could be read for that connection type, and acquires nothing. The model is
+  editor replay is ever handed the editor's writable pool. **Plan mode grounds itself the same way**
+  — the server reads the schema, and on PostgreSQL and SQLite the engine's estimated statistics
+  beside it, before the model's first turn — so a plan run is now ordinarily grounded on every engine,
+  including the nine where an agent run cannot read anything at all. What is left of the old engine
+  rule is narrower and still worth stating: the engine no longer decides WHETHER a plan run is
+  grounded, only whether it is grounded through a composed statement or through its provider, and
+  whether it gets statistics. A run whose reading fails — a provider that cannot describe itself, a
+  description that overran the time the run granted it, a refusal — begins anyway, is told which of
+  those happened, and acquires nothing further. The model is
   toolless in either case, so nothing it writes reaches a database.
 
 This document describes what the runtime *does*. The security matrix rows that cover it are 3.4 and
@@ -158,8 +163,9 @@ The mode is HOW a run executes:
 - **`planning`** — the model reasons about the objective and produces a statement the user runs
   themselves. Its tool set is **empty**, and that is decided on the server from the run's persisted
   mode; a client-supplied tool list has no way in, because there is no parameter for one. The
-  server does read this connection's catalog and its estimated statistics before the first turn —
-  see [What a plan run knows](#what-a-plan-run-knows) — so the mode's property is not "it reaches
+  server does read this connection's schema before the first turn — its catalog on the two dialects
+  the composer serves, its provider's own inspection everywhere else, plus estimated statistics where
+  the engine holds any — see [What a plan run knows](#what-a-plan-run-knows) — so the mode's property is not "it reaches
   no database" and never really was: **a planning run runs no statement of the user's, writes
   nothing, and hands every statement it drafts to the user to run themselves.**
 - **`agent`** — the model receives the read-class tools below and investigates.
@@ -273,8 +279,32 @@ that ran out of time produced no plan either.
 ### What a plan run knows
 
 **A plan run grounds itself.** Before the model's first turn the server reads this connection's
-catalog and the engine's own estimated statistics, through the same audited, read-only, budgeted
-path an agent run's `inspect_schema` takes. The model is handed no tool and reads nothing further.
+schema, and on PostgreSQL and SQLite the engine's own estimated statistics too, through the same
+audited, budgeted path an agent run's `inspect_schema` takes. The model is handed no tool and reads
+nothing further.
+
+**There are TWO readings, and which one runs is the dialect's decision** (#414). On the dialects
+`CATALOG_PLANS` serves — PostgreSQL and SQLite — the server composes catalog statements and executes
+them under `agent-read-only`. On every other dialect it invokes `db.schema.read`, a sixth operation
+descriptor whose whole input is empty: it acquires `agent-operations`, calls the connection's own
+`provider.getSchema()` — the inspection the sidebar performs when it lists your tables — and returns
+the structure rather than rows to reassemble. Both go through `runAuditedAgentCall`, so both meet the
+same mode check, deadline admission, budget clamp, audit and artifact; there is no second, unaudited
+path to an engine. The two do NOT converge, and that asymmetry is structural: the composed path is
+audited statement by statement, carries foreign keys the provider path cannot on an engine that
+declares none, and SQLite's inventory is parsed out of stored DDL the provider does not expose the
+same way.
+
+**What the provider path costs, and what it cannot promise.** One statement of the run's budget, where
+PostgreSQL costs three and SQLite two. `getSchema()` takes no budget on any provider, so the call is
+raced against the timeout this call was granted — which bounds THE RUN and not the database: the driver
+call is not cancelled, this run simply stops waiting, and the capture is then `unavailable` whole
+rather than partial. And the reading is BOUNDED by the provider itself — MongoDB stops at 200
+collections, Redis scans 1000 keys, LibreDB 10000 — so the preface says the inventory is what the
+inspection found and not proof that nothing else exists. On MongoDB and Couchbase the field names are
+inferred from a sample of the user's own documents: no value is kept, but the existence of a field
+there is derived from data rather than read from a catalog, which is why `db.schema.read` is its own
+operation id an operator can deny without denying any other agent read.
 
 That is a deliberate change of the contract, made on 2026-08-15, and it retired a sentence this
 document carried for two milestones: *"a plan run reaches no database."* That sentence was never the
@@ -303,18 +333,27 @@ What a grounded plan run is given, and where each part comes from:
   reads nothing); the **process hold** (`context-snapshot.ts`, keyed by `connectionIdentity` —
   the engine, host, port, database, service/instance and role, hashed, never the password — accepted
   only if it fingerprints as itself, newest reading wins by `capturedAtMs`, bounded to the 16 most
-  recently used connections); or a **capture**, which reads the catalog and records `context-captured` on the
-  plan run's own ledger — so the next drive of that run takes the first path. Both messages are
+  recently used connections); or a **capture**, which takes whichever of the two readings this dialect gets and
+  records `context-captured` on the plan run's own ledger — so the next drive of that run takes the first path. Both messages are
   fenced as `UNTRUSTED_CONTENT`, exactly as in agent mode.
-- **A preface saying who read it**, because the two cases are different facts: read by this run
-  before its first turn, or read by an earlier run on this connection. Both prefaces then say the
-  same true thing rather than the old "this run has read nothing" — no statement of the user's was
-  run, nothing was written, and the model has no tools.
+- **A preface saying who read it AND how** — four sentences over two axes since #414, because both
+  are facts a plan could describe falsely. Who: read by this run before its first turn, or read by an
+  earlier run on this connection (`readVia` and `readBy` on the snapshot; `readVia` is absent on the
+  composed path, so every ledger written before #414 stays byte-identical). How: through a catalog
+  read the server composed, or through the engine's own schema inspection. The provider sentences
+  claim neither a composed statement nor that nothing of the data was touched, and they carry the
+  bound. All four then say the same true thing rather than the old "this run has read nothing" — no
+  statement of the user's was run, nothing was written, and the model has no tools.
 - **Estimated statistics** (`src/lib/agent/schema-stats.ts`), read on **every** grounded path
   including the two free ones. That is deliberate: what the model may conclude must not depend on
   which process happened to have read a catalog first. They are read from what the engine already
   holds — `pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite — so no column
-  is scanned and no value is read out of any row. `AgentColumnProfile`'s "counts only" rule is
+  is scanned and no value is read out of any row. `ESTIMATE_BUILDERS` serves those two dialects and
+  nothing else, and #414 added no engine to it: on the other nine `readSchemaStatistics` answers
+  `DIALECT_HAS_NO_STATISTICS` — *"this engine does not hold statistics this run knows how to read"* —
+  so **a known schema with no statistics is now the ORDINARY combination rather than a rare one**, and
+  the two sentences the run is handed agree: the inventory is a record of what exists, and every
+  table's size is unknown rather than small. `AgentColumnProfile`'s "counts only" rule is
   untouched. Statistics are **not** folded into the snapshot: an estimate is not schema, and the
   snapshot's fingerprint is its identity, so an `ANALYZE` would otherwise change the identity of a
   schema nobody changed.
@@ -330,12 +369,18 @@ fraction at all, and writes no row for a table with no index — so on that engi
 is available only for indexed tables, and the packed text states that limit once rather than implying
 coverage it does not have.
 
-**A plan run that cannot be grounded is told so**, in the server's own voice and without naming a tool
-it does not have, and its rules then steer it to the refusal path rather than to generic advice. That
-happens on any engine outside PostgreSQL and SQLite, and whenever the catalog read is itself refused.
+**A plan run that cannot be grounded is told so**, in the CAPTURE's own voice and without naming a
+tool it does not have, and its rules then steer it to the refusal path rather than to generic advice.
+Since #414 that happens when a reading fails rather than because of the engine: a provider that
+cannot describe its own schema, a description that overran the time the run granted it, or a reading
+refused by policy or by the database. The diagnosis is forwarded verbatim rather than replaced by a
+sentence naming the engine — which is what this note used to do, and which since #414 would report a
+property of MongoDB on a build where MongoDB grounds perfectly well (the same substitution #411
+caught on the operations path, for the same reason).
 
 **An `operations` plan is grounded exactly where every other plan is**, and since #411 nothing about
-grounding is workflow-dependent: the engine decides it and nothing else. That workflow used to be
+grounding is workflow-dependent. Since #414 the engine does not decide it either — it decides only
+which of the two readings is taken. That workflow used to be
 excluded by decision — an operations objective is about what the engine reports about itself, so an
 inventory looked like dead weight — and the exclusion was reversed on the finding that the argument
 is true about the QUESTION and false about the evidence. The engine's own reports come back full of
@@ -385,8 +430,11 @@ deliberate:
   `sys.dm_exec_requests` is knowable to a run that has seen no schema, and this path already spends
   that knowledge naming the readings it would take. Withholding the fence while permitting the same
   reading in prose would be a distinction with nothing behind it, and it would cost the editor
-  hand-off on exactly the engines that have no other deliverable — MySQL, SQL Server and ClickHouse
-  are all this path, as is a PostgreSQL run whose catalog read was refused. The line it may not cross
+  hand-off on exactly the runs that have no other deliverable. Which runs those are narrowed in #414:
+  MySQL, SQL Server and ClickHouse used to be this path as a matter of course and are now ordinarily
+  grounded through their own providers, so what is left here is a run whose reading failed on any
+  engine — a refusal, a provider that cannot describe itself, a description that overran its time.
+  Fewer runs take it; nothing about what it may say has changed. The line it may not cross
   is said in the same breath: the engine's reporting objects are not this database's schema, so
   naming one invents nothing, while naming a table, an index or a column of the user's invents
   everything.
@@ -404,8 +452,12 @@ reading the plan names must be one that engine actually offers, and where the mo
 to say what it would want to establish instead of naming a mechanism the engine does not have. Three
 things it is deliberately not: it names **no tool**, because a plan run holds none (#350); it is a
 rule about the readings rather than a mention of the engine, because naming the type alone was
-already happening — `planningUngroundedNote` interpolates "on this redis connection" and that run
-still proposed a lock tree; and it carries **no per-engine catalog** of monitoring views, which would
+already happening and was not enough — the ungrounded note then said "on this redis connection" and
+that run still proposed a lock tree. (Since #414 that note names no engine at all: it forwards the
+capture's own diagnosis, which names one only when the diagnosis genuinely is about the engine. Which
+is why the rule, and not the note, is where the engine has to be stated — the observation this
+paragraph records would have survived the note's rewording either way.) And it carries **no
+per-engine catalog** of monitoring views, which would
 be a second source of truth against the kinds `inspect_operations` serves.
 
 **Agent mode needs none of this**, and that is a property of its tool rather than an omission. An
@@ -416,11 +468,13 @@ the engine is therefore bounded by what the engine answered.
 
 Three consequences worth stating plainly, because each is easy to assume the other way round:
 
-1. **A plan run costs statements now.** Grounding is catalog reads plus one statistics read (two on
-   SQLite: the `sqlite_stat1` availability probe has to be its own statement, because SQLite resolves
-   table names at prepare time). They come out of the same per-run statement budget every other read
-   does, and they are audited the same way. The ledger-reuse path saves the catalog reads and
-   deliberately does **not** save the statistics read.
+1. **A plan run costs statements now.** On PostgreSQL and SQLite grounding is catalog reads plus one
+   statistics read (two on SQLite: the `sqlite_stat1` availability probe has to be its own statement,
+   because SQLite resolves table names at prepare time). On the other nine engines it is **one** — the
+   single `db.schema.read` call, with no statistics read to add, since those dialects hold none this
+   run knows how to read. They come out of the same per-run statement budget every other read does,
+   and they are audited the same way. The ledger-reuse path saves the schema reading and deliberately
+   does **not** save the statistics read.
 2. **A plan run now writes `context-captured` to its own ledger**, which it never did before, and
    holds the reading in the process for the next run on that connection. Grounding therefore survives
    a restart. The deferral that recorded the opposite ("a plan run's grounding does not survive a
@@ -430,11 +484,53 @@ Three consequences worth stating plainly, because each is easy to assume the oth
    an agent run on. The statistics add estimated row counts, null fractions and distinct counts to
    that set — engine estimates about the shape of the data, never a value out of it.
 
+### What the inventory is an inventory OF
+
+Grounding a plan on nine more engines exposed something the two-engine version could not: this
+product records every schema in one shape, `TableSchema`, and the prompts had been using that shape's
+name as a **noun**. A plan run on a seeded local Redis read 17 real key prefixes through the provider
+— the grounding worked — and, under a block headed *"Schema inventory for this run — 17 table(s)"*,
+drafted `KEYS user:*` in one run and `ZCARD user:*` in another. Neither names anything: `user:*` is a
+grouping this server computed by SCANning a bounded slice of the keyspace and collapsing everything
+before the first colon into one row. The model read the sentence it was given correctly.
+
+Two things were wrong and each is fixed on its own axis, both driven by what the **provider** declares
+rather than by the connection's type (`CLAUDE.md` forbids an engine check here, and these two are
+exactly why: the engines that answer differently are not the ones a reader would guess).
+
+- **The noun.** `ProviderLabels.entityName` has carried the right word since long before the agent
+  existed — "Table" on every SQL engine, "Collection" on MongoDB and Couchbase, "Datasource" on Druid,
+  "Key Pattern" on Redis, "Key Prefix" on LibreDB — and only the browser was being shown it. The
+  fenced header, its omission notice, the relations block and the planning rules now take it
+  (`inventoryNoun`, `src/lib/agent/inventory-noun.ts`), so a Redis run reads "17 key pattern(s)". A
+  SQL engine's prompt is unchanged word for word: the base provider's label is the word that was
+  hard-coded before.
+- **What a derived grouping IS**, said once and only where it is true. A noun alone does not tell a
+  model that a key pattern is not addressable, and no fact about Redis could — the grouping is this
+  product's own. `ProviderCapabilities.tablesAreDerivedGroupings` is `true` on Redis and LibreDB
+  alone, and where it is, the plan rules carry one sentence saying what the rows are (groupings this
+  server derived from a bounded scan), what a statement may name instead (a whole key, or a pattern
+  scan in whatever form the engine offers), and that the list is one reading's reach rather than the
+  database's contents.
+
+What that sentence deliberately does **not** contain is any command, any command name, or a
+prohibition on one. A rule reading "never use `KEYS`" would be engine trivia in a prompt: it goes
+stale, it teaches nothing about the next command, and a run that knows what the rows are can choose
+for itself. A per-engine knowledge base was considered for this and deferred; this change stays on the
+near side of it, because what it states is a fact about **this codebase's reading** and not about any
+engine.
+
 ### The statement a plan run drafts
 
 The deliverable is one runnable statement, not a lecture. The rules ask for it in a single fenced
-block tagged with the connection's canonical type-id (`postgres`, `sqlite`), rationale after the
-block, and no table or column name that is not in the inventory. A run that cannot answer from the
+block tagged with the connection's canonical type-id, rationale after the block, and no name that is
+not in the inventory. Since #414 the WORDING varies with the engine's `queryLanguage` and the TAG does
+not: on a `json` engine the run is asked for one statement or command in that engine's own language —
+a MongoDB aggregation rather than a SELECT — and told that this engine speaks no SQL, while the tag
+stays the canonical type-id in both arms. That is deliberate rather than an oversight: `isQueryFenceTag`
+is a total record over `DatabaseType`, so all eleven ids pass it, whereas a draft the model fenced as
+```` ```javascript ```` passes nothing and records no `plan-statement-drafted` event at all — the run
+would score as having drafted nothing while the user is looking at a statement. A run that cannot answer from the
 inventory takes the other legitimate ending: a line beginning `NO STATEMENT:` saying exactly what is
 missing and asking the one question that would unblock it. That marker is a convention in the
 **output**, not a tool, which is what lets a toolless mode make its two outcomes mechanically
@@ -477,6 +573,24 @@ Two checks run before it is offered anywhere, and neither is more than it says:
 - **Read-only classification**, through the existing statement guard (`inspectAgentStatement`). A
   statement that is not read-only is **not blocked** — the owner ruled on that — but it is marked, on
   the event and visibly in the rail, so that hand-off never quietly gives a user a `DELETE`.
+
+**Both checks are SQL readers, and on an engine whose statements are not SQL they DECLINE rather than
+judge** (#414). That was invisible until grounding reached those engines, and then both were wrong at
+once on a correct draft. The guard reads every string as SQL: `db.orders.aggregate([…])` leads with the
+word `DB`, `INFO memory` with `INFO`, `SCAN 0 MATCH …` with `SCAN`, and none is in its read allowlist,
+so every correct MongoDB and Redis draft came back `NON_READ_STATEMENT` — structurally, since no
+command of either engine can lead with SELECT, VALUES, TABLE or EXPLAIN. The identifier half is wrong
+in the opposite direction: `readStatementTables` finds no table keyword in any of those, answers `[]`,
+and the affirmative branch then reports that every table the statement names is in the inventory — a
+vacuous claim about names nothing looked at. So `validatePlanStatement` takes the language, writes
+`guardApplicable: false` with no `guardViolation` (there was no objection) and `readOnly: false` (a
+guard that read nothing has vouched for nothing), and answers `identifiers: { kind: "not-applicable" }`
+— its own variant, distinct from `no-inventory`, because an inventory usually WAS read on this path and
+what is missing is a reader. `guardApplicable` is optional on the event and absent means `true`, which
+is truthful for every ledger written before #414: plan mode was then grounded on two dialects and every
+draft it recorded was SQL. The three surfaces that render it — the timeline's headline and detail, the
+card, and the applying control's accessible name — read the not-applicable state FIRST and blame the
+check's reach rather than the draft.
 
 **A statement validated against the inventory is not a statement that will run.** The inventory
 records what EXISTS in this database, not what the user's role is permitted to read, and the model is
@@ -582,11 +696,30 @@ cannot resolve.
 
 Two consequences worth stating:
 
-- **A schema read is a bounded read.** There is no fourth operation descriptor for catalog access:
-  the canonical set is exactly three operations, and a catalog read *is* a bounded read whose
-  statement the server writes per dialect. The dialect asymmetry is real and documented on the tool
-  — PostgreSQL yields a structured column inventory, while SQLite's `pragma_table_info()` is refused
-  by the statement guard, so SQLite yields each object's own DDL text from `sqlite_master` instead.
+- **A schema read takes one of two descriptors, and which one is the DIALECT's decision.** This
+  document said for two milestones that there is no descriptor for catalog access — the canonical set
+  was three, then four, then five — and the truer statement is now about the split rather than about
+  a number. On the dialects `CATALOG_COMPOSERS` serves, a catalog read still *is* a bounded read
+  (`sql.query.read`) whose statement the server writes, and the asymmetry inside that is real and
+  documented on the tool: PostgreSQL yields a structured column inventory, while SQLite's
+  `pragma_table_info()` is refused by the statement guard, so SQLite yields each object's own DDL text
+  from `sqlite_master` instead. On every other dialect the read is the **sixth** descriptor,
+  `db.schema.read` (#414) — the canonical set is six — and it is a different kind of thing rather than
+  a variant: it sends no statement for a read-only transaction to bound, so what bounds it is the
+  SHAPE of the call — `z.strictObject({})`, no input at all, the server choosing the method, and no
+  model-authored text reaching an engine. It is R0 for that reason and `resourceCost: "heavy"` for the
+  opposite one, since a provider schema read is N+1 round trips on most engines and samples documents
+  on two.
+
+  **The split is deliberate and permanent, not a step towards one path.** Collapsing PostgreSQL and
+  SQLite onto the provider descriptor would look like simplification and would cost three things the
+  composed path has and the provider path cannot: reads audited statement by statement rather than as
+  one opaque call; foreign keys, which no provider can report on an engine that declares none; and
+  SQLite's inventory, which is parsed out of the DDL text the engine stored and which its provider
+  does not expose in the same shape. Collapsing the other nine onto the composed one is the thing
+  #414 exists because nobody can do: a catalog statement has to be written per dialect and verified
+  against a live server, and until it is, refusing the dialect was the honest answer and reading the
+  provider is a better one.
 - **The executing form of `EXPLAIN` is never offered.** The analyzing variant requires approval
   because it runs the statement; the tool exposed to a model is the estimating variant, and nothing
   in the run loop may convert a require-approval outcome into an allow.
@@ -755,18 +888,24 @@ What differs is the **packing** (`packOperationsInventory`, `context-snapshot.ts
   the identifier list *is* the payload and the run is told to match what the engine reports against
   it — so an unquoted table name carrying a newline, or an index named `a, b_unique`, would add an
   entry nobody created and the run could recommend action on it.
+- **What it CALLS them is the provider's word, not `TableSchema`'s.** The header, the omission notice
+  and the note above it take their noun from `ProviderLabels.entityName` (#414), so a Redis Operate
+  run reads "key pattern(s)" rather than "table(s)" — and where those rows are groupings this server
+  derived rather than objects the engine holds, the plan rules say so in one sentence. See
+  [what the inventory is an inventory OF](#what-the-inventory-is-an-inventory-of).
 - **The opening note claims no completeness, because the block is bounded.** It says the inventory is
   as much as fits and points at the block for the count. A server sentence promising every table while
   the fenced block says 33 were left out is a contradiction a model resolves in the server's favour,
   and the failure it produces is precise: a lock reported on a table the packing dropped reads as a
   relation this database does not have.
 
-Grounding is engine-dependent here exactly as it is everywhere else: `CATALOG_PLANS` serves
-PostgreSQL and SQLite, and on every other engine the capture answers `unavailable` before a provider
-is acquired and the run continues ungrounded. What it is TOLD then is its own sentence rather than
-the capture's, which would have sent it to `inspect_schema`: it is told that no inventory could be
-read on this connection type, that not one table name and not one index is established for it, and
-that it should take its readings anyway. The run's tool rules and its opening note are deliberately
+Grounding reaches this workflow exactly as it reaches every other, and since #414 that means every
+engine: `CATALOG_PLANS` serves PostgreSQL and SQLite, and every other dialect asks its provider to
+describe itself instead of being refused on the dialect. Where the reading fails the run continues
+ungrounded. What it is TOLD then is the capture's own DIAGNOSIS under a sentence of this file's own,
+because the capture's ADVICE would have sent it to `inspect_schema`: it is told why no inventory was
+read, that not one table name and not one index is established for it, and that it should take its
+readings anyway. The run's tool rules and its opening note are deliberately
 different strings — the rules are the same for every run of the workflow and hedge accordingly
 ("where this engine can be read"), while the opening note is built from what THIS drive actually
 established. A test pins that the two agree: a grounded run is never handed a sentence saying it has
@@ -1281,10 +1420,12 @@ twice, once broad and once narrowed to a schema.
 **The other six pay for #411's grounding**, and they were ADDED rather than taken out of the readings
 on purpose: a ceiling left at 12 would have paid for the inventory by silently costing the run a third
 of the readings it exists to take. Grounding's own cost is smaller than six. A catalog capture is
-three statements on PostgreSQL and two on SQLite, and the statistics read — plan mode only — adds one
-on PostgreSQL and two on SQLite (it probes `sqlite_stat1` before reading it), so the worst case before
-the first turn is four in plan mode and three in agent mode, which is the mode where the reading
-ceiling binds. The remainder is deliberate slack in a row nothing has been measured against yet, and
+three statements on PostgreSQL and two on SQLite, one on every other engine (#414: `db.schema.read`
+takes no selector and makes one call), and the statistics read — plan mode only, and PostgreSQL and
+SQLite only — adds one on PostgreSQL and two on SQLite (it probes `sqlite_stat1` before reading it), so
+the worst case before the first turn is four in plan mode and three in agent mode, which is the mode
+where the reading ceiling binds. `AGENT_WORKFLOW_BUDGETS` therefore did not move in #414: the path it
+added is the cheapest of the three. The remainder is deliberate slack in a row nothing has been measured against yet, and
 the wall clocks are the same slack in time: at a 10 s statement timeout, four catalog reads can be 40 s
 of database time on their own. `maxModelTurns` does not move, because grounding is the server's work
 before the first turn and costs no turn. The policy version moved with the figures, to `agent-read-only.operations.2`: a row whose
@@ -1642,7 +1783,7 @@ model passed the capability probe**; for anybody else the answer is that there i
 | **A free-form markdown report**, opening with a performance score out of 100 and closing with configuration advice. | A report is claims, each citing an artifact this run read or the snapshot it captured, verified against the run's own ledger before it is recorded. A number cited to nothing cannot be reported — the citation is what is checked, never the claim's text, so a fabricated score citing a real artifact would be accepted. | `src/lib/agent/tools.ts` (`composeReportTool`); `tests/evals/legacy-surface-coverage.test.ts` — an invented correlation id is refused and the run ends `unanswered (no-report)`. |
 | **Maintenance tasks** — `VACUUM`, `ANALYZE`, reindexing — in the same report. | Nothing proposes them: the `change` card has two members and neither is maintenance. It stays where it was before the panels — the monitoring surface, and the user's own editor. | `src/lib/agent/tools.ts` (`recommendationSchema`). |
 | **Multi-turn conversation.** NL2SQL replayed the whole exchange on every request, so "and how many in the second one?" was answerable. | A run's objective is fixed when it starts and no ledger event records a later question. A follow-up is a NEW run: it re-reads the catalog and knows nothing the first one established. | `src/app/api/agent/runs/route.ts`; `src/lib/agent/types.ts` (`AgentRunEvent`); `tests/evals/legacy-surface-coverage.test.ts`. |
-| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes SQL for **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is refused rather than guessed at. Nothing refuses the run at its start, so a run opened on another engine begins, captures no schema, and is told no schema inventory can be read for that connection type. **This is the same limit on plan mode's grounding**, in both directions: a plan run is grounded on PostgreSQL and SQLite and ungrounded anywhere else, where it is told so and steered to the `NO STATEMENT:` refusal rather than left to produce generic advice. **The `operations` workflow is the exception and runs on every engine**, because it composes no SQL at all. Since #411 it is grounded under the same engine limit as everything else rather than exempt from grounding: on PostgreSQL and SQLite it is shown an inventory of table names and their indexes, and on every other engine the capture answers `unavailable` before a provider is acquired and the run is told in the server's own voice that no inventory could be read for that connection type — then takes its readings regardless, which is why the engine limit costs it grounding and never the run. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`, `packOperationsInventory`); `tests/unit/lib/agent/context-snapshot.test.ts` — a `mysql` connection reaches no database; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`; `tests/evals/plan-grounding.test.ts` — a `mysql` plan run runs no statement and says it is ungrounded; `tests/evals/operations.test.ts` — `context-captured` on postgres and sqlite, none on mysql. |
+| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes SQL for **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is never guessed at — since #414 it is read a different way instead of being refused. Nothing refuses the run at its start, so a run opened on another engine begins, and what it can then do differs by MODE. **Agent mode is still the two dialects**: its read-class tools reach the database through `provider.queryReadOnly`, so a schema-workflow run on any other engine still ends `engine-unsupported` with the same sentence. **Plan mode is now every engine**: its grounding acquires `agent-operations` and calls `provider.getSchema()` (`db.schema.read`), so a plan run on MongoDB is ordinarily grounded and is asked for one statement or command **in that engine's own language**, in a block still tagged with the canonical type-id. What the engine decides is no longer whether a plan is grounded but HOW — a composed catalog statement or a provider inventory, and whether estimated statistics exist at all — and the four prefaces say which. Where the reading itself fails, the run is steered to the `NO STATEMENT:` refusal with the capture's own diagnosis. **The `operations` workflow reaches every engine in both modes**, because it composes no SQL at all, and since #411 it is grounded under the same rule as everything else. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`, `captureFromProvider`, `packOperationsInventory`), `src/lib/db/operations/descriptors.ts` (`db.schema.read`); `tests/unit/lib/agent/context-snapshot.test.ts` — the provider path, its timeout and its refusals; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`; `tests/evals/plan-grounding.test.ts` — a plan run whose provider cannot describe itself runs no statement and says it is ungrounded; `tests/isolated/agent-investigation.test.ts` — a plan run grounded through the engine's own schema inspection. |
 
 One of these has since been restored under its own workflow (the monitoring row, which closed both
 deferrals that tracked it), and the first row is Phase 1's own boundary rather than a defect (B21 is
@@ -1902,13 +2043,15 @@ src/lib/agent/
 ├── run-service.ts        # start / status / cancel / resume / stream, decided from the ledger
 ├── investigation.ts      # the one workflow; start and resume are the same call
 ├── runtime.ts            # composition root: the only place that assembles a tool context
-├── tools.ts              # the four tools + server-side selection; the only database reach
-├── composed-sql.ts       # the SQL the SERVER writes, per dialect
+├── tools.ts              # the four tools + server-side selection; the only database reach,
+                          #   the model's tools and the server's own grounding reads alike
+├── composed-sql.ts       # the SQL the SERVER writes, per dialect — two of the eleven
 ├── sqlite-ddl.ts         # reading SQLite's stored DDL back into an inventory
 ├── execution-policy.ts   # the frozen policy and the run-level ceilings
 ├── deadline.ts           # the wall-clock deadline and the timeout clamp
 ├── repair-ledger.ts      # the bounded repair loop and its statement fingerprint
-├── context-snapshot.ts   # the schema snapshot and task-aware packing
+├── context-snapshot.ts   # the schema snapshot and task-aware packing; TWO readings, one
+                          #   per composed dialect and one per provider (#414)
 ├── schema-stats.ts       # the engine's ESTIMATED statistics, and the text that says they are
 ├── plan-statement.ts     # a plan run's drafted statement: read from the prose, then checked
 ├── model-adapter.ts      # resolved LLM config → an SDK model; SDK errors → our error classes
@@ -2039,6 +2182,31 @@ classifier's real-world agreement rate was measured — and they are the same ki
   every engine, and `classifyDriveFailure` cannot tell the two apart though the reason codes already
   do. Pre-existing for every workflow; #411 only lets an `operations` run reach it during its
   grounding capture, before the first turn, which is the least explicable moment for it to arrive.
+- **B48** — the two grounding paths fail differently. Since #414 a plan run on one of the nine
+  provider-path engines survives an unreachable host, a wrong password or a half-configured
+  `agentUser`: `captureFromProvider` converts a `DatabaseError` or an `ExecutionProfileError` raised
+  before the reading leaves into an unavailable capture, and the run answers ungrounded with that
+  diagnosis. The composed path — PostgreSQL and SQLite — still lets the same failure out, ending the
+  run `internal` or, on the profile error, `engine-unsupported` (B47). Deliberate at #414, which had
+  no business changing how the two engines it did not touch fail, and an asymmetry a reader will
+  trip over until it is resolved.
+- **B49** — a **LibreDB** connection can never be grounded, and the reason is not the agent's.
+  `lib.open()` takes an exclusive lock on the file, and an execution-profile acquisition is a SECOND
+  provider under its own cache key — so once the connection's ordinary provider is open, which it is
+  from the moment anyone browses it, the grounding read fails to connect at all. Measured live on
+  2026-08-17 against `@libredb/libredb` 0.2.2: `ConnectionError` / `CONNECTION_ERROR`, *"LibreDB file
+  is already open by another process"*, converted by `captureFromProvider` into an honest ungrounded
+  run with no `context-captured` event. The same lock is what makes the connection-test modal report a
+  failed connection (`docs/BACKLOG.md` D3), so the two close together.
+- **B50** — a grounded Redis plan run drafts `KEYS user:*`, the blocking O(N) command this product's
+  own provider refuses to use: the schema read is a non-blocking `SCAN` and never `KEYS *`. Measured
+  on two runs after #414's vocabulary work, both grounded on the same 17 real key prefixes — one
+  refused correctly with `NO STATEMENT:` and the other drafted `KEYS`, naming a whole key for the
+  lookup half exactly as the new rule intends. Grounding is working; this is draft QUALITY. Nothing
+  runs — plan mode executes nothing — so the hazard needs the user to apply the draft and run it. The
+  open question is whether one sentence about operational cost belongs in the rules, against the
+  owner's deferral of per-engine knowledge files and the argument that banning a command by name is
+  engine trivia that goes stale. Recorded, not decided.
 
 ## Related documentation
 

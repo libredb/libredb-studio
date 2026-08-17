@@ -167,10 +167,14 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
     // connections are visible is the one recorded when the run was opened.
     const connection = await resolveConnection({ connectionId }, { role: actor.role, username: actor.sessionId });
 
-    // Capabilities are type-driven and read without connecting, the way
+    // Capabilities and labels are type-driven and read without connecting, the way
     // /api/db/provider-meta reads them. The live, read-only provider a statement
     // actually runs on is acquired per call through the execution-profile seam.
-    const capabilities = (await createDatabaseProvider(connection)).getCapabilities();
+    // One provider for both, so a run's declared behaviour and its declared
+    // vocabulary can never come from two different readings.
+    const provider = await createDatabaseProvider(connection);
+    const capabilities = provider.getCapabilities();
+    const labels = provider.getLabels();
 
     return await runInvestigation(runId, {
       service,
@@ -178,6 +182,7 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
       resources: {
         connection,
         capabilities,
+        labels,
         registry: createCanonicalOperationRegistry(),
         scope: createTargetScope(connectionId),
         tracker: runResources().tracker,

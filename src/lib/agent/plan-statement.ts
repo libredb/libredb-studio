@@ -43,6 +43,7 @@
  */
 
 import { type AgentStatementViolation, inspectAgentStatement } from "@/lib/db/operations/statement-guard";
+import type { ProviderCapabilities } from "@/lib/db/types";
 import { DEFAULT_SQL_GRAMMAR } from "@/lib/sql/grammar";
 import { readSqlSpan, type SqlSpanKind } from "@/lib/sql/spans";
 import { readSqlWord } from "@/lib/sql/words";
@@ -292,10 +293,20 @@ export function readStatementTables(sql: string): readonly string[] {
  * unknown tables is a claim: it says every table this statement names exists. A run
  * on an engine this server cannot ground, or one whose catalog read failed, checked
  * nothing and has to say so.
+ *
+ * `not-applicable` is a THIRD absence and arrived with #414, when plan mode started
+ * being grounded on engines that speak no SQL. `readStatementTables` is a SQL reader:
+ * asked for the tables in `db.orders.aggregate([...])` it answers `[]`, which the
+ * `checked` variant would render as "every table it names is in the inventory" — a
+ * vacuous affirmative about a draft whose collection names were never looked at. The
+ * inventory may well be present on this path; what is missing is a reader that can
+ * find a name in this engine's language. Purely additive, so no ledger written before
+ * #414 can carry it.
  */
 export type PlanStatementIdentifiers =
   | { readonly kind: "checked"; readonly unknownTables: readonly string[] }
-  | { readonly kind: "no-inventory" };
+  | { readonly kind: "no-inventory" }
+  | { readonly kind: "not-applicable" };
 
 export interface PlanStatementValidation {
   /**
@@ -305,9 +316,33 @@ export interface PlanStatementValidation {
    * own docblock says `null` means only that that layer found nothing — and not
    * limited to writes either: two statements, or text no single dialect reading
    * settles, are objections too, which is why the reason travels beside the flag.
+   *
+   * `false` when `guardApplicable` is `false`, and that pairing is deliberate: the
+   * only two honest answers on an engine the guard cannot read are "false" and a
+   * separate field saying why, because `true` would be the guard vouching for text it
+   * never examined. It stays a REQUIRED boolean rather than becoming optional, because
+   * every ledger under `.workflow-data` already carries it and the store reads those
+   * back verbatim.
    */
   readonly readOnly: boolean;
-  /** The guard's own reason, present exactly when `readOnly` is false. */
+  /**
+   * Whether the statement guard could read this draft's language at all (#414).
+   *
+   * Written on every validation from now on and absent only in ledgers recorded before
+   * #414, where it reads as `true` — which is what those runs meant, since plan mode
+   * was grounded on PostgreSQL and SQLite alone and every draft it recorded was SQL.
+   * Consumers therefore test `=== false`.
+   *
+   * It exists because `inspectAgentStatement` reads every string as SQL and has no
+   * verdict for "this is not SQL". `db.orders.aggregate([...])` leads with the word
+   * `DB`, `INFO memory` with `INFO`, `SCAN 0 MATCH ...` with `SCAN`; none is in the
+   * guard's read allowlist, so all three come back `NON_READ_STATEMENT` and every
+   * correct MongoDB and Redis draft would have been marked as not classified as a
+   * read. That is the guard's reach and not a property of the draft, and the three
+   * surfaces that render it say so in those terms.
+   */
+  readonly guardApplicable: boolean;
+  /** The guard's own reason, present exactly when `readOnly` is false AND the guard applied. */
   readonly guardViolation?: AgentStatementViolation;
   readonly identifiers: PlanStatementIdentifiers;
 }
@@ -345,11 +380,32 @@ function unknownTables(sql: string, inventory: readonly TableSchema[]): readonly
  * inventory records what EXISTS, not what the user's role may select from — and none
  * of it blocks anything: the owner ruled that a write is marked rather than dropped,
  * because the user is the one who runs it.
+ *
+ * `language` is the connection's own `queryLanguage`, and it decides whether either
+ * half runs at all. Both of them are SQL readers, and until #414 that was invisible
+ * because plan mode was grounded on PostgreSQL and SQLite alone; grounding the mode on
+ * MongoDB and Redis made both halves wrong at once on a correct draft — the guard
+ * marking it as not classified as a read, and the identifier check affirming that
+ * every table it names exists. Declining to judge is the answer rather than teaching
+ * this module a second language: what an unexamined draft costs is one honest sentence
+ * on three surfaces, and what a half-taught reader costs is a wrong verdict on the one
+ * statement a user is most likely to run.
  */
-export function validatePlanStatement(sql: string, inventory: readonly TableSchema[] | null): PlanStatementValidation {
+export function validatePlanStatement(
+  sql: string,
+  inventory: readonly TableSchema[] | null,
+  language: ProviderCapabilities["queryLanguage"],
+): PlanStatementValidation {
+  if (language !== "sql") {
+    // No `guardViolation`: there was no objection, only a reader that does not speak
+    // this language, and recording one of the guard's own reason codes here would
+    // attribute a finding to a check that never ran.
+    return { readOnly: false, guardApplicable: false, identifiers: { kind: "not-applicable" } };
+  }
   const violation = inspectAgentStatement(sql);
   return {
     readOnly: violation === null,
+    guardApplicable: true,
     ...(violation === null ? {} : { guardViolation: violation }),
     identifiers:
       inventory === null ? { kind: "no-inventory" } : { kind: "checked", unknownTables: unknownTables(sql, inventory) },

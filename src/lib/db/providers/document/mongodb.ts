@@ -113,6 +113,11 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       // The query language is JSON commands, not SQL, so the inline row editor's
       // `UPDATE ... SET` has nothing here to run against (issue #269).
       supportsInlineRowEdit: false,
+      // MongoDB has no foreign key constraint at all, so `getSchema()`'s empty
+      // `foreignKeys` is the engine's model rather than this database's shape. A
+      // reader told only "none were found" would hedge over causes that do not apply
+      // here (#414).
+      declaresForeignKeys: false,
       supportsMaintenance: true,
       maintenanceOperations: ["vacuum", "analyze", "check"],
       supportsConnectionString: true,
@@ -449,6 +454,24 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
   /**
    * Get schema by listing collections and sampling documents to infer field types
+   *
+   * A VIEW is listed like any other object, with the three questions a view cannot
+   * answer simply not asked of it. `listCollections()` returns views, and MongoDB
+   * rejects `count`, `listIndexes` and `collStats` on one with
+   * `CommandNotSupportedOnView` (code 166) — so before #414 a single view in the
+   * database threw out of this loop and the user lost the WHOLE schema read, not just
+   * the view.
+   *
+   * Filtering views out of the listing was the alternative and it loses more than it
+   * fixes: a view is an object the user created, they see it in this product's own
+   * sidebar, and its fields are readable by exactly the document sample taken below.
+   * Hiding it would answer "your view does not exist" to keep three commands quiet.
+   *
+   * The guard reads `collInfo.type`, which the server has already told us, rather than
+   * wrapping the calls in `try/catch`. A catch cannot tell code 166 from a genuine
+   * failure without inspecting the error anyway, and the honest fallback for a caught
+   * count is not `0` — a view is not empty, its row count is unknown. Reading the type
+   * also spends no round trip on a command known to be refused.
    */
   public async getSchema(): Promise<TableSchema[]> {
     this.ensureConnected();
@@ -461,25 +484,35 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     for (const collInfo of collections) {
       const collName = collInfo.name;
       const collection = this.db!.collection(collName);
+      const isView = collInfo.type === "view";
 
-      // Get document count
-      const rowCount = await collection.estimatedDocumentCount();
+      // Get document count. Left ABSENT on a view rather than reported as 0: a view
+      // holds no documents of its own, and a zero would read as "this view is empty".
+      const rowCount = isView ? undefined : await collection.estimatedDocumentCount();
 
-      // Get collection stats for size
-      let sizeBytes = 0;
-      try {
-        const stats = await this.db!.command({ collStats: collName });
-        sizeBytes = stats.size || 0;
-      } catch {
-        // Stats might not be available
+      // Get collection stats for size. A view stores nothing, so it has no size to
+      // state; the try/catch stays for a collection whose stats are unavailable.
+      let sizeBytes: number | undefined;
+      if (!isView) {
+        // Unchanged for a collection, including its long-standing fallback: a
+        // collection whose stats this role cannot read still reports 0 B.
+        sizeBytes = 0;
+        try {
+          const stats = await this.db!.command({ collStats: collName });
+          sizeBytes = stats.size || 0;
+        } catch {
+          // Stats might not be available
+        }
       }
 
-      // Sample documents to infer schema
+      // Sample documents to infer schema. This works on a view exactly as it works on
+      // a collection, which is why a view is worth listing at all.
       const sampleDocs = await collection.find({}).limit(100).toArray();
       const columns = this.inferSchemaFromDocuments(sampleDocs);
 
-      // Get indexes
-      const indexList = await collection.indexes();
+      // Get indexes. A view has none of its own — the indexes its query uses belong to
+      // the collection underneath it, and claiming them here would misattribute them.
+      const indexList = isView ? [] : await collection.indexes();
       const indexes = indexList.map((idx) => ({
         name: idx.name || "unknown",
         columns: Object.keys(idx.key || {}),
@@ -488,8 +521,8 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
       schemas.push({
         name: collName,
-        rowCount,
-        size: formatBytes(sizeBytes),
+        ...(rowCount === undefined ? {} : { rowCount }),
+        ...(sizeBytes === undefined ? {} : { size: formatBytes(sizeBytes) }),
         columns,
         indexes,
         foreignKeys: [], // MongoDB doesn't have foreign keys

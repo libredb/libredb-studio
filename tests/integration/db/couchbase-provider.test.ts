@@ -279,6 +279,7 @@ describe("CouchbaseProvider metadata", () => {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      declaresForeignKeys: false,
       supportsMaintenance: true,
       maintenanceOperations: ["analyze", "reindex", "kill"],
       supportsConnectionString: true,
@@ -296,6 +297,13 @@ describe("CouchbaseProvider metadata", () => {
     // matches nothing. Addressing a document needs `META(d).id` or `USE KEYS`, which
     // is per-dialect statement building - deferred to issue #279.
     expect(new CouchbaseProvider(makeConnection()).getCapabilities().supportsInlineRowEdit).toBe(false);
+  });
+
+  test("declares declaresForeignKeys false because SQL++ has no referential constraint", () => {
+    // Collections are schemaless and the columns this provider reports are inferred
+    // from a document sample, so `getSchema()`'s empty `foreignKeys` is not "none
+    // were declared here" but "none can be declared at all" (#414).
+    expect(new CouchbaseProvider(makeConnection()).getCapabilities().declaresForeignKeys).toBe(false);
   });
 
   test("labels collections and documents", () => {

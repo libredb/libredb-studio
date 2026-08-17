@@ -55,6 +55,7 @@ import {
   reusableSnapshot,
 } from "./context-snapshot";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
+import { type AgentInventoryNoun, inventoryNoun } from "./inventory-noun";
 import { PLAN_NO_STATEMENT_MARKER, readPlanStatement } from "./plan-draft";
 import { validatePlanStatement } from "./plan-statement";
 import { packSchemaStatistics, readSchemaStatistics } from "./schema-stats";
@@ -104,6 +105,7 @@ import {
   type AgentRunWorkflowType,
 } from "./types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END, fenceUntrustedContent } from "./untrusted-content";
+import type { ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseType, TableSchema } from "@/lib/types";
 
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
@@ -235,6 +237,46 @@ export const AGENT_REPORT_RESERVE_NOTICE = [
 ].join(" ");
 
 /**
+ * What the ENGINE contributes to the sentences a run reads.
+ *
+ * Four facts travelled separately until #414's second finding and the count was about
+ * to become six, one parameter at a time, through five rule builders that all need the
+ * same ones. Bundling them is not tidiness: it is what makes it impossible to thread a
+ * new engine fact into three of the five and forget the other two, which is how a
+ * grounded Redis plan came to be handed an inventory headed "17 table(s)".
+ *
+ * Every field is DECLARED by the provider, never inferred from `connection.type` — the
+ * rule `CLAUDE.md` states, and the reason `tablesAreDerivedGroupings` exists at all.
+ * `type` is here because two sentences legitimately name the engine to the model (the
+ * fence tag, and the rule binding a prose plan's readings to this engine); it is a
+ * server-side enum in both.
+ */
+interface PlanningEngine {
+  readonly type: DatabaseType;
+  readonly language: ProviderCapabilities["queryLanguage"];
+  /** What this engine calls the rows of its inventory. See `inventory-noun.ts`. */
+  readonly noun: AgentInventoryNoun;
+  /**
+   * `ProviderCapabilities.tablesAreDerivedGroupings`, already resolved to a boolean.
+   *
+   * Resolved at the edge rather than carried optional, so the `=== true` gate the
+   * published-interface default requires is applied once, where the capability is
+   * read, instead of at each of the sentences that ask.
+   */
+  readonly derivedGroupings: boolean;
+}
+
+/** The engine facts a run's prose needs, taken from what its provider declared. */
+function planningEngine(context: AgentToolContext): PlanningEngine {
+  return {
+    type: context.connection.type,
+    language: context.capabilities.queryLanguage,
+    noun: inventoryNoun(context.labels),
+    derivedGroupings: context.capabilities.tablesAreDerivedGroupings === true,
+  };
+}
+
+/**
  * What an operations run is told about the inventory it was given (#411).
  *
  * Both of these sentences used to say "no schema inventory was captured for this run,
@@ -265,8 +307,8 @@ export const AGENT_REPORT_RESERVE_NOTICE = [
  * Server-authored and unfenced, like the other opening messages: nothing a database
  * wrote is in it. The inventory itself arrives fenced, in its own message.
  */
-const OPERATIONS_CONTEXT_NOTE =
-  "A schema inventory was read for this run before your first turn: this connection's table names and the indexes on each, and nothing else — no columns and no relations, because an operations objective is about what the engine reports about ITSELF and not about what its tables contain. It is as much of the inventory as fits, and the block itself says how many tables it left unnamed, so a name the engine reports that is missing from it may still be a table of this database. Use it to recognise what the engine names back at you: a lock is held on a relation, an index-stats row names an index, a slow query names tables. Take the readings you need with inspect_operations. There is no tool here that sends SQL, so apart from that inventory nothing is established for you until a reading returns it.";
+const operationsContextNote = (noun: AgentInventoryNoun): string =>
+  `A schema inventory was read for this run before your first turn: this connection's ${noun.singular} names and the indexes on each, and nothing else — no columns and no relations, because an operations objective is about what the engine reports about ITSELF and not about what its ${noun.plural} contain. It is as much of the inventory as fits, and the block itself says how many ${noun.plural} it left unnamed, so a name the engine reports that is missing from it may still be a ${noun.singular} of this database. Use it to recognise what the engine names back at you: a lock is held on a relation, an index-stats row names an index, a slow query names ${noun.plural}. Take the readings you need with inspect_operations. There is no tool here that sends SQL, so apart from that inventory nothing is established for you until a reading returns it.`;
 
 /**
  * The same workflow, planned rather than run.
@@ -276,16 +318,20 @@ const OPERATIONS_CONTEXT_NOTE =
  * #350 failure exactly, and keeping the two strings apart is what stops one edit to
  * the agent one from reintroducing it. Nothing here may name a tool at all.
  */
-const PLANNING_OPERATIONS_CONTEXT_NOTE =
-  "A schema inventory for this database is in this conversation: its table names and the indexes on each, and nothing else — an operations objective is about what the engine reports about ITSELF, its sessions, its locks, its waits, its configuration, not about what its tables contain. It is as much of the inventory as fits, and the block itself says how many tables it left unnamed. What the inventory is FOR is the identifiers those reports come back full of: a lock is held on a relation, an index-stats row names an index, a slow query names tables. Write the plan as the readings you would take and what each would settle, and name the real tables and indexes each reading would be about.";
+const planningOperationsContextNote = (noun: AgentInventoryNoun): string =>
+  `A schema inventory for this database is in this conversation: its ${noun.singular} names and the indexes on each, and nothing else — an operations objective is about what the engine reports about ITSELF, its sessions, its locks, its waits, its configuration, not about what its ${noun.plural} contain. It is as much of the inventory as fits, and the block itself says how many ${noun.plural} it left unnamed. What the inventory is FOR is the identifiers those reports come back full of: a lock is held on a relation, an index-stats row names an index, a slow query names ${noun.plural}. Write the plan as the readings you would take and what each would settle, and name the real ${noun.plural} and indexes each reading would be about.`;
 
 /**
- * The same two runs on an engine whose catalog this server cannot read.
+ * The same two runs on an engine that could not be grounded.
  *
- * `CATALOG_PLANS` serves PostgreSQL and SQLite; on MySQL, MongoDB, Redis and the rest
- * the capture answers `unavailable` before a provider is acquired, and the run
- * continues UNGROUNDED — which is the existing behaviour for every other workflow and
- * is why operations still reaches the engines it exists to reach.
+ * This said "an engine whose catalog this server cannot read", and until #414 that was
+ * the whole of it: `CATALOG_PLANS` served two dialects and the capture answered
+ * `unavailable` on the rest before acquiring anything. A dialect with no catalog plan
+ * now asks its PROVIDER to describe itself instead, and usually gets an inventory, so
+ * this path is no longer where MySQL, MongoDB and Redis end up as a matter of course —
+ * it is where a provider that cannot describe itself, a description that overran its
+ * time, and a refused reading all end up, on any engine. The run continues UNGROUNDED
+ * either way, which is why operations still reaches the engines it exists to reach.
  *
  * What may not survive is the old sentence's "and none is needed": a run that could
  * not be grounded is told exactly that, in the server's own voice.
@@ -301,28 +347,54 @@ const PLANNING_OPERATIONS_CONTEXT_NOTE =
  * run holds in either mode, and that is the #350 failure this pair of strings exists to
  * avoid. Nothing untrusted is spliced in — `detail` is server prose in every branch but
  * the refused read, whose engine text arrives already fenced.
+ *
+ * A NEWLINE joins the diagnosis to the advice, and it is load-bearing rather than
+ * formatting. `fenceUntrustedContent` ends with its terminator marker and no trailing
+ * newline, so a `detail` that is a fenced database error — an ordinary outcome on the
+ * nine engines #414 grounds through their providers — would otherwise continue the
+ * terminator line with this server's own prose. The whole point of the marker is to be
+ * a line the model can see the untrusted content end at; a sentence sharing that line
+ * is a sentence inside the boundary the fence exists to draw.
  */
-const operationsUngroundedNote = (detail: string): string =>
-  `${detail} So nothing about this database has been established for you: not one table name and not one index. Take the readings you need with inspect_operations. There is no tool here that sends SQL and none that reads a catalog, so nothing is established for you until a reading returns it.`;
+const operationsUngroundedNote = (detail: string, noun: AgentInventoryNoun): string =>
+  `${detail}\nSo nothing about this database has been established for you: not one ${noun.singular} name and not one index. Take the readings you need with inspect_operations. There is no tool here that sends SQL and none that reads a catalog, so nothing is established for you until a reading returns it.`;
 
-const planningOperationsUngroundedNote = (detail: string): string =>
-  `${detail} So nothing about this database has been established for you: not one table name and not one index. You have no tools and can read nothing further, so write the plan as the readings you would take and what each would settle, and say plainly that you cannot name the objects those readings would be about.`;
+const planningOperationsUngroundedNote = (detail: string, noun: AgentInventoryNoun): string =>
+  `${detail}\nSo nothing about this database has been established for you: not one ${noun.singular} name and not one index. You have no tools and can read nothing further, so write the plan as the readings you would take and what each would settle, and say plainly that you cannot name the objects those readings would be about.`;
 
 /**
  * What a plan run is told when its context could not be established.
  *
- * Not the capture's own words: `FALLBACK_ADVICE` sends a model to `inspect_schema`,
+ * Not the capture's own ADVICE: `FALLBACK_ADVICE` sends a model to `inspect_schema`,
  * which this mode does not have (#350). And not silence either — the design's item 6
  * is explicit that an ungrounded run must KNOW it is ungrounded, because the rules
  * that steer it away from inventing table names depend on that being honest.
  *
- * The engine type is named because it is the usual cause: grounding is served for the
- * dialects `CATALOG_COMPOSERS` covers, PostgreSQL and SQLite, and on anything else
- * there is nothing to read. It is a server-side enum, so nothing untrusted is spliced
- * into a sentence the model reads as the server's own.
+ * The DIAGNOSIS is the capture's own and is forwarded verbatim, which is #414's
+ * correction and the second time this exact substitution has been caught. This
+ * sentence used to be written here and to name the engine — "no schema inventory could
+ * be read for this run on this mongodb connection" — and the engine was then genuinely
+ * the reason, because `CATALOG_PLANS` served two dialects and refused the rest before
+ * touching anything. Since #414 a dialect with no catalog plan asks its PROVIDER for
+ * the same inventory and usually gets one, so on the very engines that sentence named
+ * it became false: the run is ungrounded because a provider could not describe itself,
+ * because the description overran the time this run granted it, or because the reading
+ * was refused — three different things to tell an operator, and the engine's name is
+ * none of them. `operations` has forwarded the diagnosis since #411 for the same
+ * reason (`planningOperationsUngroundedNote`), and #411 records what substituting a
+ * sentence of the caller's own costs: it throws away the only record of the real
+ * cause. Nothing untrusted is spliced in — `detail` is server prose in every branch
+ * but the refused read, whose engine text arrives already fenced.
+ *
+ * The engine is still named to this run, and by the rules rather than by this note:
+ * `planningProseEngineRule` binds every reading a prose plan names to this engine, and
+ * `planningStatementContract` spends the type on the fence tag.
+ *
+ * Joined with a NEWLINE for the reason `operationsUngroundedNote` records: a fenced
+ * `detail` ends on its terminator marker, and this sentence may not share that line.
  */
-const planningUngroundedNote = (type: DatabaseType): string =>
-  `No schema inventory could be read for this run on this ${type} connection, so nothing about this database has been established for you: not its tables, not its columns, not its relations, and not the size of anything. You have no tools and can read nothing further.`;
+const planningUngroundedNote = (detail: string, noun: AgentInventoryNoun): string =>
+  `${detail}\nSo nothing about this database has been established for you: not its ${noun.plural}, not its columns, not its relations, and not the size of anything. You have no tools and can read nothing further.`;
 
 /**
  * What is true of a plan run whatever its workflow and whatever it was given.
@@ -409,13 +481,36 @@ const PLAN_DELIVERABLES: Readonly<Record<AgentRunWorkflowType, PlanDeliverable>>
  * inventory records what EXISTS, not what this user's role may select from, so a
  * statement checked against it is not a statement guaranteed to run. Saying "use only
  * names from the inventory" without it would promise a soundness nothing here has.
+ *
+ * `language` arrived with #414 and every sentence that assumed SQL is now written
+ * twice. The tag does NOT vary with it and that is the point of taking the language
+ * separately: the tag is the canonical type-id in both arms, because it is what
+ * `isQueryFenceTag` accepts (a total record over `DatabaseType`, so all eleven pass)
+ * and what `rich-text.tsx` and `readPlanStatement` key the editor hand-off on. A draft
+ * a model fenced as ```` ```javascript ```` produces no `plan-statement-drafted` event
+ * at all — the run would be scored as having drafted nothing while the user is looking
+ * at a statement — so the one thing this contract cannot afford to leave to the model
+ * is what the tag says.
+ *
+ * What the json arm has to say instead is that SQL is the wrong language, and it has
+ * to say it: the objective is prose, the words "statement", "table" and "column" are
+ * all over the conversation, and a model handed a MongoDB inventory under those words
+ * will write SQL against it unless told not to. The second clause is about the same
+ * vocabulary from the other side — this product records every engine's inventory under
+ * the words table and column, so a model reading them on a document engine has to be
+ * told those are the names of its collections and fields and not evidence of a
+ * relational schema it can join.
  */
-const planningStatementContract = (deliverable: { readonly noun: string }, type: DatabaseType): string =>
+const planningStatementContract = (deliverable: { readonly noun: string }, engine: PlanningEngine): string =>
   [
-    `Produce ONE runnable statement: ${deliverable.noun}.`,
-    `Put it in a single fenced block tagged \`${type}\` — three backticks, that tag, the statement, three backticks — and put nothing else inside that block.`,
-    "Put the rationale AFTER the statement, and keep it brief: which tables it reads, which joins it makes, and why that answers the objective.",
-    "Use no table name and no column name that is not in that inventory. A name that is not there is one you invented, and the statement will fail on it.",
+    engine.language === "sql"
+      ? `Produce ONE runnable statement: ${deliverable.noun}.`
+      : `Produce ONE runnable statement or command, written in this ${engine.type} database's own query language: ${deliverable.noun}. This engine speaks no SQL, and SQL written for it would answer a question about a different database.`,
+    `Put it in a single fenced block tagged \`${engine.type}\` — three backticks, that tag, the statement, three backticks — and put nothing else inside that block.`,
+    `Put the rationale AFTER the statement, and keep it brief: which ${engine.noun.plural} it reads, which joins it makes, and why that answers the objective.`,
+    engine.language === "sql"
+      ? `Use no ${engine.noun.singular} name and no column name that is not in that inventory. A name that is not there is one you invented, and the statement will fail on it.`
+      : `Use no name that is not in that inventory. It lists each ${engine.noun.singular} with the columns under it because that is the shape this product records every engine's schema in; on this engine those are the names of its own objects and of the fields inside them, and a name that is not there is one you invented.`,
     "A statement built only from names in the inventory is still not a statement that is certain to run: the inventory records what EXISTS in this database, not what the user's role is permitted to read.",
     PLANNING_NO_STATEMENT_RULE,
   ].join(" ");
@@ -449,11 +544,20 @@ const planningStatementContract = (deliverable: { readonly noun: string }, type:
  * the split — until then only an earlier run could have read it, so "never by you"
  * was safely hard-coded.
  */
+/** Which of the two readings produced an inventory. Absent on a snapshot means the composed one. */
+type PlanningReadVia = NonNullable<AgentContextSnapshot["readVia"]>;
+
 interface PlanningGrounding {
   /** Whether an inventory reached the model at all. */
   readonly schemaKnown: boolean;
   /** Who read it. A plan run now reads its own, and says so. */
   readonly readBy: "this-run" | "earlier-run";
+  /**
+   * HOW it was read (#414). A second axis rather than a second flag on the first,
+   * because the two are independent: either reading can have been taken by this run
+   * or by an earlier one, and the rules make a separate claim about each.
+   */
+  readonly readVia: PlanningReadVia;
   /** Whether a statistics block reached the model beside the inventory. */
   readonly statisticsShown: boolean;
 }
@@ -461,20 +565,57 @@ interface PlanningGrounding {
 /**
  * Where the inventory came from, in the rules' own words.
  *
- * Neither sentence claims the run reached NO database, and that is a correction
- * rather than an omission: on both paths this run reads the engine's own estimated
+ * No sentence claims the run reached NO database, and that is a correction rather
+ * than an omission: on every path this run reads the engine's own estimated
  * statistics beside the inventory, so "this run has sent nothing" — which is what the
  * `earlier-run` sentence said while the hold was a plan run's only source (#384) —
- * became false the moment plan mode started grounding itself. What is true on both
- * paths is the narrower promise the mode actually sells, and it is what both
+ * became false the moment plan mode started grounding itself. What is true on all of
+ * them is the narrower promise the mode actually sells, and it is what all four
  * sentences say: no statement of the USER'S was run, nothing was written, and the
  * model has no tools.
+ *
+ * FOUR sentences since #414, over the same two axes as `PLANNING_SNAPSHOT_PREFACE`,
+ * and this record was left one-dimensional when that one was made 2x2 — which put the
+ * two halves of one conversation in direct contradiction on nine engines. The rules
+ * said the inventory came "through the same read-only catalog path the agent mode
+ * uses" and the message under them said it came from the engine's own inspection.
+ * Both halves of the first were false there: no catalog statement is composed on a
+ * dialect `CATALOG_PLANS` does not serve, and agent mode cannot take a read-only path
+ * on those engines at all — it is refused the profile and ends `engine-unsupported`,
+ * which is the whole reason `readProviderSchemaForGrounding` exists. Telling a model
+ * how the run came by what it knows and getting it wrong is the defect class #414 was
+ * opened to close, so it may not be stated in the rules either.
+ *
+ * The composed arms keep their reference to agent mode because it is true where they
+ * are said: on PostgreSQL and SQLite the agent path takes exactly that read.
  */
-const PLANNING_PROVENANCE: Readonly<Record<PlanningGrounding["readBy"], string>> = Object.freeze({
-  "this-run":
-    "It was read from the database by this run itself, before your first turn, through the same read-only catalog path the agent mode uses: no statement of the user's was run, nothing was written, and you have no tools and will read nothing further.",
-  "earlier-run":
-    "It was read by an EARLIER run on this connection rather than by this one, which is why this run did not have to read it again: no statement of the user's was run, nothing was written, and you have no tools and will read nothing further.",
+/**
+ * A sentence that may name what the inventory holds, so it takes the engine's noun.
+ *
+ * The two provider arms are the ones that need it: they describe the reading as the
+ * one the product performs when it lists your objects, and on Redis it lists key
+ * patterns. The composed arms take the noun and spend none of it, because the two
+ * dialects that path serves are relational and their noun is "table" by definition —
+ * the parameter is uniform so the record stays total over both axes, which is what
+ * stops an arm being added without a decision.
+ */
+type PlanningSentence = (noun: AgentInventoryNoun) => string;
+
+const PLANNING_PROVENANCE: Readonly<
+  Record<PlanningGrounding["readBy"], Readonly<Record<PlanningReadVia, PlanningSentence>>>
+> = Object.freeze({
+  "this-run": Object.freeze({
+    "composed-catalog": () =>
+      "It was read from the database by this run itself, before your first turn, through the same read-only catalog path the agent mode uses: no statement of the user's was run, nothing was written, and you have no tools and will read nothing further.",
+    "provider-inventory": (noun: AgentInventoryNoun) =>
+      `It was read from the database by this run itself, before your first turn, through the engine's own schema inspection rather than a catalog statement the server composed — the same reading this product performs when it lists your ${noun.plural}: no statement of the user's was run, nothing was written, and you have no tools and will read nothing further.`,
+  }),
+  "earlier-run": Object.freeze({
+    "composed-catalog": () =>
+      "It was read by an EARLIER run on this connection rather than by this one, which is why this run did not have to read it again: no statement of the user's was run, nothing was written, and you have no tools and will read nothing further.",
+    "provider-inventory": () =>
+      "It was read by an EARLIER run on this connection rather than by this one, through the engine's own schema inspection rather than a catalog statement the server composed, which is why this run did not have to read it again: no statement of the user's was run, nothing was written, and you have no tools and will read nothing further.",
+  }),
 });
 
 /**
@@ -506,20 +647,49 @@ const PLANNING_LIMIT_WITH_STATISTICS = `${PLANNING_STATISTICS_NATURE} Use them t
 
 const PLANNING_PROSE_LIMIT_WITH_STATISTICS = `${PLANNING_STATISTICS_NATURE} Use them to choose which table is worth a reading and which reading to take first.`;
 
+/**
+ * What the rows of the inventory ARE, said once, on the engines where they are not
+ * objects at all (#414).
+ *
+ * The noun alone does not carry this. A run told "17 key pattern(s)" still has to
+ * decide whether a key pattern is a thing a command can be given, and the honest
+ * answer is knowable only here: `user:*` is a grouping THIS SERVER made, by scanning a
+ * bounded slice of the keyspace and collapsing the real key names it found under their
+ * common prefix. Nothing about Redis or LibreDB tells a model that, because it is not a
+ * fact about either engine — it is a fact about how this product reads them. The live
+ * evidence is in `tablesAreDerivedGroupings`' own docblock: two runs, two objectives,
+ * `KEYS user:*` and `ZCARD user:*`, both naming a row as a key.
+ *
+ * Three clauses, and each answers something the model would otherwise have to guess:
+ * what the rows are, what a statement may therefore name instead, and that the list is
+ * one reading's reach rather than the database's contents.
+ *
+ * What is deliberately NOT here is any command, any command name and any prohibition
+ * on one. A rule saying "never use KEYS" would be engine trivia written into a prompt —
+ * it goes stale, it teaches nothing about the next command, and this repository has
+ * been bitten by exactly that shape before. A model that knows what the rows are can
+ * choose for itself, and choosing is not this file's job.
+ */
+const planningDerivedGroupingsRule = (noun: AgentInventoryNoun): string =>
+  `Those ${noun.plural} are not objects this database holds, and no statement can be given one as a name: this server derived every row of that inventory itself, by scanning a bounded part of the keyspace and grouping the real key names it found under their common prefix. So name a whole key, or ask for keys by pattern in whatever way this engine offers — a row from that list is neither. And because the scan was bounded, the list is what one reading reached rather than everything this database holds.`;
+
 function planningSchemaRules(
   grounding: PlanningGrounding,
   deliverable: { readonly noun: string },
-  type: DatabaseType,
+  engine: PlanningEngine,
 ): string {
   return [
     "A schema inventory for this database is in this conversation, with its relations beside it.",
-    PLANNING_PROVENANCE[grounding.readBy],
+    PLANNING_PROVENANCE[grounding.readBy][grounding.readVia](engine.noun),
     grounding.statisticsShown ? PLANNING_LIMIT_WITH_STATISTICS : PLANNING_LIMIT_WITHOUT_STATISTICS,
+    // Said where the inventory is, and only where it is true: a run with no inventory
+    // has no rows to be told the nature of.
+    ...(engine.derivedGroupings ? [planningDerivedGroupingsRule(engine.noun)] : []),
     // "Write the plan against it" until 2026-08-15, which asked for the lecture the
     // whole design exists to remove. What survives is the half that was right: the
     // real names, rather than tables in general.
-    "Write the statement against it. Name the real tables, columns and relations it reads instead of writing about tables in general.",
-    planningStatementContract(deliverable, type),
+    `Write the statement against it. Name the real ${engine.noun.plural}, columns and relations it reads instead of writing about ${engine.noun.plural} in general.`,
+    planningStatementContract(deliverable, engine),
   ].join(" ");
 }
 
@@ -538,10 +708,10 @@ function planningSchemaRules(
  * what it is missing FOR, and the question it is asked to ask is a question about the
  * statement it was meant to write.
  */
-const planningNoSchemaRules = (deliverable: { readonly noun: string }): string =>
+const planningNoSchemaRules = (deliverable: { readonly noun: string }, noun: AgentInventoryNoun): string =>
   [
-    "No schema inventory is available to this run, so you have not seen this database at all: not one table name, not one column, not one relation.",
-    `You were asked for ${deliverable.noun}, and you cannot write one from this: invent no table or column names, and do not guess a schema from the wording of the objective.`,
+    `No schema inventory is available to this run, so you have not seen this database at all: not one ${noun.singular} name, not one column, not one relation.`,
+    `You were asked for ${deliverable.noun}, and you cannot write one from this: invent no ${noun.singular} or column names, and do not guess a schema from the wording of the objective.`,
     `So answer with the refusal instead — begin a line with \`${PLAN_NO_STATEMENT_MARKER}\`, say that this run was given no inventory of this database, and ask the ONE question that would let you write the statement.`,
     "A general inspection plan is not an answer here: a plan that would read identically against any database in the world says nothing about this one.",
   ].join(" ");
@@ -655,26 +825,27 @@ const planningProseEngineRule = (type: DatabaseType): string =>
  * one of them — and both interpolate the same server-side enum, so the tag cannot drift
  * between them.
  */
-const planningProseStatementRule = (type: DatabaseType): string =>
+const planningProseStatementRule = (engine: PlanningEngine): string =>
   [
-    `A reading is not always prose: where the reading you would take is itself expressible as a statement — on some engines what the engine reports about itself is held in ordinary objects you can select from — write that statement out in a single fenced block tagged \`${type}\`, and the plan is better for it.`,
+    `A reading is not always prose: where the reading you would take is itself expressible as a statement — on some engines what the engine reports about itself is held in ordinary objects you can select from — write that statement out in a single fenced block tagged \`${engine.type}\`, and the plan is better for it.`,
     "Where it is not expressible as one, say the reading in this engine's own terms and produce no block: a plan with no block in it is a complete answer here, and no block at all is better than one written for an engine this is not.",
-    "Whatever you do put in a block must READ WHAT THE ENGINE REPORTS ABOUT ITSELF — what is connected to it, what it is spending its time on, what is blocked, where its space and its indexes are going. A statement that reads the user's own tables, their rows and their columns, is not an operational reading and does not belong in this plan.",
+    `Whatever you do put in a block must READ WHAT THE ENGINE REPORTS ABOUT ITSELF — what is connected to it, what it is spending its time on, what is blocked, where its space and its indexes are going. A statement that reads the user's own ${engine.noun.plural}, their rows and their columns, is not an operational reading and does not belong in this plan.`,
   ].join(" ");
 
-const planningProseRules = (grounding: PlanningGrounding, type: DatabaseType): string =>
+const planningProseRules = (grounding: PlanningGrounding, engine: PlanningEngine): string =>
   [
-    "A schema inventory for this database is in this conversation: the tables it holds and the indexes on each, and no columns and no relations. It is as much of the inventory as fits, and the block itself says how many tables it left unnamed.",
-    PLANNING_PROVENANCE[grounding.readBy],
+    `A schema inventory for this database is in this conversation: the ${engine.noun.plural} it holds and the indexes on each, and no columns and no relations. It is as much of the inventory as fits, and the block itself says how many ${engine.noun.plural} it left unnamed.`,
+    PLANNING_PROVENANCE[grounding.readBy][grounding.readVia](engine.noun),
     grounding.statisticsShown ? PLANNING_PROSE_LIMIT_WITH_STATISTICS : PLANNING_LIMIT_WITHOUT_STATISTICS,
-    "You must name no table and no index that this conversation has not shown you.",
-    "Answer in prose: the readings you would take, in what order, and what each one would settle. Name the real tables and indexes each reading would be about, rather than describing readings in the abstract.",
-    planningProseStatementRule(type),
-    planningProseEngineRule(type),
+    ...(engine.derivedGroupings ? [planningDerivedGroupingsRule(engine.noun)] : []),
+    `You must name no ${engine.noun.singular} and no index that this conversation has not shown you.`,
+    `Answer in prose: the readings you would take, in what order, and what each one would settle. Name the real ${engine.noun.plural} and indexes each reading would be about, rather than describing readings in the abstract.`,
+    planningProseStatementRule(engine),
+    planningProseEngineRule(engine.type),
   ].join(" ");
 
 /**
- * The same plan on an engine whose catalog this server cannot read.
+ * The same plan when the reading failed.
  *
  * It says what it has not seen rather than that it needed nothing — "and this
  * objective needs none" was the old wording, and it is exactly the claim #411 found to
@@ -693,9 +864,12 @@ const planningProseRules = (grounding: PlanningGrounding, type: DatabaseType): s
  * of the product, knowable to a run that has seen no schema at all, and it is knowledge
  * this path already spends when it names the readings it would take. Withholding the
  * FENCE while permitting the same reading in prose would be a distinction with nothing
- * behind it, and it would cost the editor hand-off on exactly the engines that have no
- * other deliverable — MySQL, SQL Server and ClickHouse are all this path, as is a
- * PostgreSQL run whose catalog read was refused.
+ * behind it, and it would cost the editor hand-off on exactly the runs that have no
+ * other deliverable. WHICH runs those are narrowed at #414: MySQL, SQL Server and
+ * ClickHouse used to be this path as a matter of course and are now ordinarily grounded
+ * through their own providers, so what is left here is a run whose reading failed, on
+ * any engine — a refusal, a provider that cannot describe itself, a description that
+ * overran its time. Fewer runs take it; nothing about what it may say has changed.
  *
  * What that permission may not cross is said in the same breath, because it is the one
  * thing this path can get wrong that the grounded path cannot: the engine's reporting
@@ -703,14 +877,14 @@ const planningProseRules = (grounding: PlanningGrounding, type: DatabaseType): s
  * table, an index or a column of the user's invents everything. `pg_stat_activity` is
  * permitted; the same read filtered on a relation name this run was never shown is not.
  */
-const planningProseRulesUngrounded = (type: DatabaseType): string =>
+const planningProseRulesUngrounded = (engine: PlanningEngine): string =>
   [
-    "No schema inventory is available to this run, so you have not seen this database at all: not one table name and not one index.",
-    "You must invent no table and no index names.",
-    `The engine's own reporting objects are not covered by that: what a ${type} engine calls its own views and counters is a property of the engine rather than of this database's schema, so naming one invents nothing — naming a table, an index or a column of this user's invents everything.`,
+    `No schema inventory is available to this run, so you have not seen this database at all: not one ${engine.noun.singular} name and not one index.`,
+    `You must invent no ${engine.noun.singular} and no index names.`,
+    `The engine's own reporting objects are not covered by that: what a ${engine.type} engine calls its own views and counters is a property of the engine rather than of this database's schema, so naming one invents nothing — naming a ${engine.noun.singular}, an index or a column of this user's invents everything.`,
     "Answer in prose: the readings you would take, in what order, and what each one would settle — and say plainly that you cannot name the objects those readings would be about.",
-    planningProseStatementRule(type),
-    planningProseEngineRule(type),
+    planningProseStatementRule(engine),
+    planningProseEngineRule(engine.type),
   ].join(" ");
 
 /**
@@ -768,9 +942,13 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
   operations: [
     // "and no schema inventory was captured for you" until #411, which captures one.
     // Hedged rather than stated flatly because these rules are the same for every run
-    // of this workflow while the grounding is not: `CATALOG_PLANS` serves two engines,
-    // and this workflow deliberately runs on the others. The per-run truth is in the
-    // opening note, which is built from what this drive actually established.
+    // of this workflow while the grounding is not. The CAUSE of that moved at #414: it
+    // was the dialect table — `CATALOG_PLANS` served two engines and this workflow
+    // deliberately runs on the others — and it is now a reading that can fail on any
+    // engine, since a dialect with no catalog plan asks its provider instead and
+    // usually gets an inventory. The hedge is unchanged, because an ungrounded
+    // operations run is still an ordinary thing. The per-run truth is in the opening
+    // note, which is built from what this drive actually established.
     "You have NO SQL in this run: there is no inspect_schema, no run_read_query and no inspect_plan. Where this engine can be read, a schema inventory of table names and their indexes was captured for you before your first turn and the message opening this run says so; it is there to tell you what the engine names back at you.",
     "Everything you read, you read with inspect_operations.",
     "Take the readings your objective needs — sessions, slow-queries, table-stats, index-stats, storage, health — one call each, and narrow them with limit or schema rather than asking for everything.",
@@ -849,7 +1027,7 @@ const AUTO_EXECUTE_RULE = [
  * own, because the capture's advice names a tool that workflow does not hold — and its
  * rules are about the tools either way.
  */
-function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, type: DatabaseType): string {
+function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, engine: PlanningEngine): string {
   // The deliverable decides WHICH pair of rules, and the grounding decides which of
   // the pair. Both axes are real since #411: the prose workflow is grounded exactly
   // where the others are — the engine decides it and nothing else — so a prose run
@@ -859,11 +1037,11 @@ function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, type
   const planningDeliverableRules =
     deliverable.kind === "prose"
       ? grounding.schemaKnown
-        ? planningProseRules(grounding, type)
-        : planningProseRulesUngrounded(type)
+        ? planningProseRules(grounding, engine)
+        : planningProseRulesUngrounded(engine)
       : grounding.schemaKnown
-        ? planningSchemaRules(grounding, deliverable, type)
-        : planningNoSchemaRules(deliverable);
+        ? planningSchemaRules(grounding, deliverable, engine)
+        : planningNoSchemaRules(deliverable, engine.noun);
   const planningRules = `${PLANNING_TOOLLESS_RULE} ${planningDeliverableRules}`;
   const rules = record.mode === "agent" ? `${AGENT_RULES} ${WORKFLOW_TOOL_RULES[record.workflowType]}` : planningRules;
   // Said only where it can happen, on all THREE counts. A planning run has no tools;
@@ -920,10 +1098,11 @@ const INSPECT_SCHEMA_RELATIONS_OMISSION_ADVICE = 'Call inspect_schema with kind=
  * not, `operations`, goes through `packOperationsInventory` instead — so the omission
  * advice is passed here and nowhere else.
  */
-function packSnapshotMessage(snapshot: AgentContextSnapshot, objective: string): string {
+function packSnapshotMessage(snapshot: AgentContextSnapshot, objective: string, noun: AgentInventoryNoun): string {
   return packContextForTask(snapshot, objective, {
     preface: snapshotHandoverText(snapshot.fingerprint),
     omissionAdvice: INSPECT_SCHEMA_OMISSION_ADVICE,
+    noun,
   });
 }
 
@@ -946,20 +1125,67 @@ function packSnapshotMessage(snapshot: AgentContextSnapshot, objective: string):
  * `PLANNING_PROVENANCE` records: the statistics beside the inventory are read on both
  * paths, so the only claim that stays true on both is the one about the user's own
  * statements.
+ *
+ * FOUR sentences since #414, over a second axis: WHO read it, and HOW. The composed
+ * arm says "a read-only catalog read the server composed", which is exactly what
+ * happens on PostgreSQL and SQLite and exactly what does not happen on the nine
+ * engines the provider path now grounds — there the server composes no statement at
+ * all and asks the provider to describe itself, the same reading the sidebar takes
+ * when it lists your tables. Leaving one sentence over both would have been this
+ * surface's recurring defect stated to the model itself: a false self-description of
+ * how the run came by what it knows.
+ *
+ * Two clauses in the provider arm that a reader will be tempted to cut, and must not:
+ *
+ *  - It does not claim that nothing of the DATA was touched. On MongoDB and Couchbase
+ *    the provider infers a table's fields from a sample of the user's own documents,
+ *    so the existence of a field here is derived from data rather than read from a
+ *    catalog. No value is kept, and the sentence says which of those two it is.
+ *  - It says the reading is bounded. MongoDB stops at 200 collections, Redis scans
+ *    1000 keys, LibreDB 10000 — so a provider inventory can be a PARTIAL reading
+ *    carrying a whole-looking table count, and a model told only "here is the
+ *    inventory" would conclude a table does not exist from its absence. Nothing else
+ *    in the conversation says this; the fenced header states a count, not a bound.
+ *
+ * The `readVia` field is optional on the snapshot and absent means `composed-catalog`,
+ * for the reason `types.ts` records: every snapshot written before #414 came from that
+ * path, and stamping it would have made those ledgers differ from the ones this build
+ * writes for the same reading.
  */
-const PLANNING_SNAPSHOT_PREFACE: Readonly<Record<PlanningGrounding["readBy"], string>> = Object.freeze({
-  "this-run":
-    "The inventory below was read from this database by this run, before your first turn, through a read-only catalog read the server composed. No statement of your objective's was run, and you will read nothing further.",
-  "earlier-run":
-    "The inventory below was read from this database by an earlier run on this connection, so this run did not have to read it again. No statement of your objective's was run, and you will read nothing further.",
+const planningProviderInventoryBound = (noun: AgentInventoryNoun): string =>
+  `That inspection is bounded and, on some engines, infers a ${noun.singular}'s fields from a sample of its own rows rather than enumerating them from a catalog — no value of yours is here, but the shape below is what the reading found and not proof that nothing else exists.`;
+
+const PLANNING_SNAPSHOT_PREFACE: Readonly<
+  Record<PlanningGrounding["readBy"], Readonly<Record<PlanningReadVia, PlanningSentence>>>
+> = Object.freeze({
+  "this-run": Object.freeze({
+    "composed-catalog": () =>
+      "The inventory below was read from this database by this run, before your first turn, through a read-only catalog read the server composed. No statement of your objective's was run, and you will read nothing further.",
+    "provider-inventory": (noun: AgentInventoryNoun) =>
+      `The inventory below was read from this database by this run, before your first turn, through the engine's own schema inspection — the same reading this product performs when it lists your ${noun.plural}. No statement of your objective's was run, and you will read nothing further. ${planningProviderInventoryBound(noun)}`,
+  }),
+  "earlier-run": Object.freeze({
+    "composed-catalog": () =>
+      "The inventory below was read from this database by an earlier run on this connection, so this run did not have to read it again. No statement of your objective's was run, and you will read nothing further.",
+    "provider-inventory": (noun: AgentInventoryNoun) =>
+      `The inventory below was read from this database by an earlier run on this connection, through the engine's own schema inspection, so this run did not have to read it again. No statement of your objective's was run, and you will read nothing further. ${planningProviderInventoryBound(noun)}`,
+  }),
 });
+
+/** Which of the four sentences this snapshot has earned. */
+const planningSnapshotPreface = (
+  snapshot: AgentContextSnapshot,
+  readBy: PlanningGrounding["readBy"],
+  noun: AgentInventoryNoun,
+): string => PLANNING_SNAPSHOT_PREFACE[readBy][snapshot.readVia ?? "composed-catalog"](noun);
 
 function packPlanningSnapshotMessage(
   snapshot: AgentContextSnapshot,
   objective: string,
   readBy: PlanningGrounding["readBy"],
+  noun: AgentInventoryNoun,
 ): string {
-  return packContextForTask(snapshot, objective, { preface: PLANNING_SNAPSHOT_PREFACE[readBy] });
+  return packContextForTask(snapshot, objective, { preface: planningSnapshotPreface(snapshot, readBy, noun), noun });
 }
 
 /**
@@ -984,14 +1210,36 @@ function packPlanningSnapshotMessage(
  * kind=\"relations\" for them" in EVERY mode until #411, and a plan run holds no tools
  * at all — so a schema with more relations than the bound holds was telling plan mode to
  * call something it does not have (#350). It reaches only agent mode's callers now.
+ *
+ * `capabilities` is passed for one flag and one sentence (#414): an engine that cannot
+ * declare a foreign key at all must not be described as one that happens to declare
+ * none. The provider is the only thing that knows, and `CLAUDE.md` forbids asking the
+ * connection's type here instead.
  */
-function packRelations(snapshot: AgentContextSnapshot, workflowType: AgentRunWorkflowType, mode: AgentRunMode): string {
+function packRelations(
+  snapshot: AgentContextSnapshot,
+  workflowType: AgentRunWorkflowType,
+  mode: AgentRunMode,
+  capabilities: ProviderCapabilities,
+  noun: AgentInventoryNoun,
+): string {
   const omissionAdvice = mode === "agent" ? INSPECT_SCHEMA_RELATIONS_OMISSION_ADVICE : undefined;
-  return fenceUntrustedContent(renderErDiagram(snapshot, erDetailForWorkflow(workflowType), { omissionAdvice }), {
-    label: "schema relations",
-    operationId: "agent/context-snapshot",
-    reference: snapshot.fingerprint,
-  });
+  return fenceUntrustedContent(
+    // Passed through as it is, `undefined` included: `renderErDiagram` tests it for
+    // `=== false`, so an absent flag and an undefined one already take the same path.
+    // Spreading it conditionally would encode the same default a second time and add a
+    // branch nothing can distinguish.
+    renderErDiagram(snapshot, erDetailForWorkflow(workflowType), {
+      omissionAdvice,
+      engineDeclaresForeignKeys: capabilities.declaresForeignKeys,
+      noun,
+    }),
+    {
+      label: "schema relations",
+      operationId: "agent/context-snapshot",
+      reference: snapshot.fingerprint,
+    },
+  );
 }
 
 /** Step id → the tool that was invoked under it, so an outcome can name its tool. */
@@ -1415,6 +1663,9 @@ export async function runInvestigation(
     workflowType: record.workflowType,
     actor: record.actor,
   };
+  // Read once, from the provider's own declarations, and spent by every sentence that
+  // has to name what this engine holds. See `PlanningEngine`.
+  const engine = planningEngine(context);
   const tools = declaredTools(record);
   const messages: ModelMessage[] = [{ role: "user", content: record.objective }];
   const priorProgress = describePriorProgress(record);
@@ -1444,7 +1695,12 @@ export async function runInvestigation(
    * have to describe it. Rebuilt rather than mutated in place so the rules can only
    * ever state a combination this code actually produced.
    */
-  let grounding: PlanningGrounding = { schemaKnown: false, readBy: "this-run", statisticsShown: false };
+  let grounding: PlanningGrounding = {
+    schemaKnown: false,
+    readBy: "this-run",
+    readVia: "composed-catalog",
+    statisticsShown: false,
+  };
   /**
    * The inventory a plan run's drafted statement is checked against, or `null` when
    * this drive has none.
@@ -1499,8 +1755,8 @@ export async function runInvestigation(
         messages.push({
           role: "user",
           content: operations
-            ? planningOperationsUngroundedNote(capture.detail)
-            : planningUngroundedNote(context.connection.type),
+            ? planningOperationsUngroundedNote(capture.detail, engine.noun)
+            : planningUngroundedNote(capture.detail, engine.noun),
         });
         return;
       }
@@ -1510,6 +1766,9 @@ export async function runInvestigation(
         fingerprint: snapshot.fingerprint,
         tableCount: snapshot.tables.length,
         snapshot,
+        // The same noun this run's own prompt blocks are written with, recorded
+        // where the timeline can read it: the rail has no provider to ask.
+        noun: engine.noun,
       });
     }
     // After the ledger on the capture path, for the reason the agent path records:
@@ -1521,14 +1780,23 @@ export async function runInvestigation(
       // Names and indexes, and NO relations block: the graph is the most expensive
       // part of the packing and the least useful part of it here (#411). The note
       // comes first, because it is what says what the fenced block below it is for.
-      messages.push({ role: "user", content: PLANNING_OPERATIONS_CONTEXT_NOTE });
+      messages.push({ role: "user", content: planningOperationsContextNote(engine.noun) });
       messages.push({
         role: "user",
-        content: packOperationsInventory(snapshot, { preface: PLANNING_SNAPSHOT_PREFACE[readBy] }),
+        content: packOperationsInventory(snapshot, {
+          preface: planningSnapshotPreface(snapshot, readBy, engine.noun),
+          noun: engine.noun,
+        }),
       });
     } else {
-      messages.push({ role: "user", content: packPlanningSnapshotMessage(snapshot, record.objective, readBy) });
-      messages.push({ role: "user", content: packRelations(snapshot, record.workflowType, record.mode) });
+      messages.push({
+        role: "user",
+        content: packPlanningSnapshotMessage(snapshot, record.objective, readBy, engine.noun),
+      });
+      messages.push({
+        role: "user",
+        content: packRelations(snapshot, record.workflowType, record.mode, context.capabilities, engine.noun),
+      });
     }
 
     const statistics = await readSchemaStatistics(context);
@@ -1544,7 +1812,15 @@ export async function runInvestigation(
       role: "user",
       content: packSchemaStatistics(snapshot.tables, statistics, operations ? { detail: "rows" } : {}),
     });
-    grounding = { schemaKnown: true, readBy, statisticsShown: statistics.kind === "read" };
+    grounding = {
+      schemaKnown: true,
+      readBy,
+      // The same defaulting the preface does, and from the same field: a snapshot with
+      // no `readVia` came from the composed path, because that was the only path there
+      // was when it was written.
+      readVia: snapshot.readVia ?? "composed-catalog",
+      statisticsShown: statistics.kind === "read",
+    };
     // What the closing statement will be checked against, taken from the same reading
     // the model was shown: a statement validated against an inventory the model never
     // saw would be checked against a database and blamed on a model.
@@ -1606,15 +1882,21 @@ export async function runInvestigation(
      */
     const show = (snapshot: AgentContextSnapshot): void => {
       if (operations) {
-        messages.push({ role: "user", content: OPERATIONS_CONTEXT_NOTE });
+        messages.push({ role: "user", content: operationsContextNote(engine.noun) });
         messages.push({
           role: "user",
-          content: packOperationsInventory(snapshot, { preface: snapshotHandoverText(snapshot.fingerprint) }),
+          content: packOperationsInventory(snapshot, {
+            preface: snapshotHandoverText(snapshot.fingerprint),
+            noun: engine.noun,
+          }),
         });
         return;
       }
-      messages.push({ role: "user", content: packSnapshotMessage(snapshot, record.objective) });
-      messages.push({ role: "user", content: packRelations(snapshot, record.workflowType, record.mode) });
+      messages.push({ role: "user", content: packSnapshotMessage(snapshot, record.objective, engine.noun) });
+      messages.push({
+        role: "user",
+        content: packRelations(snapshot, record.workflowType, record.mode, context.capabilities, engine.noun),
+      });
     };
 
     const recorded = reusableSnapshot(record.events, record.connectionId);
@@ -1634,7 +1916,7 @@ export async function runInvestigation(
       // this workflow is the one that reaches engines where the capture always fails.
       messages.push({
         role: "user",
-        content: operations ? operationsUngroundedNote(capture.detail) : capture.modelText,
+        content: operations ? operationsUngroundedNote(capture.detail, engine.noun) : capture.modelText,
       });
       return;
     }
@@ -1644,6 +1926,9 @@ export async function runInvestigation(
       fingerprint: snapshot.fingerprint,
       tableCount: snapshot.tables.length,
       snapshot,
+      // As on the planning path: what the engine calls these rows is part of what was
+      // read, so it is written down with the reading rather than guessed at later.
+      noun: engine.noun,
     });
     // After the ledger, never before it: what a plan run may later be handed is an
     // inventory that is durably part of some run's own history, not one this process
@@ -1727,7 +2012,13 @@ export async function runInvestigation(
       // The engine this drive was given, not one read off the record: a statement is
       // written for the connection it would actually be run against.
       dialect: context.connection.type,
-      ...validatePlanStatement(draft.sql, planningInventory),
+      // The engine's own query language goes in beside the inventory (#414): both
+      // halves of this validation are SQL readers, and on an engine that speaks no SQL
+      // both were wrong at once — the guard marking every correct draft as not
+      // classified as a read, and the identifier check affirming an inventory it never
+      // consulted. It declines to judge instead, and the rail says which check could
+      // not reach this draft rather than what it found.
+      ...validatePlanStatement(draft.sql, planningInventory, context.capabilities.queryLanguage),
     });
   };
 
@@ -1767,7 +2058,7 @@ export async function runInvestigation(
       // The engine is the fence tag a plan run is told to write, so the prompt reads
       // it from the connection this drive was given rather than from the record: the
       // resources are what a statement would actually be run against.
-      systemPrompt(record, grounding, context.connection.type),
+      systemPrompt(record, grounding, engine),
       messages,
       tools,
       turnBudgetMs,

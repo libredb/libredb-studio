@@ -306,6 +306,128 @@ describe("foldLedgerEntries", () => {
     });
 
     /*
+      #414. Both of this entry's checks are SQL readers, and grounding plan mode on the
+      engines that speak no SQL made both wrong at once. The guard reads every string as
+      SQL: a correct MongoDB aggregation leads with the word `DB`, which is in no read
+      allowlist, so it came back `NON_READ_STATEMENT` — and the two-way headline then
+      announced a purely-reading pipeline as a statement the guard had objected to.
+
+      What is wrong there is not the verdict's strength but its SUBJECT. So both
+      sentences move to the CHECK: what it can read, and that it did not read this. The
+      three sentences below are distinct from both of the branches they sit beside,
+      because a reader who cannot tell "the guard objected" from "the guard never
+      looked" has been told the same thing about two different situations.
+    */
+    test("a draft the guard cannot read is reported as unexamined, not as one it objected to", () => {
+      const item = drafted(
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 8,
+            sql: 'db.orders.aggregate([{ $group: { _id: "$customerId" } }])',
+            dialect: "mongodb",
+            readOnly: false,
+            guardApplicable: false,
+            identifiers: { kind: "not-applicable" },
+          },
+        }),
+      );
+
+      expect(item?.headline).toBe("Statement drafted — not examined by the statement guard");
+      expect(item?.detail).toContain("The statement guard reads SQL, and this engine's statements are not SQL");
+      expect(item?.detail).toContain("nothing here examined this draft at all");
+      // Never the sentence that blames the draft, and never a reason code: there was no
+      // objection to record.
+      expect(item?.detail).not.toContain("did not read this as a bounded read");
+      expect(item?.detail).not.toContain("NON_READ_STATEMENT");
+    });
+
+    /*
+      The identifier half says something the `no-inventory` branch cannot: an inventory
+      usually WAS read on this path — grounding is what reached these engines — and what
+      is missing is a reader that can find a collection name inside an aggregation
+      pipeline. A user told "no inventory was read" would go looking for a grounding
+      failure that did not happen.
+    */
+    test("the name check says its own reach failed, not that no inventory was read", () => {
+      const item = drafted(
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 8,
+            sql: "INFO memory",
+            dialect: "redis",
+            readOnly: false,
+            guardApplicable: false,
+            identifiers: { kind: "not-applicable" },
+          },
+        }),
+      );
+
+      expect(item?.detail).toContain("The name check reads SQL too");
+      expect(item?.detail).not.toContain("No schema inventory was read for this run");
+    });
+
+    /*
+      The field is optional on the event because ledgers under `.workflow-data` written
+      before #414 do not carry it — and an absent value reads as `true` truthfully,
+      since plan mode was then grounded on PostgreSQL and SQLite alone and every draft
+      it recorded was SQL the guard did read. So an old entry must fold exactly as it
+      always did.
+    */
+    test("a ledger written before the field existed folds to the branches it was written under", () => {
+      const item = drafted(
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 8,
+            sql: "DELETE FROM film",
+            dialect: "postgres",
+            readOnly: false,
+            guardViolation: "NON_READ_STATEMENT",
+            identifiers: { kind: "checked", unknownTables: [] },
+          },
+        }),
+      );
+
+      expect(item?.headline).toBe("Statement drafted — not classified as a read");
+      expect(item?.detail).toContain("NON_READ_STATEMENT");
+      // And the card is handed the DEFAULT rather than the absence: the fold resolves
+      // it once, here, so no consumer can spell the derivation the wrong way round and
+      // report a PostgreSQL draft as one written in a language the guard cannot read.
+      expect(item?.planStatement?.guardApplicable).toBe(true);
+    });
+
+    test("the card is handed the guard's reach when the ledger recorded it", () => {
+      const item = drafted(
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 8,
+            sql: "INFO memory",
+            dialect: "redis",
+            readOnly: false,
+            guardApplicable: false,
+            identifiers: { kind: "not-applicable" },
+          },
+        }),
+      );
+
+      expect(item?.planStatement).toEqual({
+        sql: "INFO memory",
+        readOnly: false,
+        guardApplicable: false,
+        identifiers: { kind: "not-applicable" },
+        // This ledger holds no capture, so the fold's default word stands (#414).
+        noun: { singular: "table", plural: "tables" },
+      });
+    });
+
+    /*
       Item 7: the statement itself has to REACH the surface, or the card cannot show
       it. The fold carries the ledger's own record — the text, the guard's verdict and
       what the identifier check found — rather than a rendering of it, because the
@@ -330,8 +452,12 @@ describe("foldLedgerEntries", () => {
       expect(item?.planStatement).toEqual({
         sql: "DELETE FROM film WHERE id = 1",
         readOnly: false,
+        // Resolved by the fold rather than absent: the card reads a plain boolean.
+        guardApplicable: true,
         guardViolation: "NON_READ_STATEMENT",
         identifiers: { kind: "checked", unknownTables: ["payments"] },
+        // Defaulted the same way, and for the same reason: no capture, no other word.
+        noun: { singular: "table", plural: "tables" },
       });
       // Still no `applySql`, and that stays deliberate: that field drives the rail's
       // shared hydration control, whose "Apply to editor" carries no mark at all. The
@@ -640,6 +766,119 @@ describe("foldLedgerEntries", () => {
     expect(view.items[0].headline).toBe("Schema captured");
     expect(view.items[0].detail).toBe("12 tables, fingerprint abcdef12");
     expect(view.items[0].quoted).toBeUndefined();
+  });
+
+  /*
+    The word the timeline calls the inventory's rows by (#414).
+
+    The prompt half of this was fixed first, and a live drive against a seeded Redis
+    then showed the half a user actually reads still saying the other thing: the model
+    was told "17 key pattern(s)", the sidebar called them Key Patterns, and the rail
+    said "Schema captured — 17 tables, fingerprint ctx_f409" on run
+    `arun_492bf2a7228e47e48f0caafa4da5d057`.
+
+    The noun comes off the CAPTURE EVENT, so what is pinned here is that the fold reads
+    it from the ledger and nowhere else: this function is pure over entries, it is what
+    renders a run resumed weeks later, and a connection's labels are not a fact about
+    a run that has already happened.
+  */
+  describe("the word an engine's inventory rows go by", () => {
+    const KEY_PATTERNS = { singular: "key pattern", plural: "key patterns" };
+
+    const captured = (event_: Record<string, unknown>): AgentLedgerEntry =>
+      event({
+        kind: "event",
+        event: { kind: "context-captured", atMs: 3, fingerprint: "ctx_f4090000", tableCount: 17, ...event_ } as never,
+      });
+
+    test("a capture says what the engine calls what it read", () => {
+      const view = foldLedgerEntries([captured({ noun: KEY_PATTERNS })]);
+
+      expect(view.items[0].detail).toBe("17 key patterns, fingerprint ctx_f409");
+    });
+
+    test("one of them is not pluralized, and the plural is the provider's own", () => {
+      // The plural is carried rather than derived because "key prefixes" is not
+      // "key prefix" plus an s: the singular arm and the plural arm are separate
+      // words the provider declared.
+      const view = foldLedgerEntries([captured({ tableCount: 1, noun: KEY_PATTERNS })]);
+
+      expect(view.items[0].detail).toBe("1 key pattern, fingerprint ctx_f409");
+    });
+
+    test("a ledger written before the noun existed reads exactly as it always did", () => {
+      const view = foldLedgerEntries([captured({})]);
+
+      expect(view.items[0].detail).toBe("17 tables, fingerprint ctx_f409");
+    });
+
+    test("a snapshot citation is resolved in the same words the capture used", () => {
+      const view = foldLedgerEntries([
+        captured({ noun: KEY_PATTERNS }),
+        event({
+          kind: "event",
+          event: {
+            kind: "report-composed",
+            atMs: 11,
+            claims: [
+              {
+                claim: "the keyspace groups under six prefixes",
+                evidence: [{ source: "context-snapshot", fingerprint: "ctx_f4090000" }],
+              },
+            ] as never,
+          },
+        }),
+      ]);
+
+      expect(view.report?.claims[0].citations[0].detail).toBe("17 key patterns");
+    });
+
+    test("a plan run's name check speaks of the objects the engine names", () => {
+      // The check itself is unchanged — it is the inventory's names against the
+      // statement's — and only the sentence about it moves. It comes after the
+      // capture in every real ledger, which is what lets a pure fold know the word.
+      const view = foldLedgerEntries([
+        { ...OPENED, mode: "planning" },
+        captured({ noun: { singular: "datasource", plural: "datasources" } }),
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 8,
+            sql: "SELECT page FROM wikipedia",
+            dialect: "postgres",
+            readOnly: true,
+            identifiers: { kind: "checked", unknownTables: [] },
+          },
+        }),
+      ]);
+      const item = view.items.at(-1);
+
+      expect(item?.detail).toContain("Every datasource it names is in the inventory this run read");
+      // And the card below the entry is handed the same word, because the mark in its
+      // applying control is a sentence too.
+      expect(item?.planStatement?.noun).toEqual({ singular: "datasource", plural: "datasources" });
+    });
+
+    test("a plan run with no capture behind it still speaks of tables", () => {
+      const view = foldLedgerEntries([
+        { ...OPENED, mode: "planning" },
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 8,
+            sql: "SELECT title FROM film",
+            dialect: "postgres",
+            readOnly: true,
+            identifiers: { kind: "checked", unknownTables: [] },
+          },
+        }),
+      ]);
+
+      expect(view.items.at(-1)?.detail).toContain("Every table it names is in the inventory this run read");
+      expect(view.items.at(-1)?.planStatement?.noun).toEqual({ singular: "table", plural: "tables" });
+    });
   });
 
   test("a drafted statement quotes the statement and states the reason separately", () => {

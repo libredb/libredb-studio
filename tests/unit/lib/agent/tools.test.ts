@@ -51,6 +51,7 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
+import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 
 /**
@@ -134,6 +135,7 @@ function harness(
     actor: { sessionId: "session-1", role: "user" },
     connection,
     capabilities,
+    labels: TABLE_LABELS,
     registry: createCanonicalOperationRegistry(),
     scope: createTargetScope("conn-1"),
     tracker,
@@ -2485,6 +2487,7 @@ function curatedHarness(
     // point: this is the engine the other tools are refused on.
     connection: { ...connection, type: "mysql" },
     capabilities,
+    labels: TABLE_LABELS,
     registry: createCanonicalOperationRegistry(),
     scope: createTargetScope("conn-1"),
     tracker,

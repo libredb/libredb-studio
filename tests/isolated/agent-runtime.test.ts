@@ -25,6 +25,7 @@ import { ExecutionProfileError } from "@/lib/db/errors";
 import { SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
 import type { AgentToolResources } from "@/lib/agent/investigation";
+import { TABLE_LABELS } from "../fixtures/provider-labels";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 import type { DatabaseConnection } from "@/lib/types";
@@ -47,6 +48,9 @@ const CAPABILITIES = { supportsTransactions: true } as unknown as ProviderCapabi
 
 const mockResolveConnection = mock(async () => CONNECTION);
 const mockGetCapabilities = mock(() => CAPABILITIES);
+// Read from the same provider as the capabilities (#414): the run's declared behaviour
+// and its declared vocabulary must not be able to come from two different readings.
+const mockGetLabels = mock(() => TABLE_LABELS);
 const mockCreateAgentModel = mock(async () => ({ provider: "gemini", modelId: "gemini-3-pro" }));
 
 let investigationCalls: { runId: string; resources: AgentToolResources }[] = [];
@@ -58,7 +62,9 @@ const mockRunInvestigation = mock(async (runId: string, options: { resources: Ag
 
 mock.module("@/lib/agent/run-store", () => ({ ...realRunStore, resolveAgentLedgerWorld: async () => world }));
 mock.module("@/lib/seed/resolve-connection", () => ({ resolveConnection: mockResolveConnection }));
-mock.module("@/lib/db", () => ({ createDatabaseProvider: async () => ({ getCapabilities: mockGetCapabilities }) }));
+mock.module("@/lib/db", () => ({
+  createDatabaseProvider: async () => ({ getCapabilities: mockGetCapabilities, getLabels: mockGetLabels }),
+}));
 mock.module("@/lib/agent/model-adapter", () => ({ createAgentModel: mockCreateAgentModel }));
 mock.module("@/lib/agent/investigation", () => ({ runInvestigation: mockRunInvestigation }));
 
@@ -167,6 +173,9 @@ describe("driveAgentRun", () => {
     expect(resources.scope.connectionId).toBe("seed:sales");
     expect(resources.connection).toEqual(CONNECTION);
     expect(resources.capabilities).toEqual(CAPABILITIES);
+    // And the provider's own vocabulary beside them (#414), which is what lets the
+    // prompt layer name a Redis inventory's rows without asking the connection's type.
+    expect(resources.labels).toEqual(TABLE_LABELS);
     // Never the shared writable cache: a provider is acquired for the run's
     // execution profile, which is the only seam the tool layer is allowed to use.
     expect(resources.acquireProvider).toBe(acquireExecutionProfileProvider);

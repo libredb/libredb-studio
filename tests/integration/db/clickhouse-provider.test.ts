@@ -414,6 +414,7 @@ describe("ClickHouseProvider metadata", () => {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      declaresForeignKeys: false,
       supportsMaintenance: true,
       maintenanceOperations: ["optimize", "analyze", "kill"],
       supportsConnectionString: true,
@@ -434,6 +435,12 @@ describe("ClickHouseProvider metadata", () => {
     // bare `UPDATE ... SET` the inline row editor builds answers code 48
     // NOT_IMPLEMENTED (documented in docs/providers/clickhouse.md §13).
     expect(new ClickHouseProvider(makeConnection()).getCapabilities().supportsInlineRowEdit).toBe(false);
+  });
+
+  test("declares declaresForeignKeys false because no constraint catalog exists here", () => {
+    // ClickHouse parses REFERENCES in a column definition and enforces nothing by it,
+    // and `system.*` holds no constraint table to read one back from (#414).
+    expect(new ClickHouseProvider(makeConnection()).getCapabilities().declaresForeignKeys).toBe(false);
   });
 
   test("labels the maintenance actions ClickHouse actually has", () => {

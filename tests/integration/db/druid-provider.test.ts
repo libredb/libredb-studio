@@ -500,6 +500,7 @@ describe("DruidProvider metadata", () => {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      declaresForeignKeys: false,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,
@@ -521,6 +522,13 @@ describe("DruidProvider metadata", () => {
     // `Unsupported SQL statement [UPDATE]`, so the inline row editor's statement
     // could never run. Druid SQL has no row-level DML at all.
     expect(new DruidProvider(makeConnection()).getCapabilities().supportsInlineRowEdit).toBe(false);
+  });
+
+  test("declares declaresForeignKeys false because a datasource cannot reference another", () => {
+    // Druid has no constraints at all - which is also why `isPrimary` is hardwired
+    // false in the introspection. An empty relations list here is the engine, not
+    // the schema (#414).
+    expect(new DruidProvider(makeConnection()).getCapabilities().declaresForeignKeys).toBe(false);
   });
 
   test("offers no maintenance operation, because SQL reaches none of them", () => {

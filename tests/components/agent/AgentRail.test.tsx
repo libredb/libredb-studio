@@ -3505,6 +3505,40 @@ describe("AgentRail", () => {
       expect(findings.textContent).toContain("not in the inventory");
     });
 
+    test("the same finding names the objects in the engine's own word (#414)", async () => {
+      // Druid's inventory rows are datasources, and it speaks SQL — so it is the
+      // engine where the name check runs AND the word "table" is not the one the
+      // sidebar, the prompt or the engine itself uses. The word rides in on the run's
+      // own capture entry, which is where the fold reads it from.
+      const { findByTestId } = await planRun(
+        [
+          OPENED_LINE,
+          STARTED_LINE,
+          `${JSON.stringify({
+            kind: "event",
+            event: {
+              kind: "context-captured",
+              atMs: 1_003,
+              fingerprint: "ctx_druid00",
+              tableCount: 3,
+              noun: { singular: "datasource", plural: "datasources" },
+            },
+          })}\n`,
+          draftedLine({
+            sql: "SELECT page FROM clickstream",
+            readOnly: true,
+            identifiers: { kind: "checked", unknownTables: ["clickstream"] },
+          }),
+          FINISHED_LINE,
+        ],
+        { onApplyStatement: mock((_sql: string) => {}) },
+      );
+
+      const name = (await findByTestId("agent-plan-apply-statement")).getAttribute("aria-label") ?? "";
+      expect(name).toContain("1 datasource(s)");
+      expect(name).not.toContain("table");
+    });
+
     test("a statement nothing checked says so, rather than passing for a checked one", async () => {
       const { findByTestId, queryByTestId } = await planRun(
         [
@@ -3539,6 +3573,117 @@ describe("AgentRail", () => {
       expect(queryByTestId("agent-plan-statement-unknown")).toBeNull();
       expect(queryByTestId("agent-plan-statement-unchecked")).toBeNull();
       expect(queryByTestId("agent-plan-statement-guard")).toBeNull();
+      expect(queryByTestId("agent-plan-statement-guard-unread")).toBeNull();
+      expect(queryByTestId("agent-plan-statement-unread")).toBeNull();
+    });
+
+    /*
+      #414. Grounding reached the engines that speak no SQL, and this card's two most
+      consequential sentences are both written by SQL readers. The guard reads every
+      string as SQL — a correct MongoDB aggregation leads with the word `DB`, which is
+      in no read allowlist — so the amber banner told a user that nothing established
+      this pipeline only reads, as though something had looked and been unconvinced. And
+      the name check found no table keyword in it, which is not the same as finding that
+      every name resolves.
+
+      Both banners therefore move to the CHECK and away from the draft: what it can
+      read, and that it did not read this. The mark on the applying control moves with
+      them, because a screen-reader user has only that sentence.
+    */
+    test("a draft the guard cannot read is marked as unexamined, on the card and in the control's name", async () => {
+      const aggregation = 'db.orders.aggregate([{ $group: { _id: "$customerId", n: { $sum: 1 } } }])';
+      const { findByTestId, queryByTestId } = await planRun(
+        [
+          OPENED_LINE,
+          STARTED_LINE,
+          draftedLine({
+            sql: aggregation,
+            readOnly: false,
+            guardApplicable: false,
+            identifiers: { kind: "not-applicable" },
+          }),
+          FINISHED_LINE,
+        ],
+        { onApplyStatement: mock((_sql: string) => {}) },
+      );
+
+      const unread = await findByTestId("agent-plan-statement-guard-unread");
+      expect(unread.textContent).toContain("The statement guard reads SQL");
+      expect(unread.textContent).toContain("nothing examined this draft");
+      // The banner that blames the draft is not also on the card: one card, one claim.
+      expect(queryByTestId("agent-plan-statement-guard")).toBeNull();
+      // And the MACHINE-readable half says the same thing as the prose. `"false"` is
+      // the objection the guard makes, and it made none here; a consumer keying on the
+      // attribute must not be able to read one out of a draft nothing looked at.
+      expect((await findByTestId("agent-plan-statement")).getAttribute("data-read-only")).toBe("unexamined");
+
+      // WCAG 2.5.3 still holds — the visible label is in the accessible name — and the
+      // mark a screen-reader user hears is the one about the guard's reach, not the one
+      // asserting that nothing established this only reads.
+      const name = (await findByTestId("agent-plan-apply-statement")).getAttribute("aria-label") ?? "";
+      expect(name).toContain("Apply");
+      expect(name).toContain("this engine's statements are not SQL");
+      expect(name).not.toContain("did not read this as a bounded read");
+      // No reason code anywhere, because there was no objection to report.
+      expect(`${unread.textContent} ${name}`).not.toContain("NON_READ_STATEMENT");
+    });
+
+    /*
+      Its own line and its own words. The `no-inventory` sentence reports a run that
+      read no schema; this run usually HAS one — grounding is what reached these engines
+      — and what it lacks is a reader that can find a collection name inside a pipeline.
+      A user told "no inventory was read" would go looking for a grounding failure that
+      did not happen.
+    */
+    test("the name check says its own reach failed, and never that no inventory was read", async () => {
+      const { findByTestId, queryByTestId } = await planRun(
+        [
+          OPENED_LINE,
+          STARTED_LINE,
+          draftedLine({
+            sql: "INFO memory",
+            readOnly: false,
+            guardApplicable: false,
+            identifiers: { kind: "not-applicable" },
+          }),
+          FINISHED_LINE,
+        ],
+        { onApplyStatement: mock((_sql: string) => {}) },
+      );
+
+      const unread = await findByTestId("agent-plan-statement-unread");
+      expect(unread.textContent).toContain("the check that would do it reads SQL");
+      expect(queryByTestId("agent-plan-statement-unchecked")).toBeNull();
+      expect(queryByTestId("agent-plan-statement-unknown")).toBeNull();
+
+      const name = (await findByTestId("agent-plan-apply-statement")).getAttribute("aria-label") ?? "";
+      expect(name).toContain("The name check reads SQL too");
+      expect(name).not.toContain("Nothing checked the names it uses.");
+    });
+
+    /*
+      The field is optional on the event, because ledgers written before #414 carry no
+      value — and absent reads as `true` truthfully, since plan mode was then grounded
+      on PostgreSQL and SQLite alone. An old entry must render exactly as it always did.
+    */
+    test("a ledger written before the field existed still renders the objection it recorded", async () => {
+      const { findByTestId, queryByTestId } = await planRun(
+        [
+          OPENED_LINE,
+          STARTED_LINE,
+          draftedLine({
+            sql: "DELETE FROM film",
+            readOnly: false,
+            guardViolation: "NON_READ_STATEMENT",
+            identifiers: { kind: "checked", unknownTables: [] },
+          }),
+          FINISHED_LINE,
+        ],
+        { onApplyStatement: mock((_sql: string) => {}) },
+      );
+
+      expect((await findByTestId("agent-plan-statement-guard")).textContent).toContain("NON_READ_STATEMENT");
+      expect(queryByTestId("agent-plan-statement-guard-unread")).toBeNull();
     });
 
     test("a refusal renders as its own card, and the marker never reaches the user", async () => {

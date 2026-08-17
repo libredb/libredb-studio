@@ -193,6 +193,14 @@ describe("RedisProvider", () => {
       // Redis commands are not SQL, so the inline row editor's `UPDATE ... SET`
       // has nothing to run against (#269).
       expect(caps.supportsInlineRowEdit).toBe(false);
+      // Redis has no constraints at all, and its "tables" are key prefixes this
+      // provider grouped rather than objects anyone declared (#414).
+      expect(caps.declaresForeignKeys).toBe(false);
+      // And the other half of that fact, declared rather than left to be inferred:
+      // `getSchema()` SCANs a bounded slice of the keyspace and groups the real key
+      // names it found by their prefix, so a `user:*` row is this server's own summary
+      // and no command can be given it as a key (#414).
+      expect(caps.tablesAreDerivedGroupings).toBe(true);
       expect(caps.supportsMaintenance).toBe(true);
       expect(caps.explainFormat).toBeUndefined();
       expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);

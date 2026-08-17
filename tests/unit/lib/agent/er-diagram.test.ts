@@ -175,6 +175,89 @@ describe("bounds and empty shapes", () => {
     expect(rendered).toContain("enforced by the application");
   });
 
+  /*
+    #414. The hedge above offers two explanations and both of them are claims about a
+    database that COULD have declared a foreign key and chose not to. Grounding reached
+    MongoDB, Redis, LibreDB, Druid, ClickHouse and Couchbase, where there is no such
+    construct to decline — so on those six the sentence is wrong in both branches at
+    once, and it invites a reader to wonder about a schema decision nobody made.
+
+    Driven from the provider's own capability rather than from the connection's type,
+    which `CLAUDE.md` forbids outside a provider class: six engines would have been
+    listed at this call site and the seventh forgotten.
+  */
+  test("an engine that declares no foreign keys AT ALL gets its own sentence, not the hedge", () => {
+    const rendered = renderErDiagram(snapshot([table("a"), table("b")]), "minimal", {
+      engineDeclaresForeignKeys: false,
+    });
+
+    expect(rendered).toContain("this engine does not declare foreign keys at all");
+    expect(rendered).toContain("nothing of that kind here for a reading to have found or missed");
+    // Neither branch of the hedge survives here: both would be false.
+    expect(rendered).not.toContain("That may be how the schema is");
+    expect(rendered).not.toContain("enforced by the application rather than the database");
+  });
+
+  /*
+    The flag is optional on the published `ProviderCapabilities`, so an absent value is
+    a provider that has not declared either way — and the hedge is the weaker claim,
+    which is the right thing to say about an engine nobody has decided about. Anything
+    else would assert an absence out of a silence.
+  */
+  test("a provider that says nothing about it keeps the hedge, and one that says true keeps it too", () => {
+    for (const declares of [undefined, true]) {
+      const rendered = renderErDiagram(snapshot([table("a"), table("b")]), "minimal", {
+        ...(declares === undefined ? {} : { engineDeclaresForeignKeys: declares }),
+      });
+
+      expect(rendered, String(declares)).toContain("no table in this inventory declares a foreign key");
+      expect(rendered, String(declares)).not.toContain("does not declare foreign keys at all");
+    }
+  });
+
+  /*
+    The sentence is only reached when there is nothing to show. An engine that declares
+    no foreign keys and an inventory that somehow carries one is a contradiction the
+    RELATIONS win: what was read is more informative than what was declared possible.
+  */
+  /*
+    #414, second finding. An engine that declares no foreign keys is usually one whose
+    inventory rows are not tables either, so the two sentences above named something the
+    reader was never shown: a Redis run was told "no table in this inventory" over a list
+    of key patterns. The noun comes from the provider's own `ProviderLabels` — the
+    product has always had the right word and only the browser was being told it.
+  */
+  test("the block names the rows what this engine calls them, in the header and in both empty sentences", () => {
+    const noun = { singular: "key pattern", plural: "key patterns" };
+    const rows = snapshot([table("user:*"), table("order:*")]);
+
+    const cannotDeclare = renderErDiagram(rows, "minimal", { engineDeclaresForeignKeys: false, noun });
+    expect(cannotDeclare).toContain("Relations between the 2 key pattern(s) in this inventory");
+    expect(cannotDeclare).toContain("Whatever relates these key patterns to each other");
+    expect(cannotDeclare).not.toContain("table");
+
+    const declaredNone = renderErDiagram(rows, "minimal", { noun });
+    expect(declaredNone).toContain("no key pattern in this inventory declares a foreign key");
+    expect(declaredNone).not.toContain("no table in this inventory");
+  });
+
+  /*
+    And the default, which is what keeps every SQL engine's block byte-identical: a
+    caller that passes no noun gets the base provider's own word.
+  */
+  test("a caller that declares no noun still says table", () => {
+    expect(renderErDiagram(snapshot([table("a")]), "minimal")).toContain(
+      "Relations between the 1 table(s) in this inventory",
+    );
+  });
+
+  test("a relation that exists is still drawn, whatever the capability says", () => {
+    const rendered = renderErDiagram(WITH_CUSTOMERS, "minimal", { engineDeclaresForeignKeys: false });
+
+    expect(rendered).toContain('"orders" -> "customers"');
+    expect(rendered).not.toContain("does not declare foreign keys at all");
+  });
+
   test("a wide schema is bounded by CHARACTERS, and says how much it left out", () => {
     // A count of edges is not a bound on a prompt: one long identifier can amplify a
     // single line far past a ceiling that sixty short ones would fit inside. Found by

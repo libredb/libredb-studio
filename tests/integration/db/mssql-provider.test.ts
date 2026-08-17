@@ -582,6 +582,10 @@ describe("MSSQLProvider", () => {
       // `UPDATE t SET c = v WHERE pk = v` is core T-SQL DML — the shape the inline
       // row editor builds (#269).
       expect(caps.supportsInlineRowEdit).toBe(true);
+      // Inherited from the base capabilities: this engine declares foreign keys, so
+      // an empty `foreignKeys` list is a fact about the schema or the role, never
+      // about the engine (#414).
+      expect(caps.declaresForeignKeys).toBe(true);
     });
   });
 

@@ -65,6 +65,14 @@ export class RedisProvider extends BaseDatabaseProvider {
       // Redis commands are not SQL, so the inline row editor's `UPDATE ... SET` has
       // nothing here to run against (issue #269).
       supportsInlineRowEdit: false,
+      // Redis has no constraints of any kind, and this provider's "tables" are key
+      // prefixes it grouped rather than declared objects. It emits no `foreignKeys`
+      // field at all; this says why (#414).
+      declaresForeignKeys: false,
+      // `getSchema()` SCANs 1000 keys and groups them by the text before the first
+      // colon, so every row it returns is this server's own summary of real key names
+      // — `user:*` is a grouping, not a key, and nothing can be addressed by it (#414).
+      tablesAreDerivedGroupings: true,
       supportsMaintenance: true,
       maintenanceOperations: ["analyze"],
       supportsConnectionString: false,

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
+import { UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import { DEPARTMENTS, type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
 import { answersProse } from "../isolated/fixtures/agent-scripted-model";
 
@@ -129,10 +130,12 @@ describe("a plan run on a cold process grounds itself in the database it is abou
 
 describe("a plan run on an engine this server cannot ground says so", () => {
   test("mysql: no statement is sent, nothing is captured, and the run is told it has seen nothing", async () => {
-    // The honest limit of item 6: grounding is served for the dialects
-    // `CATALOG_COMPOSERS` covers, and MySQL is not one of them. The MySQL preset
-    // carries no `queryReadOnly` at all, exactly as the real provider does not, so a
-    // run that tried to read a catalog here would die on the fixture.
+    // `CATALOG_COMPOSERS` covers PostgreSQL and SQLite and MySQL is not one of them,
+    // so no catalog STATEMENT is composed here — which is what `drive.statements`
+    // pins. Since #414 that is no longer the whole reason the run is ungrounded: the
+    // dialect falls through to its PROVIDER instead, and this preset's provider
+    // carries no `getSchema` (nor `queryReadOnly`), so it stands in for an engine
+    // whose provider cannot describe itself.
     const run = await openPlan("mysql");
 
     const drive = await run.drive(PLAN);
@@ -140,7 +143,26 @@ describe("a plan run on an engine this server cannot ground says so", () => {
     expect(drive.statements).toEqual([]);
     expect(drive.kinds).not.toContain("context-captured");
     const sent = drive.transcripts[0] ?? "";
-    expect(sent).toContain("on this mysql connection");
+    // The capture's own diagnosis (#414). This asserted "on this mysql connection"
+    // while the note was written here and named the engine; the engine is not the
+    // reason now, and saying it would report a property of MySQL on a build where a
+    // real MySQL provider describes itself perfectly well. What stopped THIS run is a
+    // `getSchema()` that rejected — the only way a provider fails to describe a
+    // database, since the method is required on every one of them — so the engine's own
+    // words are what the run is told, and they arrive fenced because the database wrote
+    // them.
+    expect(sent).toContain("this database refused to describe its own schema");
+    expect(sent).toContain(UNTRUSTED_CONTENT_END);
+    // And the server's own sentence begins on its OWN line: a fence whose terminator
+    // shares a line with this server's prose is not a boundary a reader can see.
+    // Escaped through `JSON.stringify` because `sent` is the serialised request body:
+    // a real newline in the message is `\n` in the text this reads.
+    expect(sent).toContain(
+      JSON.stringify(`${UNTRUSTED_CONTENT_END}\nSo nothing about this database has been established for you`).slice(
+        1,
+        -1,
+      ),
+    );
     expect(sent).toContain("No schema inventory is available to this run");
     // Never in the capture's own words, which send a model to `inspect_schema`: a
     // planning run has no tools, and naming one it does not have is the #350 failure.

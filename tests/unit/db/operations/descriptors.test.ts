@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import {
   createCanonicalOperationRegistry,
   dbOperationsReadDescriptor,
+  dbSchemaReadDescriptor,
   sqlExplainAnalyzeDescriptor,
   sqlExplainEstimateDescriptor,
   sqlQueryReadDescriptor,
@@ -21,23 +22,52 @@ const sqlDescriptors = [
   sqlTableProfileDescriptor,
 ];
 
-const canonicalDescriptors = [...sqlDescriptors, dbOperationsReadDescriptor];
+const canonicalDescriptors = [...sqlDescriptors, dbOperationsReadDescriptor, dbSchemaReadDescriptor];
 
 describe("canonical operation registry", () => {
-  test("registers exactly the five canonical descriptors — no write, DDL, or admin operation exists", () => {
-    // Five since the `operations` workflow, which added the one descriptor carrying no
-    // statement at all (`docs/BACKLOG.md` B27). Four since #330 T3, which reopened a
-    // decision epic #325 had pinned at three.
+  test("registers exactly the six canonical descriptors — no write, DDL, or admin operation exists", () => {
+    // Six since #414, which gave the provider's own schema inspection an id so that
+    // grounding on an engine with no composed catalog goes through the audited path
+    // rather than beside it. Five since the `operations` workflow, which added the
+    // first descriptor carrying no statement at all (`docs/BACKLOG.md` B27). Four
+    // since #330 T3, which reopened a decision epic #325 had pinned at three.
     // The assertion is exact-array equality on purpose: it is the one place a
     // descriptor can be added without somebody noticing.
     const registry = createCanonicalOperationRegistry();
     expect(registry.registeredIds()).toEqual([
       "db.operations.read",
+      "db.schema.read",
       "sql.explain.analyze",
       "sql.explain.estimate",
       "sql.query.read",
       "sql.table.profile",
     ]);
+  });
+
+  test("the provider schema read is R0 metadata, and takes no input at all", () => {
+    // R0 for the same reason the curated reading is: an R1 descriptor must NAME the
+    // database-native mechanism bounding it, and a provider call has no statement for
+    // a read-only transaction to bound. What bounds this one is that its input is
+    // EMPTY — there is no selector to widen and nothing a model wrote reaches an
+    // engine.
+    expect(dbSchemaReadDescriptor).toMatchObject({
+      id: "db.schema.read",
+      riskClass: 0,
+      accessLevel: "metadata-read",
+      requiresApproval: false,
+      supportsDryRun: false,
+      requiredCapabilities: [],
+    });
+    expect(dbSchemaReadDescriptor.verification).toBeUndefined();
+    // Heavy, not light, unlike the curated reading it is modelled on: this call is
+    // N+1 round trips on most engines and samples documents on two of them.
+    expect(dbSchemaReadDescriptor.resourceCost).toBe("heavy");
+    // The empty object is the ONLY accepted input: `getSchema()` takes no argument, so
+    // anything else is a caller that thinks it can narrow a reading it cannot.
+    expect(dbSchemaReadDescriptor.inputSchema.safeParse({}).success).toBe(true);
+    expect(dbSchemaReadDescriptor.inputSchema.safeParse({ sql: "SELECT 1" }).success).toBe(false);
+    expect(dbSchemaReadDescriptor.inputSchema.safeParse({ kind: "sessions" }).success).toBe(false);
+    expect(dbSchemaReadDescriptor.inputSchema.safeParse({ schema: "public" }).success).toBe(false);
   });
 
   test("the curated operational read is R0 metadata, and takes no statement at all", () => {

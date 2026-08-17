@@ -320,14 +320,15 @@ describe("the tables a statement names are read from its own code", () => {
 
 describe("a drafted statement is validated before anything offers it", () => {
   test("a read of tables the inventory holds is read-only with nothing unknown", () => {
-    expect(validatePlanStatement("SELECT title FROM film JOIN actor ON true", INVENTORY)).toEqual({
+    expect(validatePlanStatement("SELECT title FROM film JOIN actor ON true", INVENTORY, "sql")).toEqual({
       readOnly: true,
+      guardApplicable: true,
       identifiers: { kind: "checked", unknownTables: [] },
     });
   });
 
   test("a table the inventory does not hold is recorded, and the statement is not dropped", () => {
-    const validation = validatePlanStatement("SELECT * FROM film JOIN payments ON true", INVENTORY);
+    const validation = validatePlanStatement("SELECT * FROM film JOIN payments ON true", INVENTORY, "sql");
 
     expect(validation.readOnly).toBe(true);
     expect(validation.identifiers).toEqual({ kind: "checked", unknownTables: ["payments"] });
@@ -340,11 +341,11 @@ describe("a drafted statement is validated before anything offers it", () => {
     a name matching a same-named table in another schema is accepted here.
   */
   test("a bare name matches the qualified inventory entry it names, and the other way round", () => {
-    expect(validatePlanStatement("SELECT * FROM film", INVENTORY).identifiers).toEqual({
+    expect(validatePlanStatement("SELECT * FROM film", INVENTORY, "sql").identifiers).toEqual({
       kind: "checked",
       unknownTables: [],
     });
-    expect(validatePlanStatement("SELECT * FROM main.film", SQLITE_INVENTORY).identifiers).toEqual({
+    expect(validatePlanStatement("SELECT * FROM main.film", SQLITE_INVENTORY, "sql").identifiers).toEqual({
       kind: "checked",
       unknownTables: [],
     });
@@ -356,7 +357,7 @@ describe("a drafted statement is validated before anything offers it", () => {
     that was never read — the precision this repository keeps being caught claiming.
   */
   test("an ungrounded run reports no identifier check rather than an empty one", () => {
-    expect(validatePlanStatement("SELECT * FROM anything", null).identifiers).toEqual({ kind: "no-inventory" });
+    expect(validatePlanStatement("SELECT * FROM anything", null, "sql").identifiers).toEqual({ kind: "no-inventory" });
   });
 
   /*
@@ -366,21 +367,79 @@ describe("a drafted statement is validated before anything offers it", () => {
     reports travels with the mark.
   */
   test("a write is marked with the guard's own reason, and still recorded", () => {
-    expect(validatePlanStatement("DELETE FROM film", INVENTORY)).toEqual({
+    expect(validatePlanStatement("DELETE FROM film", INVENTORY, "sql")).toEqual({
       readOnly: false,
+      guardApplicable: true,
       guardViolation: "NON_READ_STATEMENT",
       identifiers: { kind: "checked", unknownTables: [] },
     });
   });
 
   test("a read carrying a writing CTE is marked too, since its head says nothing about what it does", () => {
-    const validation = validatePlanStatement("WITH gone AS (DELETE FROM film RETURNING id) SELECT * FROM gone", null);
+    const validation = validatePlanStatement(
+      "WITH gone AS (DELETE FROM film RETURNING id) SELECT * FROM gone",
+      null,
+      "sql",
+    );
 
     expect(validation.readOnly).toBe(false);
     expect(validation.guardViolation).toBe("SIDE_EFFECT_KEYWORD");
   });
 
   test("two statements are not read-only either, and the guard says which objection it had", () => {
-    expect(validatePlanStatement("SELECT 1; SELECT 2", null).guardViolation).toBe("MULTIPLE_STATEMENTS");
+    expect(validatePlanStatement("SELECT 1; SELECT 2", null, "sql").guardViolation).toBe("MULTIPLE_STATEMENTS");
+  });
+});
+
+/*
+  #414. Grounding reached the engines that speak no SQL, and both halves of this
+  validation were wrong on them at once — which was invisible until then, because
+  nothing recorded a plan statement on an engine outside PostgreSQL and SQLite.
+
+  The guard reads every string as SQL: `db.orders.aggregate([...])` leads with the word
+  `DB`, `INFO memory` with `INFO`, `SCAN 0 MATCH ...` with `SCAN`, and none of those is
+  in its read allowlist — so a correct, purely-reading MongoDB or Redis draft came back
+  `NON_READ_STATEMENT` every time, and structurally so: no command of either engine can
+  ever lead with SELECT, VALUES, TABLE or EXPLAIN. The identifier half is wrong in the
+  opposite direction: `readStatementTables` finds no table keyword in any of them, so it
+  answers `[]`, which `checked` renders as "every table it names is in the inventory".
+*/
+describe("an engine whose statements are not SQL is not judged by a SQL reader (#414)", () => {
+  const AGGREGATION = 'db.orders.aggregate([{ $group: { _id: "$customerId", n: { $sum: 1 } } }])';
+
+  test("the guard declines to judge rather than reporting an objection it did not have", () => {
+    const validation = validatePlanStatement(AGGREGATION, INVENTORY, "json");
+
+    expect(validation.guardApplicable).toBe(false);
+    // `false` and not `true`: a guard that read nothing has established nothing, and
+    // `true` here would be it vouching for text it never examined.
+    expect(validation.readOnly).toBe(false);
+    // And no reason code, because there was no objection — only a reader that does
+    // not speak this language.
+    expect(validation.guardViolation).toBeUndefined();
+  });
+
+  test("the identifier check declines too, even though this run HAS an inventory", () => {
+    // The distinction `not-applicable` draws that `no-inventory` cannot: there is an
+    // inventory here, and what is missing is a reader that can find a name in this
+    // engine's language.
+    expect(validatePlanStatement(AGGREGATION, INVENTORY, "json").identifiers).toEqual({ kind: "not-applicable" });
+    expect(validatePlanStatement(AGGREGATION, null, "json").identifiers).toEqual({ kind: "not-applicable" });
+  });
+
+  test("a Redis reading is treated the same way, whatever its leading word happens to be", () => {
+    for (const command of ["INFO memory", 'SCAN 0 MATCH "user:*" COUNT 100']) {
+      const validation = validatePlanStatement(command, INVENTORY, "json");
+      expect(validation.guardApplicable, command).toBe(false);
+      expect(validation.identifiers, command).toEqual({ kind: "not-applicable" });
+    }
+  });
+
+  test("the same text on a SQL engine IS judged, so the language is what decides and not the text", () => {
+    const validation = validatePlanStatement(AGGREGATION, INVENTORY, "sql");
+
+    expect(validation.guardApplicable).toBe(true);
+    expect(validation.readOnly).toBe(false);
+    expect(validation.guardViolation).toBe("NON_READ_STATEMENT");
   });
 });

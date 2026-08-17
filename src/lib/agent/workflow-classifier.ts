@@ -9,10 +9,12 @@
  * deleted; what moves is who decides it. The user writes the objective, and this
  * module reads it.
  *
- * That parenthetical used to add "and no schema inventory", which #411 made false:
- * an operations run on a dialect `CATALOG_PLANS` serves is now handed the names of
- * this connection's tables and their indexes before its first turn. What separates
- * the workflows is the tool set, not the grounding.
+ * That parenthetical used to add "and no schema inventory", which #411 made false: an
+ * operations run is now handed the names of this connection's tables and their indexes
+ * before its first turn. #414 widened WHERE — the qualifier here read "on a dialect
+ * `CATALOG_PLANS` serves", and a dialect with no catalog plan now asks its provider
+ * instead, so what is left is a reading that can fail on any engine rather than a table
+ * of two. What separates the workflows is the tool set, not the grounding.
  *
  * Three properties are load-bearing, and each is a decision rather than an
  * implementation detail:

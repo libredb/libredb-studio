@@ -16,50 +16,96 @@ records the improvements is not a measurement.
 
 ## What works on which engine
 
-Driven live on 2026-08-15, one engine at a time, against real servers. **Verified** means a run of
-that kind was started on that engine and its outcome read off the screen — nothing in this table is
-inferred from the code.
+Driven live on 2026-08-15 and 2026-08-17, one engine at a time, against real servers. **Verified**
+means a run of that kind was started on that engine and its outcome read off the screen — nothing in
+the DRIVEN columns is inferred from the code.
 
-| Engine | Plan mode | Operate | Investigate · Analyze · Optimize · Assess |
-| --- | --- | --- | --- |
-| **PostgreSQL** 18 | Verified, grounded | Verified | Verified |
-| **SQLite** | Verified, grounded | Verified | Verified |
-| **Redis** 7 | Verified | Verified | Refused |
-| **MongoDB** 8 | Verified | Verified | Refused, verified |
-| **SQL Server** 2022 | Verified | Verified | Refused |
-| **ClickHouse** 26 | Verified | Verified | Refused |
-| **LibreDB** (embedded) | Verified | Not established | Refused, verified |
-| MySQL · Oracle · Couchbase · Druid | Expected to work | Expected to work | Refused |
+The third column was driven on 2026-08-17 against the #414 build, **every engine, one at a time**, each
+on a server seeded for it. What each cell records is the inventory that reached the run and the thing
+the run then wrote, because those are the two facts that decide whether grounding is worth anything.
+The last column is unchanged and was NOT re-driven: agent mode still needs a database-native read-only
+statement path, which only two engines have.
 
-**Read the table this way.** Plan mode opens on every engine — it runs no statement of yours on any
-of them — but it is only *grounded* (case 18) on PostgreSQL and SQLite, because only those two
-capture a schema inventory and the engine's own size estimates. Ungrounded, it has nothing to draft
-a statement against and says so instead.
+| Engine | Plan mode, as driven 2026-08-15/17 | Plan grounding after #414, driven 2026-08-17 | Operate | Investigate · Analyze · Optimize · Assess |
+| --- | --- | --- | --- | --- |
+| **PostgreSQL** 18 | Verified, grounded | Unchanged, composed catalog read: 22 tables, correct three-way join | Verified | Verified |
+| **SQLite** | Verified, grounded | Unchanged, composed catalog read: 8 tables, correct join | Verified | Verified |
+| **MySQL** 9 | Expected to work | **Verified grounded**, provider inventory: 3 tables, correct join | Expected to work | Refused |
+| **Oracle** XE 21 | Expected to work | **Verified grounded**, provider inventory: 3 tables, correct join | Expected to work | Refused |
+| **SQL Server** 2022 | Verified, ungrounded | **Verified grounded**, provider inventory: 3 tables, correct `TOP 10` T-SQL | Verified | Refused |
+| **MongoDB** 8 | Verified, ungrounded | **Verified grounded**, provider inventory: 5 collections then 6 with a view; `$group`/`$lookup` aggregation | Verified | Refused, verified |
+| **ClickHouse** 26 | Verified, ungrounded | **Verified grounded**, provider inventory: 5 tables, correct join | Verified | Refused |
+| **Couchbase** 8 | Expected to work | **Verified grounded**, provider inventory: 3 collections with their indexes, correct SQL++ | Expected to work | Refused |
+| **Druid** 37 | Expected to work | **Verified grounded**, provider inventory: 2 datasources, correct Druid SQL | Expected to work | Refused |
+| **Redis** 7 | Verified, ungrounded | **Verified grounded**, provider inventory: 17 real key prefixes — read the Redis note below before promising this one | Verified | Refused |
+| **LibreDB** (embedded) | Verified, ungrounded | **Verified NOT grounded** — the file lock, see below | Not established | Refused, verified |
 
-**"Verified" in the Plan column does not mean "useful for the same things", and on an ungrounded
+**Ten of eleven, and the eleventh is not a Pending.** LibreDB is the one engine where the provider
+cannot be asked: `lib.open()` takes an exclusive file lock, and the grounding read builds a second
+provider on a path the connection's ordinary provider already holds — so it fails from the moment
+anyone browses that connection in the sidebar. That is measured, not expected, and it is why the cell
+says NOT grounded rather than Pending. The run then does the right thing with it: it says it was given
+no inventory and refuses to invent one.
+
+**What "Verified grounded" is claiming, and what it is not.** It says an inventory of that database's
+real objects reached the run and the run wrote something in that engine's own language that the editor
+accepts. It does NOT say the draft is good, and on one engine it demonstrably is not — see Redis. It
+says nothing at all about agent mode, which still ends `engine-unsupported` everywhere but PostgreSQL
+and SQLite; that is pinned by a test rather than by this table, because a run that fails at its first
+read is not a thing worth driving eleven times.
+
+**Two runs that refused, and both refusals were right.** A Couchbase run asked "how many documents of
+each type in this bucket" named the three real collections back and asked which one was meant. A Druid
+run asked about countries answered that the inventory has no column of that kind — the column is
+`region`. Neither invented an object, and re-driven against what the data actually holds both drafted
+a working query. A grounded run that refuses a bad question is the mode working, not the mode failing.
+**The three ways the expectation could have been wrong, and what the drive found.** Each was a way a
+real server could contradict a passing test, which is why the drive was worth doing at all. *Is a
+provider inventory USEFUL to a model or merely present?* Useful — eight engines drafted a working
+statement against their own real objects. *Do MongoDB's sampled field names match what a person would
+name?* Yes: `customerId`, `name` and `email` were inferred from documents and the aggregation joined on
+them. *Is the drafted statement one the editor actually runs?* Yes on every engine driven, including
+the two that speak no SQL. What #414 does **not** change: the four SQL workflows in the last column
+still need `provider.queryReadOnly`, so their refusals stand as written.
+
+**Read the table this way.** Plan mode opens on every engine and runs no statement of yours on any of
+them. Since #414 it is also *grounded* on ten of the eleven — it is handed that database's real objects
+before its first turn and asked to write against them — where before it was grounded on PostgreSQL and
+SQLite alone and refused everywhere else. The refusal did not go away and should not: it is what an
+ungrounded run still does, and LibreDB still is one.
+
+**"Verified" in the driven Plan column does not mean "useful for the same things", and on an ungrounded
 engine the workflow decides which.** Driven on MongoDB on 2026-08-17: *"Which customers placed the
 most orders? Write me the query"* opened as Analyze and came back with **no statement at all** — the
 `NO STATEMENT:` refusal, in its own words *"This run was given no inventory of this database. What
 collection and field names should I use?"*, and zero **Apply to editor** controls. That is the mode
 working correctly rather than failing: the collections are right there in the sidebar, but the
-sidebar reads them through the provider while grounding reads them through a composed catalog
-statement, which exists for PostgreSQL and SQLite only. The same connection asked *"what would you
+sidebar reads them through the provider while grounding read them through a composed catalog
+statement, which existed for PostgreSQL and SQLite only. **That observation is what #414 was opened
+about, and #414's answer is to have grounding take the sidebar's reading on those engines** — and
+re-driven on that build on 2026-08-17, the same objective on the same connection was handed the five
+real collections and drafted a `$group`/`$lookup` aggregation over `orders` and `customers` with a
+working **Apply to editor**. The refusal quoted above is the BEFORE. The same connection asked *"what would you
 check first if this server were slow"* opened as Operate and handed back four applicable blocks —
 `db.currentOp(...)`, `db.serverStatus()`, `db.stats()`, `db.system.profile.find(...)`. **So on an
 ungrounded engine, Operate is the workflow that still hands you something to run, and the schema
 workflows are the ones that correctly refuse.** Do not promise a room that plan mode is a query
 generator everywhere; it is a query generator where it is grounded, and an honest refusal where it
-is not. Operate reads what the engine reports about itself, so it needs no SQL and reaches
+is not. That sentence is unchanged by #414 and is the reason it was written this way: what #414 moves
+is where the condition holds, not the rule — and it now holds on ten engines rather than two, which is
+a demo you can give rather than a caveat you have to make. Operate reads what the engine reports about itself, so it needs no SQL and reaches
 everything. The other four workflows write SQL and need a database-native read-only statement path,
 which today only PostgreSQL and SQLite provide; everywhere else the run ends with *"The agent cannot
 run on this database engine: it offers no read-only execution profile."*
 
-**Grounding is engine-dependent and nothing else**, in every workflow. That was not true when this
+**Grounding was engine-dependent and nothing else**, in every workflow — until #414, after which the
+engine decides only HOW a run is grounded and not whether. That much was not true even when this
 script was driven: a plan-mode **Operate** run was then ungrounded by design on every engine,
 PostgreSQL included, and announced *"Because no schema was read, we cannot name specific tables or
 indexes upfront"* on a database it could have read perfectly well — which a room that has just been
-told "PostgreSQL and SQLite are grounded" reads as a bug. #411 removed the exception. Operate is now
-grounded on the same two engines as everything else, with a deliberately smaller inventory — table
+told "PostgreSQL and SQLite are grounded" reads as a bug. #411 removed the exception: Operate became
+grounded on the same two engines as everything else — and since #414, wherever anything else is
+grounded — with a deliberately smaller inventory — table
 names and the indexes on each, no columns and no relations — because what an operational reading
 needs from the schema is the ability to recognise the identifiers the engine hands back. Cases 19 and
 19b were re-driven on 2026-08-17 against that build: the *"no schema was read"* line is gone on
@@ -460,17 +506,48 @@ The grounding is real: against dvdrental the plan names `public.film` and `publi
 name. It has never seen a row — the grounding reads the catalog and the engine's own estimates,
 never a value out of a column.
 
-*Bounds, worth stating before someone finds them:* grounding serves **PostgreSQL and SQLite only**,
-because those are the dialects the catalog composer serves — and that is now the whole bound. When
+*Bounds, worth stating before someone finds them:* on the build this was driven against, grounding
+served **PostgreSQL and SQLite only**, because those are the dialects the catalog composer serves.
+That bound is the one #414 removed — a dialect the composer does not serve now reads its schema
+through its own provider — and the table at the top of this file records that being driven on
+2026-08-17: ten of the eleven engines grounded, LibreDB the exception and for a reason that has
+nothing to do with dialects. When
 this script was driven there was a second one: Operate was ungrounded on every engine by design, so
 grounding depended on the workflow as well. #411 removed it. Re-driven on 2026-08-17, an Operate plan
 on PostgreSQL is grounded like the rest — on a reduced inventory of table names and indexes — and
 names the real objects its readings are about: `public.rental`, `public.payment`, `public.inventory`,
 `idx_title`, `film_fulltext_idx`, with the engine's row estimates quoted beside them and the views
 flagged as carrying no statistics. On SQLite it captured 8 tables and concluded there was no index to
-be unused. On any engine outside those two a plan run of any workflow is ungrounded and its rules
-steer it to say so rather than to invent tables — on Redis the Operate plan says it can name no
-object and proposes `CLIENT LIST`, `INFO` and `SLOWLOG GET`.
+be unused. On any engine outside those two a plan run of any workflow was then ungrounded and its rules steered
+it to say so rather than to invent tables — on Redis the Operate plan said it could name no object and
+proposed `CLIENT LIST`, `INFO` and `SLOWLOG GET`. After #414 the Redis plan IS given its key-prefix
+inventory and does name real prefixes — driven, not expected — and the readings it proposes did not
+change, since those were already bound to the engine rather than to the schema. What being grounded
+did not settle is what it drafts with the inventory: read the note below before showing it.
+
+*And one thing to watch for on Redis specifically — the one engine where the new build HAS been
+driven.* The first grounded Redis drives read 17 real key prefixes and then drafted `KEYS user:*` and
+`ZCARD user:*` — a grouping named as though it were a key. The blocks a run reads now carry the
+provider's own noun ("17 key pattern(s)", never "17 table(s)"), and a Redis or LibreDB plan is told in
+one sentence that its rows are groupings Studio derived from a bounded scan and that a statement must
+name a whole key or scan by pattern instead. What that sentence does not do is name or forbid a
+command, so a plan choosing a different command is not a regression; a plan naming `user:*` as a key
+is.
+
+Re-driven on 2026-08-17 against the fixed build, on the same seeded keyspace, with mixed results that
+are worth knowing before you show this:
+
+- *"Which key prefix holds the most keys, and how would I list them?"* → **NO STATEMENT**, and the
+  right one: the inventory carries no key counts, so the run says the question cannot be answered from
+  what it was given. The same objective used to produce `KEYS user:*` as though it were an answer.
+  This is the demo to show.
+- *"How many users are stored, and how do I look one up?"* → drafted **`KEYS user:*`**, and explained
+  the lookup as `HGETALL user:<id>` — a whole key, which is the new rule working. `KEYS` is not: it is
+  the blocking O(N) command Studio's own provider refuses to use, and the product is offering it with
+  an Apply-to-editor button. Nothing runs unless the user applies and runs it, and this is recorded as
+  `docs/BACKLOG.md` **B50** rather than fixed, because whether the rules should speak about
+  operational cost at all is an open question the owner has not ruled on. Do not show this one, and do
+  not claim the Redis drafts are safe to run unread.
 
 *One thing to watch for on stage, because it was there when this script was driven and is not now:*
 a plan-mode Operate run used to name the **wrong engine's** readings with complete confidence — a
@@ -667,10 +744,12 @@ ledger, not from the model's opinion of its own work. The counter-example is hon
 volunteering: a citation binds a claim to what the run read, and cannot tell it that what it read was
 incomplete (B44).
 
-**"Which databases?"** See the table at the top. The short version: Operate works everywhere and was
-driven live on six engines including Redis, which has no SQL at all; the four SQL workflows need
-PostgreSQL or SQLite today; plan mode has no engine limit and is grounded on those same two, in every
-workflow — Operate included since #411, on a reduced inventory of table and index names.
+**"Which databases?"** See the table at the top, and its #414 note. The short version: Operate works
+everywhere and was driven live on six engines including Redis, which has no SQL at all; the four SQL
+workflows need PostgreSQL or SQLite, and that has not changed; plan mode has no engine limit and since
+#414 no grounding limit either — it composes catalog statements on those two and asks every other
+engine's own provider to describe itself, in every workflow, Operate included since #411 on a reduced
+inventory of table and index names.
 
 **"What does it cost per question?"** Each workflow has a frozen ceiling on model turns, statements,
 wall clock and database time, and the rail shows the meter live. The figures are the starting point

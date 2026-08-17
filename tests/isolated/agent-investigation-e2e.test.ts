@@ -19,6 +19,7 @@ import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
+import { TABLE_LABELS } from "../fixtures/provider-labels";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { chatToolCallStream, type FetchDouble } from "./fixtures/agent-transport";
 
@@ -393,6 +394,7 @@ async function driveArc(fixture: Fixture): Promise<Arc> {
   const resources: AgentToolResources = {
     connection: fixture.connection,
     capabilities: fixture.capabilities,
+    labels: TABLE_LABELS,
     registry: createCanonicalOperationRegistry(),
     scope: createTargetScope(fixture.connection.id),
     tracker,

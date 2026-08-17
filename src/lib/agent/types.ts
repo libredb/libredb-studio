@@ -46,6 +46,7 @@ import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
 import type { AgentChartSpec, DatabaseType, TableSchema } from "@/lib/types";
 import type { AgentGoalShortfall, AgentGoalVerifierId } from "./goal-verifier";
+import type { AgentInventoryNoun } from "./inventory-noun";
 import type { PlanStatementIdentifiers } from "./plan-statement";
 import type { AgentPlanSummary } from "./plan-summary";
 import type { AgentTableProfile } from "./table-profile";
@@ -241,11 +242,15 @@ export type AgentRunFailureReason =
    * workflow's own reads go through the curated provider methods every engine
    * implements, under `AGENT_OPERATIONS_PROFILE`, so it never asks for a read-only
    * STATEMENT path; and since #411 it takes a server-side catalog capture before its
-   * first turn, which does go through `runStatement` under `AGENT_EXECUTION_PROFILE` —
-   * but `captureContextSnapshot` refuses a dialect `CATALOG_PLANS` does not serve BEFORE
-   * acquiring anything, and the two it serves are exactly the two with a read-only
-   * profile. So no ENGINE-shaped acquisition refusal can reach an operations run: on
-   * every engine where one is possible, no acquisition is attempted.
+   * first turn, which does acquire a profile. WHICH profile depends on the reading, and
+   * that is what keeps this reason out of an operations run (#414): the composed catalog
+   * read takes `agent-read-only` and is composed only for the two dialects that HAVE a
+   * read-only profile, while every other dialect asks its provider to describe its own
+   * schema under `agent-operations`, whose gate does not require `queryReadOnly`. An
+   * acquisition IS attempted on all nine — the sentence here used to say none was, which
+   * was true only until the second reading existed. What survives is the conclusion: the
+   * profile whose acquisition would be refused is never the profile that capture asks for
+   * on an engine that would refuse it.
    *
    * What can still reach it, and what this reason's text then misdescribes, is an
    * acquisition refused for a reason that is not the engine at all:
@@ -379,14 +384,39 @@ export interface AgentContextSnapshot {
   readonly fingerprint: string;
   readonly capturedAtMs: number;
   readonly tables: readonly TableSchema[];
+  /**
+   * WHICH of the two readings produced this inventory (#414).
+   *
+   * `"composed-catalog"` is a statement per catalog kind, written by the server for
+   * the dialect and audited line by line; `"provider-inventory"` is the engine's own
+   * schema inspection — one audited call, on the engines for which no catalog
+   * statement is composed. What a reader does with it is say how the inventory was
+   * obtained without claiming the wrong one, which the packing preface has to.
+   *
+   * Optional, and absent reads as `"composed-catalog"`: every snapshot written before
+   * this field existed came from that path, so a ledger recorded then stays readable
+   * and stays right. A required field would have made those ledgers say nothing where
+   * they can honestly say the one thing that was true.
+   *
+   * It is deliberately NOT in the fingerprint. The fingerprint is the INVENTORY's
+   * identity, and two runs that read the same tables two ways are looking at the same
+   * schema — folding the route into it would make a resumed run refuse its own
+   * recorded capture over a fact about how it was taken.
+   */
+  readonly readVia?: "composed-catalog" | "provider-inventory";
 }
 
 /**
- * Why a curated operational reading was refused. Both are decided INSIDE the call,
- * after the pipeline allowed it and the provider was acquired, which is exactly why
- * they are refusals rather than "the run decided not to ask": a statement of the run's
- * budget was charged and the execution was audited, so a settlement that said nothing
- * happened would contradict the ledger.
+ * Why a curated reading that sends no statement was refused. Both are decided INSIDE
+ * the call, after the pipeline allowed it and the provider was acquired, which is
+ * exactly why they are refusals rather than "the run decided not to ask": a statement
+ * of the run's budget was charged and the execution was audited, so a settlement that
+ * said nothing happened would contradict the ledger.
+ *
+ * The grounding schema read (#414) adds no third code. A provider that cannot describe
+ * itself is not a state that exists — `getSchema()` is required on `DatabaseProvider`
+ * — and the reachable failure, a `getSchema()` that rejects, is a database error the
+ * reading path already reports as one.
  */
 export type AgentReadingDenyCode = "KIND_UNSUPPORTED_BY_PROVIDER" | "READING_OVER_BUDGET";
 
@@ -449,6 +479,28 @@ export type AgentRunEvent =
        * invariant instead of a second source of truth.
        */
       readonly snapshot?: AgentContextSnapshot;
+      /**
+       * What this engine called the rows of that inventory when they were READ
+       * (#414). Two plain strings, so the entry stays as inert as everything else
+       * here.
+       *
+       * On the ledger rather than re-derived by whatever renders the run later,
+       * because the two candidates are not the same fact. A surface that asks the
+       * connection for its labels answers with what the connection is called NOW —
+       * and the connection can be edited, retyped or deleted between a run and the
+       * reading of its history, while `useProviderMetadata` answers `null` for the
+       * whole of an in-flight fetch and for every failed one, which would render the
+       * default noun and then change it under the reader. The prompt this same
+       * capture produced already carries the word (`packContextForTask`), so
+       * recording it is what keeps the sentence the model was given and the sentence
+       * the user reads one decision instead of two that can disagree.
+       *
+       * Optional, and the absence is a reading rather than a hedge: every ledger
+       * written before #414 was rendered as "tables" whatever the engine, so folding
+       * one to `TABLE_INVENTORY_NOUN` shows exactly what it always showed instead of
+       * claiming a vocabulary nobody recorded.
+       */
+      readonly noun?: AgentInventoryNoun;
     })
   | (AgentRunEventBase & {
       readonly kind: "statement-drafted";
@@ -516,9 +568,11 @@ export type AgentRunEvent =
        *    runs the statement — and a `true` is not a safety claim: that guard's own
        *    docblock says it means only that that layer found nothing.
        *  - `identifiers` distinguishes "checked, and these names are not in the
-       *    inventory" from "there was no inventory to check against", because an empty
-       *    unknown list is a claim. Even the checked form is not permission to run: an
-       *    inventory records what EXISTS, not what the user's role may select from.
+       *    inventory" from "there was no inventory to check against" and, since #414,
+       *    from "no reader here can find a name in this engine's language", because an
+       *    empty unknown list is a claim. Even the checked form is not permission to
+       *    run: an inventory records what EXISTS, not what the user's role may select
+       *    from.
        */
       readonly kind: "plan-statement-drafted";
       /** The statement as the model wrote it, verbatim, fence removed. */
@@ -526,7 +580,22 @@ export type AgentRunEvent =
       /** The engine it was written for — the connection this drive was given. */
       readonly dialect: DatabaseType;
       readonly readOnly: boolean;
-      /** The guard's own reason, present exactly when `readOnly` is false. */
+      /**
+       * Whether the guard could read this draft's language at all (#414).
+       *
+       * OPTIONAL on the event and required on `PlanStatementValidation`, which is not
+       * an inconsistency: the validation is written now and always carries it, while
+       * the event is also read back out of `.workflow-data` ledgers recorded before
+       * #414. An absent value reads as `true` there, and truthfully — plan mode was
+       * grounded on PostgreSQL and SQLite alone, so every draft those runs recorded
+       * was SQL and every one of them was examined. Widening `readOnly` or renaming
+       * anything here was the alternative, and it breaks those ledgers: the store's
+       * `parseEntry` establishes only that a line is JSON, is an object and carries a
+       * known event kind, then trusts the contract — so a field that changed meaning
+       * would be re-read under its new one with no tripwire between.
+       */
+      readonly guardApplicable?: boolean;
+      /** The guard's own reason, present exactly when `readOnly` is false AND the guard applied. */
       readonly guardViolation?: AgentStatementViolation;
       readonly identifiers: PlanStatementIdentifiers;
     })

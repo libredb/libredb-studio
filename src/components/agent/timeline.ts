@@ -1,5 +1,6 @@
 import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentGoalShortfall } from "@/lib/agent/goal-verifier";
+import { type AgentInventoryNoun, TABLE_INVENTORY_NOUN } from "@/lib/agent/inventory-noun";
 import type { AgentPlanAccess, AgentPlanSummary } from "@/lib/agent/plan-summary";
 import { readPlanStatement } from "@/lib/agent/plan-draft";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
@@ -43,14 +44,18 @@ import {
  *    A database error is the only variant with a message, and that message is
  *    `quoted`, not narrated.
  *
- * TWO value imports from the runtime modules, and both are deliberate (#329 T10b,
- * and the per-workflow ceilings): `execution-policy.ts`, because the budget meter's
- * ceilings have to be the numbers the server actually enforces rather than a second
- * copy that can drift from them, and `DEFAULT_AGENT_WORKFLOW_TYPE` from `types.ts`,
- * because a header written before the workflow field must fold to the same workflow
- * the server reads it as. Both modules are frozen constants and type declarations
- * with no runtime imports of their own; nothing else here imports a value from
- * `src/lib/agent`.
+ * THREE value imports from the runtime modules, and all three are deliberate (#329
+ * T10b, the per-workflow ceilings, and #414): `execution-policy.ts`, because the
+ * budget meter's ceilings have to be the numbers the server actually enforces rather
+ * than a second copy that can drift from them; `DEFAULT_AGENT_WORKFLOW_TYPE` from
+ * `types.ts`, because a header written before the workflow field must fold to the same
+ * workflow the server reads it as; and `TABLE_INVENTORY_NOUN` from
+ * `inventory-noun.ts`, because a ledger written before the noun existed must fold to
+ * the word it was written under, and spelling "table"/"tables" a second time here is
+ * exactly the drift that default exists to prevent. All three modules are frozen
+ * constants and type declarations whose own imports are types only, so none of them
+ * puts anything in the browser bundle — the property `plan-draft-boundary.test.ts`
+ * measures, and the one a directly-inspected import list once got wrong.
  */
 
 export type AgentTimelineTone = "neutral" | "progress" | "refused" | "done";
@@ -70,8 +75,29 @@ type PlanStatementEvent = Extract<AgentRunEvent, { kind: "plan-statement-drafted
  * It carries the SQL and the findings and no rendering decision at all. How a write is
  * marked, and in what words, is the card's question (`AgentRail`), because that is
  * where the marking has to survive a screen reader as well as a colour.
+ *
+ * `guardApplicable` is the one field that is NOT picked, and is required here where the
+ * event has it optional. Absent on the event means the guard applied — a ledger written
+ * before #414 carries no value and every draft in one was SQL the guard did read — and
+ * that default belongs in the fold below, decided once. Preserving the absence would
+ * leave each consumer to re-derive it, and the obvious spelling of the derivation
+ * (`if (!draft.guardApplicable)`) is the WRONG one: it would tell a reader that this
+ * engine's statements are not SQL about every PostgreSQL draft recorded before #414.
  */
-export type AgentPlanStatementView = Pick<PlanStatementEvent, "sql" | "readOnly" | "guardViolation" | "identifiers">;
+export type AgentPlanStatementView = Pick<PlanStatementEvent, "sql" | "readOnly" | "guardViolation" | "identifiers"> & {
+  /** Whether the SQL statement guard could read this draft at all. */
+  readonly guardApplicable: boolean;
+  /**
+   * What this run's own inventory called the objects the name check looked in
+   * (#414), taken from its `context-captured` entry and defaulted to
+   * `TABLE_INVENTORY_NOUN` for a run that captured nothing.
+   *
+   * Required here where the event's is optional, for the reason `guardApplicable` is:
+   * the reading of an absent value belongs in the fold, decided once, rather than in
+   * every surface that renders a card.
+   */
+  readonly noun: AgentInventoryNoun;
+};
 
 export interface AgentTimelineItem {
   /** Stable within one render, unique even when two entries share a timestamp. */
@@ -428,8 +454,23 @@ function readPlanRefusal(prose: string | undefined): string | null {
  * that — the guard's own contract says a clean reading means only that THAT layer
  * found nothing — and an objection is a MARK rather than a refusal, because the owner
  * ruled that a plan run's statement stays the user's to run.
+ *
+ * A THIRD sentence since #414, read first and blaming the guard's reach rather than
+ * the draft. The guard reads every string as SQL, so a correct MongoDB aggregation or
+ * Redis reading came back `NON_READ_STATEMENT` on its leading word alone — and the
+ * sentence a reader then saw, "did not read this as a bounded read", is an accusation
+ * against a statement that was never examined. `guardApplicable` is the server saying
+ * which of those two happened, so this says it too. A plain boolean: the caller has
+ * already resolved the event's optional field against its documented default.
  */
-function guardSentence(readOnly: boolean, violation: PlanStatementEvent["guardViolation"]): string {
+function guardSentence(
+  readOnly: boolean,
+  violation: PlanStatementEvent["guardViolation"],
+  guardApplicable: boolean,
+): string {
+  if (!guardApplicable) {
+    return "The statement guard reads SQL, and this engine's statements are not SQL, so nothing here examined this draft at all. Nothing about it was established, for or against.";
+  }
   return readOnly
     ? "The statement guard read this as a bounded read and had no objection, which is not a promise about what it does."
     : `The statement guard did not read this as a bounded read (${violation}). It is marked, not blocked: running it is your decision.`;
@@ -443,15 +484,29 @@ function guardSentence(readOnly: boolean, violation: PlanStatementEvent["guardVi
  * spoken here: this is the app's own sentence, and untrusted content belongs in a
  * quoted block. The last clause is the design's item 6 said where the claim is made —
  * an inventory records what EXISTS, not what a role may select from — so no reader
- * takes "every table exists" for "this will run".
+ * takes "everything it names exists" for "this will run".
+ *
+ * The objects are named in the engine's own word (#414) and not in this product's
+ * storage shape: the check reads the same inventory the prompt was written from, and
+ * on Druid that inventory's rows are datasources however `TableSchema` spells them.
+ *
+ * `not-applicable` is the third branch and, like the guard's, it is about the CHECK
+ * and not about the draft (#414). It is deliberately not worded as `no-inventory` is:
+ * that one says nothing was read, and on this path an inventory usually was — what is
+ * missing is a reader that can find a collection name in an aggregation pipeline. A
+ * reader told "no inventory was read" when one was would go looking for a grounding
+ * failure that did not happen.
  */
-function identifierSentence(identifiers: PlanStatementEvent["identifiers"]): string {
+function identifierSentence(identifiers: PlanStatementEvent["identifiers"], noun: AgentInventoryNoun): string {
+  if (identifiers.kind === "not-applicable") {
+    return "The name check reads SQL too, so the objects this draft names were not looked for in anything.";
+  }
   if (identifiers.kind === "no-inventory") {
     return "No schema inventory was read for this run, so the names it used were not checked at all.";
   }
   const unknown = identifiers.unknownTables.length;
   return unknown === 0
-    ? "Every table it names is in the inventory this run read — which records what exists, not what your role is permitted to read."
+    ? `Every ${noun.singular} it names is in the inventory this run read — which records what exists, not what your role is permitted to read.`
     : `${unknown} name(s) it uses are not in the inventory this run read, so it may not run as written.`;
 }
 
@@ -640,9 +695,18 @@ const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
     "No before-and-after plan comparison was recorded, and no index was recommended: a query optimization rests on one or the other.",
   "no-plan-evidence":
     "The index was recommended without citing a plan this run read, so nothing the engine said backs it.",
+  // Stays "table" (#414): the profile is `sql.table.profile`, an SQL-only operation
+  // offered on engines whose rows really are tables, so the engine's own word and this
+  // one are the same word wherever this verdict can be reached.
   "no-table-profile": "No table was profiled, so the state of the data was never established.",
+  // "the schema inventory this run read" rather than "this database's list of tables"
+  // (#414). This is an OPERATIONS verdict and that workflow reaches Redis, where the
+  // inventory's rows are key prefixes this server grouped — and a verdict is the last
+  // sentence that may put a noun the engine does not use in front of a reader. It
+  // takes no noun of its own because it needs none: the inventory can be named without
+  // naming what is in it. `no-table-profile` below keeps its word on purpose.
   "no-reading":
-    "The report rests only on this database's list of tables, and on no reading of what the engine is doing, so nothing it says was measured on this server.",
+    "The report rests only on the schema inventory this run read, and on no reading of what the engine is doing, so nothing it says was measured on this server.",
   "no-answer":
     "The run reported what it found but never produced an answer to show, so there is nothing to put in front of you.",
   "answer-uncited":
@@ -651,9 +715,10 @@ const SHORTFALL_SENTENCES: Readonly<Record<AgentGoalShortfall, string>> = {
 };
 
 /**
- * What a refused operational reading is called in the rail. The reason code is shown
- * as the detail, so the headline says which of the two happened in the reader's own
- * terms rather than repeating the constant.
+ * What a refused reading is called in the rail. The reason code is shown as the
+ * detail, so the headline says which one happened in the reader's own terms rather
+ * than repeating the constant.
+ *
  */
 const READING_REFUSAL_HEADLINES: Readonly<Record<AgentReadingDenyCode, string>> = {
   KIND_UNSUPPORTED_BY_PROVIDER: "This engine serves no reading of that kind",
@@ -694,6 +759,7 @@ function describeEvent(
   event: AgentRunEvent,
   mode: AgentRunMode,
   stopRequested: boolean,
+  noun: AgentInventoryNoun,
 ): Omit<AgentTimelineItem, "id" | "atMs"> {
   switch (event.kind) {
     case "run-started":
@@ -702,7 +768,11 @@ function describeEvent(
       return {
         tone: "progress",
         headline: "Schema captured",
-        detail: `${event.tableCount} ${event.tableCount === 1 ? "table" : "tables"}, fingerprint ${event.fingerprint.slice(0, 8)}`,
+        // Counted in the engine's own word (#414). The rail said "17 tables" over a
+        // Redis keyspace while the sidebar beside it said Key Patterns and the model
+        // had been told key patterns — the same defect the prompt half of #414 fixed,
+        // in the half a user actually reads.
+        detail: `${event.tableCount} ${event.tableCount === 1 ? noun.singular : noun.plural}, fingerprint ${event.fingerprint.slice(0, 8)}`,
       };
     case "statement-drafted":
       return {
@@ -812,7 +882,12 @@ function describeEvent(
         // a plan run's entire markdown answer into one paragraph of literal characters.
         prose: event.text,
       };
-    case "plan-statement-drafted":
+    case "plan-statement-drafted": {
+      // The one place the optional field's default is decided (#414). A ledger written
+      // before the field existed carries no value and every draft in one was SQL the
+      // guard did read, so absence means the guard applied — said once here rather than
+      // re-derived by the headline, the detail and the card.
+      const guardApplicable = event.guardApplicable ?? true;
       return {
         tone: "progress",
         // The mark rides in the HEADLINE, not only in the detail: a statement the
@@ -828,12 +903,23 @@ function describeEvent(
         // a jsonb read as a write would be this surface claiming a precision the
         // server never established, about the one statement a user is most likely to
         // act on. The reason travels in the detail, where a reader can weigh it.
-        headline: event.readOnly ? "Statement drafted" : "Statement drafted — not classified as a read",
+        //
+        // The third headline is #414's, and it is here rather than only in the detail
+        // because this line is what a reader skims. On an engine the guard cannot read
+        // `readOnly` is `false` for a reason that has nothing to do with the draft, so
+        // the two-way headline announced every correct MongoDB aggregation as one the
+        // guard had objected to — the same overstatement the paragraph above refuses,
+        // arrived at from the other side.
+        headline: !guardApplicable
+          ? "Statement drafted — not examined by the statement guard"
+          : event.readOnly
+            ? "Statement drafted"
+            : "Statement drafted — not classified as a read",
         // The app's own words about the app's own checks, and only the app's: the
         // guard's reason is this repository's own closed vocabulary, while the table
         // names are model and engine text and are therefore COUNTED rather than
         // spoken. The statement itself is in the closing prose beside this entry.
-        detail: `${guardSentence(event.readOnly, event.guardViolation)} ${identifierSentence(event.identifiers)}`,
+        detail: `${guardSentence(event.readOnly, event.guardViolation, guardApplicable)} ${identifierSentence(event.identifiers, noun)}`,
         // The ledger's own record, carried whole so the card can show the statement
         // AND what was found about it in one place (item 7). Still no `applySql`: that
         // field drives the shared hydration control, whose "Apply to editor" says
@@ -843,10 +929,16 @@ function describeEvent(
         planStatement: {
           sql: event.sql,
           readOnly: event.readOnly,
+          // Normalised rather than copied through: the card reads a plain boolean.
+          guardApplicable,
           ...(event.guardViolation === undefined ? {} : { guardViolation: event.guardViolation }),
           identifiers: event.identifiers,
+          // The word this run's own capture used, so the card's marks and this
+          // entry's detail cannot describe one inventory in two vocabularies.
+          noun,
         },
       };
+    }
     default:
       return {
         tone: TERMINAL_TONES[event.status],
@@ -876,6 +968,7 @@ function describeEntry(
   entry: AgentLedgerEntry,
   mode: AgentRunMode,
   stopRequested: boolean,
+  noun: AgentInventoryNoun,
 ): Omit<AgentTimelineItem, "id"> {
   switch (entry.kind) {
     case "run-opened":
@@ -892,7 +985,7 @@ function describeEntry(
         quoted: entry.objective,
       };
     case "event":
-      return { atMs: entry.event.atMs, ...describeEvent(entry.event, mode, stopRequested) };
+      return { atMs: entry.event.atMs, ...describeEvent(entry.event, mode, stopRequested, noun) };
     default:
       return {
         atMs: entry.atMs,
@@ -920,12 +1013,24 @@ interface CitedArtifact {
   readonly stepId: string;
 }
 
+/**
+ * What one capture covered, and what its engine calls those rows.
+ *
+ * The noun is held PER CAPTURE rather than once for the run, because a citation is
+ * resolved by fingerprint: it points at one particular reading, and it is that
+ * reading's own vocabulary the detail should be written in.
+ */
+interface CitedCapture {
+  readonly tableCount: number;
+  readonly noun: AgentInventoryNoun;
+}
+
 interface LedgerIndex {
   readonly artifacts: ReadonlyMap<string, CitedArtifact>;
   /** step id → the statement the model drafted for it. */
   readonly statements: ReadonlyMap<string, string>;
-  /** snapshot fingerprint → how many tables it covered. */
-  readonly captures: ReadonlyMap<string, number>;
+  /** snapshot fingerprint → what that capture covered. */
+  readonly captures: ReadonlyMap<string, CitedCapture>;
 }
 
 function citationOf(reference: AgentEvidenceReference, id: string, index: LedgerIndex): AgentEvidenceCitation {
@@ -947,13 +1052,13 @@ function citationOf(reference: AgentEvidenceReference, id: string, index: Ledger
     };
   }
 
-  const tableCount = index.captures.get(reference.fingerprint);
+  const capture = index.captures.get(reference.fingerprint);
   const label = `Schema snapshot ${reference.fingerprint.slice(0, 8)}`;
-  if (tableCount === undefined) return { id, label, detail: UNRESOLVED_DETAIL, resolved: false, ...locator };
+  if (capture === undefined) return { id, label, detail: UNRESOLVED_DETAIL, resolved: false, ...locator };
   return {
     id,
     label,
-    detail: `${tableCount} ${tableCount === 1 ? "table" : "tables"}`,
+    detail: `${capture.tableCount} ${capture.tableCount === 1 ? capture.noun.singular : capture.noun.plural}`,
     resolved: true,
     ...locator,
   };
@@ -1029,7 +1134,30 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
 
   const artifacts = new Map<string, CitedArtifact>();
   const statementsByStep = new Map<string, string>();
-  const captures = new Map<string, number>();
+  const captures = new Map<string, CitedCapture>();
+
+  /*
+    What this run's engine calls the rows of its inventory (#414), carried through the
+    walk so that every sentence written ABOUT that inventory uses the engine's own
+    word: the capture line itself, the citations resolved out of it, and the name
+    check on a plan run's draft.
+
+    Read off the capture entry and from nowhere else. The alternative was for the rail
+    to ask the connection for its labels and pass them in, and it is a worse answer for
+    reasons this function's own shape makes plain: it is pure over entries, and it
+    renders a run resumed long after it ran. A connection can be retyped, edited or
+    deleted between a run and the reading of its history, and `useProviderMetadata`
+    answers `null` for the whole of its fetch and for every failure of it — so the
+    labels route would have rendered the default word first and swapped it under the
+    reader, and would have described an old run in a new connection's vocabulary. What
+    the objects were called when they were READ is a fact about the run, and the ledger
+    is where this product keeps facts about runs.
+
+    `TABLE_INVENTORY_NOUN` until a capture says otherwise: a ledger written before the
+    field, and a run that never captured anything, both read exactly as they always
+    did.
+  */
+  let noun: AgentInventoryNoun = TABLE_INVENTORY_NOUN;
 
   /*
     The two facts the closing pass below needs, gathered in the same walk rather than
@@ -1104,8 +1232,12 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
         failureReason = event.reason ?? null;
       } else if (event.kind === "closing-statement") closings.push({ index: items.length, mode });
       else if (event.kind === "plan-statement-drafted") drafted = true;
-      else if (event.kind === "context-captured") captures.set(event.fingerprint, event.tableCount);
-      else if (event.kind === "statement-drafted") statementsByStep.set(event.stepId, event.sql);
+      else if (event.kind === "context-captured") {
+        // Before the entry is described, so the capture line is written in the word it
+        // itself recorded rather than in the one the entry before it was written with.
+        noun = event.noun ?? TABLE_INVENTORY_NOUN;
+        captures.set(event.fingerprint, { tableCount: event.tableCount, noun });
+      } else if (event.kind === "statement-drafted") statementsByStep.set(event.stepId, event.sql);
       else if (event.kind === "report-composed") claims = event.claims;
       else if (event.kind === "tool-completed") {
         statements += 1;
@@ -1127,7 +1259,7 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
     }
     // Indexed, because two entries can legitimately be identical in content and
     // timestamp (a resumed run replaying a step), and React needs distinct keys.
-    items.push({ id: `entry-${index}`, ...describeEntry(entry, mode, stopRequested) });
+    items.push({ id: `entry-${index}`, ...describeEntry(entry, mode, stopRequested, noun) });
   });
 
   /*

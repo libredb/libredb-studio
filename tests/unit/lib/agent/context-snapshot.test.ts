@@ -17,13 +17,19 @@ import { assertPersistableState } from "@/lib/agent/state-guard";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import type { AgentContextSnapshot, AgentRunEvent } from "@/lib/agent/types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
-import { QueryError } from "@/lib/db/errors";
+import { ConnectionError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
-import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
+import {
+  createCanonicalOperationRegistry,
+  dbOperationsReadDescriptor,
+  sqlQueryReadDescriptor,
+} from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
+import { OperationRegistry } from "@/lib/db/operations/registry";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
-import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
+import { TABLE_LABELS } from "../../../fixtures/provider-labels";
+import type { DatabaseConnection, DatabaseType, QueryResult, TableSchema } from "@/lib/types";
 
 /**
  * The run's context snapshot and its packing (#329 T8).
@@ -159,6 +165,7 @@ function harness(type: DatabaseType, answer?: (sql: string) => Promise<QueryResu
       actor: { sessionId: "session-1", role: "user" },
       connection: connectionOf(type),
       capabilities,
+      labels: TABLE_LABELS,
       registry: createCanonicalOperationRegistry(),
       scope: createTargetScope("conn-1"),
       tracker: new ExecutionBudgetTracker(),
@@ -407,12 +414,26 @@ describe("captureContextSnapshot — when no honest inventory can be built", () 
     expect(capture.kind).toBe("unavailable");
   });
 
-  test("a dialect with no verified catalog composition is refused rather than guessed", async () => {
+  /*
+    Until #414 this test read "a dialect with no verified catalog composition is
+    refused rather than guessed", and mysql was the fixture for a capture that reached
+    no database at all. That is no longer what happens: a dialect with no composed
+    catalog now takes the provider path, so the refusal it is entitled to is a refusal
+    from a provider that cannot describe itself — which the harness above expresses,
+    since its fake provider carries `queryReadOnly` and nothing else.
+
+    What the rewrite keeps is the property that did not change: no catalog STATEMENT
+    is guessed at for an unserved dialect. Nothing here composes SQL for mysql, then
+    or now.
+  */
+  test("a dialect with no verified catalog composition composes no statement for it", async () => {
     const h = harness("mysql");
 
     const capture = await captureContextSnapshot(h.context);
 
     expect(capture.kind).toBe("unavailable");
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
     expect(h.statements()).toHaveLength(0);
   });
 
@@ -461,6 +482,278 @@ describe("captureContextSnapshot — when no honest inventory can be built", () 
     expect(capture.kind).toBe("unavailable");
     if (capture.kind !== "unavailable") throw new Error("unreachable");
     expect(capture.reasonCode).toBe("CATALOG_RESULT_UNAVAILABLE");
+  });
+});
+
+/**
+ * The second reading (#414): the engine's own schema inspection, for the dialects no
+ * catalog statement is composed for.
+ *
+ * What is asserted here is what makes it the same kind of reading as the composed one
+ * rather than a way around it — the profile it acquires, the identity its inventory
+ * produces, and that it loses the WHOLE snapshot on every way it can fail.
+ */
+describe("captureContextSnapshot — the provider's own inventory", () => {
+  /** As MongoDB answers it: a row estimate and a size, which a snapshot must drop. */
+  const MONGO_TABLES: TableSchema[] = [
+    {
+      name: "orders",
+      columns: [
+        { name: "_id", type: "objectId", nullable: false, isPrimary: true },
+        { name: "customerId", type: "objectId", nullable: true, isPrimary: false },
+      ],
+      indexes: [{ name: "_id_", columns: ["_id"], unique: true }],
+      foreignKeys: [],
+      rowCount: 4_211,
+      size: "1.2 MB",
+    },
+    {
+      name: "customers",
+      columns: [{ name: "_id", type: "objectId", nullable: false, isPrimary: true }],
+      indexes: [],
+      // No `foreignKeys` at all: Redis and LibreDB never set the field.
+      rowCount: 91,
+    },
+  ];
+
+  interface ProviderHarness {
+    readonly context: AgentToolContext;
+    readonly getSchema: ReturnType<typeof mock>;
+    readonly profiles: () => unknown[];
+  }
+
+  function providerHarness(
+    options: {
+      readonly schema?: () => Promise<TableSchema[]>;
+      readonly runDeadlineMs?: number;
+      /** What the acquisition throws, for the failures raised before any reading leaves. */
+      readonly acquireThrows?: Error;
+      /** A registry an operator narrowed, so the policy layer denies this one call. */
+      readonly registry?: OperationRegistry;
+    } = {},
+  ): ProviderHarness {
+    const getSchema = mock(options.schema ?? (async () => MONGO_TABLES.map((table) => ({ ...table }))));
+    // Always present: `getSchema` is a REQUIRED member of `DatabaseProvider`, so a
+    // provider without one is a shape no acquisition can return and a fixture carrying
+    // it would test a state that cannot occur.
+    const provider = { getSchema } as unknown as DatabaseProvider;
+    // The profile is recorded here rather than read off the spy's call list, because
+    // it is the ARGUMENT that is under test: acquiring `agent-read-only` would throw
+    // PROFILE_UNSUPPORTED_BY_PROVIDER on every engine this path exists to reach.
+    const profiles: unknown[] = [];
+    const acquireProvider = mock(async (_connection: DatabaseConnection, profile: unknown) => {
+      if (options.acquireThrows) throw options.acquireThrows;
+      profiles.push(profile);
+      return provider;
+    });
+
+    return {
+      context: {
+        runId: "run-1",
+        mode: "agent",
+        workflowType: "investigation",
+        actor: { sessionId: "session-1", role: "user" },
+        connection: connectionOf("mongodb"),
+        capabilities,
+        labels: TABLE_LABELS,
+        registry: options.registry ?? createCanonicalOperationRegistry(),
+        scope: createTargetScope("conn-1"),
+        tracker: new ExecutionBudgetTracker(),
+        artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
+        deadline: new AgentRunDeadline(
+          options.runDeadlineMs ?? AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxTotalRunMs * 2,
+          frozenClock,
+        ),
+        repairs: new AgentRepairLedger(),
+        acquireProvider,
+        clock: frozenClock,
+      },
+      getSchema,
+      profiles: () => profiles,
+    };
+  }
+
+  test("PostgreSQL and SQLite do not converge on it, and record no route of their own", async () => {
+    // The two paths are a deliberate asymmetry, and absence of `readVia` is what
+    // makes a ledger written before #414 still readable: it reads as the composed
+    // catalog, which is what every such ledger came from.
+    const postgres = await captured("postgres");
+    const sqlite = await captured("sqlite");
+
+    expect(postgres).not.toHaveProperty("readVia");
+    expect(sqlite).not.toHaveProperty("readVia");
+  });
+
+  test("an engine with no catalog plan is grounded from its provider, and says how it was read", async () => {
+    const h = providerHarness();
+
+    const capture = await captureContextSnapshot(h.context);
+
+    expect(capture.kind).toBe("captured");
+    if (capture.kind !== "captured") throw new Error("unreachable");
+    expect(capture.snapshot.readVia).toBe("provider-inventory");
+    expect(capture.snapshot.tables.map((table) => table.name)).toEqual(["customers", "orders"]);
+    expect(h.getSchema).toHaveBeenCalledTimes(1);
+  });
+
+  test("the profile acquired is the operations one, which is the only one these engines serve", async () => {
+    // Not a style preference: `agent-read-only` requires `queryReadOnly`, which none
+    // of these engines implements, so acquiring it would throw
+    // PROFILE_UNSUPPORTED_BY_PROVIDER before the provider was ever reached.
+    const h = providerHarness();
+
+    await captureContextSnapshot(h.context);
+
+    expect(h.profiles()).toEqual(["agent-operations"]);
+  });
+
+  test("the inventory is the identity its own tables produce, so the hold accepts it", async () => {
+    const h = providerHarness();
+
+    const capture = await captureContextSnapshot(h.context);
+
+    if (capture.kind !== "captured") throw new Error("unreachable");
+    const identity = connectionIdentity(h.context.connection);
+    holdSnapshotForConnection(capture.snapshot, identity);
+    expect(heldSnapshotForConnection(identity)).toEqual(capture.snapshot);
+    assertPersistableState(capture.snapshot);
+  });
+
+  test("row estimates and sizes are dropped: they are not schema and must not move the fingerprint", async () => {
+    const h = providerHarness();
+
+    const capture = await captureContextSnapshot(h.context);
+
+    if (capture.kind !== "captured") throw new Error("unreachable");
+    for (const table of capture.snapshot.tables) {
+      expect(table).not.toHaveProperty("rowCount");
+      expect(table).not.toHaveProperty("size");
+    }
+    // Same tables, one more document inserted since. The same schema must have the
+    // same identity, which is the whole reason an estimate is not carried.
+    const busier = providerHarness({
+      schema: async () => MONGO_TABLES.map((table) => ({ ...table, rowCount: (table.rowCount ?? 0) + 1 })),
+    });
+    const second = await captureContextSnapshot(busier.context);
+    if (second.kind !== "captured") throw new Error("unreachable");
+    expect(second.snapshot.fingerprint).toBe(capture.snapshot.fingerprint);
+  });
+
+  test("a table that declares no foreign keys is carried with an empty list, not without the field", async () => {
+    const h = providerHarness();
+
+    const capture = await captureContextSnapshot(h.context);
+
+    if (capture.kind !== "captured") throw new Error("unreachable");
+    expect(capture.snapshot.tables.map((table) => table.foreignKeys)).toEqual([[], []]);
+  });
+
+  test("a provider that throws loses the whole snapshot rather than yielding part of one", async () => {
+    const h = providerHarness({
+      schema: async () => {
+        throw new Error("MongoServerError: not authorized on shop to execute command listCollections");
+      },
+    });
+
+    const capture = await captureContextSnapshot(h.context);
+
+    expect(capture.kind).toBe("unavailable");
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+  });
+
+  /*
+    An operator who does not want this reading can deny it on its own, which is the
+    argument the descriptor's docblock makes for giving it an operation id of its own.
+    The narrowed registry below is what that looks like from the run's side: every other
+    agent read is still registered, and this one call is denied by the policy layer.
+
+    Its own sentence, and distinct from the timeout's: a denial is a decision somebody
+    made about this run, and an operator reading "did not describe its own schema within
+    250ms" would go looking for a slow database that is working perfectly.
+  */
+  test("a grounding read denied by policy is reported as a denial, in the policy layer's words", async () => {
+    const narrowed = new OperationRegistry();
+    narrowed.register(sqlQueryReadDescriptor);
+    narrowed.register(dbOperationsReadDescriptor);
+    const h = providerHarness({ registry: narrowed });
+
+    const capture = await captureContextSnapshot(h.context);
+
+    expect(capture.kind).toBe("unavailable");
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+    expect(capture.detail).toContain("The database operation layer refused this call");
+    expect(capture.detail).toContain("UNKNOWN_OPERATION");
+    // Not the timeout's wording, and not an engine's error text: nothing was asked.
+    expect(capture.detail).not.toContain("this run granted");
+    expect(h.getSchema).not.toHaveBeenCalled();
+  });
+
+  /*
+    A failure raised BEFORE the reading left is the environment's, and it loses the
+    grounding rather than the run.
+
+    Plan mode's promise is that it opens and answers on every connection, and on these
+    nine engines it did — because it reached no database at all. Letting an unreachable
+    host or a half-configured `agentUser` out of the capture would lose a plan run to an
+    improvement, and on the profile error it would lose it under "the agent cannot run on
+    this database engine", said about an engine plan mode demonstrably works on.
+  */
+  test("a database that cannot be reached loses the grounding, not the run", async () => {
+    const h = providerHarness({
+      acquireThrows: new ConnectionError("connect ECONNREFUSED 127.0.0.1:27017", "mongodb"),
+    });
+
+    const capture = await captureContextSnapshot(h.context);
+
+    expect(capture.kind).toBe("unavailable");
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+    expect(capture.detail).toContain("could not reach this mongodb database to ask it for its schema");
+    // The driver's own message stays out of it: this sentence is the server's voice in
+    // the note a plan run reads, and nothing fenced it.
+    expect(capture.detail).not.toContain("ECONNREFUSED");
+  });
+
+  test("a credential the profile layer will not grant loses the grounding, not the run", async () => {
+    const h = providerHarness({
+      acquireThrows: new ExecutionProfileError(
+        "agent credential for this connection could not be decrypted",
+        "AGENT_CREDENTIAL_UNRESOLVABLE",
+      ),
+    });
+
+    const capture = await captureContextSnapshot(h.context);
+
+    expect(capture.kind).toBe("unavailable");
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+    expect(capture.detail).toContain("under the execution profile a grounding read takes");
+    expect(capture.detail).not.toContain("could not be decrypted");
+  });
+
+  test("anything that is not one of those two is this server's own bug, and propagates", async () => {
+    // The bound on the catch above. A `TypeError` here is not a property of the user's
+    // database and must not be reported to them as one.
+    const h = providerHarness({ acquireThrows: new TypeError("acquireProvider is not a function") });
+
+    await expect(captureContextSnapshot(h.context)).rejects.toThrow(TypeError);
+  });
+
+  test("a reading that overruns the time it was granted loses the whole snapshot, under its own code", async () => {
+    // 250ms is `AGENT_MINIMUM_CALL_MS`, the smallest call this deadline will admit,
+    // so the granted timeout is the whole of what the run has left.
+    const h = providerHarness({ runDeadlineMs: 250, schema: () => new Promise<TableSchema[]>(() => {}) });
+
+    const capture = await captureContextSnapshot(h.context);
+
+    expect(capture.kind).toBe("unavailable");
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.reasonCode).toBe("PROVIDER_INVENTORY_TIMED_OUT");
+    expect(capture.detail).toContain("250ms");
+    // Said of the RUN, not of the database: the driver call was never cancelled.
+    expect(capture.detail).toContain("this run granted");
   });
 });
 
@@ -641,6 +934,40 @@ describe("packContextForTask", () => {
 
     expect(packed).not.toContain("inspect_schema");
   });
+
+  /*
+    #414, second finding, measured in a browser. A run handed a Redis keyspace under a
+    header reading "17 table(s)" drafted `KEYS user:*` and `ZCARD user:*` — naming a row
+    as though a command could be given it. The header is the sentence that made the
+    claim, so the header is where the engine's own noun goes: `ProviderLabels` has said
+    "Key Pattern" since long before the agent existed.
+  */
+  test("the header, the empty sentence and the omission notice all use the engine's own noun", () => {
+    const noun = { singular: "key pattern", plural: "key patterns" };
+
+    const packed = packContextForTask(wideSnapshot(200, 40), "which keys are the biggest?", { noun });
+    expect(packed).toContain("200 key pattern(s) read at epoch");
+    expect(packed).toMatch(/\d+ further key pattern\(s\) omitted as less relevant to this task/);
+    expect(packed).not.toContain("table(s)");
+
+    const empty = packContextForTask(wideSnapshot(0, 0), "anything", { noun });
+    expect(empty).toContain("This database reported no key patterns.");
+  });
+
+  /*
+    And the default. Passing no noun has to leave a SQL engine's prompt exactly as it
+    was, byte for byte — a silent change to the PostgreSQL prompt is the likeliest
+    damage this work could do.
+  */
+  test("a caller that declares no noun produces the same block it always did", () => {
+    const withoutNoun = packContextForTask(wideSnapshot(30, 4), "orders");
+    const withTableNoun = packContextForTask(wideSnapshot(30, 4), "orders", {
+      noun: { singular: "table", plural: "tables" },
+    });
+
+    expect(withoutNoun).toContain("30 table(s) read at epoch");
+    expect(withoutNoun).toBe(withTableNoun);
+  });
 });
 
 /**
@@ -795,6 +1122,25 @@ describe("packOperationsInventory", () => {
     });
 
     expect(packed).toContain("no tables");
+  });
+
+  /*
+    #414, second finding. The operations packing writes the same header, so it makes the
+    same claim and takes the same noun. It is also the packing a plan-mode Operate run on
+    a Redis connection reads, which is the run a user is most likely to open there.
+  */
+  test("the operations header and its omission notice use the engine's own noun too", () => {
+    const noun = { singular: "key pattern", plural: "key patterns" };
+
+    const packed = packOperationsInventory(wide(400), { noun });
+    expect(packed).toContain("400 key pattern(s) read at epoch");
+    expect(packed).toMatch(/\d+ further key pattern\(s\) exist in this database and are not named here/);
+
+    const empty = packOperationsInventory(
+      { connectionId: "conn-1", fingerprint: "ctx_x", capturedAtMs: 1, tables: [] },
+      { noun },
+    );
+    expect(empty).toContain("no key patterns");
   });
 });
 

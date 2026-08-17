@@ -177,6 +177,10 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: true,
       supportsInlineRowEdit: true,
+      // The default is the SQL default: a relational engine has foreign keys whether
+      // or not a given schema uses them. The engines that have none override this
+      // (#414), which is the direction that carries the strong claim.
+      declaresForeignKeys: true,
       supportsMaintenance: true,
       maintenanceOperations: ["vacuum", "analyze", "reindex", "kill", "optimize", "check"],
       supportsConnectionString: false,

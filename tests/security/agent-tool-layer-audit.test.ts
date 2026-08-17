@@ -10,6 +10,7 @@ import { createTargetScope } from "@/lib/db/operations/policy";
 import { OperationRegistry } from "@/lib/db/operations/registry";
 import { QueryError } from "@/lib/db/errors";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
+import { TABLE_LABELS } from "../fixtures/provider-labels";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 
 /**
@@ -76,6 +77,7 @@ function context(
     actor: { sessionId: SESSION_SENTINEL, role: "user" },
     connection,
     capabilities,
+    labels: TABLE_LABELS,
     registry: createCanonicalOperationRegistry(),
     scope: createTargetScope("conn-1"),
     tracker: new ExecutionBudgetTracker(),

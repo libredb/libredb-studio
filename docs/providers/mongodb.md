@@ -100,9 +100,9 @@ may render poorly ([Known limitations](#13-known-limitations--future-work)).
 
 ### 3.3 Sampling-based, flat schema inference
 
-MongoDB has no fixed schema, so `getSchema()` ([mongodb.ts:423](../../src/lib/db/providers/document/mongodb.ts))
+MongoDB has no fixed schema, so `getSchema()` ([mongodb.ts:476](../../src/lib/db/providers/document/mongodb.ts))
 **infers** one: it lists collections (skipping `system.*`, capped at 200), and for each samples the
-first **100 documents** to derive field types ([mongodb.ts:448](../../src/lib/db/providers/document/mongodb.ts)).
+first **100 documents** to derive field types ([mongodb.ts:510](../../src/lib/db/providers/document/mongodb.ts)).
 Caveats baked into this approach:
 - Fields absent from the sample (or appearing only in unsampled documents) won't show.
 - Inference is **flat** — nested object fields are reported as type `object`, not expanded into
@@ -191,12 +191,27 @@ injection, no transactions, and no `cancelQuery`. `EXPLAIN` is not supported
 
 | Data | Source |
 |------|--------|
-| Collections | `listCollections()` (skip `system.*`, cap 200) |
-| Row count | `estimatedDocumentCount()` |
-| Size | `collStats` command (`size`) |
-| Columns | inferred from a 100-document sample ([§3.3](#33-sampling-based-flat-schema-inference)) |
-| Indexes | `collection.indexes()` (`unique` flag, key fields) |
-| Foreign keys | always `[]` (MongoDB has none) |
+| Collections | `listCollections()` (skip `system.*`, cap 200) — **views included**, see below |
+| Row count | `estimatedDocumentCount()` — **not asked of a view**; absent there |
+| Size | `collStats` command (`size`) — **not asked of a view**; absent there |
+| Columns | inferred from a 100-document sample ([§3.3](#33-sampling-based-flat-schema-inference)), on a view exactly as on a collection |
+| Indexes | `collection.indexes()` (`unique` flag, key fields) — **not asked of a view**; `[]` there |
+| Foreign keys | always `[]` — MongoDB has none to declare, which the provider states as `declaresForeignKeys: false` ([§9](#9-capabilities--labels)) rather than leaving a reader to guess whether the read simply found none |
+
+### Views are listed, and are asked less
+
+`listCollections()` returns views alongside collections, and MongoDB rejects `count`, `listIndexes`
+and `collStats` on a view with `CommandNotSupportedOnView` (code 166). Those three calls used to be
+unguarded, so **one view in the database aborted the whole schema read** — the user lost every
+collection, not just the view.
+
+The fix guards them on `collInfo.type === "view"`, which the server has already reported, rather than
+filtering views out of the listing. A view is an object the user created and expects to see, and its
+fields are readable by the same document sample every collection gets; hiding it would answer "your
+view does not exist" in order to keep three commands quiet. What a view genuinely cannot answer is
+left **absent** rather than defaulted: no `rowCount` (a view holds no documents of its own, and `0`
+would read as "empty") and no `size`, with `indexes: []` because the indexes its query uses belong to
+the collection underneath it.
 
 ---
 
@@ -247,6 +262,7 @@ three, though `runMaintenance` also accepts `optimize`/`kill`/`reindex` when inv
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — the query language is JSON commands, so there is no `UPDATE ... SET` for the results grid's inline editor to emit |
+| `declaresForeignKeys` | `false` — MongoDB has no foreign key constraint at all, so an empty `foreignKeys` list here is the engine's model and not this database's shape |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['vacuum', 'analyze', 'check']` |
 | `supportsConnectionString` | `true` |
@@ -379,7 +395,8 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
   "unlimited" request can report an incorrect `hasMore`.
 - **`getSchema()` issues serial round-trips** — up to ~4 calls (count + `collStats` + 100-doc sample
   + `indexes()`) per collection, across up to 200 collections, with no batching/timeout; the schema
-  panel can be slow on a large or remote/loaded cluster.
+  panel can be slow on a large or remote/loaded cluster. A view costs one call (the sample), since
+  the other three are the ones MongoDB refuses on a view ([§6](#6-schema-introspection)).
 
 ---
 

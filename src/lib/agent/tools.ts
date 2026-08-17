@@ -73,7 +73,7 @@ import { actorLabel, executeAuditedOperation } from "@/lib/db/operations/executi
 import { inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
-import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
+import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
 import type { ColumnSchema, DatabaseConnection, QueryResult, TableSchema } from "@/lib/types";
 import {
@@ -159,7 +159,14 @@ export type AgentOperationId =
    * A curated operational reading. The one operation on this list that carries no
    * statement — see `dbOperationsReadDescriptor` for why it needs its own id.
    */
-  | "db.operations.read";
+  | "db.operations.read"
+  /**
+   * The provider's own schema inspection, driven by the SERVER's grounding read and
+   * by no tool — see `dbSchemaReadDescriptor` for why it needs its own id. It is on
+   * this list because the audited path types every operation it runs through it, not
+   * because a model can ask for it.
+   */
+  | "db.schema.read";
 
 export interface AgentToolDefinition {
   readonly name: AgentToolName;
@@ -199,6 +206,21 @@ export interface AgentToolContext {
   readonly actor: AgentRunActor;
   readonly connection: DatabaseConnection;
   readonly capabilities: ProviderCapabilities;
+  /**
+   * The provider's own vocabulary, read the same way and at the same moment as its
+   * capabilities (#414).
+   *
+   * Here for one job: what this engine CALLS the rows of a schema inventory. Every
+   * block a run is shown said "table" on every engine until a live drive found what
+   * that costs on a keyspace — see `inventory-noun.ts`. The alternative was branching
+   * on `connection.type` in the prompt layer, which `CLAUDE.md` forbids and which
+   * would have had to be extended by hand for every engine added since.
+   *
+   * The whole `ProviderLabels` rather than the two fields the prompts use, because
+   * the resource is what the provider hands over and narrowing it here would make the
+   * next sentence that needs `rowName` a second plumbing job.
+   */
+  readonly labels: ProviderLabels;
   readonly registry: OperationRegistry;
   readonly scope: TargetScope;
   readonly tracker: ExecutionBudgetTracker;
@@ -1496,6 +1518,145 @@ export async function readCatalogForGrounding(
   input: { readonly kind?: AgentCatalogKind; readonly schema?: string; readonly table?: string },
 ): Promise<AgentToolOutcome> {
   return readCatalog(context, groundingSelectorSchema, input, true);
+}
+
+/**
+ * The provider schema read overran the time this call was granted.
+ *
+ * A sentinel rather than a refusal code, for the same reason `AgentCuratedReadError`
+ * is one: `executeAuditedOperation` owns the invoke callback's result type and there
+ * is no seam for a second outcome. It is raised INSIDE the callback, propagates
+ * through the audited pipeline untouched — it is not a `DatabaseError`, so the phase
+ * gate rethrows it rather than offering the model a repair — and is caught by the one
+ * function below.
+ */
+class AgentSchemaReadTimeout extends Error {
+  constructor(readonly grantedMs: number) {
+    super(`the provider schema read did not answer within ${grantedMs}ms`);
+    this.name = "AgentSchemaReadTimeout";
+  }
+}
+
+/**
+ * What the server's provider schema read produced. `tables` is the inventory itself.
+ *
+ * No artifact reference travels with it, and that is not an oversight: the artifact is
+ * still produced, still lands in the run's store and still reaches the audit stream, so
+ * the call is as citable as any other. What the CALLER does with the reading is build a
+ * snapshot from the structure, and it has no use for a handle to a projection of it.
+ */
+export type AgentProviderSchemaRead =
+  | { readonly kind: "completed"; readonly tables: readonly TableSchema[] }
+  | { readonly kind: "timed-out"; readonly grantedMs: number }
+  | { readonly kind: "unavailable"; readonly modelText: string };
+
+/**
+ * The ENGINE'S OWN schema inspection, taken by the server while it grounds a run
+ * (#414) — the same reading the sidebar performs when it lists your tables.
+ *
+ * The sibling of `readCatalogForGrounding`, for the engines that one cannot serve.
+ * A catalog read is a statement the server composes per dialect, and it is composed
+ * for two of the eleven; everywhere else a run had no inventory at all and was told
+ * so. This is the other reading the product already knows how to take, brought inside
+ * the same pipeline rather than called beside it: `runAuditedAgentCall` applies the
+ * mode check, the repair ledger, the deadline admission, the budget clamp, the
+ * audited execution and the artifact exactly as it does for every statement, so there
+ * is still no second, unaudited path to an engine — which is the objection
+ * `context-snapshot.ts`'s own docblock opens with.
+ *
+ * **It acquires `AGENT_OPERATIONS_PROFILE`, and that is not interchangeable with the
+ * read-only one.** `agent-read-only` sets `requiresReadOnlyStatements: true`, and
+ * `factory.ts` refuses acquisition outright for a provider with no `queryReadOnly` —
+ * which is every engine this function exists to reach. Acquired under that profile
+ * this call would throw `PROFILE_UNSUPPORTED_BY_PROVIDER` before it ever reached a
+ * provider, on all nine. The operations profile is the honest one here for the same
+ * reason `runCuratedRead` takes it: no statement is sent that an engine has to plan,
+ * so there is no statement for a read-only transaction to bound.
+ *
+ * **It returns the `TableSchema[]` itself.** The artifact carries a model-facing
+ * PROJECTION — one row per table: its name, how many columns, how many indexes — so
+ * the call is citable and showable like any other reach, but the inventory does not
+ * round-trip through it. The catalog path deliberately does the opposite, reading its
+ * rows back out of the artifact store, and the difference is not inconsistency: there
+ * the rows ARE the reading, so a released artifact must yield no snapshot rather than
+ * a reconstruction from model-facing text. Here the provider handed back a structure,
+ * there is no text to reconstruct from, and a round trip through the store would only
+ * introduce a way to lose it.
+ */
+export async function readProviderSchemaForGrounding(context: AgentToolContext): Promise<AgentProviderSchemaRead> {
+  let tables: readonly TableSchema[] = [];
+
+  let outcome: AgentToolOutcome;
+  try {
+    outcome = await runAuditedAgentCall(context, {
+      operationId: "db.schema.read",
+      // The connection IS the identity of this call: it takes no input, so two
+      // requests for it on one run are the same request and the repair ledger should
+      // say so rather than admitting the second as a fresh attempt.
+      fingerprintSource: `schema:${context.connection.id}`,
+      input: {},
+      label: "provider schema inventory",
+      grounding: true,
+      invoke: async (_validatedInput, budget, phase) => {
+        // No "can this provider describe itself" check, deliberately: `getSchema()` is
+        // a REQUIRED member of `DatabaseProvider`, so every provider `acquireProvider`
+        // can return has one, and a guard for its absence would be a refusal code, a
+        // sentence and a headline for a state that cannot occur. What CAN happen is a
+        // `getSchema()` that rejects, and that is the case handled below.
+        const provider = await context.acquireProvider(context.connection, AGENT_OPERATIONS_PROFILE);
+        const startedAtMs = context.clock?.() ?? Date.now();
+        // Set immediately before the call leaves, for the same reason the statement
+        // path sets it: anything that threw while we were still connecting is not
+        // something the model could have written differently.
+        phase.statementSent = true;
+
+        // HONEST LIMIT, stated because the alternative reading of this race is
+        // wrong: `getSchema()` takes no budget on any provider, so what this bounds
+        // is THE RUN and not the database. The driver call is not cancelled — it goes
+        // on reading until the engine or the driver ends it — and this run simply
+        // stops waiting for it. The clamp that reaches an engine on the statement
+        // path (PostgreSQL's `SET LOCAL statement_timeout`) has no counterpart here.
+        // Without the race there is no bound at all, which is the only worse answer.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const overran = new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new AgentSchemaReadTimeout(budget.statementTimeoutMs)),
+            budget.statementTimeoutMs,
+          );
+        });
+        try {
+          tables = await Promise.race([provider.getSchema(), overran]);
+        } catch (error) {
+          if (error instanceof AgentSchemaReadTimeout) throw error;
+          // Same wrap as the curated path, for the same measured reason: these
+          // provider methods do not map their driver's errors uniformly, so a raw
+          // `MongoServerError` can reach this seam and would otherwise propagate out
+          // of the tool layer and kill the run on the engines this exists to reach.
+          throw asReadingFailure(error, context.connection.type);
+        } finally {
+          clearTimeout(timer);
+        }
+
+        const rows = tables.map((table) => ({
+          table: table.name,
+          columns: table.columns.length,
+          indexes: table.indexes.length,
+        }));
+        return {
+          rows,
+          fields: ["table", "columns", "indexes"],
+          rowCount: rows.length,
+          executionTime: (context.clock?.() ?? Date.now()) - startedAtMs,
+        };
+      },
+    });
+  } catch (error) {
+    if (error instanceof AgentSchemaReadTimeout) return { kind: "timed-out", grantedMs: error.grantedMs };
+    throw error;
+  }
+
+  if (outcome.kind !== "completed") return { kind: "unavailable", modelText: outcome.modelText };
+  return { kind: "completed", tables };
 }
 
 /**

@@ -241,6 +241,22 @@ describe("BaseDatabaseProvider", () => {
         schemaRefreshPattern: "",
       };
       expect(externalImplementer.supportsInlineRowEdit).toBeUndefined();
+      expect(externalImplementer.declaresForeignKeys).toBeUndefined();
+      // The SQL default: a relational engine HAS foreign keys whether or not a given
+      // schema uses any. The six engines that have none override it, so the strong
+      // claim - "no reading could ever return one here" - is always declared and
+      // never inherited (#414).
+      expect(caps.declaresForeignKeys).toBe(true);
+      // The other direction. Nothing here declares that its inventory rows are
+      // groupings this server derived, because on every engine but Redis and LibreDB
+      // they are objects the engine holds - so the flag is absent by default and the
+      // two that answer true say so themselves (#414).
+      expect(externalImplementer.tablesAreDerivedGroupings).toBeUndefined();
+      expect(caps.tablesAreDerivedGroupings).toBeUndefined();
+      // And the vocabulary the agent layer reads out of the labels: "Table" here, so
+      // every SQL engine's prompt says table without any provider having to declare it.
+      expect(provider.getLabels().entityName).toBe("Table");
+      expect(provider.getLabels().entityNamePlural).toBe("Tables");
       expect(caps.supportsMaintenance).toBe(true);
       expect(caps.maintenanceOperations).toBeArray();
       expect(caps.maintenanceOperations).toContain("vacuum");

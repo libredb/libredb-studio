@@ -517,14 +517,29 @@ function ProseBlock({
  */
 function applyStatementName(draft: AgentPlanStatementView): string {
   const marks: string[] = [];
-  if (!draft.readOnly)
+  // The guard's reach comes FIRST, and it replaces the objection rather than joining
+  // it (#414). On an engine whose statements are not SQL the guard read nothing, so
+  // `readOnly` is `false` for a reason that is not about this draft — and the sentence
+  // below it, spoken to a screen-reader user who cannot see the card, would otherwise
+  // assert that nothing establishes this correct MongoDB aggregation only reads, as
+  // though something had looked and been unconvinced.
+  if (!draft.guardApplicable)
+    marks.push(
+      "The statement guard reads SQL and this engine's statements are not SQL, so nothing examined this draft.",
+    );
+  else if (!draft.readOnly)
     marks.push(
       `The statement guard did not read this as a bounded read (${draft.guardViolation ?? "no reason recorded"}), so nothing here establishes that running it would only read.`,
     );
-  if (draft.identifiers.kind === "no-inventory") marks.push("Nothing checked the names it uses.");
+  if (draft.identifiers.kind === "not-applicable")
+    marks.push("The name check reads SQL too, so the names it uses were not looked for in anything.");
+  else if (draft.identifiers.kind === "no-inventory") marks.push("Nothing checked the names it uses.");
   else if (draft.identifiers.unknownTables.length > 0) {
+    // Named in the engine's own word (#414). This sentence is spoken to a user who
+    // cannot see the card, so it is the last place a Druid run should be told about
+    // "table(s)" while every visible surface beside it says datasources.
     marks.push(
-      `It names ${draft.identifiers.unknownTables.length} table(s) the inventory this run read does not hold, so it may not run as written.`,
+      `It names ${draft.identifiers.unknownTables.length} ${draft.noun.singular}(s) the inventory this run read does not hold, so it may not run as written.`,
     );
   }
   return ["Apply to editor.", ...marks].join(" ");
@@ -552,7 +567,9 @@ function applyStatementName(draft: AgentPlanStatementView): string {
  *  - `data-read-only` carries the guard's own verdict as data rather than as a class
  *    name, so the distinction can be asserted in a test instead of inferred from
  *    styling — and it is named after the field it holds, because "write" is a claim
- *    that verdict does not make;
+ *    that verdict does not make. Three values since #414: `"unexamined"` is a verdict
+ *    the guard did not reach, and it is not `"false"`, because `"false"` reads as an
+ *    objection and there was none;
  *  - what the identifier check found sits beside the statement rather than in a
  *    sentence further up. An unvalidated statement that looks like a sound one is the
  *    failure this half exists to prevent, and a count alone leaves a reader with
@@ -579,24 +596,56 @@ function PlanStatementCard({
   return (
     <section
       data-testid="agent-plan-statement"
-      data-read-only={draft.readOnly ? "true" : "false"}
+      /*
+        THREE values, not two (#414). Every human-readable surface on this card reads
+        `guardApplicable` first and says the guard did not look; this machine-readable
+        one said `"false"` in the same breath, which a consumer can only read as "the
+        guard objected". A third value rather than a second attribute, deliberately: a
+        reader who tests for `"false"` must not be able to reach the accusation at all,
+        and a separate `data-guard-applicable` would leave `"false"` sitting there for
+        them to find.
+      */
+      data-read-only={!draft.guardApplicable ? "unexamined" : draft.readOnly ? "true" : "false"}
       className={cn(
         "mt-1 ml-3.5 rounded border p-1.5",
         draft.readOnly ? "border-hairline-strong" : "border-amber-400/50 bg-amber-500/5",
       )}
     >
-      {!draft.readOnly && (
+      {/*
+        Read first, and a different claim rather than a softer one (#414). The banner
+        below it says the guard looked and was not satisfied; on an engine whose
+        statements are not SQL the guard did not look, and saying the first thing about
+        a correct MongoDB aggregation is the accusation this branch exists to stop. It
+        keeps the amber, because "nobody established anything about this" is what the
+        colour means on this card and it is exactly the state; what changes is the
+        words, and there is no reason code to show because there was no objection.
+      */}
+      {!draft.guardApplicable ? (
         <p
-          data-testid="agent-plan-statement-guard"
+          data-testid="agent-plan-statement-guard-unread"
           className="mb-1 flex items-start gap-1 text-[0.625rem] text-amber-300"
         >
           <TriangleAlert strokeWidth={1.5} className="mt-px w-3 h-3 shrink-0" aria-hidden="true" />
           <span>
-            The statement guard did not read this as a bounded read (
-            <span className="font-mono">{draft.guardViolation ?? "no reason recorded"}</span>). It is drafted, not run —
-            nothing has happened to your data — but nothing here establishes that running it would only read.
+            The statement guard reads SQL, and this engine&apos;s statements are not SQL — so nothing examined this
+            draft. It is drafted, not run — nothing has happened to your data — but nothing here has established
+            anything about it, for or against.
           </span>
         </p>
+      ) : (
+        !draft.readOnly && (
+          <p
+            data-testid="agent-plan-statement-guard"
+            className="mb-1 flex items-start gap-1 text-[0.625rem] text-amber-300"
+          >
+            <TriangleAlert strokeWidth={1.5} className="mt-px w-3 h-3 shrink-0" aria-hidden="true" />
+            <span>
+              The statement guard did not read this as a bounded read (
+              <span className="font-mono">{draft.guardViolation ?? "no reason recorded"}</span>). It is drafted, not run
+              — nothing has happened to your data — but nothing here establishes that running it would only read.
+            </span>
+          </p>
+        )
       )}
       {/* Verbatim, with the clipboard control every other verbatim block in this rail
           carries: the statement is what the user came for, and selecting it by hand
@@ -618,6 +667,19 @@ function PlanStatementCard({
       {draft.identifiers.kind === "no-inventory" && (
         <p data-testid="agent-plan-statement-unchecked" className="mt-1 text-[0.625rem] text-amber-400/80">
           No schema inventory was read for this run, so the names in this statement were not checked against anything.
+        </p>
+      )}
+      {/*
+        Its own line and its own words, not a reuse of the one above (#414). That one
+        reports a run with no inventory; this run usually HAS one, and what it lacks is
+        a reader that can find a collection name inside an aggregation pipeline. A user
+        told "no inventory was read" would go looking for a grounding failure that did
+        not happen.
+      */}
+      {draft.identifiers.kind === "not-applicable" && (
+        <p data-testid="agent-plan-statement-unread" className="mt-1 text-[0.625rem] text-amber-400/80">
+          The names in this statement were not checked: the check that would do it reads SQL, and this engine&apos;s
+          statements are not SQL.
         </p>
       )}
       {onApply !== undefined && (
@@ -2095,9 +2157,10 @@ export function AgentRail({
                       Says only that the run could not draft, never WHY — the two reasons
                       are different and this card cannot tell them apart. A grounded run
                       refuses because the inventory it was given does not reach the
-                      question; an ungrounded one (any engine but PostgreSQL and SQLite,
-                      or a catalog that could not be read) refuses because there was no
-                      inventory at all. The earlier wording named "the schema it read",
+                      question; an ungrounded one (a reading that was refused, that
+                      overran its time, or a provider that cannot describe its own
+                      schema — the engine alone stopped deciding it in #414) refuses
+                      because there was no inventory at all. The earlier wording named "the schema it read",
                       which on the second path is a reading that never happened.
                     */}
                     <p className="text-[0.625rem] text-amber-300">

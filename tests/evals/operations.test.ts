@@ -225,18 +225,25 @@ describe("an operations run is grounded in the objects its readings will name (#
 
   for (const mode of ["agent", "planning"] as const) {
     test(`mysql: a ${mode} run this server cannot ground is told so, and is not told it has an inventory`, async () => {
-      // `CATALOG_PLANS` serves PostgreSQL and SQLite. Everywhere else the capture
-      // answers `unavailable` before a provider is acquired, and the run continues —
-      // which is why this workflow still reaches MySQL, MongoDB and Redis at all.
+      // `CATALOG_PLANS` serves PostgreSQL and SQLite; since #414 every other dialect
+      // asks its PROVIDER for the same inventory instead of refusing on the dialect.
+      // This preset's provider carries only the curated readings — exactly as it did
+      // before, and exactly as an engine whose provider cannot describe itself would
+      // — so the capture is refused and the run continues ungrounded, which is why
+      // this workflow still reaches MySQL, MongoDB and Redis at all.
       const run = mode === "agent" ? await open("mysql") : await openPlan("mysql");
 
       const drive = await run.drive([answersProse("Nothing to add.")]);
 
       const first = drive.transcripts[0] ?? "";
-      // The capture's own diagnosis, which is the only thing that knows WHY — here the
-      // dialect, elsewhere a refusal or a released result. Substituting a sentence of
-      // the caller's own threw that away (review, #411).
-      expect(first).toContain("No schema inventory can be read for a mysql connection.");
+      // The capture's own diagnosis, which is the only thing that knows WHY — here a
+      // provider that serves no such reading, elsewhere a refusal or a released
+      // result. Substituting a sentence of the caller's own threw that away (review,
+      // #411). Until #414 the diagnosis here named the DIALECT ("no schema inventory
+      // can be read for a mysql connection"), which was the true reason then and is
+      // no longer: the dialect no longer decides it. Here it is a `getSchema()` that
+      // rejected, and the engine's own words reach the model fenced.
+      expect(first).toContain("this database refused to describe its own schema");
       expect(first).not.toContain("A schema inventory was read for this run");
       // Nothing was shown to it either, so there is nothing to mistake for an
       // inventory it does not have.

@@ -17,6 +17,7 @@ import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
+import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import type { DatabaseConnection, DatabaseType, QueryResult, TableSchema } from "@/lib/types";
 
 /**
@@ -90,6 +91,7 @@ function harness(
       actor: { sessionId: "session-1", role: "user" },
       connection: connectionOf(type),
       capabilities,
+      labels: TABLE_LABELS,
       registry: createCanonicalOperationRegistry(),
       scope: createTargetScope("conn-1"),
       tracker: new ExecutionBudgetTracker(),

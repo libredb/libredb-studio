@@ -1,10 +1,13 @@
 /**
- * Canonical Phase 1 operation descriptors (#328, epic #325; extended by #330 T3).
+ * Canonical Phase 1 operation descriptors (#328, epic #325; extended by #330 T3,
+ * B27 and #414).
  *
- * Four operations exist: bounded read, plan inspection, plan execution and table
- * profiling. The set was pinned at THREE by epic #325 and reopened by #330 T3,
- * which is why the fourth carries that reversal in its own comment rather than
- * arriving as though the number had never been a decision.
+ * Six operations exist: bounded read, plan inspection, plan execution, table
+ * profiling, the curated operational reading and the provider's schema read. The set
+ * was pinned at THREE by epic #325 and reopened by #330 T3, which is why the fourth
+ * carries that reversal in its own comment rather than arriving as though the number
+ * had never been a decision; the fifth and sixth carry their own reasons for the same
+ * reason. The last two are the ones that name no statement at all.
  *
  * Plan inspection and plan execution are DISTINCT descriptors whose
  * ids are derived from the explain seam's modes (`ExplainMode`,
@@ -202,6 +205,58 @@ export const dbOperationsReadDescriptor: RegistrableOperationDescriptor = {
   inputSchema: agentCuratedReadInput,
 };
 
+/**
+ * The provider's own schema inspection: the reading the sidebar already performs.
+ *
+ * A SIXTH descriptor, and it exists because grounding had to reach engines for which
+ * no catalog statement is composed (#414). Until then a run's inventory came only
+ * from `sql.query.read` statements the server wrote per dialect, which is why the set
+ * served two engines. This one names the other way the product already reads a
+ * schema — `provider.getSchema()` — so that reading can be audited, budgeted and
+ * cited exactly like a statement instead of happening beside the pipeline.
+ *
+ * **R0/`metadata-read`, on `db.operations.read`'s own argument.** R1 requires a
+ * `RiskVerification` naming the database-native mechanism that bounds the operation,
+ * and a provider call has no statement for a read-only transaction to bound. What
+ * bounds this one is the SHAPE of the call, and here that shape is as narrow as it
+ * gets: the input is EMPTY, the server chooses the method, and no model-authored text
+ * reaches an engine on this path at all.
+ *
+ * **`heavy`, unlike the curated reading it is modelled on**, and that is a cost claim
+ * rather than caution. A provider schema read is N+1 round trips on most engines —
+ * MySQL spends three per table, SQLite counts every row of every table — and on
+ * MongoDB and Couchbase it reads a sample of documents. A few engines answer it in one
+ * or two catalog queries, PostgreSQL among them, but the cost is declared for the
+ * expensive shape rather than the cheapest one: calling it `light` would tell the
+ * budget that the single call this path makes is always the cheap kind.
+ *
+ * The honest edge, stated rather than glossed, as `db.operations.read` states its
+ * own: on the document engines the FIELD NAMES in the resulting inventory are
+ * inferred from a sample of the user's own documents (MongoDB samples 100 per
+ * collection; Couchbase's `INFER` does the same server-side). No value is kept — but
+ * the existence of a field is DERIVED FROM DATA, which is a different claim from
+ * "read out of a catalog", and this is the only agent reading of which that is true.
+ * An operator who does not want it can deny this one operation id in the audit stream
+ * without denying any other agent read — the same argument the table-profile and
+ * curated-read descriptors make for having ids of their own.
+ */
+export const dbSchemaReadDescriptor: RegistrableOperationDescriptor = {
+  id: "db.schema.read",
+  riskClass: 0,
+  accessLevel: "metadata-read",
+  // None: `getSchema()` is declared on the `DatabaseProvider` interface for every
+  // engine, so there is no capability whose absence would make this call impossible.
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  // Empty, and strict: `getSchema()` takes no argument, so there is no selector to
+  // validate. `z.strictObject({})` refuses every key rather than ignoring unknown
+  // ones, so a caller that believes it can narrow this reading is told it cannot
+  // instead of being handed the whole schema silently.
+  inputSchema: z.strictObject({}),
+};
+
 export function createCanonicalOperationRegistry(): OperationRegistry {
   const registry = new OperationRegistry();
   registry.register(sqlQueryReadDescriptor);
@@ -209,5 +264,6 @@ export function createCanonicalOperationRegistry(): OperationRegistry {
   registry.register(sqlExplainAnalyzeDescriptor);
   registry.register(sqlTableProfileDescriptor);
   registry.register(dbOperationsReadDescriptor);
+  registry.register(dbSchemaReadDescriptor);
   return registry;
 }

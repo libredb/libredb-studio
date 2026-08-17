@@ -314,6 +314,11 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       // report success. Addressing a document needs `META(d).id` or `USE KEYS`, i.e.
       // per-dialect statement building, which is issue #279.
       supportsInlineRowEdit: false,
+      // SQL++ has no referential constraint: collections are schemaless, and the
+      // columns this provider reports are inferred from a document sample rather than
+      // declared. `getSchema()` returns `foreignKeys: []` because none are invented,
+      // and this says that none could be found either (#414).
+      declaresForeignKeys: false,
       supportsMaintenance: true,
       maintenanceOperations: ["analyze", "reindex", "kill"],
       supportsConnectionString: true,

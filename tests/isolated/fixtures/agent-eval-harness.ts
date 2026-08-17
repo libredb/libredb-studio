@@ -52,12 +52,14 @@ import type {
   AgentRunWorkflowType,
   AgentRunTerminalStatus,
 } from "@/lib/agent/types";
+import { QueryError } from "@/lib/db/errors";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
-import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
-import type { DatabaseConnection, QueryResult } from "@/lib/types";
+import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import { TABLE_LABELS } from "../../fixtures/provider-labels";
+import type { DatabaseConnection, QueryResult, TableSchema } from "@/lib/types";
 import { type ScriptedTurn, modelOver, scriptedModel } from "./agent-scripted-model";
 
 // ─── the two Phase 1 engines ────────────────────────────────────────────────
@@ -67,6 +69,12 @@ export type EvalEngine = "postgres" | "sqlite" | "mysql";
 export interface EvalEnginePreset {
   readonly connection: DatabaseConnection;
   readonly capabilities: ProviderCapabilities;
+  /**
+   * What this engine calls its inventory rows. Absent means the base provider's
+   * "Table", which is what all three presets here declare; an eval that needs another
+   * vocabulary supplies one through `engine`.
+   */
+  readonly labels?: ProviderLabels;
   /**
    * Catalog statements one drive sends before the model's first turn, in order.
    *
@@ -492,6 +500,15 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
     // somebody might later delete as redundant.
     const provider = {
       ...(engine.servesReadOnlyStatements ? { queryReadOnly } : {}),
+      // `getSchema` is a REQUIRED member of `DatabaseProvider`, so a preset without one
+      // is a provider shape that cannot exist and an eval driven against it would prove
+      // nothing about a run. What a provider that cannot describe this database really
+      // does is REJECT, so that is what this one does: the grounding read on a dialect
+      // with no catalog plan (#414) then fails the way it fails in production, and the
+      // ungrounded plan path these evals exercise is reached through a real state.
+      getSchema: async (): Promise<readonly TableSchema[]> => {
+        throw new QueryError("this database refused to describe its own schema");
+      },
       ...DEFAULT_CURATED,
       ...options.curated,
     } as unknown as DatabaseProvider;
@@ -528,6 +545,7 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
     const resources: AgentToolResources = {
       connection: engine.connection,
       capabilities: engine.capabilities,
+      labels: engine.labels ?? TABLE_LABELS,
       registry: createCanonicalOperationRegistry(),
       scope: createTargetScope(engine.connection.id),
       tracker,

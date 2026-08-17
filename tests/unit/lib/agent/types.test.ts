@@ -80,6 +80,9 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
     fingerprint: SNAPSHOT.fingerprint,
     tableCount: SNAPSHOT.tables.length,
     snapshot: SNAPSHOT,
+    // And the word the engine used for those rows (#414), which is two strings and
+    // therefore as inert as the rest of the entry.
+    noun: { singular: "key pattern", plural: "key patterns" },
   },
   "statement-drafted": {
     kind: "statement-drafted",

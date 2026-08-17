@@ -31,7 +31,22 @@ const createMockCursor = (data: Record<string, unknown>[]) => {
   return cursor;
 };
 
-const createMockCollection = () => ({
+/**
+ * The server's own answer for a command that is not supported on a view: code 166,
+ * `CommandNotSupportedOnView`. Reproduced here because it is what one view in a
+ * database used to do to the WHOLE schema read - `estimatedDocumentCount()` and
+ * `indexes()` were unguarded, so the first view aborted every collection after it.
+ */
+const commandNotSupportedOnView = (command: string, name: string): Error => {
+  const error = new Error(`Namespace testdb.${name} is a view, not a collection`) as Error & { code: number };
+  error.code = 166;
+  error.name = `MongoServerError(${command})`;
+  return error;
+};
+
+const isMockView = (name: string): boolean => mockCollections.some((c) => c.name === name && c.type === "view");
+
+const createMockCollection = (name = "users") => ({
   find: () => createMockCursor(mockCollectionData),
   findOne: async () => mockCollectionData[0] || null,
   aggregate: () => ({
@@ -57,11 +72,17 @@ const createMockCollection = () => ({
   }),
   deleteOne: async () => ({ deletedCount: 1 }),
   deleteMany: async () => ({ deletedCount: 3 }),
-  estimatedDocumentCount: async () => 42,
-  indexes: async () => [
-    { name: "_id_", key: { _id: 1 }, unique: true },
-    { name: "email_1", key: { email: 1 }, unique: false },
-  ],
+  estimatedDocumentCount: async () => {
+    if (isMockView(name)) throw commandNotSupportedOnView("count", name);
+    return 42;
+  },
+  indexes: async () => {
+    if (isMockView(name)) throw commandNotSupportedOnView("listIndexes", name);
+    return [
+      { name: "_id_", key: { _id: 1 }, unique: true },
+      { name: "email_1", key: { email: 1 }, unique: false },
+    ];
+  },
 });
 
 const mockCommandResults: Record<string, unknown> = {};
@@ -69,7 +90,10 @@ const mockCommandResults: Record<string, unknown> = {};
 const createMockDb = () => ({
   command: async (cmd: Record<string, unknown>) => {
     if (cmd.ping) return { ok: 1 };
-    if (cmd.collStats) return { size: 1024, totalIndexSize: 512, count: 42 };
+    if (cmd.collStats) {
+      if (isMockView(String(cmd.collStats))) throw commandNotSupportedOnView("collStats", String(cmd.collStats));
+      return { size: 1024, totalIndexSize: 512, count: 42 };
+    }
     if (cmd.validate) return { ok: 1, valid: true };
     if (cmd.compact) return { ok: 1 };
     return mockCommandResults;
@@ -77,7 +101,7 @@ const createMockDb = () => ({
   listCollections: () => ({
     toArray: async () => mockCollections,
   }),
-  collection: () => createMockCollection(),
+  collection: (name?: string) => createMockCollection(name),
   stats: async () => ({
     dataSize: 2048,
     indexSize: 512,
@@ -289,6 +313,9 @@ describe("MongoDBProvider", () => {
       // No SQL at all here: the query language is JSON commands, so the inline row
       // editor's `UPDATE ... SET` has nothing to run against (#269).
       expect(caps.supportsInlineRowEdit).toBe(false);
+      // MongoDB has no foreign key constraint, so an empty `foreignKeys` here is the
+      // engine's model and not this database's shape (#414).
+      expect(caps.declaresForeignKeys).toBe(false);
       expect(caps.supportsConnectionString).toBe(true);
       expect(caps.supportsMaintenance).toBe(true);
       expect(caps.explainFormat).toBeUndefined();
@@ -417,6 +444,36 @@ describe("MongoDBProvider", () => {
 
       // indexes should be present
       expect(usersSchema!.indexes!.length).toBe(2);
+    });
+
+    test("lists a view, and does not ask a view the two questions MongoDB refuses on one", async () => {
+      // The defect this pins (#414): `listCollections()` returns views, and both
+      // `estimatedDocumentCount()` and `indexes()` answer CommandNotSupportedOnView
+      // (code 166) on one. Both calls were unguarded, so a single view in the
+      // database aborted the entire schema read - the user lost every collection,
+      // not just the view.
+      mockCollections = [
+        { name: "users", type: "collection" },
+        { name: "active_users", type: "view" },
+        { name: "orders", type: "collection" },
+      ];
+
+      const schemas = await provider.getSchema();
+
+      // The view is LISTED. A user who created it wants to see it, and its fields are
+      // readable by exactly the sample this provider already takes.
+      expect(schemas.map((s) => s.name)).toEqual(["users", "active_users", "orders"]);
+      const view = schemas.find((s) => s.name === "active_users")!;
+      expect(view.columns.length).toBeGreaterThan(0);
+      // And what a view genuinely has no answer for is left ABSENT rather than
+      // reported as zero: a view holds no documents of its own and carries no
+      // indexes, and `rowCount: 0` would read as "this view is empty".
+      expect(view.rowCount).toBeUndefined();
+      expect(view.size).toBeUndefined();
+      expect(view.indexes).toEqual([]);
+      // The collections after it are still read, which is the half of the defect a
+      // user actually noticed.
+      expect(schemas.find((s) => s.name === "orders")!.rowCount).toBe(42);
     });
   });
 

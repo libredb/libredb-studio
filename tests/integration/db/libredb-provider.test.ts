@@ -117,6 +117,13 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
     // The query language is a small JSON command grammar, not SQL, so the inline
     // row editor's `UPDATE ... SET` cannot be expressed here (#269).
     expect(caps.supportsInlineRowEdit).toBe(false);
+    // The catalog declares namespaces and columns and nothing that references
+    // another namespace, so there is no foreign key to read (#414).
+    expect(caps.declaresForeignKeys).toBe(false);
+    // The namespaces come from a bounded `kv.range` over the keyspace, grouped by
+    // prefix, so they are this server's summary of what one scan reached rather than
+    // objects the engine declares (#414).
+    expect(caps.tablesAreDerivedGroupings).toBe(true);
     expect(caps.supportsExplain).toBe(false);
     expect(caps.explainFormat).toBeUndefined();
     expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);

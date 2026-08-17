@@ -139,8 +139,11 @@ what comes back, and finishes by composing a report whose every claim cites the 
   `sqlite.ts:397`, and nowhere else. On any other engine an Agent-mode run ends `engine-unsupported`
   (`src/lib/agent/runtime.ts:199`). **Plan** mode opens on every connection — the model there is
   toolless, runs no statement of yours, writes nothing, and drafts a statement for you to run
-  yourself — but the schema reading that grounds it takes the same path, so it is grounded on those
-  same two engines and says so plainly anywhere else.
+  yourself. Its GROUNDING reaches every engine: on PostgreSQL and SQLite the server composes catalog
+  statements, and on every other connection it asks that connection's own provider to describe its
+  schema — the reading the sidebar already performs — which needs no read-only statement path. So the
+  two limits are separate: agent mode is those two engines, grounding is all of them, and a run whose
+  reading fails says so plainly rather than inventing tables.
 - **Three workflows**: **Investigate** (answer a question), **Optimize** (compare estimated plans,
   propose an index or a rewrite), **Assess** (profile tables — counts only, never values).
 - **Nothing runs itself.** The agent never starts a run for you, never writes to the editor, and

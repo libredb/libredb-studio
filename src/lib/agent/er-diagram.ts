@@ -35,6 +35,7 @@
  *    trusts it most.
  */
 
+import { type AgentInventoryNoun, TABLE_INVENTORY_NOUN } from "./inventory-noun";
 import type { AgentContextSnapshot, AgentRunWorkflowType } from "./types";
 import { quoteIdentifierForPrompt } from "./untrusted-content";
 
@@ -228,16 +229,55 @@ function groupByPair(relations: readonly Relation[]): readonly (readonly Relatio
  * The empty case is worth its own words: a database whose tables declare no foreign
  * keys is a real and common shape, and a reader shown an empty list would not know
  * whether the run failed to look.
+ *
+ * TWO empty sentences since #414, because an empty relations read means two different
+ * things and the hedge could only cover one of them. The hedge offers "that may be how
+ * the schema is" and "the keys may be enforced by the application" — both of which are
+ * claims about a database that COULD have declared foreign keys and did not. Grounding
+ * reached MongoDB, Redis, LibreDB, Druid, ClickHouse and Couchbase, where there is no
+ * such construct to decline: on those engines both branches of the hedge are wrong at
+ * once, and the reader is invited to wonder about a schema decision nobody made.
+ *
+ * `engineDeclaresForeignKeys` is `ProviderCapabilities.declaresForeignKeys`, and it is
+ * a capability rather than an engine check for the rule `CLAUDE.md` states: engine
+ * behaviour is declared by the provider that has it, and `=== 'mongodb'` outside a
+ * provider class is how six of these would have been listed here and the seventh
+ * forgotten. The flag is optional on the published interface, so this reads `=== false`
+ * and an absent value keeps the hedge — the weaker claim, which is the right default
+ * for an engine nobody has decided about.
+ *
+ * B44 is a THIRD absence and its hedge is not weakened by either of these. That entry
+ * is about a role that cannot SEE the keys a database really declares — measured live,
+ * 18 foreign keys and 0 visible rows — which is a fact about a privilege and not about
+ * an engine. An engine that declares none and a role that sees none are different
+ * things to tell an operator, and the day B44's half lands it will be a fourth sentence
+ * and not a rewording of one of these.
+ *
+ * `noun` is what this engine calls the things the relations run between, from
+ * `ProviderLabels` by way of `inventoryNoun`. It matters most in exactly the two
+ * sentences above: an engine that declares no foreign keys is usually one whose rows
+ * are not tables either, so saying "no table in this inventory" there names something
+ * the reader was never shown. It defaults to `TABLE_INVENTORY_NOUN`, so every SQL
+ * engine's block is unchanged.
  */
 export function renderErDiagram(
   snapshot: AgentContextSnapshot,
   detail: AgentErDetail,
-  options: { readonly maxChars?: number; readonly omissionAdvice?: string } = {},
+  options: {
+    readonly maxChars?: number;
+    readonly omissionAdvice?: string;
+    readonly engineDeclaresForeignKeys?: boolean;
+    readonly noun?: AgentInventoryNoun;
+  } = {},
 ): string {
   const relations = relationsOf(snapshot);
-  const header = `Relations between the ${snapshot.tables.length} table(s) in this inventory, as declared foreign keys.`;
+  const noun = options.noun ?? TABLE_INVENTORY_NOUN;
+  const header = `Relations between the ${snapshot.tables.length} ${noun.singular}(s) in this inventory, as declared foreign keys.`;
   if (relations.length === 0) {
-    return `${header}\nNone: no table in this inventory declares a foreign key. That may be how the schema is, or the keys may be enforced by the application rather than the database.`;
+    if (options.engineDeclaresForeignKeys === false) {
+      return `${header}\nNone, and none could be: this engine does not declare foreign keys at all, so there is nothing of that kind here for a reading to have found or missed. Whatever relates these ${noun.plural} to each other is enforced somewhere other than the database, and this run has not seen it.`;
+    }
+    return `${header}\nNone: no ${noun.singular} in this inventory declares a foreign key. That may be how the schema is, or the keys may be enforced by the application rather than the database.`;
   }
 
   const groups = groupByPair(relations);

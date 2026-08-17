@@ -82,7 +82,7 @@ objective unless you say otherwise**.
 
 | Button | What it means |
 | --- | --- |
-| **Plan** | The model writes **one statement** that answers your objective, for you to run yourself. It has **no tools**: it runs no statement of yours, writes nothing, and applies nothing. The server reads your schema for it first, so the statement names your real tables — see [What a Plan run knows about your database](#what-a-plan-run-knows-about-your-database). This is what a run opens in. |
+| **Plan** | The model writes **one statement** that answers your objective, for you to run yourself — in your engine's own language, so a MongoDB connection gets an aggregation rather than a SELECT. It has **no tools**: it runs no statement of yours, writes nothing, and applies nothing. The server reads your schema for it first, on every engine, so the statement names your real tables — see [What a Plan run knows about your database](#what-a-plan-run-knows-about-your-database). This is what a run opens in. |
 | **Agent** | The model is given the read-only tools and investigates: it drafts statements, reads results, and finishes by composing a report whose claims cite what it read. |
 
 **2. The workflow — what the run is for**, and it is **Automatic** unless you say otherwise. Under
@@ -183,14 +183,46 @@ badly out of date, and a table nobody has `ANALYZE`d has none at all — such a 
 having **no statistics**, never as empty. On SQLite the statistics exist only after you have run
 `ANALYZE`, there is no null fraction at all, and a table with no index gets no row estimate either.
 
-**Two engines only.** Grounding works on **PostgreSQL and SQLite**. On any other connection a Plan
-run says plainly that no inventory could be read for it, and is asked to refuse rather than to invent
-table names. **That is the whole of the rule** — grounding follows the engine and nothing else, in
-every workflow including **Operate**. Operate used to be excluded on the reasoning that it asks the
+**Every engine, read one of two ways.** On **PostgreSQL and SQLite** the server composes catalog
+statements and reads them through the same audited, read-only path an Agent run uses. On every other
+connection — MySQL, Oracle, SQL Server, MongoDB, Redis, ClickHouse, Couchbase, Druid, LibreDB — it
+asks that connection's own provider to describe its schema, which is the reading the sidebar already
+performs when it lists your tables, and composes no statement at all. Grounding is no longer decided
+by the engine, and that changed in #414; what decides it now is whether the reading succeeds. A run
+whose provider cannot describe its own schema, whose description overruns the time the run granted
+it, or whose reading is refused says plainly that no inventory could be read for it, and is asked to
+refuse rather than to invent table names. **That is the whole of the rule**, and it holds in every
+workflow including **Operate**.
+
+**Do not read that as "the agent runs everywhere now."** Two limits used to be one sentence and are
+now two different sentences, and the difference is the whole of what changed:
+
+- **Grounding — every engine.** What a Plan run is TOLD about your database. It needs no read-only
+  statement path, because the provider reading sends no statement, so it reaches all eleven engines.
+- **Agent mode — PostgreSQL and SQLite.** What a run may DO by itself. Its tools execute statements
+  and need a database-native read-only path, which only those two providers implement, so a
+  schema-workflow Agent run on any other engine still ends *"The agent cannot run on this database
+  engine: it offers no read-only execution profile."* — after grounding has succeeded, which is
+  slightly odd to watch and entirely honest: the run knows your schema and still may not read a row.
+  See [What the agent does not do](#what-the-agent-does-not-do).
+
+Two things are worth knowing about the provider reading, because they are not true of the composed
+one. It is **bounded** — MongoDB stops at 200 collections, Redis scans 1000 keys — so it is what the
+inspection found and not proof that nothing else exists, and the plan is told so. And on the document
+engines it works out a collection's fields from a **sample of your own documents**: no value from
+them is kept, but the existence of a field there is derived from your data rather than read from a
+catalog. The **estimated statistics** below are still PostgreSQL's and SQLite's alone; on the other
+nine the plan is told that this engine holds none it knows how to read, which means it has an
+inventory and no sizes — the ordinary case now rather than a rare one.
+
+On an engine that speaks no SQL, a Plan run is asked for one statement or command **in that engine's
+own language** — a MongoDB aggregation rather than a SELECT — still in a block tagged with the
+engine's name, so **Apply to editor** still works. The two checks below behave differently there, and
+the rail says which of them could not reach the draft; see *What is checked* further down. Operate used to be excluded on the reasoning that it asks the
 engine about itself rather than about your tables; what the reasoning missed is that the engine's
 answers are full of your table and index names — a lock is held on a table, an unused index is named,
 a slow query names the tables it reads — so a run that has never seen the inventory reads all of them
-as strings it cannot place. An Operate plan is therefore grounded on PostgreSQL and SQLite too,
+as strings it cannot place. An Operate plan is therefore grounded wherever any other plan is,
 though with **less** of the inventory than the others: the table names and the indexes on each, and
 no columns and no relations, because those are not what an operational reading asks about. The
 estimated statistics it gets beside them are reduced the same way — row counts, and nothing per
@@ -241,8 +273,25 @@ run never runs it. Two things are checked first and both are shown to you:
   PostgreSQL's `#>`/`#>>` operators — so a marked statement is one nothing established to be a read,
   which is not the same as one established to write.
 
+Both checks read SQL, and on an engine whose statements are not SQL neither can reach the draft.
+Rather than judge it wrongly they decline, and the card says which one could not look: a correct
+MongoDB aggregation used to be marked as one the guard had objected to, and every name in it reported
+as found in your inventory, because a SQL reader finds no table keyword in a pipeline and answers
+"none missing". So on those engines the card tells you that nothing examined this draft and nothing
+checked its names — which is less than you get on PostgreSQL, and is what is actually true.
+
 **A statement built from your real table names is still not a statement guaranteed to run.** The
 inventory records what exists in the database, not what your role is permitted to read.
+
+**On engines that hold no tables, the plan is told what it is looking at.** Studio records every
+schema in one shape, and the word "table" is that shape's name rather than a claim about your
+database — so the prompt uses whatever your engine's provider calls its objects: collections on
+MongoDB, datasources on Druid, key patterns on Redis, key prefixes on LibreDB. On Redis and LibreDB
+there is a further thing to say and the run is told it: the rows in that inventory are **groupings
+Studio computed**, by scanning a bounded part of the keyspace and collecting your real key names
+under their common prefix. `user:*` is not a key and no command can be given it. Without that
+sentence a grounded Redis plan drafted `ZCARD user:*` — specific, confident, and against something
+that does not exist.
 
 **When it cannot answer**, the run says so instead of guessing: the rail shows a *No statement
 drafted* card with what was missing and the one question that would unblock it. That is a successful
@@ -321,12 +370,12 @@ Two consequences you will notice:
   Server, MongoDB or Redis works rather than ending `engine-unsupported`.
 - **It has no free-form SQL, and its schema is a short list of names.** There is no `inspect_schema`
   and no `run_read_query` here, and the run is told so in its opening message rather than being left
-  to discover it. What it is given instead — on PostgreSQL and SQLite, where the server can read a
-  catalog — is an inventory of your table names and the indexes on each, and nothing more: no
-  columns, no types, no relations. That is there so the run can recognise what the engine names back
-  at it, since a lock report, an index-stats row and a slow query all come back full of identifiers.
-  On any other engine the run is told plainly that no inventory could be read for that connection and
-  takes its readings anyway.
+  to discover it. What it is given instead is an inventory of your table names and the indexes on
+  each, and nothing more: no columns, no types, no relations. That is there so the run can recognise
+  what the engine names back at it, since a lock report, an index-stats row and a slow query all come
+  back full of identifiers. It arrives on every engine since #414 — composed on PostgreSQL and
+  SQLite, read from the provider everywhere else — and where the reading cannot be taken the run is
+  told plainly that no inventory could be read for that connection and takes its readings anyway.
 
 Two things this workflow will not do, and it says so rather than implying otherwise:
 
@@ -370,7 +419,7 @@ yet. A run's steps appear here as they are recorded."*
 | `Answer composed` | The run named one stored result as its answer and said how to show it — as a table, or as a chart of a named type. A chart's caption is the model's own prose and is shown quoted; the columns never appear in the application's own sentence, because they are engine text |
 | `Report composed` | How many claims, each citing evidence |
 | `Closing statement` | The model's closing prose. It cites nothing and claims nothing — a Plan run's whole output, an Agent run's aside |
-| `Statement drafted` / `Statement drafted — not classified as a read` | Plan mode: the one statement the run wrote, on its own card — the SQL verbatim, any table it names that your schema does not have, and **Apply to editor**. The second headline is a statement the guard did not classify as read-only, and its reason is shown beside it: that can mean the statement writes, and it can equally mean the guard could not settle the text. Nothing runs either |
+| `Statement drafted` / `Statement drafted — not classified as a read` / `Statement drafted — not examined by the statement guard` | Plan mode: the one statement the run wrote, on its own card — the statement verbatim, any table it names that your schema does not have, and **Apply to editor**. The second headline is a statement the guard did not classify as read-only, and its reason is shown beside it: that can mean the statement writes, and it can equally mean the guard could not settle the text. The third is a draft on an engine whose statements are not SQL, where the guard is not a reader of that language and examined nothing — no reason is shown, because there was no objection to show. Nothing runs under any of the three |
 | `No statement drafted` | A Plan run that could not answer from your schema, with what was missing. A legitimate ending, not a failure |
 | `Stop requested` | You pressed Stop; *"the run takes no further database step; work already in hand, such as a report, still finishes"* |
 
@@ -748,10 +797,13 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   **LibreDB sample** connection, whose provider implements no `queryReadOnly`
   (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded
   connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode still opens on
-  every connection — the model is toolless there, so no profile has to be acquired for it — but its
-  **grounding** takes the same path and therefore the same two engines. On any other connection a
-  Plan run starts, says no inventory could be read for it, and is asked to refuse rather than to
-  invent table names.
+  every connection — the model is toolless there, so no profile has to be acquired for it — and since
+  #414 its **grounding** no longer takes this path at all on the other nine: it asks the provider to
+  describe its schema, which needs no read-only statement profile, so a Plan run on MongoDB or MySQL
+  is ordinarily grounded while an Agent run on the same connection still cannot read anything. Where
+  the reading does fail — a provider that cannot describe itself, a description that overran its
+  time, a refusal — the Plan run starts, says no inventory could be read for it, and is asked to
+  refuse rather than to invent table names.
 - **It never executes a recommendation**, and never applies one to your editor by itself. The single
   exception anywhere in the rail is auto-execute, which is off unless the run was opened with it, and
   which covers only the answer's own statement under the three conditions above.

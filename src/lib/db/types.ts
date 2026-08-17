@@ -131,6 +131,56 @@ export interface ProviderCapabilities {
    * permissive default.
    */
   supportsInlineRowEdit?: boolean;
+  /**
+   * Whether this engine has foreign keys to declare at all — not whether any
+   * particular schema declares one, and not whether the current role can see them.
+   *
+   * It exists because an empty `TableSchema.foreignKeys` means two different things
+   * and the reader cannot tell them apart. On PostgreSQL an empty list means this
+   * schema declares none (or, per `docs/BACKLOG.md` B44, that this role cannot see
+   * them); on MongoDB, Redis, LibreDB, Druid, ClickHouse and Couchbase it means the
+   * engine has no such constraint in its model, so no reading of any kind could ever
+   * return one. A consumer that hedges between "the schema is like that" and "the
+   * application enforces them" is wrong in BOTH branches on those six, and #414 hit
+   * that when grounding reached them. Reading `connection.type` at the consumer was
+   * the alternative and is forbidden by `CLAUDE.md`: engine behaviour is declared by
+   * the provider that has it.
+   *
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`
+   * (`src/exports/types.ts`): a required field added after the fact stops every
+   * external implementer compiling. Consumers therefore gate on `=== false`, so an
+   * absent flag reads as "this engine may declare foreign keys" — the weaker claim,
+   * which keeps the existing hedge rather than asserting an absence nobody declared.
+   */
+  declaresForeignKeys?: boolean;
+  /**
+   * Whether the rows of this provider's `getSchema()` are objects the engine holds,
+   * or groupings this server derived from a bounded scan of what it found.
+   *
+   * True on Redis and LibreDB and nowhere else. Neither engine has a schema to read:
+   * `getSchema()` scans a bounded slice of the keyspace — 1000 keys on Redis, 10000 on
+   * LibreDB — and collapses the real key names it found into one row per common
+   * prefix. So a row named `user:*` is not a key, was never named by anybody, and no
+   * command can be given it; and the set of rows is what that one scan happened to
+   * reach rather than everything the database holds.
+   *
+   * It exists because a consumer cannot tell the two apart from the inventory itself,
+   * and #414 measured what that costs: plan mode, grounded on a seeded Redis with 17
+   * real prefixes, drafted `KEYS user:*` and `ZCARD user:*` against rows it had been
+   * handed under the word "table". Both name a key that does not exist. The model was
+   * not wrong to treat them as addressable — nothing it was shown said they were not,
+   * and only this server knows, because the grouping is this server's own.
+   *
+   * Optional for the same published-interface reason as `declaresForeignKeys`
+   * (`src/exports/types.ts`): a required field added after the fact stops every
+   * external implementer compiling. Consumers therefore gate on `=== true`, so an
+   * absent flag reads as "these rows are real objects" — the ordinary case, and the
+   * one every SQL engine and every document engine is in. Reading `connection.type` at
+   * the consumer was the alternative and is forbidden by `CLAUDE.md` for the reason
+   * this pair of engines demonstrates: the two that answer true are not the two a
+   * reader would guess, and a third would be added to a provider and forgotten here.
+   */
+  tablesAreDerivedGroupings?: boolean;
   supportsMaintenance: boolean;
   maintenanceOperations: MaintenanceType[];
   supportsConnectionString: boolean;

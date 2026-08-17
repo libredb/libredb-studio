@@ -196,6 +196,25 @@ provider instead of opening a second handle, or the test is skipped with an hone
 that cannot be opened twice. Whichever is chosen, the modal must not present a lock conflict as a
 failed connection test.
 
+### D4. A MongoDB connection cannot name the database its credentials live in (`authSource`)
+
+`buildConnectionString()` (`src/lib/db/providers/document/mongodb.ts`) composes
+`mongodb://user:pass@host:port/<database>` and nothing else, and `authSource` appears nowhere in the
+repository — not in the connection form, not in `DatabaseConnection`, not in the driver options. The
+MongoDB driver authenticates against the database named in the URI when no `authSource` is given, so
+the ordinary deployment — users created in `admin`, data in another database — cannot be connected to
+through the form fields at all. It fails as a credentials error, which is what it looks like and is
+not what it is.
+
+The workaround exists and is not discoverable: MongoDB is one of the engines offering the
+connection-string toggle, and a pasted `mongodb://user:pass@host:port/shop?authSource=admin` is
+passed through verbatim.
+
+Raised while driving agent grounding against a seeded MongoDB (#414) and deliberately left out of that
+work: this is a connection-form feature, not a grounding one. Done when the MongoDB connection form
+carries an optional auth-database field that reaches the URI, with the tri-sync the provider rule
+requires (code, `docs/providers/mongodb.md`, `tests/integration/db/mongodb-provider.test.ts`).
+
 ---
 
 ## Value interpolation
@@ -2020,6 +2039,12 @@ execution profile." The sentence is exact and the failure is honest. It is also 
 predictable before the run: `queryReadOnly` is a property of the provider, known from the
 connection's type, and nothing about the objective can change it.
 
+One clause of that observation expired with #414 and the defect did not: a run on that connection no
+longer "captures nothing" — the capture reads the provider's own schema, on this engine and on the
+other eight, and succeeds. So the run now spends a model turn AND is grounded in a schema it will
+never be allowed to read a row of, which makes the offered-then-withdrawn shape worse rather than
+better. The fix is unchanged.
+
 So a user spends a model turn and a run id to be told something the rail could have said while the
 Start button was still grey. This repository already follows the opposite rule everywhere it
 matters — `HydrationControls` renders no control the host cannot serve, the stop button is absent
@@ -2192,3 +2217,99 @@ explicable moment for it to arrive.
 Done when a credential refusal is classified apart from an engine refusal — the reason codes already
 distinguish them, so this is a branch in `classifyDriveFailure` and a second rail sentence, not new
 information — with a test per cause pinning the sentence a user is shown.
+
+### B48. The composed grounding path still loses a plan run to an environment failure
+
+`captureFromProvider` (`src/lib/agent/context-snapshot.ts`) converts a `DatabaseError` or an
+`ExecutionProfileError` raised before the reading leaves into an unavailable capture, so a plan run on
+one of the nine provider-path engines survives an unreachable host, a wrong password or a
+half-configured `agentUser` and answers ungrounded with the capture's own diagnosis. The composed path
+— PostgreSQL and SQLite — does not: the same failure propagates out of `readCatalogForGrounding`,
+through `captureContextSnapshot` and `establishPlanningContext`, and ends the run `internal`, or
+`engine-unsupported` on the profile error (see B47).
+
+The asymmetry was deliberate at #414 and is recorded here rather than resolved there: those two
+engines have never reached the new line, and changing their failure mode is a second decision about a
+path #414 did not touch. It is still an asymmetry a reader will trip over — two grounding paths, one
+of which loses the run to an unreachable database and one of which does not.
+
+Done when a plan run on PostgreSQL or SQLite whose catalog read cannot reach the engine answers
+ungrounded with the reason, exactly as the provider path now does, with a test per converted class.
+
+### B49. A LibreDB connection can never be grounded, because the file takes an exclusive lock
+
+A plan run on the seeded `Demo (LibreDB)` connection (`data/demo.libredb`, type `libredb`) is
+ungrounded on every attempt: it writes no `context-captured` event at all and answers with the
+refusal it is instructed to give — "this run was given no inventory of this database". The provider
+path reaches this engine like the other eight, so the reading is attempted; it simply cannot open the
+file.
+
+Measured on 2026-08-17, against `@libredb/libredb` 0.2.2 and a copy of the seeded file:
+
+- `lib.open({ path })` takes an **exclusive lock**. Opening the same path a second time in the same
+  process throws `LibreDbError` with `code: "LOCKED"` (`libredb: <path> is locked`).
+- `acquireExecutionProfileProvider(connection, "agent-operations")` is a **second provider**, cached
+  under `profiledCacheKey(connection.id, profile)` rather than under the connection id, and it calls
+  `connect()` — which is `lib.open()` on a path the ordinary writable provider already holds open
+  (`LibreDBProvider.connect`, `src/lib/db/providers/embedded/libredb.ts:177`).
+- Driven end to end: with the writable provider connected and returning five namespaces
+  (`config:*`, `people:*`, `project:*`, `users:*`, `session:*`), the profiled acquisition fails with
+  `ConnectionError` / `CONNECTION_ERROR` and the message the provider writes for `LOCKED` — *"LibreDB
+  file is already open by another process (exclusive lock)."*
+- `ConnectionError` extends `DatabaseError`, so `captureFromProvider` converts it into an unavailable
+  capture rather than propagating it. The run therefore continues, honestly, ungrounded — which is
+  why nothing about this looks like a failure anywhere.
+
+The condition is "the connection's ordinary provider is currently connected", which is true from the
+moment anyone browses the connection in the sidebar — so in practice this is every run. It is not a
+grounding defect: the same lock defeats any second handle on the same file, which is why
+`docs/BACKLOG.md` D3 already records the connection-test modal presenting it as a failed connection.
+
+LibreDB is not a priority, so this is recorded rather than fixed. Done when an execution-profile
+acquisition on a single-writer embedded engine reuses the connection's existing provider instead of
+opening a second handle — the same answer D3 needs, and the reason the two entries should be closed
+together — with a test that grounds a plan run on a `libredb` connection whose writable provider is
+already open.
+
+### B50. A grounded Redis plan still drafts `KEYS`, the one command this product refuses to use itself
+
+Two plan runs on the seeded local Redis, driven after #414's vocabulary work landed, both grounded on
+the same 17 real key prefixes the provider read:
+
+- `arun_492bf2a7228e47e48f0caafa4da5d057`, objective *"Which key prefix holds the most keys, and how
+  would I list them?"* → **NO STATEMENT**, and the refusal is a good one: *"The inventory shows key
+  patterns like `user:*`, `order:*`, etc., but does not provide row counts or key counts for each
+  prefix, so it is impossible to determine which key prefix holds the most keys from the available
+  data."* Before the vocabulary fix the same objective produced `KEYS user:*` as though it were an
+  answer.
+- `arun_7f8ef0bb38e842c087a65cfc674e78d5`, objective *"How many users are stored, and how do I look
+  one up?"* → drafted `KEYS user:*`, with the rationale *"The key pattern `user:*` stores the user
+  records as hashes. The `KEYS user:*` command retrieves all keys matching that pattern, allowing you
+  to count them, and you can look up an individual user with `HGETALL user:<id>` using their specific
+  key."*
+
+Grounding is working, and the second half of that rationale is the new rule working exactly as
+designed: it names a WHOLE KEY (`HGETALL user:<id>`) rather than handing a derived grouping to a
+command. This is a draft-QUALITY matter, not a grounding one, and it should not be read as evidence
+against #414.
+
+What is wrong is the first half. `KEYS` is the blocking O(N) command this product's own provider
+deliberately refuses to use: the schema read is a non-blocking `SCAN` and never `KEYS *`
+(`docs/providers/redis.md`, and `CLAUDE.md` states it as a rule). So the product reads the keyspace
+safely, and then offers the user the unsafe way to do the same thing — with an Apply-to-editor button
+on it. Nothing runs: plan mode executes nothing and has no tools, so reaching the hazard takes the
+user applying the draft and running it themselves on their own connection.
+
+The open question, and it is genuinely open. The owner deliberately deferred per-engine knowledge
+files, and the derived-groupings rule was written to stay on the near side of that line — it says what
+the inventory's rows ARE and names no command, which is pinned by a test ("it names no command and
+forbids none", `tests/isolated/agent-investigation.test.ts`). One sentence about operational COST is a
+different kind of statement from a ban on a named command, and it may belong in the rules. Against it:
+a rule that bans one command by name is engine trivia that goes stale, says nothing about the next
+command, and this repository has been bitten by exactly that before — a model that knows what the rows
+are can choose for itself, which is the premise the whole grounding design rests on. The third
+position is that this is the user's call: the draft is theirs to run, on their own connection, and a
+product that reads for them does not have to think for them.
+
+Not decided here. Done when the owner rules, and — whichever way — the reason is recorded next to the
+derived-groupings rule so the two read as one decision.

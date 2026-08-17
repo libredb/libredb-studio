@@ -3,20 +3,43 @@
  * (#329 T8, epic #325).
  *
  * A run reasons about a schema it has to be told about, and the two obvious ways to
- * tell it are both wrong: asking the provider directly bypasses the M1 enforcement
- * layer, and serialising the whole inventory into every prompt spends the context
- * window on tables the task is not about. This module does neither.
+ * tell it are both wrong: reaching a provider BESIDE the M1 enforcement layer, and
+ * serialising the whole inventory into every prompt, which spends the context window
+ * on tables the task is not about. This module does neither.
  *
- *  - **Every read goes through the T6 catalog tool.** `captureContextSnapshot`
- *    calls `readCatalogForGrounding`, which composes the statement server-side and
- *    drives it through `executeAuditedOperation` under the read-only profile. So
- *    a snapshot costs statements out of the run's budget, is audited line by line,
- *    and is refused by the same policy as any other read. There is no faster path
- *    and deliberately no seam for one.
- *  - **The rows come back out of the run's artifact store**, keyed by the
- *    correlation id the tool returned — the same store a later claim cites. A
+ *  - **Every read goes through the audited pipeline, and there are now TWO of them**
+ *    (#414). On a dialect `CATALOG_PLANS` serves, `captureContextSnapshot` calls
+ *    `readCatalogForGrounding`, which composes the statement server-side and drives
+ *    it through `executeAuditedOperation` under the read-only profile. On every other
+ *    dialect it calls `readProviderSchemaForGrounding`, which asks the provider for
+ *    its own schema inspection — the reading the sidebar already performs — under the
+ *    operations profile.
+ *
+ *    The second path is not the objection above returning under a new name, and the
+ *    difference is mechanical rather than a matter of degree. What "asking the
+ *    provider directly" meant was a call with no operation descriptor naming it, no
+ *    policy able to deny it, no budget charged for it and no audit line recording it.
+ *    This one has all four: `db.schema.read` is a canonical R0 descriptor, the call
+ *    is admitted by the run deadline, costs a statement out of `maxStatementsPerRun`,
+ *    is denied or allowed by the same policy as every other reach, and lands on the
+ *    audit stream under its own operation id — which an operator can deny on its own
+ *    without denying any other agent read. So a snapshot still costs the run
+ *    something, is still refusable, and there is still no seam for a faster path.
+ *
+ *    The two paths are a real asymmetry rather than a transitional state, and
+ *    PostgreSQL and SQLite deliberately do NOT converge on the provider one. Three
+ *    reasons, all of them properties the composed path has and this one cannot:
+ *    the composed reads are audited STATEMENT BY STATEMENT rather than as one opaque
+ *    call; they carry foreign keys, which the provider path cannot on any engine that
+ *    does not declare them; and SQLite's inventory is parsed out of the DDL text the
+ *    engine stored, which its provider does not expose in the same shape.
+ *  - **The catalog path's rows come back out of the run's artifact store**, keyed by
+ *    the correlation id the tool returned — the same store a later claim cites. A
  *    result that has been released or has expired yields no snapshot rather than a
- *    reconstruction from the model-facing text.
+ *    reconstruction from the model-facing text. The provider path does not round-trip
+ *    through the store, because it never turned its inventory into text: it returns
+ *    the tables themselves and puts a projection of them in the artifact so the call
+ *    is still citable. See `readProviderSchemaForGrounding`.
  *  - **The inventory is all-or-nothing.** One refused read loses the whole
  *    snapshot, because an inventory missing its keys while claiming to be whole is
  *    worse than no inventory: the model would reason about relations that are
@@ -50,10 +73,17 @@
 
 import { createHash } from "node:crypto";
 import type { AgentCatalogKind } from "./composed-sql";
+import { type AgentInventoryNoun, TABLE_INVENTORY_NOUN } from "./inventory-noun";
 import { parseSqliteIndexDdl, parseSqliteTableDdl } from "./sqlite-ddl";
-import { type AgentToolContext, readCatalogForGrounding } from "./tools";
+import {
+  type AgentProviderSchemaRead,
+  type AgentToolContext,
+  readCatalogForGrounding,
+  readProviderSchemaForGrounding,
+} from "./tools";
 import type { AgentContextSnapshot, AgentRunEvent } from "./types";
 import { fenceUntrustedContent, quoteIdentifierForPrompt } from "./untrusted-content";
+import { DatabaseError, ExecutionProfileError } from "@/lib/db/errors";
 import type {
   ColumnSchema,
   DatabaseConnection,
@@ -63,12 +93,30 @@ import type {
   TableSchema,
 } from "@/lib/types";
 
-/** Why a run has no snapshot. Both are states the run continues from, not failures. */
+/** Why a run has no snapshot. All are states the run continues from, not failures. */
 export type AgentContextUnavailableCode =
-  /** A catalog read did not complete: refused, denied, out of budget, or unserved. */
+  /**
+   * A schema read did not complete: refused, denied, out of budget, rejected by the
+   * engine — or, on the provider path, never reached, because the connection could not
+   * be opened or the execution profile could not be granted.
+   *
+   * It kept the `CATALOG_` name when the second path arrived, because the code is
+   * written into ledgers this server still reads and renaming it would silently
+   * reclassify every run recorded before #414. The name is narrower than the set, and
+   * the DETAIL is what a reader is shown: each of those causes carries its own sentence.
+   */
   | "CATALOG_READ_REFUSED"
   /** The read completed but its rows are no longer in the run's artifact store. */
-  | "CATALOG_RESULT_UNAVAILABLE";
+  | "CATALOG_RESULT_UNAVAILABLE"
+  /**
+   * The provider's own schema inspection did not answer within the time this call
+   * was granted (#414). Its own code and not `CATALOG_READ_REFUSED`, because the two
+   * ask an operator for different things: a refusal is a decision somebody made about
+   * this run, while this one says the engine is slower to describe itself than a run
+   * of this workflow has to spend — which is a fact about the database, and on a large
+   * MongoDB or MySQL schema an ordinary one.
+   */
+  | "PROVIDER_INVENTORY_TIMED_OUT";
 
 export type AgentContextCapture =
   | { readonly kind: "captured"; readonly snapshot: AgentContextSnapshot }
@@ -314,31 +362,32 @@ export function reusableSnapshot(events: readonly AgentRunEvent[], connectionId:
 }
 
 /**
- * Reads the run's schema inventory through the catalog tool.
+ * Reads the run's schema inventory, through whichever of the two readings this
+ * dialect has.
  *
  * Runs before the first model turn of a drive that has no recorded inventory to
- * reuse. It costs one statement per catalog kind out of the run's budget, which is
- * why the result is persisted rather than re-read.
+ * reuse. It costs one statement per catalog kind out of the run's budget on the
+ * composed path and exactly one on the provider path, which is why the result is
+ * persisted rather than re-read.
  *
  * PLANNING RUNS REACH THIS TOO, since the plan-mode grounding design of 2026-08-15.
  * Until then a planning run was refused here by the mode gate in `tools.ts` and was
  * left scavenging whatever inventory this process happened to hold, which made the
  * safe mode's usefulness conditional on having already used the unsafe one. What has
- * NOT changed is the property the mode actually sells: this is a catalog read, no
+ * NOT changed is the property the mode actually sells: this is a schema read, no
  * statement of the user's is run, nothing is written, and the model is still handed
- * no tools — `readCatalogForGrounding` is the server's own call, and
- * `selectAgentTools` still yields an empty set for the mode.
+ * no tools — both `readCatalogForGrounding` and `readProviderSchemaForGrounding` are
+ * the server's own calls, and `selectAgentTools` still yields an empty set for the
+ * mode.
  */
 export async function captureContextSnapshot(context: AgentToolContext): Promise<AgentContextCapture> {
   const plan = CATALOG_PLANS[context.connection.type];
-  if (plan === undefined) {
-    return unavailable(
-      "CATALOG_READ_REFUSED",
-      `No schema inventory can be read for a ${context.connection.type} connection.`,
-    );
-  }
-
   const nowMs = context.clock?.() ?? Date.now();
+  // No composed catalog for this dialect, which used to end the capture here with
+  // "no schema inventory can be read for a mongodb connection". One can: the product
+  // reads it every time the sidebar lists a table. See `captureFromProvider`.
+  if (plan === undefined) return captureFromProvider(context, nowMs);
+
   const rows = new Map<AgentCatalogKind, readonly Record<string, unknown>[]>();
 
   for (const kind of plan.kinds) {
@@ -362,8 +411,122 @@ export async function captureContextSnapshot(context: AgentToolContext): Promise
       fingerprint: fingerprintTables(tables),
       capturedAtMs: nowMs,
       tables,
+      // Deliberately not stamped `"composed-catalog"`: absence already means that,
+      // and every snapshot written before `readVia` existed came from here. Writing
+      // it would change nothing a reader concludes and would make this path's output
+      // differ, byte for byte, from what every ledger already holds.
     },
   };
+}
+
+/**
+ * The same snapshot, read through the engine's own schema inspection (#414).
+ *
+ * The tables are NORMALISED before they become a snapshot: name, columns, indexes,
+ * foreign keys, and nothing else. `rowCount` and `size` are what get dropped, and
+ * dropping them is the point rather than tidiness. The fingerprint is over the
+ * schema; a row estimate is not schema, so keeping it would make an inventory change
+ * identity every time somebody inserted a row — and each provider means something
+ * different by the number anyway (`estimatedDocumentCount` on MongoDB, a scanned key
+ * sample on Redis, `TABLE_ROWS` on MySQL). Worse, it would arrive unlabelled through
+ * a path that never announced it had one, which is exactly the kind of silent claim
+ * this run is not allowed to make. Statistics have their own read and their own
+ * honest "this engine holds none" answer (`schema-stats.ts`).
+ *
+ * `finalize` is reused rather than reimplemented, so the ordering and therefore the
+ * fingerprint are produced by the same code the composed path uses: two readings of
+ * the same schema have to agree whichever route reached them, or `reusableSnapshot`
+ * and `holdSnapshotForConnection` would reject a run's own recorded capture.
+ *
+ * All-or-nothing, exactly as the composed path is. A refused read, a provider that
+ * could not be reached, a schema the provider rejected the request for, and a read
+ * that overran its time all lose the WHOLE snapshot: a partial inventory presented as
+ * complete is the failure this module exists to avoid, and it is no less one for
+ * having been read a second way.
+ *
+ * A failure raised BEFORE the reading left is caught here and becomes an unavailable
+ * capture, rather than propagating and ending the run. That is a decision, and the
+ * reason is what plan mode promises: it opens and answers on every engine, and it did
+ * on these nine before this change, because nothing was reached at all. Letting an
+ * unreachable host, a wrong password, a refused `connect()` or an `ExecutionProfileError`
+ * from a half-configured `agentUser` out of here would lose a plan run to an
+ * IMPROVEMENT — and on the profile error it would lose it under
+ * "the agent cannot run on this database engine: it offers no read-only execution
+ * profile", said about an engine where plan mode demonstrably works. The user is still
+ * told: the ungrounded note carries this capture's own diagnosis, so what reaches the
+ * model is that the reading did not happen and why, which is the whole of what an
+ * ungrounded run is owed. Anything that is NOT one of these two classes propagates —
+ * a `TypeError` here is this server's bug and must not be reported to a user as a
+ * property of their database.
+ *
+ * The COMPOSED path still propagates such a failure, and this change deliberately
+ * leaves it alone: PostgreSQL and SQLite have never reached this line and changing
+ * their failure mode is not what #414 is about. The asymmetry is filed in
+ * `docs/BACKLOG.md` rather than resolved here.
+ *
+ * Neither sentence carries the error's own message. `detail` is spliced into the note
+ * a plan run reads as the server's own voice, and a driver message is text the database
+ * wrote; the fenced diagnoses arrive that way from the tool layer, and these do not go
+ * through it.
+ */
+async function captureFromProvider(context: AgentToolContext, nowMs: number): Promise<AgentContextCapture> {
+  let read: AgentProviderSchemaRead;
+  try {
+    read = await readProviderSchemaForGrounding(context);
+  } catch (error) {
+    if (error instanceof ExecutionProfileError) {
+      return unavailable(
+        "CATALOG_READ_REFUSED",
+        `This server could not open a connection to this ${context.connection.type} database under the execution profile a grounding read takes, so its schema was not read for this run.`,
+      );
+    }
+    if (error instanceof DatabaseError) {
+      return unavailable(
+        "CATALOG_READ_REFUSED",
+        `This run could not reach this ${context.connection.type} database to ask it for its schema, so nothing was read for this run.`,
+      );
+    }
+    throw error;
+  }
+  if (read.kind === "timed-out") {
+    return unavailable(
+      "PROVIDER_INVENTORY_TIMED_OUT",
+      `This ${context.connection.type} database did not describe its own schema within the ${read.grantedMs}ms this run granted the reading.`,
+    );
+  }
+  if (read.kind === "unavailable") return unavailable("CATALOG_READ_REFUSED", read.modelText);
+
+  const tables = finalize(providerTables(read.tables));
+  return {
+    kind: "captured",
+    snapshot: {
+      connectionId: context.connection.id,
+      fingerprint: fingerprintTables(tables),
+      capturedAtMs: nowMs,
+      tables,
+      readVia: "provider-inventory",
+    },
+  };
+}
+
+/**
+ * The provider's tables, reduced to the four fields a snapshot carries.
+ *
+ * `foreignKeys` defaults to an empty list because two providers (Redis, LibreDB)
+ * never set the field at all, and `finalize` has to produce the same shape on both
+ * paths or two readings of one schema would fingerprint differently.
+ */
+function providerTables(tables: readonly TableSchema[]): TableIndex {
+  const index: TableIndex = new Map();
+  for (const table of tables) {
+    index.set(table.name, {
+      name: table.name,
+      columns: [...table.columns],
+      indexes: [...table.indexes],
+      foreignKeys: [...(table.foreignKeys ?? [])],
+    });
+  }
+  return index;
 }
 
 // ============================================================================
@@ -645,14 +808,26 @@ function renderTable(table: TableSchema): string {
  * caller, so the caller says what can be done about the omission and a caller with no
  * tool to name says nothing. The omission ITSELF is never optional: a model shown a
  * silently truncated list believes it has seen the schema.
+ *
+ * `noun` is what the rows are CALLED on this engine, and it is a parameter for the
+ * same reason the preface is: this function keeps the bound, so the header it counts
+ * has to be the header it writes. Defaulting to `TABLE_INVENTORY_NOUN` keeps every
+ * SQL engine's prompt exactly as it was — see the type's own docblock for what a
+ * wrong noun cost on Redis.
  */
 export function packContextForTask(
   snapshot: AgentContextSnapshot,
   objective: string,
-  options: { readonly maxChars?: number; readonly preface?: string; readonly omissionAdvice?: string } = {},
+  options: {
+    readonly maxChars?: number;
+    readonly preface?: string;
+    readonly omissionAdvice?: string;
+    readonly noun?: AgentInventoryNoun;
+  } = {},
 ): string {
   const lead = options.preface === undefined ? "" : `${options.preface}\n`;
   const maxChars = (options.maxChars ?? AGENT_CONTEXT_PACK_MAX_CHARS) - lead.length;
+  const noun = options.noun ?? TABLE_INVENTORY_NOUN;
   const source = {
     label: "schema inventory",
     operationId: "agent/context-snapshot",
@@ -662,9 +837,9 @@ export function packContextForTask(
   // The capture time is named because the inventory can be REUSED: a run resumed
   // hours later is shown the schema it started with, and a model told only "the
   // schema" would take it for the schema as it is now.
-  const header = `Schema inventory for this run — fingerprint ${snapshot.fingerprint}, ${snapshot.tables.length} table(s) read at epoch ${snapshot.capturedAtMs}ms and not re-read since, most task-relevant first.`;
+  const header = `Schema inventory for this run — fingerprint ${snapshot.fingerprint}, ${snapshot.tables.length} ${noun.singular}(s) read at epoch ${snapshot.capturedAtMs}ms and not re-read since, most task-relevant first.`;
   if (snapshot.tables.length === 0) {
-    return `${lead}${fenceUntrustedContent(`${header}\nThis database reported no tables.`, source)}`;
+    return `${lead}${fenceUntrustedContent(`${header}\nThis database reported no ${noun.plural}.`, source)}`;
   }
 
   const terms = taskTerms(objective);
@@ -675,7 +850,9 @@ export function packContextForTask(
 
   const advice = options.omissionAdvice === undefined ? "" : ` ${options.omissionAdvice}`;
   const close = (body: string, omitted: number): string =>
-    omitted === 0 ? body : `${body}\n${omitted} further table(s) omitted as less relevant to this task.${advice}`;
+    omitted === 0
+      ? body
+      : `${body}\n${omitted} further ${noun.singular}(s) omitted as less relevant to this task.${advice}`;
 
   let body = header;
   let shown = 0;
@@ -720,26 +897,29 @@ export function packContextForTask(
  */
 export function packOperationsInventory(
   snapshot: AgentContextSnapshot,
-  options: { readonly maxChars?: number; readonly preface?: string } = {},
+  options: { readonly maxChars?: number; readonly preface?: string; readonly noun?: AgentInventoryNoun } = {},
 ): string {
   const lead = options.preface === undefined ? "" : `${options.preface}\n`;
   const maxChars = (options.maxChars ?? AGENT_CONTEXT_PACK_MAX_CHARS) - lead.length;
+  const noun = options.noun ?? TABLE_INVENTORY_NOUN;
   const source = {
     label: "schema inventory: names and indexes",
     operationId: "agent/context-snapshot",
     reference: snapshot.fingerprint,
   };
 
-  const header = `Schema inventory for this run — fingerprint ${snapshot.fingerprint}, ${snapshot.tables.length} table(s) read at epoch ${snapshot.capturedAtMs}ms and not re-read since. Names and the indexes on each; no columns and no relations are included.`;
+  const header = `Schema inventory for this run — fingerprint ${snapshot.fingerprint}, ${snapshot.tables.length} ${noun.singular}(s) read at epoch ${snapshot.capturedAtMs}ms and not re-read since. Names and the indexes on each; no columns and no relations are included.`;
   if (snapshot.tables.length === 0) {
-    return `${lead}${fenceUntrustedContent(`${header}\nThis database reported no tables.`, source)}`;
+    return `${lead}${fenceUntrustedContent(`${header}\nThis database reported no ${noun.plural}.`, source)}`;
   }
 
   // Names no tool, in either mode: an operations agent run holds no `inspect_schema`
   // and a plan run holds nothing at all, so a way out named here would be a way out
   // neither reader has (#350).
   const close = (body: string, omitted: number): string =>
-    omitted === 0 ? body : `${body}\n${omitted} further table(s) exist in this database and are not named here.`;
+    omitted === 0
+      ? body
+      : `${body}\n${omitted} further ${noun.singular}(s) exist in this database and are not named here.`;
 
   let body = header;
   let shown = 0;

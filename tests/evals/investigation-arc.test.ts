@@ -227,7 +227,14 @@ describe("a planning run is judged by what planning mode can produce", () => {
     expect(drive.kinds).not.toContain("context-captured");
     expect(drive.kinds).not.toContain("plan-statement-drafted");
     expect(drive.transcripts[0] ?? "").toContain("No schema inventory is available to this run");
-    expect(drive.transcripts[0] ?? "").toContain("on this mysql connection");
+    // The capture's own diagnosis, forwarded rather than replaced (#414). Until then
+    // this note was written by `investigation.ts` and named the ENGINE — "on this mysql
+    // connection" — which was the true reason while `CATALOG_PLANS` refused a dialect
+    // before touching anything. It is not the reason now: a dialect with no catalog
+    // plan asks its provider for the same inventory, and this preset's provider is one
+    // whose `getSchema()` rejects. Naming the engine there would say MySQL cannot be
+    // ground on a build where a real MySQL provider can.
+    expect(drive.transcripts[0] ?? "").toContain("this database refused to describe its own schema");
     expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
   });
 
