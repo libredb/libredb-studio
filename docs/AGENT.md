@@ -1818,9 +1818,11 @@ declared-target allowlist, the statement guard and the role's own grants are the
   is hidden while a run's result is shown.
 
 The next six were found by driving the product against a live model in a browser, which is the only
-way any of them could have been found: every one of them passes every gate. The two after them were
-found later, by other routes, and are listed here because they are the same kind of thing — a defect
-no gate in this repository objects to.
+way any of them could have been found: every one of them passes every gate. The one after them was
+found later, by another route, and is listed here because it is the same kind of thing — a defect
+no gate in this repository objects to. The last three came from repeating that exercise against the
+inference surface (#407) — twenty-six runs over `docs/AGENT_DEMO.md`, which is also where the
+classifier's real-world agreement rate was measured — and they are the same kind of thing again.
 
 - **B36** — a follow-up question is answered as if it were the first. Runs carry no memory of each
   other, and neither the surface nor the model says so — the model picks a plausible referent and
@@ -1841,6 +1843,29 @@ no gate in this repository objects to.
 - **B43** — every copy control outside the agent rail reaches `navigator.clipboard` unguarded, and it
   is a secure-context API: nine call sites across seven components, four of which claim success — by
   a label or a toast — in the same statement that starts a write nobody observed.
+- **B44** — the composed foreign-key read returns nothing under the least-privilege role this
+  repository's own demo script prescribes, and the run then asserts the negative. PostgreSQL
+  restricts the `information_schema` constraint views to constraints on tables the role owns or
+  holds a privilege other than `SELECT` on, so a `SELECT`-only agent role reads an empty relations
+  graph — measured on the seeded dvdrental as 0 rows where `pg_constraint` holds 18 — and an
+  investigation answers "there are no declared foreign key constraints between tables in the
+  database", confidently, citing a snapshot that genuinely contained nothing. It makes B8's
+  `pg_constraint` rewrite a correctness fix rather than a precision one, and leaves a second half
+  standing behind it: an empty read cannot tell "none exist" from "none visible to this role", and
+  should license neither.
+- **B45** — every query-optimization run is scored `unanswered / empty-evidence`, including one that
+  compared two plans, priced both and wrote the correct `CREATE INDEX`. A `sql.explain.estimate`
+  artifact records `rowCount: 0` because a plan arrives in a single column, and
+  `verifyOptimizationGoal` composes on the investigation baseline, which carries the emptiness arm.
+  The operations template was exempted from exactly this, for a reason it states at length — holding
+  an operational reading to the emptiness rule is "precisely backwards" — and that argument applies
+  to a plan artifact verbatim. The #356 shape a third time: a rule stated in terms of an artifact
+  only one valid answer can produce.
+- **B46** — plan-mode grounding is workflow-dependent while the documentation frames it as
+  engine-dependent. A planning run of the operations workflow reads no catalog by design, on any
+  engine, so it says "no schema was read" on a PostgreSQL connection that a planning run of any
+  other workflow would have read. Inference (#407) makes it far more reachable: an objective about
+  what to check first now classifies to Operate on its own, without anyone choosing it.
 
 ## Related documentation
 
