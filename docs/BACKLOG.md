@@ -457,8 +457,6 @@ decision survives whether or not the bot re-raises them under the `bun` ecosyste
   server, not a type-check.
 - **`oracledb` 6 -> 7** — thick/thin mode and the prebuilt binaries are what the Docker image and the
   AppImage build depend on; check those before the API.
-- **`lucide-react` 0.562 -> 1.31** — UI-visible, and lucide's 1.0 is its first stable major, so icon
-  names are the risk.
 - **`@types/node` 25 -> 26** — deferred for a reason worth stating: the runtime images are on Node 26
   (#380) but `engines.node` still declares `>=24.0.0`. Typing against 26 would let code compile that
   breaks on the floor the package advertises. Decide the floor first, then move the types to match
@@ -480,6 +478,27 @@ Deciding this is not a bump: either accept the vendored set as a deliberate on-h
 in `CLAUDE.md`, which today says nothing about it), or sweep the orphans and their packages the way
 `calendar.tsx` went. Until then every Dependabot major on one of those packages costs a review for a
 component nothing renders. Reproduce the list with a per-file importer count over `src/components/ui/`.
+
+### P6. Twenty-one lucide icon imports survive only through legacy-rename aliases
+
+The lucide-react 1.31 bump found this and did not fix it. These names were renamed upstream and are
+re-exported under their old spelling, at runtime as well as in the types: `AlertTriangle`,
+`Loader2`, `Loader2Icon`, `CheckCircle2`, `BarChart3`, `BarChart2`, `AlertCircle`, `FileJson`,
+`XCircle`, `AlignLeft`, `Edit3`, `Filter`, `Wand2`, `MoreVertical`, `MoreHorizontal`,
+`MoreHorizontalIcon`, `History`, `PlayCircle`, `LineChart`, `PieChart`, `AreaChart` — 51 import
+sites in all. Geometry is byte-identical to what we rendered before, so nothing is broken today.
+
+What makes it worth recording is the failure mode rather than the tidiness: lucide-react 1.31.0
+ships **zero** `@deprecated` JSDoc tags, so no editor, linter or typecheck warns while an alias is
+alive, and the first signal is the build breaking on the release that drops it. That is exactly how
+`Github` arrived — as a hard break, not a warning. Migrating each import to its canonical v1 name
+(`TriangleAlert`, `LoaderCircle`, `CircleCheck`, `ChartColumn`, …) turns a future silent removal
+into a no-op.
+
+Note `History` is the one with a rendered-output consequence: in v1 it aliases `RotateCcwClock`, and
+`createLucideIcon` derives the emitted class from the canonical name, so its element class moves
+from `lucide-history` to `lucide-rotate-ccw-clock`. No test asserts that class today — checked all
+17 `lucide-*` class literals under `src/` and `tests/` — but a migration should re-check it.
 
 ---
 
