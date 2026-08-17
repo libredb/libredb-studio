@@ -318,6 +318,31 @@ const AGENT_REPORT_REMINDER_NOTICE = [
 ].join(" ");
 
 /**
+ * What an answer-presenting run is told once when it would report without presenting.
+ *
+ * A workflow offered `present_answer` is one whose whole point is the answer: the goal
+ * verifier scores it `no-answer` when the report lands with nothing presented beside
+ * it, and the rail shows a report with an empty answer pane. Measured on three models
+ * (`qwen3.5:4b`, `qwen3.5:9b`, `mistral-small3.2:24b`), each read the data, got a
+ * result, and then went straight to `compose_report`: the reading was taken and the
+ * answer was one call away.
+ *
+ * Said at the moment it can still be acted on. `compose_report` ENDS the run, so a
+ * message delivered after it arrives too late; this one is delivered INSTEAD of that
+ * call, and the call is not executed. The run then has the turn it needs to present.
+ *
+ * Only where all three hold, which is what keeps it from ever being a lecture: the
+ * workflow presents answers, the run HAS a readable result to present, and the model
+ * has not already tried to present one. A model that tried and was refused is not
+ * hesitating about the answer — it is stuck on the payload, and telling it to present
+ * again would spend the turn on a call the tool has already rejected.
+ */
+const AGENT_PRESENT_BEFORE_REPORT_NOTICE = [
+  "This run answers by PRESENTING a result, and nothing has been presented yet: a report on its own is scored as having answered nothing.",
+  "Your compose_report call was not run. Call present_answer first, with the artifact id of the result that answers the objective, and then call compose_report.",
+].join(" ");
+
+/**
  * What an operations run is told about the inventory it was given (#411).
  *
  * Both of these sentences used to say "no schema inventory was captured for this run,
@@ -1986,6 +2011,14 @@ export async function runInvestigation(
   let anyToolCalled = false;
   /** The report reminder is a one-shot too; see `AGENT_REPORT_REMINDER_NOTICE`. */
   let reportReminded = false;
+  /** The present-before-report notice is a one-shot; see `AGENT_PRESENT_BEFORE_REPORT_NOTICE`. */
+  let presentReminded = false;
+  /**
+   * Whether `present_answer` has been CALLED, which is not the same as answered: a
+   * refused call writes no event, so the ledger cannot tell the two apart and this is
+   * the only place that can.
+   */
+  let answerAttempted = false;
 
   /**
    * Tells the run, once, that it has come within the reserve of a ceiling.
@@ -2145,6 +2178,27 @@ export async function runInvestigation(
       // — so a run reminded on either would be told to call `compose_report`, which is
       // a tool it has not got (#350).
       if (tools?.[call.toolName] !== undefined) anyToolCalled = true;
+      if (call.toolName === "present_answer") answerAttempted = true;
+      // A run whose workflow answers by presenting, which read something and is about
+      // to report without presenting it, is one call short of an answer. Checked here
+      // and not after the call, because `compose_report` ends the run.
+      if (
+        call.toolName === "compose_report" &&
+        !presentReminded &&
+        !answerAttempted &&
+        AGENT_WORKFLOW_PRESENTS_ANSWER[record.workflowType]
+      ) {
+        const { record: sofar } = await service.resume(context.runId);
+        const hasReading = sofar.events.some(
+          (event) => event.kind === "tool-completed" && event.artifact.operationId === "sql.query.read",
+        );
+        const presented = sofar.events.some((event) => event.kind === "answer-composed");
+        if (hasReading && !presented) {
+          presentReminded = true;
+          messages.push(toolResultMessage(call, AGENT_PRESENT_BEFORE_REPORT_NOTICE));
+          continue;
+        }
+      }
       const outcome = await handleCall({ service, context, record, call, known, notAttempted });
       if (outcome.kind === "cancelled") {
         // `runStep` already ended the run at its checkpoint; finishing again would
