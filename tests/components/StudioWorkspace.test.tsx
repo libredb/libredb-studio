@@ -551,7 +551,7 @@ describe("StudioWorkspace", () => {
     act(() => (capturedBottomPanelProps.onExportResults as (f: string) => void)("csv"));
     expect(mockCreateObjectURL).toHaveBeenCalledTimes(1);
     const blob = mockCreateObjectURL.mock.calls[0][0] as Blob;
-    expect(blob.type).toBe("text/csv");
+    expect(blob.type).toBe("text/csv;charset=utf-8");
     const text = await blob.text();
     expect(text).toContain("id,name,ratio,active,created,deleted");
     // A value is quoted only where RFC 4180 requires it, and NULL is an empty
@@ -634,8 +634,10 @@ describe("StudioWorkspace", () => {
     expect(blob.type).toBe("text/sql");
     const text = await blob.text();
     expect(text).toContain("CREATE TABLE users");
-    expect(text).toContain('"id" INTEGER');
-    expect(text).toContain('"ratio" NUMERIC');
+    expect(text).toContain('"id" BIGINT');
+    // A JS non-integer is a double, and `NUMERIC` without a scale truncates it on
+    // MySQL and SQL Server — so the inferred type is spelled per dialect now.
+    expect(text).toContain('"ratio" DOUBLE PRECISION');
     expect(text).toContain('"active" BOOLEAN');
     expect(text).toContain('"created" TIMESTAMP');
     expect(text).toContain('"name" TEXT');

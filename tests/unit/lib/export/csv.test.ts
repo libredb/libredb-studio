@@ -85,3 +85,42 @@ describe("toCsv", () => {
     expect(toCsv([], ["a", "b"])).toBe("a,b");
   });
 });
+
+describe("toCsv — a column name that is also a prototype member", () => {
+  // `row[column]` walks the prototype chain, so a column the row does not carry
+  // resolved to an INHERITED member: a header named `constructor` wrote
+  // "function Object() { [native code] }" into every row that lacked the field.
+  // Document stores hand back rows that do not share a shape, which is exactly
+  // where a header can name a field a given row has no own entry for.
+  test("writes an empty field for a prototype-named column the row does not carry", () => {
+    const csv = toCsv([{ constructor: "declared", id: 1 }, { id: 2 }]);
+    expect(csv).toBe("constructor,id\ndeclared,1\n,2");
+  });
+
+  test("writes an empty field for every prototype member a row lacks", () => {
+    const csv = toCsv([{ id: 1 }], ["id", "constructor", "toString", "valueOf", "hasOwnProperty"]);
+    expect(csv).toBe("id,constructor,toString,valueOf,hasOwnProperty\n1,,,,");
+  });
+
+  test("still writes a row's OWN value for a prototype-named column", () => {
+    expect(toCsv([{ toString: "mine" }], ["toString"])).toBe("toString\nmine");
+  });
+});
+
+describe("toCsv — a value JSON cannot serialize", () => {
+  // The writer is reached from the embeddable shell too, where the rows are live
+  // JavaScript objects rather than a parsed HTTP response: a `BigInt` inside a
+  // JSON column, or a self-referencing document, made `JSON.stringify` throw out
+  // of the click handler, so the export produced NO file and said nothing.
+  test("writes a structured value holding a bigint rather than throwing", () => {
+    expect(toCsv([{ j: { n: BigInt(10) } }], ["j"])).toBe('j\n"{""n"":""10""}"');
+  });
+
+  test("writes a self-referencing value rather than throwing", () => {
+    const cyclic: Record<string, unknown> = { name: "root" };
+    cyclic.self = cyclic;
+    const csv = toCsv([{ doc: cyclic }], ["doc"]);
+    expect(csv.startsWith("doc\n")).toBe(true);
+    expect(csv).toContain("root");
+  });
+});

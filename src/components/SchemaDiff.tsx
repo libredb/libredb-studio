@@ -482,9 +482,14 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
         <div>
           <h4 className="text-xs text-fg-muted mb-2 font-medium">Foreign Keys</h4>
           <div className="space-y-1">
+            {/* Keyed by the action as well as the column: a foreign key repointed at
+                another table is TWO entries under one column name, because the diff
+                engine keys an FK by `columnName→table.column` and reports the old one
+                removed and the new one added. The column name alone gave React two
+                children with the same key. */}
             {diff.foreignKeys.map((fk) => (
               <div
-                key={fk.columnName}
+                key={`${fk.action}:${fk.columnName}`}
                 className={cn(
                   "px-3 py-2 rounded text-xs flex items-center gap-2",
                   fk.action === "added" && "bg-green-500/5 border border-green-500/10",

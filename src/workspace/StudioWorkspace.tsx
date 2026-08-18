@@ -18,6 +18,8 @@ import { useConnectionAdapter } from "@/workspace/hooks/use-connection-adapter";
 import { useQueryAdapter } from "@/workspace/hooks/use-query-adapter";
 import { type StudioWorkspaceProps, DEFAULT_WORKSPACE_FEATURES } from "@/workspace/types";
 import { cn } from "@/lib/utils";
+import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
+import { lazyRetry } from "@/lib/lazy";
 import { buildResultExport, type ResultExportFormat } from "@/lib/export/result-export";
 import { downloadText } from "@/lib/export/download";
 
@@ -25,8 +27,8 @@ import { downloadText } from "@/lib/export/download";
 // engine + the snapdom capture), and it is mounted only while `showDiagram` is true.
 // Split for the same reason the bottom panel's heavy views are, and through the same
 // `React.lazy` seam — this shell imports nothing from `next` by construction.
-const SchemaDiagram = React.lazy(() =>
-  import("@/components/SchemaDiagram").then((m) => ({ default: m.SchemaDiagram })),
+const SchemaDiagram = React.lazy(
+  lazyRetry(() => import("@/components/SchemaDiagram").then((m) => ({ default: m.SchemaDiagram }))),
 );
 
 /**
@@ -256,6 +258,9 @@ export function StudioWorkspace({
         // after the host switched connections quoted its literals for whichever
         // engine happened to be active on the first render.
         dialect: conn.activeConnection?.type,
+        // The host's own declared column types (`use-query-adapter` carries them),
+        // which the DDL form prefers over a type guessed from a value.
+        columnTypes: tabMgr.currentTab.result.columnTypes,
       });
       downloadText(file.content, file.mimeType, `query_result_export.${file.extension}`);
     },
@@ -331,9 +336,17 @@ export function StudioWorkspace({
               {features.schemaDiagram && (
                 <AnimatePresence>
                   {showDiagram && (
-                    <React.Suspense fallback={null}>
-                      <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />
-                    </React.Suspense>
+                    // A visible fallback and a boundary, for the reason spelled out at
+                    // the same mount in `src/components/Studio.tsx`: this is the
+                    // heaviest chunk, and it is fetched from whatever base the
+                    // embedding host serves the package's assets from.
+                    <ChunkBoundary label="The diagram">
+                      <React.Suspense
+                        fallback={<ViewLoading label="Loading the diagram" className="absolute inset-0 z-20" />}
+                      >
+                        <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />
+                      </React.Suspense>
+                    </ChunkBoundary>
                   )}
                 </AnimatePresence>
               )}

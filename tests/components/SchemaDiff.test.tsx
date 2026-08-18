@@ -753,6 +753,49 @@ describe("SchemaDiff", () => {
       expect(queryByText("Foreign Keys")).toBeNull();
     });
 
+    // A foreign key REPOINTED at another table is two entries under one column name:
+    // the diff engine keys an FK by `columnName→table.column` (`diff-engine.ts`), so
+    // it reports the old one removed and the new one added. Keying the rows by the
+    // column name alone gave React two children with the same key — one row, and the
+    // half of the change the user needed to see missing.
+    test("renders both halves of a foreign key that was repointed", () => {
+      mockDiffSchemas.mockImplementation(() =>
+        structuredClone({
+          tables: [
+            {
+              action: "modified",
+              tableName: "users",
+              columns: [],
+              indexes: [],
+              foreignKeys: [
+                { action: "removed", columnName: "org_id", changes: ["Removed FK: org_id -> orgs(id)"] },
+                { action: "added", columnName: "org_id", changes: ["Added FK: org_id -> tenants(id)"] },
+              ],
+            },
+          ],
+          summary: { added: 0, removed: 0, modified: 1 },
+          hasChanges: true,
+        }),
+      );
+      const complaints: string[] = [];
+      const originalError = console.error;
+      console.error = (...args: unknown[]) => {
+        complaints.push(args.map(String).join(" "));
+      };
+      try {
+        const { getByText, getAllByText } = renderDiff();
+        changeTarget("snap-1");
+        fireEvent.click(getByText("users"));
+
+        expect(getAllByText("org_id")).toHaveLength(2);
+        expect(getByText("Removed FK: org_id -> orgs(id)")).toBeTruthy();
+        expect(getByText("Added FK: org_id -> tenants(id)")).toBeTruthy();
+      } finally {
+        console.error = originalError;
+      }
+      expect(complaints.filter((line) => line.includes("same key"))).toEqual([]);
+    });
+
     test("renders no action icon for unknown column action", () => {
       mockDiffSchemas.mockImplementation(() =>
         structuredClone({

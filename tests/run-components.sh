@@ -226,6 +226,7 @@ run_group "Group 11/12: Smoke tests" \
   tests/components/DataImportModal.test.tsx \
   tests/components/RootLayout.test.tsx \
   tests/components/AppErrorPages.test.tsx \
+  tests/components/LazyView.test.tsx \
   tests/components/Page.test.tsx \
   tests/components/LoginPage.test.tsx \
   tests/components/LoginPageOIDC.test.tsx \

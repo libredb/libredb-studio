@@ -12,11 +12,17 @@
  * it is data the database held. The difference is only which grammar has to be
  * respected — RFC 4180 here, the engine's literal grammar there.
  *
+ * Fields are separated by `,` and records by a single `\n`. RFC 4180 spells the
+ * record separator `CRLF`; every reader that matters accepts a bare LF, and a field
+ * that CONTAINS either is quoted, which is the part a reader cannot recover from.
+ *
  * NOT done here: neutralising a leading `=`, `+`, `-` or `@`, which a spreadsheet
- * reads as a formula. That is a real hazard and a separate decision, because the
- * fix mutates the user's values on the way out; this file's job is to write the
- * value it was given, exactly and unambiguously.
+ * reads as a formula (`docs/BACKLOG.md` X1). That is a real hazard and a separate
+ * decision, because the fix mutates the user's values on the way out; this file's
+ * job is to write the value it was given, exactly and unambiguously.
  */
+
+import { jsonText } from "./json";
 
 /**
  * The characters RFC 4180 says force a field to be quoted. A field is left bare
@@ -35,8 +41,10 @@ function renderValue(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (value instanceof Date) return value.toISOString();
   // A JSON column, a Postgres array, a Mongo sub-document: `String(...)` answers
-  // `[object Object]` for all of them, which loses the cell entirely.
-  if (typeof value === "object") return JSON.stringify(value);
+  // `[object Object]` for all of them, which loses the cell entirely. Through
+  // `jsonText`, because a bare `JSON.stringify` throws on a bigint or a cycle and
+  // would take the whole export with it.
+  if (typeof value === "object") return jsonText(value);
   return String(value);
 }
 
@@ -78,6 +86,20 @@ export function resolveColumns(
 }
 
 /**
+ * One row's value for `column`.
+ *
+ * `Object.hasOwn` first, because `row[column]` walks the prototype chain: a header
+ * naming a field this row has no own entry for — ordinary in a document store, which
+ * hands back rows that do not share a shape — resolved to an INHERITED member when
+ * the name happened to be one. A column called `constructor` wrote
+ * "function Object() { [native code] }" into every row that lacked the field. Same
+ * guard, and the same reason, as `declaredTypeOf` in `src/components/ResultsGrid.tsx`.
+ */
+export function cellOf(row: Record<string, unknown>, column: string): unknown {
+  return Object.hasOwn(row, column) ? row[column] : undefined;
+}
+
+/**
  * `rows` as CSV text, with a header row.
  *
  * Pass `columns` — a result's own `fields` — wherever they are known: they are what
@@ -89,7 +111,7 @@ export function toCsv(rows: readonly Record<string, unknown>[], columns?: readon
   const header = resolveColumns(rows, columns);
   const lines = [csvRow(header)];
   for (const row of rows) {
-    lines.push(csvRow(header.map((column) => row[column])));
+    lines.push(csvRow(header.map((column) => cellOf(row, column))));
   }
   return lines.join("\n");
 }

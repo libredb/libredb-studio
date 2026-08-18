@@ -81,11 +81,50 @@ describe("downloadBlob", () => {
 
 describe("downloadText", () => {
   test("wraps the text in a blob of the declared type", async () => {
-    downloadText("a,b\n1,2", "text/csv", "rows.csv");
+    downloadText('{"a":1}', "application/json", "rows.json");
 
     expect(recorded.created).toHaveLength(1);
-    expect(recorded.created[0].type).toBe("text/csv");
-    expect(await recorded.created[0].text()).toBe("a,b\n1,2");
-    expect(recorded.clicked[0].download).toBe("rows.csv");
+    expect(recorded.created[0].type).toStartWith("application/json");
+    expect(await recorded.created[0].text()).toBe('{"a":1}');
+    expect(recorded.clicked[0].download).toBe("rows.json");
+  });
+
+  // Read as BYTES, not through `blob.text()`: the text decoder strips a leading BOM
+  // per spec, so a text assertion here passes whether the mark is written or not.
+  const firstBytes = async (blob: Blob, count: number) => [...new Uint8Array(await blob.arrayBuffer()).slice(0, count)];
+
+  // Excel decides a CSV's encoding from its first bytes, not from the charset on the
+  // download: without the mark it reads UTF-8 as the host's legacy code page, and
+  // every non-ASCII name in the file arrives mangled. Every other reader treats the
+  // mark as insignificant.
+  test("puts the byte order mark Excel needs in front of a CSV", async () => {
+    downloadText("ad,şehir\nÖmer,İstanbul", "text/csv;charset=utf-8", "rows.csv");
+
+    expect(await firstBytes(recorded.created[0], 3)).toEqual([0xef, 0xbb, 0xbf]);
+    expect(await recorded.created[0].text()).toBe("ad,şehir\nÖmer,İstanbul");
+  });
+
+  test("marks a CSV even when the caller named the type without a charset", async () => {
+    downloadText("a,b", "text/csv", "rows.csv");
+
+    expect(await firstBytes(recorded.created[0], 3)).toEqual([0xef, 0xbb, 0xbf]);
+  });
+
+  test("leaves SQL bytes alone, so the first statement is still the first byte", async () => {
+    downloadText("INSERT INTO t (a) VALUES (1);", "text/sql", "rows.sql");
+
+    expect(await firstBytes(recorded.created[0], 1)).toEqual(["I".charCodeAt(0)]);
+  });
+
+  test("leaves markdown bytes alone", async () => {
+    downloadText("# Docs", "text/markdown", "docs.md");
+
+    expect(await firstBytes(recorded.created[0], 1)).toEqual(["#".charCodeAt(0)]);
+  });
+
+  test("leaves JSON bytes alone, so a strict parser still reads the first token", async () => {
+    downloadText('{"a":1}', "application/json", "rows.json");
+
+    expect(await firstBytes(recorded.created[0], 1)).toEqual(["{".charCodeAt(0)]);
   });
 });

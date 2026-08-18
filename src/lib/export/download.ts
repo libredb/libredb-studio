@@ -34,7 +34,22 @@ export function downloadBlob(blob: Blob, fileName: string): void {
   setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS);
 }
 
+/**
+ * The UTF-8 byte order mark, and the one format that needs it.
+ *
+ * Excel decides a CSV's encoding from its first bytes; the charset on the download is
+ * not consulted. Without the mark it reads the file in the host's legacy code page,
+ * and every non-ASCII character in it arrives mangled — which is most exports outside
+ * an English-language database. Every other reader treats the mark as insignificant.
+ *
+ * Only CSV: prepending it to JSON would break a strict parser, and to SQL would put
+ * a stray character in front of the first statement.
+ */
+const BOM = "﻿";
+const NEEDS_BOM = /^text\/csv\b/;
+
 /** Hand `content` to the browser as a `mimeType` download named `fileName`. */
 export function downloadText(content: string, mimeType: string, fileName: string): void {
-  downloadBlob(new Blob([content], { type: mimeType }), fileName);
+  const bytes = NEEDS_BOM.test(mimeType) ? `${BOM}${content}` : content;
+  downloadBlob(new Blob([bytes], { type: mimeType }), fileName);
 }

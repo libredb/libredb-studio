@@ -817,7 +817,8 @@ describe("Studio", () => {
     act(() => exportFn("csv"));
     expect(mockCreateObjectURL).toHaveBeenCalledTimes(1);
     const blob = (mockCreateObjectURL.mock.calls[0] as unknown[])[0] as Blob;
-    expect(blob.type).toBe("text/csv");
+    // The charset is stated on the type as well as written as a BOM in the bytes.
+    expect(blob.type).toBe("text/csv;charset=utf-8");
   });
 
   // The blob URL outlives the task that started the download: revoking it in the

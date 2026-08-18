@@ -9,6 +9,10 @@ import type { CellChange } from "@/components/ResultsGrid";
 import { ResultsGrid } from "@/components/ResultsGrid";
 import { QueryHistory } from "@/components/QueryHistory";
 import { SavedQueries } from "@/components/SavedQueries";
+import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
+import { lazyRetry } from "@/lib/lazy";
+import { describeExportScope } from "@/lib/export/scope";
+import type { ResultExportFormat } from "@/lib/export/result-export";
 
 import { resolveExplainPlan } from "@/lib/explain";
 import { cn } from "@/lib/utils";
@@ -22,7 +26,6 @@ import {
   GitCompare,
   LayoutDashboard,
   LayoutGrid,
-  LoaderCircle,
   Terminal,
   X,
   Zap,
@@ -31,6 +34,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
@@ -63,32 +67,27 @@ export type BottomPanelMode =
 
   Not split: `ResultsGrid` is the default view and would only trade a chunk for a
   flash, and `QueryHistory`/`SavedQueries` are small and pull in nothing heavy.
-*/
-const PivotTable = React.lazy(() => import("@/components/PivotTable").then((m) => ({ default: m.PivotTable })));
-const DatabaseDocs = React.lazy(() => import("@/components/DatabaseDocs").then((m) => ({ default: m.DatabaseDocs })));
-const VisualExplain = React.lazy(() =>
-  import("@/components/VisualExplain").then((m) => ({ default: m.VisualExplain })),
-);
-const DataCharts = React.lazy(() => import("@/components/DataCharts").then((m) => ({ default: m.DataCharts })));
-const SchemaDiff = React.lazy(() => import("@/components/SchemaDiff").then((m) => ({ default: m.SchemaDiff })));
 
-/**
- * What the panel shows while a split view's chunk is on the wire.
- *
- * `LoaderCircle`, not `Loader2`: on lucide-react 1.x the latter is a legacy-rename
- * alias that ships no `@deprecated` tag, so nothing warns while it is alive and the
- * first signal is a build breaking on the release that drops it (docs/BACKLOG.md P6).
- * The 21 sites that entry counts are its to migrate; this one starts canonical.
- */
-function PanelLoading() {
-  return (
-    // `output` rather than a div with role="status": it carries the live region
-    // natively, which is what jsx-a11y's prefer-tag-over-role asks for.
-    <output className="h-full flex items-center justify-center bg-sunken" aria-label="Loading the panel">
-      <LoaderCircle strokeWidth={1.5} className="w-5 h-5 animate-spin text-fg-muted" />
-    </output>
-  );
-}
+  Each loader is wrapped in `lazyRetry`, and the whole switch sits in a
+  `ChunkBoundary`: a view that is no longer in the first load is a request that can
+  fail, and this product runs where those fail — behind proxies, air-gapped, and
+  across an upgrade that renames every chunk under an open tab.
+*/
+const PivotTable = React.lazy(
+  lazyRetry(() => import("@/components/PivotTable").then((m) => ({ default: m.PivotTable }))),
+);
+const DatabaseDocs = React.lazy(
+  lazyRetry(() => import("@/components/DatabaseDocs").then((m) => ({ default: m.DatabaseDocs }))),
+);
+const VisualExplain = React.lazy(
+  lazyRetry(() => import("@/components/VisualExplain").then((m) => ({ default: m.VisualExplain }))),
+);
+const DataCharts = React.lazy(
+  lazyRetry(() => import("@/components/DataCharts").then((m) => ({ default: m.DataCharts }))),
+);
+const SchemaDiff = React.lazy(
+  lazyRetry(() => import("@/components/SchemaDiff").then((m) => ({ default: m.SchemaDiff }))),
+);
 
 // The saved-chart dashboard. Its data is read on mount, not its module — the module
 // is split at the import above, along with the `DataCharts` this renders.
@@ -165,7 +164,9 @@ interface BottomPanelProps {
   onLoadQuery: (query: string) => void;
   onLoadMore: (() => void) | undefined;
   isLoadingMore: boolean | undefined;
-  onExportResults: (format: "csv" | "json" | "sql-insert" | "sql-ddl") => void;
+  // The writer's own type, so a format added there cannot silently fail to reach this
+  // menu — the drift between two spellings of one list is what this PR is about.
+  onExportResults: (format: ResultExportFormat) => void;
   /**
    * A result an agent run stored, shown in the surface that already renders that
    * kind of result (#329 T11). Optional so every other caller — the embedded shell
@@ -236,6 +237,9 @@ export function BottomPanel({
       (mode === "explain" && hydratedPlan !== null) ||
       (mode === "charts" && hydratedChart !== null));
   const displayedResult = hydratedResult ?? currentTab.result;
+  // How much of the result an export would write — the count the button carries and
+  // the shortfall the menu states. Derived here so both read the same numbers.
+  const exportScope = describeExportScope(displayedResult ?? { rows: [] });
 
   const tabs: { key: BottomPanelMode; label: string; icon: React.ReactNode; activeClass: string }[] = [
     {
@@ -328,10 +332,26 @@ export function BottomPanel({
                     size="sm"
                     className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-2"
                   >
+                    {/*
+                      The count belongs ON the button because it is what the button
+                      does: an export writes the rows the grid HOLDS, which is one
+                      page, and a file of 500 rows off a table of two million looks
+                      exactly like a complete answer once it has left the product.
+                    */}
                     <Download strokeWidth={1.5} className="w-3 h-3" /> Export
+                    <span data-testid="export-row-count" className="font-mono text-fg-subtle">
+                      {exportScope.countLabel}
+                    </span>
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="bg-raised border-hairline-strong text-fg-secondary">
+                  <div data-testid="export-scope" className="px-2 py-1.5 text-xs text-fg-muted max-w-[15rem]">
+                    {exportScope.summary}
+                    {exportScope.shortfall !== null && (
+                      <span className="block mt-1 text-amber-400/80">{exportScope.shortfall}</span>
+                    )}
+                  </div>
+                  <DropdownMenuSeparator className="bg-hairline" />
                   <DropdownMenuItem onClick={() => onExportResults("csv")} className="text-xs cursor-pointer">
                     Export as CSV
                   </DropdownMenuItem>
@@ -380,85 +400,88 @@ export function BottomPanel({
       )}
 
       <div className="flex-1 overflow-hidden relative">
-        {/* One boundary for the whole switch: only one view is ever mounted, and the
-            fallback is what the user sees for the moment a split chunk is in flight. */}
-        <React.Suspense fallback={<PanelLoading />}>
-          {mode === "pivot" ? (
-            <PivotTable
-              result={currentTab.result}
-              onLoadQuery={(q) => {
-                onLoadQuery(q);
-                onSetMode("results");
-              }}
-              databaseType={activeConnection?.type}
-            />
-          ) : mode === "docs" ? (
-            <DatabaseDocs schema={schema} schemaContext={schemaContext} databaseType={activeConnection?.type} />
-          ) : mode === "history" ? (
-            <QueryHistory
-              refreshTrigger={historyKey}
-              activeConnectionId={activeConnection?.id}
-              onSelectQuery={(q) => {
-                onLoadQuery(q);
-                onSetMode("results");
-              }}
-            />
-          ) : mode === "saved" ? (
-            <SavedQueries
-              refreshTrigger={savedKey}
-              connectionType={activeConnection?.type}
-              onSelectQuery={(q) => {
-                onLoadQuery(q);
-                onSetMode("results");
-              }}
-            />
-          ) : mode === "charts" ? (
-            <DataCharts result={hydratedChart ?? currentTab.result} spec={hydratedChartSpec} />
-          ) : mode === "schemadiff" ? (
-            <SchemaDiff schema={schema} connection={activeConnection} />
-          ) : mode === "dashboard" ? (
-            <ChartDashboard result={currentTab.result} />
-          ) : mode === "explain" ? (
-            <VisualExplain
-              plan={hydratedPlan ?? explainInput}
-              /*
+        {/* One pair of boundaries for the whole switch: only one view is ever mounted,
+            so the fallback is what the user sees while a split chunk is in flight and
+            the error boundary is what they see when it never arrives. */}
+        <ChunkBoundary label="This view">
+          <React.Suspense fallback={<ViewLoading label="Loading the panel" />}>
+            {mode === "pivot" ? (
+              <PivotTable
+                result={currentTab.result}
+                onLoadQuery={(q) => {
+                  onLoadQuery(q);
+                  onSetMode("results");
+                }}
+                databaseType={activeConnection?.type}
+              />
+            ) : mode === "docs" ? (
+              <DatabaseDocs schema={schema} schemaContext={schemaContext} databaseType={activeConnection?.type} />
+            ) : mode === "history" ? (
+              <QueryHistory
+                refreshTrigger={historyKey}
+                activeConnectionId={activeConnection?.id}
+                onSelectQuery={(q) => {
+                  onLoadQuery(q);
+                  onSetMode("results");
+                }}
+              />
+            ) : mode === "saved" ? (
+              <SavedQueries
+                refreshTrigger={savedKey}
+                connectionType={activeConnection?.type}
+                onSelectQuery={(q) => {
+                  onLoadQuery(q);
+                  onSetMode("results");
+                }}
+              />
+            ) : mode === "charts" ? (
+              <DataCharts result={hydratedChart ?? currentTab.result} spec={hydratedChartSpec} />
+            ) : mode === "schemadiff" ? (
+              <SchemaDiff schema={schema} connection={activeConnection} />
+            ) : mode === "dashboard" ? (
+              <ChartDashboard result={currentTab.result} />
+            ) : mode === "explain" ? (
+              <VisualExplain
+                plan={hydratedPlan ?? explainInput}
+                /*
               A run's plan travels without the editor's statement. The AI analysis in
               this view posts the query and the plan together, so pairing a hydrated
               plan with whatever happens to be in the editor would ask for an
               explanation of a statement that never produced it; with no query the view
               says so itself instead.
             */
-              query={hydratedPlan === null ? currentTab.query : undefined}
-              schemaContext={schemaContext}
-              databaseType={activeConnection?.type}
-              onLoadQuery={(q) => {
-                onLoadQuery(q);
-                onSetMode("results");
-              }}
-            />
-          ) : displayedResult ? (
-            <ResultsGrid
-              result={displayedResult}
-              onLoadMore={hydratedHere ? undefined : onLoadMore}
-              isLoadingMore={isLoadingMore}
-              maskingEnabled={maskingEnabled}
-              onToggleMasking={onToggleMasking}
-              userRole={userRole}
-              maskingConfig={maskingConfig}
-              editingEnabled={hydratedHere ? false : editingEnabled}
-              pendingChanges={pendingChanges}
-              onCellChange={onCellChange}
-              onApplyChanges={onApplyChanges}
-              onDiscardChanges={onDiscardChanges}
-            />
-          ) : (
-            <div className="h-full flex flex-col items-center justify-center opacity-20 bg-surface">
-              <Terminal strokeWidth={1.5} className="w-12 h-12 mb-4" />
-              <p className="text-xs font-medium">Execute a query or check history</p>
-              <p className="text-xs mt-2">Ready to query</p>
-            </div>
-          )}
-        </React.Suspense>
+                query={hydratedPlan === null ? currentTab.query : undefined}
+                schemaContext={schemaContext}
+                databaseType={activeConnection?.type}
+                onLoadQuery={(q) => {
+                  onLoadQuery(q);
+                  onSetMode("results");
+                }}
+              />
+            ) : displayedResult ? (
+              <ResultsGrid
+                result={displayedResult}
+                onLoadMore={hydratedHere ? undefined : onLoadMore}
+                isLoadingMore={isLoadingMore}
+                maskingEnabled={maskingEnabled}
+                onToggleMasking={onToggleMasking}
+                userRole={userRole}
+                maskingConfig={maskingConfig}
+                editingEnabled={hydratedHere ? false : editingEnabled}
+                pendingChanges={pendingChanges}
+                onCellChange={onCellChange}
+                onApplyChanges={onApplyChanges}
+                onDiscardChanges={onDiscardChanges}
+              />
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center opacity-20 bg-surface">
+                <Terminal strokeWidth={1.5} className="w-12 h-12 mb-4" />
+                <p className="text-xs font-medium">Execute a query or check history</p>
+                <p className="text-xs mt-2">Ready to query</p>
+              </div>
+            )}
+          </React.Suspense>
+        </ChunkBoundary>
       </div>
     </div>
   );

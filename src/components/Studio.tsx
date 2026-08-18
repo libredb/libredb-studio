@@ -23,6 +23,8 @@ import {
 } from "@/components/studio/index";
 import { AgentRail } from "@/components/agent/AgentRail";
 import { DatabaseConnection, SavedQuery } from "@/lib/types";
+import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
+import { lazyRetry } from "@/lib/lazy";
 import { buildResultExport, type ResultExportFormat } from "@/lib/export/result-export";
 import { downloadText } from "@/lib/export/download";
 import { newLocalId } from "@/lib/ids";
@@ -73,8 +75,8 @@ import {
   true, which for most sessions is never. `React.lazy`, not `next/dynamic`, to keep the
   same seam the bottom panel uses; the diagram is reached from the embeddable shell too.
 */
-const SchemaDiagram = React.lazy(() =>
-  import("@/components/SchemaDiagram").then((m) => ({ default: m.SchemaDiagram })),
+const SchemaDiagram = React.lazy(
+  lazyRetry(() => import("@/components/SchemaDiagram").then((m) => ({ default: m.SchemaDiagram }))),
 );
 
 export default function Studio() {
@@ -342,6 +344,9 @@ export default function Studio() {
       fields,
       tabName: tabMgr.currentTab.name,
       dialect: conn.activeConnection?.type,
+      // The types the engine declared for THIS result, which is what the DDL form
+      // writes when they are there — the only source for a computed column.
+      columnTypes: tabMgr.currentTab.result.columnTypes,
     });
     downloadText(file.content, file.mimeType, `query_result_export.${file.extension}`);
   };
@@ -465,9 +470,19 @@ export default function Studio() {
             <main className="flex-1 overflow-hidden relative">
               <AnimatePresence>
                 {showDiagram && (
-                  <React.Suspense fallback={null}>
-                    <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />
-                  </React.Suspense>
+                  /*
+                    A visible fallback, not `null`: this is the heaviest chunk in the
+                    tree (`@xyflow/react` + elk + snapdom), so the wait is the one the
+                    user is most likely to see — and a click that shows nothing at all
+                    reads as a broken button, which is answered by clicking it again.
+                  */
+                  <ChunkBoundary label="The diagram">
+                    <React.Suspense
+                      fallback={<ViewLoading label="Loading the diagram" className="absolute inset-0 z-20" />}
+                    >
+                      <SchemaDiagram schema={conn.schema} onClose={() => setShowDiagram(false)} />
+                    </React.Suspense>
+                  </ChunkBoundary>
                 )}
               </AnimatePresence>
 
