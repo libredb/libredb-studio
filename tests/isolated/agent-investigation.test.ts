@@ -1047,11 +1047,7 @@ describe("planning mode runs no statement of the user's", () => {
   test("a tool the run was never offered is refused without reaching the database", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "planning");
-    const script = scriptedModel(
-      callsTool("run_read_query", { sql: "SELECT 1" }),
-      answersProse("understood"),
-      answersProse("understood"),
-    );
+    const script = scriptedModel(callsTool("run_read_query", { sql: "SELECT 1" }), answersProse("understood"));
 
     const result = await runInvestigation(run.runId, {
       service: b.service,
@@ -2461,8 +2457,6 @@ describe("planning mode runs no statement of the user's", () => {
     const script = scriptedModel(
       callsTool("present_answer", { artifact: "corr_1", presentation: { kind: "table" } }),
       answersProse("understood"),
-      // Reminded once after a reading, the model narrates again rather than reporting.
-      answersProse("understood"),
     );
 
     const result = await runInvestigation(run.runId, {
@@ -3048,6 +3042,121 @@ describe("a run reserves its last turns for its report", () => {
     // The same sentence the run opened with: the rules the model was given carry it,
     // so the notice repeats the bar rather than restating it in other words.
     expect(JSON.stringify(script.turns[0]?.body)).toContain(AGENT_CITATION_RULE);
+  });
+});
+
+describe("a run that used its tools and then narrated is reminded once", () => {
+  /*
+    The `no-report` shortfall, measured on three models: each called this run's tools,
+    established something, and then wrote its findings as prose. A prose turn ends the
+    run, so the readings were thrown away and the verdict read `no-report`.
+
+    What the reminder may NOT do is as load-bearing as what it does. It names
+    `compose_report`, so it may only reach a run that holds that tool; and it costs a
+    turn, so it may only be sent where a turn remains.
+  */
+  const invents = (): Response => chatToolCallStream("no_such_tool", JSON.stringify({}), "call_invented");
+
+  test("a planning run that reaches for a tool is never told to call one", async () => {
+    // Planning mode holds NO tools at all, so a reminder naming `compose_report` would
+    // be a rule this run's tool set cannot satisfy (#350/#356). The refusal a run gets
+    // for reaching outside its set is not evidence that it used one.
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(callsTool("run_read_query", { sql: "SELECT 1" }), answersProse("understood"));
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const sent = script.turns.flatMap((turn) => JSON.stringify(turn.body.messages ?? []));
+    expect(sent.some((messages) => messages.includes("compose_report"))).toBe(false);
+    expect(result.stopReason).toBe("model-stopped");
+  });
+
+  test("a name the model invented is not a tool this run used", async () => {
+    // The sentence says this run CALLED its tools. A name that matched nothing reached
+    // nothing, so a run reminded on one would be told something untrue about itself and
+    // then told to cite artifacts it has not got.
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(invents, answersProse("I could not do that."));
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(script.turns[1]?.transcript).toContain("There is no tool called");
+    const sent = script.turns.flatMap((turn) => JSON.stringify(turn.body.messages ?? []));
+    expect(sent.some((messages) => messages.includes("written your findings as prose"))).toBe(false);
+    expect(result.stopReason).toBe("model-stopped");
+  });
+
+  test("a run that narrates on its last allowed turn keeps its own ending", async () => {
+    // The ceiling is exactly where this happens: `AGENT_REPORT_RESERVE_NOTICE` has
+    // already told the model to wrap up two turns earlier, and a small model wraps up
+    // in prose. A reminder sent into a turn the loop will not grant does not rescue the
+    // run — it rewrites a model that stopped as a run that ran out of turns.
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT id FROM orders", rationale: "read it" }),
+      answersProse("Orders were read."),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+      maxTurns: 2,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.stopReason).toBe("model-stopped");
+  });
+
+  test("a run with a turn left is reminded, and reports on it", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT id FROM orders", rationale: "read it" }),
+      answersProse("Orders were read."),
+      reportOn("Orders were read."),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(result.stopReason).toBe("report-composed");
+    const sent = script.turns.flatMap((turn) => JSON.stringify(turn.body.messages ?? []));
+    expect(sent.some((messages) => messages.includes("written your findings as prose"))).toBe(true);
+    expect((await eventsOf(b.store, run.runId)).map((event) => event.kind)).toContain("report-composed");
+  });
+
+  test("the reminder is sent once, so a model that narrates again still stops", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT id FROM orders", rationale: "read it" }),
+      answersProse("Orders were read."),
+      answersProse("Orders were read."),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(result.stopReason).toBe("model-stopped");
+    expect(result.turns).toBe(3);
   });
 });
 

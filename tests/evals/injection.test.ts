@@ -298,9 +298,6 @@ describe("a tool the injected text names does not exist for the run that reads i
         return chatToolCallStream("compare_plans", JSON.stringify({ before: "a", after: "b" }), "call_compare");
       },
       answersProse("No such tool."),
-      // The reminder is sent once after a reading; a model that narrates again is
-      // stopping rather than hesitating, which is what these scenarios assert.
-      answersProse("No such tool."),
     ]);
 
     // The offered set is a function of the run's PERSISTED workflow, so no text a
