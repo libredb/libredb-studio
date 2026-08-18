@@ -5,6 +5,8 @@ import {
   answersProse,
   callsTool,
   correlationIdsIn,
+  promptText,
+  reportCitingWhatWasOffered,
   reportOn,
 } from "../isolated/fixtures/agent-scripted-model";
 import { chatToolCallStream } from "../isolated/fixtures/agent-transport";
@@ -222,8 +224,22 @@ describe("THE GATE: the verifier fails the run when the template's own artifact 
     test(`${engine}: a competent, fully cited report that proposes nothing does not answer`, async () => {
       const run = await open(engine);
 
+      /*
+        Two report turns, because the run is now NUDGED once before this gate closes: a
+        run holding one plan and reaching for the report is asked for the second plan
+        instead (`secondPlanBeforeReportNotice`). The script's second report is the model
+        ignoring that nudge.
+
+        Which is the point of asserting it here rather than only in the nudge's own
+        block. The guarantee the nudge must not break is that it is offered ONCE and then
+        stays out of the way: a model that will not take it still reports, and the gate
+        still fails the run for what it did not establish. A nudge that could swallow a
+        report would be trading this verdict for `no-report`, which is the worse one —
+        the same trade a reverted `present_answer` narrowing made earlier.
+      */
       const drive = await run.drive([
         callsTool("inspect_plan", { sql: SLOW }, "call_plan_before"),
+        reportOn("The listing reads the whole table."),
         reportOn("The listing reads the whole table."),
       ]);
 
@@ -236,6 +252,133 @@ describe("THE GATE: the verifier fails the run when the template's own artifact 
       });
     });
   }
+
+  /*
+    And the bar that gate enforces is STATED, which is the #350/#356 rule the
+    `operations` rules already follow and this workflow did not.
+
+    The rules describe both instruments — inspect two plans and call `compare_plans`,
+    or recommend an index citing the plan it would change — but describing how a tool
+    works is not the same as saying the report is judged on having used one. Measured
+    across 25 local models, 6 failed on `no-plan-comparison`, and their ledgers have
+    the shape the gate above scripts, character for character: `inspect_schema`,
+    `run_read_query`, ONE `inspect_plan`, report. `nemotron-3.5-lightning:30b` and
+    `qwen3.5:9b` produced identical arcs. They diagnosed the statement correctly and
+    stopped, never calling `recommend_change` at all — which is a reasonable place to
+    stop if nothing has said otherwise.
+  */
+  test("a run is told that one plan is not enough, and what would be", async () => {
+    const prompts: string[] = [];
+    const run = await open("sqlite");
+
+    await run.drive([
+      (turn: Turn) => {
+        prompts.push(promptText(turn));
+        return answersProse("nothing to do")(turn);
+      },
+    ]);
+
+    expect(prompts[0]).toContain("One plan on its own answers nothing");
+  });
+});
+
+describe("a run holding two plans and reporting without comparing them is asked once", () => {
+  /*
+    The measured other half of `no-plan-comparison`, and the reason a stated bar was not
+    enough on its own.
+
+    Told that one plan answers nothing, models stopped taking one plan and started taking
+    several: `qwen3.5:4b` and `qwen3.5:2b` went to FIVE, `nemotron-3.5-lightning:30b` to
+    three. Not one of them then called `compare_plans`. They hold both artifact ids and
+    report anyway — so this asks, at the only moment it can still be acted on, and names
+    the ids rather than describing where to find them.
+
+    The three conditions mirror `AGENT_PRESENT_BEFORE_REPORT_NOTICE` exactly, and for the
+    #350 reason: the workflow must be the one whose verdict wants a comparison, the run
+    must HOLD two plans for there to be anything to compare, and a run whose comparison is
+    already recorded is not hesitating. A run holding one plan is never told to compare,
+    because it cannot.
+  */
+  test("the report is held back, the two plan ids are named, and the run may still finish", async () => {
+    const run = await open("sqlite");
+
+    const drive = await run.drive([
+      callsTool("inspect_plan", { sql: SLOW }, "call_plan_before"),
+      callsTool("inspect_plan", { sql: FAST }, "call_plan_after"),
+      reportOn("The listing reads the whole table."),
+      comparesPlans(),
+      reportOn("The rewrite reaches the same rows by index."),
+    ]);
+
+    // The notice carries BOTH ids, because the measured failure is a model that has them.
+    const ids = correlationIdsIn(drive.transcripts[3] ?? "");
+    expect(ids.length).toBeGreaterThanOrEqual(2);
+    expect(drive.transcripts[3]).toContain("no comparison is recorded");
+    // And the run went on to compare and report, so the notice cost it nothing.
+    expect(drive.kinds).toContain("plan-comparison");
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
+  });
+
+  test("a run holding ONE plan is asked for the second one, never for a comparison", async () => {
+    /*
+      The arm the measurement added, and the distinction it turns on.
+
+      With one plan a comparison is impossible, so asking for one would be the mistake
+      this file already records elsewhere: told to do something it cannot, a run neither
+      does it nor reports. What it CAN do is take the second plan — or recommend an index
+      on the plan it has, which its verdict accepts as the other route — so it is asked
+      for those.
+
+      Measured on the clean sweep: `granite4.1:30b` inspected one plan and reported, and
+      `granite4.1:3b` did the same after a refused read. Both had moved UP from
+      `no-report` to a real report, and both stopped one call short. The stated bar had
+      already moved other models to three and five plans (`nemotron-3.5-lightning:30b`,
+      `qwen3.5:4b`, `qwen3.5:2b`), so what was missing here was the nudge and not the
+      rule.
+    */
+    const run = await open("sqlite");
+
+    const drive = await run.drive([
+      callsTool("inspect_plan", { sql: SLOW }, "call_plan_before"),
+      reportOn("The listing reads the whole table."),
+      callsTool("inspect_plan", { sql: FAST }, "call_plan_after"),
+      comparesPlans(),
+      reportOn("The rewrite reaches the same rows by index."),
+    ]);
+
+    // The notice lands in the prompt of the turn AFTER the held-back report, which is
+    // the point of delivering it instead of running the call.
+    expect(drive.transcripts[2]).toContain("only ONE plan");
+    // Asked for the second plan, NOT for a comparison it cannot make.
+    expect(drive.transcripts[2]).toContain("inspect_plan");
+    expect(drive.transcripts[2]).not.toContain("Call compare_plans with before=");
+    // And the run finished the arc the nudge pointed at.
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
+  });
+
+  test("a run holding NO plan is not asked at all, because the nudge would be a lecture", async () => {
+    const run = await open("sqlite");
+
+    // Citing the inventory, because a run that read nothing has nothing else to cite.
+    const drive = await run.drive([reportCitingWhatWasOffered("It is slow because the table is large.")]);
+
+    expect(drive.stopReason).toBe("report-composed");
+    expect(drive.verdict.unmet).toEqual(["no-plan-comparison"]);
+  });
+
+  test("a run that already compared is not asked again", async () => {
+    const run = await open("sqlite");
+
+    const drive = await run.drive([
+      callsTool("inspect_plan", { sql: SLOW }, "call_plan_before"),
+      callsTool("inspect_plan", { sql: FAST }, "call_plan_after"),
+      comparesPlans(),
+      reportOn("The rewrite reaches the same rows by index."),
+    ]);
+
+    expect(drive.stopReason).toBe("report-composed");
+    expect(drive.verdict.outcome).toBe("answered");
+  });
 });
 
 describe("the tools belong to the workflow, not to the model", () => {

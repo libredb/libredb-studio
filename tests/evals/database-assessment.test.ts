@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
-import { type Turn, answersProse, callsTool, reportOn } from "../isolated/fixtures/agent-scripted-model";
+import {
+  type Turn,
+  answersProse,
+  callsTool,
+  promptText,
+  reportCitingWhatWasOffered,
+  reportOn,
+} from "../isolated/fixtures/agent-scripted-model";
 import { chatToolCallStream } from "../isolated/fixtures/agent-transport";
 import { ConnectionError, QueryError } from "@/lib/db/errors";
 
@@ -111,6 +118,60 @@ describe("the assessment arc, on both reference engines", () => {
       for (const finding of profiled.profile.findings) expect(finding.detail).not.toContain("@");
     });
   }
+});
+
+describe("the bar this workflow is judged against is stated to the model", () => {
+  /*
+    The #350/#356 rule, applied to the one workflow that was still missing it.
+
+    `verifyDatabaseAssessmentGoal` requires a `table-profiled` event: a report resting
+    on the schema inventory alone is `no-table-profile` however good its prose. The
+    rules said "profile the tables that matter", which reads as advice about WHERE to
+    look rather than as the condition the report is judged by — and the `operations`
+    rules already show what stating a bar looks like ("your report must cite at least
+    one reading you took"), with a comment saying why: a rule the model is never told
+    is a rule live runs fail.
+
+    Measured across 25 local models on this workflow: 18 failed it, and five of those
+    composed a report having called NO tool at all. They were not refusing to profile;
+    nothing had told them a profile was required.
+
+    The rule names the TOOL for a measured reason, which is why this asserts the tool
+    name and not a paraphrase. Told "profile at least one table", `qwen3.5:4b` composed
+    eighteen count statements by hand with `run_read_query` and three other models went
+    to `inspect_schema`: every one of them had done what the sentence asked and none
+    produced the `table-profiled` event the verifier reads.
+  */
+  test("a run is told which tool it must call before it reports", async () => {
+    const prompts: string[] = [];
+    const run = await open("sqlite");
+
+    await run.drive([
+      (turn) => {
+        prompts.push(promptText(turn));
+        return answersProse("nothing to do")(turn);
+      },
+    ]);
+
+    expect(prompts[0]).toContain("call profile_table on at least one table before you report");
+  });
+
+  test("and a run that reports without one is judged exactly that way", async () => {
+    // The other half, so the rule above is stated because it is enforced rather than
+    // as decoration. Both directions are asserted for the reason the operations
+    // verifier test gives: an arm that only ever fires would fail every accurate run.
+    const run = await open("sqlite");
+
+    // Citing the inventory the server captured, which is the shape a live run took:
+    // a report about the data resting on the list of table names alone.
+    const drive = await run.drive([reportCitingWhatWasOffered("The data looks incomplete in places.")]);
+
+    expect(drive.verdict).toEqual({
+      outcome: "unanswered",
+      verifier: "agent-database-assessment.1",
+      unmet: ["no-table-profile"],
+    });
+  });
 });
 
 describe("a profile's artifact is an artifact like any other", () => {
