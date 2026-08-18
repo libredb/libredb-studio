@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
-import { promptedToolContract, readPromptedAction } from "@/lib/agent/prompted-tools";
+import { promptedToolContract, readPromptedAction, readPromptedPayload } from "@/lib/agent/prompted-tools";
 import type { AgentToolDefinition } from "@/lib/agent/tools";
 
 /**
@@ -116,5 +116,90 @@ describe("reading an action back out of a model's prose", () => {
 
   test("missing arguments read as an empty object, so a no-argument tool still dispatches", () => {
     expect(readPromptedAction('{"action": "compose_report"}')).toEqual({ name: "compose_report", input: {} });
+  });
+});
+
+describe("a tool call the model wrote as its payload rather than as a call", () => {
+  /*
+    The largest measured loss, and the shape it actually has.
+
+    `no-report` was 37 of 66 failing cells across 25 local models on six surfaces. Reading
+    the ledgers of 36 of those runs, SEVEN had written a complete `compose_report` payload
+    into their prose — a fenced JSON object with a `claims` array — instead of calling the
+    tool. Seven different families: `deepseek-r1:14b`, `deepseek-r1:32b`, `granite4.1:30b`,
+    `lfm2:24b`, `nemotron3:33b`, `qwen3:0.6b`, `qwen3:1.7b`. `granite4.1:3b` did it too and
+    appended "(The compose_report tool was successfully used with the required structure,
+    producing the above report.)" — it believed it had called the tool.
+
+    `readPromptedAction` cannot help: it looks for an `{"action", "arguments"}` envelope and
+    these models wrote the bare ARGUMENTS. So the payload is matched against the schemas of
+    the tools the run actually holds, which is the only way to know which tool a bare object
+    belongs to without guessing.
+
+    Two refusals matter more than the recovery:
+
+      - AMBIGUITY is not resolved. If a payload satisfies two held tools, nothing is
+        recovered, because picking one would be the reader inventing an intent.
+      - Recovery grants no authority. The action goes back through the same schema and the
+        same audited pipeline as a native call, so a recovered report citing an id the run
+        never produced is refused by the citation contract exactly as it would be.
+  */
+  const report = definition(
+    "compose_report",
+    "Compose the report",
+    z.strictObject({
+      claims: z
+        .array(z.strictObject({ claim: z.string().min(1), evidence: z.array(z.object({ source: z.string() })).min(1) }))
+        .min(1),
+    }),
+  );
+  const profile = definition("profile_table", "Profile a table", z.strictObject({ table: z.string().min(1) }));
+
+  test("a fenced payload is recovered as a call to the tool whose schema it fits", () => {
+    const prose = [
+      "**Report**",
+      "```json",
+      '{ "claims": [ { "claim": "The engineering table is sparsely populated.",',
+      '  "evidence": [ { "source": "artifact", "correlationId": "1aac8a1c" } ] } ] }',
+      "```",
+      "(The compose_report tool was successfully used with the required structure.)",
+    ].join("\n");
+
+    const action = readPromptedPayload(prose, [report, profile]);
+
+    expect(action?.name).toBe("compose_report");
+    expect(action?.input).toMatchObject({ claims: [{ claim: "The engineering table is sparsely populated." }] });
+  });
+
+  test("prose with no object in it recovers nothing", () => {
+    expect(readPromptedPayload("I have finished looking at the tables.", [report, profile])).toBeNull();
+  });
+
+  test("an object that fits no held tool recovers nothing", () => {
+    expect(readPromptedPayload('{"thoughts": "I should probably report now"}', [report, profile])).toBeNull();
+  });
+
+  test("an object that fits TWO held tools recovers nothing, because the intent is unknown", () => {
+    // Two tools taking the same shape is the case a reader must not guess at.
+    const first = definition("first_tool", "one", z.strictObject({ table: z.string() }));
+    const second = definition("second_tool", "two", z.strictObject({ table: z.string() }));
+
+    expect(readPromptedPayload('{"table": "engineering"}', [first, second])).toBeNull();
+  });
+
+  test("the LAST fitting object wins, because a reasoning model rehearses before it commits", () => {
+    // The same reason `readPromptedAction` reads backwards: a thinking model writes
+    // candidate payloads inside its reasoning and the one it means is the final one.
+    const prose = [
+      '{"table": "draft_one"}',
+      "on reflection the interesting one is the other table",
+      '{"table": "engineering"}',
+    ].join("\n");
+
+    expect(readPromptedPayload(prose, [profile])?.input).toEqual({ table: "engineering" });
+  });
+
+  test("a run holding no tools recovers nothing", () => {
+    expect(readPromptedPayload('{"table": "engineering"}', [])).toBeNull();
   });
 });

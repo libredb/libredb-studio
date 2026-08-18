@@ -58,7 +58,12 @@ import {
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
 import { type AgentGoalShortfall, verifyRunGoal } from "./goal-verifier";
 import { type AgentInventoryNoun, inventoryNoun } from "./inventory-noun";
-import { PROMPTED_PROTOCOL_REMINDER, promptedToolContract, readPromptedAction } from "./prompted-tools";
+import {
+  PROMPTED_PROTOCOL_REMINDER,
+  promptedToolContract,
+  readPromptedAction,
+  readPromptedPayload,
+} from "./prompted-tools";
 import { PLAN_NO_STATEMENT_MARKER, readPlanStatement } from "./plan-draft";
 import { validatePlanStatement } from "./plan-statement";
 import { packSchemaStatistics, readSchemaStatistics } from "./schema-stats";
@@ -2611,10 +2616,30 @@ export async function runInvestigation(
       may answer without acting sometimes does.
     */
     const promptedAction = prompted && turn.toolCalls.length === 0 ? readPromptedAction(turn.text) : null;
+    /*
+      A payload the model wrote instead of calling with it, recovered by schema.
+
+      The largest measured loss: of 36 `no-report` ledgers, SEVEN had written a complete
+      `compose_report` payload into their prose and one said outright that it had "used the
+      compose_report tool". Their work was done; only the channel was wrong. Read on BOTH
+      protocols, because those seven were native tool callers — they emit `tool_calls` for
+      other tools and then hand-write this one.
+
+      Last, after the prompted envelope, so nothing changes for a model that is speaking the
+      protocol it was given. It recovers a name and an unvalidated input and grants no
+      authority: what comes back goes through the same schema and the same audited pipeline
+      as a native call, so a recovered report citing an id this run never produced is refused
+      by the citation contract exactly as it would be.
+    */
+    const writtenPayload =
+      promptedAction === null && turn.toolCalls.length === 0
+        ? readPromptedPayload(turn.text, selectAgentTools(record))
+        : null;
+    const recovered = promptedAction ?? writtenPayload;
     const calls =
-      promptedAction === null
+      recovered === null
         ? turn.toolCalls
-        : [{ toolCallId: `prompted_${turns}`, toolName: promptedAction.name, input: promptedAction.input }];
+        : [{ toolCallId: `prompted_${turns}`, toolName: recovered.name, input: recovered.input }];
 
     if (calls.length === 0) {
       // A run that used its tools and then narrated is one call short of a report;
