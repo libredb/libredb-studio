@@ -2014,13 +2014,22 @@ export async function runInvestigation(
 
   let turns = 0;
   let text = "";
-  /** The reserve notice is a one-shot: a run is told once that it is out of room. */
+  /*
+    The three notice flags below are one-shots per DRIVE, not per run, and the
+    distinction is worth stating where they are declared: this function is also what
+    RESUMES a run a dead process left running (`service.resume`, at its head), so a
+    resumed drive starts with all three false and can say again what the previous drive
+    already said. Nothing durable bounds them, because a delivery writes no ledger entry
+    — `docs/BACKLOG.md` B51 records both halves as one item, since recording delivery is
+    what would make "once" mean once.
+  */
+  /** The reserve notice is a one-shot: a drive tells the run once that it is out of room. */
   let reserveAnnounced = false;
   /** Whether a tool this run HOLDS has been called; see `remindToReport`. */
   let anyToolCalled = false;
-  /** The report reminder is a one-shot too; see `AGENT_REPORT_REMINDER_NOTICE`. */
+  /** The report reminder is a one-shot per drive too; see `AGENT_REPORT_REMINDER_NOTICE`. */
   let reportReminded = false;
-  /** The present-before-report notice is a one-shot; see `AGENT_PRESENT_BEFORE_REPORT_NOTICE`. */
+  /** The present-before-report notice, once per drive; see `AGENT_PRESENT_BEFORE_REPORT_NOTICE`. */
   let presentReminded = false;
   /**
    * Whether `present_answer` has been CALLED, which is not the same as answered: a

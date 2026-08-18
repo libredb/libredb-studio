@@ -8,7 +8,7 @@ how many times, and where the results stop being safe to generalise from.
 | | |
 | --- | --- |
 | Measured | 16–17 August 2026 |
-| Application | LibreDB Studio at `907e83c` for the baseline, `b64941e` for the rescued rows |
+| Application | LibreDB Studio at three revisions — see "Which revision a row is from" below |
 | Runtime | Ollama, OpenAI-compatible endpoint (`http://localhost:11434/v1`) |
 | Database | the embedded SQLite sample (`seed:sqlite-embedded-sample`) |
 | Evidence | every run's ledger, in `.workflow-data` |
@@ -16,15 +16,26 @@ how many times, and where the results stop being safe to generalise from.
 Model behaviour changes when a family publishes a new build under the same tag, so
 these results describe the tags as they were on those dates.
 
-Two commits are named because two runtime changes were made while measuring, and every
-page says which side of them a row sits on. A figure marked *(fixed)*, and every "after"
-column, was taken with the report reminder (#416) and the present-before-report notice
-(#417) in place; everything else is the baseline. Both notices were narrowed in review
-before they landed — the reminder to a tool the run holds and a turn the loop will grant,
-the notice to a read the answer tool would accept — and the runs recorded here sit inside
-the narrower triggers: each was an agent run that drafted its own read and had turns to
-spare. Anything measured against `907e83c` alone will not reproduce the rescued rows,
-because the runtime that produced them is not in that commit.
+### Which revision a row is from
+
+Three runtime fixes were made while measuring, so no single commit produces every figure
+on these pages. A row's numbers belong to whichever revision could have produced them:
+
+| Revision | What it is | Which figures |
+| --- | --- | --- |
+| `7256f93` | before the serialized-presentation fix (#406) | the BEFORE figures on [`qwen3.8`](qwen/qwen3.8.md) (`no-answer` in 84.9s) and [`muse-glimmer`](muse/muse-glimmer.md) (`no-answer` after 234.4s) |
+| `907e83c` | the baseline; #406 is already in it | everything not named in the other two rows, including both models' "after" figures |
+| `b64941e` | with the report reminder (#416) and the present-before-report notice (#417) | every row marked *(fixed)*, and the "after" column of those two fixes |
+
+The first row is the one worth stating rather than leaving to be worked out: #406 is an
+ancestor of the baseline, so those two before-figures cannot be reproduced from the
+baseline either — the runtime that produced them is older than both of the other
+revisions here.
+
+Both of the later notices were narrowed in review before they landed — the reminder to a
+tool the run holds and a turn the loop will grant, the notice to a read the answer tool
+would accept. The runs recorded here sit inside the narrower triggers: each was an agent
+run that drafted its own read and had turns to spare.
 
 ## The machine
 

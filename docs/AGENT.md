@@ -2207,14 +2207,17 @@ classifier's real-world agreement rate was measured — and they are the same ki
   open question is whether one sentence about operational cost belongs in the rules, against the
   owner's deferral of per-engine knowledge files and the argument that banning a command by name is
   engine trivia that goes stale. Recorded, not decided.
-- **B51** — the loop delivers three one-shot notices to a model (the reserve warning, the report
-  reminder of #416, the present-before-report notice of #417) and records none of them. `recordEvent`
-  is called for what the RUN did and never for what the server said to it, so a rescued run and a run
-  that never needed rescuing leave the same ledger — and a `compose_report` the loop withheld leaves
-  no trace that a call was made. That is a measurement problem first: [`docs/llms/`](./llms/) is built
-  by reading those ledgers, and its whole claim is that each figure comes from an observed run. The
-  guards are also the part that keeps being got wrong — both notices shipped with a condition that
-  named one thing and read another, and both were caught in review rather than by a gate.
+- **B51** — the loop delivers three notices to a model (the reserve warning, the report reminder of
+  #416, the present-before-report notice of #417) and records none of them. `recordEvent` is called
+  for what the RUN did and never for what the server said to it, so a rescued run and a run that never
+  needed rescuing leave the same ledger — and a `compose_report` the loop withheld leaves no trace
+  that a call was made. That is a measurement problem first: [`docs/llms/`](./llms/) is built by
+  reading those ledgers, and its whole claim is that each figure comes from an observed run. Each
+  notice is sent once per DRIVE and not once per run, and the missing entry is why: the three booleans
+  live inside `runInvestigation`, which is also what resumes a run a dead process left running, so a
+  resumed drive starts with all three false. The guards are the part that keeps being got wrong —
+  both new notices shipped with a condition that named one thing and read another, and both were
+  caught in review rather than by a gate.
 
 ## Related documentation
 
