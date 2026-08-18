@@ -425,6 +425,39 @@ describe("the verdict is previewed before the report lands, not after the run di
     expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-database-assessment.1", unmet: [] });
   });
 
+  test("and it is narrowed to what would fix it, so it cannot spend the turn elsewhere", async () => {
+    /*
+      Measured with the ledger's own record of the hold, once `call-held` made holds
+      visible. On `qwen3.5:4b` the notice fired and the model then called `inspect_schema`
+      four times and `run_read_query` three times without ever profiling; on `qwen3:8b` it
+      fired and the run went back to `inspect_schema`. `qwen3.5:9b` took the offer on one
+      run and answered.
+
+      So the notice is heard and the wandering is what beats it — which is what the
+      narrowing mechanism already exists for. A held call narrows the run to the tools its
+      own verdict accepts, and on this workflow that is exactly `profile_table` and
+      `compose_report`: it can fix the thing it was asked to fix, or say nothing.
+    */
+    const named: string[][] = [];
+    const run = await open("sqlite");
+
+    await run.drive([
+      callsTool("run_read_query", { sql: "SELECT count(*) FROM engineering", rationale: "by hand" }),
+      reportOnAll("The engineering table looks sparsely populated."),
+      (turn) => {
+        named.push(
+          ((turn.body.tools ?? []) as { function?: { name?: string } }[]).map((entry) => entry.function?.name ?? ""),
+        );
+        return answersProse("nothing further")(turn);
+      },
+      // One more, because narrating instead of acting earns the report reminder and the
+      // drive takes another turn for it.
+      answersProse("still nothing further"),
+    ]);
+
+    expect(named[0]?.sort()).toEqual(["compose_report", "profile_table"]);
+  });
+
   test("a run that ignores it still reports, and still fails the bar honestly", async () => {
     // The guarantee every notice here keeps: offered once, then out of the way. Trading
     // `no-table-profile` for `no-report` would be the worse outcome, not a smaller one.

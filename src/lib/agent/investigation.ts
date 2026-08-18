@@ -466,13 +466,35 @@ function previewClaims(input: unknown): readonly AgentReportClaim[] {
  * `cancelled` is not the model's to fix, and the shortfalls that already have a purpose-
  * written notice keep it, because those carry ids this generic sentence cannot.
  */
-function shortfallNotice(shortfall: AgentGoalShortfall, table: string | undefined): string | null {
+interface ShortfallAdvice {
+  readonly said: string;
+  /**
+   * Whether narrowing the run to its verdict's tools would HELP this shortfall.
+   *
+   * False wherever the fix lies outside that set, and an eval caught the case immediately:
+   * the answer to `no-plan-evidence` is to call `inspect_plan`, which is a READING tool and
+   * so not among the tools the optimization verdict accepts. Narrowing there would have
+   * removed the very tool this notice asks for — telling a run to do something and taking
+   * away its means of doing it, which is the shape of mistake this file has already paid
+   * for twice.
+   */
+  readonly narrow: boolean;
+}
+
+function shortfallNotice(shortfall: AgentGoalShortfall, table: string | undefined): ShortfallAdvice | null {
   if (shortfall === "no-table-profile") {
     const named = table === undefined ? "a table this run's inventory lists" : `"${table}"`;
-    return [
-      "This workflow answers with the counts profile_table takes and no table has been profiled, so the report would be scored as having established nothing about the data.",
-      `Your compose_report call was not run. Call profile_table on ${named} — counts you compose yourself with run_read_query do not satisfy this — and then call compose_report again.`,
-    ].join(" ");
+    return {
+      said: [
+        "This workflow answers with the counts profile_table takes and no table has been profiled, so the report would be scored as having established nothing about the data.",
+        `Your compose_report call was not run. Call profile_table on ${named} — counts you compose yourself with run_read_query do not satisfy this — and then call compose_report again.`,
+      ].join(" "),
+      // `profile_table` IS what this verdict accepts, so the narrowed set is exactly the two
+      // tools the run now needs — and the ledger argued for narrowing here: told once and
+      // left holding everything, `qwen3.5:4b` called `inspect_schema` four times and
+      // `run_read_query` three without ever profiling.
+      narrow: true,
+    };
   }
   if (shortfall === "no-plan-evidence") {
     // Measured on `qwen3:8b` and `qwen3:14b`, same arc both times: `inspect_schema`, a
@@ -480,10 +502,16 @@ function shortfallNotice(shortfall: AgentGoalShortfall, table: string | undefine
     // The recommendation may well be right; it is simply not established, which is what
     // this verdict says. There is no plan id to name because the run holds none, so the
     // sentence asks for the reading rather than for a citation it cannot make.
-    return [
-      "Your index recommendation rests on no plan: this workflow judges a change by HOW the engine reaches its rows, and no plan has been inspected, so the report would be scored as having established nothing.",
-      "Your compose_report call was not run. Call inspect_plan on the slow statement, then call recommend_change again citing that plan's artifact id, and then call compose_report.",
-    ].join(" ");
+    return {
+      said: [
+        "Your index recommendation rests on no plan: this workflow judges a change by HOW the engine reaches its rows, and no plan has been inspected, so the report would be scored as having established nothing.",
+        "Your compose_report call was not run. Call inspect_plan on the slow statement, then call recommend_change again citing that plan's artifact id, and then call compose_report.",
+      ].join(" "),
+      // NOT narrowed: `inspect_plan` is a reading tool, and this verdict accepts only
+      // `compare_plans` and `recommend_change`. Narrowing would take away the tool this very
+      // sentence asks for.
+      narrow: false,
+    };
   }
   return null;
 }
@@ -2720,15 +2748,35 @@ export async function runInvestigation(
             : [],
         );
         const spoken = would.flatMap((shortfall) => {
-          const said = shortfallNotice(shortfall, inventory[0]);
-          return said === null ? [] : [{ shortfall, said }];
+          const advice = shortfallNotice(shortfall, inventory[0]);
+          return advice === null ? [] : [{ shortfall, advice }];
         })[0];
         if (spoken !== undefined) {
           previewReminded = true;
-          await holdCall(call.toolName, spoken.said, spoken.shortfall);
-          messages.push(
-            prompted ? promptedResultMessage(call, notice(spoken.said)) : toolResultMessage(call, spoken.said),
-          );
+          /*
+            Narrowed as well as told, and this is the pairing the ledger argued for.
+
+            Once `call-held` made holds visible, the same three cells were measured again:
+            the notice fires every time. `qwen3.5:9b` took the offer on one run and answered
+            after six `profile_table` calls. On the runs that failed, the model heard it and
+            spent the turn elsewhere — `qwen3.5:4b` called `inspect_schema` four times and
+            `run_read_query` three, `qwen3:8b` went back to `inspect_schema`. So the notice
+            is not the missing part; the wandering after it is.
+
+            `AGENT_NARROWED_EXTRA_TOOLS` already holds the answer per workflow, because it is
+            keyed on what each verdict accepts — on this one exactly `profile_table` and
+            `compose_report`. A held run can therefore fix the thing it was asked to fix, or
+            say nothing. It cannot go looking.
+
+            Only where the fix is INSIDE that set, which `advice.narrow` decides. An eval
+            caught the other case at once: `no-plan-evidence` is answered by `inspect_plan`,
+            a reading tool the optimization verdict does not accept, so narrowing there would
+            have removed the tool the notice asks for.
+          */
+          if (spoken.advice.narrow) narrowed = true;
+          const said = spoken.advice.said;
+          await holdCall(call.toolName, said, spoken.shortfall);
+          messages.push(prompted ? promptedResultMessage(call, notice(said)) : toolResultMessage(call, said));
           continue;
         }
       }
