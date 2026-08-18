@@ -206,6 +206,16 @@ export const AGENT_WORKFLOW_PRESENTS_ANSWER: Readonly<Record<AgentRunWorkflowTyp
 /** A run that has stopped, and why. Terminal states are never re-entered. */
 export type AgentRunTerminalStatus = "succeeded" | "failed" | "cancelled";
 
+/**
+ * How a run asks its model for a tool call.
+ *
+ * `native` is the OpenAI tool-call format the SDK speaks. `prompted` is the fallback for
+ * a model that cannot speak it: the tools are described in prose and the reply is read
+ * back for one action (`prompted-tools.ts`). Both end at the same schema and the same
+ * audited pipeline — the protocol decides how the model is ASKED, never what it may do.
+ */
+export type AgentToolProtocol = "native" | "prompted";
+
 export type AgentRunStatus = "queued" | "running" | AgentRunTerminalStatus;
 
 /**
@@ -816,6 +826,18 @@ export interface AgentRunRecord {
    * which is what was true of every run written then.
    */
   readonly autoExecute: boolean;
+  /**
+   * How this run asks its model for a tool call.
+   *
+   * Decided once, by the capability gate on the start path, and carried here for the
+   * reason `autoExecute` is: a resumed drive must ask the same way the drive that died
+   * asked, and a model's answer to "can you call tools" is not something a later turn
+   * should re-decide mid-run.
+   *
+   * Optional, and absent folds to `native` — what was true of every run written before
+   * the prose path existed, and of every model that can call a tool.
+   */
+  readonly toolProtocol?: AgentToolProtocol;
   readonly status: AgentRunStatus;
   readonly actor: AgentRunActor;
   /** The single connection this run may reach; the server builds the scope from it. */

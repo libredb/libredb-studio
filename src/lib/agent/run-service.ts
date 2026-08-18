@@ -61,6 +61,7 @@ import type {
   AgentRunTerminalStatus,
   AgentRunWorkflowType,
   AgentToolRefusal,
+  AgentToolProtocol,
 } from "./types";
 
 /**
@@ -128,6 +129,8 @@ export interface AgentRunStartInput {
   readonly workflowType?: AgentRunWorkflowType;
   /** Whether the run may hand its answer to the editor to run. Defaults to `false`. */
   readonly autoExecute?: boolean;
+  /** Defaults to `native`; see `AgentRunRecord.toolProtocol`. */
+  readonly toolProtocol?: AgentToolProtocol;
   readonly actor: AgentRunActor;
   readonly connectionId: string;
   readonly objective: string;

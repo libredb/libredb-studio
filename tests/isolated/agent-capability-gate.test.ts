@@ -93,12 +93,73 @@ describe("the model gate on the start path", () => {
     expect(probeAgentModel).toHaveBeenCalledTimes(1);
   });
 
-  test("a model established as unable to call tools is refused, with the probe's own words", async () => {
+  test("a model that only lacks tool calling is admitted to drive the run in prose", async () => {
+    // The `deepseek-r1` case, measured: the endpoint streams and the model reasons
+    // well, it simply never emits `tool_calls`. Refusing it threw away a model that
+    // produced the correct call 15 times out of 15 when asked for one in prose.
     probeAgentModel.mockImplementation(async () => REFUSAL);
 
     const verdict = await admitAgentModel("agent");
 
-    expect(verdict).toMatchObject({ kind: "refused", refusal: { missing: ["toolCalling"] } });
+    expect(verdict).toMatchObject({ kind: "allowed", protocol: "prompted" });
+  });
+
+  test("a model whose endpoint never streamed is still refused, because prose needs a stream too", async () => {
+    probeAgentModel.mockImplementation(async () => ({
+      ...REFUSAL,
+      refusal: {
+        ...REFUSAL.refusal,
+        capabilities: { toolCalling: false, structuredOutput: false, streaming: false },
+        missing: ["toolCalling" as const, "streaming" as const],
+      },
+    }));
+
+    const verdict = await admitAgentModel("agent");
+
+    expect(verdict.kind).toBe("refused");
+  });
+
+  test("a model that can call tools is admitted on the native protocol, unchanged", async () => {
+    const verdict = await admitAgentModel("agent");
+
+    expect(verdict).toMatchObject({ kind: "allowed", protocol: "native" });
+  });
+
+  test("a planning run names no protocol, because it is offered no tools at all", async () => {
+    expect(await admitAgentModel("planning")).toEqual({ kind: "allowed", protocol: "native" });
+  });
+
+  test("schema-valid arguments counted as missing do not refuse, since there were none to validate", async () => {
+    // The shape a real refusal has: two missing, one disproved. A model that called no
+    // tool sent no arguments, so `structuredOutput` is unestablished as a CONSEQUENCE
+    // rather than as a second thing watched to fail — which is why the admission reads
+    // `disproved`. Requiring one entry in `missing` rejected every deepseek-r1 size.
+    probeAgentModel.mockImplementation(async () => ({
+      ...REFUSAL,
+      refusal: {
+        ...REFUSAL.refusal,
+        missing: ["toolCalling" as const, "structuredOutput" as const],
+        disproved: ["toolCalling" as const],
+      },
+    }));
+
+    expect(await admitAgentModel("agent")).toMatchObject({ kind: "allowed", protocol: "prompted" });
+  });
+
+  test("a model whose arguments were watched to fail is refused, because prose cannot fix a schema", async () => {
+    probeAgentModel.mockImplementation(async () => ({
+      ...REFUSAL,
+      refusal: {
+        ...REFUSAL.refusal,
+        capabilities: { toolCalling: true, structuredOutput: false, streaming: true },
+        missing: ["structuredOutput" as const],
+        disproved: ["structuredOutput" as const],
+      },
+    }));
+
+    const verdict = await admitAgentModel("agent");
+
+    expect(verdict).toMatchObject({ kind: "refused", refusal: { missing: ["structuredOutput"] } });
   });
 
   test("a probe that says nothing about the model admits the run", async () => {
@@ -122,7 +183,15 @@ describe("the model gate on the start path", () => {
   });
 
   test("a refusal is re-probed, because the operator may have fixed the server", async () => {
-    probeAgentModel.mockImplementation(async () => REFUSAL);
+    // A shortfall the prose path cannot rescue either, so this one really refuses.
+    probeAgentModel.mockImplementation(async () => ({
+      ...REFUSAL,
+      refusal: {
+        ...REFUSAL.refusal,
+        capabilities: { toolCalling: false, structuredOutput: false, streaming: false },
+        missing: ["toolCalling" as const, "streaming" as const],
+      },
+    }));
     expect((await admitAgentModel("agent")).kind).toBe("refused");
 
     probeAgentModel.mockImplementation(async () => ({

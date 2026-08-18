@@ -28,7 +28,10 @@ const mockGetSession = mock(
 
 // ─── The connection the run is opened against ───────────────────────────────
 
-const mockAdmitAgentModel = mock<typeof realGate.admitAgentModel>(async () => ({ kind: "allowed" }));
+const mockAdmitAgentModel = mock<typeof realGate.admitAgentModel>(async () => ({
+  kind: "allowed",
+  protocol: "native",
+}));
 
 const mockResolveConnection = mock(async (body: { connectionId?: string }) => ({
   id: body.connectionId ?? "seed:sales",
@@ -175,7 +178,7 @@ beforeEach(() => {
   configureAgentModel();
   mockDriveAgentRun.mockClear();
   mockAdmitAgentModel.mockClear();
-  mockAdmitAgentModel.mockImplementation(async () => ({ kind: "allowed" }));
+  mockAdmitAgentModel.mockImplementation(async () => ({ kind: "allowed", protocol: "native" }));
   mockStart.mockClear();
   mockResolveConnection.mockClear();
 });

@@ -222,6 +222,10 @@ export async function POST(req: Request) {
       // Spread for the same reason, and it matters more here: the store's `false` is
       // the single place "nobody asked" is turned into an answer.
       ...(autoExecute === undefined ? {} : { autoExecute }),
+      // The gate's own verdict, carried onto the run rather than re-derived later: a
+      // resumed drive must ask this model the way the first drive asked, and only the
+      // start path is in a position to have probed.
+      ...(gate.protocol === "native" ? {} : { toolProtocol: gate.protocol }),
       actor: { sessionId: guard.session.username, role: guard.session.role },
       connectionId: connection.id,
       objective,

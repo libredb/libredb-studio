@@ -56,6 +56,7 @@ import {
 } from "./context-snapshot";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
 import { type AgentInventoryNoun, inventoryNoun } from "./inventory-noun";
+import { PROMPTED_PROTOCOL_REMINDER, promptedToolContract, readPromptedAction } from "./prompted-tools";
 import { PLAN_NO_STATEMENT_MARKER, readPlanStatement } from "./plan-draft";
 import { validatePlanStatement } from "./plan-statement";
 import { packSchemaStatistics, readSchemaStatistics } from "./schema-stats";
@@ -1675,6 +1676,19 @@ function toolResultMessage(call: { toolCallId: string; toolName: string }, value
   };
 }
 
+/**
+ * The same answer, for a run whose model never made a tool call to answer.
+ *
+ * A `role: "tool"` message must reference a `tool_call_id` the assistant turn declared,
+ * and on the prompted path the assistant declared nothing — the call was a JSON object
+ * inside ordinary text. Sending a result for an id that is not in the transcript is what
+ * a real endpoint answers with a 400, which would wedge every later turn of the run
+ * rather than this one. So the server answers in the register the model spoke in.
+ */
+function promptedResultMessage(call: { toolName: string }, value: string): ModelMessage {
+  return { role: "user", content: `The server ran ${call.toolName} and answers: ${value}` };
+}
+
 /** What handling one tool call did. `cancelled` and `reported` both end the run. */
 type CallResult =
   | { readonly kind: "answered"; readonly text: string }
@@ -1741,8 +1755,50 @@ export async function runInvestigation(
   // Read once, from the provider's own declarations, and spent by every sentence that
   // has to name what this engine holds. See `PlanningEngine`.
   const engine = planningEngine(context);
-  const tools = declaredTools(record);
+  /*
+    How this model is asked for a call, decided by the capability gate when the run opened
+    and read here rather than re-derived: a resumed drive must ask the way the drive that
+    died asked.
+
+    `prompted` means the model cannot emit `tool_calls` — measured on every `deepseek-r1`
+    distill — so the SDK is handed no tools at all and the contract is stated in prose
+    instead. Everything downstream is unchanged: the action read back out of the reply
+    goes through the same `AGENT_TOOL_DEFINITIONS` schema and the same audited pipeline.
+
+    Native is the default and the branch is computed ONCE, which is what keeps a model
+    that can call tools from being sent a single byte it was not sent before.
+  */
+  const prompted = record.toolProtocol === "prompted";
+  const tools = prompted ? undefined : declaredTools(record);
+  const contract = prompted ? promptedToolContract(selectAgentTools(record)) : null;
+  /**
+   * Whether a name is a tool this run HOLDS, on either protocol.
+   *
+   * Native reads it off the set the SDK was given, which is what excludes a planning run
+   * and an invented name. A prompted run is given no set, so the same question is asked
+   * of the workflow's own selection — the set the contract was written from.
+   */
+  const heldToolNames = new Set(selectAgentTools(record).map((definition) => definition.name));
+  const holdsTool = (name: string): boolean =>
+    prompted ? heldToolNames.has(name as AgentToolName) : tools?.[name] !== undefined;
+  /**
+   * A server notice, in the register this run can act on.
+   *
+   * The notices are written for a model holding tools ("call compose_report now"), which
+   * names the act but not the format for a model that has none. Restating the protocol
+   * costs a sentence and was worth three runs; see `PROMPTED_PROTOCOL_REMINDER`.
+   */
+  const notice = (text: string): string => (prompted ? `${text} ${PROMPTED_PROTOCOL_REMINDER}` : text);
   const messages: ModelMessage[] = [{ role: "user", content: record.objective }];
+  /*
+    The contract is a USER message, not an addition to the instructions, and that is the
+    vendor's own guidance rather than a preference: DeepSeek-R1's model card says "avoid
+    adding a system prompt; all instructions should be contained within the user prompt".
+    Measured, it decided the run — with the contract in the instructions the model
+    produced the action format correctly and ignored the arc, reporting on turn one with
+    no readings. It also keeps `instructions` byte-for-byte what it was for every run.
+  */
+  if (contract !== null) messages.push({ role: "user", content: contract });
   const priorProgress = describePriorProgress(record);
   if (priorProgress !== null) messages.push({ role: "user", content: priorProgress });
 
@@ -2051,7 +2107,7 @@ export async function runInvestigation(
     if (reserveAnnounced || record.mode !== "agent") return;
     if (maxTurns - turns > AGENT_REPORT_RESERVE_TURNS && remainingMs > AGENT_REPORT_RESERVE_MS) return;
     reserveAnnounced = true;
-    messages.push({ role: "user", content: AGENT_REPORT_RESERVE_NOTICE });
+    messages.push({ role: "user", content: notice(AGENT_REPORT_RESERVE_NOTICE) });
   };
 
   /**
@@ -2071,7 +2127,7 @@ export async function runInvestigation(
     if (turns >= maxTurns || resources.deadline.remainingMs() <= 0) return false;
     reportReminded = true;
     messages.push(...assistant);
-    messages.push({ role: "user", content: AGENT_REPORT_REMINDER_NOTICE });
+    messages.push({ role: "user", content: notice(AGENT_REPORT_REMINDER_NOTICE) });
     return true;
   };
 
@@ -2182,7 +2238,24 @@ export async function runInvestigation(
     );
     text = turn.text;
     if (turn.aborted) return conclude("failed", turnBudgetMs < remainingMs ? "model-timeout" : "deadline-exceeded");
-    if (turn.toolCalls.length === 0) {
+    /*
+      On the prompted path the call arrives as a JSON object inside ordinary text, so it is
+      read out here and from here on the turn is indistinguishable from a native one.
+
+      The id is minted by the server because the model declared none. It correlates this
+      loop's own bookkeeping and is never sent back as a `tool_call_id` — see
+      `promptedResultMessage` for why it cannot be.
+
+      A reply that names nothing stays prose, which is the correct reading: a model told it
+      may answer without acting sometimes does.
+    */
+    const promptedAction = prompted && turn.toolCalls.length === 0 ? readPromptedAction(turn.text) : null;
+    const calls =
+      promptedAction === null
+        ? turn.toolCalls
+        : [{ toolCallId: `prompted_${turns}`, toolName: promptedAction.name, input: promptedAction.input }];
+
+    if (calls.length === 0) {
       // A run that used its tools and then narrated is one call short of a report;
       // one that established nothing has nothing to be reminded about.
       if (remindToReport(turn.assistantMessages)) return null;
@@ -2190,12 +2263,12 @@ export async function runInvestigation(
     }
 
     messages.push(...turn.assistantMessages);
-    for (const call of turn.toolCalls) {
+    for (const call of calls) {
       // A tool this run HOLDS, read from the set the SDK was actually given. A name
       // the model invented reached nothing, and planning mode is handed no set at all
       // — so a run reminded on either would be told to call `compose_report`, which is
       // a tool it has not got (#350).
-      if (tools?.[call.toolName] !== undefined) anyToolCalled = true;
+      if (holdsTool(call.toolName)) anyToolCalled = true;
       if (call.toolName === "present_answer") answerAttempted = true;
       // A run whose workflow answers by presenting, which read something and is about
       // to report without presenting it, is one call short of an answer. Checked here
@@ -2225,7 +2298,11 @@ export async function runInvestigation(
         const presented = sofar.events.some((event) => event.kind === "answer-composed");
         if (hasReading && !presented) {
           presentReminded = true;
-          messages.push(toolResultMessage(call, AGENT_PRESENT_BEFORE_REPORT_NOTICE));
+          messages.push(
+            prompted
+              ? promptedResultMessage(call, notice(AGENT_PRESENT_BEFORE_REPORT_NOTICE))
+              : toolResultMessage(call, AGENT_PRESENT_BEFORE_REPORT_NOTICE),
+          );
           continue;
         }
       }
@@ -2236,7 +2313,7 @@ export async function runInvestigation(
         return { runId, status: "cancelled", stopReason: "cancelled", turns, text };
       }
       if (outcome.kind === "reported") return conclude("succeeded", "report-composed");
-      messages.push(toolResultMessage(call, outcome.text));
+      messages.push(prompted ? promptedResultMessage(call, outcome.text) : toolResultMessage(call, outcome.text));
     }
     return null;
   };

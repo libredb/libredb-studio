@@ -40,15 +40,37 @@
  * cached.
  */
 
-import type { AgentRunMode } from "./types";
+import type { AgentRunMode, AgentToolProtocol } from "./types";
 import type { AgentCapabilityRefusal } from "./capability-probe";
 import { probeAgentModel } from "./capability-probe";
 import { type AgentModel, createAgentModel } from "./model-adapter";
 import { logger } from "@/lib/logger";
 
 export type AgentCapabilityGateVerdict =
-  | { readonly kind: "allowed" }
+  | { readonly kind: "allowed"; readonly protocol: AgentToolProtocol }
   | { readonly kind: "refused"; readonly refusal: AgentCapabilityRefusal };
+
+/**
+ * Whether a refusal describes a model that could still be driven in prose.
+ *
+ * Exactly one shortfall qualifies, and it must have been WATCHED rather than merely
+ * unobserved: the model was handed a tool and answered without calling it. Anything
+ * else — an endpoint that never streamed, arguments that did not validate — is a model
+ * the prose path cannot rescue either, because it needs the same stream and the same
+ * schema. Measured on `deepseek-r1` 7b, 8b and 14b, which land here and then produce
+ * the correct action 15 times out of 15 when asked for one.
+ */
+function onlyLacksToolCalling(refusal: AgentCapabilityRefusal): boolean {
+  // Read off `disproved`, not `missing`, and the difference is the whole judgement.
+  // `missing` is what the run needed and did not get, so a model that never called a
+  // tool is missing schema-valid arguments too — there were no arguments to validate.
+  // `disproved` is the half the probe WATCHED fail, and it already excludes
+  // `structuredOutput` when tool calling was never established (`capability-probe.ts`).
+  // Requiring one entry in `missing` therefore rejected exactly the models this exists
+  // for: every `deepseek-r1` size arrives with two missing and one disproved.
+  const watched = refusal.disproved;
+  return refusal.capabilities.streaming && watched.length === 1 && watched[0] === "toolCalling";
+}
 
 /**
  * Model identities established as able to drive a run. Process-scoped on purpose: a
@@ -71,7 +93,7 @@ export function resetAgentCapabilityCache(): void {
  * to fail. The drive builds its own model moments later and reports that honestly.
  */
 export async function admitAgentModel(mode: AgentRunMode): Promise<AgentCapabilityGateVerdict> {
-  if (mode === "planning") return { kind: "allowed" };
+  if (mode === "planning") return { kind: "allowed", protocol: "native" };
 
   let model: AgentModel;
   try {
@@ -81,11 +103,11 @@ export async function admitAgentModel(mode: AgentRunMode): Promise<AgentCapabili
       route: "agent/capability-gate",
       error: error instanceof Error ? error.name : "unknown",
     });
-    return { kind: "allowed" };
+    return { kind: "allowed", protocol: "native" };
   }
 
   const identity = identityOf(model);
-  if (established.has(identity)) return { kind: "allowed" };
+  if (established.has(identity)) return { kind: "allowed", protocol: "native" };
 
   let result: Awaited<ReturnType<typeof probeAgentModel>>;
   try {
@@ -99,12 +121,23 @@ export async function admitAgentModel(mode: AgentRunMode): Promise<AgentCapabili
       modelId: model.modelId,
       error: error instanceof Error ? error.name : "unknown",
     });
-    return { kind: "allowed" };
+    return { kind: "allowed", protocol: "native" };
   }
 
   if (result.supported) {
     established.add(identity);
-    return { kind: "allowed" };
+    return { kind: "allowed", protocol: "native" };
+  }
+
+  if (onlyLacksToolCalling(result.refusal)) {
+    // Not cached: this is a fallback, and a model that starts calling tools should be
+    // asked natively again rather than held to a decision made once.
+    logger.warn("Model cannot call tools; the run will ask for them in prose instead", {
+      route: "agent/capability-gate",
+      provider: result.refusal.provider,
+      modelId: result.refusal.modelId,
+    });
+    return { kind: "allowed", protocol: "prompted" };
   }
 
   logger.warn("Model refused an agent run: its capabilities were established as absent", {

@@ -71,6 +71,7 @@ import {
   DEFAULT_AGENT_WORKFLOW_READING,
   DEFAULT_AGENT_WORKFLOW_SOURCE,
   DEFAULT_AGENT_WORKFLOW_TYPE,
+  AgentToolProtocol,
 } from "./types";
 
 /** Stream-name prefix, so one world may carry ledgers next to other streams. */
@@ -155,6 +156,12 @@ export type AgentLedgerEntry =
        * statement anywhere.
        */
       readonly autoExecute?: boolean;
+      /**
+       * Optional for the same reason, and absent folds to `native`: every run written
+       * before the prose path existed asked for tools natively, because there was no
+       * other way to ask.
+       */
+      readonly toolProtocol?: AgentToolProtocol;
       readonly actor: AgentRunActor;
       readonly connectionId: string;
       readonly objective: string;
@@ -232,6 +239,8 @@ export interface AgentRunOpenInput {
   readonly workflowReading?: AgentRunWorkflowReading;
   /** Defaults to `false`. Decided at start and never afterwards; see `AgentRunRecord`. */
   readonly autoExecute?: boolean;
+  /** Defaults to `native`. Decided by the capability gate at start; see `AgentRunRecord`. */
+  readonly toolProtocol?: AgentToolProtocol;
   readonly actor: AgentRunActor;
   readonly connectionId: string;
   readonly objective: string;
@@ -340,6 +349,9 @@ function foldLedger(runId: string, entries: readonly AgentLedgerEntry[]): AgentR
       workflowSource: header.workflowSource ?? DEFAULT_AGENT_WORKFLOW_SOURCE,
       workflowReading: header.workflowReading ?? DEFAULT_AGENT_WORKFLOW_READING,
       autoExecute: header.autoExecute ?? false,
+      // Spread rather than defaulted: `native` is the absence, so writing it would put
+      // a field on every record to say what its absence already says.
+      ...(header.toolProtocol === undefined ? {} : { toolProtocol: header.toolProtocol }),
       status,
       actor: header.actor,
       connectionId: header.connectionId,
@@ -396,6 +408,7 @@ export class AgentRunStore {
       // and a setting recorded as `false` must be the same run, so that no ledger
       // generation can be read as having permitted something it did not.
       autoExecute: input.autoExecute ?? false,
+      ...(input.toolProtocol === undefined ? {} : { toolProtocol: input.toolProtocol }),
       actor: input.actor,
       connectionId: input.connectionId,
       objective: input.objective,
