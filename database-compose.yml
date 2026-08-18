@@ -399,6 +399,11 @@ services:
   # inside the container namespace cannot be published with -p. Host networking is
   # the only way to reach an insecure single node; the alternative is a secure
   # cluster with --accept-sql-without-tls.
+  #
+  # LINUX ONLY. Docker Desktop (macOS, Windows) runs containers inside a VM, where
+  # `host` is the VM rather than your machine, so 127.0.0.1:26257 will not answer
+  # there. On those platforms run a secure cluster with --accept-sql-without-tls and
+  # a normal port mapping instead. The probe behind this entry ran on Linux.
   cockroachdb:
     image: cockroachdb/cockroach:latest
     container_name: libredb-cockroachdb

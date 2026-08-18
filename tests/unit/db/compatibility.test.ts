@@ -78,6 +78,18 @@ describe("wire-compatibility registry", () => {
     }
   });
 
+  test("the docs compatibility table lists every registry entry, with its probed version", async () => {
+    // The table is hand-written prose beside machine-readable data, which is how
+    // the two drift: an entry gets added to one and not the other, and the docs
+    // then publish a claim the registry does not make (or the reverse). This is the
+    // provider tri-sync rule applied to a compatible name that has no doc page.
+    const docs = await Bun.file("docs/providers/README.md").text();
+    for (const engine of WIRE_COMPATIBLE_ENGINES) {
+      expect(docs).toContain(engine.name);
+      expect(docs).toContain(engine.probedVersion.replace(/ \(.*\)$/, ""));
+    }
+  });
+
   test("caveats are one-line strings, because they render inline in the connection dialog", () => {
     for (const engine of WIRE_COMPATIBLE_ENGINES) {
       for (const caveat of engine.caveats) {
