@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { agentModelTurnTimeoutMs } from "@/lib/agent/config";
 import {
   AGENT_EXECUTION_PROFILE,
   AGENT_HANDOVER_BUDGET,
@@ -378,5 +379,75 @@ describe("the ending a run keeps back for its report", () => {
         AGENT_WORKFLOW_BUDGETS[workflow].policy.budgets.statementTimeoutMs,
       );
     }
+  });
+});
+
+describe("the per-turn ceiling reads its environment", () => {
+  /*
+    Measured, and it is an instrument fault rather than a model one: across 25 local models
+    on six surfaces, NINE cells ended `status=failed, stopReason=model-timeout` — the model
+    was still working and the loop stopped waiting. Six of those were counted as `no-report`,
+    which is the shortfall this whole effort has been chasing, and four were on Optimize, the
+    surface reported as hardest.
+
+    The constant's own docblock explains why 90 seconds was right: "turns on this workload
+    land in seconds, so a ceiling this far above them is only ever reached by a call that is
+    not coming back." That was written against hosted APIs. On a local endpoint a 33 GB
+    reasoning model's FIRST turn can exceed it — `deepseek-r1:8b` in planning mode was cut at
+    92 s with a zero-event ledger, on a prompt this repository had just enlarged itself.
+
+    So the value becomes configuration rather than a constant, and the default does not move:
+    an operator who sets nothing measures exactly what was measured before. What changes is
+    that a slow LOCAL model stops being recorded as a model that answered nothing.
+
+    Read per call rather than at module load, which is the idiom `config.ts` already uses in
+    this repository: a test can set the variable and a server can be reconfigured without a
+    restart, and there is no import-order hazard in which the read happens before the
+    environment is set up.
+  */
+  const KEY = "AGENT_MODEL_TURN_TIMEOUT_MS";
+  const original = process.env[KEY];
+
+  afterEach(() => {
+    if (original === undefined) delete process.env[KEY];
+    else process.env[KEY] = original;
+  });
+
+  test("with nothing set, it is the measured default", () => {
+    delete process.env[KEY];
+
+    expect(agentModelTurnTimeoutMs()).toBe(AGENT_MODEL_TURN_TIMEOUT_MS);
+  });
+
+  test("a whole number of milliseconds is honoured", () => {
+    // Under the clamp below, which the smallest run deadline (`operations`, 360 s) puts at
+    // just under 180 s — so this is the largest round value an operator can actually get.
+    process.env[KEY] = "150000";
+
+    expect(agentModelTurnTimeoutMs()).toBe(150_000);
+  });
+
+  test("a value that is not a positive number is ignored, and the default stands", () => {
+    // Refused rather than clamped, and silently rather than by throwing: a mistyped
+    // environment variable must not take down the start path, and a ceiling of zero or NaN
+    // would end every turn instantly — a worse outcome than the value the operator meant to
+    // change.
+    for (const bad of ["", "0", "-1", "abc", "90s", "1e999", "  "]) {
+      process.env[KEY] = bad;
+      expect(agentModelTurnTimeoutMs(), bad).toBe(AGENT_MODEL_TURN_TIMEOUT_MS);
+    }
+  });
+
+  test("it is clamped below half the smallest run deadline, so the budget invariant holds", () => {
+    /*
+      The invariant asserted above — every workflow's `runDeadlineMs` exceeds twice the turn
+      ceiling — is what keeps a run able to take at least two turns. An operator raising the
+      ceiling past that would be configuring a run that cannot finish, so the value is capped
+      at the bound rather than obeyed into incoherence.
+    */
+    process.env[KEY] = "999999999";
+    const smallest = Math.min(...Object.values(AGENT_WORKFLOW_BUDGETS).map((budget) => budget.runDeadlineMs));
+
+    expect(agentModelTurnTimeoutMs() * 2).toBeLessThan(smallest);
   });
 });

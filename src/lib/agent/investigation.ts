@@ -55,6 +55,7 @@ import {
   packOperationsInventory,
   reusableSnapshot,
 } from "./context-snapshot";
+import { agentModelTurnTimeoutMs } from "./config";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
 import { type AgentGoalShortfall, verifyRunGoal } from "./goal-verifier";
 import { type AgentInventoryNoun, inventoryNoun } from "./inventory-noun";
@@ -127,7 +128,7 @@ export interface AgentInvestigationOptions {
   readonly resources: AgentToolResources;
   /** Backstop on model turns; defaults to the run's own workflow row in `AGENT_WORKFLOW_BUDGETS`. */
   readonly maxTurns?: number;
-  /** Ceiling on ONE model call; defaults to `AGENT_MODEL_TURN_TIMEOUT_MS`. */
+  /** Ceiling on ONE model call; defaults to `agentModelTurnTimeoutMs()`. */
   readonly turnTimeoutMs?: number;
 }
 
@@ -2068,7 +2069,11 @@ export async function runInvestigation(
   options: AgentInvestigationOptions,
 ): Promise<AgentInvestigationResult> {
   const { service, model, resources } = options;
-  const turnTimeoutMs = options.turnTimeoutMs ?? AGENT_MODEL_TURN_TIMEOUT_MS;
+  // The configured ceiling, not the constant: `AGENT_MODEL_TURN_TIMEOUT_MS` is right for a
+  // hosted API and measurably wrong for a local reasoning model, where nine cells across 25
+  // models ended `model-timeout` with the model still working. An explicit
+  // `options.turnTimeoutMs` still wins — that is the seam the tests drive.
+  const turnTimeoutMs = options.turnTimeoutMs ?? agentModelTurnTimeoutMs();
 
   // Refuses a run that has ended, and tells us what the previous process left
   // behind. A queued run is one nothing has driven yet; a running one is a resume.
