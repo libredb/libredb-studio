@@ -204,9 +204,13 @@ describe("an index answers on the plan it diagnosed", () => {
       // one has to. Nothing here asked the engine how it reaches its rows.
       const run = await open(engine);
 
+      // Two report turns: the run is now asked for the plan its recommendation lacks
+      // before that report is allowed through (`shortfallNotice`), and this gate is about
+      // what happens when it declines. The bar still closes.
       const drive = await run.drive([
         callsTool("run_read_query", { sql: FAST }, "call_read"),
         recommends(),
+        reportOn("The listing reads the whole table."),
         reportOn("The listing reads the whole table."),
       ]);
 
@@ -378,6 +382,45 @@ describe("a run holding two plans and reporting without comparing them is asked 
 
     expect(drive.stopReason).toBe("report-composed");
     expect(drive.verdict.outcome).toBe("answered");
+  });
+});
+
+describe("an index recommended on no plan at all is asked for one", () => {
+  /*
+    Measured on `qwen3:8b` and `qwen3:14b`, whose ledgers are the same arc: `inspect_schema`,
+    a refused read, then `recommend_change` for an index — and no `inspect_plan` anywhere.
+    `verifyQueryOptimizationGoal` accepts an index recommendation only when its evidence
+    cites a plan this run inspected, so both scored `no-plan-evidence` having produced a
+    recommendation that may well be correct and is not established.
+
+    The sentence comes from the same verifier-derived mechanism as the assessment one, which
+    is the point of that mechanism: a new shortfall costs a sentence, not a design.
+  */
+  test("the report is held back and the run is told to inspect the plan first", async () => {
+    const run = await open("sqlite");
+
+    const drive = await run.drive([
+      (turn: Turn) =>
+        chatToolCallStream(
+          "recommend_change",
+          JSON.stringify({
+            change: "index",
+            statement: "CREATE INDEX employee_last_name_idx ON employee (last_name)",
+            rationale: "The filtered column looks unindexed.",
+            evidence: [{ source: "context-snapshot", fingerprint: /ctx_[a-z0-9]+/.exec(promptText(turn))?.[0] ?? "" }],
+          }),
+          "call_recommend",
+        ),
+      // Citing the inventory, because this run has read nothing else yet — which is
+      // precisely the state that earns `no-plan-evidence`.
+      reportCitingWhatWasOffered("An index on last_name would help."),
+      callsTool("inspect_plan", { sql: SLOW }, "call_plan_before"),
+      recommends(),
+      reportOn("The listing scans the table; an index on last_name would change that."),
+    ]);
+
+    expect(drive.transcripts[2]).toContain("inspect_plan");
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
   });
 });
 

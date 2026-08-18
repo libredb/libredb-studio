@@ -462,12 +462,25 @@ function previewClaims(input: unknown): readonly AgentReportClaim[] {
  * written notice keep it, because those carry ids this generic sentence cannot.
  */
 function shortfallNotice(shortfall: AgentGoalShortfall, table: string | undefined): string | null {
-  if (shortfall !== "no-table-profile") return null;
-  const named = table === undefined ? "a table this run's inventory lists" : `"${table}"`;
-  return [
-    "This workflow answers with the counts profile_table takes and no table has been profiled, so the report would be scored as having established nothing about the data.",
-    `Your compose_report call was not run. Call profile_table on ${named} — counts you compose yourself with run_read_query do not satisfy this — and then call compose_report again.`,
-  ].join(" ");
+  if (shortfall === "no-table-profile") {
+    const named = table === undefined ? "a table this run's inventory lists" : `"${table}"`;
+    return [
+      "This workflow answers with the counts profile_table takes and no table has been profiled, so the report would be scored as having established nothing about the data.",
+      `Your compose_report call was not run. Call profile_table on ${named} — counts you compose yourself with run_read_query do not satisfy this — and then call compose_report again.`,
+    ].join(" ");
+  }
+  if (shortfall === "no-plan-evidence") {
+    // Measured on `qwen3:8b` and `qwen3:14b`, same arc both times: `inspect_schema`, a
+    // refused read, then `recommend_change` for an index and no `inspect_plan` anywhere.
+    // The recommendation may well be right; it is simply not established, which is what
+    // this verdict says. There is no plan id to name because the run holds none, so the
+    // sentence asks for the reading rather than for a citation it cannot make.
+    return [
+      "Your index recommendation rests on no plan: this workflow judges a change by HOW the engine reaches its rows, and no plan has been inspected, so the report would be scored as having established nothing.",
+      "Your compose_report call was not run. Call inspect_plan on the slow statement, then call recommend_change again citing that plan's artifact id, and then call compose_report.",
+    ].join(" ");
+  }
+  return null;
 }
 
 /**
