@@ -172,8 +172,13 @@ export function compatibleEnginesFor(type: DatabaseType): readonly WireCompatibl
 }
 
 /**
- * The single source for the "N databases" claim. README, docs and channel
- * listings all quote this number and none of them recomputes it.
+ * The counting rule for #424's claim discipline: a published count is the shipped
+ * drivers plus the relatives an actual probe verified, and nothing else.
+ *
+ * No runtime consumer today - the README and the docs table are markdown and quote
+ * the number as prose. This exists so the arithmetic has one definition instead of
+ * being redone by hand in each place, and the unit test pins it. If a UI surface
+ * ever prints the count, it reads it here rather than hardcoding it.
  */
 export function verifiedEngineCount(): number {
   return SHIPPED_DATABASE_TYPES.length + WIRE_COMPATIBLE_ENGINES.length;
