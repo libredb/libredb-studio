@@ -443,3 +443,77 @@ describe("an engine whose statements are not SQL is not judged by a SQL reader (
     expect(validation.guardViolation).toBe("NON_READ_STATEMENT");
   });
 });
+
+describe("a statement the model wrote without a fence", () => {
+  /*
+    Measured, and the two shapes it comes in have to be told apart.
+
+    `qwen3:1.7b` was asked for a plan and produced this, verbatim:
+
+        sqlite
+        SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' …
+
+        The statement retrieves the names of the tables in the database. …
+
+    It had understood the contract well enough to write the engine tag on its own line
+    and the statement under it. It simply left out the backticks, and the run was scored
+    `no-statement` — the plan-mode bar — for a formatting slip around a real statement.
+
+    `qwen3:0.6b` produced the other shape on the same objective:
+
+        sqlite
+        <sqlite>
+        The tables are: current_dept_emp, department, dept_emp, …
+        </sqlite>
+
+    That is prose, and it must NOT be read as a statement. `plan-statement-drafted` is
+    recorded whenever this reader returns one and the validation result rides along
+    rather than gating it, so a reader that accepted this would score the run answered
+    while the user looked at a sentence. The whole value of loosening the fence rule
+    depends on it staying closed to that.
+
+    So an unfenced candidate is accepted only when the text plainly opens a statement —
+    a line beginning with a query verb. That admits the first and rejects the second,
+    and the guard and identifier checks still judge what it admits.
+  */
+  const ENGINE_THEN_SQL = [
+    "sqlite",
+    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';",
+    "",
+    "The statement retrieves the names of the tables in the database.",
+  ].join("\n");
+
+  const ENGINE_THEN_PROSE = ["sqlite", "<sqlite>", "The tables are: department, employee, salary.", "</sqlite>"].join(
+    "\n",
+  );
+
+  test("an unfenced statement is read, because the slip is the backticks and not the SQL", () => {
+    const draft = readPlanStatement(ENGINE_THEN_SQL, "sqlite");
+
+    expect(draft.kind).toBe("statement");
+    if (draft.kind !== "statement") throw new Error("expected a statement");
+    expect(draft.sql).toStartWith("SELECT table_name");
+    // The prose that followed it is not part of the statement.
+    expect(draft.sql).not.toContain("The statement retrieves");
+  });
+
+  test("prose is still not a statement, however the model wrapped it", () => {
+    expect(readPlanStatement(ENGINE_THEN_PROSE, "sqlite").kind).toBe("absent");
+  });
+
+  test("a fenced block still wins, so nothing about the normal path changes", () => {
+    const both = ["Here is my plan.", "```sql", "SELECT 1;", "```", "SELECT 2;"].join("\n");
+
+    const draft = readPlanStatement(both, "sqlite");
+
+    if (draft.kind !== "statement") throw new Error("expected a statement");
+    expect(draft.sql).toBe("SELECT 1;");
+  });
+
+  test("a refusal still wins over an unfenced statement, for the reason it wins over a fenced one", () => {
+    // A run that declined and then illustrated has not produced a deliverable.
+    const text = [`${PLAN_NO_STATEMENT_MARKER} Tell me which column records the price.`, "SELECT 1;"].join("\n");
+
+    expect(readPlanStatement(text, "sqlite").kind).toBe("refusal");
+  });
+});

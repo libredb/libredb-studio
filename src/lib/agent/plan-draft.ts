@@ -60,6 +60,31 @@ const FENCE_LINE = /^\s*```([^`]*)$/;
 const REFUSAL_LINE = /^\s*NO STATEMENT:\s*(.*)$/i;
 
 /**
+ * A line that plainly OPENS a statement, for a run that wrote one without a fence.
+ *
+ * Measured on two local models asked for the same plan. `qwen3:1.7b` wrote the engine tag
+ * on its own line and the statement under it, backticks and all left out:
+ *
+ *     sqlite
+ *     SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';
+ *
+ * and lost the cell to `no-statement` — the plan-mode bar — for a formatting slip around
+ * a real statement. `qwen3:0.6b` wrote prose in XML-ish tags on the same objective, and
+ * that one must keep failing: `plan-statement-drafted` is recorded whenever this reader
+ * returns a statement, with the validation riding along rather than gating it, so a reader
+ * that accepted a sentence would score the run answered while the user reads prose. The
+ * whole value of relaxing the fence rule is that it stays closed to that.
+ *
+ * A leading query verb is the narrowest signal that separates them, and it is checked
+ * against the START of the candidate rather than searched for anywhere in it — a sentence
+ * ABOUT a select is not a select. The list is the read-shaped openers a plan-mode
+ * deliverable can have; anything a guard would reject as a write is deliberately absent,
+ * because a plan run's statement is a read by contract and this reader should not be the
+ * place a write first becomes plausible.
+ */
+const STATEMENT_OPENER = /^\s*(SELECT|WITH|EXPLAIN|SHOW|PRAGMA|DESCRIBE|DESC)\b/i;
+
+/**
  * What a plan run's closing prose turned out to hold.
  *
  * Three outcomes and not two: "no statement" and "an explicit refusal" are different
@@ -149,6 +174,17 @@ export function readPlanStatement(text: string, dialect?: DatabaseType): PlanSta
   let open: { readonly tag: string | undefined; readonly lines: string[] } | null = null;
   let block: FencedBlock | null = null;
   let refusal: string | null = null;
+  /*
+    The lines that were never inside a fence, kept for the unfenced reading below.
+
+    Collected here rather than re-scanned afterwards, and that is what makes the relaxed
+    reading safe: a fence the model tagged for ANOTHER engine is rejected on purpose
+    (`fencedBlock`), and a reader that went back over the whole text would find the SELECT
+    inside that rejected fence and take it anyway — filing the model's MySQL as this
+    connection's dialect, which is the exact mislabelling the rejection exists to prevent.
+    Caught by the eval that pins it.
+  */
+  const plain: string[] = [];
 
   for (const line of text.split("\n")) {
     const marker = FENCE_LINE.exec(line);
@@ -180,10 +216,39 @@ export function readPlanStatement(text: string, dialect?: DatabaseType): PlanSta
       const refused = REFUSAL_LINE.exec(line);
       if (refused !== null && refused[1].trim().length > 0) refusal = refused[1].trim();
     }
+    plain.push(line);
   }
   if (open !== null) block = block ?? fencedBlock(open.tag, open.lines, dialect);
 
   if (refusal !== null) return { kind: "refusal", detail: refusal };
   if (block !== null) return { kind: "statement", sql: block.sql, tag: block.tag };
-  return { kind: "absent" };
+
+  // No fence anywhere, so the last chance is a statement the model wrote plainly. Read
+  // only AFTER the fenced and refusal paths, which keeps every existing precedence
+  // untouched: a fenced block still wins among several, and a refusal still wins over an
+  // illustration the run declined to stand behind.
+  const unfenced = unfencedStatement(plain);
+  return unfenced === null ? { kind: "absent" } : { kind: "statement", sql: unfenced, tag: undefined };
+}
+
+/**
+ * The statement in text that never opened a fence: from the first line that opens one to
+ * the last line that still looks like part of it.
+ *
+ * Ends at the first BLANK line, because that is where these models put the explanation
+ * they were also asked for, and carrying prose into the SQL would hand the editor
+ * something no engine accepts. No tag is returned: the model named no fence, so there is
+ * nothing it told us about the engine, and the recorder stamps the connection's own
+ * dialect the way it does for an untagged fence.
+ */
+function unfencedStatement(lines: readonly string[]): string | null {
+  const start = lines.findIndex((line) => STATEMENT_OPENER.test(line));
+  if (start === -1) return null;
+  const body: string[] = [];
+  for (const line of lines.slice(start)) {
+    if (line.trim().length === 0) break;
+    body.push(line);
+  }
+  const sql = body.join("\n").trim();
+  return sql.length === 0 ? null : sql;
 }
