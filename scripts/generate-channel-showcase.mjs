@@ -148,6 +148,24 @@ ${platformDeclaration}
 `;
 }
 
+/**
+ * The committed module's current text, or `null` when it is not there yet.
+ *
+ * Read-and-catch rather than `existsSync` then read. The stat bought nothing - the write
+ * below is unconditional and never consults the result - while leaving a check-then-use
+ * window CodeQL reports as `js/file-system-race`. Only `ENOENT` is swallowed: any other
+ * errno (a directory in the file's place, a permission failure) is a real problem and must
+ * surface, not read as "stale" and send someone off to run the generator again.
+ */
+function readGeneratedOrNull(filePath) {
+  try {
+    return fs.readFileSync(filePath, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 function main(argv) {
   const checkOnly = argv.includes("--check");
   const rootIdx = argv.indexOf("--root");
@@ -162,7 +180,7 @@ function main(argv) {
   const next = renderModule(buildShowcase(fs.readFileSync(path.join(root, CHANNELS_YAML), "utf8")));
   // Absent counts as stale: the file is committed, so "not there" and "out of
   // date" are the same failure with the same fix.
-  const current = fs.existsSync(generatedPath) ? fs.readFileSync(generatedPath, "utf8") : null;
+  const current = readGeneratedOrNull(generatedPath);
 
   if (checkOnly) {
     if (current !== next) {

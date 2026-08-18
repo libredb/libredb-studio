@@ -224,6 +224,18 @@ describe("CLI (subprocess against temp fixtures)", () => {
     expect(result.stderr.toString()).toContain("bun run channels:showcase");
   });
 
+  test("a read failure that is not ENOENT surfaces instead of reading as stale", () => {
+    // Only "the file is not there yet" may be swallowed. A directory sitting where the
+    // generated module belongs is a broken checkout, and reporting it as drift would send
+    // the reader off to run the generator - which would fail the same way, with no clue.
+    const root = makeFixture(row({ id: "docker-ghcr", name: "Docker image" }));
+    mkdirSync(join(root, GENERATED), { recursive: true });
+    const result = run(root, ["--check"]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr.toString()).toContain("EISDIR");
+    expect(result.stderr.toString()).not.toContain("bun run channels:showcase");
+  });
+
   test("--root without a directory is a usage error", () => {
     const result = Bun.spawnSync(["node", SCRIPT, "--root"], { stdout: "pipe", stderr: "pipe" });
     expect(result.exitCode).toBe(2);
