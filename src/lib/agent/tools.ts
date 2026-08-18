@@ -247,6 +247,8 @@ export type AgentToolUnavailableCode =
   | "UNVERIFIABLE_PLAN"
   /** The named table is not in the inventory this run captured. */
   | "TABLE_NOT_INVENTORIED"
+  /** A catalog read matched no object at all, so there is nothing to inspect or cite. */
+  | "CATALOG_MATCHED_NOTHING"
   /** The profile ran, and its aggregate row could not be read back. */
   | "PROFILE_UNREADABLE"
   /** The requested column offset is past the end of the table. */
@@ -813,6 +815,8 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
   // evidence object wrong was answered with a sentence about statements.
   INVALID_TOOL_INPUT:
     "The arguments did not match the shape this tool declares, so nothing was done. Correct them and call the tool again.",
+  CATALOG_MATCHED_NOTHING:
+    "There is no object of that name in this database, so nothing was inspected. Check the inventory this run was given and inspect a name it lists — a name from the objective may be the name of a query or a report rather than of a table.",
   UNVERIFIABLE_EVIDENCE: `At least one evidence reference does not match anything this run produced. Cite an artifact this run actually read, or the schema snapshot it captured. ${AGENT_EVIDENCE_CONTRACT}`,
   UNVERIFIABLE_PLAN:
     "At least one of those references is not an estimated plan this run produced. Inspect the plan of each statement first, then compare the two artifacts those inspections returned.",
@@ -1696,7 +1700,7 @@ async function readCatalog(
   } catch (error) {
     return composedSqlOutcome(error);
   }
-  return executeAgentOperation(context, {
+  const outcome = await executeAgentOperation(context, {
     operationId: "sql.query.read",
     sql,
     grounding,
@@ -1717,6 +1721,36 @@ async function readCatalog(
     // denied against a `["main"]` allowlist.
     ...(selector.schema === undefined ? {} : { target: { schema: normalizeDeclaredSchema(context, selector.schema) } }),
   });
+  /*
+    A catalog read that matched NO OBJECT is a refusal, not a result.
+
+    Measured, and it is the server answering wrongly rather than the model asking wrongly.
+    This repository's own `query-optimization` eval objective is "Why is the employee listing
+    query slow?" — and there is no `employee_listing` object in the sample, because "employee
+    listing" names a QUERY. Models called `inspect_schema` for it, the composed `sqlite_master`
+    read matched nothing, and this function returned a COMPLETED step with `rowCount: 0` and a
+    citable correlation id. The model then cited it, as it should be able to cite anything the
+    server called a success, and `restsOnlyOnEmptyResults` scored the run `empty-evidence`.
+    Three families produced character-identical ledgers doing exactly this: `gemma4:26b`,
+    `mistral-small3.2:24b` and `lfm2:24b`.
+
+    `profile_table` has had the right behaviour all along — it refuses a table the inventory
+    does not list (`TABLE_NOT_INVENTORIED`) — and this is the same refusal for the same reason.
+
+    What this deliberately does NOT refuse is an empty RESULT. `run_read_query` returning no
+    rows has established something about the data, and this workflow family has a whole eval
+    file about not treating that as a failure. The distinction is between a question about the
+    data, which zero rows answers, and a question about the CATALOG, which zero objects does
+    not: nothing was inspected, so there is nothing to cite.
+
+    Only the model's own calls. A grounding read is the server asking, and an empty answer
+    there is the honest state of a database with no tables — the drive reads that itself and
+    says so in the opening note rather than being refused.
+  */
+  if (!grounding && outcome.kind === "completed" && outcome.artifact.summary.rowCount === 0) {
+    return unavailable("CATALOG_MATCHED_NOTHING");
+  }
+  return outcome;
 }
 
 /** One bounded read the model drafted. The statement guard is what bounds it. */
