@@ -133,6 +133,8 @@
     "chart:bump": "node scripts/sync-chart-version.mjs --write",
     "distribution:check": "node scripts/distribution-check.mjs",
     "distribution:matrix": "node scripts/distribution-check.mjs --matrix",
+    "channels:showcase": "node scripts/generate-channel-showcase.mjs",
+    "channels:showcase:check": "node scripts/generate-channel-showcase.mjs --check",
     "readme:check": "node scripts/readme-check.mjs",
     "security:check": "node scripts/security-check.mjs"
   },

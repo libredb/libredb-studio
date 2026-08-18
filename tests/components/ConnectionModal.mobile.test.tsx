@@ -202,6 +202,10 @@ mock.module("@/lib/db-ui-config", () => ({
   }),
   getDBIcon: () => () => null,
   getDBColor: () => "text-blue-400",
+  // See the same note in ConnectionModal.test.tsx: `DB_UI_CONFIG` became an exported
+  // binding in #425, so this mock's `{}` now reaches the real `isFileBased` unless the
+  // function is mocked here too.
+  isFileBased: (type: string) => type === "sqlite" || type === "libredb",
   DB_UI_CONFIG: {},
 }));
 

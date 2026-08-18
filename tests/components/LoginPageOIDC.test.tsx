@@ -2,6 +2,8 @@ import "../setup-dom";
 import React from "react";
 import { mock } from "bun:test";
 import { setMockSearchParams, resetMockSearchParams } from "../helpers/mock-navigation";
+import { listShowcaseDatabases } from "@/lib/db-showcase";
+import { LIVE_CHANNELS } from "@/lib/distribution/channels.generated";
 
 // next/navigation is mocked via the preloaded shared helper; search params
 // are driven through setMockSearchParams instead of a local mock.module call.
@@ -73,6 +75,28 @@ describe("LoginPage (OIDC mode)", () => {
     // Restore location
     if (savedDescriptor) {
       Object.defineProperty(window, "location", savedDescriptor);
+    }
+  });
+
+  test("renders the same derived showcase as the local login", () => {
+    // The hero is outside the auth branch, so the SSO deployment must advertise the same
+    // engines and the same channel count. Asserted here as well because the two forms have
+    // drifted before - the OIDC branch is the one nobody opens while editing copy.
+    const { container } = render(<LoginForm authProvider="oidc" />);
+    for (const db of listShowcaseDatabases()) {
+      expect(container.textContent).toContain(db.label);
+    }
+    expect(container.textContent).toContain(`${LIVE_CHANNELS.length} install channels`);
+    expect(container.textContent).not.toContain("7+");
+  });
+
+  test("states both agent modes on the SSO surface too", () => {
+    const { getAllByTestId } = render(<LoginForm authProvider="oidc" />);
+    const claims = getAllByTestId("agent-claim");
+    expect(claims.length).toBeGreaterThanOrEqual(2);
+    for (const claim of claims) {
+      expect(claim.textContent).toMatch(/plan mode/i);
+      expect(claim.textContent).toMatch(/agent mode/i);
     }
   });
 });

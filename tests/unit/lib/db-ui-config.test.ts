@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { getDBConfig, getDBIcon, getDBColor, isFileBased } from "@/lib/db-ui-config";
+import { SHOWCASE_DATABASE_ORDER, SHOWCASE_RANK, listShowcaseDatabases } from "@/lib/db-showcase";
 import type { DatabaseType } from "@/lib/types";
 
 const ALL_TYPES: DatabaseType[] = [
@@ -133,6 +134,65 @@ describe("db-ui-config", () => {
       expect(isFileBased("couchbase")).toBe(false);
       expect(isFileBased("clickhouse")).toBe(false);
       expect(isFileBased("druid")).toBe(false);
+    });
+  });
+});
+
+describe("db-showcase", () => {
+  describe("SHOWCASE_RANK", () => {
+    test("assigns every database type a distinct rank covering 0..N-1", () => {
+      // A stable sort silently preserves insertion order when two keys compare equal,
+      // so a duplicated rank would swap two engines without ever failing a type check.
+      // Asserting the ranks are a bijection onto 0..N-1 is what rules that out.
+      const ranks = ALL_TYPES.map((type) => SHOWCASE_RANK[type]);
+      expect([...ranks].sort((a, b) => a - b)).toEqual(ALL_TYPES.map((_, index) => index));
+    });
+  });
+
+  describe("SHOWCASE_DATABASE_ORDER", () => {
+    test("renders every configured engine exactly once", () => {
+      expect([...SHOWCASE_DATABASE_ORDER].sort()).toEqual([...ALL_TYPES].sort());
+    });
+
+    test("includes the embedded libredb provider", () => {
+      // Decided in issue #425 step 2: libredb is a shipped, user-selectable provider
+      // with its own doc and icon, so hiding it on the page that says "Supported
+      // Databases" would contradict the connection picker one click later.
+      expect(SHOWCASE_DATABASE_ORDER).toContain("libredb");
+    });
+
+    test("orders the engines by recognisability, best known first", () => {
+      expect([...SHOWCASE_DATABASE_ORDER]).toEqual([
+        "postgres",
+        "mysql",
+        "sqlite",
+        "mongodb",
+        "redis",
+        "oracle",
+        "mssql",
+        "couchbase",
+        "clickhouse",
+        "druid",
+        "libredb",
+      ]);
+    });
+  });
+
+  describe("listShowcaseDatabases", () => {
+    test("carries the label, icon and colour straight from DB_UI_CONFIG", () => {
+      const entries = listShowcaseDatabases();
+      expect(entries.map((entry) => entry.type)).toEqual([...SHOWCASE_DATABASE_ORDER]);
+      for (const entry of entries) {
+        const config = getDBConfig(entry.type);
+        expect(entry.label).toBe(config.label);
+        expect(entry.icon).toBe(config.icon);
+        expect(entry.color).toBe(config.color);
+      }
+    });
+
+    test("returns a fresh array each call, so a caller cannot mutate the shared order", () => {
+      expect(listShowcaseDatabases()).not.toBe(listShowcaseDatabases());
+      expect(listShowcaseDatabases()).toEqual(listShowcaseDatabases());
     });
   });
 });

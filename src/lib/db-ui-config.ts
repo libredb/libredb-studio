@@ -15,7 +15,7 @@ import {
 import type { DatabaseType } from "@/lib/types";
 
 // DB brand icons share the same interface as LucideIcon (className + SVG props)
-type DBIcon = LucideIcon | React.FC<React.SVGAttributes<SVGSVGElement> & { className?: string }>;
+export type DBIcon = LucideIcon | React.FC<React.SVGAttributes<SVGSVGElement> & { className?: string }>;
 
 export interface DatabaseUIConfig {
   icon: DBIcon;
@@ -35,7 +35,7 @@ export interface DatabaseUIConfig {
   )[];
 }
 
-const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
+export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   postgres: {
     icon: PostgreSQLIcon,
     color: "text-blue-400",

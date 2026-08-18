@@ -6,10 +6,19 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { ExternalLink, Lock, Mail, ShieldCheck, Zap, Globe, Shield, Layers } from "lucide-react";
+import { ExternalLink, Lock, Mail, ShieldCheck, Shield } from "lucide-react";
 import { toast } from "sonner";
 import LibreDBLogo from "@/components/libredb-logo";
 import { CommunitySection } from "@/components/community-section";
+import { ConnectionSignature } from "@/components/login/connection-signature";
+import { DatabaseShowcase } from "@/components/login/database-showcase";
+import { HeroProof, HERO_CLAIMS } from "@/components/login/hero-proof";
+
+/**
+ * The agent half of the mobile summary. Pulled from `HERO_CLAIMS` rather than retyped, so
+ * the mobile line states exactly what the desktop figure states about the two modes.
+ */
+const agentClaimDetail = HERO_CLAIMS.find((claim) => claim.key === "agent")?.detail ?? "";
 
 function LoginFormInner({ authProvider }: { authProvider: string }) {
   const isOIDC = authProvider === "oidc";
@@ -57,17 +66,6 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
       setIsLoading(false);
     }
   };
-
-  const features = [
-    { icon: Globe, title: "7+ Database Engines", desc: "PostgreSQL, MySQL, MongoDB, Oracle, SQL Server" },
-    {
-      icon: Zap,
-      title: "AI-Assisted SQL",
-      desc: "Plan explanations, safety checks and schema docs, on your own model",
-    },
-    { icon: Shield, title: "Zero Install", desc: "Browser-based — deploy anywhere with Docker in seconds" },
-    { icon: Layers, title: "Real-Time Monitoring", desc: "Live metrics, schema explorer, and visual ERD diagrams" },
-  ];
 
   return (
     <div className="flex min-h-[100dvh] bg-background">
@@ -117,55 +115,46 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
             </span>
           </a>
 
-          {/* Middle: Hero text + Features */}
-          <div className="space-y-10 mt-auto">
-            <div className="space-y-4 max-w-lg">
-              <h1 className="text-4xl xl:text-5xl font-bold text-white tracking-tight leading-[1.1]">
-                The open-source SQL IDE for
+          {/*
+            Thesis, then evidence, then the proof numbers - three tiers of weight instead of
+            six blocks competing at one weight.
+
+            A single `mt-auto` here, and none below: with `mt-auto` on both the middle and
+            the bottom group the column split its free space in two, and once the content
+            grew past the viewport the two groups closed up against each other and the panel
+            simply overflowed the page (measured at 1294px tall in a 900px viewport, which
+            pushed the sign-in card itself below the fold). The content now ends with the
+            community row, so one auto margin above it is the whole layout.
+          */}
+          <div className="space-y-8 mt-auto">
+            <div className="space-y-4 max-w-xl">
+              <h1 className="text-4xl font-bold text-white tracking-tight leading-[1.1]">
+                The open-source SQL IDE that
                 <span className="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
                   {" "}
-                  cloud-native teams
+                  deploys next to your data
                 </span>
               </h1>
-              <p className="text-lg text-fg-tertiary leading-relaxed">
-                Query, explore, and manage all your databases from a single AI-powered interface. Zero install — deploy
-                with Docker in seconds.
+              {/*
+                No longer "deploy with Docker in seconds": Docker is one of two dozen live
+                channels (distribution/channels.yaml), and half of the rest are installers,
+                so the old line was both an undercount and a contradiction of the deb, rpm,
+                Snap, winget, Homebrew and AppImage packages this project ships.
+              */}
+              <p className="text-base text-fg-tertiary leading-relaxed">
+                Point it at a database you already run. Query, explore and manage every one of them from a single
+                workspace.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-              {features.map((feature) => (
-                <div
-                  key={feature.title}
-                  className="flex gap-3 p-3 rounded-xl bg-fill border border-hairline pointer-events-none select-none"
-                >
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 border border-blue-500/10">
-                    <feature.icon className="h-4 w-4 text-blue-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-fg">{feature.title}</p>
-                    <p className="text-xs text-fg-muted mt-0.5">{feature.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <ConnectionSignature />
+
+            <DatabaseShowcase variant="desktop" />
+
+            <HeroProof />
           </div>
 
-          {/* Bottom: DB badges + Community */}
-          <div className="space-y-6 mt-auto">
-            <div className="space-y-3">
-              <p className="text-xs text-fg-subtle uppercase tracking-widest font-medium">Supported Databases</p>
-              <div className="flex flex-wrap gap-2">
-                {["PostgreSQL", "MySQL", "MongoDB", "Oracle", "SQL Server"].map((db) => (
-                  <span
-                    key={db}
-                    className="text-xs px-3 py-1.5 rounded-full bg-fill text-fg-muted border border-hairline font-medium"
-                  >
-                    {db}
-                  </span>
-                ))}
-              </div>
-            </div>
+          <div className="mt-8">
             <CommunitySection variant="desktop" />
           </div>
         </div>
@@ -308,19 +297,25 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
             </CardFooter>
           </Card>
 
-          {/* Mobile community + DB pills */}
+          {/*
+            Mobile showcase: the same three derived sources as the hero, condensed. The
+            deploy block collapses to one line and the agent claim to its own paragraph -
+            these tokens follow the viewer's theme, unlike the pinned-dark hero above.
+          */}
           <div className="lg:hidden space-y-4">
+            <DatabaseShowcase variant="mobile" />
+            {/*
+              The same three claims the desktop hero makes, joined into one line rather than
+              re-worded for mobile: `HERO_CLAIMS` is the single source, so a change to the
+              agent copy cannot land on one surface and miss the other.
+            */}
+            <p
+              data-testid="agent-claim"
+              className="text-[10px] text-center text-muted-foreground leading-relaxed select-none"
+            >
+              {HERO_CLAIMS.map((claim) => `${claim.value} ${claim.unit}`).join(" · ")} — {agentClaimDetail}
+            </p>
             <CommunitySection variant="mobile" />
-            <div className="flex flex-wrap justify-center gap-2">
-              {["PostgreSQL", "MySQL", "MongoDB", "Oracle", "SQL Server"].map((db) => (
-                <span
-                  key={db}
-                  className="text-[10px] px-2.5 py-1 rounded-full bg-muted text-muted-foreground font-medium"
-                >
-                  {db}
-                </span>
-              ))}
-            </div>
           </div>
         </div>
       </div>

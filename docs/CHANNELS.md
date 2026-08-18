@@ -12,7 +12,10 @@ for the install or deploy steps.
 **Developers** — the Updates column says whether release CI publishes the channel
 or a human updates it by hand, and how quickly it is expected to follow a release.
 New channels are added in
-[`distribution/channels.yaml`](../distribution/channels.yaml).
+[`distribution/channels.yaml`](../distribution/channels.yaml), which also drives the
+product itself: the login page renders the live channels straight from that
+inventory (`bun run channels:showcase`, gated in CI), so flipping a channel to
+`live` publishes it in the UI with no code change.
 
 **Buyers, investors, supporters** — the snapshot below is the coverage claim.
 `pending` and `deprecated` rows are listed on purpose, not hidden.
