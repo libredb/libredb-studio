@@ -2459,6 +2459,26 @@ export async function runInvestigation(
    * pushed the model into: two turns from the end, told to wrap up, wrapping up in
    * prose.
    */
+  /**
+   * Records that the server turned a call back, and what it asked for instead.
+   *
+   * Held calls were invisible: a call that is not run settles no step, so nothing reached
+   * the ledger and a reader saw a run that reported once — when what happened is that it
+   * tried, was asked for a profile or a citation, and tried again. On the runs where the
+   * model declines the offer, this entry is the only place the offer exists at all.
+   *
+   * It cost real time to lack: a notice measured as having no effect on two models could
+   * not be told apart from a notice that never fired, because neither leaves a trace.
+   */
+  const holdCall = async (tool: AgentToolName, reason: string, shortfall?: AgentGoalShortfall): Promise<void> => {
+    await service.recordEvent(runId, {
+      kind: "call-held",
+      tool,
+      reason,
+      ...(shortfall === undefined ? {} : { shortfall }),
+    });
+  };
+
   const remindToReport = (assistant: readonly ModelMessage[]): boolean => {
     if (reportReminded || !anyToolCalled) return false;
     if (turns >= maxTurns || resources.deadline.remainingMs() <= 0) return false;
@@ -2651,6 +2671,7 @@ export async function runInvestigation(
         const presented = sofar.events.some((event) => event.kind === "answer-composed");
         if (hasReading && !presented) {
           presentReminded = true;
+          await holdCall(call.toolName, AGENT_PRESENT_BEFORE_REPORT_NOTICE);
           messages.push(
             prompted
               ? promptedResultMessage(call, notice(AGENT_PRESENT_BEFORE_REPORT_NOTICE))
@@ -2673,13 +2694,16 @@ export async function runInvestigation(
             ? event.snapshot.tables.map((entry) => entry.name)
             : [],
         );
-        const text = would.flatMap((shortfall) => {
+        const spoken = would.flatMap((shortfall) => {
           const said = shortfallNotice(shortfall, inventory[0]);
-          return said === null ? [] : [said];
+          return said === null ? [] : [{ shortfall, said }];
         })[0];
-        if (text !== undefined) {
+        if (spoken !== undefined) {
           previewReminded = true;
-          messages.push(prompted ? promptedResultMessage(call, notice(text)) : toolResultMessage(call, text));
+          await holdCall(call.toolName, spoken.said, spoken.shortfall);
+          messages.push(
+            prompted ? promptedResultMessage(call, notice(spoken.said)) : toolResultMessage(call, spoken.said),
+          );
           continue;
         }
       }
@@ -2716,6 +2740,7 @@ export async function runInvestigation(
           const offer = useful.length > 0 ? useful : [...held.keys()];
           citeReminded = true;
           const text = citeWhatYouReadNotice(offer, citedOnlyEmpty);
+          await holdCall(call.toolName, text);
           messages.push(prompted ? promptedResultMessage(call, notice(text)) : toolResultMessage(call, text));
           continue;
         }
@@ -2761,6 +2786,7 @@ export async function runInvestigation(
               : compareBeforeReportNotice(before, after);
         if (text !== null) {
           compareReminded = true;
+          await holdCall(call.toolName, text);
           messages.push(prompted ? promptedResultMessage(call, notice(text)) : toolResultMessage(call, text));
           continue;
         }

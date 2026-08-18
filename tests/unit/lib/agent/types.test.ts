@@ -71,6 +71,16 @@ const DATABASE_ERROR: AgentToolRefusal = {
  */
 const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
   "run-started": { kind: "run-started", atMs: 1, mode: "agent" },
+  // A call the server turned back, carrying the verifier's own name for what was missing.
+  // `shortfall` is optional because the purpose-written notices answer conditions the
+  // verifier has no vocabulary for — a run holding two plans and citing neither, say.
+  "call-held": {
+    kind: "call-held",
+    atMs: 2,
+    tool: "compose_report",
+    reason: 'Call profile_table on "engineering" and then call compose_report again.',
+    shortfall: "no-table-profile",
+  },
   // Carries the inventory itself: that is what lets a resumed run re-derive its
   // schema context without reading a catalog again (#329 T8), and it only works
   // because the snapshot is as inert as every other contract here.

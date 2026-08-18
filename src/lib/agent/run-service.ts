@@ -87,6 +87,12 @@ export type AgentRunNarrativeEvent = Extract<
       | "context-captured"
       | "statement-drafted"
       | "report-composed"
+      // A call the drive turned back, with what it asked for instead. It belongs here
+      // for the same reason the three below do: nothing was executed and no step was
+      // settled — the run is telling the ledger a decision it made, not recording an
+      // effect. Without it a held call is invisible, and a reader sees a run that
+      // reported once where it in fact tried, was asked for something, and tried again.
+      | "call-held"
       // Both reach no database and settle no step: they record what the run has
       // ALREADY established, which is exactly what a narrative entry is.
       | "plan-comparison"

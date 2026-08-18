@@ -46,6 +46,7 @@ import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
 import type { AgentChartSpec, DatabaseType, TableSchema } from "@/lib/types";
 import type { AgentGoalShortfall, AgentGoalVerifierId } from "./goal-verifier";
+import type { AgentToolName } from "./tools";
 import type { AgentInventoryNoun } from "./inventory-noun";
 import type { PlanStatementIdentifiers } from "./plan-statement";
 import type { AgentPlanSummary } from "./plan-summary";
@@ -532,6 +533,30 @@ export type AgentRunEvent =
     })
   | (AgentRunEventBase & { readonly kind: "tool-refused"; readonly stepId: string; readonly refusal: AgentToolRefusal })
   | (AgentRunEventBase & { readonly kind: "report-composed"; readonly claims: readonly AgentReportClaim[] })
+  | (AgentRunEventBase & {
+      /**
+       * A call the server held back, and what it asked for instead.
+       *
+       * The drive can refuse to RUN a `compose_report` and answer the model with a notice —
+       * cite a reading you took, compare the two plans you hold, profile a table before you
+       * report. Every one of those decisions was invisible: a held call performs no effect,
+       * so it settles no step and wrote nothing at all. A reader of the ledger saw a run
+       * that reported once, when what happened was that it tried, was turned back, and
+       * tried again.
+       *
+       * That is a gap in the thing this ledger exists to be. It also cost real time: a
+       * notice measured as having no effect on `qwen3.5:9b` and `qwen3:8b` could not be
+       * told apart from a notice that never fired, because neither leaves a trace.
+       *
+       * `shortfall` is the verifier's own name for what was missing where the notice came
+       * from the verdict preview, and absent for the purpose-written ones, which answer
+       * conditions the verifier has no vocabulary for.
+       */
+      readonly kind: "call-held";
+      readonly tool: AgentToolName;
+      readonly reason: string;
+      readonly shortfall?: AgentGoalShortfall;
+    })
   | (AgentRunEventBase & {
       /**
        * The model's closing prose, recorded because it is otherwise lost.

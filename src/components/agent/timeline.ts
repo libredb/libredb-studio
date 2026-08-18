@@ -871,6 +871,21 @@ function describeEvent(
         // rather than deciding again in the browser what may be run.
         ...(event.handover === "none" ? {} : { handover: { kind: event.handover, sql: event.sql } }),
       };
+    case "call-held":
+      return {
+        /*
+          Not a failure and not progress: the server turned a call back and said what it
+          wanted instead. Rendered because a reader who cannot see it reads the run as
+          having reported once, when what happened is that it tried, was asked for
+          something, and tried again — and on the runs where the model declines the offer,
+          this entry is the only place the offer exists at all.
+        */
+        // `refused` is the existing tone for "the server did not run this", which is
+        // exactly what happened here; a new tone would be a second colour for one fact.
+        tone: "refused",
+        headline: `Held back ${event.tool}`,
+        detail: event.reason,
+      };
     case "closing-statement":
       return {
         // Content the run produced, so it reads like the report entry rather than
