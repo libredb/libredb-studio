@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { DEPARTMENTS, type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
-import { type Turn, answersProse, callsTool, reportOn } from "../isolated/fixtures/agent-scripted-model";
+import { type Turn, answersProse, callsTool, promptText, reportOn } from "../isolated/fixtures/agent-scripted-model";
+import { chatToolCallStream } from "../isolated/fixtures/agent-transport";
 import { QueryError } from "@/lib/db/errors";
 
 /**
@@ -399,5 +400,82 @@ describe("an engine that cannot serve a reading", () => {
 
     expect(drive.verdict.outcome).toBe("answered");
     expect(drive.statements).toEqual([]);
+  });
+});
+
+describe("a run that took readings and cited none is asked once, with the ids", () => {
+  /*
+    Measured, and the shape is unambiguous: `mistral-small3.2:24b` called
+    `inspect_operations` SIX times, every call completed, and then composed a report whose
+    only citation was the schema inventory — `no-reading`, the arm #411 made necessary.
+    `verifyOperationsGoal` asks for one `source: "artifact"` reference and got none.
+
+    The run had done the work. It cited the wrong thing, and nothing told it so at a
+    moment it could still act — `compose_report` ends the run. So the call is held back
+    once and the ids of the readings it actually took are named, exactly as the
+    plan notices name plan ids.
+
+    This is the general form of that mistake and it is not confined to `operations`: on
+    every other agent workflow the same misdirection scores `empty-evidence` when the only
+    artifacts cited came back with no rows while the run held ones that did.
+
+    The #350 guard applies as always: the notice fires only when the run HOLDS a usable
+    artifact. A run with nothing to cite is told nothing, because it would be being asked
+    for the impossible.
+  */
+  const citesSnapshotOnly =
+    (claim: string) =>
+    (turn: Turn): Response => {
+      const match = /\{"source":"context-snapshot","fingerprint":"(ctx_[a-z0-9]+)"\}/.exec(promptText(turn));
+      if (match === null) throw new Error(`no snapshot citation offered: ${promptText(turn).slice(0, 600)}`);
+      return chatToolCallStream(
+        "compose_report",
+        JSON.stringify({ claims: [{ claim, evidence: [{ source: "context-snapshot", fingerprint: match[1] }] }] }),
+        "call_report",
+      );
+    };
+
+  test("the report is held back, a reading id is named, and the run may still answer", async () => {
+    const run = await open("postgres");
+
+    const drive = await run.drive([
+      reads("sessions"),
+      citesSnapshotOnly("One session has been blocked on a lock for over four minutes."),
+      reportOn("One session has been blocked on a lock for over four minutes."),
+    ]);
+
+    expect(drive.transcripts[2]).toContain("cited none of them");
+    // The notice carries the id of the reading this run took, so the model has nothing to
+    // look up.
+    const reading = drive.events.find((event) => event.kind === "tool-completed");
+    if (reading?.kind !== "tool-completed") throw new Error("expected a reading");
+    expect(drive.transcripts[2]).toContain(reading.artifact.correlationId);
+    // And the run went on to answer, so the notice cost it nothing.
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-operations.2", unmet: [] });
+  });
+
+  test("a run that ignores the notice still reports, and still fails the bar honestly", async () => {
+    // The guarantee every notice in this loop has to keep: offered ONCE, then out of the
+    // way. A notice that could swallow a report would trade `no-reading` for `no-report`,
+    // which is the worse verdict.
+    const run = await open("postgres");
+
+    const drive = await run.drive([
+      reads("sessions"),
+      citesSnapshotOnly("One session has been blocked on a lock for over four minutes."),
+      citesSnapshotOnly("One session has been blocked on a lock for over four minutes."),
+    ]);
+
+    expect(drive.stopReason).toBe("report-composed");
+    expect(drive.verdict.unmet).toEqual(["no-reading"]);
+  });
+
+  test("a run holding no reading at all is told nothing, because it has nothing to cite", async () => {
+    const run = await open("postgres");
+
+    const drive = await run.drive([citesSnapshotOnly("Nothing is blocked as far as I can tell.")]);
+
+    expect(drive.stopReason).toBe("report-composed");
+    expect(drive.verdict.unmet).toEqual(["no-reading"]);
   });
 });

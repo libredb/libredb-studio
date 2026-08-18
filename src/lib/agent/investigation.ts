@@ -45,6 +45,7 @@
 
 import { createHash } from "node:crypto";
 import { type ModelMessage, type ToolSet, streamText, tool } from "ai";
+import { z } from "zod";
 import {
   captureContextSnapshot,
   connectionIdentity,
@@ -378,6 +379,65 @@ function compareBeforeReportNotice(before: string, after: string): string {
   return [
     "This workflow answers by COMPARING plans and no comparison is recorded: a report resting on a single plan is scored as having established nothing.",
     `Your compose_report call was not run. Call compare_plans with before="${before}" and after="${after}" — the two plans this run already inspected — and then call compose_report.`,
+  ].join(" ");
+}
+
+/**
+ * The artifact ids a `compose_report` call is CITING, read from the call itself.
+ *
+ * Read from the arguments rather than from the ledger, because at the moment this matters
+ * the report has not been recorded — that is the whole point of intercepting the call
+ * instead of judging the run after it ends. Permissive on purpose: `composeReportTool`
+ * validates the payload properly a moment later, so all this has to do is decide whether
+ * the run is about to cite nothing it read.
+ */
+const citedEvidenceSchema = z.object({
+  claims: z
+    .array(z.object({ evidence: z.array(z.object({ source: z.string(), correlationId: z.string().optional() })) }))
+    .optional(),
+});
+
+function citedArtifactIds(input: unknown): readonly string[] {
+  const parsed = citedEvidenceSchema.safeParse(input);
+  if (!parsed.success) return [];
+  return (parsed.data.claims ?? []).flatMap((claim) =>
+    claim.evidence.flatMap((reference) =>
+      reference.source === "artifact" && reference.correlationId !== undefined ? [reference.correlationId] : [],
+    ),
+  );
+}
+
+/**
+ * What a run is told once when it is about to report on none of what it read.
+ *
+ * Measured: `mistral-small3.2:24b` called `inspect_operations` SIX times, every call
+ * completed, and then composed a report whose only citation was the schema inventory.
+ * `verifyOperationsGoal` asks for one `source: "artifact"` reference and got none, so the
+ * run scored `no-reading` having done the work. The same misdirection on the other
+ * workflows scores `empty-evidence`: the artifacts cited came back with no rows while the
+ * run held ones that did.
+ *
+ * So the ids are NAMED rather than described, and the call is held back instead of run —
+ * `compose_report` ends the run, so anything said afterwards arrives too late. Offered
+ * once, like every other notice here: a model that will not take it still reports, and
+ * the verdict is still the honest one.
+ *
+ * The #350 guard: this fires only when the run HOLDS something worth citing. A run that
+ * read nothing is told nothing, because asking it to cite a reading it never took is
+ * asking for the impossible — the mistake the reverted `ANSWER_NOT_PRESENTED` refusal
+ * made, which cost those runs their report as well as their answer.
+ */
+function citeWhatYouReadNotice(ids: readonly string[], everythingCitedWasEmpty: boolean): string {
+  const named = ids
+    .slice(0, 4)
+    .map((id) => `"${id}"`)
+    .join(", ");
+  const opening = everythingCitedWasEmpty
+    ? "Every result your report cites came back with NO rows, so it establishes nothing — and this run holds readings that did return rows."
+    : "This run took readings and your report cited none of them: a report that rests only on the schema inventory is scored as having answered nothing about what the engine is doing.";
+  return [
+    opening,
+    `Your compose_report call was not run. Cite at least one of the results this run actually read — ${named} — as {"source":"artifact","correlationId":"<one of those>"}, then call compose_report again.`,
   ].join(" ");
 }
 
@@ -2250,6 +2310,8 @@ export async function runInvestigation(
   let presentReminded = false;
   /** The compare-before-report notice, once per drive; see `compareBeforeReportNotice`. */
   let compareReminded = false;
+  /** The cite-what-you-read notice, once per drive; see `citeWhatYouReadNotice`. */
+  let citeReminded = false;
   /**
    * Whether the run has been narrowed to what would finish it; see
    * `AGENT_NARROWED_EXTRA_TOOLS`. Set once and never cleared — a run narrowed for
@@ -2491,6 +2553,43 @@ export async function runInvestigation(
               ? promptedResultMessage(call, notice(AGENT_PRESENT_BEFORE_REPORT_NOTICE))
               : toolResultMessage(call, AGENT_PRESENT_BEFORE_REPORT_NOTICE),
           );
+          continue;
+        }
+      }
+      // A run about to report on none of what it read is one citation short of its bar.
+      // Checked before the plan notices because it is the more basic mistake: a report
+      // resting on nothing the run established fails every workflow, comparison or not.
+      if (call.toolName === "compose_report" && !citeReminded) {
+        const { record: sofar } = await service.resume(context.runId);
+        // Every artifact this run holds, with how many rows it came back with — the same
+        // fold `restsOnlyOnEmptyResults` performs, read here while the report can still
+        // be changed rather than after it has been scored.
+        const held = new Map<string, number>();
+        for (const event of sofar.events) {
+          if (event.kind === "tool-completed") held.set(event.artifact.correlationId, event.artifact.summary.rowCount);
+        }
+        // The RAW citations, unfiltered, and that distinction is load-bearing. An id this
+        // run never produced is a DIFFERENT mistake, and `composeReportTool` already
+        // answers it with a precise refusal naming the invented id. Filtering those out
+        // first made such a call look like one that cited nothing, so this notice
+        // swallowed the citation contract's refusal — caught by the two evals that pin it,
+        // including the one where a hostile row value is the thing being cited. Whenever a
+        // citation is present but unresolvable, this stays out of the way and lets the
+        // tool speak.
+        const citedRaw = citedArtifactIds(call.input);
+        const useful = [...held.entries()].flatMap(([id, rows]) => (rows > 0 ? [id] : []));
+        const allResolve = citedRaw.every((id) => held.has(id));
+        const citedNothing = citedRaw.length === 0 && held.size > 0;
+        const citedOnlyEmpty =
+          citedRaw.length > 0 && allResolve && citedRaw.every((id) => held.get(id) === 0) && useful.length > 0;
+        if (citedNothing || citedOnlyEmpty) {
+          // Prefer the rows-bearing ids; a run whose every reading was empty is still
+          // told to cite one, because an empty reading IS an answer on some surfaces and
+          // the verifier only rejects a report resting ENTIRELY on empties.
+          const offer = useful.length > 0 ? useful : [...held.keys()];
+          citeReminded = true;
+          const text = citeWhatYouReadNotice(offer, citedOnlyEmpty);
+          messages.push(prompted ? promptedResultMessage(call, notice(text)) : toolResultMessage(call, text));
           continue;
         }
       }
