@@ -8,13 +8,23 @@ how many times, and where the results stop being safe to generalise from.
 | | |
 | --- | --- |
 | Measured | 16–17 August 2026 |
-| Application | LibreDB Studio at commit `907e83c` |
+| Application | LibreDB Studio at `907e83c` for the baseline, `b64941e` for the rescued rows |
 | Runtime | Ollama, OpenAI-compatible endpoint (`http://localhost:11434/v1`) |
 | Database | the embedded SQLite sample (`seed:sqlite-embedded-sample`) |
 | Evidence | every run's ledger, in `.workflow-data` |
 
 Model behaviour changes when a family publishes a new build under the same tag, so
 these results describe the tags as they were on those dates.
+
+Two commits are named because two runtime changes were made while measuring, and every
+page says which side of them a row sits on. A figure marked *(fixed)*, and every "after"
+column, was taken with the report reminder (#416) and the present-before-report notice
+(#417) in place; everything else is the baseline. Both notices were narrowed in review
+before they landed — the reminder to a tool the run holds and a turn the loop will grant,
+the notice to a read the answer tool would accept — and the runs recorded here sit inside
+the narrower triggers: each was an agent run that drafted its own read and had turns to
+spare. Anything measured against `907e83c` alone will not reproduce the rescued rows,
+because the runtime that produced them is not in that commit.
 
 ## The machine
 

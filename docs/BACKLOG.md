@@ -2313,3 +2313,41 @@ product that reads for them does not have to think for them.
 
 Not decided here. Done when the owner rules, and — whichever way — the reason is recorded next to the
 derived-groupings rule so the two read as one decision.
+
+### B51. The run loop nudges a model three times and records none of it, so a rescued run is indistinguishable from one that never needed rescuing
+
+`runInvestigation` now delivers three one-shot notices, each with its own boolean, its own guard set
+and its own delivery mechanism:
+
+| Notice | When | Delivered as |
+| --- | --- | --- |
+| `AGENT_REPORT_RESERVE_NOTICE` | within the turn or time reserve of a ceiling | a `user` message, riding the turn about to be taken |
+| `AGENT_REPORT_REMINDER_NOTICE` | a prose turn after a tool this run holds was called | a `user` message, and the turn is taken again |
+| `AGENT_PRESENT_BEFORE_REPORT_NOTICE` | a `compose_report` on an answering workflow with a presentable read and no presentation | a `tool` result, INSTEAD of running the call |
+
+None of the three writes to the ledger. `service.recordEvent` is called for the schema capture, the
+drafted statement, the closing prose, the recommendation, the answer and the report — and for nothing
+the server said to the model. So a run's timeline shows a model that read, narrated, and then
+reported, with no entry anywhere saying it was told to report; and a `compose_report` the loop
+withheld leaves no record that a call was made at all.
+
+That is a measurement problem before it is a design one. `docs/llms/` is built by reading run ledgers
+out of `.workflow-data`, and its whole claim is that each figure comes from an observed run. After
+#416 and #417 a ledger can no longer answer "did this model do that by itself?" — which is the exact
+question those pages exist to answer, and the question that decides whether a nudge is worth keeping.
+`methodology.md` already warns that one run per cell is the weakest part of the method; an
+unattributable rescue is weaker still, because re-running does not reveal it either.
+
+The second half is the shape. Each notice's GUARDS are the load-bearing part, and they are the part
+that keeps being got wrong: #416 arrived without the tool-set bound (a planning run, which holds no
+tools, was told to call `compose_report`) and without the turn bound (a run narrating at the ceiling
+was turned from `succeeded` / `model-stopped` into `failed` / `turn-limit`); #417 arrived with a
+condition that named "a result this run can present" and read an operation id that `inspect_schema`
+shares. Both were caught in review rather than by a gate, and a fourth notice will be written by
+someone reading the third.
+
+Done when a delivery is an entry on the ledger — one event kind, carrying which notice and what the
+run had done when it arrived — and the three share one declared shape, so a new one states its
+condition, its one-shot and its delivery in the same place rather than inventing them again. Whether
+the rail SHOWS the entry is a separate question and probably a no: the notices exist to be invisible
+to a user, and the timeline is not the same surface as the ledger.
