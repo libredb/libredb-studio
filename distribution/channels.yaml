@@ -684,7 +684,7 @@ channels:
 
   - id: rancher-partner
     name: Rancher Partner Charts
-    status: pending
+    status: live
     category: kubernetes-operators
     platforms: [kubernetes]
     runtime: channel_supplied
@@ -696,10 +696,15 @@ channels:
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/166
       first_pr: https://github.com/rancher/partner-charts/pull/1158
+      catalog: https://www.suse.com/pcsc/viewVersionPage?versionID=26969
       upstream_repo: https://github.com/rancher/partner-charts
     pin:
       strategy: none
-      note: Awaiting certification; pin strategy decided once the listing exists.
+      note: Merged in rancher/partner-charts#1158 (17 Aug 2026); live in Rancher Partner Charts (the repo
+        index.yaml carries libredb-studio at appVersion 0.11.0) and listed in the SUSE Solutions Catalog.
+        Partner catalog, not self-serve - the chart is regenerated on Rancher's cadence and index.yaml
+        accumulates every chart version, so an image-tag extract there would be ambiguous; strategy stays
+        none like the other tier-4 partner/curated catalogs.
 
   - id: koyeb-catalog
     name: Koyeb One-Click Apps catalog (curated by Koyeb)
