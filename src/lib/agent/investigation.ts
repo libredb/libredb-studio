@@ -56,6 +56,7 @@ import {
   reusableSnapshot,
 } from "./context-snapshot";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
+import { type AgentGoalShortfall, verifyRunGoal } from "./goal-verifier";
 import { type AgentInventoryNoun, inventoryNoun } from "./inventory-noun";
 import { PROMPTED_PROTOCOL_REMINDER, promptedToolContract, readPromptedAction } from "./prompted-tools";
 import { PLAN_NO_STATEMENT_MARKER, readPlanStatement } from "./plan-draft";
@@ -100,6 +101,7 @@ import {
 import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
   type AgentContextSnapshot,
+  type AgentReportClaim,
   type AgentRunEvent,
   type AgentRunMode,
   type AgentRunRecord,
@@ -379,6 +381,92 @@ function compareBeforeReportNotice(before: string, after: string): string {
   return [
     "This workflow answers by COMPARING plans and no comparison is recorded: a report resting on a single plan is scored as having established nothing.",
     `Your compose_report call was not run. Call compare_plans with before="${before}" and after="${after}" — the two plans this run already inspected — and then call compose_report.`,
+  ].join(" ");
+}
+
+/**
+ * The shortfalls the report being submitted WOULD earn, asked of the verifier itself.
+ *
+ * The architectural form of every notice in this loop, and the reason it is worth having.
+ * Seven fixes were measured in one day and all seven were one mistake under different
+ * names: the model did the work and then missed a protocol detail on its finishing move.
+ * Each cost the run everything, because that move gets exactly one attempt. Five were
+ * answered with a hand-written notice apiece, which neither scales to the shortfalls not
+ * yet hand-written nor stays in step with the check — a bar this file stated in its own
+ * words was phrased as an activity rather than a tool, and four models satisfied the
+ * sentence while failing the verifier.
+ *
+ * So this asks the verifier instead. `VerifiableAgentRun` is a Pick over the record, so
+ * the run it is ABOUT to become can be assembled — the ledger so far, plus the report on
+ * its way in — and handed to `verifyRunGoal` unchanged. What the model is then told is the
+ * verifier's own vocabulary, which cannot drift from the verifier the way a duplicated
+ * sentence can.
+ *
+ * It changes no bar. A run still has to produce the profile, the comparison, the citation;
+ * all it gains is being told what is missing while it can still act, instead of reading it
+ * on a verdict after the run is over.
+ */
+function shortfallsIfReported(
+  record: AgentRunRecord,
+  events: readonly AgentRunEvent[],
+  claims: readonly AgentReportClaim[],
+): readonly AgentGoalShortfall[] {
+  return verifyRunGoal({
+    mode: record.mode,
+    workflowType: record.workflowType,
+    // The status the run would end in, so the verdict is the one this report would earn
+    // rather than one shaped by a `cancelled` arm that has not happened.
+    status: "succeeded",
+    events: [...events, { kind: "report-composed", atMs: 0, claims }],
+  }).unmet;
+}
+
+/**
+ * The claims a `compose_report` call carries, read permissively for the preview above.
+ *
+ * `composeReportTool` validates them properly a moment later; all this has to produce is
+ * something the verifier can fold, and a call whose claims cannot be read at all is one
+ * the tool is about to refuse on its own terms.
+ */
+const previewClaimsSchema = z.object({
+  claims: z
+    .array(
+      z.object({
+        claim: z.string(),
+        evidence: z.array(z.object({ source: z.string(), correlationId: z.string().optional() }).passthrough()),
+      }),
+    )
+    .optional(),
+});
+
+function previewClaims(input: unknown): readonly AgentReportClaim[] {
+  const parsed = previewClaimsSchema.safeParse(input);
+  if (!parsed.success) return [];
+  return (parsed.data.claims ?? []).flatMap((claim) => {
+    // Rebuilt as the non-empty tuple `AgentReportClaim` declares, rather than cast
+    // wholesale: a claim with no evidence at all is one `composeReportTool` refuses on its
+    // own terms, and the verifier should not be shown a shape its type rules out.
+    const [head, ...rest] = claim.evidence;
+    if (head === undefined) return [];
+    const evidence = [head, ...rest] as unknown as AgentReportClaim["evidence"];
+    return [{ claim: claim.claim, evidence }];
+  });
+}
+
+/**
+ * What a run is told about a shortfall it is one call away from fixing.
+ *
+ * `null` for every shortfall this cannot honestly ask about, and that list is the #350
+ * rule applied per case: `no-report` is impossible here (a report is being submitted),
+ * `cancelled` is not the model's to fix, and the shortfalls that already have a purpose-
+ * written notice keep it, because those carry ids this generic sentence cannot.
+ */
+function shortfallNotice(shortfall: AgentGoalShortfall, table: string | undefined): string | null {
+  if (shortfall !== "no-table-profile") return null;
+  const named = table === undefined ? "a table this run's inventory lists" : `"${table}"`;
+  return [
+    "This workflow answers with the counts profile_table takes and no table has been profiled, so the report would be scored as having established nothing about the data.",
+    `Your compose_report call was not run. Call profile_table on ${named} — counts you compose yourself with run_read_query do not satisfy this — and then call compose_report again.`,
   ].join(" ");
 }
 
@@ -2312,6 +2400,8 @@ export async function runInvestigation(
   let compareReminded = false;
   /** The cite-what-you-read notice, once per drive; see `citeWhatYouReadNotice`. */
   let citeReminded = false;
+  /** The verdict-preview notice, once per drive; see `shortfallsIfReported`. */
+  let previewReminded = false;
   /**
    * Whether the run has been narrowed to what would finish it; see
    * `AGENT_NARROWED_EXTRA_TOOLS`. Set once and never cleared — a run narrowed for
@@ -2553,6 +2643,30 @@ export async function runInvestigation(
               ? promptedResultMessage(call, notice(AGENT_PRESENT_BEFORE_REPORT_NOTICE))
               : toolResultMessage(call, AGENT_PRESENT_BEFORE_REPORT_NOTICE),
           );
+          continue;
+        }
+      }
+      // The verdict this report would earn, asked of the verifier before it lands. Read
+      // first among the report checks: it is the general case, and the purpose-written
+      // notices below answer the shortfalls it deliberately declines to speak for.
+      if (call.toolName === "compose_report" && !previewReminded) {
+        const { record: sofar } = await service.resume(context.runId);
+        const would = shortfallsIfReported(record, sofar.events, previewClaims(call.input));
+        // A name from the inventory the run was handed, so the notice can point at a real
+        // table instead of asking the model to pick one. The snapshot is optional on the
+        // event, and a run without one is told the generic form rather than nothing.
+        const inventory = sofar.events.flatMap((event) =>
+          event.kind === "context-captured" && event.snapshot !== undefined
+            ? event.snapshot.tables.map((entry) => entry.name)
+            : [],
+        );
+        const text = would.flatMap((shortfall) => {
+          const said = shortfallNotice(shortfall, inventory[0]);
+          return said === null ? [] : [said];
+        })[0];
+        if (text !== undefined) {
+          previewReminded = true;
+          messages.push(prompted ? promptedResultMessage(call, notice(text)) : toolResultMessage(call, text));
           continue;
         }
       }
