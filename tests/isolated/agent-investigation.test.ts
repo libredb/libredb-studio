@@ -3806,6 +3806,41 @@ describe("a run that would report an answer it never presented", () => {
     const sent = script.turns.flatMap((turn) => JSON.stringify(turn.body.messages ?? []));
     expect(sent.some((messages) => messages.includes("This run answers by PRESENTING"))).toBe(false);
   });
+
+  test("a catalog read is not a result this run can present, so it is never told to", async () => {
+    /*
+      The same guard, on the reading that looks like one and is not. `inspect_schema`
+      reads the catalog under the SAME operation id a drafted read uses, so a run that
+      inspected the schema and nothing else has `sql.query.read` on its ledger — and
+      `present_answer` will refuse every artifact it holds, because the statement behind
+      a catalog read is the SERVER's and there is nothing of the model's to hand over.
+      Told to present one, such a run neither presents nor reports.
+    */
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent", "data-analysis", true);
+    const script = scriptedModel(
+      callsTool("inspect_schema", { schema: "public" }),
+      reportOn("The schema was inspected."),
+      answersProse("done"),
+    );
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const events = await eventsOf(b.store, run.runId);
+    // The reading is on the ledger under the answer's own operation id, which is what
+    // makes this case the trap rather than a run with an empty ledger.
+    expect(
+      events.some((event) => event.kind === "tool-completed" && event.artifact.operationId === "sql.query.read"),
+    ).toBe(true);
+    const sent = script.turns.flatMap((turn) => JSON.stringify(turn.body.messages ?? []));
+    expect(sent.some((messages) => messages.includes("This run answers by PRESENTING"))).toBe(false);
+    // And the report it did compose was composed, not intercepted.
+    expect(events.map((event) => event.kind)).toContain("report-composed");
+  });
 });
 
 describe("the handover an answer records comes from the run's own setting", () => {

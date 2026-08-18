@@ -332,10 +332,19 @@ const AGENT_REPORT_REMINDER_NOTICE = [
  * call, and the call is not executed. The run then has the turn it needs to present.
  *
  * Only where all three hold, which is what keeps it from ever being a lecture: the
- * workflow presents answers, the run HAS a readable result to present, and the model
- * has not already tried to present one. A model that tried and was refused is not
- * hesitating about the answer — it is stuck on the payload, and telling it to present
- * again would spend the turn on a call the tool has already rejected.
+ * workflow presents answers, the run HAS a result this tool would accept, and the
+ * model has not already tried to present one. A model that tried and was refused is
+ * not hesitating about the answer — it is stuck on the payload, and telling it to
+ * present again would spend the turn on a call the tool has already rejected.
+ *
+ * The middle one is read from the ledger the way `present_answer` reads it, and the
+ * join is the whole of it: a completed `sql.query.read` whose STEP also drafted a
+ * statement. The operation id alone admits `inspect_schema`, which is a catalog read
+ * under that same id — real evidence, and nothing an answer can hand to an editor,
+ * because the statement behind it is the server's. A run whose only reading is a
+ * catalog inspection would be told to present something the tool refuses every time,
+ * and would then neither present nor report: measured, the run lost the report it was
+ * about to compose.
  */
 const AGENT_PRESENT_BEFORE_REPORT_NOTICE = [
   "This run answers by PRESENTING a result, and nothing has been presented yet: a report on its own is scored as having answered nothing.",
@@ -2189,8 +2198,20 @@ export async function runInvestigation(
         AGENT_WORKFLOW_PRESENTS_ANSWER[record.workflowType]
       ) {
         const { record: sofar } = await service.resume(context.runId);
+        // The reading `present_answer` will ACCEPT, joined the way that tool joins it.
+        // The operation id alone is not the question: `inspect_schema` is a catalog read
+        // under that very id, and its statement is the SERVER's — so `statementBehind`
+        // finds none and the tool refuses every artifact such a run holds. A run told to
+        // present one would be told to do the impossible, which is the condition this
+        // check exists to be.
+        const drafted = new Set(
+          sofar.events.flatMap((event) => (event.kind === "statement-drafted" ? [event.stepId] : [])),
+        );
         const hasReading = sofar.events.some(
-          (event) => event.kind === "tool-completed" && event.artifact.operationId === "sql.query.read",
+          (event) =>
+            event.kind === "tool-completed" &&
+            event.artifact.operationId === "sql.query.read" &&
+            drafted.has(event.stepId),
         );
         const presented = sofar.events.some((event) => event.kind === "answer-composed");
         if (hasReading && !presented) {
