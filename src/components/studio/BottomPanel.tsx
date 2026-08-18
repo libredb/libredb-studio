@@ -301,9 +301,20 @@ export function BottomPanel({
   const visibleTabs = metadata?.capabilities.explainFormat ? tabs : tabs.filter((tab) => tab.key !== "explain");
 
   return (
-    <div className="h-full flex flex-col bg-sunken">
-      <div className="h-9 bg-surface border-b border-hairline flex items-center justify-between px-2">
-        <div className="flex items-center h-full gap-1">
+    /*
+      A container, not the viewport: everything in this header is sized against the
+      PANEL's width, and the panel loses width to things the viewport knows nothing
+      about — the agent rail opening, the sidebar staying open, a narrowed window.
+    */
+    <div className="h-full flex flex-col bg-sunken @container/panel">
+      <div className="h-9 bg-surface border-b border-hairline flex items-center justify-between gap-2 px-2">
+        {/*
+          The tab strip is the part that yields. It scrolls (without a visible bar in
+          a 36px-tall row) rather than pushing the export group out of the header:
+          nine mode tabs plus a rail plus a sidebar is enough to clip the right-hand
+          side entirely, and what got clipped was the only way to save a result.
+        */}
+        <div className="flex items-center h-full gap-1 min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {visibleTabs.map((tab) => (
             <button
               key={tab.key}
@@ -320,8 +331,15 @@ export function BottomPanel({
         </div>
 
         {displayedResult && mode === "results" && (
-          <div className="flex items-center gap-1">
-            <span className="text-xs font-mono text-fg-muted mr-2">
+          // Never shrinks: Export is the only way a result leaves the product, so it
+          // is the last thing that may be given up for width.
+          <div className="flex items-center gap-1 shrink-0">
+            {/*
+              Dropped first when the panel is narrow, because it is the only thing here
+              that is said twice — the stats bar directly below carries the row count,
+              and EXEC TIME carries the duration.
+            */}
+            <span className="hidden @4xl/panel:inline text-xs font-mono text-fg-muted mr-2">
               {displayedResult.rowCount} rows • {displayedResult.executionTime}ms
             </span>
             {!hydratedHere && (
