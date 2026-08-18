@@ -30,8 +30,10 @@ test.describe("Connection Management", () => {
     const dialog = page.locator('[role="dialog"]');
     await expect(dialog).toBeVisible({ timeout: 5000 });
 
-    // Should show database type options inside the dialog
-    await expect(dialog.locator("text=PostgreSQL")).toBeVisible({ timeout: 5000 });
+    // The driver BUTTON, not any text containing "PostgreSQL": the dialog also
+    // names the wire-compatible engines (#424), and three of their probed version
+    // strings mention PostgreSQL, so a substring locator matches four elements.
+    await expect(dialog.getByRole("button", { name: "PostgreSQL" })).toBeVisible({ timeout: 5000 });
   });
 
   test("connection modal has required fields", async ({ page }) => {
