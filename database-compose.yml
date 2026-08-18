@@ -355,6 +355,165 @@ services:
       timeout: 5s
       retries: 40
 
+  # Redis, as a service rather than a hand-started container. Its absence was the
+  # one hole in the shipped set (#424): `redis` had no compose entry, so its own
+  # gate-4 probe could not be reproduced on a clean machine.
+  redis:
+    image: redis:latest
+    container_name: libredb-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ==========================================================================
+  # Wire-compatible engines (issue #424, Phase 0)
+  #
+  # These have no provider of their own: each speaks the wire protocol of a driver
+  # we already ship, and the entries below are the instances a gate-4 probe
+  # actually ran against. They exist so the compatibility claims in
+  # `src/lib/db/compatibility.ts` can be re-measured rather than trusted.
+  #
+  # All of them carry `profiles: ["compat"]`, so a plain `docker compose up` still
+  # starts only the shipped engines. Bring them up deliberately:
+  #   docker compose -f database-compose.yml --profile compat up -d
+  # ==========================================================================
+
+  # -- PostgreSQL wire ------------------------------------------------------
+
+  citus:
+    image: citusdata/citus:latest
+    container_name: libredb-citus
+    profiles: ["compat"]
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5435:5432"
+
+  # network_mode: host is not a shortcut here. CockroachDB 26.x refuses an insecure
+  # cluster whose --listen-addr is not 127.0.0.1/localhost, and a loopback bind
+  # inside the container namespace cannot be published with -p. Host networking is
+  # the only way to reach an insecure single node; the alternative is a secure
+  # cluster with --accept-sql-without-tls.
+  cockroachdb:
+    image: cockroachdb/cockroach:latest
+    container_name: libredb-cockroachdb
+    profiles: ["compat"]
+    network_mode: host
+    command: start-single-node --insecure --listen-addr=localhost:26257 --http-addr=localhost:18080
+    healthcheck:
+      test: ["CMD", "./cockroach", "sql", "--insecure", "--host=127.0.0.1:26257", "-e", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  materialize:
+    image: materialize/materialized:latest
+    container_name: libredb-materialize
+    profiles: ["compat"]
+    ports:
+      - "6875:6875"
+
+  risingwave:
+    image: risingwavelabs/risingwave:latest
+    container_name: libredb-risingwave
+    profiles: ["compat"]
+    command: single_node
+    ports:
+      - "4566:4566"
+
+  # -- MySQL wire ----------------------------------------------------------
+
+  mariadb:
+    image: mariadb:latest
+    container_name: libredb-mariadb
+    profiles: ["compat"]
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: probe
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-uroot", "-proot", "--silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # -- Redis wire ----------------------------------------------------------
+
+  valkey:
+    image: valkey/valkey:latest
+    container_name: libredb-valkey
+    profiles: ["compat"]
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: libredb-dragonfly
+    profiles: ["compat"]
+    ulimits:
+      memlock: -1
+    ports:
+      - "6381:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  keydb:
+    image: eqalpha/keydb:latest
+    container_name: libredb-keydb
+    profiles: ["compat"]
+    ports:
+      - "6382:6379"
+    healthcheck:
+      test: ["CMD", "keydb-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # -- MongoDB wire --------------------------------------------------------
+
+  # FerretDB is a proxy, not a database: it needs its own PostgreSQL-with-
+  # DocumentDB backend, which is why it is the only two-service entry here. Sign in
+  # with the BACKEND's PostgreSQL credentials - FerretDB rejects authMechanism=PLAIN.
+  ferretdb-backend:
+    image: ghcr.io/ferretdb/postgres-documentdb:latest
+    container_name: libredb-ferretdb-backend
+    profiles: ["compat"]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  ferretdb:
+    image: ghcr.io/ferretdb/ferretdb:latest
+    container_name: libredb-ferretdb
+    profiles: ["compat"]
+    depends_on:
+      ferretdb-backend:
+        condition: service_healthy
+    environment:
+      FERRETDB_POSTGRESQL_URL: postgres://postgres:postgres@ferretdb-backend:5432/postgres
+    ports:
+      - "27018:27017"
+
 volumes:
   # Named volumes only for Druid: it is the one service here whose processes must share
   # state (deep storage) and whose task history is worth surviving a restart. Everything

@@ -32,6 +32,7 @@ import { getDBConfig, isFileBased } from "@/lib/db-ui-config";
 import { motion, AnimatePresence } from "framer-motion";
 import { useConnectionForm } from "@/hooks/use-connection-form";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { WireCompatibilityHint } from "@/components/WireCompatibilityHint";
 
 interface ConnectionModalProps {
   isOpen: boolean;
@@ -289,6 +290,9 @@ export function ConnectionModal({
               </button>
             ))}
           </div>
+
+          {/* Wire-compatible engines served by the selected driver (#424) */}
+          <WireCompatibilityHint type={type} />
 
           <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <>
