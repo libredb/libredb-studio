@@ -361,14 +361,37 @@ describe("a run holding two plans and reporting without comparing them is asked 
     expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
   });
 
-  test("a run holding NO plan is not asked at all, because the nudge would be a lecture", async () => {
+  test("a run holding no plan IS asked, and the ask is for the reading rather than the comparison", async () => {
+    /*
+      This test used to assert the opposite — that a run holding no plan is not asked at
+      all, "because the nudge would be a lecture". That was a judgement made without the
+      measurement, and the measurement overturned it.
+
+      `no-plan-comparison` blocks NINE cells across the models measured at five repeats,
+      five of them losing to nothing else. `qwen3:4b` loses this cell four times in five,
+      and each losing run has a ledger of four events: started, context captured, report
+      composed, finished. No tool was called at all. Those runs are not being lectured for
+      a diligence they lack; they never learned that a report here is scored against plans,
+      and they ended without anyone telling them.
+
+      What stays true from the original judgement is the shape of the ask. This notice does
+      not demand a comparison — a run with no plans cannot make one, and the sibling test
+      above holds the two-plan case, where `compareBeforeReportNotice` names the ids. It
+      asks for the reading, which is the one call that can start the arc.
+    */
     const run = await open("sqlite");
 
     // Citing the inventory, because a run that read nothing has nothing else to cite.
-    const drive = await run.drive([reportCitingWhatWasOffered("It is slow because the table is large.")]);
+    const drive = await run.drive([
+      reportCitingWhatWasOffered("It is slow because the table is large."),
+      callsTool("inspect_plan", { sql: SLOW }, "call_plan_before"),
+      recommends(),
+      reportOn("The listing scans the table; an index on last_name would change that."),
+    ]);
 
-    expect(drive.stopReason).toBe("report-composed");
-    expect(drive.verdict.unmet).toEqual(["no-plan-comparison"]);
+    expect(drive.transcripts[1]).toContain("inspect_plan");
+    expect(drive.transcripts[1]).not.toContain("Call compare_plans with before=");
+    expect(drive.verdict.outcome).toBe("answered");
   });
 
   test("a run that already compared is not asked again", async () => {
@@ -421,6 +444,37 @@ describe("an index recommended on no plan at all is asked for one", () => {
     ]);
 
     expect(drive.transcripts[2]).toContain("inspect_plan");
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
+  });
+
+  test("a report resting on no plans at all is held and told to inspect one", async () => {
+    /*
+      `no-plan-comparison` blocks NINE cells across the measured models, five of them losing
+      to nothing else, and it was the one large shortfall with no sentence at all: the
+      verdict-preview mechanism had branches for `no-table-profile` and `no-plan-evidence`
+      and returned null here, so a run earning it was never told.
+
+      The ledgers show why that matters. `qwen3:4b` loses this cell 4 times in 5, and the
+      losing runs have a ledger of exactly four events — started, context captured, report
+      composed, finished. No tool was called at all. There was nothing wrong with the run's
+      reasoning that a notice would have to argue with; it simply did not know that a report
+      here is scored against plans.
+
+      The existing `compareBeforeReportNotice` cannot cover this. It names the two plan ids
+      to compare, so it can only fire once a run HOLDS two plans — the case where the model
+      has already done the work and stopped one call short. A run that inspected nothing has
+      no ids to be named, and needs to be sent to the reading instead.
+    */
+    const run = await open("sqlite");
+
+    const drive = await run.drive([
+      reportCitingWhatWasOffered("The listing is slow because it scans."),
+      callsTool("inspect_plan", { sql: SLOW }, "call_plan_before"),
+      recommends(),
+      reportOn("The listing scans the table; an index on last_name would change that."),
+    ]);
+
+    expect(drive.transcripts[1]).toContain("inspect_plan");
     expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
   });
 });

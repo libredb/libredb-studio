@@ -516,7 +516,11 @@ interface ShortfallAdvice {
   readonly narrow: boolean;
 }
 
-function shortfallNotice(shortfall: AgentGoalShortfall, table: string | undefined): ShortfallAdvice | null {
+function shortfallNotice(
+  shortfall: AgentGoalShortfall,
+  table: string | undefined,
+  plansInspected: number,
+): ShortfallAdvice | null {
   if (shortfall === "no-table-profile") {
     const named = table === undefined ? "a table this run's inventory lists" : `"${table}"`;
     return {
@@ -529,6 +533,40 @@ function shortfallNotice(shortfall: AgentGoalShortfall, table: string | undefine
       // left holding everything, `qwen3.5:4b` called `inspect_schema` four times and
       // `run_read_query` three without ever profiling.
       narrow: true,
+    };
+  }
+  if (shortfall === "no-plan-comparison") {
+    // Only for a run holding NO plan. With one or two in hand the run is not missing the
+    // idea, it is one call short, and `compareBeforeReportNotice` says that better because
+    // it can name the ids. Saying "this run has inspected none" to a run that inspected two
+    // is worse than saying nothing — caught by the two gate evals that assert exactly that
+    // arc.
+    if (plansInspected > 0) return null;
+    /*
+      The largest shortfall that had no sentence at all. It blocks NINE cells across the
+      measured models, five of them losing to nothing else, and `shortfallNotice` returned
+      null for it — so a run earning it was never told anything.
+
+      The ledgers say what is missing is knowledge rather than diligence. `qwen3:4b` loses
+      this cell four times in five, and each losing run holds exactly four events: started,
+      context captured, report composed, finished. No tool was called. Nothing about the run
+      needs arguing with; it did not know that a report here is scored against plans.
+
+      `compareBeforeReportNotice` cannot cover this case. It names the two plan ids to
+      compare, so it can only speak once a run HOLDS two plans — a model that did the work
+      and stopped one call short. A run with no plans has no ids to be named and has to be
+      sent to the reading instead, which is why this asks for `inspect_plan` first.
+
+      NOT narrowed, for the reason `no-plan-evidence` is not: this verdict accepts
+      `compare_plans` and `recommend_change`, and narrowing would remove `inspect_plan` —
+      the very tool the sentence asks for.
+    */
+    return {
+      said: [
+        "This workflow is judged on plans: a report is scored on whether it shows HOW the engine reaches its rows, and this run has inspected none, so it would be scored as having established nothing.",
+        "Your compose_report call was not run. Call inspect_plan on the statement in question, then either recommend_change citing that plan's artifact id, or inspect_plan on a rewritten form and compare_plans on the two — and then call compose_report.",
+      ].join(" "),
+      narrow: false,
     };
   }
   if (shortfall === "no-plan-evidence") {
@@ -2831,7 +2869,15 @@ export async function runInvestigation(
           event.kind === "context-captured" && event.snapshot !== undefined ? event.snapshot.tables : [],
         );
         const spoken = would.flatMap((shortfall) => {
-          const advice = shortfallNotice(shortfall, tableToProfile(inventory, previewClaims(call.input)));
+          const advice = shortfallNotice(
+            shortfall,
+            tableToProfile(inventory, previewClaims(call.input)),
+            // Counted the way `compareBeforeReportNotice` counts them below: a plan is a
+            // completed step under the estimate operation, not an event kind of its own.
+            sofar.events.filter(
+              (event) => event.kind === "tool-completed" && event.artifact.operationId === "sql.explain.estimate",
+            ).length,
+          );
           return advice === null ? [] : [{ shortfall, advice }];
         })[0];
         if (spoken !== undefined) {

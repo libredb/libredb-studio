@@ -1016,11 +1016,15 @@ function unavailable(
  * `UNVERIFIABLE_EVIDENCE` carries the contract in `UNAVAILABLE_TEXT` itself, because
  * only these same two tools can produce it.
  */
-function invalidEvidenceInput(): AgentToolOutcome & { kind: "unavailable" } {
+function invalidEvidenceInput(problems: string): AgentToolOutcome & { kind: "unavailable" } {
   return {
     kind: "unavailable",
     reasonCode: "INVALID_TOOL_INPUT",
-    modelText: `${UNAVAILABLE_TEXT.INVALID_TOOL_INPUT} ${AGENT_EVIDENCE_CONTRACT}`,
+    // The failing paths come FIRST, before the contract. This is the refusal a
+    // `qwen3:8b` run received thirty-seven times in a row without changing its call, and
+    // the contract was already in it every one of those times: restating a rule the model
+    // has read and misapplied is not what it is missing. The field that failed is.
+    modelText: `${UNAVAILABLE_TEXT.INVALID_TOOL_INPUT} (${problems}) ${AGENT_EVIDENCE_CONTRACT}`,
   };
 }
 
@@ -1495,9 +1499,47 @@ function normalizeDeclaredSchema(context: AgentToolContext, schema: string): str
  * failure returns the same `INVALID_TOOL_INPUT` as a composition refusal: from the
  * model's side both mean "these arguments cannot become a statement".
  */
-function parseToolInput<T>(schema: z.ZodType<T>, input: unknown): { ok: true; value: T } | { ok: false } {
+function parseToolInput<T>(
+  schema: z.ZodType<T>,
+  input: unknown,
+): { ok: true; value: T } | { ok: false; problems: string } {
   const parsed = schema.safeParse(input);
-  return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+  return parsed.success
+    ? { ok: true, value: parsed.data }
+    : { ok: false, problems: describeIssues(parsed.error.issues) };
+}
+
+/**
+ * The failing fields of a refused call, in this layer's own words.
+ *
+ * The largest measured shortfall on this project is `no-report` — 51 runs, about half of
+ * every loss — and the wire recording of a `qwen3:8b` run shows it from the inside. The
+ * model called `compose_report`, was told "The arguments did not match the shape this tool
+ * declares", called it again unchanged, was told the same sentence, and did that for
+ * THIRTY-SEVEN turns until the run ended having reported nothing. A `granite4.1:3b`
+ * `data-analysis` run spent 14 of its 42 turns the same way.
+ *
+ * The sentence is true and unusable: it names no field, so there is nothing in it to act
+ * on. Zod knows the path that failed and what was expected there, and this layer was
+ * throwing that away.
+ *
+ * What crosses over is server-authored — the path, and the type or rule that was expected —
+ * and never the VALUE the model sent, which is the rule `composedSqlOutcome` states for the
+ * same reason: a refusal quoting model text back inside a server sentence makes the
+ * ledger's provenance unreadable. Field names are structural, not content, and naming them
+ * is the whole point.
+ *
+ * Three at most, because a model that got the shape wrong is not helped by a fourth, and a
+ * long list read as prose is how a refusal becomes another wall.
+ */
+function describeIssues(issues: readonly z.core.$ZodIssue[]): string {
+  const named = issues.slice(0, 3).map((issue) => {
+    const where = issue.path.length === 0 ? "the arguments object" : issue.path.join(".");
+    if (issue.code === "invalid_type") return `${where}: expected ${issue.expected}`;
+    if (issue.code === "unrecognized_keys") return `${where}: remove ${issue.keys.join(", ")}`;
+    return `${where}: ${issue.code.replaceAll("_", " ")}`;
+  });
+  return `the fields that did not match — ${named.join("; ")}`;
 }
 
 /**
@@ -1718,7 +1760,7 @@ async function readCatalog(
   grounding: boolean,
 ): Promise<AgentToolOutcome> {
   const parsed = parseToolInput(selectorSchema, input);
-  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
+  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
   const selector = normalizeSelector(parsed.value);
   let sql: string;
   try {
@@ -1785,7 +1827,7 @@ export async function runReadQueryTool(
   input: { readonly sql: string; readonly rationale?: string },
 ): Promise<AgentToolOutcome> {
   const parsed = parseToolInput(readStatementSchema, input);
-  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
+  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
   return executeAgentOperation(context, { operationId: "sql.query.read", sql: parsed.value.sql, label: "read result" });
 }
 
@@ -2083,7 +2125,7 @@ function asReadingFailure(error: unknown, provider: DatabaseConnection["type"]):
  */
 export async function inspectOperationsTool(context: AgentToolContext, input: unknown): Promise<AgentToolOutcome> {
   const parsed = parseToolInput(agentCuratedReadInput, input);
-  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
+  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
   const selector = parsed.value;
   return runAuditedAgentCall(context, {
     operationId: "db.operations.read",
@@ -2106,7 +2148,7 @@ export async function inspectPlanTool(
   input: { readonly sql: string },
 ): Promise<AgentToolOutcome> {
   const parsed = parseToolInput(planStatementSchema, input);
-  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
+  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
   let sql: string;
   try {
     sql = composeEstimatingExplain(context.connection.type, parsed.value.sql);
@@ -2301,7 +2343,7 @@ export function planTableProfile(
   }
 
   const parsed = parseToolInput(profileSelectorSchema, input);
-  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
+  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
 
   const snapshot = capturedSnapshot(run.events);
   const target = snapshot === null ? null : inventoriedTable(snapshot, parsed.value.schema, parsed.value.table);
@@ -2420,7 +2462,7 @@ export function comparePlansTool(
   }
 
   const parsed = parseToolInput(planComparisonSchema, input);
-  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT");
+  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
   // One plan cited as both sides is not a before and an after. Without this, a
   // comparison of a plan with itself records a valid `plan-comparison` and the goal
   // verifier marks the run answered on a single inspected plan — which defeats the
@@ -2462,7 +2504,7 @@ export function recommendChangeTool(
   }
 
   const parsed = parseToolInput(recommendationSchema, input);
-  if (!parsed.ok) return invalidEvidenceInput();
+  if (!parsed.ok) return invalidEvidenceInput(parsed.problems);
   if (!matchesCard(parsed.value.change, parsed.value.statement)) {
     return unavailable("RECOMMENDATION_SHAPE_MISMATCH");
   }
@@ -2912,7 +2954,7 @@ export function composeReportTool(
   }
 
   const parsed = parseToolInput(reportSchema, input);
-  if (!parsed.ok) return invalidEvidenceInput();
+  if (!parsed.ok) return invalidEvidenceInput(parsed.problems);
 
   const claims: AgentReportClaim[] = [];
   for (const claim of parsed.value.claims) {

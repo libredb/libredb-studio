@@ -500,6 +500,40 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       expect(answer.reasonCode).toBe("INVALID_TOOL_INPUT");
     });
 
+    test("and names the field that did not match, so there is something to correct", async () => {
+      /*
+        The largest measured shortfall on this project is `no-report` -- 51 runs, about half
+        of every loss -- and the wire recording of a `qwen3:8b` run shows what it looks like
+        from the inside. The model called `compose_report`, was told "The arguments did not
+        match the shape this tool declares", called it again with the same shape, was told
+        the same sentence, and did that for THIRTY-SEVEN turns until the run ran out of
+        budget and ended having reported nothing.
+
+        The sentence is true and it is unusable: it names no field, so there is nothing in
+        it to act on. Zod knows exactly which path failed and what was expected there, and
+        this layer was discarding that.
+
+        What is passed on is server-authored -- the path and the expected type -- and never
+        the value the model sent, which is the rule `composedSqlOutcome` states for the same
+        reason: a refusal that quotes model text back inside a server sentence makes the
+        ledger's provenance unreadable. Field NAMES are structural rather than content, and
+        naming them is the entire point of the message.
+      */
+      const h = analysis();
+      const { artifact, events } = await readWithLedger(h.context);
+
+      const answer = presentAnswerTool(
+        h.context,
+        { runId: h.context.runId, events, autoExecute: false },
+        { artifact: artifact.correlationId, presentation: { kind: "spreadsheet" } },
+      );
+
+      expect(answer.kind).toBe("unavailable");
+      if (answer.kind !== "unavailable") return;
+      expect(answer.reasonCode).toBe("INVALID_TOOL_INPUT");
+      expect(answer.modelText).toContain("presentation");
+    });
+
     test("refuses a string that is not JSON at all, in the contract's own words", async () => {
       const h = analysis();
       const { artifact, events } = await readWithLedger(h.context);
