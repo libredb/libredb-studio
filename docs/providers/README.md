@@ -92,29 +92,70 @@ Upstash, PlanetScale, Azure Cosmos DB and Amazon DocumentDB. Their status is tra
   [`../API_DOCS.md`](../API_DOCS.md).
 
 
-## database compose connection tests
+## Connecting to the container fixture
 
-What to type into the connection dialog for each service in
-[`database-compose.yml`](../../database-compose.yml). This was an ASCII box drawing until the two
-search providers were added: a fifth column does not fit at that width, and every added engine would
-have meant re-drawing every rule. It is a markdown table now, so a new engine is one new column and
-the widths look after themselves.
+What to type into the connection dialog for **every shipped provider**, against
+[`database-compose.yml`](../../database-compose.yml). One row per type-id, so the table covers the
+same set as the table at the top of this file and a new provider is a new row rather than a re-drawn
+grid. Each row was verified against the running container on 2026-08-19 — the credentials are the
+ones the fixture actually accepts, not the ones its environment block asks for (twice those differ;
+see the notes).
 
-| | Couchbase | ClickHouse | Apache Druid | Elasticsearch | OpenSearch |
-|---|---|---|---|---|---|
-| **Host** | localhost | localhost | localhost | localhost | localhost |
-| **Port** | 8091 | 8123 | 8888 | 9200 | **9201** |
-| **User** | Administrator | libredb | *none* | *none* | *none* |
-| **Password** | password123 | password123 | *none* | *none* | *none* |
-| **Database** | travel | demo | *none* | *none* | *none* |
+Start the eight always-on services with a plain `docker compose -f database-compose.yml up -d`; the
+`Profile` column names the ones that need asking for.
 
-> **NOTE — the two search services.** OpenSearch is on **9201** on the host because both products ship
-> on 9200 inside the container and the `elasticsearch` service publishes it; the provider's default
-> port stays 9200, so this is a collision on this machine and not a fact about the product. Both run
-> with **security disabled**, which is why no credentials are needed *and* why these containers can
-> never produce a 401/403 body — a bogus `Basic` header is ignored there (measured, HTTP 200 on both).
-> Neither offers a `Database` field at all: an index has no namespace above it. Details in
-> [elasticsearch.md](./elasticsearch.md) and [opensearch.md](./opensearch.md).
->
-> *none* means the field is left empty — for Druid because a default install loads no security
-> extension, for the search services because the security plugin is off.
+| Provider | Compose service | Host | Port | User | Password | Database / service | Profile |
+|---|---|---|---|---|---|---|---|
+| PostgreSQL | `postgres` | localhost | 5432 | `postgres` | `postgres` | `postgres` | — |
+| MySQL | `mysql` | localhost | 3306 | `root` | `root` | `mysql` | — |
+| Oracle | `oracle` | localhost | 1521 | `system` | `Password123!` | `XEPDB1` (service name) | — |
+| SQL Server | `mssql` | localhost | 1433 | `sa` | `Password123!` | `master` | — |
+| MongoDB | `mongodb` | localhost | 27017 | `admin` | `admin` | any; auth source `admin` | — |
+| Redis | `redis` | localhost | 6379 | *none* | *none* | *none* (db index 0) | — |
+| Couchbase | `couchbase` | localhost | 8091 | `Administrator` | `password123` | `travel` (bucket) | — |
+| ClickHouse | `clickhouse` | localhost | 8123 | `libredb` | `password123` | `demo` | — |
+| Apache Druid | `druid-router` | localhost | 8888 | *none* | *none* | *none* | `druid` |
+| Elasticsearch | `elasticsearch` | localhost | 9200 | *none* | *none* | *none* | — |
+| OpenSearch | `opensearch` | localhost | **9201** | *none* | *none* | *none* | — |
+| SQLite | *no service* | — | — | — | — | a file path on the Studio host | — |
+| LibreDB | *no service* | — | — | — | — | a directory on the Studio host | — |
+
+*none* means leave the field empty. It is never a default that happens to be blank: Druid loads no
+security extension in a default install, both search services run with their security plugin off, and
+the `redis` service sets no `requirepass` (verified: `CONFIG GET requirepass` answers empty).
+
+**The two embedded providers have no container, and that is the whole point of them.** SQLite takes a
+path resolved *in the Studio process* and LibreDB a directory; neither reaches a network. Both also
+ship a ready-made sample connection — "Sample (Employees)" and "Sample (LibreDB)" appear in the
+sidebar with no configuration at all — so the fastest way to exercise them is to click one rather than
+to fill this dialog in. See [sqlite.md](./sqlite.md) and [libredb.md](./libredb.md).
+
+**Two rows differ from what the compose file's environment asks for**, which is why they are stated
+from the running container instead:
+
+- **Oracle** sets `ORACLE_PDB: ORCLPDB1`, and `gvenzl/oracle-xe` does not read that variable — it
+  takes `ORACLE_DATABASE` for an application PDB. So the only PDB on the node is the image default,
+  `XEPDB1` (verified: `SELECT name FROM v$pdbs`). Connect to `XEPDB1`, or the listener refuses the
+  service name.
+- **SQL Server** sets `MSSQL_DATABASE: mssql`, which the official image ignores; it creates no
+  database. `master` is what the fixture guarantees (verified: `SELECT name FROM sys.databases`), and
+  a `shop` database appears only once an E2E seed has run.
+
+**The two search services share a port inside the container.** OpenSearch publishes **9201** on the
+host because both products ship on 9200 and the `elasticsearch` service claims it; the provider's own
+default port stays 9200, so this is a collision on this machine and not a fact about the product.
+Security is off on both, which is what makes their fixtures reproducible *and* the limit of what they
+can prove: a bogus `Basic` header is ignored there (HTTP 200 on both, measured), so no 401/403 body
+can ever be captured from these containers. Neither offers a `Database` field at all — an index has no
+namespace above it. Details in [elasticsearch.md](./elasticsearch.md) and
+[opensearch.md](./opensearch.md).
+
+**Druid is seven containers, not one.** It has no single-container mode, so the whole block carries
+`profiles: ["druid"]` and a plain `up -d` leaves it out. The dialog only ever needs the Router:
+
+```bash
+docker compose -f database-compose.yml --profile druid up -d
+```
+
+For the engines that have no provider of their own, use the `compat` profile and connect as the driver
+named in the [Wire-compatible engines](#wire-compatible-engines) table above.
