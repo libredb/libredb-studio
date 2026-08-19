@@ -56,7 +56,11 @@ export function toPascalCase(str: string): string {
  * for such a name is left where it already was before this function existed.
  */
 export function toIdentifier(str: string): string {
-  const result = toPascalCase(str.replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_+|_+$/g, ""));
+  // The trim is `^_|_$`, not `^_+|_+$`: the collapse above has already reduced
+  // every run of separators to ONE underscore, so a repeated quantifier here can
+  // never match more — it only adds the backtracking that makes the pattern
+  // super-linear on a long run of separators (SonarCloud S5852).
+  const result = toPascalCase(str.replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_|_$/g, ""));
   if (!/^\p{L}/u.test(result)) return result ? `T${result}` : "Record";
   return result;
 }

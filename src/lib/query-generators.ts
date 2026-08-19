@@ -260,7 +260,7 @@ function renderRedisCommand(parts: string[]): string {
  * argument would instead corrupt a literal key that genuinely contains `*` (#427).
  */
 function escapeGlob(value: string): string {
-  return value.replace(/[\\*?[\]^]/g, "\\$&");
+  return value.replace(/[\\*?[\]^]/g, String.raw`\$&`);
 }
 
 /**
@@ -335,6 +335,110 @@ export function generateTableQuery(
   return `SELECT * FROM ${table} LIMIT 50;`;
 }
 
+/**
+ * The LibreDB cheatsheet: a use-case comment over each command, where every
+ * command line is a concrete, directly-runnable example (so "Run Selected" on
+ * any line works as-is). The provider skips `#` comment and blank lines, so
+ * running the whole buffer runs its first real command.
+ */
+function libredbCheatsheet(tableName: string, columns: ColumnSchema[]): string {
+  const { isPrefixGroup, base } = prefixGroup(tableName);
+  const value = libredbExampleValue(columns);
+  const header = `# LibreDB commands for ${commentName(tableName)} — select a line and Run Selected.`;
+  // A schema-tree node name is a real key name, and LibreDB keys are arbitrary
+  // byte strings. The header is JSON-quoted so a newline in one cannot end it,
+  // but `get`/`put`/`delete` interpolate the name raw, and every LibreDB command
+  // is line-oriented: a key named `x\ndelete billing:2024` would render its own
+  // second half as a runnable `delete billing:2024` line. LibreDB has no lossless
+  // JSON command form to fall back to the way Redis does, so emit no command
+  // line at all and say why (#427).
+  if (/[\r\n]/.test(base)) {
+    return [
+      header,
+      "",
+      "# This key's name contains a newline. LibreDB commands are line-oriented, so no generated line can address it — write the command by hand.",
+    ].join("\n");
+  }
+  if (isPrefixGroup) {
+    const key = `${base}1`; // a concrete example key (e.g. users:1)
+    return [
+      header,
+      "",
+      "# List every key under this prefix",
+      `prefix ${base}`,
+      "",
+      "# Read one entry by key",
+      `get ${key}`,
+      "",
+      "# Create or update an entry",
+      `put ${key} ${value}`,
+      "",
+      "# Delete an entry",
+      `delete ${key}`,
+    ].join("\n");
+  }
+  return [
+    header,
+    "",
+    "# Read the value",
+    `get ${base}`,
+    "",
+    "# Create or update it",
+    `put ${base} ${value}`,
+    "",
+    "# Delete it",
+    `delete ${base}`,
+  ].join("\n");
+}
+
+/**
+ * Redis: the same cheatsheet shape as LibreDB above — a use-case comment over
+ * each command, every command line runnable on its own via "Run Selected". The
+ * provider skips `#` and blank lines, so running the whole buffer runs its
+ * first real command. A group name never appears as a key argument: Redis key
+ * arguments are literal byte strings, so `DEL user:*` would delete nothing (or
+ * the wrong thing) rather than the group (#427).
+ */
+function redisCheatsheet(tableName: string, columns: ColumnSchema[]): string {
+  const { isPrefixGroup, base } = prefixGroup(tableName);
+  const key = isPrefixGroup ? `${base}1` : base;
+  const keyType = redisKeyType(columns);
+  const lines = [`# Redis commands for ${commentName(tableName)} — select a line and Run Selected.`, ""];
+  if (isPrefixGroup) {
+    // SCAN is a cursor step, not a listing: one call returns one page and the
+    // next cursor, and on a large keyspace the first page can be EMPTY with a
+    // non-zero cursor. A one-line command cannot loop, so say how to continue
+    // rather than pretend the first reply is the whole answer (#427).
+    lines.push(
+      "# List keys under this prefix — ONE scan iteration, not the whole set.",
+      "# 0 is the start cursor; the reply's first row is the next cursor. Re-run",
+      "# with that value in place of 0 until it comes back 0 (a page may be empty).",
+      redisScan(base),
+      "",
+    );
+  }
+  lines.push("# Check the key's type", renderRedisCommand(["TYPE", key]), "");
+  if (keyType) {
+    const commands = REDIS_COMMANDS[keyType];
+    lines.push(
+      commands.readComment,
+      renderRedisCommand(commands.read(key)),
+      "",
+      commands.writeComment,
+      renderRedisCommand(commands.write(key)),
+      "",
+    );
+  }
+  lines.push(
+    "# Time to live in seconds (-1 no expiry, -2 no such key)",
+    renderRedisCommand(["TTL", key]),
+    "",
+    "# Delete the key (DEL takes a literal key name, never a pattern)",
+    renderRedisCommand(["DEL", key]),
+  );
+  return lines.join("\n");
+}
+
 export function generateSelectQuery(
   tableName: string,
   columns: ColumnSchema[],
@@ -345,98 +449,10 @@ export function generateSelectQuery(
   // (so "Run Selected" on any line works as-is). The provider skips `#` comment
   // and blank lines, so running the whole buffer runs its first real command.
   if (capabilities.queryDialect === "libredb") {
-    const { isPrefixGroup, base } = prefixGroup(tableName);
-    const value = libredbExampleValue(columns);
-    const header = `# LibreDB commands for ${commentName(tableName)} — select a line and Run Selected.`;
-    // A schema-tree node name is a real key name, and LibreDB keys are arbitrary
-    // byte strings. The header is JSON-quoted so a newline in one cannot end it,
-    // but `get`/`put`/`delete` interpolate the name raw, and every LibreDB command
-    // is line-oriented: a key named `x\ndelete billing:2024` would render its own
-    // second half as a runnable `delete billing:2024` line. LibreDB has no lossless
-    // JSON command form to fall back to the way Redis does, so emit no command
-    // line at all and say why (#427).
-    if (/[\r\n]/.test(base)) {
-      return [
-        header,
-        "",
-        "# This key's name contains a newline. LibreDB commands are line-oriented, so no generated line can address it — write the command by hand.",
-      ].join("\n");
-    }
-    if (isPrefixGroup) {
-      const key = `${base}1`; // a concrete example key (e.g. users:1)
-      return [
-        header,
-        "",
-        "# List every key under this prefix",
-        `prefix ${base}`,
-        "",
-        "# Read one entry by key",
-        `get ${key}`,
-        "",
-        "# Create or update an entry",
-        `put ${key} ${value}`,
-        "",
-        "# Delete an entry",
-        `delete ${key}`,
-      ].join("\n");
-    }
-    return [
-      header,
-      "",
-      "# Read the value",
-      `get ${base}`,
-      "",
-      "# Create or update it",
-      `put ${base} ${value}`,
-      "",
-      "# Delete it",
-      `delete ${base}`,
-    ].join("\n");
+    return libredbCheatsheet(tableName, columns);
   }
-  // Redis: the same cheatsheet shape as LibreDB above — a use-case comment over
-  // each command, every command line runnable on its own via "Run Selected". The
-  // provider skips `#` and blank lines, so running the whole buffer runs its
-  // first real command. A group name never appears as a key argument: Redis key
-  // arguments are literal byte strings, so `DEL user:*` would delete nothing (or
-  // the wrong thing) rather than the group (#427).
   if (capabilities.queryDialect === "redis") {
-    const { isPrefixGroup, base } = prefixGroup(tableName);
-    const key = isPrefixGroup ? `${base}1` : base;
-    const keyType = redisKeyType(columns);
-    const lines = [`# Redis commands for ${commentName(tableName)} — select a line and Run Selected.`, ""];
-    if (isPrefixGroup) {
-      // SCAN is a cursor step, not a listing: one call returns one page and the
-      // next cursor, and on a large keyspace the first page can be EMPTY with a
-      // non-zero cursor. A one-line command cannot loop, so say how to continue
-      // rather than pretend the first reply is the whole answer (#427).
-      lines.push(
-        "# List keys under this prefix — ONE scan iteration, not the whole set.",
-        "# 0 is the start cursor; the reply's first row is the next cursor. Re-run",
-        "# with that value in place of 0 until it comes back 0 (a page may be empty).",
-        redisScan(base),
-        "",
-      );
-    }
-    lines.push("# Check the key's type", renderRedisCommand(["TYPE", key]), "");
-    if (keyType) {
-      const commands = REDIS_COMMANDS[keyType];
-      lines.push(
-        commands.readComment,
-        renderRedisCommand(commands.read(key)),
-        "",
-        commands.writeComment,
-        renderRedisCommand(commands.write(key)),
-        "",
-      );
-    }
-    lines.push(
-      "# Time to live in seconds (-1 no expiry, -2 no such key)",
-      renderRedisCommand(["TTL", key]),
-      "",
-      "# Delete the key (DEL takes a literal key name, never a pattern)",
-      renderRedisCommand(["DEL", key]),
-    );
-    return lines.join("\n");
+    return redisCheatsheet(tableName, columns);
   }
   if (capabilities.queryLanguage === "json") {
     const projection: Record<string, number> = {};

@@ -38,7 +38,9 @@ interface TableItemProps {
   table: TableSchema;
   isExpanded: boolean;
   onToggle: () => void;
-  labels?: ProviderMetadata["labels"];
+  // `labels` is itself optional on ProviderMetadata, so the indexed access already
+  // carries `undefined`; NonNullable keeps the `?` from restating it (#427).
+  labels?: NonNullable<ProviderMetadata["labels"]>;
   capabilities?: ProviderMetadata["capabilities"];
   isAdmin: boolean;
   onTableClick?: (tableName: string) => void;
@@ -54,16 +56,32 @@ type TableItemCallbacks = Pick<
   "onTableClick" | "onGenerateSelect" | "onProfileTable" | "onGenerateCode" | "onGenerateTestData" | "onOpenMaintenance"
 >;
 
-function renderMenuItems(
-  table: TableSchema,
-  labels: TableItemProps["labels"],
-  capabilities: TableItemProps["capabilities"],
-  isAdmin: boolean,
-  callbacks: TableItemCallbacks,
-  copyToClipboard: (text: string, label: string) => void,
-  Item: React.ComponentType<{ onClick?: () => void; children: React.ReactNode }>,
-  Separator: React.ComponentType,
-): React.ReactNode {
+/**
+ * What one rendering of the menu needs. The two call sites differ only in which
+ * primitives they pass (`DropdownMenu*` vs `ContextMenu*`), so everything else
+ * travels as one object rather than as a positional list.
+ */
+interface MenuItemsContext {
+  table: TableSchema;
+  labels: TableItemProps["labels"];
+  capabilities: TableItemProps["capabilities"];
+  isAdmin: boolean;
+  callbacks: TableItemCallbacks;
+  copyToClipboard: (text: string, label: string) => void;
+  Item: React.ComponentType<{ onClick?: () => void; children: React.ReactNode }>;
+  Separator: React.ComponentType;
+}
+
+function renderMenuItems({
+  table,
+  labels,
+  capabilities,
+  isAdmin,
+  callbacks,
+  copyToClipboard,
+  Item,
+  Separator,
+}: MenuItemsContext): React.ReactNode {
   // Rows that are derived groupings are not addressable objects: a Redis `user:*`
   // row is this server's summary of a key prefix, so profiling it and inserting
   // rows into it have no target and the provider answers 400 (#427). Gate on the
@@ -210,32 +228,32 @@ export const TableItem = React.memo(function TableItem({
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
-                  {renderMenuItems(
+                  {renderMenuItems({
                     table,
                     labels,
                     capabilities,
                     isAdmin,
                     callbacks,
                     copyToClipboard,
-                    DropdownMenuItem,
-                    DropdownMenuSeparator,
-                  )}
+                    Item: DropdownMenuItem,
+                    Separator: DropdownMenuSeparator,
+                  })}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-48">
-          {renderMenuItems(
+          {renderMenuItems({
             table,
             labels,
             capabilities,
             isAdmin,
             callbacks,
             copyToClipboard,
-            ContextMenuItem,
-            ContextMenuSeparator,
-          )}
+            Item: ContextMenuItem,
+            Separator: ContextMenuSeparator,
+          })}
         </ContextMenuContent>
       </ContextMenu>
 

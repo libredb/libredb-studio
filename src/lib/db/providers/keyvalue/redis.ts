@@ -217,19 +217,29 @@ export class RedisProvider extends BaseDatabaseProvider {
    * keeps both behaviours exactly, and lines are appended verbatim so
    * indentation inside a quoted value survives too.
    */
+  /**
+   * What a buffer line is to `commandBody`. Both chrome kinds require that no
+   * quoted argument is open across the line: inside one, a line-leading `#` and
+   * an empty line are data, not structure (#427).
+   */
+  private static lineKind(raw: string, quoteChar: string): "comment" | "blank" | "content" {
+    if (quoteChar !== "") return "content";
+    const line = raw.trim();
+    if (line.startsWith("#")) return "comment";
+    return line === "" ? "blank" : "content";
+  }
+
   private commandBody(input: string): string {
     const block: string[] = [];
     let quoteChar = "";
     let isJsonBlock = false;
     for (const raw of input.split("\n")) {
-      if (quoteChar === "") {
-        const line = raw.trim();
-        if (line.startsWith("#")) continue;
-        if (line === "") {
-          // A blank line ends the first block; blank lines before it are leading padding.
-          if (block.length > 0) break;
-          continue;
-        }
+      const kind = RedisProvider.lineKind(raw, quoteChar);
+      if (kind === "comment") continue;
+      if (kind === "blank") {
+        // A blank line ends the first block; blank lines before it are leading padding.
+        if (block.length > 0) break;
+        continue;
       }
       // The block's kind is fixed by its first content line, using the SAME test
       // `executeRedisCommand` uses to pick a parser. Quote tracking exists only to
