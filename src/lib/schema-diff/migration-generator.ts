@@ -69,6 +69,23 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     label: "Apache Druid",
     reason: "Druid SQL has no ALTER TABLE; rewrite the datasource with REPLACE INTO through an MSQ task.",
   },
+  // Measured 2026-08-19: `ALTER TABLE probe_orders ADD COLUMN x INT` and
+  // `... MODIFY COLUMN customer TEXT` are refused by both grammars - Elasticsearch
+  // 9.1.4 with `parsing_exception`, "mismatched input 'ALTER' expecting {'(',
+  // 'DEBUG', 'DESC', 'DESCRIBE', 'EXPLAIN', 'SELECT', 'SHOW', 'SYS', 'WITH'}" (the
+  // grammar lists everything it accepts, and no DDL is among them), OpenSearch 3.8.0
+  // with `SQLFeatureNotSupportedException`, "Query must start with SELECT, DELETE,
+  // SHOW or DESCRIBE". A mapping is also not editable in place even outside SQL: an
+  // existing field's type cannot be changed at all, which is why the reason says
+  // reindex rather than "use the mapping API".
+  elasticsearch: {
+    label: "Elasticsearch",
+    reason: "Elasticsearch SQL reads only; change a field by reindexing into an index whose mapping declares it.",
+  },
+  opensearch: {
+    label: "OpenSearch",
+    reason: "OpenSearch SQL reads only; change a field by reindexing into an index whose mapping declares it.",
+  },
   mongodb: {
     label: "MongoDB",
     reason: "Collections are schemaless, so there is no column definition to change.",

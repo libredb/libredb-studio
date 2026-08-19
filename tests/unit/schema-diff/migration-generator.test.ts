@@ -765,6 +765,11 @@ const MODIFIED_COLUMN_COVERAGE: Record<DatabaseType, { label: string; reason: st
   clickhouse: "has-own-branch",
   couchbase: { label: "Couchbase", reason: "schemaless JSON documents" },
   druid: { label: "Apache Druid", reason: "no ALTER TABLE" },
+  // Neither grammar has ALTER at all (measured on Elasticsearch 9.1.4 and OpenSearch
+  // 3.8.0), and a mapping's existing field cannot be retyped even outside SQL, so the
+  // comment sends the user to a reindex rather than to a statement.
+  elasticsearch: { label: "Elasticsearch", reason: "reindexing into an index" },
+  opensearch: { label: "OpenSearch", reason: "reindexing into an index" },
   mongodb: { label: "MongoDB", reason: "schemaless" },
   redis: { label: "Redis", reason: "no column definitions" },
   libredb: { label: "LibreDB", reason: "JSON command grammar" },

@@ -386,9 +386,23 @@ before generating one.
 `not_bounded`: immediately after an `INSERT`, a `SELECT` returned zero rows. For an interactive
 editor that is unacceptable, so the transport sends `request_plus` and accepts the latency.
 
-**Pagination models differ.** Couchbase returns everything in one response; Trino makes the client
-poll a `nextUri` until it is absent; Elasticsearch uses `search_after`. The `query()` contract
-assumes one shot, so a polling protocol needs a bounded loop inside the transport.
+**Pagination models differ, and the engine may page you without being asked.** Couchbase returns
+everything in one response; Trino makes the client poll a `nextUri` until it is absent; the
+Elasticsearch and OpenSearch SQL endpoints hand back a `cursor` you POST again. (`search_after`, which
+this sentence used to name, belongs to the native search API — the SQL surface these providers use
+does not offer it. Read the endpoint you are actually going to call.) The `query()` contract assumes
+one shot, so a paging protocol needs a bounded loop inside the transport.
+
+The Elasticsearch case is the one worth copying, because it is not opt-in. Measured on 9.1.4:
+`SELECT k, COUNT(*) FROM probe_buckets GROUP BY k` over 1500 distinct values answers HTTP 200 with
+**1000 rows and a `cursor`** with no `fetch_size` requested — an aggregation is paged by the engine's
+own default. Dropping that cursor returns two thirds of the buckets and labels the result complete,
+which is worse than an error, because nobody reading a `GROUP BY` can tell that 500 groups are
+missing. Two traps come with following it: page two carries rows and **no** column declaration, so
+the declaration has to be carried forward from page one; and the loop needs its own ceiling
+(`MAX_PAGES` in `providers/sql/search/http-transport.ts`) plus a cursor-close on the way out, because
+the terminating condition is the server's and an abandoned cursor is server-side state. Assume any
+HTTP SQL endpoint may page, and probe an aggregation — not a plain `SELECT` — to find out.
 
 **Statelessness has a hard edge.** With one HTTP request per statement there is no session, so
 transactions, temp tables, `SET` and prepared statements all need explicit threading — a transaction
@@ -613,8 +627,9 @@ Assessed against the rubric in [Prerequisites](#prerequisites). Anything not lis
 
 **Shipped since this list was written:** Couchbase
 ([#263](https://github.com/libredb/libredb-studio/issues/263)), ClickHouse
-([#264](https://github.com/libredb/libredb-studio/issues/264)) and Apache Druid
-([#265](https://github.com/libredb/libredb-studio/issues/265)).
+([#264](https://github.com/libredb/libredb-studio/issues/264)), Apache Druid
+([#265](https://github.com/libredb/libredb-studio/issues/265)) and Elasticsearch + OpenSearch
+([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 1).
 
 Druid is worth a paragraph, because it **corrected this table's own verdict**. The entry that stood
 here rated it strong but predicted that `EXPLAIN PLAN FOR` "returns a native-query translation rather
@@ -627,16 +642,33 @@ types (`groupBy`, `scan`, `timeseries`, `topN`) rather than borrowing a relation
 The lesson for the next candidate is to read the engine's real EXPLAIN output before predicting the
 render model from its documentation. See [druid.md](./providers/druid.md).
 
+Elasticsearch and OpenSearch get a paragraph for the opposite reason: the entry that stood here was
+**right about the question and wrong about the answer**. It said the pair "needs a dialect decision
+first: the SQL endpoint is a subset, the native DSL is JSON", and that "OpenSearch is Apache 2.0 and
+the cleaner primary target". The dialect decision was indeed the first one, and it went to the SQL
+endpoint — both products expose one without a licence, and `SQLBaseProvider`'s `LIMIT n` is correct on
+both, which no JSON DSL would have been. Elastic's ES|QL was rejected on the same test: it exists on
+one of the two products only, so it cannot be the shared query language. But "primary target" turned
+out to be the wrong shape entirely. Neither product is primary: **two type-ids share one provider
+module**, because everything the two disagree about on the wire is one row of a dialect table
+(`providers/sql/search/http-transport.ts`) and the one difference above the wire — Elasticsearch's SQL
+has no `OFFSET` — is one declared trait rather than an `if`. The lesson for the next candidate: when a
+fork and its upstream both qualify, price the shared seam before you pick a favourite, and let the
+live probe decide how much the two actually differ. Measured, it was less than the licence history
+suggests — and asymmetrically: the *same* mistyped keyword is a `parsing_exception` (`syntax`) on
+Elasticsearch and a `SQLFeatureNotSupportedException` (`unsupported`) on OpenSearch, and a missing
+index is HTTP 400 on one and 404 on the other, which is why that provider classifies errors from the
+body and never from the status.
+
 | Candidate | Verdict |
 |---|---|
 | **Trino / Starburst** | Highest strategic value — one provider fronts S3, Iceberg, Delta and Hive. Unscheduled on purpose: a catalog is another *system*, so what a connection pins is a product question. Also a `nextUri` polling protocol and a fragmented auth matrix |
-| **OpenSearch / Elasticsearch** | HTTP is the only protocol. Needs a dialect decision first: the SQL endpoint is a subset, the native DSL is JSON. OpenSearch is Apache 2.0 and the cleaner primary target |
 | **Snowflake / BigQuery / Databricks SQL** | REST SQL APIs exist and the data model fits; auth is the wall (key-pair JWT, service-account signing, OAuth) and that is where the no-dependency promise ends |
 | **CouchDB, ArangoDB, SurrealDB, Qdrant, Weaviate** | All HTTP, all non-SQL or only partially SQL. Feasible, but each needs its own query grammar the way MongoDB and LibreDB do |
 
 Contributions are welcome for any of these. Open an issue with the rubric score first, so the design
-decisions are settled before code exists — that is what let the Couchbase, ClickHouse and Druid
-providers each land as a single reviewable PR.
+decisions are settled before code exists — that is what let the Couchbase, ClickHouse, Druid and
+search providers each land as a single reviewable PR.
 
 ---
 
@@ -654,8 +686,13 @@ The integration points, all of which need an entry. This is the list the Strateg
 - [ ] `src/hooks/use-connection-form.ts` — **append** to `selectableTypes` (do not retype the array)
 - [ ] `src/components/icons/db-icons.tsx` — the engine's mark (`strokeWidth={1.5}`, no HTML size attrs)
 - [ ] `src/lib/seed/types.ts` — the seed-config `type` enum, or seeded connections fail validation
+- [ ] `src/lib/db/compatibility.ts` — the `SHIPPED` record. It is an exhaustive
+      `Record<DatabaseType, true>`, so the compiler refuses the omission rather than letting the
+      published engine count silently undercount; it is listed here because the count in `README.md`
+      and `docs/BRAND_MESSAGING.md` is derived from it and has to move in the same PR
 - [ ] `package.json` — the driver, **if** it needs one. A driver-free provider leaves it untouched, and
-      three shipped ones do: `couchbase`, `clickhouse` and `druid` each add nothing here
+      five shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch` and `opensearch` each
+      add nothing here
 - [ ] `database-compose.yml` — a service, so the next person can repeat the live pass. A distributed
       engine contributes a `profiles: [...]` set instead, as Druid's seven services do, so the default
       stack does not grow for everyone

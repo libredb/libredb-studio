@@ -42,6 +42,14 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   couchbase: true,
   clickhouse: true,
   druid: true,
+  // Both products' query language IS SQL over their HTTP endpoint (measured on
+  // Elasticsearch 9.1.4 and OpenSearch 3.8.0), so a block tagged with either
+  // type-id holds a statement the editor can run. No alias is registered for them
+  // below: `es` names Spanish as often as Elasticsearch in a fence, and an alias
+  // that names the WRONG engine is worse here than a missing one - `fenceTagEngine`
+  // is what decides whether a plan's deliverable was written for this connection.
+  elasticsearch: true,
+  opensearch: true,
 });
 
 /**

@@ -16,6 +16,8 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | Couchbase | `couchbase` | Document | none (HTTP: Query + management REST) | SQL (SQL++) | [couchbase.md](./couchbase.md) |
 | ClickHouse | `clickhouse` | SQL | none (HTTP interface) | SQL | [clickhouse.md](./clickhouse.md) |
 | Apache Druid | `druid` | SQL (analytics) | none (HTTP: SQL endpoint) | SQL (Calcite) | [druid.md](./druid.md) |
+| Elasticsearch | `elasticsearch` | SQL (search) | none (HTTP: `_sql` + REST) | SQL (Elasticsearch SQL) | [elasticsearch.md](./elasticsearch.md) |
+| OpenSearch | `opensearch` | SQL (search) | none (HTTP: `_plugins/_sql` + REST) | SQL (OpenSearch SQL plugin) | [opensearch.md](./opensearch.md) |
 | LibreDB | `libredb` | Embedded (Key-Value) | `@libredb/libredb` | JSON (command grammar) | [libredb.md](./libredb.md) |
 
 ## Conventions
@@ -23,7 +25,10 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 - **Filename = canonical type-id** (`postgres.md`, `mssql.md`, …), mirroring the source file
   (`src/lib/db/providers/<family>/<type-id>.ts`, or a `<type-id>/` directory when a provider is
   split across modules, as Couchbase, ClickHouse and Druid are). The official product name (e.g.
-  "SQL Server") is used only in each doc's title and prose.
+  "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
+  — `providers/sql/search/` is `elasticsearch` and `opensearch` — and each type-id still gets its own
+  document, because the tri-sync invariant is per type-id and each doc is the prime reference for its
+  own product's measured behaviour.
 - **Each doc mirrors the code.** Every `file:line` citation is verified, and the per-provider triad
   — code, this doc, and `tests/integration/db/<type-id>-provider.test.ts` — must stay in sync in the
   same PR (the *provider tri-sync invariant*).
@@ -88,16 +93,28 @@ Upstash, PlanetScale, Azure Cosmos DB and Amazon DocumentDB. Their status is tra
 
 
 ## database compose connection tests
-  ┌──────────┬───────────────┬─────────────┬──────────────┐
-  │          │   Couchbase   │ ClickHouse  │ Apache Druid │
-  ├──────────┼───────────────┼─────────────┼──────────────┤
-  │ Host     │ localhost     │ localhost   │ localhost    │
-  ├──────────┼───────────────┼─────────────┼──────────────┤
-  │ Port     │ 8091          │ 8123        │ 8888         │
-  ├──────────┼───────────────┼─────────────┼──────────────┤
-  │ User     │ Administrator │ libredb     │ null         │
-  ├──────────┼───────────────┼─────────────┼──────────────┤
-  │ Password │ password123   │ password123 │ null         │
-  ├──────────┼───────────────┼─────────────┼──────────────┤
-  │ Database │ travel        │ demo        │ null         │
-  └──────────┴───────────────┴─────────────┴──────────────┘
+
+What to type into the connection dialog for each service in
+[`database-compose.yml`](../../database-compose.yml). This was an ASCII box drawing until the two
+search providers were added: a fifth column does not fit at that width, and every added engine would
+have meant re-drawing every rule. It is a markdown table now, so a new engine is one new column and
+the widths look after themselves.
+
+| | Couchbase | ClickHouse | Apache Druid | Elasticsearch | OpenSearch |
+|---|---|---|---|---|---|
+| **Host** | localhost | localhost | localhost | localhost | localhost |
+| **Port** | 8091 | 8123 | 8888 | 9200 | **9201** |
+| **User** | Administrator | libredb | *none* | *none* | *none* |
+| **Password** | password123 | password123 | *none* | *none* | *none* |
+| **Database** | travel | demo | *none* | *none* | *none* |
+
+> **NOTE — the two search services.** OpenSearch is on **9201** on the host because both products ship
+> on 9200 inside the container and the `elasticsearch` service publishes it; the provider's default
+> port stays 9200, so this is a collision on this machine and not a fact about the product. Both run
+> with **security disabled**, which is why no credentials are needed *and* why these containers can
+> never produce a 401/403 body — a bogus `Basic` header is ignored there (measured, HTTP 200 on both).
+> Neither offers a `Database` field at all: an index has no namespace above it. Details in
+> [elasticsearch.md](./elasticsearch.md) and [opensearch.md](./opensearch.md).
+>
+> *none* means the field is left empty — for Druid because a default install loads no security
+> extension, for the search services because the security plugin is off.

@@ -111,6 +111,20 @@ export async function createDatabaseProvider(
       return new DruidProvider(connection, options);
     }
 
+    // Search engines - two type-ids, ONE implementation module (issue #424 Phase 1).
+    // The explicit /index specifier keeps this dynamic import statically
+    // analysable: a bare directory resolves only at runtime, which the bundler
+    // cannot trace into a chunk.
+    case "elasticsearch": {
+      const { ElasticsearchProvider } = await import("./providers/sql/search/index");
+      return new ElasticsearchProvider(connection, options);
+    }
+
+    case "opensearch": {
+      const { OpenSearchProvider } = await import("./providers/sql/search/index");
+      return new OpenSearchProvider(connection, options);
+    }
+
     // Document Databases - dynamically imported
     case "mongodb": {
       const { MongoDBProvider } = await import("./providers/document/mongodb");
@@ -139,7 +153,10 @@ export async function createDatabaseProvider(
 
     default:
       throw new DatabaseConfigError(
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, clickhouse, druid, mongodb, couchbase, redis, libredb`,
+        // This list is NOT type-checked against the union - a new case above with no
+        // entry here is silent - so it is kept in the same order as the cases and
+        // tests/unit/db/factory.test.ts pins individual names in it by regex.
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, clickhouse, druid, elasticsearch, opensearch, mongodb, couchbase, redis, libredb`,
         connection.type,
       );
   }

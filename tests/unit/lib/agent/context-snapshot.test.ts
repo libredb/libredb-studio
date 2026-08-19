@@ -596,6 +596,24 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
     expect(h.getSchema).toHaveBeenCalledTimes(1);
   });
 
+  test("a search engine is grounded the same way, which is what makes plan mode work there", async () => {
+    // Gate 7 of #424's per-provider Definition of Done: plan mode must work on a new
+    // provider with no per-provider cost. This is what that rests on - the two search
+    // type-ids have no catalog plan, so #414's provider path grounds them from the
+    // schema the sidebar already reads, and nothing about the agent had to learn what
+    // an index is. Asserted for both ids because "one implementation, two type-ids"
+    // must not hide a divergence here either.
+    for (const type of ["elasticsearch", "opensearch"] as const) {
+      const h = providerHarness();
+      const capture = await captureContextSnapshot({ ...h.context, connection: connectionOf(type) });
+
+      expect(capture.kind).toBe("captured");
+      if (capture.kind !== "captured") throw new Error("unreachable");
+      expect(capture.snapshot.readVia).toBe("provider-inventory");
+      expect(capture.snapshot.tables.map((table) => table.name)).toEqual(["customers", "orders"]);
+    }
+  });
+
   test("the profile acquired is the operations one, which is the only one these engines serve", async () => {
     // Not a style preference: `agent-read-only` requires `queryReadOnly`, which none
     // of these engines implements, so acquiring it would throw

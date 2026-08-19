@@ -30,6 +30,21 @@ function couchbaseQuote(name: string): string {
 }
 
 /**
+ * Quote only when the name would not round-trip bare, in the two styles a provider
+ * may DECLARE (`ProviderCapabilities.identifierQuoting`).
+ *
+ * One object rather than two functions, and looked up rather than branched on: bun's
+ * lcov attributes a freshly added function's declaration line to nothing, so two new
+ * `function` declarations here read as uncovered while their bodies run - the phantom
+ * this repo's coverage notes describe. A table has one executable line per entry and
+ * no declaration line to lose.
+ */
+const DECLARED_QUOTING: Record<"backtick" | "double", (name: string) => string> = {
+  backtick: (name) => (/^[A-Za-z_][\w$]*$/.test(name) ? name : couchbaseQuote(name)),
+  double: (name) => (/^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`),
+};
+
+/**
  * The document key projection. `SELECT *` nests whole documents under the
  * keyspace name and never yields the key at all (issue #262, decision 5), so
  * every generated statement projects it explicitly through the alias.
@@ -60,6 +75,16 @@ const COUCHBASE_KEY_PROJECTION = `META(${COUCHBASE_ALIAS}).id AS ${COUCHBASE_DOC
 export function quoteIdentifier(name: string, capabilities: ProviderCapabilities): string {
   // Document stores (MongoDB) don't use SQL identifier quoting.
   if (capabilities.queryLanguage === "json") return name;
+
+  // An explicit declaration wins over the port heuristic below, because the port
+  // stopped being a faithful proxy for the dialect: Elasticsearch and OpenSearch
+  // both ship on 9200 and disagree about the quote character. Measured on
+  // OpenSearch 3.8.0, a double-quoted identifier is a STRING LITERAL - the
+  // generated query answers 200 with zero rows instead of failing - so the
+  // fall-through default would produce silently wrong results here, not an error.
+  // See `ProviderCapabilities.identifierQuoting`.
+  const declared = capabilities.identifierQuoting;
+  if (declared !== undefined) return DECLARED_QUOTING[declared](name);
 
   if (capabilities.defaultPort === COUCHBASE_PORT) {
     // Couchbase (SQL++): quote unconditionally. Reserved words (`bucket`, `scope`,

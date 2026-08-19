@@ -16,8 +16,23 @@ import {
   SHIPPED_DATABASE_TYPES,
 } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
+import { isQueryFenceTag } from "@/lib/sql/fence-tags";
 
 describe("wire-compatibility registry", () => {
+  test("the shipped list holds every database type the product declares", () => {
+    // SHIPPED_DATABASE_TYPES used to be a hand-written `readonly DatabaseType[]`,
+    // which made the count test below a tautology: both sides read the same
+    // constant, so forgetting a newly added type-id undercounted silently. It is
+    // now derived from an exhaustive Record, so the COMPILER refuses an omission.
+    // This test guards the other direction - a stale entry for a type-id that no
+    // longer exists - by cross-checking against an independently maintained
+    // exhaustive record over the same union.
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      expect(isQueryFenceTag(type)).toBe(true);
+    }
+    expect(SHIPPED_DATABASE_TYPES.length).toBe(new Set(SHIPPED_DATABASE_TYPES).size);
+  });
+
   test("every entry names a driver we actually ship", () => {
     for (const engine of WIRE_COMPATIBLE_ENGINES) {
       expect(SHIPPED_DATABASE_TYPES).toContain(engine.via);

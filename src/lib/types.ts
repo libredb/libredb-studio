@@ -9,7 +9,15 @@ export type DatabaseType =
   | "libredb"
   | "couchbase"
   | "clickhouse"
-  | "druid";
+  | "druid"
+  // Two type-ids, ONE provider implementation (issue #424 Phase 1,
+  // `src/lib/db/providers/sql/search/index.ts`): the two products speak the same
+  // shape of SQL over HTTP and differ only in wire detail. They stay separate ids
+  // because a connection has to say which product is listening - the SQL endpoint
+  // path is product-specific and the wrong one never reaches a SQL engine - and
+  // because their grammars really do disagree (OFFSET, string escapes, `#`, `[…]`).
+  | "elasticsearch"
+  | "opensearch";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 

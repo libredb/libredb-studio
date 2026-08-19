@@ -19,6 +19,9 @@ const ConnectionEnvironmentSchema = z.enum(["production", "staging", "developmen
 // Allowed roles in current iteration (matches JWT role: 'admin' | 'user' + wildcard)
 const AllowedRoleSchema = z.enum(["*", "admin", "user"]);
 
+// Kept in step with DatabaseType in src/lib/types.ts BY HAND: a zod enum is a value,
+// so a type-id missing here is not a compile error - it is a seed file the server
+// rejects with "invalid enum value" for a connection type the product supports.
 const SeedDatabaseType = z.enum([
   "postgres",
   "mysql",
@@ -31,6 +34,8 @@ const SeedDatabaseType = z.enum([
   "couchbase",
   "clickhouse",
   "druid",
+  "elasticsearch",
+  "opensearch",
 ]);
 
 export const SeedDefaultsSchema = z.object({

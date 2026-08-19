@@ -11,6 +11,8 @@ import {
   CouchbaseIcon,
   ClickHouseIcon,
   DruidIcon,
+  ElasticsearchIcon,
+  OpenSearchIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 
@@ -131,6 +133,41 @@ const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // catalog, always named `druid`, so a database selector would be a control with no
     // effect. Credentials stay offered because a cluster running druid-basic-security
     // needs them; a default install ignores the Authorization header entirely.
+    connectionFields: ["host", "port", "user", "password"],
+  },
+  elasticsearch: {
+    icon: ElasticsearchIcon,
+    // The Elastic mark's own hues are teal (#00bfb3) and yellow (#fed10a); teal-400
+    // and yellow-400 are already owned by druid and clickhouse, and the distinct-colour
+    // assertion in tests/unit/lib/db-ui-config.test.ts rules a duplicate out. teal-300
+    // is the nearest free shade to the brand teal.
+    color: "text-teal-300",
+    label: "Elasticsearch",
+    // 9200 for both products and both schemes: a TLS deployment serves HTTPS on the
+    // SAME port rather than on a second well-known one, so unlike ClickHouse there is
+    // no 8443-shaped alternative (the provider's SEARCH_DEFAULT_PORT says the same).
+    defaultPort: "9200",
+    // No URI convention to paste: the provider is addressed by host and port like
+    // Druid, and http:// / https:// already resolve to ClickHouse in
+    // connection-string-parser.ts. Nothing was added there for these two ids.
+    showConnectionStringToggle: false,
+    // Deliberately no "database": an index has no namespace above it - measured, ES's
+    // SHOW TABLES reports only a catalog (the cluster name) and OpenSearch reports
+    // TABLE_SCHEM null, and the catalog is not addressable in a statement - so a
+    // database selector would be a control with no effect. Credentials stay offered
+    // because a cluster running the security plugin needs them; a stock node ignores
+    // the Authorization header entirely (measured).
+    connectionFields: ["host", "port", "user", "password"],
+  },
+  opensearch: {
+    icon: OpenSearchIcon,
+    // OpenSearch's Pacific Blue (#005EB8) is deeper and bluer than postgres' own
+    // blue-400, which already owns "blue" here; indigo-400 is the nearest free shade.
+    color: "text-indigo-400",
+    label: "OpenSearch",
+    // Same 9200 floor, same reason - the fork kept the port.
+    defaultPort: "9200",
+    showConnectionStringToggle: false,
     connectionFields: ["host", "port", "user", "password"],
   },
   libredb: {

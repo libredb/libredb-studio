@@ -20,6 +20,17 @@ partner contact.
 > ten-engine wording against a version older than 0.11.0 — send the eight-engine
 > variant instead.
 >
+> **The count is now twelve on `main`, and that wording waits for a release.**
+> Elasticsearch and OpenSearch shipped on `main` with
+> [#424](https://github.com/libredb/libredb-studio/issues/424) Phase 1 and are in the
+> `SHIPPED` record in `src/lib/db/compatibility.ts`, but the catalog page describes a
+> released version. So the prose below stays at ten until a tag carries the two, and
+> then both the short and long descriptions gain "Elasticsearch and OpenSearch" and the
+> feature bullet becomes twelve. Read the number from `SHIPPED` (minus the embedded
+> `libredb`) rather than from this file, and state the scope with it: on those two
+> engines LibreDB Studio queries and browses — their SQL has no `INSERT`, `UPDATE` or
+> `CREATE TABLE` — so "manage data across …" must not be extended to include them.
+>
 > The chart's own `description` in `Chart.yaml` still names seven engines, and that is
 > the string Rancher renders on the Apps catalog card. Correcting it means a chart
 > version bump and a fresh release, so it is tracked separately from this file.

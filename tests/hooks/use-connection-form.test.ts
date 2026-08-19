@@ -570,6 +570,11 @@ describe("useConnectionForm", () => {
     couchbase: true,
     clickhouse: true,
     druid: true,
+    // Both search ids are selectable: the same form EDITS an existing connection, so
+    // an omitted type leaves the picker with nothing selected for a connection the
+    // product can otherwise open (issue #424 Phase 1).
+    elasticsearch: true,
+    opensearch: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

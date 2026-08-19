@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DatabaseConnection, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { ExecutionProfileError } from "@/lib/db/errors";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 
 /** Enforcement caps for the sqlite agent-profile assertions below. */
 const AGENT_BUDGET: ReadOnlyStatementBudget = {
@@ -308,10 +309,14 @@ describe("createDatabaseProvider", () => {
   });
 
   test("the unknown-type error lists every supported type", async () => {
+    // The list inside that message is a hand-written string literal, not something
+    // TypeScript checks, so a new provider is only named there because a test pins it.
+    // Every SHIPPED type is pinned here rather than a sample of them: the surface that
+    // silently drifts is exactly the one nobody notices.
     const conn = makeConnection("unknown");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(/couchbase/);
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(/clickhouse/);
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(/druid/);
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      await expect(createDatabaseProvider(conn)).rejects.toThrow(new RegExp(type));
+    }
   });
 
   test('creates provider for type "postgres"', async () => {
@@ -369,6 +374,24 @@ describe("createDatabaseProvider", () => {
     const provider = await createDatabaseProvider(conn);
     expect(provider).toBeDefined();
     expect(provider.type).toBe("couchbase");
+  });
+
+  test('creates provider for type "elasticsearch"', async () => {
+    // Two type-ids resolve to ONE module (`providers/sql/search/index`), which is the
+    // first time that happens here - so both cases are asserted, and each is asserted
+    // to produce its OWN class. A copy-paste that returned the same provider for both
+    // would otherwise pass every other test in the suite.
+    const conn = makeConnection("elasticsearch", { port: 9200 });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider).toBeDefined();
+    expect(provider.type).toBe("elasticsearch");
+  });
+
+  test('creates provider for type "opensearch"', async () => {
+    const conn = makeConnection("opensearch", { port: 9200 });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider).toBeDefined();
+    expect(provider.type).toBe("opensearch");
   });
 
   test('creates provider for type "clickhouse"', async () => {

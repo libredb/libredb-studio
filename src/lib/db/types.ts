@@ -185,6 +185,25 @@ export interface ProviderCapabilities {
   maintenanceOperations: MaintenanceType[];
   supportsConnectionString: boolean;
   defaultPort: number | null;
+  /**
+   * How this engine quotes an identifier, when the port cannot say.
+   *
+   * `src/lib/query-generators.ts` has always derived the dialect from
+   * `defaultPort`, which worked only because every engine had a distinct one. That
+   * assumption broke with #424 Phase 1: Elasticsearch and OpenSearch BOTH ship on
+   * 9200 and they disagree about the quote character, so one port had to answer for
+   * two dialects. The consequence was measured, and it is the worst kind: on
+   * OpenSearch 3.8.0 a double-quoted identifier is a STRING LITERAL, so
+   * `SELECT customer FROM probe_orders WHERE "customer" = 'acme'` answers HTTP 200
+   * with `total: 0` - a generated query silently returning no rows instead of
+   * failing. Backticks return the row.
+   *
+   * Absent means "keep deriving it from the port", so no existing provider changes
+   * and nothing about the old behaviour moves. A provider sets this when the port
+   * is not a faithful proxy for its dialect - which is any engine that shares a
+   * default port with a differently-quoting one.
+   */
+  identifierQuoting?: "double" | "backtick";
   schemaRefreshPattern: string;
 }
 

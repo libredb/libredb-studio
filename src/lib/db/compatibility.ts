@@ -28,19 +28,36 @@ import type { DatabaseType } from "@/lib/types";
  * published count is "shipped drivers + verified relatives" and both halves must
  * come from the same module or they drift.
  */
-export const SHIPPED_DATABASE_TYPES: readonly DatabaseType[] = [
-  "postgres",
-  "mysql",
-  "sqlite",
-  "oracle",
-  "mssql",
-  "clickhouse",
-  "druid",
-  "mongodb",
-  "couchbase",
-  "redis",
-  "libredb",
-];
+const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
+  postgres: true,
+  mysql: true,
+  sqlite: true,
+  oracle: true,
+  mssql: true,
+  clickhouse: true,
+  druid: true,
+  // Two ids served by ONE provider module (`providers/sql/search/`), which is the
+  // first time "shipped" here does not mean one provider file per id. They are still
+  // two entries because the tri-sync invariant is per type-id - each has its own doc
+  // page and its own integration test - and because `verifiedEngineCount()` counts
+  // what a user can pick, not how the code is laid out.
+  elasticsearch: true,
+  opensearch: true,
+  mongodb: true,
+  couchbase: true,
+  redis: true,
+  libredb: true,
+});
+
+/**
+ * Derived from an exhaustive Record on purpose. As a hand-written array this was
+ * the one mandatory registration surface in the codebase with no guard at all: a
+ * new type-id omitted here made `verifiedEngineCount()` undercount, nothing failed,
+ * and the unit test that checked the count read the same constant on both sides.
+ * With the Record the compiler refuses the omission, which is the same technique
+ * `src/lib/sql/fence-tags.ts` already uses over this union.
+ */
+export const SHIPPED_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(Object.keys(SHIPPED) as DatabaseType[]);
 
 /**
  * How much of the product works against a wire-compatible engine.

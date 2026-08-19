@@ -25,6 +25,12 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // Druid quotes a string with single quotes and puts its backslash escapes in the
   // separate `U&'fo\00F6'` form, so a backslash in a plain literal is data.
   druid: "standard",
+  // Elasticsearch doubles the quote and reads a backslash as DATA. Measured on
+  // 9.1.4 (2026-08-19): `SELECT 'a''b'` -> `a'b`; `SELECT 'a\\b'` -> the two
+  // characters `a\b`; `SELECT 'a\'b'` is a `parsing_exception` at the character AFTER
+  // the backslash, which is only possible if the `\` did not escape the quote that
+  // closed the literal; and `SELECT 'a\'` returns `a\`.
+  elasticsearch: "standard",
   // These three declare `queryLanguage: "json"`, so no statement is ever built for
   // them to read. What a generator emits for such a connection is portable SQL
   // meant to run elsewhere, and the standard form is the only thing it can claim.
@@ -38,6 +44,15 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // Matches what the ClickHouse provider already does when it builds its own
   // literals (`src/lib/db/providers/sql/clickhouse/index.ts`).
   clickhouse: "double-and-backslash",
+  // OpenSearch does BOTH, which is why its two type-ids do not share a row with
+  // Elasticsearch's. Measured on 3.8.0 (2026-08-19): `SELECT 'a''b'` -> `a'b`, so
+  // doubling works; `SELECT 'a\'b'` -> `a'b` too, so a backslash escapes the quote;
+  // `SELECT 'a\\b'` -> ONE backslash, so it escapes itself; and `SELECT 'a\'` is a
+  // `ParserException` - the trailing backslash escaped the closing quote and left the
+  // literal open, which is exactly the defect #290 is about. The fork's SQL plugin
+  // reads its literals the way MySQL does, and this row is not an inference from that
+  // lineage but the four probes above.
+  opensearch: "double-and-backslash",
   // SQL++ spells its literals the way JSON does — `char ::= unicode-character |
   // '\' ( '\' | '"' | "'" | 'b' | 'f' | 'n' | 'r' | 't' | 'u' hex hex hex hex )`.
   // Doubling is not in that grammar, so a doubled quote is not one literal there.
@@ -87,6 +102,14 @@ export function quoteLiteral(value: string, dialect: DatabaseType | undefined): 
  * and MongoDB, Redis and the embedded engine declare `queryLanguage: "json"`, so
  * no SQL statement binds anything for them. It is the signal to quote the value
  * with `quoteLiteral` instead — never to emit a placeholder nothing will bind.
+ *
+ * `elasticsearch` and `opensearch` fall to that `null` too, and for a sharper reason
+ * than "no form exists": both endpoints really do bind `?` (measured - ES takes
+ * `{"query":"… WHERE id = ?","params":[1]}`, OpenSearch takes a `parameters` array of
+ * `{type,value}` objects, both HTTP 200), but they spell the REQUEST differently and
+ * the provider's seam carries the statement alone, so its `query()` refuses
+ * positional parameters outright. Emitting `?` here would produce a statement whose
+ * placeholder the provider then declines to fill.
  */
 export function positionalPlaceholder(dialect: DatabaseType, position: number): string | null {
   switch (dialect) {

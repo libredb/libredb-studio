@@ -376,6 +376,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     if (!parsed) {
       setTestResult({
         success: false,
+        // One scheme per branch in connection-string-parser.ts, and nothing else.
+        // Elasticsearch and OpenSearch are absent on purpose: they are addressed by
+        // host and port like Druid, and `http(s)://` already resolves to ClickHouse
+        // there, so listing them would promise a paste this form cannot honour.
         message:
           "Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, couchbase://, clickhouse://, http(s)://, redis://, oracle://, mssql://",
       });
@@ -428,6 +432,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "libredb",
     "clickhouse",
     "druid",
+    "elasticsearch",
+    "opensearch",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

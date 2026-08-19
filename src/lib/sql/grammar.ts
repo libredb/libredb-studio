@@ -168,6 +168,58 @@ const SQLITE_GRAMMAR: SqlGrammar = {
 };
 
 /**
+ * The two search engines are the only rows here established by LIVE PROBE rather
+ * than from documentation or a bundled driver: their SQL surfaces are HTTP endpoints
+ * on a running cluster, so the grammar can be asked directly, and asking it beats
+ * every other source. All probes ran 2026-08-19 against Elasticsearch 9.1.4 and
+ * OpenSearch 3.8.0, and they DISAGREE about two of the four facts - which is the
+ * reason the one provider implementation still has two rows here.
+ */
+const ELASTICSEARCH_GRAMMAR: SqlGrammar = {
+  // `#` opens NOTHING: `SELECT 1 # x` is a `parsing_exception`, "mismatched input
+  // '#'", and so is `SELECT # x\n1`. So the rest of the line is not hidden, which is
+  // the only thing the readers in this folder ask about. Reading it as a comment (the
+  // compatibility default) would also leave every `#` run AMBIGUOUS
+  // (`hashRunIsAmbiguous`), and since #297 an unreadable span is a confirmation
+  // PROMPT rather than silence - a prompt on a statement this engine simply refuses.
+  hash: "code",
+  // NOT established, and left at the default deliberately. `[` has no meaning at all
+  // in this grammar - `SELECT [1, 2]` and `SELECT [customer] FROM probe_orders` are
+  // both "extraneous input '['" - so it is neither an identifier quote nor a
+  // subscript, and PD-5 forbids reading one dialect's rule off another's. The name
+  // reading can only cost a bound on a statement the engine refuses anyway, which is
+  // the same fail-safe argument the `mysql` and `oracle` rows make.
+  bracket: DEFAULT_SQL_GRAMMAR.bracket,
+  // FLAT: `SELECT /* a /* b */ 1 AS a` answers 200 with the column, so the first
+  // `*/` closed the run. A nesting reader would have seen an unterminated comment.
+  blockComment: "flat",
+  // `SELECT q'{it's}'` is a `parsing_exception` - the form does not exist here.
+  alternateQuoting: false,
+};
+const OPENSEARCH_GRAMMAR: SqlGrammar = {
+  // `#` really is a line comment, and this is where the fork's SQL plugin parts
+  // company with Elasticsearch's. Three probes, because "the statement still ran" is
+  // not enough to tell a comment from a token the parser ignored:
+  //   `SELECT 1 AS a # , 2 AS b`         -> 200, ONE column: the rest was hidden.
+  //   `SELECT 1 AS a # hidden\n, 2 AS b` -> 200, TWO columns: the run ended at the
+  //                                         newline, so it is a LINE comment.
+  //   `SELECT customer # FROM probe_orders` -> `SemanticCheckException`, "can't
+  //                                         resolve … customer": the FROM was hidden.
+  hash: "comment",
+  // `[…]` is an identifier quote, MySQL/SQL-Server style: `SELECT [customer] FROM
+  // probe_orders` answers the field's value, while `SELECT [1, 2]` is refused with
+  // "All items between Brackets should be identifiers, got:LITERAL_INT". It has no
+  // escape and does not nest - `[customer]]` and `[a[b]]` are both refused - which is
+  // the SQLITE_GRAMMAR situation exactly: this reading's doubled-`]` allowance can
+  // only swallow a closer in text the server rejects either way.
+  bracket: "quoted-identifier",
+  // FLAT, same probe and same answer as Elasticsearch.
+  blockComment: "flat",
+  // `SELECT q'{it's}'` is refused, "Illegal SQL expression".
+  alternateQuoting: false,
+};
+
+/**
  * The established readings, one row per fact per dialect.
  *
  * A dialect absent from this table is at the compatibility default because its
@@ -177,9 +229,14 @@ const SQLITE_GRAMMAR: SqlGrammar = {
  * confirmation gate reads their editor text as SQL only where `readsSqlText` says
  * the text IS SQL, which for those two it does not (#297). Present for one fact and
  * undecided about another: `mysql` and `oracle` carry no established BRACKET
- * reading (see the row below).
+ * reading (see the row below), and `elasticsearch` carries none either - `[` is not
+ * in its grammar at all.
  *
- * Sources, one per row, all offline or first-party documentation:
+ * Sources, one per row, all offline or first-party documentation - except
+ * `elasticsearch` and `opensearch`, whose rows were established by probing the
+ * engines themselves (their SQL surface is an HTTP endpoint, so the grammar can be
+ * asked rather than read about). The probes and their answers are quoted on the two
+ * constants above, and the two products disagree about `#` and about `[…]`:
  *
  * - `mysql` - `#` to end of line is MySQL's and MariaDB's second comment form;
  *   this repo already skipped such a run in a statement's LEADING trivia before the
@@ -283,6 +340,8 @@ const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
   oracle: ORACLE_GRAMMAR,
   mssql: MSSQL_GRAMMAR,
   sqlite: SQLITE_GRAMMAR,
+  elasticsearch: ELASTICSEARCH_GRAMMAR,
+  opensearch: OPENSEARCH_GRAMMAR,
 };
 
 /**
@@ -307,6 +366,16 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * `BaseDatabaseProvider` and never call `prepareQuery`. They reach the confirmation
  * gate, though, because both execution paths ask about whatever is in the editor
  * before running it (#297).
+ *
+ * `elasticsearch` and `opensearch` are deliberately ABSENT: their editor text is SQL
+ * (measured - both answer `POST`ed statements with columns and rows, and both
+ * providers extend `SQLBaseProvider` and call `prepareQuery`). Listing them here
+ * would switch the SQL checks off for text that IS SQL, which is the mirror of the
+ * defect this set exists to fix: the confirmation gate would stop reading a statement
+ * it can read, and an unreadable statement's spans are what tell it a write is
+ * hiding behind a comment. The other direction is the one #297 measured - reading
+ * non-SQL as SQL prompted on ordinary reads - so a wrong answer here costs either a
+ * gate that never asks or a gate an operator learns to click through.
  */
 const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["mongodb", "redis"]);
 

@@ -16,13 +16,33 @@ import type { DatabaseType } from "@/lib/types";
  */
 export function quoteIdentifier(name: string, dialect: DatabaseType | undefined): string {
   switch (dialect) {
+    // OpenSearch shares MySQL's backtick, and it is NOT a stylistic choice: measured
+    // 2026-08-19 on 3.8.0, its SQL plugin reads a DOUBLE-quoted name as a string
+    // literal, so `SELECT customer FROM "probe_orders"` is `IndexNotFoundException[no
+    // such index ["probe_orders"]]` - quotes and all - while ``FROM `probe_orders``` is
+    // HTTP 200. Worse in a predicate, where nothing fails: `WHERE "customer" = 'acme'`
+    // compares two literals and answers 0 rows. Backticks work for both a table and a
+    // field there. Elasticsearch 9.1.4 is the exact opposite - it answers a backtick
+    // with "backquoted identifiers not supported; please use double quotes instead" -
+    // so the two search ids cannot share a branch, and `elasticsearch` belongs in the
+    // standard-form default below.
+    //
+    // The doubling is this repo's own convention carried over from MySQL and is NOT
+    // measured: an index or field name containing a backtick would be needed to probe
+    // it, and creating one on the probe cluster to find out was judged not worth
+    // polluting the fixtures. It is the fail-safe direction either way - a doubled
+    // backtick can only make the engine refuse a name, never make it read one it
+    // should not.
+    case "opensearch":
     case "mysql":
       return `\`${name.replace(/`/g, "``")}\``;
     case "mssql":
       return `[${name.replace(/]/g, "]]")}]`;
     default:
       // The SQL standard form, and what the remaining dialects use: PostgreSQL,
-      // SQLite, Oracle, ClickHouse, Druid, and the document/key-value providers
+      // SQLite, Oracle, ClickHouse, Druid, Elasticsearch (measured: `FROM
+      // "probe_orders"` and `SELECT "note.keyword"` both answer 200, and a backtick is
+      // refused outright), and the document/key-value providers
       // whose generators fall back to it. An undefined dialect lands here too —
       // a generator with no connection to name one can claim only the standard.
       return `"${name.replace(/"/g, '""')}"`;

@@ -370,6 +370,83 @@ services:
       timeout: 3s
       retries: 10
 
+  # ---------------------------------------------------------------------------------------
+  # Search engines (issue #424, Phase 1). Two type-ids, one provider module, so BOTH have to
+  # be runnable at once: every claim the provider records is a claim about which of the two
+  # answered differently, and that can only be re-measured side by side.
+  #
+  # This is the exact configuration the Phase 1 probes ran against (read back with
+  # `docker inspect`): single-node discovery, security off, and a 512 MB heap each - about
+  # 1.2 GB of RSS for the pair. No `profiles:` on purpose, unlike the druid block: these are
+  # SHIPPED providers, so a plain `docker compose up` has to be able to reproduce their
+  # integration pass, the same rule clickhouse and couchbase follow above.
+  #
+  # Security is DISABLED on both, which is what makes the fixtures reproducible - and it is
+  # also the limit of what they can prove: a bogus `Basic` header is IGNORED here (HTTP 200
+  # on both, measured), so no 401/403 body could ever be captured from these containers. The
+  # transport decides `auth` on the HTTP status alone for exactly that reason.
+  # ---------------------------------------------------------------------------------------
+  elasticsearch:
+    # Pinned to the exact build the provider was live-verified against, the same rule the
+    # clickhouse service follows: the status codes, fault names and paging behaviour recorded
+    # in docs/providers/elasticsearch.md are version-specific claims.
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.1.4
+    container_name: libredb-elasticsearch
+    restart: unless-stopped
+    environment:
+      # One node forms its own cluster; without it the node waits for a seed host it will
+      # never find and the SQL endpoint never comes up.
+      discovery.type: single-node
+      # Off, so the endpoint is plain HTTP with no bootstrap password or enrolment token. The
+      # SQL API itself needs no licence beyond basic - that is what makes SQL, and not ES|QL,
+      # the query language both products can share.
+      xpack.security.enabled: "false"
+      # Sized for a laptop. The image otherwise claims a heap from the host's total memory.
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      # 9200 is the HTTP API, the only protocol this provider speaks. 9300 (transport) is
+      # deliberately not published: there is no transport-protocol client in this codebase.
+      - "9200:9200"
+    healthcheck:
+      # `_cluster/health` answers before any index exists, so it does not need seed data. A
+      # single-node cluster with a replica requested is YELLOW and never green, so waiting
+      # for green here would hang forever. The image ships curl.
+      test: ["CMD", "curl", "-sf", "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=3s"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  opensearch:
+    # Pinned for the same reason, and here the reason is sharper: the SQL PLUGIN's fault
+    # names are Java class names that its own releases rename, and `latest` resolved to 3.8.0
+    # when the provider was measured (`GET /` reported distribution `opensearch`, number
+    # 3.8.0, build_date 2026-08-01).
+    image: opensearchproject/opensearch:3.8.0
+    container_name: libredb-opensearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      # The fork's own switch, and NOT the same key as Elasticsearch's: the security plugin
+      # is installed rather than a licensed feature, so it is disabled by name. Without this
+      # the node serves HTTPS with a self-signed certificate and a default admin password.
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      # 9201 on the host because both products ship on 9200 in the container and the
+      # elasticsearch service above already publishes it. The provider's default port stays
+      # 9200 - this is a collision on THIS machine, not a fact about the product.
+      - "9201:9200"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=3s"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    # No seed sidecar, and one thing to expect instead: a stock node ships its own indices.
+    # Measured on an empty 3.8.0 cluster, `.plugins-ml-config` and `top_queries-<date>-<n>`
+    # are already there, so two thirds of the index listing is the engine's bookkeeping. The
+    # provider hides both; the second one carries no leading dot, so the dot convention alone
+    # does not catch it.
+
   # ==========================================================================
   # Wire-compatible engines (issue #424, Phase 0)
   #

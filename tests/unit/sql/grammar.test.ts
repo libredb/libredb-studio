@@ -234,6 +234,14 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   oracle: "established",
   mssql: "established",
   clickhouse: "established",
+  // Established by live probe rather than from a document: their SQL surface is an
+  // HTTP endpoint, so the grammar was asked directly (2026-08-19, Elasticsearch 9.1.4
+  // and OpenSearch 3.8.0). They disagree about `#` (a line comment on OpenSearch, not
+  // in Elasticsearch's grammar at all) and about `[…]` (an identifier quote on
+  // OpenSearch, meaningless on Elasticsearch), which is why one provider
+  // implementation still needs two rows.
+  elasticsearch: "established",
+  opensearch: "established",
   // No authoritative source was established for these, so they read as SQL under
   // the compatibility grammar. See the module doc in `grammar.ts`.
   couchbase: "default",
@@ -262,6 +270,11 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   couchbase: true,
   druid: true,
   libredb: true,
+  // SQL, measured: both answer a POSTed statement with columns and positional rows,
+  // and both providers extend SQLBaseProvider. Answering false here would switch the
+  // confirmation gate's SQL reading off for text that is SQL.
+  elasticsearch: true,
+  opensearch: true,
   mongodb: false,
   redis: false,
 };

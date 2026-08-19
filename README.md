@@ -81,13 +81,13 @@ You create a Postgres on a managed platform. It is ready in forty seconds. Then 
 
 LibreDB Studio goes the other way. It deploys next to the data: a container, a Helm chart, an operator, a one-click template on your PaaS, or `npm i @libredb/studio` inside your own product. Nothing has to face outward.
 
-Ten engines share one interface — PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse and Druid — with the same explorer, ER diagrams, schema diff and monitoring across all of them.
+Twelve engines share one interface — PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch and OpenSearch — with the same explorer everywhere, and ER diagrams, schema diff and monitoring wherever the engine has something to report. Three of the twelve are read-only because their own SQL is: Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` in the grammar at all, so those controls are reported as unsupported instead of failing when used.
 
 And nothing is held back. Single sign-on, ER diagrams, the AI features and the NoSQL engines all ship in the MIT build. MIT is not generosity here, it is a requirement of the architecture: you cannot place a per-seat licensed, feature-gated tool into every environment you own.
 
 ### Why LibreDB Studio?
 - **Deploys next to the data**: container, Helm chart, OpenShift operator, one-click PaaS template, or embedded via npm.
-- **Ten engines, one interface**: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Druid.
+- **Twelve engines, one interface**: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch.
 - **Runs where you are**: browser, phone, Windows, Linux desktop.
 - **A read-only agent, with your own model**: state a question, and the run drafts SQL, reads the results and writes a report whose claims cite them. Gemini, OpenAI, or a local Ollama.
 - **Nothing behind a wall**: RBAC, OIDC single sign-on, query audit trail and ER diagrams all ship under MIT.
@@ -243,13 +243,15 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 | **Couchbase** | none — HTTP (Query + management REST) | Full SQL++ IDE, EXPLAIN plans, bucket/scope/collection explorer, `INFER` column inference, read-your-writes consistency, `UPDATE STATISTICS` / `BUILD INDEX` / request kill |
 | **ClickHouse** | none — HTTP (SQL interface, port 8123) | Full SQL IDE, JSON EXPLAIN plan trees, system-table schema introspection, `OPTIMIZE TABLE` / table statistics / query kill maintenance |
 | **Apache Druid** | none — HTTP (`POST /druid/v2/sql`, Router port 8888 or Broker 8082) | Read-only SQL IDE, native-query EXPLAIN plan trees, `INFORMATION_SCHEMA` datasource introspection, `sys.*` monitoring (segments, servers, ingestion tasks). Druid SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, and nothing it can do counts as a maintenance operation — a datasource changes through ingestion, not from the editor |
+| **Elasticsearch** | none — HTTP (`POST /_sql?format=json`, port 9200) | Read-only SQL IDE, mapping-driven index/field explorer, cluster health plus per-index document counts and store sizes. No EXPLAIN, no maintenance operation, no slow-query or session panel: those live in log files and stats APIs the SQL surface does not reach. Elasticsearch SQL also has no `OFFSET`, so a second page of results cannot be requested — narrow the statement or raise the limit instead |
+| **OpenSearch** | none — HTTP (`POST /_plugins/_sql`, port 9200) | The same read-only SQL IDE and explorer, from the same provider module. `LIMIT n OFFSET m` does work here, so paging does |
 | **Redis** | `ioredis` | Command editor, key browser, INFO-based monitoring |
 
 > **Nine more engines connect through the drivers above** without a driver of their own — MariaDB, Citus, CockroachDB, Materialize and RisingWave (as PostgreSQL or MySQL), Valkey, DragonflyDB and KeyDB (as Redis), and FerretDB (as MongoDB). Each was measured against a live instance, and how much of the product works differs per engine: MariaDB, Citus, Valkey, DragonflyDB, KeyDB and FerretDB behave as their driver's own engine, CockroachDB loses the object browser and the size panels, and Materialize and RisingWave are query-editor-only. The per-engine detail, with the exact version probed, is in [`docs/providers/README.md`](docs/providers/README.md#wire-compatible-engines) — we publish a name only after connecting to it, so a name absent there is untested rather than unsupported.
 
-> **Transport security is cross-cutting, not per engine.** The SSH tunnel is opened before the provider connects and the connection is rewritten to the local endpoint, so it is provider-independent: it applies to any connection configured with a host and a port. A connection entered as a connection string instead (an option for MongoDB, Couchbase and ClickHouse) carries neither, so it is not tunnelled; SQLite has neither either. The SSL/TLS panel is honoured by PostgreSQL, MySQL, SQL Server, Couchbase, ClickHouse and Druid. Oracle, MongoDB and Redis ignore that setting, so on those three encryption depends on what the connection string itself asks for rather than on what the dialog shows.
+> **Transport security is cross-cutting, not per engine.** The SSH tunnel is opened before the provider connects and the connection is rewritten to the local endpoint, so it is provider-independent: it applies to any connection configured with a host and a port. A connection entered as a connection string instead (an option for MongoDB, Couchbase and ClickHouse) carries neither, so it is not tunnelled; SQLite has neither either. The SSL/TLS panel is honoured by PostgreSQL, MySQL, SQL Server, Couchbase, ClickHouse, Druid, Elasticsearch and OpenSearch. Oracle, MongoDB and Redis ignore that setting, so on those three encryption depends on what the connection string itself asks for rather than on what the dialog shows.
 
-> All SQL databases share: schema explorer, ER diagrams, schema diff & migration, display masking (preview), monitoring dashboard, and connection string import. Druid is the exception twice over: its HTTP SQL API has no URI convention to paste, so it is configured by host and port only, and a generated migration names the limitation instead of emitting column-modification DDL against an engine whose SQL contains none — as it also does for Couchbase's schemaless collections.
+> All SQL databases share: schema explorer, ER diagrams, schema diff & migration, display masking (preview), monitoring dashboard, and connection string import. Druid, Elasticsearch and OpenSearch are each the exception twice over: their HTTP SQL APIs have no URI convention to paste, so they are configured by host and port only, and a generated migration names the limitation instead of emitting column-modification DDL against an engine whose SQL contains none — as it also does for Couchbase's schemaless collections. An ER diagram over a search cluster draws boxes and no edges: an index declares no foreign keys and the engine's model has none to declare, which the provider states as `declaresForeignKeys: false` rather than leaving to be guessed from an empty list.
 
 > **Provider reference docs:** each database has an in-depth reference (design, connection, query format, monitoring, limitations) under [`docs/providers/`](docs/providers/README.md). For the provider architecture see [`docs/DATABASE_PROVIDERS.md`](docs/DATABASE_PROVIDERS.md), and to add a new database see [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md).
 
@@ -265,7 +267,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 | **Editor** | Monaco Editor (VS Code Engine) | Web |
 | **AI** | Multi-Model (Gemini, OpenAI, Ollama, Custom) | Web, Mobile |
 | **Auth** | JWT (`jose`) + OIDC (`openid-client`), PKCE, Role Mapping | Web, Mobile |
-| **Database** | PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Couchbase, ClickHouse, Apache Druid, Redis | Web, Mobile |
+| **Database** | PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Redis | Web, Mobile |
 | **Charts** | Recharts (Bar, Line, Pie, Area, Scatter, Histogram, Stacked) | Web, Mobile |
 | **ERD** | React Flow, ELK.js (auto-layout) | Web |
 | **State/Grid** | TanStack Table & Virtual | Web, Mobile |
