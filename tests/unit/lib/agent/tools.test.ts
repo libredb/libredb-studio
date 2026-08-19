@@ -2318,14 +2318,47 @@ describe("profileTableTool — the model names a table, the server decides the r
     expect(outcome.reasonCode).toBe("TABLE_NOT_INVENTORIED");
   });
 
+  test("a qualifier the inventory has never heard of is refused by naming the entry that exists", () => {
+    /*
+      Read off the wire, from the run this refusal was costing.
+
+      `qwen3:8b` called profile_table with
+      `{schema: "ctx_3b6ba24865a80f993576ee1f566c5238", table: "current_dept_emp"}` — the
+      SNAPSHOT FINGERPRINT in the schema field, which is a fair guess from a model whose
+      every surrounding rule talks about fingerprints and whose tool schema describes that
+      field not at all. `current_dept_emp` is in the inventory. The qualifier is not.
+
+      What came back was "That table is not in the schema inventory this run captured. Call
+      inspect_schema for it first" — untrue of the table, and pointing at a tool the run had
+      just been narrowed out of holding. The model made the identical call three times,
+      because nothing in the sentence identified anything to change, and then spent the rest
+      of its budget failing to report.
+
+      The lookup stays exactly as strict: #345 is why a named schema is never matched against
+      a bare entry, and profiling a table the caller did not ask for is worse than refusing.
+      What changes is that the refusal now distinguishes the two cases it had been merging —
+      a table that is absent, and a table that is present under a name the caller qualified
+      wrongly — and in the second it says the name the inventory uses.
+    */
+    const outcome = plan(harness(), { schema: "ctx_3b6ba24865a80f993576ee1f566c5238", table: "orders" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("TABLE_QUALIFIER_UNKNOWN");
+  });
+
   test("a named schema is part of the answer, never ignored", () => {
     // Found by review on #345: matching a BARE inventory entry while a schema was
     // named accepted {schema: "other", table: "orders"} against an unqualified
     // `orders`, and then targeted `other.orders` — a table never inventoried.
+    //
+    // The protection is unchanged and this test still holds it: nothing is profiled,
+    // and the answer is a refusal. Only the refusal got more specific — this run named
+    // a qualifier the inventory does not have, which is the case above, so it is told
+    // the name the inventory does use rather than that its table is missing.
     const outcome = plan(harness(), { schema: "other", table: "orders" });
 
     if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
-    expect(outcome.reasonCode).toBe("TABLE_NOT_INVENTORIED");
+    expect(outcome.reasonCode).toBe("TABLE_QUALIFIER_UNKNOWN");
   });
 
   test("the composed statement targets what was RESOLVED, not what was asked for", () => {

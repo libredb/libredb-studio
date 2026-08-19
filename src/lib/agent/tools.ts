@@ -245,6 +245,14 @@ export type AgentToolUnavailableCode =
   | "UNVERIFIABLE_EVIDENCE"
   /** A cited plan is not an estimating plan THIS run produced. */
   | "UNVERIFIABLE_PLAN"
+  /**
+   * The named table IS inventoried, but not under the schema the call qualified it with.
+   *
+   * Split from `TABLE_NOT_INVENTORIED` because the two need different sentences: this one
+   * is a caller that has the right table and the wrong qualifier, and can be told the name
+   * to use, while that one has no such table at all.
+   */
+  | "TABLE_QUALIFIER_UNKNOWN"
   /** The named table is not in the inventory this run captured. */
   | "TABLE_NOT_INVENTORIED"
   /** A catalog read matched no object at all, so there is nothing to inspect or cite. */
@@ -467,7 +475,19 @@ const reportSchema = z.strictObject({
  * never established exists — the same rule `compare_plans` follows about plans.
  */
 const profileSelectorSchema = z.strictObject({
-  schema: z.string().optional(),
+  /*
+    Described, because an undescribed optional string next to a fingerprint-heavy set of
+    rules is an invitation. `qwen3:8b` filled it with the snapshot fingerprint
+    (`ctx_3b6b…`), which resolved to nothing and cost it the run. Omitting the field
+    entirely is the right answer whenever the inventory names a table bare, so the
+    description leads with that rather than with what a schema is.
+  */
+  schema: z
+    .string()
+    .describe(
+      "Omit this unless the inventory qualifies the table as schema.table. It is a database schema name — never an artifact id or a snapshot fingerprint.",
+    )
+    .optional(),
   table: z.string().min(1),
   depth: z.enum(["basic", "distribution", "pattern"]).optional(),
   /** Where in the table's column list to start. The server bounds how many follow. */
@@ -822,6 +842,12 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
     "At least one of those references is not an estimated plan this run produced. Inspect the plan of each statement first, then compare the two artifacts those inspections returned.",
   TABLE_NOT_INVENTORIED:
     "That table is not in the schema inventory this run captured. Call inspect_schema for it first, then profile it by the name the inventory uses.",
+  // Says what to change, which is the whole of it: the call this replaces was repeated
+  // verbatim three times because the sentence it got named nothing that could be edited.
+  // It also may not send the model to `inspect_schema` — a held run has been narrowed out
+  // of holding it, and the fix does not need it, since the table is already inventoried.
+  TABLE_QUALIFIER_UNKNOWN:
+    "The table is in this run's inventory, but not under the schema you named — this run's inventory has no such schema, so nothing was profiled. Call profile_table again with the same table and NO schema field at all: the inventory's own name for it is what this tool matches. The schema field takes a database schema name, never an artifact id or a snapshot fingerprint.",
   NO_COLUMNS_AT_OFFSET:
     "That column offset is past the end of the table, so there is nothing there to profile. Start from an earlier column, or profile a different table.",
   PROFILE_UNREADABLE:
@@ -2279,7 +2305,30 @@ export function planTableProfile(
 
   const snapshot = capturedSnapshot(run.events);
   const target = snapshot === null ? null : inventoriedTable(snapshot, parsed.value.schema, parsed.value.table);
-  if (target === null) return unavailable("TABLE_NOT_INVENTORIED");
+  if (target === null) {
+    /*
+      Two different failures used to share one sentence, and the wire recording of a
+      `qwen3:8b` run shows what the merged one costs. It called
+
+        profile_table {schema: "ctx_3b6ba24865a80f993576ee1f566c5238", table: "current_dept_emp"}
+
+      putting the SNAPSHOT FINGERPRINT in the schema field — a fair guess from a model
+      whose surrounding rules all speak of fingerprints and whose schema field is
+      described nowhere. `current_dept_emp` was in the inventory; the qualifier was not.
+      It was answered "That table is not in the schema inventory this run captured. Call
+      inspect_schema for it first", which is untrue of the table and names a tool the run
+      had just been narrowed out of holding. It repeated the identical call three times —
+      nothing in the sentence identified anything to change — and then spent the rest of
+      its budget failing to report.
+
+      The RESOLUTION is untouched: #345 is why a named schema is never matched against a
+      bare entry, and profiling a table the caller did not ask for is worse than refusing.
+      This only asks the second question once the first has failed — would this table have
+      resolved unqualified? — and, when it would, says so and gives the name to use.
+    */
+    const unqualified = snapshot !== null && inventoriedTable(snapshot, undefined, parsed.value.table) !== null;
+    return unavailable(unqualified ? "TABLE_QUALIFIER_UNKNOWN" : "TABLE_NOT_INVENTORIED");
+  }
 
   const depth = parsed.value.depth ?? "basic";
   const from = parsed.value.fromColumn ?? 0;
