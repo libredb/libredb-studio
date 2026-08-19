@@ -233,6 +233,12 @@ mock.module("@/lib/db-ui-config", () => ({
   }),
   getDBIcon: () => () => null,
   getDBColor: () => "text-blue-400",
+  // `isFileBased` must be mocked now that `DB_UI_CONFIG` is an exported binding (#425 made
+  // it one so the login showcase can enumerate it). The real `isFileBased` reads that
+  // binding, and this mock replaces it with `{}`, so leaving the function to the real module
+  // makes it throw on `DB_UI_CONFIG[type].connectionFields` for every render. Mirrors the
+  // real rule: a file-based provider carries only a path.
+  isFileBased: (type: string) => type === "sqlite" || type === "libredb",
   DB_UI_CONFIG: {},
 }));
 

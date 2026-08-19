@@ -59,6 +59,10 @@ export class RedisProvider extends BaseDatabaseProvider {
   public override getCapabilities(): ProviderCapabilities {
     return {
       queryLanguage: "json",
+      // Redis says "json" only because it is not SQL. Without this the client-side
+      // generators fall through to their MongoDB branch and every schema-explorer
+      // action emits `{"collection":...}` that `executeRedisCommand` rejects (#427).
+      queryDialect: "redis",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
       supportsCreateTable: false,
@@ -172,13 +176,102 @@ export class RedisProvider extends BaseDatabaseProvider {
     });
   }
 
-  private async executeRedisCommand(input: string): Promise<Omit<QueryResult, "executionTime">> {
-    const trimmed = input.trim();
+  /**
+   * Advance the plain tokenizer's quote state across one line of text, using the
+   * SAME rule `executePlainCommand` uses: outside a quote any `"` or `'` opens
+   * one, inside a quote only the matching character closes it, and there is no
+   * escape handling. Returns the open quote character, or '' when none is open.
+   */
+  private static quoteStateAfter(text: string, quoteChar: string): string {
+    let open = quoteChar;
+    for (const ch of text) {
+      if (open === "") {
+        if (ch === '"' || ch === "'") open = ch;
+      } else if (ch === open) {
+        open = "";
+      }
+    }
+    return open;
+  }
 
-    // Try JSON format first
-    if (trimmed.startsWith("{")) {
+  /**
+   * Reduce a buffer to the ONE command it should run: drop every `#` comment
+   * line, then take the first blank-line-delimited block and join its lines back
+   * with a NEWLINE. A line is a comment only when it *starts* with `#` (after
+   * trimming) AND no quoted argument is open across it, so a `#` inside a key or
+   * value is never mistaken for one. Returns '' when nothing runnable remains
+   * (#427).
+   *
+   * Why a block rather than a line: outside quotes the tokenizer treats a
+   * newline as ordinary whitespace, so a single command wrapped across several
+   * lines (`HSET k a 1` / `b 2`) has always run whole, and a pretty-printed JSON
+   * command is legitimately multi-line — picking only line 1 would silently
+   * half-execute both. Why not the whole buffer: the schema-explorer "Generate
+   * Command" cheatsheet is a list of alternatives separated by blank lines, and
+   * running the buffer must run only its first command, not all of them.
+   *
+   * Why the join character is a newline and not a space: the tokenizer's
+   * whitespace branch is guarded by `!inQuote`, so a newline INSIDE a quoted
+   * argument is data. `SET note "line1\nline2"` stores a two-line value, and
+   * joining with a space silently rewrote it to `line1 line2`. A newline join
+   * keeps both behaviours exactly, and lines are appended verbatim so
+   * indentation inside a quoted value survives too.
+   */
+  /**
+   * What a buffer line is to `commandBody`. Both chrome kinds require that no
+   * quoted argument is open across the line: inside one, a line-leading `#` and
+   * an empty line are data, not structure (#427).
+   */
+  private static lineKind(raw: string, quoteChar: string): "comment" | "blank" | "content" {
+    if (quoteChar !== "") return "content";
+    const line = raw.trim();
+    if (line.startsWith("#")) return "comment";
+    return line === "" ? "blank" : "content";
+  }
+
+  private commandBody(input: string): string {
+    const block: string[] = [];
+    let quoteChar = "";
+    let isJsonBlock = false;
+    for (const raw of input.split("\n")) {
+      const kind = RedisProvider.lineKind(raw, quoteChar);
+      if (kind === "comment") continue;
+      if (kind === "blank") {
+        // A blank line ends the first block; blank lines before it are leading padding.
+        if (block.length > 0) break;
+        continue;
+      }
+      // The block's kind is fixed by its first content line, using the SAME test
+      // `executeRedisCommand` uses to pick a parser. Quote tracking exists only to
+      // protect a `#` inside a quoted argument of a PLAIN command, and its rules
+      // are the plain tokenizer's — no escape handling. Applying them to a JSON
+      // body counted `\"` inside a string as a real quote, so a key named `say"hi`
+      // left a phantom quote open, every later comment line stopped being dropped,
+      // and the buffer reached `JSON.parse` with comments in it (#427). A JSON
+      // body cannot hide a line-leading `#` inside a string — JSON strings carry
+      // no literal newline — so it needs no tracking at all.
+      if (block.length === 0) isJsonBlock = raw.trimStart().startsWith("{");
+      block.push(raw);
+      if (!isJsonBlock) quoteChar = RedisProvider.quoteStateAfter(raw, quoteChar);
+    }
+    return block.join("\n");
+  }
+
+  private async executeRedisCommand(input: string): Promise<Omit<QueryResult, "executionTime">> {
+    const body = this.commandBody(input);
+    if (body.trim() === "") {
+      throw new QueryError("No command to run (only comments or blank lines)", "redis");
+    }
+
+    // Try JSON format first — over the whole block, because `JSON.stringify(cmd,
+    // null, 2)` is what the MongoDB-shaped generator emits and what users paste.
+    // It is also the lossless form the Redis generators fall back to for any
+    // argument the plain tokenizer cannot round-trip. Trailing `#` comment lines
+    // are dropped with every other comment; trailing non-comment text is not —
+    // it joins the block and fails JSON.parse (#427).
+    if (body.trimStart().startsWith("{")) {
       try {
-        const parsed = JSON.parse(trimmed);
+        const parsed = JSON.parse(body);
         return this.executeJsonCommand(parsed);
       } catch {
         throw new QueryError("Invalid JSON command format", "redis");
@@ -186,7 +279,7 @@ export class RedisProvider extends BaseDatabaseProvider {
     }
 
     // Plain text command format: COMMAND arg1 arg2 ...
-    return this.executePlainCommand(trimmed);
+    return this.executePlainCommand(body);
   }
 
   private async executeJsonCommand(cmd: RedisJsonCommand): Promise<Omit<QueryResult, "executionTime">> {

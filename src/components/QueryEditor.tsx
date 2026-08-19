@@ -11,6 +11,7 @@ import { registerSQLCompletionProvider } from "@/lib/editor/sql-completions";
 import type { SchemaCompletionCache, SchemaColumnItem } from "@/lib/editor/sql-completions";
 import { registerMongoDBCompletionProvider } from "@/lib/editor/mongodb-completions";
 import { registerLibreDBLanguage } from "@/lib/editor/libredb-language";
+import { registerRedisLanguage } from "@/lib/editor/redis-language";
 import { configureMonacoLoader } from "@/lib/editor/monaco-loader";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
 import { logger } from "@/lib/logger";
@@ -41,7 +42,7 @@ interface QueryEditorProps {
   /** Called when content changes in real-time. Use sparingly as it triggers on every keystroke. */
   onContentChange?: (val: string) => void;
   onExplain?: () => void;
-  language?: "sql" | "json" | "libredb";
+  language?: "sql" | "json" | "libredb" | "redis";
   schemaContext?: string;
   capabilities?: import("@/lib/db/types").ProviderCapabilities;
 }
@@ -393,9 +394,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     }, []);
 
     const handleBeforeMount = (monacoInstance: typeof Monaco) => {
-      // Register the LibreDB command language (idempotent) so its tabs highlight
-      // correctly instead of being treated as JSON.
+      // Register the LibreDB and Redis command languages (both idempotent) so
+      // their tabs highlight correctly instead of being treated as JSON (#427).
       registerLibreDBLanguage(monacoInstance);
+      registerRedisLanguage(monacoInstance);
 
       // Suppress Monaco's "Canceled" errors in console (with cleanup tracking)
       if (!originalConsoleErrorRef.current) {

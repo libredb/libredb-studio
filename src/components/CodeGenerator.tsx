@@ -31,6 +31,40 @@ export function toPascalCase(str: string): string {
     .replace(/s$/, ""); // Remove trailing 's' (pluralized table name)
 }
 
+/**
+ * A legal type identifier for every target language. Table names are not always
+ * identifiers: Redis "tables" are key-prefix groupings like `user:*` (#427), so
+ * `export interface User:*` was being emitted for every language. Punctuation
+ * runs become word boundaries, the segments PascalCase, and anything that cannot
+ * start an identifier is replaced rather than prefixed with `_`, because Prisma
+ * model names must begin with a letter and would reject a leading underscore.
+ * One shared rule for all six languages: their union constraint is a letter
+ * followed by letters and digits, so per-language variants would buy nothing.
+ *
+ * The classes are Unicode (`\p{L}` / `\p{N}`), never `A-Za-z0-9`: TypeScript,
+ * Zod, Go, Python and Java all accept Unicode letters in an identifier, so an
+ * ASCII-only strip DESTROYS names that were already legal in five of the six
+ * targets — `musteri` with its Turkish diacritics collapsed to `MTeri`, and a
+ * wholly non-Latin name such as a CJK one lost every character and fell back to
+ * `Record`, which made two different tables generate two files declaring ONE
+ * type (#427).
+ *
+ * Prisma is the exception: a model name is `[A-Za-z][A-Za-z0-9_]*`, so a Unicode
+ * name still yields a model Prisma would reject. Stripping to ASCII would not
+ * rescue it — the surviving stem names the wrong thing, or nothing — and it
+ * would break the other five, so the Unicode classes stand and the Prisma output
+ * for such a name is left where it already was before this function existed.
+ */
+export function toIdentifier(str: string): string {
+  // The trim is `^_|_$`, not `^_+|_+$`: the collapse above has already reduced
+  // every run of separators to ONE underscore, so a repeated quantifier here can
+  // never match more — it only adds the backtracking that makes the pattern
+  // super-linear on a long run of separators (SonarCloud S5852).
+  const result = toPascalCase(str.replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_|_$/g, ""));
+  if (!/^\p{L}/u.test(result)) return result ? `T${result}` : "Record";
+  return result;
+}
+
 export function toCamelCase(str: string): string {
   const pascal = toPascalCase(str);
   return pascal.charAt(0).toLowerCase() + pascal.slice(1);
@@ -141,7 +175,7 @@ export function mapSqlTypeToJava(sqlType: string): string {
 }
 
 export function generateCode(lang: Language, table: TableSchema): string {
-  const name = toPascalCase(table.name);
+  const name = toIdentifier(table.name);
   const columns = table.columns || [];
 
   switch (lang) {

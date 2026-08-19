@@ -43,6 +43,14 @@ jobs:
         env:
           CHART_SYNC_STRICT: "1"
 
+      - name: Login channel showcase drift guard (#425)
+        # Same reasoning as the chart guard above: inside the required check so
+        # it actually gates. src/lib/distribution/channels.generated.ts is the
+        # login hero's copy of distribution/channels.yaml, generated and
+        # committed so the unauthenticated page parses no yaml at runtime -
+        # nothing else notices when the inventory moves on without it.
+        run: bun run channels:showcase:check
+
       - name: Localized README drift guard (#317)
         # Same reasoning as the chart guard above: inside the required check so
         # it actually gates. README_zh.md and README_ja.md restate README.md's

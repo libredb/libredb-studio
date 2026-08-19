@@ -22,6 +22,34 @@ export interface ParsedConnection {
 }
 
 /**
+ * The canonical URI scheme each engine is reachable by, for the engines that HAVE one.
+ *
+ * Deliberately partial, and the gaps are the point: SQLite is a file path, LibreDB is
+ * embedded in the process, and Druid is reached over plain HTTP through the form. Inventing
+ * `sqlite://` or `druid://` to make the map look complete would put a scheme on the login
+ * page that `parseConnectionString` below rejects - a claim the product does not honour,
+ * which is the class of defect issue #425 exists to remove.
+ *
+ * Aliases the parser also accepts (`postgresql://`, `mongodb+srv://`, `rediss://`,
+ * `sqlserver://`, `couchbases://`, and ClickHouse's `http(s)://`) are not listed: this map
+ * answers "what is the one scheme to show a reader for this engine", not "what will parse".
+ *
+ * `tests/unit/lib/connection-string-parser.test.ts` pins the entries against the parser
+ * itself - every scheme here must round-trip to its own `DatabaseType` - so the map cannot
+ * drift away from the `startsWith` checks below without failing CI.
+ */
+export const ENGINE_URI_SCHEMES: Partial<Record<DatabaseType, string>> = {
+  postgres: "postgres",
+  mysql: "mysql",
+  mongodb: "mongodb",
+  redis: "redis",
+  oracle: "oracle",
+  mssql: "mssql",
+  couchbase: "couchbase",
+  clickhouse: "clickhouse",
+};
+
+/**
  * Parse a database connection string URL into its components.
  * Supports: postgres://, postgresql://, mysql://, mongodb://, mongodb+srv://, redis://,
  * couchbase://, couchbases://, clickhouse://, http://, https://

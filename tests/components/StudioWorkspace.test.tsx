@@ -19,6 +19,9 @@ let capturedSchemaDiagramProps: Record<string, unknown> = {};
 let capturedDataProfilerProps: Record<string, unknown> = {};
 let capturedCodeGeneratorProps: Record<string, unknown> = {};
 let capturedTestDataGeneratorProps: Record<string, unknown> = {};
+// The arguments StudioWorkspace hands the shared tab manager. `metadata` used to
+// be hardcoded `null` here, which made the whole of #427 inert in this surface.
+let capturedTabManagerArgs: Record<string, unknown> = {};
 
 // ---- Trackable mock functions (shared across mocks + assertions) ----
 
@@ -88,6 +91,7 @@ mock.module("@/workspace/hooks/use-connection-adapter", () => ({
     connectionPulse: null,
     fetchSchema: mockFetchSchema,
     schemaContext: JSON.stringify([usersTable]),
+    metadata: null,
     ...connAdapterOverride,
   })),
 }));
@@ -115,24 +119,27 @@ mock.module("@/workspace/hooks/use-query-adapter", () => ({
 // ---- Mock shared studio hooks ----
 
 mock.module("@/hooks/use-tab-manager", () => ({
-  useTabManager: mock(() => ({
-    tabs: [baseTab],
-    activeTabId: "tab-1",
-    currentTab: baseTab,
-    setTabs: mockSetTabs,
-    setActiveTabId: mock(() => {}),
-    editingTabId: null,
-    editingTabName: "",
-    setEditingTabId: mock(() => {}),
-    setEditingTabName: mock(() => {}),
-    addTab: mock(() => {}),
-    closeTab: mock(() => {}),
-    updateCurrentTab: mockUpdateCurrentTab,
-    updateTabById: mockUpdateTabById,
-    handleTableClick: mockHandleTableClick,
-    handleGenerateSelect: mockHandleGenerateSelect,
-    ...tabMgrOverride,
-  })),
+  useTabManager: mock((args: Record<string, unknown>) => {
+    capturedTabManagerArgs = args;
+    return {
+      tabs: [baseTab],
+      activeTabId: "tab-1",
+      currentTab: baseTab,
+      setTabs: mockSetTabs,
+      setActiveTabId: mock(() => {}),
+      editingTabId: null,
+      editingTabName: "",
+      setEditingTabId: mock(() => {}),
+      setEditingTabName: mock(() => {}),
+      addTab: mock(() => {}),
+      closeTab: mock(() => {}),
+      updateCurrentTab: mockUpdateCurrentTab,
+      updateTabById: mockUpdateTabById,
+      handleTableClick: mockHandleTableClick,
+      handleGenerateSelect: mockHandleGenerateSelect,
+      ...tabMgrOverride,
+    };
+  }),
 }));
 
 mock.module("@/hooks/use-toast", () => ({
@@ -278,6 +285,8 @@ import { describe, test, expect, afterEach, beforeEach } from "bun:test";
 import { render, cleanup, act } from "@testing-library/react";
 import React from "react";
 import type { SavedQueryInput, StudioWorkspaceProps } from "@/workspace/types";
+import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import { generateTableQuery } from "@/lib/query-generators";
 
 const { StudioWorkspace } = await import("@/workspace/StudioWorkspace");
 
@@ -344,6 +353,7 @@ describe("StudioWorkspace", () => {
     capturedDataProfilerProps = {};
     capturedCodeGeneratorProps = {};
     capturedTestDataGeneratorProps = {};
+    capturedTabManagerArgs = {};
 
     // Reset overrides
     connAdapterOverride = {};
@@ -723,8 +733,9 @@ describe("StudioWorkspace", () => {
     expect(capturedSidebarProps.onProfileTable).toBeUndefined();
     expect(capturedSidebarProps.onGenerateCode).toBeUndefined();
     expect(capturedSidebarProps.onGenerateTestData).toBeUndefined();
-    // Import and save become noops
-    act(() => (capturedQueryToolbarProps.onImport as () => void)());
+    // Import is withheld entirely, so the toolbar renders no IMPORT button (#427);
+    // save stays wired and becomes a noop when the host passes no onSaveQuery.
+    expect(capturedQueryToolbarProps.onImport).toBeUndefined();
     expect(queryByTestId("dataimportmodal")).toBeNull();
     act(() => (capturedQueryToolbarProps.onSaveQuery as () => void)());
     expect(queryByTestId("savequerymodal")).toBeNull();
@@ -792,12 +803,13 @@ describe("StudioWorkspace", () => {
     act(() => (capturedQueryToolbarProps.onExecuteQuery as () => void)());
     expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
     expect(capturedQueryToolbarProps.onCancelQuery).toBe(mockCancelQuery);
-    // Transaction and playground callbacks are noops in embedded mode
-    act(() => (capturedQueryToolbarProps.onBeginTransaction as () => void)());
-    act(() => (capturedQueryToolbarProps.onCommitTransaction as () => void)());
-    act(() => (capturedQueryToolbarProps.onRollbackTransaction as () => void)());
-    act(() => (capturedQueryToolbarProps.onTogglePlayground as () => void)());
-    act(() => (capturedQueryToolbarProps.onToggleEditing as () => void)());
+    // Transaction, playground and editing are withheld, not noops, in embedded
+    // mode — see "withholds every control the embedded shell cannot serve" (#427).
+    expect(capturedQueryToolbarProps.onBeginTransaction).toBeUndefined();
+    expect(capturedQueryToolbarProps.onCommitTransaction).toBeUndefined();
+    expect(capturedQueryToolbarProps.onRollbackTransaction).toBeUndefined();
+    expect(capturedQueryToolbarProps.onTogglePlayground).toBeUndefined();
+    expect(capturedQueryToolbarProps.onToggleEditing).toBeUndefined();
   });
 
   test("toolbar onImport opens the import modal which delegates and closes", () => {
@@ -836,6 +848,90 @@ describe("StudioWorkspace", () => {
     tabMgrOverride = { currentTab: { ...baseTab, type: "mongodb" } };
     renderWorkspace();
     expect(capturedQueryEditorProps.language).toBe("json");
+  });
+
+  test("editor language is redis for redis tabs (#427)", () => {
+    tabMgrOverride = { currentTab: { ...baseTab, type: "redis" } };
+    renderWorkspace();
+    expect(capturedQueryEditorProps.language).toBe("redis");
+  });
+
+  // =========================================================================
+  // Provider metadata wiring (#427)
+  // =========================================================================
+  //
+  // This shell hardcoded `metadata: null` into the tab manager and `metadata={null}`
+  // into every child that reads it, so a Redis connection here still generated
+  // `SELECT * FROM user:* LIMIT 50;` and still offered per-row actions the provider
+  // answers 400 to — the whole of #427 was inert in the published surface.
+  describe("provider metadata wiring (#427)", () => {
+    const redisMetadata = {
+      capabilities: {
+        queryLanguage: "json",
+        queryDialect: "redis",
+        tablesAreDerivedGroupings: true,
+        supportsMaintenance: true,
+        maintenanceOperations: ["analyze"],
+      },
+      labels: { selectAction: "Scan Keys" },
+    } as unknown as ProviderMetadata;
+
+    test("hands the connection adapter's metadata to the tab manager and every child that reads it", () => {
+      connAdapterOverride = { activeConnection: { ...dbConn, type: "redis" as const }, metadata: redisMetadata };
+      renderWorkspace();
+
+      expect(capturedTabManagerArgs.metadata).toBe(redisMetadata);
+      expect(capturedSidebarProps.metadata).toBe(redisMetadata);
+      expect(capturedQueryToolbarProps.metadata).toBe(redisMetadata);
+      expect(capturedBottomPanelProps.metadata).toBe(redisMetadata);
+      expect(capturedQueryEditorProps.capabilities).toBe(redisMetadata.capabilities);
+    });
+
+    test("a redis connection here generates a redis command, not SQL", () => {
+      connAdapterOverride = { activeConnection: { ...dbConn, type: "redis" as const }, metadata: redisMetadata };
+      renderWorkspace();
+
+      // The generator the tab manager runs, fed the metadata this shell actually
+      // passed it: with `null` it fell through to `SELECT * FROM user:* LIMIT 50;`.
+      const capabilities = (capturedTabManagerArgs.metadata as ProviderMetadata).capabilities;
+      const query = generateTableQuery("user:*", capabilities, []);
+      expect(query.startsWith("SCAN ")).toBe(true);
+      expect(query).not.toContain("SELECT");
+    });
+
+    test("stays null when the host declares no capabilities", () => {
+      renderWorkspace();
+      expect(capturedTabManagerArgs.metadata).toBeNull();
+      expect(capturedSidebarProps.metadata).toBeNull();
+    });
+
+    // Passing real metadata un-hides QueryToolbar's `queryLanguage === "sql"`
+    // group, which this shell serves none of: `transactionActive` and
+    // `editingEnabled` are hardcoded false here and nothing can change them, so a
+    // `noop` callback is a button that silently does nothing. Withholding the
+    // callback is how the toolbar is told not to render the control (#269, #427).
+    test("withholds every control the embedded shell cannot serve", () => {
+      const sqlMetadata = {
+        capabilities: { queryLanguage: "sql", supportsMaintenance: false, maintenanceOperations: [] },
+      } as unknown as ProviderMetadata;
+      connAdapterOverride = { metadata: sqlMetadata };
+      renderWorkspace();
+
+      expect(capturedQueryToolbarProps.metadata).toBe(sqlMetadata);
+      expect(capturedQueryToolbarProps.onBeginTransaction).toBeUndefined();
+      expect(capturedQueryToolbarProps.onCommitTransaction).toBeUndefined();
+      expect(capturedQueryToolbarProps.onRollbackTransaction).toBeUndefined();
+      expect(capturedQueryToolbarProps.onTogglePlayground).toBeUndefined();
+      expect(capturedQueryToolbarProps.onToggleEditing).toBeUndefined();
+      // The controls it does serve stay wired.
+      expect(typeof capturedQueryToolbarProps.onExecuteQuery).toBe("function");
+      expect(typeof capturedQueryToolbarProps.onImport).toBe("function");
+    });
+
+    test("withholds onImport too when the host disables the data-import feature", () => {
+      renderWorkspace({ features: ALL_FEATURES_OFF });
+      expect(capturedQueryToolbarProps.onImport).toBeUndefined();
+    });
   });
 
   // =========================================================================

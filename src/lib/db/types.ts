@@ -103,10 +103,13 @@ export interface ProviderCapabilities {
    * Optional client-side query dialect. `queryLanguage` only says SQL vs JSON;
    * for non-SQL providers the query generators otherwise assume MongoDB syntax.
    * A provider sets `queryDialect` to opt its tables into a custom client-side
-   * generator (see `query-generators.ts`). Left undefined by SQL/Mongo/Redis,
-   * so their generation is unchanged.
+   * generator (see `query-generators.ts`), and it is checked BEFORE
+   * `queryLanguage` everywhere. Left undefined by SQL and MongoDB, so their
+   * generation is unchanged; Redis declares `"redis"` because it too says
+   * `queryLanguage: "json"` while speaking neither MongoDB JSON nor SQL, and
+   * silently got MongoDB commands its own driver rejected (#427).
    */
-  queryDialect?: "libredb";
+  queryDialect?: "libredb" | "redis";
   supportsExplain: boolean;
   /**
    * Present iff supportsExplain is true (enforced by provider tests).

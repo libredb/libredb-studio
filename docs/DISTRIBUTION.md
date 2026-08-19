@@ -1254,6 +1254,30 @@ historical PaaS drift. For the Helm chart the enforcement remains the required `
 gate (#138) — the matrix row is visibility, not a second gate. `--json` emits the rows for
 scripting.
 
+#### The inventory also drives the login page
+
+Since [#425](https://github.com/libredb/libredb-studio/issues/425) `channels.yaml` is read by the
+product itself, not only by the docs and the drift table. `bun run channels:showcase`
+([`scripts/generate-channel-showcase.mjs`](../scripts/generate-channel-showcase.mjs)) emits
+[`src/lib/distribution/channels.generated.ts`](../src/lib/distribution/channels.generated.ts) — the
+**live** channels, each mapped to one of the login hero's four rows (containers, Kubernetes, PaaS,
+packages) by its `category`, plus the platforms those channels cover — and the login page renders
+that module. `bun run channels:showcase:check` regenerates it in memory and fails on drift; it runs
+in the required `lint-and-build` job next to `chart:check`, so the committed module is always the
+inventory.
+
+The consequence worth stating: **flipping a channel's `status` to `live` publishes it on the login
+page, with no component edit** — the same one-line edit that already moves it in
+[`docs/CHANNELS.md`](CHANNELS.md) and in the drift table. Only `live` reaches the UI, so a `pending`
+submission or a `deprecated` listing renders nothing at all, and the count the page states is a
+`.length` over that array rather than a written number. The generator refuses to guess: a `category`
+with no row mapping throws instead of defaulting, so adding a business bucket to the inventory fails
+the gate loudly rather than quietly dropping a channel out of the product's front door.
+
+The channel's **label** on that page is its `short_name` when it has one and its `name` otherwise, so
+a channel whose full name is too long for the hero is shortened in `channels.yaml` — never in the
+component. The whole point of the generated module is that no channel name is typed into JSX.
+
 #### Turning a channel's automation off
 
 Some channels can be temporarily unable to publish for reasons outside this repository — a package

@@ -156,7 +156,9 @@ describe("useProviderMetadata", () => {
 
     expect(result.current.metadata!.capabilities.queryLanguage).toBe("sql");
     expect(result.current.metadata!.capabilities.supportsExplain).toBe(true);
-    expect(result.current.metadata!.labels.entityName).toBe("Table");
+    // `/api/db/provider-meta` always answers with labels; the field is optional on
+    // `ProviderMetadata` only because the embedded shell's host may omit it (#427).
+    expect(result.current.metadata!.labels?.entityName).toBe("Table");
   });
 
   test("sets metadata to null on fetch error", async () => {

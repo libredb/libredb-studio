@@ -17,13 +17,21 @@ interface QueryToolbarProps {
   onSaveQuery: () => void;
   onExecuteQuery: () => void;
   onCancelQuery: () => void;
-  onBeginTransaction: () => void;
-  onCommitTransaction: () => void;
-  onRollbackTransaction: () => void;
-  onTogglePlayground: () => void;
+  /**
+   * The transaction trio, supplied together or not at all. A caller that cannot
+   * run transactions omits all three and BEGIN/COMMIT/ROLLBACK do not render —
+   * the embedded shell passed `noop` for them and, once it started passing real
+   * provider metadata, showed three buttons that did nothing (#427).
+   */
+  onBeginTransaction?: () => void;
+  onCommitTransaction?: () => void;
+  onRollbackTransaction?: () => void;
+  /** Omitted where the caller cannot run sandboxed (auto-rolled-back) queries. */
+  onTogglePlayground?: () => void;
   /** Omitted where the provider declares no inline row editing (issue #269). */
   onToggleEditing?: () => void;
-  onImport: () => void;
+  /** Omitted where the caller offers no data import. */
+  onImport?: () => void;
 }
 
 export function QueryToolbar({
@@ -43,6 +51,16 @@ export function QueryToolbar({
   onToggleEditing,
   onImport,
 }: QueryToolbarProps) {
+  // Bundled so the three cannot be half-supplied: a caller offering BEGIN without
+  // COMMIT would strand the user inside a transaction it cannot close.
+  const transaction =
+    onBeginTransaction && onCommitTransaction && onRollbackTransaction
+      ? { begin: onBeginTransaction, commit: onCommitTransaction, rollback: onRollbackTransaction }
+      : null;
+  // The group's border and separator are chrome for its members; with no member to
+  // show, the whole group goes rather than leaving an empty rule (#427).
+  const hasGroupControls = transaction !== null || !!onTogglePlayground || !!onToggleEditing || !!onImport;
+
   return (
     <>
       {/* Playground Mode Banner */}
@@ -92,58 +110,61 @@ export function QueryToolbar({
         )}
 
         {/* Transaction Controls + Playground + Import + Edit */}
-        {activeConnection && metadata?.capabilities.queryLanguage === "sql" && (
+        {activeConnection && metadata?.capabilities.queryLanguage === "sql" && hasGroupControls && (
           <div className="flex items-center gap-1 ml-2 pl-2 border-l border-hairline-strong">
-            {transactionActive ? (
-              <>
-                <span className="text-[0.625rem] font-medium text-amber-400 px-1.5 py-0.5 bg-amber-500/10 rounded border border-amber-500/20 mr-1">
-                  TXN
-                </span>
+            {transaction !== null &&
+              (transactionActive ? (
+                <>
+                  <span className="text-[0.625rem] font-medium text-amber-400 px-1.5 py-0.5 bg-amber-500/10 rounded border border-amber-500/20 mr-1">
+                    TXN
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs font-medium text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 gap-1"
+                    onClick={transaction.commit}
+                  >
+                    COMMIT
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 gap-1"
+                    onClick={transaction.rollback}
+                  >
+                    ROLLBACK
+                  </Button>
+                </>
+              ) : (
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="h-7 text-xs font-medium text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 gap-1"
-                  onClick={onCommitTransaction}
+                  className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-1"
+                  onClick={transaction.begin}
+                  disabled={playgroundMode}
                 >
-                  COMMIT
+                  BEGIN
                 </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 gap-1"
-                  onClick={onRollbackTransaction}
-                >
-                  ROLLBACK
-                </Button>
-              </>
-            ) : (
+              ))}
+
+            {onTogglePlayground && (
               <Button
                 size="sm"
                 variant="ghost"
-                className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-1"
-                onClick={onBeginTransaction}
-                disabled={playgroundMode}
+                className={cn(
+                  "h-7 text-xs font-medium gap-1",
+                  playgroundMode
+                    ? "text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20"
+                    : "text-fg-muted hover:text-fg-bright",
+                )}
+                onClick={onTogglePlayground}
+                disabled={transactionActive}
+                title="Playground mode: queries are auto-rolled back"
               >
-                BEGIN
+                <FlaskConical strokeWidth={1.5} className="w-3 h-3" />
+                SANDBOX
               </Button>
             )}
-
-            <Button
-              size="sm"
-              variant="ghost"
-              className={cn(
-                "h-7 text-xs font-medium gap-1",
-                playgroundMode
-                  ? "text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20"
-                  : "text-fg-muted hover:text-fg-bright",
-              )}
-              onClick={onTogglePlayground}
-              disabled={transactionActive}
-              title="Playground mode: queries are auto-rolled back"
-            >
-              <FlaskConical strokeWidth={1.5} className="w-3 h-3" />
-              SANDBOX
-            </Button>
 
             {onToggleEditing && (
               <Button
@@ -163,16 +184,18 @@ export function QueryToolbar({
               </Button>
             )}
 
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-1"
-              onClick={onImport}
-              title="Import data from CSV/JSON"
-            >
-              <Upload strokeWidth={1.5} className="w-3 h-3" />
-              IMPORT
-            </Button>
+            {onImport && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-1"
+                onClick={onImport}
+                title="Import data from CSV/JSON"
+              >
+                <Upload strokeWidth={1.5} className="w-3 h-3" />
+                IMPORT
+              </Button>
+            )}
           </div>
         )}
       </div>

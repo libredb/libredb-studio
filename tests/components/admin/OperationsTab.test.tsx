@@ -31,7 +31,7 @@ let mockActiveConnectionId: string | null = "c1";
 // The capabilities the selected connection's provider declares. `null` is the
 // state before `/api/db/provider-meta` answers, and the state it stays in when
 // that request fails (#282).
-let mockMetadata: { capabilities: Record<string, unknown> } | null = {
+let mockMetadata: { capabilities: Record<string, unknown>; labels?: Record<string, string> } | null = {
   capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze", "vacuum", "reindex"] },
 };
 
@@ -311,6 +311,61 @@ describe("OperationsTab", () => {
     const titles = Array.from(container.querySelectorAll("button")).map((b) => b.getAttribute("title"));
     expect(titles).toContain("Analyze");
     expect(titles).not.toContain("Vacuum");
+  });
+
+  // ── Global maintenance cards speak the provider's language (#427) ─────────
+  //
+  // The six analyze/vacuum global ProviderLabels fields were declared in the type,
+  // set by four providers, and read by no component: Redis rendered Postgres's
+  // "Update Statistics / Updates query planner statistics for all tables".
+
+  test("renders the provider's own global maintenance wording", async () => {
+    mockMetadata = {
+      capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze", "vacuum"] },
+      labels: {
+        analyzeGlobalLabel: "Run Info",
+        analyzeGlobalTitle: "Server Info",
+        analyzeGlobalDesc: "Get Redis server information and statistics.",
+        vacuumGlobalLabel: "Run Memory Doctor",
+        vacuumGlobalTitle: "Memory Doctor",
+        vacuumGlobalDesc: "Analyzes memory usage and reports issues.",
+      },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+
+    expect(queryByText("Run Info")).not.toBeNull();
+    expect(queryByText("Server Info")).not.toBeNull();
+    expect(queryByText("Get Redis server information and statistics.")).not.toBeNull();
+    expect(queryByText("Run Memory Doctor")).not.toBeNull();
+    expect(queryByText("Memory Doctor")).not.toBeNull();
+    expect(queryByText("Analyzes memory usage and reports issues.")).not.toBeNull();
+
+    // The Postgres wording must be gone, not merely joined.
+    expect(queryByText("Run Analyze")).toBeNull();
+    expect(queryByText("Update Statistics")).toBeNull();
+    expect(queryByText("Reclaim Space")).toBeNull();
+  });
+
+  test("falls back to the generic wording when the provider ships no labels", async () => {
+    mockMetadata = {
+      capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze", "vacuum"] },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+
+    expect(queryByText("Run Analyze")).not.toBeNull();
+    expect(queryByText("Update Statistics")).not.toBeNull();
+    expect(queryByText("Updates query planner statistics for all tables.")).not.toBeNull();
+    expect(queryByText("Run Vacuum")).not.toBeNull();
+    expect(queryByText("Reclaim Space")).not.toBeNull();
+    expect(queryByText("Removes dead rows and returns space to the OS.")).not.toBeNull();
   });
 
   test("warning card present", async () => {

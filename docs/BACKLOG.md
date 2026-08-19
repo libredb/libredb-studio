@@ -400,6 +400,119 @@ recorded here with the number that justified it.
 
 ---
 
+### U4. The profile modal's error state cannot be dismissed
+
+`DataProfiler` renders the message `/api/db/profile` returned and offers no way out: Escape does not
+close it, and the header's close control is under the error card. #427 measured this on Redis, where
+the route answered 400 for every key-prefix row, but the fault is not Redis's — any provider whose
+profile request fails traps the user in the same modal. #427 hid the menu item on providers whose
+rows are derived groupings, which removes the reachable path without fixing the modal.
+
+Done when a failed profile is dismissable by Escape and by the modal's own close control, for every
+provider that can fail it.
+
+### U5. The Operations tab shows `Tables (0)` for a key-value provider and preselects nothing
+
+Two separate gaps meet on the same screen. `OperationsTab` calls `useMonitoringData` with
+`includeTables: true` for every connection, so a provider that has no addressable tables renders an
+empty panel rather than none. And the Explorer's deep link — `onOpenMaintenance("tables", table.name)`
+— carries the row's name, but `openMaintenance` in `Studio.tsx` drops the second argument on the way
+to `/admin/operations`, so the tab opens with nothing selected however the user got there.
+
+Done when a provider whose rows are derived groupings renders no Tables panel, and a deep link from a
+row arrives with that row selected.
+
+### U6. The Reindex card has no per-provider wording, so it still speaks Postgres
+
+`ProviderLabels` carries an `analyzeGlobal*` and a `vacuumGlobal*` triad and no `reindexGlobal` one.
+#427 made the Operations tab render the first two, but the reindex card is left hardcoded to
+*"Run Reindex"* / *"Rebuild Indexes"* / *"Reconstructs all indexes in the database."* Three
+providers declare `reindex` — Postgres, SQLite and Couchbase — and for Couchbase, whose reindex is a
+GSI rebuild rather than a table reindex, that copy is wrong in the same way the analyze copy was
+wrong for Redis. Adding the triad was deliberately out of scope for #427: it means touching
+`ProviderLabels` and every provider that implements it, which is a wider change than the Redis fix.
+
+The same card gap has a smaller twin on the same screen: the per-table Analyze and Vacuum buttons are
+titled with the hardcoded `"Analyze"` and `"Vacuum"`, so MongoDB's *"Validate Collection"*,
+ClickHouse's *"Table Statistics"* and Oracle's *"Rebuild Indexes"* never reach them (#427). Wiring
+those two is entangled with U9 below and should be done with it, not before it.
+
+Done when `reindexGlobalLabel` / `reindexGlobalTitle` / `reindexGlobalDesc` exist, the three
+declaring providers set them, the card renders them with the current strings as the fallback, and the
+per-table buttons carry `analyzeAction` / `vacuumAction`.
+
+### U7. `StudioWorkspace` hands the toolbar a noop Save while the Save button renders unconditionally
+
+`QueryToolbar` renders its Save Query control whenever it is given an `onSaveQuery`, and
+`StudioWorkspace` passes `() => {}`. In the embedded surface the button is therefore always present
+and always dead — the same dead-control class #427 closed for the Redis row menu, but pre-existing
+and unrelated to that issue, which is why it was recorded rather than fixed there. The standalone
+`Studio` surface passes a real handler, so this is visible only in the npm-package render path.
+
+Done when the embedded surface either supplies a working save or does not render the control — and
+the decision is stated where the prop is passed, since "the host will wire it later" is a real option
+for a published library surface.
+
+### U8. The LibreDB Monaco language module's tokenizer is never exercised
+
+`registerLibreDBLanguage` (`src/lib/editor/libredb-language.ts`) hands Monaco a Monarch `tokenizer`
+whose rules are the whole point of the module, and `tests/unit/editor/libredb-language.test.ts`
+asserts only that a provider object with a non-empty `root` was passed. Nothing checks what the rules
+match, so a regex covering the wrong span, a shadowing rule order, or a word landing in both the
+keyword and modifier lists would pass every gate and be visible only in a browser. 100% line coverage
+does not help here: the rules are data, and loading the module covers them.
+
+The Redis half of this is **done** — `tests/unit/editor/redis-language.test.ts` now asserts the rule
+regexes directly (#427): what the `^\s*#` comment rule matches and does not, that a SCAN cursor
+tokenizes as a number, that `user:*` is ONE identifier token, that a quoted value keeps a `#` inside
+it, and that no two root rules can open on the same character — the property that makes the rule
+order safe. It needs no Monaco runtime, so the same shape applies to LibreDB.
+
+Done when the LibreDB module is checked the same way, or both are driven through Monaco's own Monarch
+runtime end to end.
+
+### U9. Four providers point `vacuumAction` at an operation that is not `vacuum`, and one shows a row item for an operation it does not have
+
+Two mismatches, measured while fixing #427 and deliberately left alone.
+
+(a) **MySQL shows the base default it never meant.** The schema explorer's per-row maintenance items
+are gated on `isAdmin` alone, so MySQL renders *"Vacuum Table"* — `BaseDatabaseProvider`'s default
+wording — although its `maintenanceOperations` is `['analyze', 'optimize', 'check', 'kill']` and
+contains no `vacuum`. The item names an operation MySQL does not have; following it reaches an
+Operations tab that renders no vacuum card either.
+
+(b) **ClickHouse, SQL Server, Oracle and Couchbase map the LABEL onto another operation.** Their
+`vacuumAction` reads *"Optimize Table"*, *"Rebuild Indexes"*, *"Rebuild Indexes"* and *"Compact"*,
+standing for the `optimize` / `optimize` / `optimize` / `reindex` each declares. So a label-driven
+gate is not enough on its own, and a *generic* label-to-operation mapping is actively wrong: #427
+built one, wired it into the Operations tab's per-table button, and thereby handed Oracle a per-table
+*"Rebuild Indexes"* control that sent `optimize` with a TABLE name — while `oracle.ts` builds
+`ALTER INDEX "<target>" REBUILD` from that target, so every click answered **ORA-01418: specified
+index does not exist**. A control that always fails is worse than the dead end it replaced, and the
+whole chain was reverted before merge.
+
+The conclusion the revert paid for: any future mapping must be **per provider**, declared by the
+provider next to the operation it names — because the target grammar differs even among providers
+that declare the same `MaintenanceType`. Oracle's `optimize` wants an index name; ClickHouse's wants
+a table; Couchbase's `reindex` wants a keyspace.
+
+Done when each provider declares which operation its `vacuumAction` (and `analyzeAction`) stands for
+*and* what kind of target that operation takes, both surfaces gate and title from that declaration,
+and a live run against Oracle proves the per-table control succeeds rather than returning ORA-01418.
+
+### U10. The Monarch rules for the Redis and LibreDB command languages carry no cross-line string state
+
+`redis-language.ts` and `libredb-language.ts` give Monaco a `root` state whose comment rule is
+`^\s*#`, with no separate string state carried between lines. The providers, however, treat a newline
+inside an open quoted argument as data (`SET note "line1` / `#tag"` stores a two-line value — see
+`docs/providers/redis.md` §3.4a). So the editor paints the continuation line as a comment while the
+provider stores it as part of the value: the highlighting and the execution disagree about the same
+buffer. Low severity — it misleads, it does not corrupt — and the tokenizer has no idea what the
+provider will do until the buffer runs.
+
+Done when an open quoted argument keeps its string state across the line break in both Monarch
+tokenizers, with a test asserting a `#`-leading continuation line is not tokenized as a comment.
+
 ## Authentication and security headers
 
 ### A1. Three copies of the 401 response, with two different shapes
@@ -2446,3 +2559,21 @@ and the three share one declared shape, so a new one states its condition, its s
 in the same place rather than inventing them again. Whether
 the rail SHOWS the entry is a separate question and probably a no: the notices exist to be invisible
 to a user, and the timeline is not the same surface as the ledger.
+
+### U11. The LibreDB "Scan Keys" generator interpolates a newline-bearing key name raw
+
+`generateSelectQuery`'s LibreDB branch refuses to emit a command line for a node whose name contains a
+newline (#427), because a line-oriented grammar cannot address it and a generated line would otherwise
+carry attacker-chosen text into the tab. `generateTableQuery` — the "Scan Keys" action, which
+`handleTableClick` AUTO-EXECUTES — was left as it was: for a key literally named
+`x\ndelete billing:2024` it returns `get x\ndelete billing:2024`. Only `get x` runs, because
+`firstCommandLine()` takes the first line, so nothing destructive executes and nothing is deleted; but
+line 2 sits in the editor as a plausible, runnable `delete billing:2024`, one Run Selected away.
+
+Redis's equivalent path is closed: an argument the plain tokenizer cannot round-trip switches that line
+to the lossless JSON command form, which has no line-oriented escape at all. LibreDB has no such form,
+so closing this needs either a quoting rule in its grammar or the same "emit a note, emit no command"
+answer `generateSelectQuery` already gives.
+
+Done when no generated LibreDB line can carry a second command, and `docs/providers/libredb.md` §5.3
+says so for Scan Keys as well as for the cheatsheet — today it claims the stronger property for both.

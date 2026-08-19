@@ -75,6 +75,18 @@ export function OperationsTab() {
   const canRun = (type: MaintenanceType) =>
     metadata?.capabilities.supportsMaintenance === true && metadata.capabilities.maintenanceOperations.includes(type);
   const anyMaintenance = canRun("analyze") || canRun("vacuum") || canRun("reindex");
+  // The six analyze/vacuum global ProviderLabels fields were declared, set by
+  // seven providers, and read by no component, so every engine rendered
+  // Postgres's query-planner copy (#427).
+  //
+  // Which card each provider's wording actually reaches follows from the gates
+  // below, not from the labels: the analyze card renders for every provider that
+  // declares `analyze`, so Redis now says "Server Info" and MongoDB "Validate
+  // Collections"; the GLOBAL vacuum card is gated on the literal `vacuum`, which
+  // among the providers that ship vacuum wording only MongoDB declares.
+  //
+  // The `??` fallbacks stay: `metadata` may carry capabilities without labels.
+  const labels = metadata?.labels;
 
   const { connections: allConns } = useAllConnections();
   useEffect(() => {
@@ -259,12 +271,12 @@ export function OperationsTab() {
                     disabled={!!actionLoading || !selectedConnection}
                   >
                     {actionLoading === "analyze-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
-                    Run Analyze
+                    {labels?.analyzeGlobalLabel ?? "Run Analyze"}
                   </Button>
                 </div>
-                <h4 className="text-sm font-bold text-fg mb-1">Update Statistics</h4>
+                <h4 className="text-sm font-bold text-fg mb-1">{labels?.analyzeGlobalTitle ?? "Update Statistics"}</h4>
                 <p className="text-xs text-fg-muted leading-relaxed">
-                  Updates query planner statistics for all tables.
+                  {labels?.analyzeGlobalDesc ?? "Updates query planner statistics for all tables."}
                 </p>
               </div>
             )}
@@ -284,15 +296,18 @@ export function OperationsTab() {
                     disabled={!!actionLoading || !selectedConnection}
                   >
                     {actionLoading === "vacuum-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
-                    Run Vacuum
+                    {labels?.vacuumGlobalLabel ?? "Run Vacuum"}
                   </Button>
                 </div>
-                <h4 className="text-sm font-bold text-fg mb-1">Reclaim Space</h4>
-                <p className="text-xs text-fg-muted leading-relaxed">Removes dead rows and returns space to the OS.</p>
+                <h4 className="text-sm font-bold text-fg mb-1">{labels?.vacuumGlobalTitle ?? "Reclaim Space"}</h4>
+                <p className="text-xs text-fg-muted leading-relaxed">
+                  {labels?.vacuumGlobalDesc ?? "Removes dead rows and returns space to the OS."}
+                </p>
               </div>
             )}
 
-            {/* Reindex */}
+            {/* Reindex — ProviderLabels declares no reindexGlobal triad, so this
+                card stays generic; adding one is out of scope for #427. */}
             {canRun("reindex") && (
               <div className="p-4 rounded-xl border border-hairline bg-fill-subtle hover:bg-fill transition-colors">
                 <div className="flex items-start justify-between mb-3">

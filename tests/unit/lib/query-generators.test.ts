@@ -104,6 +104,37 @@ describe("generateSelectQuery — LibreDB dialect", () => {
     expect(out.split("\n").some((l) => l.trim().startsWith("#"))).toBe(true);
   });
 
+  test("a node name containing a newline emits a note and NO command line (#427)", () => {
+    // A key name is server data. `get`/`put`/`delete` interpolate it raw, so its
+    // second line rendered as a runnable command of its own — `delete billing:2024`
+    // below would have been executed by Run Selected. LibreDB has no lossless JSON
+    // command form to fall back to, so the cheatsheet declines to guess.
+    const out = generateSelectQuery("x\ndelete billing:2024", kvColumns, libreCaps);
+    expect(out.split("\n")[0]).toBe(
+      '# LibreDB commands for "x\\ndelete billing:2024" — select a line and Run Selected.',
+    );
+    expect(commandLines(out)).toEqual([]);
+    expect(out).toContain("# This key's name contains a newline.");
+    expect(out).not.toContain("delete billing:2024\n");
+  });
+
+  test("a node name containing a bare CR emits the same note (#427)", () => {
+    // A lone CR ends a line for an editor and for Run Selected just as LF does.
+    const out = generateSelectQuery("x\rdelete billing:2024", kvColumns, libreCaps);
+    expect(commandLines(out)).toEqual([]);
+  });
+
+  test("a PREFIX GROUP whose name contains a newline emits the same note (#427)", () => {
+    const out = generateSelectQuery("x\ndelete billing:2024:*", kvColumns, libreCaps);
+    expect(commandLines(out)).toEqual([]);
+  });
+
+  test("an ordinary node name still renders unescaped in the header (#427)", () => {
+    expect(generateSelectQuery("users:*", kvColumns, libreCaps).split("\n")[0]).toBe(
+      '# LibreDB commands for "users:*" — select a line and Run Selected.',
+    );
+  });
+
   test("relational group: put example is a concrete JSON object from the columns", () => {
     const out = generateSelectQuery("users:*", relationalColumns, libreCaps);
     expect(commandLines(out)).toEqual([
@@ -513,5 +544,330 @@ describe("shouldRefreshSchema", () => {
 
   test("INSERT does NOT trigger refresh", () => {
     expect(shouldRefreshSchema("INSERT INTO users VALUES (1)", pattern)).toBe(false);
+  });
+});
+
+// ============================================================================
+// Redis dialect (#427)
+// ============================================================================
+
+const redisCaps = makeCaps({ queryLanguage: "json", defaultPort: 6379, queryDialect: "redis" });
+
+/** The three columns `redis.ts` `getSchema()` builds for every key-prefix row. */
+function typeCols(sample: string): ColumnSchema[] {
+  return [
+    { name: "key", type: "string", nullable: false, isPrimary: true },
+    { name: "value", type: sample.split(", ").join("/"), nullable: true, isPrimary: false },
+    { name: "type", type: sample, nullable: false, isPrimary: false },
+  ];
+}
+
+describe("generateTableQuery — Redis dialect", () => {
+  test("prefix group scans with SCAN 0 MATCH ... COUNT 50", () => {
+    expect(generateTableQuery("user:*", redisCaps, typeCols("string"))).toBe("SCAN 0 MATCH user:* COUNT 50");
+  });
+
+  test("prefix group SCANs regardless of the sampled type", () => {
+    expect(generateTableQuery("session:*", redisCaps, typeCols("hash"))).toBe("SCAN 0 MATCH session:* COUNT 50");
+  });
+
+  test("bare key, string sample -> GET", () => {
+    expect(generateTableQuery("counter", redisCaps, typeCols("string"))).toBe("GET counter");
+  });
+
+  test("bare key, hash sample -> HGETALL", () => {
+    expect(generateTableQuery("counter", redisCaps, typeCols("hash"))).toBe("HGETALL counter");
+  });
+
+  test("bare key, list sample -> LRANGE k 0 -1", () => {
+    expect(generateTableQuery("counter", redisCaps, typeCols("list"))).toBe("LRANGE counter 0 -1");
+  });
+
+  test("bare key, set sample -> SMEMBERS", () => {
+    expect(generateTableQuery("counter", redisCaps, typeCols("set"))).toBe("SMEMBERS counter");
+  });
+
+  test("bare key, zset sample -> ZRANGE k 0 -1 WITHSCORES", () => {
+    expect(generateTableQuery("counter", redisCaps, typeCols("zset"))).toBe("ZRANGE counter 0 -1 WITHSCORES");
+  });
+
+  test('bare key, mixed sample ("string, hash") -> TYPE', () => {
+    expect(generateTableQuery("counter", redisCaps, typeCols("string, hash"))).toBe("TYPE counter");
+  });
+
+  test('bare key, unrecognised sample ("stream") -> TYPE', () => {
+    expect(generateTableQuery("counter", redisCaps, typeCols("stream"))).toBe("TYPE counter");
+  });
+
+  test('bare key, empty sample ("") -> TYPE', () => {
+    expect(generateTableQuery("counter", redisCaps, typeCols(""))).toBe("TYPE counter");
+  });
+
+  test("bare key with no columns argument -> TYPE", () => {
+    expect(generateTableQuery("counter", redisCaps)).toBe("TYPE counter");
+  });
+
+  test('bare key with columns that have no "type" column -> TYPE', () => {
+    expect(generateTableQuery("counter", redisCaps, sampleColumns)).toBe("TYPE counter");
+  });
+
+  test("glob metacharacters in the prefix are escaped in MATCH", () => {
+    // The escape introduces a backslash, which the plain tokenizer cannot be
+    // trusted to carry, so the line switches to the lossless JSON form (#427).
+    expect(generateTableQuery("a[b:*", redisCaps, typeCols("string"))).toBe(
+      '{"command":"SCAN","args":["0","MATCH","a\\\\[b:*","COUNT","50"]}',
+    );
+  });
+
+  test("a key containing a double quote falls back to the JSON form (#427)", () => {
+    // Plain `GET "say"hi""` tokenizes to the key `sayhi` — a different key.
+    expect(generateTableQuery('say"hi"', redisCaps, typeCols("string"))).toBe(
+      '{"command":"GET","args":["say\\"hi\\""]}',
+    );
+  });
+
+  test("a key containing a single quote falls back to the JSON form (#427)", () => {
+    expect(generateTableQuery("it's", redisCaps, typeCols("hash"))).toBe('{"command":"HGETALL","args":["it\'s"]}');
+  });
+
+  test("a quoted prefix group falls back to the JSON form (#427)", () => {
+    expect(generateTableQuery('a"b:*', redisCaps, typeCols("string"))).toBe(
+      '{"command":"SCAN","args":["0","MATCH","a\\"b:*","COUNT","50"]}',
+    );
+  });
+
+  test("an argument containing whitespace is quoted", () => {
+    expect(generateTableQuery("my key", redisCaps, typeCols(""))).toBe('TYPE "my key"');
+  });
+
+  test("returns exactly one line", () => {
+    expect(generateTableQuery("user:*", redisCaps, typeCols("string"))).not.toContain("\n");
+    expect(generateTableQuery("counter", redisCaps, typeCols("string"))).not.toContain("\n");
+  });
+
+  test("Redis no longer emits MongoDB JSON (#427 regression)", () => {
+    const result = generateTableQuery("user:*", redisCaps, typeCols("string"));
+    expect(() => JSON.parse(result)).toThrow();
+  });
+});
+
+describe("generateSelectQuery — Redis dialect", () => {
+  // The runnable command lines (drop the use-case comments and blank lines).
+  const commandLines = (out: string) =>
+    out
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l !== "" && !l.startsWith("#"));
+
+  test("output carries explanatory # comments", () => {
+    const out = generateSelectQuery("user:*", typeCols("string"), redisCaps);
+    expect(out.split("\n").some((l) => l.trim().startsWith("#"))).toBe(true);
+  });
+
+  test("prefix group (string) emits the exact cheatsheet", () => {
+    expect(generateSelectQuery("user:*", typeCols("string"), redisCaps)).toBe(
+      [
+        '# Redis commands for "user:*" — select a line and Run Selected.',
+        "",
+        "# List keys under this prefix — ONE scan iteration, not the whole set.",
+        "# 0 is the start cursor; the reply's first row is the next cursor. Re-run",
+        "# with that value in place of 0 until it comes back 0 (a page may be empty).",
+        "SCAN 0 MATCH user:* COUNT 50",
+        "",
+        "# Check the key's type",
+        "TYPE user:1",
+        "",
+        "# Read the value",
+        "GET user:1",
+        "",
+        "# Create or update it — this overwrites an existing value",
+        "SET user:1 example",
+        "",
+        "# Time to live in seconds (-1 no expiry, -2 no such key)",
+        "TTL user:1",
+        "",
+        "# Delete the key (DEL takes a literal key name, never a pattern)",
+        "DEL user:1",
+      ].join("\n"),
+    );
+  });
+
+  test("hash prefix group emits the exact cheatsheet", () => {
+    expect(generateSelectQuery("session:*", typeCols("hash"), redisCaps)).toBe(
+      [
+        '# Redis commands for "session:*" — select a line and Run Selected.',
+        "",
+        "# List keys under this prefix — ONE scan iteration, not the whole set.",
+        "# 0 is the start cursor; the reply's first row is the next cursor. Re-run",
+        "# with that value in place of 0 until it comes back 0 (a page may be empty).",
+        "SCAN 0 MATCH session:* COUNT 50",
+        "",
+        "# Check the key's type",
+        "TYPE session:1",
+        "",
+        "# Read every field of the hash",
+        "HGETALL session:1",
+        "",
+        "# Create or update one field — this overwrites an existing field",
+        "HSET session:1 field example",
+        "",
+        "# Time to live in seconds (-1 no expiry, -2 no such key)",
+        "TTL session:1",
+        "",
+        "# Delete the key (DEL takes a literal key name, never a pattern)",
+        "DEL session:1",
+      ].join("\n"),
+    );
+  });
+
+  test("bare key (string) emits the exact cheatsheet", () => {
+    expect(generateSelectQuery("counter", typeCols("string"), redisCaps)).toBe(
+      [
+        '# Redis commands for "counter" — select a line and Run Selected.',
+        "",
+        "# Check the key's type",
+        "TYPE counter",
+        "",
+        "# Read the value",
+        "GET counter",
+        "",
+        "# Create or update it — this overwrites an existing value",
+        "SET counter example",
+        "",
+        "# Time to live in seconds (-1 no expiry, -2 no such key)",
+        "TTL counter",
+        "",
+        "# Delete the key (DEL takes a literal key name, never a pattern)",
+        "DEL counter",
+      ].join("\n"),
+    );
+  });
+
+  test("list prefix group emits LRANGE/RPUSH", () => {
+    expect(commandLines(generateSelectQuery("queue:*", typeCols("list"), redisCaps))).toEqual([
+      "SCAN 0 MATCH queue:* COUNT 50",
+      "TYPE queue:1",
+      "LRANGE queue:1 0 -1",
+      "RPUSH queue:1 example",
+      "TTL queue:1",
+      "DEL queue:1",
+    ]);
+  });
+
+  test("set prefix group emits SMEMBERS/SADD", () => {
+    expect(commandLines(generateSelectQuery("tags:*", typeCols("set"), redisCaps))).toEqual([
+      "SCAN 0 MATCH tags:* COUNT 50",
+      "TYPE tags:1",
+      "SMEMBERS tags:1",
+      "SADD tags:1 example",
+      "TTL tags:1",
+      "DEL tags:1",
+    ]);
+  });
+
+  test("zset prefix group emits ZRANGE ... WITHSCORES / ZADD", () => {
+    expect(commandLines(generateSelectQuery("score:*", typeCols("zset"), redisCaps))).toEqual([
+      "SCAN 0 MATCH score:* COUNT 50",
+      "TYPE score:1",
+      "ZRANGE score:1 0 -1 WITHSCORES",
+      "ZADD score:1 1 example",
+      "TTL score:1",
+      "DEL score:1",
+    ]);
+  });
+
+  test("mixed-type prefix group omits the read and write blocks", () => {
+    expect(commandLines(generateSelectQuery("misc:*", typeCols("string, hash"), redisCaps))).toEqual([
+      "SCAN 0 MATCH misc:* COUNT 50",
+      "TYPE misc:1",
+      "TTL misc:1",
+      "DEL misc:1",
+    ]);
+  });
+
+  test("bare key emits no SCAN line", () => {
+    const out = generateSelectQuery("counter", typeCols("string"), redisCaps);
+    expect(out).not.toContain("SCAN");
+  });
+
+  test("bare key with an unknown type omits the read and write blocks", () => {
+    expect(commandLines(generateSelectQuery("counter", typeCols(""), redisCaps))).toEqual([
+      "TYPE counter",
+      "TTL counter",
+      "DEL counter",
+    ]);
+  });
+
+  test("every command line is a single runnable command", () => {
+    for (const sample of ["string", "hash", "list", "set", "zset"]) {
+      for (const name of ["user:*", "counter"]) {
+        for (const line of commandLines(generateSelectQuery(name, typeCols(sample), redisCaps))) {
+          expect(line).not.toContain("\n");
+          expect(line).not.toContain("<");
+          expect(line.split(" ")[0]).toBe(line.split(" ")[0].toUpperCase());
+        }
+      }
+    }
+  });
+
+  test("no command line but SCAN takes the group name as a key argument", () => {
+    const lines = commandLines(generateSelectQuery("user:*", typeCols("string"), redisCaps));
+    for (const line of lines) {
+      if (line.includes(":*")) expect(line.startsWith("SCAN ")).toBe(true);
+    }
+    expect(lines.filter((l) => l.includes("*"))).toEqual(["SCAN 0 MATCH user:* COUNT 50"]);
+  });
+
+  test("Redis no longer emits MongoDB JSON (#427 regression)", () => {
+    const out = generateSelectQuery("user:*", typeCols("string"), redisCaps);
+    expect(out).not.toContain('"collection"');
+  });
+
+  test("only the lines that need it fall back to the JSON form (#427)", () => {
+    // Mixed forms in one cheatsheet are fine: the provider decides per run, and
+    // every line is run on its own. Here the key needs JSON; nothing else does.
+    const lines = commandLines(generateSelectQuery('say"hi"', typeCols("string"), redisCaps));
+    expect(lines).toEqual([
+      '{"command":"TYPE","args":["say\\"hi\\""]}',
+      '{"command":"GET","args":["say\\"hi\\""]}',
+      '{"command":"SET","args":["say\\"hi\\"","example"]}',
+      '{"command":"TTL","args":["say\\"hi\\""]}',
+      '{"command":"DEL","args":["say\\"hi\\""]}',
+    ]);
+  });
+
+  test("a node name containing a newline stays inside the header comment (#427)", () => {
+    // Redis keys are arbitrary byte strings. Raw interpolation put `DEL user:1
+    // x" — select a line and Run Selected.` on line 2, which the provider then
+    // ran as the buffer's first command.
+    const out = generateSelectQuery("a\nDEL user:1 x", typeCols("string"), redisCaps);
+    expect(out.split("\n")[0]).toBe('# Redis commands for "a\\nDEL user:1 x" — select a line and Run Selected.');
+    for (const line of commandLines(out)) expect(line).not.toContain("Run Selected");
+  });
+
+  test("a node name containing CR LF and a quote stays inside the header comment (#427)", () => {
+    const out = generateSelectQuery('a\r\nDEL "user:1" x', typeCols("hash"), redisCaps);
+    expect(out.split("\n")[0]).toBe(
+      '# Redis commands for "a\\r\\nDEL \\"user:1\\" x" — select a line and Run Selected.',
+    );
+    expect(commandLines(out)).toEqual([
+      '{"command":"TYPE","args":["a\\r\\nDEL \\"user:1\\" x"]}',
+      '{"command":"HGETALL","args":["a\\r\\nDEL \\"user:1\\" x"]}',
+      '{"command":"HSET","args":["a\\r\\nDEL \\"user:1\\" x","field","example"]}',
+      '{"command":"TTL","args":["a\\r\\nDEL \\"user:1\\" x"]}',
+      '{"command":"DEL","args":["a\\r\\nDEL \\"user:1\\" x"]}',
+    ]);
+  });
+
+  test("an ordinary node name still renders unescaped in the header (#427)", () => {
+    expect(generateSelectQuery("user:*", typeCols("string"), redisCaps).split("\n")[0]).toBe(
+      '# Redis commands for "user:*" — select a line and Run Selected.',
+    );
+  });
+
+  test("the SCAN comment says one iteration is not the whole set (#427)", () => {
+    const out = generateSelectQuery("user:*", typeCols("string"), redisCaps);
+    expect(out).toContain("ONE scan iteration");
+    expect(out).toContain("the reply's first row is the next cursor");
   });
 });

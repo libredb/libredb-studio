@@ -30,7 +30,14 @@ Three properties frame everything below, and each of them is load-bearing rather
   anywhere.** They are the only providers implementing `queryReadOnly` (`postgres.ts:870`,
   `sqlite.ts:397`), so any other engine fails profiled acquisition with
   `PROFILE_UNSUPPORTED_BY_PROVIDER` and the run ends `engine-unsupported`
-  (`src/lib/agent/runtime.ts:199`). The restriction is a property of the **execution profile**, not
+  (`src/lib/agent/runtime.ts:199`). Surfaces that must *state* that reach — the login hero does,
+  since #425 — read `AGENT_EXECUTION_ENGINES` (`src/lib/agent/engine-support.ts`), which mirrors the
+  gate rather than replacing it: the factory keeps probing `typeof provider.queryReadOnly`, and
+  `tests/unit/lib/agent/engine-support.test.ts` measures the provider prototypes so the constant
+  cannot go stale against them in either direction. It is client-safe by construction (it imports
+  only `DatabaseType`), and it deliberately says nothing about plan mode, which executes nothing
+  anywhere, or about `operations`, which runs everywhere.
+  The restriction is a property of the **execution profile**, not
   of the factory: `agent-read-only` sends model-authored statements and is served only where the
   engine can bound one, `agent-handover` sends the statement a run already answered with and takes
   the same gate for the same reason, while `agent-operations` sends no statement at all — it calls

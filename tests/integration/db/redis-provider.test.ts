@@ -6,6 +6,7 @@
  */
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import type { DatabaseConnection } from "@/lib/types";
+import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
 
 // ============================================================================
 // Mock Setup — MUST come before provider import
@@ -52,7 +53,28 @@ const mockCallResults: Record<string, unknown> = {
   PING: "PONG",
   DBSIZE: 42,
   SLOWLOG: MOCK_SLOWLOG_ENTRIES,
+  // Every verb the schema-explorer generators can emit, so the round-trip tests
+  // below can feed generated command lines straight into query() (#427). One
+  // entry per verb is enough; `capturedCalls` records the args separately.
+  SCAN: ["0", ["user:1", "user:2"]],
+  TYPE: "string",
+  TTL: -1,
+  HSET: 1,
+  LRANGE: [],
+  RPUSH: 1,
+  SMEMBERS: [],
+  SADD: 1,
+  ZRANGE: [],
+  ZADD: 1,
 };
+
+/**
+ * Every (command, args) tuple the provider actually handed the driver. The
+ * round-trip tests assert against THIS, not against the reply: a generated
+ * command that reaches the driver with mangled args still "succeeds" otherwise,
+ * which is exactly how the quote defect survived the first review (#427).
+ */
+const capturedCalls: Array<{ command: string; args: string[] }> = [];
 
 mock.module("ioredis", () => {
   class MockRedis {
@@ -91,8 +113,9 @@ mock.module("ioredis", () => {
       return "OK";
     }
 
-    async call(command: string) {
+    async call(command: string, ...args: string[]) {
       const cmd = command.toUpperCase();
+      capturedCalls.push({ command: cmd, args });
       // Simulate a Redis-side error (e.g. unknown command / wrong arity)
       if (cmd === "BOGUS") {
         throw new Error("ERR unknown command 'BOGUS'");
@@ -205,6 +228,13 @@ describe("RedisProvider", () => {
       expect(caps.explainFormat).toBeUndefined();
       expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);
     });
+
+    test("declares the redis query dialect (#427)", () => {
+      // Without this the client-side generators fall through to the MongoDB
+      // branch on `queryLanguage === "json"` and every schema-explorer action
+      // emits JSON this provider rejects.
+      expect(provider.getCapabilities().queryDialect).toBe("redis");
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -302,6 +332,297 @@ describe("RedisProvider", () => {
 
     test("Redis-side command error is surfaced as QueryError", async () => {
       await expect(provider.query("BOGUS arg1")).rejects.toThrow(/Redis error: ERR unknown command/);
+    });
+
+    // --- Commented cheatsheets from the schema explorer (#427) ---
+
+    test("a leading # comment line is skipped; the command runs", async () => {
+      const result = await provider.query("# Read the value\nGET mykey");
+      expect(result.rows[0].result).toBe("hello-world");
+    });
+
+    test("blank lines are skipped", async () => {
+      const result = await provider.query("\n\n   \nGET mykey");
+      expect(result.rows[0].result).toBe("hello-world");
+    });
+
+    test('a "#" inside an argument is not a comment', async () => {
+      const result = await provider.query("SET k #tag");
+      expect(result.rows[0].result).toBe("OK");
+    });
+
+    test("input that is only comments and blank lines is rejected", async () => {
+      await expect(provider.query("# just a note\n\n# and another")).rejects.toThrow(/only comments|no command/i);
+    });
+
+    test("a line that tokenizes to nothing throws Empty command", async () => {
+      await expect(provider.query('""')).rejects.toThrow(/Empty command/);
+    });
+
+    test("a pretty-printed multi-line JSON command still parses", async () => {
+      const result = await provider.query(JSON.stringify({ command: "GET", args: ["mykey"] }, null, 2));
+      expect(result.rows[0].result).toBe("hello-world");
+    });
+
+    test("a JSON command preceded by comment lines still parses", async () => {
+      const result = await provider.query('# a note\n\n{"command":"GET","args":["mykey"]}');
+      expect(result.rows[0].result).toBe("hello-world");
+    });
+
+    test("a trailing # comment after a JSON body is dropped, not an error", async () => {
+      const result = await provider.query('{"command":"GET","args":["mykey"]}\n# trailing note');
+      expect(result.rows[0].result).toBe("hello-world");
+    });
+
+    test("trailing non-comment text after a JSON body is still an Invalid JSON command format", async () => {
+      await expect(provider.query('{"command":"GET","args":["mykey"]}\ntrailing note')).rejects.toThrow(
+        /Invalid JSON command format/,
+      );
+    });
+
+    test("the generated Scan Keys command runs against this provider (#427)", async () => {
+      const schema = await provider.getSchema();
+      const generated = generateTableQuery(schema[0].name, provider.getCapabilities(), schema[0].columns);
+      const result = await provider.query(generated);
+      expect(result.rows).toBeArray();
+    });
+
+    test("every command line the cheatsheet generates is accepted (#427)", async () => {
+      for (const sample of ["string", "hash", "list", "set", "zset"]) {
+        const columns = [
+          { name: "key", type: "string", nullable: false, isPrimary: true },
+          { name: "value", type: sample, nullable: true, isPrimary: false },
+          { name: "type", type: sample, nullable: false, isPrimary: false },
+        ];
+        const out = generateSelectQuery("user:*", columns, provider.getCapabilities());
+        const lines = out
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l !== "" && !l.startsWith("#"));
+        expect(lines.length).toBeGreaterThan(0);
+        for (const line of lines) {
+          await expect(provider.query(line)).resolves.toBeDefined();
+        }
+      }
+    });
+
+    // --- Round-trip: generator output THROUGH this provider's own parser (#427) ---
+
+    /**
+     * Run every runnable line of a generated buffer and return what the driver
+     * was actually called with. Comments and blank lines are dropped exactly as
+     * "Run Selected" would leave them out.
+     *
+     * NOTE: this helper strips comments and blank lines ITSELF and runs each line
+     * on its own, so it exercises the per-line paths and NOT `commandBody`'s block
+     * logic — which is how a comment-stripping defect survived two reviews (#427).
+     * The whole-buffer suite below is the one that covers `commandBody`.
+     */
+    async function runGeneratedLines(buffer: string): Promise<Array<{ command: string; args: string[] }>> {
+      capturedCalls.length = 0;
+      const lines = buffer
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l !== "" && !l.startsWith("#"));
+      for (const line of lines) await provider.query(line);
+      return [...capturedCalls];
+    }
+
+    const KEY_COLUMNS = (sample: string) => [
+      { name: "key", type: "string", nullable: false, isPrimary: true },
+      { name: "value", type: sample, nullable: true, isPrimary: false },
+      { name: "type", type: sample, nullable: false, isPrimary: false },
+    ];
+
+    test("a key containing a double quote reaches the driver unmangled (#427)", async () => {
+      // Plain-form `DEL "say"hi""` tokenizes to `sayhi` — a DIFFERENT key. The
+      // generator must fall back to the lossless JSON form for such a line.
+      const calls = await runGeneratedLines(
+        generateSelectQuery('say"hi"', KEY_COLUMNS("string"), provider.getCapabilities()),
+      );
+      for (const call of calls) {
+        expect(call.args[0]).toBe('say"hi"');
+      }
+      expect(calls.map((c) => c.command)).toContain("DEL");
+    });
+
+    test("a key containing a single quote reaches the driver unmangled (#427)", async () => {
+      const calls = await runGeneratedLines(
+        generateSelectQuery("it's", KEY_COLUMNS("hash"), provider.getCapabilities()),
+      );
+      for (const call of calls) {
+        expect(call.args[0]).toBe("it's");
+      }
+    });
+
+    test("a quoted prefix group SCANs the pattern it meant to (#427)", async () => {
+      const calls = await runGeneratedLines(
+        generateTableQuery('a"b:*', provider.getCapabilities(), KEY_COLUMNS("string")),
+      );
+      expect(calls).toEqual([{ command: "SCAN", args: ["0", "MATCH", 'a"b:*', "COUNT", "50"] }]);
+    });
+
+    test("a key containing whitespace still round-trips in plain form (#427)", async () => {
+      const calls = await runGeneratedLines(
+        generateTableQuery("my key", provider.getCapabilities(), KEY_COLUMNS("string")),
+      );
+      expect(calls).toEqual([{ command: "GET", args: ["my key"] }]);
+    });
+
+    test("an ordinary key still round-trips in plain form (#427)", async () => {
+      const calls = await runGeneratedLines(
+        generateTableQuery("user:1", provider.getCapabilities(), KEY_COLUMNS("zset")),
+      );
+      expect(calls).toEqual([{ command: "ZRANGE", args: ["user:1", "0", "-1", "WITHSCORES"] }]);
+    });
+
+    test("a glob-escaped prefix reaches the driver with its backslash intact (#427)", async () => {
+      const calls = await runGeneratedLines(
+        generateTableQuery("a[b:*", provider.getCapabilities(), KEY_COLUMNS("string")),
+      );
+      expect(calls).toEqual([{ command: "SCAN", args: ["0", "MATCH", "a\\[b:*", "COUNT", "50"] }]);
+    });
+
+    // --- Multi-line bodies (#427 F2 regression) ---
+
+    test("a plain command wrapped across lines still runs whole", async () => {
+      // On main the tokenizer treated a newline as ordinary whitespace, so this
+      // wrote BOTH fields. First-line-only picking silently dropped the second.
+      capturedCalls.length = 0;
+      await provider.query("HSET user:1 name alice\nemail a@b.c");
+      expect(capturedCalls).toEqual([{ command: "HSET", args: ["user:1", "name", "alice", "email", "a@b.c"] }]);
+    });
+
+    test("a blank line ends the command: the cheatsheet runs only its first block", async () => {
+      capturedCalls.length = 0;
+      await provider.query(generateSelectQuery("user:*", KEY_COLUMNS("string"), provider.getCapabilities()));
+      expect(capturedCalls).toEqual([{ command: "SCAN", args: ["0", "MATCH", "user:*", "COUNT", "50"] }]);
+    });
+
+    test("comment lines between the wrapped lines of one command are dropped", async () => {
+      capturedCalls.length = 0;
+      await provider.query("HSET user:1 name alice\n# a note\nemail a@b.c");
+      expect(capturedCalls).toEqual([{ command: "HSET", args: ["user:1", "name", "alice", "email", "a@b.c"] }]);
+    });
+
+    // --- A node name may not smuggle a command through the header comment (#427) ---
+
+    /**
+     * A schema-tree node name is a real key name, and Redis keys are arbitrary
+     * byte strings — a newline in one used to end the cheatsheet's header
+     * comment and turn its own remainder into the FIRST runnable line of the
+     * buffer, which this provider then executed. Asserted on what the driver was
+     * called with, because a mangled command still "succeeds" otherwise.
+     */
+    async function runWholeBuffer(buffer: string): Promise<Array<{ command: string; args: string[] }>> {
+      capturedCalls.length = 0;
+      await provider.query(buffer);
+      return [...capturedCalls];
+    }
+
+    test("a node name containing a newline cannot inject a command (#427)", async () => {
+      const name = "a\nDEL user:1 x";
+      const calls = await runWholeBuffer(generateSelectQuery(name, KEY_COLUMNS("string"), provider.getCapabilities()));
+      expect(calls).toEqual([{ command: "TYPE", args: [name] }]);
+    });
+
+    test("a node name containing CRLF cannot inject a command (#427)", async () => {
+      const name = "a\r\nDEL user:1 x";
+      const calls = await runWholeBuffer(generateSelectQuery(name, KEY_COLUMNS("string"), provider.getCapabilities()));
+      expect(calls).toEqual([{ command: "TYPE", args: [name] }]);
+    });
+
+    test("a node name containing a newline and a quote cannot inject a command (#427)", async () => {
+      const name = 'a\nDEL "user:1" x';
+      const calls = await runWholeBuffer(generateSelectQuery(name, KEY_COLUMNS("hash"), provider.getCapabilities()));
+      expect(calls).toEqual([{ command: "TYPE", args: [name] }]);
+    });
+
+    test("a newline-bearing prefix group still SCANs its own pattern (#427)", async () => {
+      const calls = await runWholeBuffer(
+        generateSelectQuery("a\nDEL user:1 x:*", KEY_COLUMNS("string"), provider.getCapabilities()),
+      );
+      expect(calls).toEqual([{ command: "SCAN", args: ["0", "MATCH", "a\nDEL user:1 x:*", "COUNT", "50"] }]);
+    });
+
+    // --- The WHOLE generated buffer through commandBody (#427 S4) ---
+    //
+    // `runGeneratedLines` above pre-strips comments and blank lines, so it never
+    // reaches `commandBody`. These hand the buffer over UNMODIFIED — what a user
+    // gets by pressing Run with nothing selected — and assert the args the driver
+    // received for the FIRST block, which is the only command that may run.
+    const wholeBufferCases: {
+      name: string;
+      node: string;
+      sample: string;
+      expected: { command: string; args: string[] };
+    }[] = [
+      {
+        name: "a plain prefix group",
+        node: "user:*",
+        sample: "string",
+        expected: { command: "SCAN", args: ["0", "MATCH", "user:*", "COUNT", "50"] },
+      },
+      {
+        name: "a bare key",
+        node: "user:1",
+        sample: "zset",
+        expected: { command: "TYPE", args: ["user:1"] },
+      },
+      {
+        // The quote forces every command line into the JSON form, and JSON's `\"`
+        // is not the plain tokenizer's quote: counting it left a phantom quote
+        // open, so no later comment line was dropped and the whole buffer reached
+        // JSON.parse with comments in it — "Invalid JSON command format" instead
+        // of a TYPE result (#427).
+        name: "a name containing a double quote",
+        node: 'say"hi',
+        sample: "string",
+        expected: { command: "TYPE", args: ['say"hi'] },
+      },
+      {
+        name: "a name containing a newline",
+        node: "a\nDEL user:1 x",
+        sample: "string",
+        expected: { command: "TYPE", args: ["a\nDEL user:1 x"] },
+      },
+    ];
+
+    for (const { name, node, sample, expected } of wholeBufferCases) {
+      test(`the whole cheatsheet buffer for ${name} runs exactly its first block (#427)`, async () => {
+        const buffer = generateSelectQuery(node, KEY_COLUMNS(sample), provider.getCapabilities());
+        const calls = await runWholeBuffer(buffer);
+        expect(calls).toEqual([expected]);
+      });
+    }
+
+    // --- A quoted argument spanning lines keeps its newline (#427 regression) ---
+
+    test("a quoted value spanning two lines keeps the newline", async () => {
+      // The tokenizer's whitespace branch is guarded by `!inQuote`, so inside a
+      // quoted argument a newline is DATA. Joining the block with a space
+      // rewrote the stored value silently.
+      capturedCalls.length = 0;
+      await provider.query('SET note "line1\nline2"');
+      expect(capturedCalls).toEqual([{ command: "SET", args: ["note", "line1\nline2"] }]);
+    });
+
+    test("a quoted value whose continuation starts with # is data, not a comment", async () => {
+      capturedCalls.length = 0;
+      await provider.query('SET note "line1\n#tag"');
+      expect(capturedCalls).toEqual([{ command: "SET", args: ["note", "line1\n#tag"] }]);
+    });
+
+    test("a blank line inside a quoted value does not end the command", async () => {
+      capturedCalls.length = 0;
+      await provider.query('SET note "line1\n\nline3"');
+      expect(capturedCalls).toEqual([{ command: "SET", args: ["note", "line1\n\nline3"] }]);
+    });
+
+    test("indentation inside a quoted value is preserved", async () => {
+      capturedCalls.length = 0;
+      await provider.query('SET note "line1\n  line2"');
+      expect(capturedCalls).toEqual([{ command: "SET", args: ["note", "line1\n  line2"] }]);
     });
 
     test("query on a disconnected provider throws", async () => {

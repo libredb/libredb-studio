@@ -1,8 +1,17 @@
 import "../setup-dom";
 import React from "react";
+import { readFileSync } from "node:fs";
+import { parse as parseYaml } from "yaml";
 import { mockRouterPush, mockRouterRefresh } from "../helpers/mock-navigation";
 import { mockToastSuccess, mockToastError } from "../helpers/mock-sonner";
 import { mock } from "bun:test";
+import { listShowcaseDatabases } from "@/lib/db-showcase";
+import { getDBConfig } from "@/lib/db-ui-config";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { LIVE_CHANNELS, LIVE_PLATFORMS } from "@/lib/distribution/channels.generated";
+import { DEPLOY_GROUP_LABELS, DEPLOY_GROUP_ORDER } from "@/lib/distribution/deploy-groups";
+import { ENGINE_URI_SCHEMES, parseConnectionString } from "@/lib/connection-string-parser";
+import { SIGNATURE_URIS } from "@/components/login/connection-signature";
 
 // sonner and next/navigation are mocked via preload
 // lucide-react resolves fine natively — no mock needed
@@ -224,5 +233,144 @@ describe("LoginPage route (app/login/page)", () => {
     const { queryByText, container } = render(<LoginPageRoute />);
     expect(queryByText("Login with SSO")).not.toBeNull();
     expect(container.querySelector("form")).toBeNull();
+  });
+});
+
+describe("LoginPage showcase (issue #425)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  function renderShowcase() {
+    return render(<LoginForm authProvider="local" />);
+  }
+
+  test("renders every configured engine label on both surfaces", () => {
+    // Driven by DB_UI_CONFIG through listShowcaseDatabases, never by a literal list: the
+    // defect this issue closes was two hand-written five-item arrays that stopped tracking
+    // DatabaseType. Each label must appear twice - once in the desktop hero, once in the
+    // mobile block - so neither surface can quietly drop an engine.
+    const { getAllByText } = renderShowcase();
+    for (const db of listShowcaseDatabases()) {
+      expect(getAllByText(db.label).length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  test("names no engine outside DB_UI_CONFIG", () => {
+    const { getByTestId } = renderShowcase();
+    const known = new Set(listShowcaseDatabases().map((db) => db.label));
+    for (const item of getByTestId("database-showcase-desktop").querySelectorAll("li")) {
+      expect(known.has(item.textContent?.trim() ?? "")).toBe(true);
+    }
+  });
+
+  test("states the live channel count and every group name, without printing channel names", () => {
+    // The hero used to print all two dozen channel names, which is what made the panel
+    // unreadable. What survives is the claim - a derived count plus the four group names -
+    // so the count still cannot go stale while the ink is a single line.
+    const { getByTestId } = renderShowcase();
+    const proof = getByTestId("hero-proof");
+    expect(proof.textContent).toContain(`${LIVE_CHANNELS.length}`);
+    for (const group of DEPLOY_GROUP_ORDER) {
+      expect(proof.textContent).toContain(DEPLOY_GROUP_LABELS[group]);
+    }
+  });
+
+  test("names the operating systems a workstation reader is looking for", () => {
+    const { getByTestId } = renderShowcase();
+    const line = (getByTestId("platform-line").textContent ?? "").toLowerCase();
+    const expected = LIVE_PLATFORMS.filter((platform) => ["linux", "macos", "windows"].includes(platform));
+    expect(expected.length).toBeGreaterThan(0);
+    for (const platform of expected) {
+      expect(line).toContain(platform);
+    }
+  });
+
+  test("cycles only schemes parseConnectionString actually accepts", () => {
+    // The signature is the evidence behind the engine count, so it may only show URIs the
+    // product honours. SQLite is a file, LibreDB is embedded and Druid is plain HTTP -
+    // inventing a scheme for any of them would put a false claim on the front door.
+    const { getByTestId } = renderShowcase();
+    const scheme = (getByTestId("connection-signature").textContent ?? "").split("://")[0];
+    expect(Object.values(ENGINE_URI_SCHEMES)).toContain(scheme);
+    expect(SIGNATURE_URIS.length).toBe(Object.keys(ENGINE_URI_SCHEMES).length);
+    for (const uri of SIGNATURE_URIS) {
+      expect(parseConnectionString(`${uri.scheme}${uri.rest}`)?.type).toBe(uri.type);
+    }
+  });
+
+  test("shows no pending or deprecated channel anywhere on the page", () => {
+    // channels.yaml is the inventory; anything not `live` is a listing that does not exist
+    // yet (or no longer does), and docs/CHANNELS.md is explicit that a deprecated channel
+    // renders nothing at all. Parsed from the YAML rather than listed here, so a newly
+    // promoted or newly retired row is covered without touching this test.
+    const { container } = renderShowcase();
+    const inventory = parseYaml(readFileSync("distribution/channels.yaml", "utf8")) as {
+      channels: { status: string; name: string; short_name?: string }[];
+    };
+    const unlisted = inventory.channels.filter((channel) => channel.status !== "live");
+    expect(unlisted.length).toBeGreaterThan(0);
+    for (const channel of unlisted) {
+      expect(container.textContent).not.toContain(channel.short_name ?? channel.name);
+    }
+  });
+
+  test("derives the engine and channel counts instead of typing them", () => {
+    const { container } = renderShowcase();
+    expect(container.textContent).toContain(`${listShowcaseDatabases().length}`);
+    expect(container.textContent).toContain(`${LIVE_CHANNELS.length} install channels`);
+  });
+
+  test("no longer claims a stale engine count or a Docker-only install", () => {
+    const { container } = renderShowcase();
+    expect(container.textContent).not.toContain("7+");
+    expect(container.textContent).not.toContain("deploy with Docker in seconds");
+    expect(container.textContent).not.toContain("deploy anywhere with Docker in seconds");
+  });
+
+  test("pins the agent claim: two modes, and auto-execution only where agent mode runs", () => {
+    // This pins the CLAIM, not the wording, so a future copy edit is free to rewrite the
+    // sentence but not free to overclaim. docs/AGENT.md: plan mode executes nothing on any
+    // engine, and agent mode executes only where the provider implements `queryReadOnly`.
+    const { getAllByTestId } = renderShowcase();
+    const claims = getAllByTestId("agent-claim");
+    expect(claims.length).toBeGreaterThanOrEqual(2);
+
+    const allowed = new Set(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
+    expect(allowed.size).toBeGreaterThan(0);
+
+    for (const claim of claims) {
+      const sentences = (claim.textContent ?? "").split(/(?<=\.)\s+/);
+
+      const planSentence = sentences.find((sentence) => /plan mode/i.test(sentence));
+      expect(planSentence).toBeDefined();
+      expect(/(executes|runs) nothing/i.test(planSentence!)).toBe(true);
+
+      const agentSentence = sentences.find((sentence) => /agent mode/i.test(sentence));
+      expect(agentSentence).toBeDefined();
+      for (const db of listShowcaseDatabases()) {
+        if (allowed.has(db.label)) continue;
+        expect(agentSentence).not.toContain(db.label);
+      }
+    }
+  });
+
+  test("gives the mobile surface the same claims and the full engine list", () => {
+    const { getAllByTestId, getByTestId } = renderShowcase();
+    const summary = getAllByTestId("agent-claim").map((node) => node.textContent ?? "");
+    expect(summary.some((text) => text.includes(`${LIVE_CHANNELS.length} install channels`))).toBe(true);
+
+    const engines = getByTestId("database-showcase-mobile");
+    expect(engines.querySelectorAll("li").length).toBe(listShowcaseDatabases().length);
+  });
+
+  test("keeps the showcase decorative - no channel or engine is a link", () => {
+    // The login page is unauthenticated; the maintainer's rule is that decorative showcase
+    // content adds no outbound navigation there. The community section's own anchors are
+    // the only links this half of the page is allowed to grow.
+    const { getByTestId } = renderShowcase();
+    for (const testId of ["database-showcase-desktop", "database-showcase-mobile", "hero-proof"]) {
+      expect(getByTestId(testId).querySelectorAll("a").length).toBe(0);
+    }
   });
 });
