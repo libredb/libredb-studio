@@ -44,7 +44,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { type ModelMessage, type ToolSet, streamText, tool } from "ai";
+import { type ModelMessage, Output, type ToolSet, streamText, tool } from "ai";
 import { z } from "zod";
 import {
   captureContextSnapshot,
@@ -60,6 +60,7 @@ import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
 import { type AgentGoalShortfall, verifyRunGoal } from "./goal-verifier";
 import { type AgentInventoryNoun, inventoryNoun } from "./inventory-noun";
 import {
+  PROMPTED_ACTION_SHAPE,
   PROMPTED_PROTOCOL_REMINDER,
   promptedToolContract,
   readPromptedAction,
@@ -1879,6 +1880,7 @@ interface ModelTurn {
  */
 const AGENT_UNREPORTED_CALL_CEILING = 12;
 
+
 /**
  * What a narrowed run keeps BESIDES `compose_report`: whatever its own verdict requires.
  *
@@ -1963,9 +1965,28 @@ async function takeTurn(
   messages: readonly ModelMessage[],
   tools: ToolSet | undefined,
   remainingMs: number,
+  /*
+    A schema the reply must CONFORM to, for the prompted path only.
+
+    The endpoint enforces it rather than the prompt asking for it: probed directly against
+    Ollama's OpenAI-compatible endpoint, `response_format: json_schema` comes back conforming
+    ("SEMAYA UYUYOR"), which is the industry's answer to the failure class this repository has
+    been reconstructing after the fact. `no-report` is the largest measured loss and is
+    overwhelmingly a FORMAT failure: models that write a correct payload and never call with
+    it, or narrate where a call was due.
+
+    Passed ONLY where the model is already being asked for JSON in prose, and where `tools` is
+    therefore undefined — so there is no interaction with tool calling, and the native path
+    that every locked cell was measured on is not sent a single different byte.
+  */
+  constrainTo?: z.ZodType,
 ): Promise<ModelTurn> {
   const stream = streamText({
     model: agentModel.model,
+    // Constrained decoding, where a shape was asked for. `Output.object` is what makes the
+    // SDK send `response_format`, and it composes here precisely because this branch offers
+    // no tools.
+    ...(constrainTo === undefined ? {} : { output: Output.object({ schema: constrainTo }) }),
     // The SDK refuses a system message inside `messages` and takes it here
     // instead — verified against the installed version, which throws
     // `Invalid prompt: System messages are not allowed` otherwise.
@@ -2634,6 +2655,10 @@ export async function runInvestigation(
       // Narrowed once the run has been told to finish; see `AGENT_NARROWED_EXTRA_TOOLS`.
       narrowed && !prompted ? narrowedTools(record) : tools,
       turnBudgetMs,
+      // Constrained ONLY on the prompted path, where the model is already being asked for a
+      // JSON action in prose and a malformed reply is a total loss. The native path is sent
+      // nothing new, which is what keeps every locked cell out of this change's reach.
+      prompted ? PROMPTED_ACTION_SHAPE : undefined,
     );
     text = turn.text;
     if (turn.aborted) return conclude("failed", turnBudgetMs < remainingMs ? "model-timeout" : "deadline-exceeded");

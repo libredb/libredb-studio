@@ -131,6 +131,26 @@ const actionSchema = z.object({
 });
 
 /**
+ * The same shape, offered for the ENDPOINT to enforce rather than the prompt to request.
+ *
+ * Probed directly against Ollama's OpenAI-compatible endpoint: given this schema as
+ * `response_format: json_schema`, the reply comes back conforming. That turns the protocol
+ * from something a model may fumble into something it cannot — which matters here more than
+ * anywhere, because on this path a malformed reply is a pure loss: there is no `tool_calls`
+ * field to fall back on, only prose to parse.
+ *
+ * `arguments` is REQUIRED here while the parser above keeps it optional, and the difference
+ * is deliberate. A constraint is a demand the server makes of a model that can satisfy it; a
+ * parser is a reading of whatever arrived, including from an endpoint that ignored the
+ * constraint entirely. Loosening the parser to match the constraint would remove the
+ * tolerance that made the prompted path work at all.
+ */
+export const PROMPTED_ACTION_SHAPE = z.object({
+  action: z.string().min(1).describe("The exact name of one tool this run holds"),
+  arguments: z.looseObject({}).describe("The arguments for that tool, as an object"),
+});
+
+/**
  * The action a prompted turn settled on, or null if the reply was prose.
  *
  * Reads the LAST action-shaped object in the text, and that direction is the point: a
