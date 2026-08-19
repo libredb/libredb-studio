@@ -263,6 +263,37 @@ service:
   nodePort: ""
   # -- Service annotations
   annotations: {}
+  # -- Address families the Service is allocated from: "SingleStack",
+  # "PreferDualStack" (two families on a dual-stack cluster, one on a
+  # single-stack cluster) or "RequireDualStack" (fails to create on a
+  # single-stack cluster). Empty renders no field at all, which is deliberate:
+  # Kubernetes does not treat an omitted policy as a static SingleStack default
+  # (on update it inherits the live Service's policy), and an explicit
+  # SingleStack is read as intent to TRUNCATE - it releases the secondary
+  # clusterIP of a Service that is already dual-stack.
+  # THE POD MUST LISTEN ON BOTH FAMILIES TOO. Nothing in Kubernetes checks what
+  # address the container bound: on a dual-stack cluster the pod has an IPv6
+  # address either way, so the IPv6 EndpointSlice is populated and kube-proxy
+  # routes to it, while the app's default HOSTNAME=0.0.0.0 is IPv4 only and
+  # answers those connections with a TCP RST. Kubelet probes only the primary
+  # podIP, so the pod stays Ready and the breakage is silent. Pair this with:
+  #   extraEnv:
+  #     - name: HOSTNAME
+  #       value: "::"
+  # which overrides the ConfigMap's HOSTNAME (an explicit env entry beats
+  # envFrom) and, on Linux with the default net.ipv6.bindv6only=0, serves IPv4
+  # through the same socket.
+  ipFamilyPolicy: ""
+  # -- Explicit family order, e.g. ["IPv4", "IPv6"]. Empty leaves the choice to
+  # the cluster's own default family. Entry 0 is the PRIMARY family: it is what
+  # spec.clusterIP (the address every IPv4-only client reads) is allocated from,
+  # and it is immutable - reordering the list on a live Service is rejected
+  # ("may not change once set"), so switching primaries needs the Service
+  # deleted and recreated. Two entries require service.ipFamilyPolicy to be
+  # PreferDualStack or RequireDualStack; the chart refuses to render otherwise.
+  # Naming a family the cluster does not have is rejected even under
+  # PreferDualStack, so leave this empty unless the order matters.
+  ipFamilies: []
 
 ingress:
   # -- Enable Ingress

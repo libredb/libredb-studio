@@ -244,6 +244,21 @@
         "annotations": {
           "type": "object",
           "description": "Service annotations"
+        },
+        "ipFamilyPolicy": {
+          "type": "string",
+          "enum": ["", "SingleStack", "PreferDualStack", "RequireDualStack"],
+          "description": "Service address families: SingleStack, PreferDualStack or RequireDualStack; empty renders no field and leaves the cluster default"
+        },
+        "ipFamilies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["IPv4", "IPv6"]
+          },
+          "maxItems": 2,
+          "uniqueItems": true,
+          "description": "Explicit address-family order, e.g. [IPv4, IPv6]; entry 0 is the immutable primary family. Two entries require ipFamilyPolicy PreferDualStack or RequireDualStack"
         }
       }
     },

@@ -72,7 +72,11 @@ with it already on. Unrecognized `AUTH_BOOTSTRAP` values log a warning and keep 
 
 Every native channel is **local-first**: the server binds to `127.0.0.1` by default, and
 exposing it on the network is an explicit opt-in. (The Docker image and the Helm chart are the
-exception - containers must bind `0.0.0.0` and are isolated by container networking instead.)
+exception - a container binds all of its own addresses, `0.0.0.0` by default, and is isolated by
+container networking instead.) `HOSTNAME` is the bind address wherever the server is started
+directly - Docker, Helm, npx, the systemd units and Snap; the `.deb`/`.rpm` and Homebrew wrappers
+and the Windows launcher take `LIBREDB_BIND` instead and discard an inherited `HOSTNAME`. The note
+below the table covers the address family either one selects.
 
 | Channel | Default bind | How to expose |
 |---|---|---|
@@ -81,7 +85,7 @@ exception - containers must bind `0.0.0.0` and are isolated by container network
 | .deb / .rpm (direct run) | `127.0.0.1` | `LIBREDB_BIND=0.0.0.0 libredb-studio` |
 | Homebrew service | `127.0.0.1` | run the binary manually with `LIBREDB_BIND=0.0.0.0`, or front it with a reverse proxy |
 | Snap | `127.0.0.1` | `sudo systemctl edit snap.libredb-studio.libredb-studio.service` with `[Service]` `Environment=HOSTNAME=0.0.0.0` |
-| Docker / Helm | `0.0.0.0` (container-internal) | publish/route ports as usual (`-p`, Service/Ingress) |
+| Docker / Helm | `0.0.0.0` (container-internal, IPv4 only) | publish/route ports as usual (`-p`, Service/Ingress); `HOSTNAME=::` to also listen on IPv6 |
 
 For anything reachable from a network, prefer a reverse proxy with TLS in front and strict mode
 (`AUTH_BOOTSTRAP=off`) with explicit credentials.
@@ -90,7 +94,64 @@ A direct run of the `.deb`/`.rpm` wrapper or the Homebrew binary ignores any inh
 (empty, or - under Docker - the container ID Next.js would otherwise bind to) and defaults to
 loopback; `LIBREDB_BIND` is the explicit opt-in for that case. Under systemd, `HOSTNAME` in
 `/etc/libredb-studio/env` is still the override, since the unit resolves it before the wrapper
-runs (detected via the systemd-set `INVOCATION_ID`, so the wrapper leaves it untouched there).
+runs (detected via the systemd-set `INVOCATION_ID`, so the wrapper leaves it untouched there). The
+Windows launcher rebuilds `HOSTNAME` from `LIBREDB_BIND` on every run, with no systemd exception.
+
+**Address family (IPv4, IPv6, dual-stack).** The bind address accepts an IPv6 literal in every
+channel, because whichever variable that channel reads ends up as the host argument of a plain
+`server.listen(port, hostname)` in the standalone Next.js server
+(`next/dist/server/lib/start-server.js`) - so it is Node, not Next, that gives `::` its meaning.
+(Next touches `[::]` only to format the URL it prints at startup.) Use `HOSTNAME` where the server is started directly
+(Docker, Helm, npx, the systemd units, Snap) and `LIBREDB_BIND` in the wrapper channels (a direct
+`.deb`/`.rpm` run, Homebrew, the Windows launcher), per the paragraph above. The values that
+matter:
+
+| `HOSTNAME` | `LIBREDB_BIND` | Listens on |
+|---|---|---|
+| `0.0.0.0` | `0.0.0.0` | all IPv4 addresses (the Docker image and chart ConfigMap default) |
+| `::` | `::` | all IPv6 addresses - and, on Linux with the default `net.ipv6.bindv6only=0`, all IPv4 addresses through the same socket, so one listener serves both families |
+| `127.0.0.1` | `127.0.0.1` | IPv4 loopback (the native-channel default) |
+| `::1` | `::1` | IPv6 loopback - the IPv6 equivalent of that local-first default |
+
+The dual-stack behaviour of `::` is conditional: where `net.ipv6.bindv6only=1` is in force, `::`
+is **IPv6 only** and IPv4 clients are dropped. Read that sysctl in the right namespace - it is
+network-namespace scoped, not a host-wide property, and a fresh namespace initializes to `0`. A
+Docker container or a Kubernetes pod therefore gets `0` whatever the node reads, unless the
+namespace is overridden explicitly (`docker run --sysctl net.ipv6.bindv6only=1`, a pod
+`securityContext.sysctls` entry) or it shares the host's namespace (`docker run --network host`,
+`hostNetwork: true`). Checking the node and finding `1` does not mean `-e HOSTNAME=::` will drop
+IPv4 in your container.
+
+That residual case is why the container image default stays `0.0.0.0` rather than `::`: a default
+has to hold for host-network and sysctl-overridden deployments too, where flipping it would
+silently remove IPv4 for existing users. Opting in per deployment is safe because you know your own
+namespace.
+
+```bash
+docker run -p 3000:3000 -e HOSTNAME=:: ghcr.io/libredb/libredb-studio:latest
+```
+
+For Helm, `extraEnv` renders into the container's `env:` list, which overrides the same key
+delivered by the chart ConfigMap through `envFrom`:
+
+```yaml
+extraEnv:
+  - name: HOSTNAME
+    value: "::"
+```
+
+> **A dual-stack Service is not enough on its own.** The chart's `service.ipFamilyPolicy` /
+> `service.ipFamilies` values give the Service an IPv6 address, but Kubernetes never checks what
+> address the container actually bound: the IPv6 EndpointSlice is populated from the pod's IPv6
+> address regardless, and traffic to it hits a pod with no IPv6 listener, which answers `connection
+> refused`. The kubelet probes the pod's *primary* IP (IPv4 on a typical cluster), so the pod still
+> reports Ready and nothing self-heals. **Set both**: the dual-stack Service values *and*
+> `extraEnv` `HOSTNAME: "::"`. See the chart
+> [README](../charts/libredb-studio/README.md#ipv6-and-dual-stack).
+
+The native channels are unaffected by all of this: they stay on `127.0.0.1` by default and treat
+any exposure, IPv4 or IPv6, as an explicit opt-in - `LIBREDB_BIND=::` (or `LIBREDB_BIND=::1` for
+IPv6 loopback) is that opt-in for the wrapper channels, `HOSTNAME` for the rest.
 
 ## Release artifact naming
 
@@ -172,7 +233,9 @@ docker run --name libredb-studio -p 3000:3000 \
 ```
 
 All environment variables are documented in [`.env.example`](../.env.example); a ready-to-use
-compose file is [`docker-compose.example.yml`](../docker-compose.example.yml).
+compose file is [`docker-compose.example.yml`](../docker-compose.example.yml). The container
+listens on IPv4 only unless you add `-e HOSTNAME=::` - see
+[Network exposure](#network-exposure-bind-address).
 
 ### Image tag model
 
@@ -223,6 +286,11 @@ is the canonical description of that behaviour — credential retrieval, what st
 auth provider, persistence and the single-replica constraint. Full values reference:
 [`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md); chart architecture:
 [`docs/HELM_CHART.md`](HELM_CHART.md).
+
+On a dual-stack cluster, set `service.ipFamilyPolicy` (and optionally `service.ipFamilies`) **and**
+`extraEnv` `HOSTNAME: "::"` together - a dual-stack Service in front of an IPv4-only listener
+advertises an IPv6 address that refuses every connection. See
+[Network exposure](#network-exposure-bind-address).
 
 ## OpenShift operator (OperatorHub)
 

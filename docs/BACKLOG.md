@@ -2625,3 +2625,25 @@ than "none found".
 
 Done when a metric an engine cannot report renders as unavailable rather than as zero, on every
 provider whose health payload omits it.
+
+### U15. The container image's default bind stays IPv4-only, deliberately
+
+`Dockerfile` sets `ENV HOSTNAME="0.0.0.0"` and the chart ConfigMap writes the same, so the container
+listens on IPv4 only until an operator sets `HOSTNAME=::`. Issue #432 asked for `::` as the default,
+on the argument that the container is the only channel that matters. The docs fix and the chart's
+`service.ipFamilyPolicy` / `service.ipFamilies` values shipped in that PR; the default flip did not.
+
+The reason it did not is narrower than it first looks. `::` is a dual-stack listener wherever
+`net.ipv6.bindv6only=0`, and that sysctl is network-namespace scoped and initializes to `0` in a
+fresh namespace — so a normal container or pod gets the dual-stack behaviour whatever the node is
+set to (verified 2026-08-19: `docker run --rm alpine sysctl net.ipv6.bindv6only` reads `0`). What
+survives is the case a *default* has to cover and an opt-in does not: `--network host` /
+`hostNetwork: true`, where the host's value applies, and an explicit `--sysctl` / pod
+`securityContext.sysctls` override. Under `bindv6only=1`, `::` is IPv6-only and every existing IPv4
+client is dropped with no error and no config change on the user's side.
+
+Done when either the image can pick its family without that failure mode — an entrypoint that binds
+`::` and falls back to `0.0.0.0` when the namespace forbids dual-stack, which adds a moving part to
+a path that currently has none — or the decision is closed as permanent and this entry is deleted.
+The alternative that needs no code is to leave the default and keep the opt-in documented, which is
+what ships today.

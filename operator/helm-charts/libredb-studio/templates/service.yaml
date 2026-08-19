@@ -1,3 +1,7 @@
+{{- $ipFamilies := default (list) .Values.service.ipFamilies }}
+{{- if and (gt (len $ipFamilies) 1) (not (has .Values.service.ipFamilyPolicy (list "PreferDualStack" "RequireDualStack"))) }}
+{{- fail "service.ipFamilies lists two address families, which the API server accepts only alongside a dual-stack policy: on create, with service.ipFamilyPolicy unset or SingleStack, it rejects the Service outright ('must be RequireDualStack or PreferDualStack when multiple IP families are specified'), so the install would fail against the cluster instead of here. (On update an omitted policy is inherited from the live Service, so the API server may accept what this guard refuses - set the policy explicitly rather than relying on that inheritance.) Set service.ipFamilyPolicy=PreferDualStack (both families where the cluster is dual-stack, one where it is not) or service.ipFamilyPolicy=RequireDualStack (fail on a single-stack cluster), or list a single family in service.ipFamilies. A dual-stack Service also needs the pod to listen on both families: set extraEnv HOSTNAME=\"::\", or the IPv6 address it advertises refuses every connection" }}
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -10,6 +14,13 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.service.type }}
+  {{- with .Values.service.ipFamilyPolicy }}
+  ipFamilyPolicy: {{ . }}
+  {{- end }}
+  {{- with $ipFamilies }}
+  ipFamilies:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   ports:
     - port: {{ .Values.service.port }}
       targetPort: {{ .Values.service.targetPort }}

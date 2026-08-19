@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting twelve engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch and OpenSearch
 type: application
-version: 0.1.38
+version: 0.1.39
 appVersion: "0.12.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -34,9 +34,10 @@ annotations:
   artifacthub.io/license: MIT
   artifacthub.io/prerelease: "false"
   # False for this chart version, and that is a statement rather than a default:
-  # 0.1.38 changes chart metadata only and installs the same 0.12.0 image 0.1.37
-  # installs, so it carries no security fix of its own. The app-level fixes are
-  # recorded on 0.1.37, which is the chart version that first shipped them.
+  # 0.1.39 adds an opt-in Service setting and installs the same 0.12.0 image
+  # 0.1.37 installs, so it carries no security fix of its own. The app-level
+  # fixes are recorded on 0.1.37, which is the chart version that first shipped
+  # them.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
@@ -52,10 +53,11 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Chart metadata only, and no application change: the appVersion stays 0.12.0 and the deployed image is the same one 0.1.37 installs"
-    - "The chart description named seven engines and twelve ship - Couchbase, ClickHouse, Apache Druid, Elasticsearch and OpenSearch were missing from the text Rancher and ArtifactHub render beside this chart"
-    - "Those five engines are searchable now: they are keywords on the chart rather than only prose"
-    - "Track app release 0.12.0 (appVersion bump; default image tag follows)"
+    - "The Service can be dual-stack: service.ipFamilyPolicy and service.ipFamilies are rendered onto it, so a dual-stack cluster can hand this release an IPv6 address (#432)"
+    - "Both are unset by default, so an existing install upgrades to a byte-identical Service - Kubernetes reads an explicit SingleStack as intent to release a secondary clusterIP, which is why the chart writes neither field unless asked"
+    - "Two address families without a dual-stack policy now fails at render time, with the message the API server would have returned at install time"
+    - "The pairing is documented rather than assumed: a dual-stack Service in front of the pod's default IPv4-only listener advertises an IPv6 address that refuses every connection, so the README recipe sets extraEnv HOSTNAME to :: alongside it"
+    - "No application change: the appVersion stays 0.12.0 and the deployed image is the same one 0.1.37 installs"
 dependencies:
   - name: postgresql
     version: "16.x.x"

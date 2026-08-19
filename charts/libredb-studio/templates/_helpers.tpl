@@ -277,6 +277,45 @@ execs directly when not running as root.
 {{- end }}
 
 {{/*
+Whether extraEnv sets HOSTNAME - the container's bind address. An explicit env
+entry beats the same key delivered by the ConfigMap through envFrom, so this is
+the only place in these values that can move the pod off the ConfigMap's
+IPv4-only 0.0.0.0. Only the key is read, never the value: "::" is the
+dual-stack answer, but an operator who set HOSTNAME at all chose the bind
+address deliberately and does not need to be told about it again.
+
+Same blind spot as agentPossible: a HOSTNAME delivered through extraEnvFrom is
+not visible here, so such a release still sees the NOTES.txt warning. That is
+the safe direction - an unnecessary note rather than a silent IPv6 address that
+refuses every connection.
+*/}}
+{{- define "libredb-studio.extraEnvHostnameSet" -}}
+{{- range .Values.extraEnv }}
+{{- if eq (.name | default "" | toString) "HOSTNAME" }}
+{{- true }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Whether these values ask the Service for an IPv6 address: either a dual-stack
+policy, or an explicit IPv6 entry in service.ipFamilies (which needs no policy
+when it is the only family, so templates/service.yaml's guard never sees it).
+
+Kubernetes populates the IPv6 EndpointSlice from the pod's own IPv6 address
+without ever checking what the process bound, so this is the condition under
+which the ConfigMap's IPv4-only HOSTNAME turns into a silent misconfiguration:
+a green install whose IPv6 address refuses every connection, on a pod that -
+probed only on its primary IP - stays Ready. NOTES.txt warns whenever this is
+requested without a HOSTNAME override.
+*/}}
+{{- define "libredb-studio.serviceWantsIPv6" -}}
+{{- if or (has .Values.service.ipFamilyPolicy (list "PreferDualStack" "RequireDualStack")) (has "IPv6" (default (list) .Values.service.ipFamilies)) }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
 Return the full image reference (repository:tag)
 */}}
 {{- define "libredb-studio.image" -}}
