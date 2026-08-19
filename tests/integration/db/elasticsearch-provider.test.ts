@@ -35,6 +35,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { ElasticsearchProvider } from "@/lib/db/providers/sql/search";
+import { generateTableQuery } from "@/lib/query-generators";
 import {
   AuthenticationError,
   ConnectionError,
@@ -670,8 +671,24 @@ describe("ElasticsearchProvider metadata", () => {
       // port alone can no longer answer for this. Elasticsearch takes the standard
       // double quote (measured: `WHERE "customer" = 'acme'` matches there).
       identifierQuoting: "double",
+      // Declared for the same reason and measured the same way: this grammar has no
+      // statement terminator, so the generated `SELECT * FROM orders LIMIT 50;`
+      // answered "extraneous input ';' expecting <EOF>" and the schema tree's first
+      // click failed. OpenSearch declares it too - see the shared-answer test there.
+      statementTerminator: "none",
       schemaRefreshPattern: "\\b(DELETE)\\b",
     });
+  });
+
+  test("declares no statement terminator, which is what keeps the generated query runnable", () => {
+    // The generator asks the capability rather than the engine name
+    // (`src/lib/query-generators.ts`), so this is the whole of the fix: with the
+    // terminator declared away, "Select Top 50 Documents" and "Generate Query" both
+    // emit a statement this grammar accepts.
+    const capabilities = new ElasticsearchProvider(makeConnection()).getCapabilities();
+
+    expect(capabilities.statementTerminator).toBe("none");
+    expect(generateTableQuery("orders", capabilities)).toBe("SELECT * FROM orders LIMIT 50");
   });
 
   test("declares no explain format at all, which is what hides the button and the tab", () => {

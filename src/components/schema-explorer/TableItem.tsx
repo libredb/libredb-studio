@@ -122,12 +122,21 @@ function renderMenuItems({
           {"Generate Test Data"}
         </Item>
       )}
-      {/* A PER-ROW maintenance action needs an addressable row: both items call
-          `onOpenMaintenance("tables", table.name)`, and for a derived grouping
-          there is no such object to name — which is exactly the dead end #427
-          reported for Redis "Key Info". Global maintenance is unaffected: it lives
-          on the admin Operations page and still runs there. */}
-      {isAdmin && rowsAreAddressable && (
+      {/* A PER-ROW maintenance action needs an addressable row AND an engine with
+          maintenance to run: both items call `onOpenMaintenance("tables", table.name)`,
+          and for a derived grouping there is no such object to name — which is exactly
+          the dead end #427 reported for Redis "Key Info".
+
+          The second half of the condition is the same dead end reached the other way,
+          measured in the browser on 2026-08-19 against Elasticsearch 9.1.4: an index IS
+          addressable, so both items rendered on an engine that declares
+          `supportsMaintenance: false`, and the page they open gates its Global
+          Operations card on that same capability — so clicking "Merge Segments" landed
+          on a page with no maintenance controls, no error and no explanation.
+
+          Global maintenance is unaffected wherever an engine has any: it lives on the
+          admin Operations page and still runs there. */}
+      {isAdmin && rowsAreAddressable && capabilities?.supportsMaintenance !== false && (
         <>
           <Separator />
           <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.name)}>

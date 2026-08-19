@@ -593,8 +593,11 @@ confirmation gate reads a statement's spans to decide whether a write is hiding 
 an unreadable span is a **prompt** rather than silence.
 
 **A trailing semicolon is accepted.** `SELECT 1;` is HTTP 200 here and a `parsing_exception` upstream —
-which is why the shared `generateTableQuery()` statement (`SELECT * FROM probe_orders LIMIT 50;`) runs
-on this product and fails on the other ([elasticsearch.md §5.4](./elasticsearch.md#54-dialect-traps-a-user-will-hit)).
+so the generated statement (`SELECT * FROM probe_orders LIMIT 50;`) ran on this product and failed on
+the other ([elasticsearch.md §5.4](./elasticsearch.md#54-dialect-traps-a-user-will-hit)). This product
+nevertheless declares `statementTerminator: "none"` along with the upstream one, because the absence of
+the terminator is accepted **here too** (measured) and one answer that runs on both beats a branch on
+`dialect` — the same rule that keeps `getCapabilities()` a single answer for both type-ids.
 
 **String literals accept BOTH escape forms.** Measured: `SELECT 'a''b'` → `a'b`, so doubling works;
 `SELECT 'a\'b'` → `a'b` too, so a backslash escapes the quote; `SELECT 'a\\b'` → one backslash, so it
@@ -925,6 +928,8 @@ difference — `OFFSET` — has no field in `ProviderCapabilities` to declare it
 | `maintenanceOperations` | `[]` | Consequence of the above |
 | `supportsConnectionString` | **`false`** | No URI convention, and `http(s)://` is ClickHouse's ([§4.2](#42-there-is-no-connection-string-and-that-is-deliberate)) |
 | `defaultPort` | `9200` | Both schemes; the fixture publishes 9201 on the host ([§4.1](#41-configuration-fields)) |
+| `identifierQuoting` | **`backtick`** | The difference that fails silently: a double-quoted name here is a string literal, so a generated `WHERE "customer" = 'acme'` answers HTTP 200 with no rows ([§5.4](#54-dialect-traps-a-user-will-hit)) |
+| `statementTerminator` | **`none`** | Declared even though this product accepts `;`: the absence runs here too, and the upstream grammar has no terminator at all, so one answer serves both ([§5.4](#54-dialect-traps-a-user-will-hit)) |
 | `schemaRefreshPattern` | `\b(DELETE)\b` | **This is the product it exists for**: a cluster with DELETE enabled really changes the counts this provider reports ([§5.6](#56-this-grammar-has-delete-and-it-is-off)) |
 
 `isGroupedKeyspace` is deliberately **absent**: an index is a real object the cluster holds, named by
@@ -941,6 +946,14 @@ is what Redis and LibreDB declare.
 | `analyzeAction` / `analyzeGlobalLabel` | `Index Statistics` |
 | `vacuumAction` / `vacuumGlobalLabel` | `Merge Segments` |
 | `searchPlaceholder` | `Search indices or fields...` |
+| `statementLanguage` | `OpenSearch SQL, the SQL plugin's own dialect - NOT the JSON query DSL, NOT an aggregation body, and NOT PPL` |
+
+`statementLanguage` is the one label written for a **model** rather than for the UI, and this product's
+spelling differs from the upstream one because its alternatives do: the SQL plugin ships **PPL** beside
+SQL, and ES|QL does not exist here. The run that made the field necessary was on *this* product — a
+plan run answered with a native aggregation body, correct for the cluster and unrunnable through the
+SQL endpoint (measured in the browser, 2026-08-19). See
+[elasticsearch.md §9](./elasticsearch.md#9-capabilities--labels) for the mechanism, which is shared.
 
 These are not decoration. `inventory-noun.ts` lowercases `entityName` into the noun the **agent**
 reasons with, so a cluster described as holding "tables" of "rows" invites statements written for a
@@ -949,9 +962,12 @@ documentation use — and because "indexes" is the word this codebase already us
 secondary-index objects an index does **not** have (`TableSchema.indexes`, empty by construction here).
 
 The two maintenance actions are named even though `supportsMaintenance` is false, because they are
-still **rendered**: the schema tree offers both entries to an admin and both open the Maintenance
-panel, which then offers this engine no operation. Their global descriptions say in words that nothing
-runs from there.
+still rendered **where an engine has maintenance to run**, and their global descriptions say in words
+that nothing runs from here. They are no longer offered in this engine's schema tree: that was a dead
+end into a page whose maintenance card is gated on the same capability, and
+[`TableItem.tsx`](../../src/components/schema-explorer/TableItem.tsx) now requires both an addressable
+row and a declared capability. See
+[elasticsearch.md §9](./elasticsearch.md#9-capabilities--labels) for the measurement.
 
 ---
 
@@ -1039,7 +1055,7 @@ Validation (host required), capabilities and labels, connect/disconnect includin
 surfacing a wrong endpoint or a rejected credential, query execution and result shaping (the alias
 preference, the declared order, the measured duration, the dropped `totalHits`), the full
 category-to-error map across **both** fault vocabularies, `prepareQuery()` passing an `OFFSET`
-statement through untouched, mapping-driven schema (containers dropped, multi-fields kept, closed
+statement through untouched, mapping-driven schema (containers dropped, multi-fields dropped, closed
 index, both system-index rules, the degradable per-index failures), every monitoring method and its
 empties, and `runMaintenance()` refusing with its reason.
 

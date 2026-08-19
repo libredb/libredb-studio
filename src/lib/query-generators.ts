@@ -315,6 +315,21 @@ function redisScan(base: string): string {
   return renderRedisCommand(["SCAN", "0", "MATCH", `${escapeGlob(base)}*`, "COUNT", "50"]);
 }
 
+/**
+ * The terminator a generated statement ends with: `;` everywhere, and nothing on a
+ * product whose grammar has none.
+ *
+ * Only the two shapes a user reaches by CLICKING are bounded here - the schema tree's
+ * "Select Top N" and "Generate Query" - because those are the statements this file
+ * writes on the user's behalf. The dialect-specific returns above keep their own
+ * literal `;`: each of those engines accepts one, and this is the fallthrough every
+ * other SQL engine shares, which is where the two search products land. See
+ * `ProviderCapabilities.statementTerminator` for the measurement.
+ */
+function terminator(capabilities: ProviderCapabilities): string {
+  return capabilities.statementTerminator === "none" ? "" : ";";
+}
+
 export function generateTableQuery(
   tableName: string,
   capabilities: ProviderCapabilities,
@@ -353,11 +368,11 @@ export function generateTableQuery(
   if (capabilities.defaultPort === 1433) {
     return `SELECT TOP 50 * FROM ${table};`;
   }
-  // PostgreSQL / MySQL / SQLite / ClickHouse. The trailing LIMIT matters for
-  // ClickHouse specifically: it also accepts `FORMAT x` and `SETTINGS ...` as
-  // trailing clauses, and a LIMIT placed after either is a syntax error, so the
-  // limit must stay last (issue #264).
-  return `SELECT * FROM ${table} LIMIT 50;`;
+  // PostgreSQL / MySQL / SQLite / ClickHouse / Elasticsearch / OpenSearch. The
+  // trailing LIMIT matters for ClickHouse specifically: it also accepts `FORMAT x`
+  // and `SETTINGS ...` as trailing clauses, and a LIMIT placed after either is a
+  // syntax error, so the limit must stay last (issue #264).
+  return `SELECT * FROM ${table} LIMIT 50${terminator(capabilities)}`;
 }
 
 /**
@@ -519,7 +534,7 @@ export function generateSelectQuery(
   if (capabilities.defaultPort === 1433) {
     return `SELECT TOP 100\n${cols}\nFROM ${table}\nWHERE 1=1;`;
   }
-  return `SELECT\n${cols}\nFROM ${table}\nWHERE 1=1\nLIMIT 100;`;
+  return `SELECT\n${cols}\nFROM ${table}\nWHERE 1=1\nLIMIT 100${terminator(capabilities)}`;
 }
 
 export function shouldRefreshSchema(query: string, schemaRefreshPattern: string): boolean {

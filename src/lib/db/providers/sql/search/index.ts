@@ -246,6 +246,24 @@ interface SearchProduct {
    * to answer for two dialects.
    */
   readonly identifierQuoting: "double" | "backtick";
+
+  /**
+   * The product's SQL surface, named for a MODEL rather than for the UI.
+   *
+   * Read by `ProviderLabels.statementLanguage`, which the agent's plan contract
+   * states verbatim. It exists because the engine's NAME is itself misleading:
+   * asked for one runnable statement against a connection stamped
+   * `elasticsearch`, a live plan run on 2026-08-19 answered with a native
+   * aggregation body - `{"size":0,"aggs":{...},"query":{"term":{...}}}` - which is
+   * correct Elasticsearch and unrunnable here, because this provider speaks to the
+   * SQL endpoint alone. The statement guard then declined to classify it
+   * (`NO_STATEMENT`), so nothing ran; what the user was handed was still a plan
+   * they could not execute.
+   *
+   * Both spellings name the endpoint and rule out the alternatives by name, since
+   * "SQL" alone did not survive contact with the model's prior about this engine.
+   */
+  readonly statementLanguage: string;
 }
 
 const ELASTICSEARCH_PRODUCT: SearchProduct = Object.freeze({
@@ -253,6 +271,8 @@ const ELASTICSEARCH_PRODUCT: SearchProduct = Object.freeze({
   label: "Elasticsearch",
   acceptsOffsetClause: false,
   identifierQuoting: "double",
+  statementLanguage:
+    "Elasticsearch SQL, the product's own SQL endpoint - NOT the JSON query DSL, NOT an aggregation body, and NOT ES|QL",
 });
 
 const OPENSEARCH_PRODUCT: SearchProduct = Object.freeze({
@@ -260,6 +280,8 @@ const OPENSEARCH_PRODUCT: SearchProduct = Object.freeze({
   label: "OpenSearch",
   acceptsOffsetClause: true,
   identifierQuoting: "backtick",
+  statementLanguage:
+    "OpenSearch SQL, the SQL plugin's own dialect - NOT the JSON query DSL, NOT an aggregation body, and NOT PPL",
 });
 
 // ============================================================================
@@ -448,6 +470,14 @@ abstract class SearchProvider extends SQLBaseProvider {
       // Declared because the port cannot say: both products are 9200 and they
       // disagree. See SearchProduct.identifierQuoting for the measurement.
       identifierQuoting: this.product.identifierQuoting,
+      // One answer for both products, and the safe one rather than the tolerant one.
+      // Elasticsearch has no `;` in its grammar: the generator's own
+      // `SELECT * FROM orders LIMIT 50;` - "Select Top 50 Documents", the first thing
+      // a user clicks on an index - answered `parsing_exception`, "extraneous input
+      // ';' expecting <EOF>" (measured 2026-08-19, both generated shapes). OpenSearch
+      // accepts the terminator and also accepts its absence, so omitting it on both
+      // keeps this a fact about the family instead of a branch on `dialect`.
+      statementTerminator: "none",
       schemaRefreshPattern: SEARCH_SCHEMA_REFRESH_PATTERN,
     };
   }
@@ -483,6 +513,10 @@ abstract class SearchProvider extends SQLBaseProvider {
       rowNamePlural: "documents",
       selectAction: "Select Top 50 Documents",
       generateAction: "Generate Query",
+      // The one label here written for a MODEL and not for the UI. See
+      // `SearchProduct.statementLanguage`: a plan run on this engine wrote a JSON
+      // aggregation body when it was told only "produce one runnable statement".
+      statementLanguage: this.product.statementLanguage,
       analyzeAction: "Index Statistics",
       vacuumAction: "Merge Segments",
       searchPlaceholder: "Search indices or fields...",

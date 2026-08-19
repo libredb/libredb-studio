@@ -2577,3 +2577,51 @@ answer `generateSelectQuery` already gives.
 
 Done when no generated LibreDB line can carry a second command, and `docs/providers/libredb.md` §5.3
 says so for Scan Keys as well as for the cheatsheet — today it claims the stronger property for both.
+
+### U12. The monitoring Queries tab tells every engine to enable `pg_stat_statements`
+
+`src/components/monitoring/tabs/QueriesTab.tsx:113,123` hardcodes PostgreSQL's advice as the empty
+state for "Slowest Queries": a badge reading *"pg_stat_statements required"* and the line *"Enable
+pg_stat_statements extension to see query stats."* Nothing gates it on the engine, so it renders on
+every connection whose `getSlowQueries()` answered nothing — measured in the browser on 2026-08-19 on
+an **OpenSearch** connection, and by inspection it is the same on MySQL, Oracle, SQL Server, MongoDB,
+Redis, Couchbase, ClickHouse, Druid and Elasticsearch.
+
+This is the #427 defect in another panel: six global `ProviderLabels` fields existed, were set by
+seven providers and read by no component, so every engine rendered Postgres's copy. That one was
+fixed by reading the labels; this one has no label to read.
+
+Done when the empty state names something true for the connected engine — a slow-query label on
+`ProviderLabels`, defaulted to today's wording for `postgres` alone — and each provider whose slow-log
+lives outside the query surface says so in its own words (the search providers' is "the SQL surface
+does not reach the slow log", already written in `docs/providers/elasticsearch.md` §7).
+
+### U13. BEGIN and SANDBOX render on engines that have no transactions
+
+`Studio.tsx` supplies `onBeginTransaction`/`onCommit`/`onRollback` unconditionally, so `QueryToolbar`
+renders the trio (and SANDBOX, which auto-rolls-back through the same route) on every connection.
+`POST /api/db/transaction` then refuses with *"Transaction control is not supported for this database
+type"* — measured 2026-08-19 on OpenSearch, HTTP 400 for both `begin` and `rollback`. Elasticsearch,
+Druid, Couchbase, MongoDB and Redis are in the same position.
+
+The toolbar's own doc comment already states the rule this breaks: *"A caller that cannot run
+transactions omits all three"* — added by #427 when the embedded shell was showing three dead buttons.
+The standalone shell now does the same thing for a different reason: there is no capability to gate on.
+The server gates on `isTransactionProvider(provider)`, a runtime shape check no client can read, and
+`ProviderCapabilities` has no `supportsTransactions`.
+
+Done when a provider declares whether it has transactions, `Studio.tsx` omits the trio and the sandbox
+toggle where it does not, and the eleven providers' docs each state their answer. Deliberately not
+folded into #424: the capability has to be added to every provider at once, which is a wider change
+than the PR that found it.
+
+### U14. Monitoring reports relational zeros as measurements on engines that have no such counter
+
+The monitoring Overview renders *Buffer Pool 0%*, *Deadlocks 0* and *Checkpoint N/A* for a search
+cluster (measured 2026-08-19 on OpenSearch). `N/A` is the honest one: a cluster has no checkpoint. A
+`0` for a counter the engine does not keep reads as a measurement — the same class of claim the #414
+work removed from the schema tree, where an empty foreign-key list had to say "impossible here" rather
+than "none found".
+
+Done when a metric an engine cannot report renders as unavailable rather than as zero, on every
+provider whose health payload omits it.

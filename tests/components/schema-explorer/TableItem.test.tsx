@@ -82,6 +82,12 @@ const libredbCaps = caps({
   supportsMaintenance: false,
   maintenanceOperations: [],
 });
+/**
+ * Search-shaped (Elasticsearch / OpenSearch, #424 Phase 1): an index is a real,
+ * addressable object — so the `tablesAreDerivedGroupings` gate does NOT catch it —
+ * and the engine still declares no maintenance of any kind.
+ */
+const searchCaps = caps({ supportsMaintenance: false, maintenanceOperations: [] });
 
 /**
  * Labels are partial for the same reason capabilities are: TableItem reads four
@@ -629,6 +635,39 @@ describe("TableItem", () => {
       expect(dropdown.queryByText("Compact")).toBeNull();
       // Naming the row is still fine; addressing it is not.
       expect(dropdown.queryByText("Generate Code")).not.toBeNull();
+    });
+
+    /*
+      The #427 gate stopped one row short. Its rule was "a per-row maintenance action
+      needs an addressable row", which is true and is not the whole test: an index on a
+      search cluster IS addressable, so both items rendered — and the engine declares
+      `supportsMaintenance: false`, so the page they open offers nothing at all.
+
+      Measured in the browser on 2026-08-19 against Elasticsearch 9.1.4: clicking
+      "Merge Segments" on an index navigated to /admin/operations, where the Global
+      Operations card is itself gated on the same capability and so was absent. No
+      error, no explanation, nothing about merging — the labels written for exactly
+      this moment ("Merging is an index API rather than a statement this SQL surface
+      can send, so nothing runs from here") are on the card that does not render.
+    */
+    test("hides both items on an engine that declares no maintenance, addressable rows or not", () => {
+      const { getByTestId } = render(
+        <TableItem
+          table={largeTable}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin
+          capabilities={searchCaps}
+          labels={labelsFor({ analyzeAction: "Index Statistics", vacuumAction: "Merge Segments" })}
+        />,
+      );
+      const dropdown = within(getByTestId("dropdown"));
+      expect(dropdown.queryByText("Index Statistics")).toBeNull();
+      expect(dropdown.queryByText("Merge Segments")).toBeNull();
+      // The row IS addressable here, so everything the #427 gate removes for a
+      // derived grouping stays: this gate is about maintenance and nothing else.
+      expect(dropdown.queryByText("Profile Table")).not.toBeNull();
+      expect(dropdown.queryByText("Generate Test Data")).not.toBeNull();
     });
 
     test("hides maintenance from a non-admin even when declared", () => {

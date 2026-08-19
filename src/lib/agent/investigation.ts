@@ -264,6 +264,11 @@ interface PlanningEngine {
    * read, instead of at each of the sentences that ask.
    */
   readonly derivedGroupings: boolean;
+  /**
+   * `ProviderLabels.statementLanguage`, and absent on every engine that declares
+   * none — which is all but the two search products. See the contract below.
+   */
+  readonly statementLanguage?: string;
 }
 
 /** The engine facts a run's prose needs, taken from what its provider declared. */
@@ -273,6 +278,7 @@ function planningEngine(context: AgentToolContext): PlanningEngine {
     language: context.capabilities.queryLanguage,
     noun: inventoryNoun(context.labels),
     derivedGroupings: context.capabilities.tablesAreDerivedGroupings === true,
+    ...(context.labels.statementLanguage === undefined ? {} : { statementLanguage: context.labels.statementLanguage }),
   };
 }
 
@@ -581,6 +587,15 @@ const planningStatementContract = (deliverable: { readonly noun: string }, engin
     engine.language === "sql"
       ? `Produce ONE runnable statement: ${deliverable.noun}.`
       : `Produce ONE runnable statement or command, written in this ${engine.type} database's own query language: ${deliverable.noun}. This engine speaks no SQL, and SQL written for it would answer a question about a different database.`,
+    // Only where the PROVIDER declared one, which today is the two search engines and
+    // nothing else. `queryLanguage: "sql"` is true of them and settles nothing for a
+    // model: asked for a statement on a connection stamped `elasticsearch`, a live run
+    // on 2026-08-19 wrote a native aggregation body, which is correct for the product
+    // and unrunnable through the SQL endpoint this provider speaks to. The sentence
+    // ADDS to the contract above rather than replacing it — two contracts in one
+    // message is the #350 failure — and it names what the language is NOT, because
+    // naming only what it is did not survive contact with the model's prior.
+    ...(engine.statementLanguage === undefined ? [] : [`Write it in ${engine.statementLanguage}.`]),
     `Put it in a single fenced block tagged \`${engine.type}\` — three backticks, that tag, the statement, three backticks — and put nothing else inside that block.`,
     `Put the rationale AFTER the statement, and keep it brief: which ${engine.noun.plural} it reads, which joins it makes, and why that answers the objective.`,
     engine.language === "sql"

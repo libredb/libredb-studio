@@ -26,8 +26,8 @@ import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
-import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
-import { KEY_PATTERN_LABELS, TABLE_LABELS } from "../fixtures/provider-labels";
+import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import { KEY_PATTERN_LABELS, SEARCH_INDEX_LABELS, TABLE_LABELS } from "../fixtures/provider-labels";
 import { LLMAuthError } from "@/lib/llm/types";
 import type { ColumnSchema, DatabaseConnection, DatabaseType, QueryResult, TableSchema } from "@/lib/types";
 import {
@@ -1296,6 +1296,7 @@ describe("planning mode runs no statement of the user's", () => {
 
       const planOnProvider = async (
         language: ProviderCapabilities["queryLanguage"],
+        labels?: ProviderLabels,
       ): Promise<{ readonly rules: string; readonly transcript: string }> => {
         const b = boot(freshDataDir(), { describesSchema: async () => PROVIDER_INVENTORY });
         const run = await startRun(b, "planning");
@@ -1308,6 +1309,7 @@ describe("planning mode runs no statement of the user's", () => {
             ...b.resources,
             connection: { ...CONNECTION, type: "mongodb" },
             capabilities: { ...CAPABILITIES, queryLanguage: language, declaresForeignKeys: false },
+            ...(labels === undefined ? {} : { labels }),
           },
         });
 
@@ -1392,6 +1394,35 @@ describe("planning mode runs no statement of the user's", () => {
         // And the vocabulary warning, because this product records every engine's
         // inventory under the words table and column.
         expect(rules).toContain("those are the names of its own objects and of the fields inside them");
+      });
+
+      /*
+        The gap a live run found, and the reason it is a LABEL rather than a branch on
+        the engine name. Measured 2026-08-19 in the browser: a plan run on an
+        OpenSearch connection, told only "produce ONE runnable statement", answered
+        with a native aggregation body — `{"size":0,"aggs":{…},"query":{"term":{…}}}` —
+        which is correct for the product and unrunnable through the SQL endpoint this
+        provider speaks to. `queryLanguage: "sql"` was already true and said nothing to
+        the model; the engine's NAME carried the stronger prior. So the provider now
+        declares what its statements are written in, and the contract states it.
+      */
+      test("an engine that declares a statement language has it stated in the contract", async () => {
+        const { rules } = await planOnProvider("sql", SEARCH_INDEX_LABELS);
+
+        expect(rules).toContain("Write it in Elasticsearch SQL, the product's own SQL endpoint");
+        expect(rules).toContain("NOT the JSON query DSL");
+        // Still the SQL contract: the language sentence adds to it rather than
+        // replacing it, or the model would be handed two contracts to pick from.
+        expect(rules).toContain("Produce ONE runnable statement");
+      });
+
+      test("an engine that declares none is told nothing extra about its language", async () => {
+        // A connection stamped `postgres` needs nobody to add that its statements are
+        // SQL, and a sentence saying so would spend prompt on what the dialect line
+        // already carries.
+        const { rules } = await planOnProvider("sql");
+
+        expect(rules).not.toContain("Write it in");
       });
 
       test("a SQL engine reached the same way still gets the SQL contract, so the LANGUAGE decides and not the path", async () => {

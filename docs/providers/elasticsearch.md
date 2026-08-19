@@ -566,10 +566,20 @@ SELECT 1;
 -> 400  parsing_exception  "line 1:9: extraneous input ';' expecting <EOF>"
 ```
 
-This one bites through the product's own affordances, not only hand-typed SQL: the shared generator
-`generateTableQuery()` emits `SELECT * FROM probe_orders LIMIT 50;` for a search connection, and that
-statement is refused here (measured — same `extraneous input ';'`). It is accepted by the fork, so it
-is one of the sharpest differences between the two docs. Delete the semicolon and the statement runs.
+This one bit through the product's own affordances rather than only hand-typed SQL, and that is why
+the provider declares it. The shared generators emitted `SELECT * FROM probe_orders LIMIT 50;` and
+`SELECT … WHERE 1=1 LIMIT 100;` for a search connection — "Select Top 50 Documents" and "Generate
+Query", the first two things a user clicks on an index — and both were refused here with the same
+`extraneous input ';'` (measured in the browser, 2026-08-19). So
+`ProviderCapabilities.statementTerminator` is `"none"` on both products and
+[`query-generators.ts`](../../src/lib/query-generators.ts) asks the capability instead of the engine
+name: the generated statement now ends at `LIMIT 50`. Both spellings run on the fork, which is why one
+answer serves both type-ids rather than a branch on `dialect`.
+
+A semicolon a **user** types is unaffected by that declaration and still runs, because the editor's
+statement reader strips the terminator before the statement is sent. The raw `POST /api/db/query`
+passes text through untouched, so a `;` sent there is refused by the engine — which is the honest
+answer for an API that promises no rewriting.
 
 **Backticks are refused, and double quotes are the identifier form.** Measured:
 `` SELECT `customer` FROM probe_orders `` answers *"backquoted identifiers not supported; please use
@@ -914,6 +924,8 @@ difference — `OFFSET` — has no field in `ProviderCapabilities` to declare it
 | `maintenanceOperations` | `[]` | Consequence of the above |
 | `supportsConnectionString` | **`false`** | No URI convention, and `http(s)://` is ClickHouse's ([§4.2](#42-there-is-no-connection-string-and-that-is-deliberate)) |
 | `defaultPort` | `9200` | Both schemes ([§4.3](#43-tls)) |
+| `identifierQuoting` | **`double`** | Declared because the port cannot say: the fork ships on 9200 too and quotes differently, and a wrong guess there returns **no rows** rather than an error ([opensearch.md §5.4](./opensearch.md#54-dialect-traps-a-user-will-hit)) |
+| `statementTerminator` | **`none`** | This grammar has no `;`, and the generated `SELECT * FROM probe_orders LIMIT 50;` was refused — the schema tree's first click ([§5.4](#54-dialect-traps-a-user-will-hit)) |
 | `schemaRefreshPattern` | `\b(DELETE)\b` | Can never fire on this product — its grammar has no DELETE. It is there for the fork ([§5.6](#56-this-grammar-does-not-write)) |
 
 `isGroupedKeyspace` is deliberately **absent**: an index is a real object the cluster holds, named by
@@ -930,6 +942,17 @@ is what Redis and LibreDB declare.
 | `analyzeAction` / `analyzeGlobalLabel` | `Index Statistics` |
 | `vacuumAction` / `vacuumGlobalLabel` | `Merge Segments` |
 | `searchPlaceholder` | `Search indices or fields...` |
+| `statementLanguage` | `Elasticsearch SQL, the product's own SQL endpoint - NOT the JSON query DSL, NOT an aggregation body, and NOT ES\|QL` |
+
+`statementLanguage` is the one label here written for a **model** rather than for the UI, and it is
+declared on these two engines alone. Measured in the browser on 2026-08-19: a plan run on a search
+connection, told only "produce ONE runnable statement", answered with a native aggregation body —
+`{"size":0,"aggs":{…},"query":{"term":{…}}}` — which is correct for the product and unrunnable through
+the SQL endpoint this provider speaks to. The statement guard then declined to classify it
+(`NO_STATEMENT`), so nothing ran; the user was still handed a plan they could not execute.
+`queryLanguage: "sql"` was already true and settled nothing, because the engine's NAME carries the
+stronger prior — so the label names what the language is **not**, and
+[`investigation.ts`](../../src/lib/agent/investigation.ts) states it in the plan contract.
 
 These are not decoration. `inventory-noun.ts` lowercases `entityName` into the noun the **agent**
 reasons with, so a cluster described as holding "tables" of "rows" invites statements written for a
@@ -939,9 +962,16 @@ secondary-index objects an index does **not** have (`TableSchema.indexes`, empty
 here).
 
 The two maintenance actions are named even though `supportsMaintenance` is false, because they are
-still **rendered**: the schema tree offers both entries to an admin and both open the Maintenance
-panel, which then offers this engine no operation. So they name the closest real cluster concept, and
-their global descriptions say in words that nothing runs from there.
+still rendered **where an engine has maintenance to run**, and their global descriptions say in words
+that nothing runs from here.
+
+They are no longer rendered in the **schema tree** on this engine. They used to be, and it was a dead
+end: an index is addressable, so the `tablesAreDerivedGroupings` gate #427 added did not catch it, and
+clicking "Merge Segments" navigated to `/admin/operations` — where the Global Operations card is gated
+on `supportsMaintenance` and so was absent. No controls, no error, and none of the wording above, which
+lives on the card that does not render (measured in the browser, 2026-08-19).
+[`TableItem.tsx`](../../src/components/schema-explorer/TableItem.tsx) now asks for both an addressable
+row **and** a declared maintenance capability.
 
 ---
 
@@ -1026,7 +1056,7 @@ surfacing a wrong endpoint or a rejected credential, query execution and result 
 order, duplicate-name disambiguation, the measured duration, the absent `totalHits`), engine-initiated
 paging including the ceiling and the cursor close, the full category-to-error map including the
 HTTP-500 user error, the `prepareQuery()` override in both directions, mapping-driven schema
-(containers dropped, multi-fields kept, closed index, system-index flag, the degradable per-index
+(containers dropped, multi-fields dropped, closed index, system-index flag, the degradable per-index
 failures), every monitoring method and its empties, and `runMaintenance()` refusing with its reason.
 
 ### 11.3 Run it

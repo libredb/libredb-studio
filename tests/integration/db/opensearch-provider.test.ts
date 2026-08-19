@@ -708,12 +708,32 @@ describe("OpenSearchProvider shares the Elasticsearch implementation", () => {
     expect(opensearch.defaultPort).toBe(9200);
   });
 
-  test("declares the same labels as the other type-id", () => {
-    const opensearch = new OpenSearchProvider(makeConnection()).getLabels();
-    const elasticsearch = new ElasticsearchProvider(makeConnection({ type: ELASTICSEARCH })).getLabels();
+  test("declares the same labels as the other type-id, except the one written for a model", () => {
+    // Subtracted explicitly, the same way the capability divergence above is, so a
+    // second difference in the UI vocabulary still fails this test.
+    //
+    // Why `statementLanguage` diverges while every button label does not: it is the
+    // one label a MODEL reads rather than a person, and what it has to rule out is
+    // per-product. This product ships PPL beside SQL and has no ES|QL; upstream is
+    // the other way round. Naming the wrong language that actually exists on the
+    // connected cluster is the whole point of the field - a live plan run answered
+    // with a native aggregation body when it was told only "one runnable statement"
+    // (2026-08-19).
+    const { statementLanguage: osLanguage, ...opensearch } = new OpenSearchProvider(makeConnection()).getLabels();
+    const { statementLanguage: esLanguage, ...elasticsearch } = new ElasticsearchProvider(
+      makeConnection({ type: ELASTICSEARCH }),
+    ).getLabels();
 
     expect(opensearch).toEqual(elasticsearch);
     expect(opensearch.entityNamePlural).toBe("Indices");
+    // Each names its own endpoint, and rules out its own product's alternatives.
+    expect(osLanguage).toContain("OpenSearch SQL");
+    expect(osLanguage).toContain("NOT PPL");
+    expect(esLanguage).toContain("Elasticsearch SQL");
+    expect(esLanguage).toContain("NOT ES|QL");
+    // Both rule out the one a model actually reached for.
+    expect(osLanguage).toContain("NOT the JSON query DSL");
+    expect(esLanguage).toContain("NOT the JSON query DSL");
   });
 
   test("names OpenSearch in the messages it writes itself", async () => {

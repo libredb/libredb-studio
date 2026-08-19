@@ -65,6 +65,17 @@ describe("generateTableQuery", () => {
     expect(result).toBe("SELECT TOP 50 * FROM users;");
   });
 
+  // #424 Phase 1, measured 2026-08-19 against Elasticsearch 9.1.4 and OpenSearch
+  // 3.8.0. Elasticsearch SQL has no statement terminator in its grammar: the
+  // generator's own `SELECT * FROM orders LIMIT 50;` answered
+  // `line 1:30: extraneous input ';' expecting <EOF>`, so the FIRST click on an
+  // index in the schema tree failed. OpenSearch tolerates the `;`, and omitting it
+  // runs on both, so one answer serves both products.
+  test("a dialect that declares no terminator gets no trailing semicolon", () => {
+    const caps = makeCaps({ defaultPort: 9200, statementTerminator: "none" });
+    expect(generateTableQuery("orders", caps)).toBe("SELECT * FROM orders LIMIT 50");
+  });
+
   test('LibreDB dialect: a ":*" prefix group scans with prefix', () => {
     const caps = makeCaps({ queryLanguage: "json", defaultPort: null, queryDialect: "libredb" });
     expect(generateTableQuery("users:*", caps)).toBe("prefix users:");
@@ -73,6 +84,22 @@ describe("generateTableQuery", () => {
   test("LibreDB dialect: a bare (no-colon) group reads with get", () => {
     const caps = makeCaps({ queryLanguage: "json", defaultPort: null, queryDialect: "libredb" });
     expect(generateTableQuery("orphan", caps)).toBe("get orphan");
+  });
+});
+
+// ============================================================================
+// generateSelectQuery — a dialect with no statement terminator
+// ============================================================================
+
+describe("generateSelectQuery — no statement terminator", () => {
+  // The twin of the generateTableQuery case above: "Generate Query" emits the
+  // multi-column shape, and on Elasticsearch its `LIMIT 100;` answered
+  // `line 6:10: extraneous input ';' expecting <EOF>` (measured 2026-08-19).
+  test("omits the trailing semicolon the other dialects carry", () => {
+    const caps = makeCaps({ defaultPort: 9200, statementTerminator: "none" });
+    const out = generateSelectQuery("orders", sampleColumns, caps);
+    expect(out.endsWith("LIMIT 100")).toBe(true);
+    expect(out).not.toContain(";");
   });
 });
 
