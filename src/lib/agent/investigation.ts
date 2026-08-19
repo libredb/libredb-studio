@@ -2655,10 +2655,10 @@ export async function runInvestigation(
       // Narrowed once the run has been told to finish; see `AGENT_NARROWED_EXTRA_TOOLS`.
       narrowed && !prompted ? narrowedTools(record) : tools,
       turnBudgetMs,
-      // Constrained ONLY on the prompted path, where the model is already being asked for a
-      // JSON action in prose and a malformed reply is a total loss. The native path is sent
-      // nothing new, which is what keeps every locked cell out of this change's reach.
-      prompted ? PROMPTED_ACTION_SHAPE : undefined,
+      // Constraint measured and REVERTED; see the commit that removes it. Left unset here
+      // rather than deleted from `takeTurn`, because the seam is correct and the cost was in
+      // the model, not the wiring.
+      undefined,
     );
     text = turn.text;
     if (turn.aborted) return conclude("failed", turnBudgetMs < remainingMs ? "model-timeout" : "deadline-exceeded");
