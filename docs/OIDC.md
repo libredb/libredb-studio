@@ -341,9 +341,9 @@ The role mapping system:
 
 ### Logout doesn't clear provider session
 
-- Auth0: Ensure `http://localhost:3000/login` is in Allowed Logout URLs
-- Keycloak: Provider logout is handled via RP-Initiated Logout endpoint
-- Other providers: Check if your provider supports end_session_endpoint
+- The return URL must be registered with the provider, or it rejects the redirect: Auth0 "Allowed Logout URLs", Keycloak "Valid post logout redirect URIs", Azure AD "Front-channel logout URL"
+- Keycloak / Okta / Azure AD: the logout endpoint comes from the provider's own Discovery metadata, so no per-provider configuration is needed on Studio's side
+- If the provider advertises no `end_session_endpoint` (Google, for one), the provider session survives on purpose — Studio clears its own cookie and skips the redirect. Signing in again still prompts, because Studio always sends `prompt=login`
 
 ---
 
@@ -891,15 +891,22 @@ async function buildLogoutUrl(returnTo: string): Promise<string | null> {
 
 > **What `buildLogoutUrl()` actually implements:** **Auth0** and **Zitadel** retain their existing special cases. Every
 > other issuer uses the `end_session_endpoint` advertised by OIDC Discovery. Providers that do not advertise this
-> metadata complete the local logout without a provider redirect.
+> metadata complete the local logout without a provider redirect. **Google is a real example of that last
+> case** — its discovery document carries no `end_session_endpoint`, so signing out of Studio deliberately
+> leaves the Google session alone (the next sign-in still prompts, because Studio always sends `prompt=login`).
+>
+> The request carries `post_logout_redirect_uri` and the `client_id` that `openid-client` adds; it does **not**
+> carry `id_token_hint`, because Studio never persists the ID token. Providers that require `id_token_hint`
+> for RP-initiated logout will reject the redirect — that is the one case the ✅ column below does not cover.
 
 | Provider | Native Endpoint | Return Param | Wired? |
 |----------|-----------------|--------------|--------|
 | **Auth0** | `{issuer}/v2/logout` | `returnTo` | ✅ special-cased |
 | **Zitadel** | `{issuer}/oidc/v1/end_session` (auto-detected via role claim) | `post_logout_redirect_uri` | ✅ special-cased |
 | **Keycloak** | Discovery `end_session_endpoint` (typically `{issuer}/protocol/openid-connect/logout`) | `post_logout_redirect_uri` | ✅ discovery metadata |
-| **Okta** | Discovery `end_session_endpoint` | `post_logout_redirect_uri` | ✅ discovery metadata |
-| **Azure AD** | Discovery `end_session_endpoint` | `post_logout_redirect_uri` | ✅ discovery metadata |
+| **Azure AD** | Discovery `end_session_endpoint` (measured: `{login.microsoftonline.com}/common/oauth2/v2.0/logout`) | `post_logout_redirect_uri` | ✅ discovery metadata |
+| **Okta** | Discovery `end_session_endpoint` | `post_logout_redirect_uri` | ⚠️ endpoint is used, not probed against a live tenant — org authorization servers may require `id_token_hint` |
+| **Google** | none advertised | — | ⚠️ local logout only, by design |
 
 ### Extension Point
 

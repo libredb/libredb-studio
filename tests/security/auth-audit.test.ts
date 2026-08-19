@@ -43,7 +43,7 @@ mock.module("@/lib/oidc", () => ({
   exchangeCode: mockExchangeCode,
   mapOIDCRole: mock(() => "user" as "admin" | "user"),
   resetDiscoveryCache: mock(() => {}),
-  buildLogoutUrl: mock(() => null as string | null),
+  buildLogoutUrl: mock(async () => null as string | null),
   getPublicOrigin: mock((req: Request) => new URL(req.url).origin),
 }));
 

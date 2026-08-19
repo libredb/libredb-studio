@@ -232,6 +232,10 @@ describe("buildLogoutUrl", () => {
     process.env.OIDC_CLIENT_SECRET = "test-client-secret";
     mockDiscoveryFn.mockClear();
     mockBuildEndSessionUrl.mockClear();
+    // mockClear() drops recorded calls but keeps whatever return value a previous test queued, so
+    // the default is re-established here: otherwise a mockReturnValue set in one test silently
+    // decides what a later test sees, and the suite's outcome depends on declaration order.
+    mockBuildEndSessionUrl.mockReturnValue(new URL("https://provider.com/logout"));
     resetDiscoveryCache();
   });
 
@@ -251,19 +255,20 @@ describe("buildLogoutUrl", () => {
   test("uses the discovered end-session endpoint instead of deriving one from the issuer", async () => {
     process.env.OIDC_ISSUER = "https://keycloak.example.com/realms/myrealm";
     const returnTo = "http://localhost:3000/login";
-    mockBuildEndSessionUrl.mockReturnValue(
-      new URL(
-        "https://logout.example.net/custom/end-session?client_id=test-client-id&post_logout_redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Flogin",
-      ),
-    );
+    // Deliberately a BARE endpoint, with no query string and an origin that is not the issuer's:
+    // the assertions below then describe what buildLogoutUrl() did, not what this fixture spelled out.
+    mockBuildEndSessionUrl.mockReturnValue(new URL("https://logout.example.net/custom/end-session"));
 
     const url = await buildLogoutUrl(returnTo);
     expect(url).not.toBeNull();
+    // The endpoint comes from Discovery, not from the issuer: neither the issuer's origin nor its
+    // /realms/myrealm path may appear in the result. That is the regression this test exists for.
     const parsed = new URL(url!);
     expect(parsed.origin).toBe("https://logout.example.net");
     expect(parsed.pathname).toBe("/custom/end-session");
-    expect(parsed.searchParams.get("client_id")).toBe("test-client-id");
-    expect(parsed.searchParams.get("post_logout_redirect_uri")).toBe(returnTo);
+    // The only logout parameter this module owns. `client_id` is NOT asserted on the URL: the real
+    // buildEndSessionUrl() injects it (openid-client build/index.js sets it when absent), and that
+    // function is mocked here — asserting it would only re-assert the mock's own output.
     expect(mockBuildEndSessionUrl).toHaveBeenCalledWith("mock-oidc-config", {
       post_logout_redirect_uri: returnTo,
     });
