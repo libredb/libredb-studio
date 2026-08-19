@@ -184,6 +184,13 @@ export interface QueryTab {
 
 For most SQL databases, the existing `'sql'` type is sufficient. You only need a new tab type if your database uses a fundamentally different query language.
 
+A new tab type needs three things wired, all in `src/lib/editor/tab-language.ts` and its neighbours:
+declare `queryDialect` on the provider, add the arm to `resolveTabType()` **above** the
+`queryLanguage === 'json'` rung, and map the type to a Monaco language in
+`editorLanguageForTabType()` — registering that language module in `QueryEditor`'s
+`handleBeforeMount` alongside `registerLibreDBLanguage` / `registerRedisLanguage`. Skipping the
+dialect leaves the tab typed `mongodb` and the arm unreachable, which is exactly what #427 fixed.
+
 ## Step 2: Create the Provider Class
 
 Create the file under the right family folder, named by the canonical **type-id** —
@@ -543,38 +550,46 @@ Every field and what it controls:
 | Field | Type | Controls |
 |-------|------|----------|
 | `queryLanguage` | `'sql' \| 'json'` | Monaco editor language mode, AI prompt style, query template format |
-| `queryDialect` | `'libredb' \| undefined` | Optional. Opts a provider's tables into a custom client-side query generator (see `query-generators.ts`); left undefined by SQL/Mongo/Redis |
+| `queryDialect` | `'libredb' \| 'redis' \| undefined` | Optional. Opts a provider's tables into a custom client-side query generator (see `query-generators.ts`) and picks the editor tab type and Monaco language. Checked **before** `queryLanguage` everywhere — `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
 | `supportsExplain` | `boolean` | EXPLAIN button visibility in QueryEditor toolbar |
 | `explainFormat` | `ExplainFormat \| undefined` | **Required whenever `supportsExplain` is true.** Selects the strategy in `src/lib/explain/index.ts`. Setting the flag without the format leaves the control visible and dead — the UI resets out of explain mode when metadata lacks it |
 | `supportsExternalQueryLimiting` | `boolean` | Whether route applies LIMIT to queries (SQL) or provider handles it (MongoDB) |
 | `supportsCreateTable` | `boolean` | "Create Table" button in SchemaExplorer |
 | `supportsInlineRowEdit` | `boolean?` | Whether the results grid offers inline row editing. `false` hides the EDIT toggle and every editable cell — set it where the engine has no `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` statement, which is what `use-inline-editing.ts` builds. Optional only because the interface is published and a required addition breaks external implementers; every provider here declares it, and an absent flag reads as unsupported |
+| `declaresForeignKeys` | `boolean?` | Whether this engine has foreign keys in its model at all. `false` says an empty `TableSchema.foreignKeys` means "no such constraint exists here", not "this schema declares none" — set it on every engine without referential constraints. Optional for the published-interface reason above; consumers gate on `=== false`, so an absent flag reads as "may declare them" |
+| `tablesAreDerivedGroupings` | `boolean?` | Whether `getSchema()`'s rows are objects the engine holds, or groupings this server derived from a bounded scan. `true` on Redis and LibreDB only. Where it is true the schema explorer hides every menu item that *addresses* the row — `Profile Table`, `Generate Test Data`, and both per-row maintenance items, all of which name the row to a route that needs a real object — and keeps the ones that merely name it (`Select`, `Generate`, `Copy Name`, `Generate Code`). The agent layer states it to a plan run in one sentence. Consumers gate on `=== true`, so an absent flag reads as "ordinary objects" |
 | `supportsMaintenance` | `boolean` | Whether maintenance API accepts requests for this provider |
-| `maintenanceOperations` | `MaintenanceType[]` | Which operation cards show in MaintenanceModal (vacuum, analyze, reindex, etc.) |
+| `maintenanceOperations` | `MaintenanceType[]` | Which global cards and per-table buttons the admin Operations tab renders. `/api/db/maintenance` rejects anything not in this list, so a surface that ignored it could only offer a control answering HTTP 400. The schema explorer's row menu does **not** read it — its per-row maintenance items are gated on `isAdmin` and on `tablesAreDerivedGroupings`; see `docs/BACKLOG.md` U9 for the mismatches that leaves |
 | `supportsConnectionString` | `boolean` | Used for future connection validation logic |
 | `defaultPort` | `number \| null` | Informational; actual UI port comes from `db-ui-config.ts` |
 | `schemaRefreshPattern` | `string` | Regex to detect write/DDL queries that should trigger schema reload |
 
 ### ProviderLabels
 
-Every field and where it appears:
+Every field and where it appears. There is **no `MaintenanceModal` component** — earlier revisions of
+this table named one for ten of these rows; `git grep MaintenanceModal src/` finds only a ClickHouse
+comment. Two surfaces read labels today, plus the agent's prompt layer:
 
 | Field | Where it appears |
 |-------|-----------------|
-| `entityName` | "Create {Table}" button title, "{Table} name copied", "{Table} Optimizer" |
-| `entityNamePlural` | "{Tables} found" count in MaintenanceModal |
-| `rowName` / `rowNamePlural` | "{rows}" count in MaintenanceModal table list |
-| `selectAction` | SchemaExplorer dropdown: "Select Top 100" / "Find Documents" |
-| `generateAction` | SchemaExplorer dropdown: "Generate Query" / "Generate Find" |
-| `analyzeAction` | SchemaExplorer dropdown + MaintenanceModal button title |
-| `vacuumAction` | SchemaExplorer dropdown + MaintenanceModal button title |
-| `searchPlaceholder` | SchemaExplorer search input placeholder text |
-| `analyzeGlobalLabel` | MaintenanceModal "Run Analyze" button text |
-| `analyzeGlobalTitle` | MaintenanceModal card title ("Update Statistics") |
-| `analyzeGlobalDesc` | MaintenanceModal card description paragraph |
-| `vacuumGlobalLabel` | MaintenanceModal "Run Vacuum" button text |
-| `vacuumGlobalTitle` | MaintenanceModal card title ("Reclaim Space") |
-| `vacuumGlobalDesc` | MaintenanceModal card description paragraph |
+| `entityName` | `SchemaExplorer` "Create {Table}" button title; `TableItem` "{Table} name copied" toast; lowercased by `inventoryNoun()` into the agent's prompt noun |
+| `entityNamePlural` | Lowercased by `inventoryNoun()` (`src/lib/agent/inventory-noun.ts`) into the agent's prompt noun. No UI surface reads it |
+| `rowName` / `rowNamePlural` | **Nothing reads these.** Declared, defaulted in `base-provider.ts`, set by several providers, consumed nowhere in `src/` |
+| `selectAction` | `TableItem` row menu, first item ("Select Top 50" / "Find Documents" / "Scan Keys") |
+| `generateAction` | `TableItem` row menu, second item ("Generate Query" / "Generate Find") |
+| `analyzeAction` | `TableItem` row menu only, and only where the rows are not derived groupings. The Operations tab's per-table Analyze button title is still the hardcoded "Analyze" (`docs/BACKLOG.md` U6) |
+| `vacuumAction` | `TableItem` row menu only, under the same derived-groupings gate as `analyzeAction`. The Operations tab's per-table button is gated on the literal `vacuum` and titled "Vacuum", so the four providers that point this label at `optimize`/`reindex` show a row item whose wording the tab does not repeat (`docs/BACKLOG.md` U9) |
+| `searchPlaceholder` | `SchemaExplorer` search input placeholder text |
+| `analyzeGlobalLabel` | Admin Operations tab, analyze card's button text ("Run Analyze") |
+| `analyzeGlobalTitle` | Admin Operations tab, analyze card title ("Update Statistics") |
+| `analyzeGlobalDesc` | Admin Operations tab, analyze card description paragraph |
+| `vacuumGlobalLabel` | Admin Operations tab, vacuum card's button text ("Run Vacuum") |
+| `vacuumGlobalTitle` | Admin Operations tab, vacuum card title ("Reclaim Space") |
+| `vacuumGlobalDesc` | Admin Operations tab, vacuum card description paragraph |
+
+The `*Global*` triads reach only the card, never the per-table button, and only where the card
+renders: the analyze card is gated on `analyze`, the vacuum card on the **literal** `vacuum`. There
+is no `reindexGlobal*` triad; that card is still hardcoded (`docs/BACKLOG.md` U6).
 
 ### PreparedQuery
 

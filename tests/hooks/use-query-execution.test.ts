@@ -648,6 +648,40 @@ describe("useQueryExecution", () => {
     expect(multiCall).toBeDefined();
   });
 
+  // ── a non-SQL dialect never takes the statement splitter ──────────────────
+
+  test("executeQuery keeps a JSON-dialect buffer on /api/db/query, semicolons and all (#427)", async () => {
+    // Redis commands are not `;`-separated, so splitting one buffer into
+    // "statements" can only invent fragments. Measured in the browser before this
+    // gate existed: the generated Redis cheatsheet carried a `;` inside a `#`
+    // comment, `isMultiStatement` said 2, and /api/db/multi-query executed a
+    // comments-only fragment -> "No command to run (only comments or blank lines)"
+    // reported to the user as a successful empty result.
+    const fetchMock = mockGlobalFetch({
+      "/api/db/multi-query": { ok: true, json: mockQueryResult },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const params = createDefaultParams({
+      metadata: { ...mockMetadata, capabilities: { ...mockMetadata.capabilities, queryLanguage: "json" } },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("# 0 is the cursor; re-run with it\nSCAN 0 MATCH user:* COUNT 50");
+    });
+
+    const multiCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/multi-query"),
+    );
+    expect(multiCall).toBeUndefined();
+    const singleCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    expect(singleCall).toBeDefined();
+  });
+
   // ── executeQuery uses /api/db/transaction when transactionActive ───────────
 
   test("executeQuery uses /api/db/transaction when transactionActive", async () => {

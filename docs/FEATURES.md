@@ -68,7 +68,7 @@
 *   **Precision Row Counts:** Optimized PostgreSQL integration using `pg_class` statistics for fast, accurate (estimated) row counts even on large datasets.
 *   **Visual Table Designer:** Create new tables directly from the explorer with a modern, column-based UI. No SQL knowledge required for basic structures.
 *   **Contextual Actions:** Quick access menus for each table including "Select Top 50", "Generate Query", and "Copy Name". Action labels adapt per provider (e.g. "Scan Keys" for Redis, "Find Documents" for MongoDB).
-*   **DBA Quick Tools:** (Admin Only) Instant access to "Analyze Table" and "Vacuum Table" directly from the table context menu.
+*   **DBA Quick Tools:** (Admin Only) Instant access to "Analyze Table" and "Vacuum Table" directly from the table context menu, on the providers whose rows are real objects. A key-value provider such as Redis, whose rows are derived key-prefix groupings, offers neither -- there is no table for the maintenance page to act on.
 *   **Visual Clarity:** Modern glassmorphic design with Framer Motion animations for smooth transitions.
 *   **Database Stats:** Integrated table counts and connection health monitoring directly in the sidebar.
 

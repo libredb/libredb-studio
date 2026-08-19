@@ -353,8 +353,9 @@ internal metadata.
 Right-clicking a node in the schema tree (or its `⋮` menu) offers commands generated for that
 node, so you do not have to type the grammar from memory. The generation is driven by the
 `queryDialect: 'libredb'` capability, which routes the shared client-side query generators
-(`src/lib/query-generators.ts`) to LibreDB output instead of the default MongoDB-JSON used by other
-`queryLanguage: 'json'` providers:
+(`src/lib/query-generators.ts`) to LibreDB output instead of the MongoDB-JSON that
+`queryLanguage: 'json'` otherwise implies. Redis took the same route in #427 with
+`queryDialect: 'redis'`; MongoDB is now the only provider that reaches the JSON branch:
 
 - **Scan Keys** runs `prefix <group>:` for a `:`-prefix group (e.g. `users:*` → `prefix users:`), or
   `get <name>` for a bare single-key node.
@@ -382,6 +383,32 @@ node, so you do not have to type the grammar from memory. The generation is driv
 
 Because the provider skips `#` comment and blank lines (see 5.1), selecting a single line runs just
 that command, and running the whole buffer runs the first real command (the prefix scan).
+
+The node name in the header comment is **JSON-quoted**, not interpolated raw: a key name is
+arbitrary text, and a name containing a newline used to end that comment and turn its own remainder
+into the buffer's first runnable line. For an ordinary name the rendering is unchanged. The Redis
+cheatsheet shares the helper and the defect (see `docs/providers/redis.md` §5.3) — that is where it
+was found (#427).
+
+The command lines themselves interpolate the node name **raw** — LibreDB's grammar has no quoting
+and no lossless JSON command form to fall back to the way Redis's does. Since every LibreDB command
+is line-oriented, a name containing CR or LF cannot be addressed by a generated line at all: a key
+named `x\ndelete billing:2024` would render `delete billing:2024` as a line of its own that
+**Run Selected** would execute. For such a name the cheatsheet emits the header plus a single `#`
+note saying the key must be addressed with a hand-written command, and **no command line** (#427).
+
+That answer covers the cheatsheet only. `Scan Keys` still emits `get <name>` for such a key, so its
+second line lands in the editor as a runnable command; nothing destructive auto-executes, because
+`firstCommandLine()` runs only `get x`. Recorded as U11 in [`docs/BACKLOG.md`](../BACKLOG.md).
+
+Two menu actions are **not offered** on this provider. `Profile Table` and `Generate Test Data`
+address an object and insert rows into it; a `users:*` row is a prefix grouping this server derived
+from one bounded scan (`tablesAreDerivedGroupings`, see 9), not an object any command can be given,
+so both are hidden rather than left to answer HTTP 400 (#427). The per-row `Analyze` and `Vacuum`
+items are hidden for the same reason — they call `onOpenMaintenance("tables", <row>)` and there is no
+such row to name; the row menu reads no maintenance capability of its own. `Generate Code`
+stays: it names the row, it does not address it, and it sanitises the name into an identifier that
+is legal in every target language (`users:*` -> `User`), keeping Unicode letters intact.
 
 ---
 
@@ -458,7 +485,8 @@ This is reflected in `getCapabilities().supportsMaintenance = false` and
 monitoring **Tables** tab renders no per-row control when a provider declares maintenance
 unsupported (issue #272), and the admin **Operations** tab hides its whole Global Operations group
 and its per-table buttons on the same reading (issue #282). Neither offers a control that could only
-answer HTTP 400.
+answer HTTP 400. The schema explorer's own per-row `Analyze`/`Vacuum` items are hidden here too, but
+for a different reason — the rows are derived groupings, see 5.3.
 
 ---
 

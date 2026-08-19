@@ -9,10 +9,32 @@ import React from "react";
 import { QueryToolbar } from "@/components/studio/QueryToolbar";
 import { mockPostgresConnection } from "../../fixtures/connections";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import type { ProviderLabels } from "@/lib/db/types";
 
 // =============================================================================
 // QueryToolbar Tests
 // =============================================================================
+
+// Named separately so a variant can spread it: `ProviderMetadata.labels` is
+// optional (a host of the embedded shell may declare capabilities only), and
+// spreading an optional field yields optional members (#427).
+const sqlLabels: ProviderLabels = {
+  entityName: "table",
+  entityNamePlural: "tables",
+  rowName: "row",
+  rowNamePlural: "rows",
+  selectAction: "SELECT * FROM",
+  generateAction: "Generate",
+  analyzeAction: "Analyze",
+  vacuumAction: "Vacuum",
+  searchPlaceholder: "Search tables...",
+  analyzeGlobalLabel: "Analyze All",
+  analyzeGlobalTitle: "Analyze All Tables",
+  analyzeGlobalDesc: "Update statistics for all tables",
+  vacuumGlobalLabel: "Vacuum All",
+  vacuumGlobalTitle: "Vacuum All Tables",
+  vacuumGlobalDesc: "Reclaim storage for all tables",
+};
 
 const sqlMetadata: ProviderMetadata = {
   capabilities: {
@@ -27,23 +49,7 @@ const sqlMetadata: ProviderMetadata = {
     defaultPort: 5432,
     schemaRefreshPattern: "",
   },
-  labels: {
-    entityName: "table",
-    entityNamePlural: "tables",
-    rowName: "row",
-    rowNamePlural: "rows",
-    selectAction: "SELECT * FROM",
-    generateAction: "Generate",
-    analyzeAction: "Analyze",
-    vacuumAction: "Vacuum",
-    searchPlaceholder: "Search tables...",
-    analyzeGlobalLabel: "Analyze All",
-    analyzeGlobalTitle: "Analyze All Tables",
-    analyzeGlobalDesc: "Update statistics for all tables",
-    vacuumGlobalLabel: "Vacuum All",
-    vacuumGlobalTitle: "Vacuum All Tables",
-    vacuumGlobalDesc: "Reclaim storage for all tables",
-  },
+  labels: sqlLabels,
 };
 
 function createDefaultProps(overrides: Record<string, unknown> = {}) {
@@ -142,6 +148,86 @@ describe("QueryToolbar", () => {
     expect(queryByText("SANDBOX")).not.toBeNull();
     expect(queryByText("IMPORT")).not.toBeNull();
     expect(queryByText("BEGIN")).not.toBeNull();
+  });
+
+  // ── Every control in the SQL group is withheld the same way (#427) ─────────
+  //
+  // The embedded shell serves none of transactions, sandbox or inline editing, and
+  // used to hide the whole group by passing `metadata={null}`. Once it passes the
+  // host's real metadata, a host declaring `queryLanguage: "sql"` rendered three
+  // buttons wired to `noop` — no disabled state, no tooltip, nothing happens. A
+  // caller that cannot serve a control omits its callback, as #269 established for
+  // EDIT, and the control does not render.
+
+  test("No transaction controls when the transaction callbacks are not provided", () => {
+    const { queryByText } = render(
+      <QueryToolbar
+        {...createDefaultProps({
+          onBeginTransaction: undefined,
+          onCommitTransaction: undefined,
+          onRollbackTransaction: undefined,
+        })}
+      />,
+    );
+
+    expect(queryByText("BEGIN")).toBeNull();
+    expect(queryByText("SANDBOX")).not.toBeNull();
+    expect(queryByText("IMPORT")).not.toBeNull();
+  });
+
+  test("No COMMIT/ROLLBACK in an active transaction when the callbacks are not provided", () => {
+    const { queryByText } = render(
+      <QueryToolbar
+        {...createDefaultProps({
+          transactionActive: true,
+          onBeginTransaction: undefined,
+          onCommitTransaction: undefined,
+          onRollbackTransaction: undefined,
+        })}
+      />,
+    );
+
+    expect(queryByText("COMMIT")).toBeNull();
+    expect(queryByText("ROLLBACK")).toBeNull();
+    expect(queryByText("TXN")).toBeNull();
+  });
+
+  test("No SANDBOX button when onTogglePlayground is not provided", () => {
+    const { queryByText } = render(<QueryToolbar {...createDefaultProps({ onTogglePlayground: undefined })} />);
+
+    expect(queryByText("SANDBOX")).toBeNull();
+    expect(queryByText("BEGIN")).not.toBeNull();
+  });
+
+  test("No IMPORT button when onImport is not provided", () => {
+    const { queryByText } = render(<QueryToolbar {...createDefaultProps({ onImport: undefined })} />);
+
+    expect(queryByText("IMPORT")).toBeNull();
+    expect(queryByText("BEGIN")).not.toBeNull();
+  });
+
+  test("No group at all when the caller can serve none of it, even on SQL", () => {
+    // The embedded shell's exact shape: real SQL metadata, no servable control.
+    const { queryByText } = render(
+      <QueryToolbar
+        {...createDefaultProps({
+          onBeginTransaction: undefined,
+          onCommitTransaction: undefined,
+          onRollbackTransaction: undefined,
+          onTogglePlayground: undefined,
+          onToggleEditing: undefined,
+          onImport: undefined,
+        })}
+      />,
+    );
+
+    expect(queryByText("BEGIN")).toBeNull();
+    expect(queryByText("SANDBOX")).toBeNull();
+    expect(queryByText("EDIT")).toBeNull();
+    expect(queryByText("IMPORT")).toBeNull();
+    // The controls this shell does serve are outside the group and stay.
+    expect(queryByText("RUN")).not.toBeNull();
+    expect(queryByText("Save")).not.toBeNull();
   });
 
   test("Run button disabled when no activeConnection", () => {
@@ -299,7 +385,7 @@ describe("QueryToolbar", () => {
         queryLanguage: "json",
       },
       labels: {
-        ...sqlMetadata.labels,
+        ...sqlLabels,
         entityName: "collection",
         entityNamePlural: "collections",
       },

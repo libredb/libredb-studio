@@ -154,6 +154,52 @@ The query string is dispatched by its first character ([`redis.ts:165`](../../sr
 - Anything else → parsed as a **plain command** with a small quote-aware tokenizer that preserves
   single/double-quoted arguments (so `SET k "hello world"` is two args, not three).
 
+The dispatch happens *after* leading blank lines and `#` comment lines are dropped, so the character
+that decides the format is the first character of the first runnable line, not of the buffer.
+
+### 3.4a Comments and how one command is picked out of a buffer
+
+`commandBody()` reduces the buffer to the one command to run, in two steps:
+
+1. **Every `#` comment line is dropped**, wherever it sits — leading, interleaved or trailing. A
+   line is a comment only when it *starts* with `#` (after trimming) **and no quoted argument is
+   open across it**, so a `#` inside a key or a value is never mistaken for one — including the
+   continuation line of a multi-line quoted value (`SET note "line1` / `#tag"`). The same quote
+   state suspends the blank-line rule: a blank line inside an open quoted argument is data.
+
+   Quote state is tracked **only while the block is a plain command**. The block's kind is fixed by
+   its first content line with the same test §3.4 uses to pick a parser (`{` first), because the
+   tracker's rules are the plain tokenizer's — no escape handling — and a JSON body's `\"` inside a
+   string is not a quote to it. A key named `say"hi` therefore left a phantom quote open, no later
+   comment line was dropped, and the whole-buffer run reached `JSON.parse` with comments in it:
+   *"Invalid JSON command format"* instead of a `TYPE` result. A JSON body needs no tracking anyway
+   — a JSON string carries no literal newline, so no line inside one can begin with `#` (#427).
+2. **The first blank-line-delimited block of what remains is taken**, and its lines are joined back
+   with a **newline**, verbatim. Leading blank lines are padding and are skipped; the first blank
+   line *after* content ends the block.
+
+A block rather than a line, because *outside quotes* the tokenizer treats a newline as ordinary
+whitespace: a single command wrapped over several lines (`HSET k a 1` / `b 2`) has always run whole,
+and `JSON.stringify(cmd, null, 2)` is legitimately multi-line — taking only line 1 would silently
+half-execute both. Not the whole buffer, because the generated cheatsheet (§5.3) is a list of
+alternatives separated by blank lines, and running it must run only its first command.
+
+Joined with a newline and not a space, because the tokenizer's whitespace branch is guarded by
+`!inQuote`: *inside* a quoted argument a newline is data. `SET note "line1` / `line2"` stores a
+two-line value, and a space join silently rewrote it to `line1 line2`. Lines are also appended
+without trimming, so indentation inside a quoted value survives.
+
+The dispatch of §3.4 then looks at the first character of that block, not of the buffer. A JSON
+command is parsed whole, so a trailing **comment** after a JSON body is fine (it was dropped in
+step 1) but trailing **non-comment** text is not — it joins the block and fails `JSON.parse`.
+
+Input that is only comments or blank lines raises
+`QueryError("No command to run (only comments or blank lines)")`.
+
+This mirrors the embedded LibreDB provider, and exists so the commented cheatsheet the schema
+explorer inserts is directly runnable: selecting one command runs it, and running the whole buffer
+runs its first one (#427).
+
 ### 3.5 Reply normalisation into the shared grid
 
 Redis replies are heterogeneous (status strings, integers, nil, flat arrays, hash arrays, bulk
@@ -220,6 +266,10 @@ KEYS user:*
 # JSON command object
 { "command": "HGETALL", "args": ["user:1"] }
 { "command": "SET", "args": ["greeting", "hello world"] }
+
+# Comments: blank lines and lines starting with '#' are skipped (see 3.4a)
+# Read every field of the hash
+HGETALL user:1
 ```
 
 ### 5.2 Result shaping
@@ -239,6 +289,122 @@ KEYS user:*
 `INFO` is special-cased: `parseInfoResult()` splits the bulk reply into one row per metric, tagging
 each with its `# Section` header ([`redis.ts:288`](../../src/lib/db/providers/keyvalue/redis.ts)).
 
+### 5.3 Schema-explorer menu actions
+
+Right-clicking a node in the schema tree (or its `⋮` menu) offers commands generated for that node,
+so you do not have to type them from memory. The generation is driven by the `queryDialect: 'redis'`
+capability, which routes the shared client-side query generators
+([`src/lib/query-generators.ts`](../../src/lib/query-generators.ts)) to Redis command output.
+
+Before #427 Redis declared no dialect, so those generators fell through to their MongoDB branch on
+the strength of `queryLanguage: 'json'` alone and every action emitted a
+`{"collection": "user:*", "operation": "find", …}` document that this provider answered with
+`Command is required in JSON format`. The dialect is checked **before** `queryLanguage` everywhere
+for that reason.
+
+Both generators are **type-aware**: they read the sampled Redis type off the synthetic `type`
+column that `getSchema()` builds (§6). A prefix that sampled a single type resolves; one that
+sampled several (`string, hash`) or none does not, and falls into the unknown bucket.
+
+**Scan Keys** (`generateTableQuery`) inserts one runnable command and executes it immediately:
+
+| Node | Sampled type | Command |
+|------|--------------|---------|
+| prefix group `user:*` | any | `SCAN 0 MATCH user:* COUNT 50` |
+| bare key `counter` | `string` | `GET counter` |
+| bare key `session` | `hash` | `HGETALL session` |
+| bare key `queue` | `list` | `LRANGE queue 0 -1` |
+| bare key `tags` | `set` | `SMEMBERS tags` |
+| bare key `board` | `zset` | `ZRANGE board 0 -1 WITHSCORES` |
+| bare key | unknown or mixed | `TYPE <key>` |
+
+A prefix group always SCANs and is never used as a key argument: it is a derived grouping
+(`tablesAreDerivedGroupings`), so `GET user:*` would read a key literally named `user:*`. `TYPE` is
+the unknown-bucket answer rather than a guessed reader, because a wrong reader (`GET` on a hash)
+returns a `WRONGTYPE` error instead of an answer.
+
+**Generate Command** (`generateSelectQuery`) inserts a cheatsheet instead — a use-case comment above
+each command, where **every command line is runnable on its own** via "Run Selected". For a
+`user:*` group whose keys sampled as `hash`:
+
+```text
+# Redis commands for "user:*" — select a line and Run Selected.
+
+# List keys under this prefix — ONE scan iteration, not the whole set.
+# 0 is the start cursor; the reply's first row is the next cursor. Re-run
+# with that value in place of 0 until it comes back 0 (a page may be empty).
+SCAN 0 MATCH user:* COUNT 50
+
+# Check the key's type
+TYPE user:1
+
+# Read every field of the hash
+HGETALL user:1
+
+# Create or update one field — this overwrites an existing field
+HSET user:1 field example
+
+# Time to live in seconds (-1 no expiry, -2 no such key)
+TTL user:1
+
+# Delete the key (DEL takes a literal key name, never a pattern)
+DEL user:1
+```
+
+Shape rules:
+
+- The `SCAN` block appears only for a prefix group. A bare key starts at `TYPE`.
+- The example key for a prefix group is the prefix plus `1` (`user:` → `user:1`), so every line is
+  concrete rather than a `<placeholder>` — the same rule the LibreDB cheatsheet follows.
+- The read/write pair appears only when the type resolved. An unknown or mixed group gets the
+  `TYPE` / `TTL` / `DEL` frame alone. The pairs are `GET`/`SET`, `HGETALL`/`HSET`,
+  `LRANGE`/`RPUSH`, `SMEMBERS`/`SADD`, `ZRANGE`/`ZADD`.
+- `DEL` is given a literal key, never the group pattern: Redis key arguments are byte strings, so
+  `DEL user:*` deletes a key named `user:*` or nothing at all.
+- Glob metacharacters are escaped in the `MATCH` half of a `SCAN` only (a key `a[b:1` groups to
+  `a[b:*`, whose unescaped `[` would open a character class), never in a key argument, where
+  escaping would corrupt a literal key that genuinely contains `*`.
+- An argument containing whitespace is double-quoted for the tokenizer of §3.4. An argument that the
+  tokenizer cannot round-trip — one containing `"`, `'`, a backslash or a newline — makes **that line
+  alone** switch to the lossless JSON command form (`{"command":"DEL","args":["say\"hi\""]}`). The two
+  forms mix freely inside one cheatsheet: the provider decides per run, and every line is run on its
+  own. Plain `DEL "say"hi""` would reach the driver as the key `sayhi` — a different key.
+- The node name in the **header comment** is JSON-quoted, not interpolated raw. A key name is
+  arbitrary bytes: a name containing a newline used to end the comment and make its own remainder
+  the buffer's first runnable line, so a key called `a⏎DEL user:1 x` produced a cheatsheet whose
+  first command was `DEL user:1`. The per-argument defence above never engaged, because the
+  injection travelled through a comment rather than through a command. The LibreDB cheatsheet header
+  is quoted the same way. For an ordinary name the rendering is unchanged (#427).
+- **`SCAN 0 MATCH <prefix>* COUNT 50` is ONE cursor iteration, not a listing.** `0` is the start
+  cursor and the reply's first row is the next cursor; re-run with that value in place of `0` until
+  it comes back `0`. On a large keyspace an iteration can legitimately return a **non-zero cursor and
+  no keys**, so "Scan Keys" may show a cursor and nothing else while the schema tree reports the
+  prefix has keys — the tree's count comes from `getSchema()`, which loops the cursor over up to
+  1000 keys (§6) rather than stopping at one page. A one-line command cannot loop, so the cheatsheet
+  documents the continuation instead of hiding it.
+
+A Redis tab is typed `redis` and rendered by a dedicated Monaco language
+([`src/lib/editor/redis-language.ts`](../../src/lib/editor/redis-language.ts)) — command verbs as
+keywords, argument words such as `MATCH` / `COUNT` / `WITHSCORES` as functions, `#` line comments.
+Before #427 a Redis tab was typed `mongodb` and highlighted as JSON, which flagged every command as
+a syntax error.
+
+Four menu actions are **not offered** on Redis, all for the same reason: they address the row as an
+object, and a `user:*` row is this server's grouping of a key prefix, not an object any command can
+be given.
+
+- `Profile Table` and `Generate Test Data` profile an object and insert rows into it. Both are
+  hidden wherever `tablesAreDerivedGroupings` is true rather than left to answer HTTP 400 (#427).
+- **Redis offers no per-row maintenance action at all** — neither *"Key Info"* nor *"Memory
+  Doctor"*. Both items call `onOpenMaintenance("tables", <row>)`, which opens the admin Operations
+  tab against a named table; there is no such table here, so the item was a dead end even for the
+  `analyze` this provider does declare (#427). Global maintenance is unaffected and still runs from
+  the Operations page (§8).
+
+`Generate Code` stays — it names the row, it does not address it, and it sanitises the name into an
+identifier that is legal in every target language (`user:*` → `User`), keeping Unicode letters
+intact so a non-ASCII key prefix does not collide with another one.
+
 ---
 
 ## 6. Schema introspection
@@ -253,7 +419,9 @@ each with its `# Section` header ([`redis.ts:288`](../../src/lib/db/providers/ke
      for each key:
         prefix = substring before first ':' + ':*'   (or the whole key)
         increment prefix.count
-        if prefix has < 3 sampled types: TYPE key → add to prefix.types
+        if prefix has < 3 DISTINCT sampled types: TYPE key → add to prefix.types
+           (one blocking round-trip per key until the 3rd distinct type — a
+            uniform prefix pays it for every key the scan cap allows)
    until cursor == "0"  OR  totalScanned >= 1000
 3. emit TableSchema per prefix, sorted by rowCount desc
 ```
@@ -298,8 +466,16 @@ Redis exposes a single maintenance operation:
 | `analyze` | Runs `INFO` and reports the number of lines in the output as a snapshot. Non-destructive. |
 | anything else | Throws `QueryError` (`Unsupported maintenance type for Redis`) |
 
-This is reflected in `getCapabilities().maintenanceOperations = ['analyze']`. The UI relabels these
-actions for Redis via `getLabels()` (e.g. *"Memory Doctor"*, *"Run Info"*).
+This is reflected in `getCapabilities().maintenanceOperations = ['analyze']`. The admin Operations
+tab has gated each card on that list since #282, so it renders the analyze card only and never
+offered Redis a vacuum action; #427 changed the **wording** on that card, not the gate (§9). The
+schema explorer's **per-row** menu offers neither *"Key Info"* nor *"Memory Doctor"*, because a
+per-row action needs an addressable row and these rows are derived groupings (§5.3).
+
+The admin Operations tab also renders this provider's own wording for the analyze card — *"Run
+Info"* / *"Server Info"* / *"Get Redis server information and statistics."* — instead of Postgres's
+query-planner copy. Those `analyzeGlobal*` fields had been declared and set for a long time and read
+by no component (#427).
 
 ---
 
@@ -310,6 +486,7 @@ actions for Redis via `getLabels()` (e.g. *"Memory Doctor"*, *"Run Info"*).
 | Capability | Value |
 |------------|-------|
 | `queryLanguage` | `json` |
+| `queryDialect` | `redis` — routes the client-side query generators to Redis command output and types the editor tab `redis` (see 5.3). Checked before `queryLanguage`, which says only "not SQL" and by itself meant MongoDB (#427) |
 | `supportsExplain` | `false` |
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
@@ -328,8 +505,22 @@ refresh — i.e. commands that add or remove keys.
 ### `getLabels()` ([`redis.ts:70`](../../src/lib/db/providers/keyvalue/redis.ts))
 
 The label map relabels the generic schema-explorer UI for key-value semantics: entity → *"Key
-Pattern"*, row → *"key"*, select → *"Scan Keys"*, analyze → *"Key Info"*, vacuum → *"Memory
-Doctor"*, search placeholder → *"Search keys…"*, etc.
+Pattern"*, row → *"key"*, select → *"Scan Keys"*, generate → *"Generate Command"*, analyze → *"Key
+Info"*, search placeholder → *"Search keys…"*, etc. `analyzeAction` (*"Key Info"*) is declared but
+no longer reaches the schema explorer's per-row menu, which offers no maintenance here at all
+(§5.3); it stays because it is the correct wording the moment a per-row target exists.
+
+The labels rename actions that behave differently here, not generic ones wearing Redis names:
+*"Scan Keys"* really emits `SCAN`, and *"Generate Command"* really emits Redis commands (§5.3).
+That was not true before #427, when both emitted MongoDB documents under these labels.
+
+`analyzeGlobalLabel` / `analyzeGlobalTitle` / `analyzeGlobalDesc` (*"Run Info"*, *"Server Info"*,
+*"Get Redis server information and statistics."*) are rendered by the admin Operations tab. The
+`vacuumAction` / `vacuumGlobal*` fields (*"Memory Doctor"*, *"Memory Analysis"*) are still declared
+but reach no screen: the admin Operations tab's vacuum card and per-table button are gated on
+`maintenanceOperations` containing `vacuum`, which this provider does not list (§8 — that gate is
+#282 and unchanged here), and the schema explorer's row item is hidden because the rows are derived
+groupings (§5.3). They stay so the map is complete if a vacuum-shaped operation is ever added.
 
 ---
 
@@ -442,6 +633,14 @@ request/response contract.
   Redis ACL / user role, not the provider.
 - **Binary values** are stringified via `String(...)`; non-UTF8 binary payloads may not render
   faithfully in the grid.
+- **The plain-command tokenizer has no escape syntax.** Quotes group an argument but cannot be
+  escaped inside one, so a key or value containing a literal `"` or `'` is not expressible in plain
+  form; use the JSON command object for those. The schema-explorer generators detect this and emit
+  the JSON form for the affected line automatically (§5.3), so only hand-typed plain commands are
+  exposed to it.
+- **Non-comment text cannot follow a JSON command.** Comment lines anywhere are dropped, including
+  after a JSON body, but the body itself is parsed whole (§3.4a) — so trailing text that is not a
+  `#` comment joins the block and fails `JSON.parse`.
 - **No column modification in a generated migration.** Since
   [#269](https://github.com/libredb/libredb-studio/issues/269) the schema-diff migration generator
   answers a modified column per dialect; keys are not tables and carry no column definitions, so it

@@ -256,7 +256,8 @@ src/
     │   └── types.ts         # Database types
     ├── agent/               # Agent runtime: run ledger, workflow, tools, policy (docs/AGENT.md)
     ├── llm/                 # LLM provider module
-    ├── editor/              # Monaco completions (SQL + MongoDB)
+    ├── editor/              # Monaco completions (SQL + MongoDB), the tab-type/language ladder,
+    │                       # and the LibreDB + Redis command languages
     ├── schema-diff/         # Diff engine + migration SQL generator
     ├── export/              # The writers behind every "save this to disk": RFC 4180 CSV,
     │                        #   the SQL INSERT/DDL forms, and the one blob-download path

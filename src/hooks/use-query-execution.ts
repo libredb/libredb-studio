@@ -277,12 +277,23 @@ export function useQueryExecution({
         // splits the payload and binds nothing, so the values would be dropped and
         // the statement would run with unbound placeholders. Parameters may only
         // travel to an endpoint that binds them (PR #304 review).
+        //
+        // The splitter is a SQL splitter: it cuts on `;` outside quotes. A dialect
+        // that is not SQL has no such separator, so every cut it makes there is an
+        // invented fragment. Measured on Redis (#427): the generated cheatsheet
+        // carried a `;` inside a `#` comment, so the buffer was split, and the
+        // first "statement" was comments only - the run failed with "No command to
+        // run" and the panel reported a successful empty result. Unknown metadata
+        // keeps the pre-existing behaviour, since only a declared JSON dialect is
+        // known not to be SQL.
+        const dialectIsSql = (metadata?.capabilities.queryLanguage ?? "sql") === "sql";
         const useMultiQuery =
           !isExplain &&
           !isLoadMore &&
           !transactionActive &&
           !isPlaygroundRun &&
           !params &&
+          dialectIsSql &&
           isMultiStatement(queryToExecute);
 
         // Use transaction endpoint if a transaction is active or in playground mode

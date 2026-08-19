@@ -7,7 +7,17 @@ import { logger } from "@/lib/logger";
 
 export interface ProviderMetadata {
   capabilities: ProviderCapabilities;
-  labels: ProviderLabels;
+  /**
+   * Optional because one producer genuinely cannot supply it. `/api/db/provider-meta`
+   * always answers with both, but the embedded shell has no such route: the host
+   * declares each connection's metadata, and `WorkspaceConnection.labels` is
+   * optional there so a host that only knows the capabilities need not restate
+   * fifteen strings (#427). Every consumer already reads labels through `?.` with
+   * its own fallback wording, so this states what was already true rather than
+   * changing any behaviour — and it removes an `as ProviderLabels` cast that was
+   * laundering `undefined` into a field declared required.
+   */
+  labels?: ProviderLabels;
 }
 
 export function useProviderMetadata(connection: DatabaseConnection | null): {

@@ -110,12 +110,34 @@ export function quoteQualifiedName(name: string, capabilities: ProviderCapabilit
 }
 
 /**
- * Resolve a LibreDB schema-tree node name to its command shape. A node is either
- * a `:`-prefix group (e.g. `users:*`, whose rows live under the `users:` prefix)
- * or a bare single key with no colon. The `*` is stripped so the base is the
- * literal prefix used in commands (`users:*` -> `users:`).
+ * Render a schema-tree node name for a `#` comment line. A node name is a real
+ * key/collection name taken from the server, and a Redis key is an arbitrary
+ * byte string — so a name containing a newline used to END the header comment
+ * and turn its own remainder into the first RUNNABLE line of the cheatsheet,
+ * which the provider then executed (`a\nDEL user:1 x` ran `DEL user:1`). The
+ * per-argument defence never engaged, because the injection travelled through
+ * the comment rather than through a command.
+ *
+ * JSON quoting is the fix: it escapes CR, LF and the quote character in one
+ * lossless step, and for an ordinary name it renders exactly the `"name"` the
+ * headers already wrote by hand. Any name entering a comment line must go
+ * through this (#427).
  */
-function libredbGroup(name: string): { isPrefixGroup: boolean; base: string } {
+function commentName(name: string): string {
+  return JSON.stringify(name);
+}
+
+/**
+ * Resolve a key-value schema-tree node name to its command shape. A node is
+ * either a `:`-prefix group (e.g. `users:*`, whose rows live under the `users:`
+ * prefix) or a bare single key with no colon. The `*` is stripped so the base is
+ * the literal prefix used in commands (`users:*` -> `users:`).
+ *
+ * Shared by the LibreDB and Redis branches: both build their tree from the same
+ * `getKeyPrefix` grouping, so a future change to what a prefix node looks like
+ * must not be able to make the two dialects disagree (#427).
+ */
+function prefixGroup(name: string): { isPrefixGroup: boolean; base: string } {
   if (name.endsWith(":*")) return { isPrefixGroup: true, base: name.slice(0, -1) };
   return { isPrefixGroup: false, base: name };
 }
@@ -154,12 +176,141 @@ function libredbExampleValue(columns: ColumnSchema[]): string {
   return `'${JSON.stringify(obj)}'`;
 }
 
-export function generateTableQuery(tableName: string, capabilities: ProviderCapabilities): string {
+/**
+ * Redis key types this generator can produce a read/write command for. `TYPE`
+ * also replies `stream` and `none`; both fall into the unknown bucket, which
+ * emits `TYPE <key>` rather than guessing a reader (#427).
+ */
+type RedisKeyType = "string" | "hash" | "list" | "set" | "zset";
+
+/**
+ * The read and write command each key type gets, with the use-case comment that
+ * introduces it in the generated cheatsheet. A lookup table rather than a
+ * `switch` so every arm is one attributable line.
+ */
+const REDIS_COMMANDS: Record<
+  RedisKeyType,
+  { readComment: string; read: (key: string) => string[]; writeComment: string; write: (key: string) => string[] }
+> = {
+  string: {
+    readComment: "# Read the value",
+    read: (key) => ["GET", key],
+    writeComment: "# Create or update it — this overwrites an existing value",
+    write: (key) => ["SET", key, "example"],
+  },
+  hash: {
+    readComment: "# Read every field of the hash",
+    read: (key) => ["HGETALL", key],
+    writeComment: "# Create or update one field — this overwrites an existing field",
+    write: (key) => ["HSET", key, "field", "example"],
+  },
+  list: {
+    readComment: "# Read the whole list",
+    read: (key) => ["LRANGE", key, "0", "-1"],
+    writeComment: "# Append an element to the list",
+    write: (key) => ["RPUSH", key, "example"],
+  },
+  set: {
+    readComment: "# Read every member",
+    read: (key) => ["SMEMBERS", key],
+    writeComment: "# Add a member to the set",
+    write: (key) => ["SADD", key, "example"],
+  },
+  zset: {
+    readComment: "# Read every member with its score",
+    read: (key) => ["ZRANGE", key, "0", "-1", "WITHSCORES"],
+    writeComment: "# Add a member with a score",
+    write: (key) => ["ZADD", key, "1", "example"],
+  },
+};
+
+/**
+ * Whether an argument survives a round-trip through the provider's plain-command
+ * tokenizer. That tokenizer splits on unquoted whitespace and has NO escape
+ * handling: it toggles quote mode on every `"` or `'` and drops the character.
+ * So `DEL "say"hi""` reaches the driver as the key `sayhi` — a DIFFERENT key —
+ * and a quote inside a MATCH pattern swallows the rest of the line. A backslash
+ * or a newline is treated the same way for safety (#427).
+ */
+function redisPlainSafe(value: string): boolean {
+  return !/["'\\\n]/.test(value);
+}
+
+/**
+ * Render one Redis command in the form the provider can actually run it in.
+ *
+ * Plain form (`SET key value`, quoting an argument that contains whitespace) is
+ * the readable default. When any argument cannot round-trip through the plain
+ * tokenizer, this line — and only this line — is emitted in the lossless JSON
+ * form the provider also accepts, `{"command":"DEL","args":["say\"hi\""]}`.
+ * The two forms mix freely inside one cheatsheet: the provider decides per run,
+ * and every line is run on its own via "Run Selected" (#427).
+ */
+function renderRedisCommand(parts: string[]): string {
+  if (parts.every(redisPlainSafe)) {
+    return parts.map((part) => (/\s/.test(part) ? `"${part}"` : part)).join(" ");
+  }
+  return JSON.stringify({ command: parts[0], args: parts.slice(1) });
+}
+
+/**
+ * Escape Redis glob metacharacters. Applied ONLY to the prefix half of a MATCH
+ * pattern, never to a key argument: a real key `a[b:1` groups to `a[b:*`, and an
+ * unescaped `[` opens a glob class that matches the wrong set. Escaping a key
+ * argument would instead corrupt a literal key that genuinely contains `*` (#427).
+ */
+function escapeGlob(value: string): string {
+  return value.replace(/[\\*?[\]^]/g, "\\$&");
+}
+
+/**
+ * The single Redis key type a schema node's sample resolves to, or `null` for the
+ * unknown bucket. The source is the `type` column's own `type` field, which
+ * `redis.ts` `getSchema()` builds as `types.join(", ")` over the DISTINCT `TYPE`
+ * replies it sampled — it issues `TYPE` for every key of a prefix until it has
+ * seen 3 distinct types (or the 1000-key scan cap ends the walk), so a uniform
+ * prefix costs one blocking round-trip per key and still yields one type — so `"string"` resolves, and `""` (every TYPE call threw) or
+ * `"string, hash"` (a mixed prefix) deliberately do not. The `value` column
+ * carries the same sample joined with `/` and exists for display only (#427).
+ */
+function redisKeyType(columns?: ColumnSchema[]): RedisKeyType | null {
+  const sample = columns?.find((c) => c.name === "type")?.type;
+  const parts = (sample || "")
+    .split(",")
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => part !== "");
+  // Redis TYPE replies are lowercase already; normalising keeps a hand-authored
+  // schema from reading as a silent unknown.
+  if (parts.length !== 1) return null;
+  return parts[0] in REDIS_COMMANDS ? (parts[0] as RedisKeyType) : null;
+}
+
+/** The SCAN command listing a prefix group's keys — the only place a glob is interpreted. */
+function redisScan(base: string): string {
+  return renderRedisCommand(["SCAN", "0", "MATCH", `${escapeGlob(base)}*`, "COUNT", "50"]);
+}
+
+export function generateTableQuery(
+  tableName: string,
+  capabilities: ProviderCapabilities,
+  columns?: ColumnSchema[],
+): string {
   // LibreDB speaks its own command grammar (get/put/delete/prefix/range), not SQL
   // and not MongoDB JSON. "Scan" lists everything under the group's prefix.
   if (capabilities.queryDialect === "libredb") {
-    const { isPrefixGroup, base } = libredbGroup(tableName);
+    const { isPrefixGroup, base } = prefixGroup(tableName);
     return isPrefixGroup ? `prefix ${base}` : `get ${base}`;
+  }
+  // Redis speaks its own command grammar. It must be checked BEFORE the JSON
+  // branch below: it declares `queryLanguage: "json"` too, so it silently got
+  // MongoDB documents its driver answered with HTTP 400 (#427). A prefix group
+  // is not addressable (`tablesAreDerivedGroupings`), so it always SCANs; a bare
+  // key gets the reader its sampled type calls for, or `TYPE` when unknown.
+  if (capabilities.queryDialect === "redis") {
+    const { isPrefixGroup, base } = prefixGroup(tableName);
+    if (isPrefixGroup) return redisScan(base);
+    const keyType = redisKeyType(columns);
+    return renderRedisCommand(keyType ? REDIS_COMMANDS[keyType].read(base) : ["TYPE", base]);
   }
   if (capabilities.queryLanguage === "json") {
     return JSON.stringify({ collection: tableName, operation: "find", filter: {}, options: { limit: 50 } }, null, 2);
@@ -194,9 +345,23 @@ export function generateSelectQuery(
   // (so "Run Selected" on any line works as-is). The provider skips `#` comment
   // and blank lines, so running the whole buffer runs its first real command.
   if (capabilities.queryDialect === "libredb") {
-    const { isPrefixGroup, base } = libredbGroup(tableName);
+    const { isPrefixGroup, base } = prefixGroup(tableName);
     const value = libredbExampleValue(columns);
-    const header = `# LibreDB commands for "${tableName}" — select a line and Run Selected.`;
+    const header = `# LibreDB commands for ${commentName(tableName)} — select a line and Run Selected.`;
+    // A schema-tree node name is a real key name, and LibreDB keys are arbitrary
+    // byte strings. The header is JSON-quoted so a newline in one cannot end it,
+    // but `get`/`put`/`delete` interpolate the name raw, and every LibreDB command
+    // is line-oriented: a key named `x\ndelete billing:2024` would render its own
+    // second half as a runnable `delete billing:2024` line. LibreDB has no lossless
+    // JSON command form to fall back to the way Redis does, so emit no command
+    // line at all and say why (#427).
+    if (/[\r\n]/.test(base)) {
+      return [
+        header,
+        "",
+        "# This key's name contains a newline. LibreDB commands are line-oriented, so no generated line can address it — write the command by hand.",
+      ].join("\n");
+    }
     if (isPrefixGroup) {
       const key = `${base}1`; // a concrete example key (e.g. users:1)
       return [
@@ -227,6 +392,51 @@ export function generateSelectQuery(
       "# Delete it",
       `delete ${base}`,
     ].join("\n");
+  }
+  // Redis: the same cheatsheet shape as LibreDB above — a use-case comment over
+  // each command, every command line runnable on its own via "Run Selected". The
+  // provider skips `#` and blank lines, so running the whole buffer runs its
+  // first real command. A group name never appears as a key argument: Redis key
+  // arguments are literal byte strings, so `DEL user:*` would delete nothing (or
+  // the wrong thing) rather than the group (#427).
+  if (capabilities.queryDialect === "redis") {
+    const { isPrefixGroup, base } = prefixGroup(tableName);
+    const key = isPrefixGroup ? `${base}1` : base;
+    const keyType = redisKeyType(columns);
+    const lines = [`# Redis commands for ${commentName(tableName)} — select a line and Run Selected.`, ""];
+    if (isPrefixGroup) {
+      // SCAN is a cursor step, not a listing: one call returns one page and the
+      // next cursor, and on a large keyspace the first page can be EMPTY with a
+      // non-zero cursor. A one-line command cannot loop, so say how to continue
+      // rather than pretend the first reply is the whole answer (#427).
+      lines.push(
+        "# List keys under this prefix — ONE scan iteration, not the whole set.",
+        "# 0 is the start cursor; the reply's first row is the next cursor. Re-run",
+        "# with that value in place of 0 until it comes back 0 (a page may be empty).",
+        redisScan(base),
+        "",
+      );
+    }
+    lines.push("# Check the key's type", renderRedisCommand(["TYPE", key]), "");
+    if (keyType) {
+      const commands = REDIS_COMMANDS[keyType];
+      lines.push(
+        commands.readComment,
+        renderRedisCommand(commands.read(key)),
+        "",
+        commands.writeComment,
+        renderRedisCommand(commands.write(key)),
+        "",
+      );
+    }
+    lines.push(
+      "# Time to live in seconds (-1 no expiry, -2 no such key)",
+      renderRedisCommand(["TTL", key]),
+      "",
+      "# Delete the key (DEL takes a literal key name, never a pattern)",
+      renderRedisCommand(["DEL", key]),
+    );
+    return lines.join("\n");
   }
   if (capabilities.queryLanguage === "json") {
     const projection: Record<string, number> = {};

@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useMemo } from "react";
 import type { DatabaseConnection, TableSchema, QueryTab } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
+import { resolveTabType } from "@/lib/editor/tab-language";
 import { logger } from "@/lib/logger";
 import { newLocalId } from "@/lib/ids";
 
@@ -148,8 +149,6 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
 
   const addTab = useCallback(() => {
     const newId = newLocalId();
-    const queryLanguage = metadata?.capabilities.queryLanguage;
-    const queryDialect = metadata?.capabilities.queryDialect;
     setTabs((prev) => [
       ...prev,
       {
@@ -158,7 +157,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
         query: "",
         result: null,
         isExecuting: false,
-        type: queryDialect === "libredb" ? "libredb" : queryLanguage === "json" ? "mongodb" : "sql",
+        type: resolveTabType(metadata?.capabilities),
       },
     ]);
     setActiveTabId(newId);
@@ -183,8 +182,13 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
   const handleTableClick = useCallback(
     (tableName: string, executeQueryFn: (query: string, tabId: string) => void) => {
       const capabilities = metadata?.capabilities;
+      // Look the table up exactly as handleGenerateSelect does: the Redis
+      // generator is type-aware, and the sampled key type lives on the schema
+      // node's `type` column (#427).
+      const table = schema.find((t) => t.name === tableName);
+      const columns = table?.columns || [];
       const newQuery = capabilities
-        ? generateTableQuery(tableName, capabilities)
+        ? generateTableQuery(tableName, capabilities, columns)
         : `SELECT * FROM ${tableName} LIMIT 50;`;
 
       const newId = newLocalId();
@@ -194,18 +198,13 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
         query: newQuery,
         result: null,
         isExecuting: false,
-        type:
-          capabilities?.queryDialect === "libredb"
-            ? "libredb"
-            : capabilities?.queryLanguage === "json"
-              ? "mongodb"
-              : "sql",
+        type: resolveTabType(capabilities),
       };
       setTabs((prev) => [...prev, newTab]);
       setActiveTabId(newId);
       setTimeout(() => executeQueryFn(newQuery, newId), 100);
     },
-    [metadata],
+    [metadata, schema],
   );
 
   const handleGenerateSelect = useCallback(
@@ -218,12 +217,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
         ? generateSelectQuery(tableName, columns, capabilities)
         : `SELECT\n${columns.map((c) => `  ${c.name}`).join(",\n") || "  *"}\nFROM ${tableName}\nWHERE 1=1\nLIMIT 100;`;
 
-      const tabType: "sql" | "mongodb" | "redis" | "libredb" =
-        capabilities?.queryDialect === "libredb"
-          ? "libredb"
-          : capabilities?.queryLanguage === "json"
-            ? "mongodb"
-            : "sql";
+      const tabType = resolveTabType(capabilities);
 
       const newId = newLocalId();
       setTabs((prev) => [

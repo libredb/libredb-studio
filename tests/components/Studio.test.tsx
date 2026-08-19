@@ -1262,6 +1262,19 @@ describe("Studio", () => {
     expect(result[0].type).toBe("sql");
   });
 
+  test("connection-change effect retypes tabs to redis when the provider declares that dialect (#427)", () => {
+    // Redis declares queryLanguage "json"; before #427 the json rung matched
+    // first and the redis arm below it was unreachable dead code.
+    connMgrOverride = { activeConnection: pgConn };
+    capabilitiesOverride = { queryLanguage: "json", queryDialect: "redis" };
+    render(<Studio />);
+    const updater = (mockSetTabs.mock.calls[0] as unknown[])[0] as (prev: unknown[]) => Array<{ type: string }>;
+    const result = updater([
+      { id: "tab-1", name: "Query 1", query: "GET k", result: null, isExecuting: false, type: "sql" },
+    ]);
+    expect(result[0].type).toBe("redis");
+  });
+
   // --- exportResults sql-ddl type mapping ---
   test("exportResults sql-ddl maps boolean and date sample values", async () => {
     tabMgrOverride = {

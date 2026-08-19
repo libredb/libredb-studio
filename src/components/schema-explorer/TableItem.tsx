@@ -39,6 +39,7 @@ interface TableItemProps {
   isExpanded: boolean;
   onToggle: () => void;
   labels?: ProviderMetadata["labels"];
+  capabilities?: ProviderMetadata["capabilities"];
   isAdmin: boolean;
   onTableClick?: (tableName: string) => void;
   onGenerateSelect?: (tableName: string) => void;
@@ -56,12 +57,20 @@ type TableItemCallbacks = Pick<
 function renderMenuItems(
   table: TableSchema,
   labels: TableItemProps["labels"],
+  capabilities: TableItemProps["capabilities"],
   isAdmin: boolean,
   callbacks: TableItemCallbacks,
   copyToClipboard: (text: string, label: string) => void,
   Item: React.ComponentType<{ onClick?: () => void; children: React.ReactNode }>,
   Separator: React.ComponentType,
 ): React.ReactNode {
+  // Rows that are derived groupings are not addressable objects: a Redis `user:*`
+  // row is this server's summary of a key prefix, so profiling it and inserting
+  // rows into it have no target and the provider answers 400 (#427). Gate on the
+  // declared capability, never on connection.type. Absent capabilities read as
+  // "ordinary objects", matching the flag's own docblock.
+  const rowsAreAddressable = capabilities?.tablesAreDerivedGroupings !== true;
+
   return (
     <>
       <Item onClick={() => callbacks.onTableClick?.(table.name)}>
@@ -76,20 +85,31 @@ function renderMenuItems(
         <Copy strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
         {"Copy Name"}
       </Item>
+      {/* Generate Code stays visible everywhere — it names the row, it does not
+          address it — so this separator is unconditional (#427). */}
       <Separator />
-      <Item onClick={() => callbacks.onProfileTable?.(table.name)}>
-        <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-cyan-500" />
-        {"Profile Table"}
-      </Item>
+      {rowsAreAddressable && (
+        <Item onClick={() => callbacks.onProfileTable?.(table.name)}>
+          <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-cyan-500" />
+          {"Profile Table"}
+        </Item>
+      )}
       <Item onClick={() => callbacks.onGenerateCode?.(table.name)}>
         <Code strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-purple-500" />
         {"Generate Code"}
       </Item>
-      <Item onClick={() => callbacks.onGenerateTestData?.(table.name)}>
-        <Wand2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-amber-500" />
-        {"Generate Test Data"}
-      </Item>
-      {isAdmin && (
+      {rowsAreAddressable && (
+        <Item onClick={() => callbacks.onGenerateTestData?.(table.name)}>
+          <Wand2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-amber-500" />
+          {"Generate Test Data"}
+        </Item>
+      )}
+      {/* A PER-ROW maintenance action needs an addressable row: both items call
+          `onOpenMaintenance("tables", table.name)`, and for a derived grouping
+          there is no such object to name — which is exactly the dead end #427
+          reported for Redis "Key Info". Global maintenance is unaffected: it lives
+          on the admin Operations page and still runs there. */}
+      {isAdmin && rowsAreAddressable && (
         <>
           <Separator />
           <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.name)}>
@@ -111,6 +131,7 @@ export const TableItem = React.memo(function TableItem({
   isExpanded,
   onToggle,
   labels,
+  capabilities,
   isAdmin,
   onTableClick,
   onGenerateSelect,
@@ -192,6 +213,7 @@ export const TableItem = React.memo(function TableItem({
                   {renderMenuItems(
                     table,
                     labels,
+                    capabilities,
                     isAdmin,
                     callbacks,
                     copyToClipboard,
@@ -204,7 +226,16 @@ export const TableItem = React.memo(function TableItem({
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-48">
-          {renderMenuItems(table, labels, isAdmin, callbacks, copyToClipboard, ContextMenuItem, ContextMenuSeparator)}
+          {renderMenuItems(
+            table,
+            labels,
+            capabilities,
+            isAdmin,
+            callbacks,
+            copyToClipboard,
+            ContextMenuItem,
+            ContextMenuSeparator,
+          )}
         </ContextMenuContent>
       </ContextMenu>
 

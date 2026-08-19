@@ -20,6 +20,7 @@ import { type StudioWorkspaceProps, DEFAULT_WORKSPACE_FEATURES } from "@/workspa
 import { cn } from "@/lib/utils";
 import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
 import { lazyRetry } from "@/lib/lazy";
+import { editorLanguageForTabType } from "@/lib/editor/tab-language";
 import { buildResultExport, type ResultExportFormat } from "@/lib/export/result-export";
 import { downloadText } from "@/lib/export/download";
 
@@ -183,7 +184,7 @@ export function StudioWorkspace({
   // 2. Tab Manager (pure UI state, reused as-is)
   const tabMgr = useTabManager({
     activeConnection: conn.activeConnection,
-    metadata: null,
+    metadata: conn.metadata,
     schema: conn.schema,
   });
 
@@ -307,7 +308,7 @@ export function StudioWorkspace({
             isAdmin={false}
             onOpenMaintenance={noop}
             databaseType={conn.activeConnection?.type}
-            metadata={null}
+            metadata={conn.metadata}
             onProfileTable={features.codeGenerator ? (name: string) => setProfilerTable(name) : undefined}
             onGenerateCode={features.codeGenerator ? (name: string) => setCodeGenTable(name) : undefined}
             onGenerateTestData={features.testDataGenerator ? (name: string) => setTestDataTable(name) : undefined}
@@ -359,7 +360,7 @@ export function StudioWorkspace({
                       <div className="h-full flex flex-col">
                         <QueryToolbar
                           activeConnection={conn.activeConnection}
-                          metadata={null}
+                          metadata={conn.metadata}
                           isExecuting={tabMgr.currentTab.isExecuting}
                           playgroundMode={false}
                           transactionActive={false}
@@ -367,12 +368,21 @@ export function StudioWorkspace({
                           onSaveQuery={onSaveQueryProp ? () => setIsSaveQueryModalOpen(true) : noop}
                           onExecuteQuery={() => queryExec.executeQuery()}
                           onCancelQuery={queryExec.cancelQuery}
-                          onBeginTransaction={noop}
-                          onCommitTransaction={noop}
-                          onRollbackTransaction={noop}
-                          onTogglePlayground={noop}
-                          onToggleEditing={noop}
-                          onImport={features.dataImport ? () => setIsImportModalOpen(true) : noop}
+                          // Withheld, not `noop`: this shell runs no transaction,
+                          // no sandbox and no inline editing — `transactionActive`
+                          // and `editingEnabled` are hardcoded false above and
+                          // nothing here can change them. While it passed
+                          // `metadata={null}` the group never rendered and `noop`
+                          // was invisible; passing the host's real metadata (#427)
+                          // would have put three dead buttons on any host that
+                          // declares `queryLanguage: "sql"`, with no disabled state
+                          // and no tooltip. A withheld callback hides its control.
+                          onBeginTransaction={undefined}
+                          onCommitTransaction={undefined}
+                          onRollbackTransaction={undefined}
+                          onTogglePlayground={undefined}
+                          onToggleEditing={undefined}
+                          onImport={features.dataImport ? () => setIsImportModalOpen(true) : undefined}
                         />
 
                         <div className="flex-1 relative min-h-0">
@@ -380,15 +390,9 @@ export function StudioWorkspace({
                             ref={queryEditorRef}
                             value={tabMgr.currentTab.query}
                             onContentChange={(val) => tabMgr.updateTabById(tabMgr.currentTab.id, { query: val })}
-                            language={
-                              tabMgr.currentTab.type === "libredb"
-                                ? "libredb"
-                                : tabMgr.currentTab.type === "mongodb"
-                                  ? "json"
-                                  : "sql"
-                            }
+                            language={editorLanguageForTabType(tabMgr.currentTab.type)}
                             schemaContext={conn.schemaContext}
-                            capabilities={undefined}
+                            capabilities={conn.metadata?.capabilities}
                           />
                         </div>
                       </div>
@@ -402,7 +406,7 @@ export function StudioWorkspace({
                         schema={conn.schema}
                         schemaContext={conn.schemaContext}
                         activeConnection={conn.activeConnection}
-                        metadata={null}
+                        metadata={conn.metadata}
                         historyKey={queryExec.historyKey}
                         savedKey={savedKey}
                         maskingEnabled={false}

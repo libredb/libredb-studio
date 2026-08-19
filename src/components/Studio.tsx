@@ -25,6 +25,7 @@ import { AgentRail } from "@/components/agent/AgentRail";
 import { DatabaseConnection, SavedQuery } from "@/lib/types";
 import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
 import { lazyRetry } from "@/lib/lazy";
+import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
 import { buildResultExport, type ResultExportFormat } from "@/lib/export/result-export";
 import { downloadText } from "@/lib/export/download";
 import { newLocalId } from "@/lib/ids";
@@ -147,14 +148,7 @@ export default function Studio() {
       editing.setEditingEnabled(false);
       editing.handleDiscardChanges();
       conn.fetchSchema(conn.activeConnection);
-      const tabType =
-        metadata?.capabilities.queryDialect === "libredb"
-          ? "libredb"
-          : metadata?.capabilities.queryLanguage === "json"
-            ? "mongodb"
-            : conn.activeConnection.type === "redis"
-              ? "redis"
-              : "sql";
+      const tabType = resolveTabType(metadata?.capabilities);
       tabMgr.setTabs((prev) =>
         prev.map((t) => {
           return {
@@ -580,13 +574,7 @@ export default function Studio() {
                                 ? () => queryExec.executeQuery(undefined, undefined, true)
                                 : undefined
                             }
-                            language={
-                              tabMgr.currentTab.type === "libredb"
-                                ? "libredb"
-                                : tabMgr.currentTab.type === "mongodb"
-                                  ? "json"
-                                  : "sql"
-                            }
+                            language={editorLanguageForTabType(tabMgr.currentTab.type)}
                             schemaContext={conn.schemaContext}
                             capabilities={metadata?.capabilities}
                           />

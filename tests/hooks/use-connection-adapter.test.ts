@@ -291,4 +291,77 @@ describe("useConnectionAdapter", () => {
 
     expect(result.current.connectionPulse).toBeNull();
   });
+
+  // ── Provider metadata (#427) ───────────────────────────────────────────
+
+  describe("provider metadata", () => {
+    const redisCapabilities = {
+      queryLanguage: "json",
+      queryDialect: "redis",
+      tablesAreDerivedGroupings: true,
+      supportsMaintenance: true,
+      maintenanceOperations: ["analyze"],
+    } as unknown as NonNullable<WorkspaceConnection["capabilities"]>;
+
+    test("is null when the host declares no capabilities", () => {
+      const connections = [makeWorkspaceConnection({ id: "c1" })];
+      const onSchemaFetch = mock(() => Promise.resolve([]));
+
+      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+
+      expect(result.current.metadata).toBeNull();
+    });
+
+    test("reports the active connection's declared capabilities", () => {
+      const connections = [
+        makeWorkspaceConnection({ id: "c1", type: "redis", capabilities: redisCapabilities }),
+        makeWorkspaceConnection({ id: "c2" }),
+      ];
+      const onSchemaFetch = mock(() => Promise.resolve([]));
+
+      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+
+      expect(result.current.metadata?.capabilities.queryDialect).toBe("redis");
+    });
+
+    test("follows the active connection when it changes", () => {
+      const connections = [
+        makeWorkspaceConnection({ id: "c1", type: "redis", capabilities: redisCapabilities }),
+        makeWorkspaceConnection({ id: "c2" }),
+      ];
+      const onSchemaFetch = mock(() => Promise.resolve([]));
+
+      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+
+      act(() => {
+        result.current.setActiveConnection(result.current.connections[1]);
+      });
+
+      expect(result.current.metadata).toBeNull();
+    });
+
+    test("passes the host's labels through when it declares them", () => {
+      const labels = { vacuumAction: "Memory Doctor" } as unknown as NonNullable<WorkspaceConnection["labels"]>;
+      const connections = [
+        makeWorkspaceConnection({ id: "c1", type: "redis", capabilities: redisCapabilities, labels }),
+      ];
+      const onSchemaFetch = mock(() => Promise.resolve([]));
+
+      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+
+      expect(result.current.metadata?.labels?.vacuumAction).toBe("Memory Doctor");
+    });
+
+    // `ProviderMetadata.labels` is optional precisely so this case needs no cast:
+    // a host that knows only the capabilities leaves the wording to studio's own
+    // fallbacks, and every consumer reads labels through `?.` (#427).
+    test("leaves labels absent when the host declares only capabilities", () => {
+      const connections = [makeWorkspaceConnection({ id: "c1", type: "redis", capabilities: redisCapabilities })];
+      const onSchemaFetch = mock(() => Promise.resolve([]));
+
+      const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+
+      expect(result.current.metadata?.labels).toBeUndefined();
+    });
+  });
 });
