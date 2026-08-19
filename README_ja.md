@@ -31,7 +31,7 @@
 
 ```bash
 # Docker（推奨）
-docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest
+docker run -p 3000:3000 ghcr.io/libredb/libredb-studio:latest
 
 # または Node.js 24+ で（Dockerなし）
 npx @libredb/studio
@@ -188,7 +188,7 @@ StudioのAIの中心は、エディタの隣にあるエージェントレール
 
 | 方法 | コマンド |
 | :--- | :--- |
-| **Docker** | `docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest` |
+| **Docker** | `docker run -p 3000:3000 ghcr.io/libredb/libredb-studio:latest` |
 | **npx** | `npx @libredb/studio` |
 | **Helm** | `helm install libredb oci://ghcr.io/libredb/charts/libredb-studio` |
 | **Homebrew** | `brew trust libredb/tap && brew install libredb/tap/libredb-studio` |

@@ -27,7 +27,7 @@ Query **PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB and Redis** from 
 ## Quick start
 
 ```bash
-docker run -d \
+docker run \
   --name libredb-studio \
   -p 3000:3000 \
   -e ADMIN_EMAIL=admin@libredb.org \

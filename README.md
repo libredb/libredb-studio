@@ -50,7 +50,7 @@ Run a full SQL IDE in one command — no clone, no build:
 
 ```bash
 # Docker (recommended)
-docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest
+docker run -p 3000:3000 ghcr.io/libredb/libredb-studio:latest
 
 # or with Node.js 24+ (no Docker)
 npx @libredb/studio
@@ -281,7 +281,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 
   | Channel | Command | Notes |
   | :--- | :--- | :--- |
-  | **Docker** | `docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest` | Zero-config: the admin password is printed to the log on first run |
+  | **Docker** | `docker run -p 3000:3000 ghcr.io/libredb/libredb-studio:latest` | Zero-config: the admin password is printed to the log on first run |
   | **Helm (Kubernetes)** | `helm install libredb oci://ghcr.io/libredb/charts/libredb-studio` | Zero-config: first-run admin credentials are printed to the pod log |
   | **npx** | `npx @libredb/studio` | Linux/macOS/Windows, Node 24+ (24 LTS is the reference runtime); downloads the release server archive |
   | **Homebrew** | `brew trust libredb/tap && brew install libredb/tap/libredb-studio` | `brew trust` is required once (Homebrew 6+; run `brew update` if unknown) |
@@ -301,7 +301,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
   Run LibreDB Studio with a single command — no clone, no install, no build:
 
 ```bash
-docker run -d \
+docker run \
   --name libredb-studio \
   -p 3000:3000 \
   -e ADMIN_EMAIL=admin@libredb.org \

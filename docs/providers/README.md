@@ -164,7 +164,7 @@ named in the [Wire-compatible engines](#wire-compatible-engines) table above.
 
 Every `Host` in the table above is written for a Studio that runs **on the host** — `bun dev`,
 `bun run start`, or the npm package. Inside a container, `localhost` is that container's own loopback
-and nothing is listening on it: a plain `docker run -p 3000:3000 ghcr.io/libredb/libredb-studio` reaches
+and nothing is listening on it: a plain `docker run -p 3000:3000 libredb/libredb-studio` reaches
 none of these services (measured — `curl localhost:9200` from an unrelated container answers no HTTP
 status at all, not a refusal you could mistake for a credential problem).
 

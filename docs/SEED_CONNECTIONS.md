@@ -276,7 +276,7 @@ In Kubernetes, ConfigMap updates propagate in ~60-120s (kubelet sync period). Co
 ### Docker
 
 ```bash
-docker run -d \
+docker run \
   -v ./seed-connections.yaml:/app/config/seed-connections.yaml:ro \
   -e SEED_CONFIG_PATH=/app/config/seed-connections.yaml \
   -e PG_PASSWORD=secret \

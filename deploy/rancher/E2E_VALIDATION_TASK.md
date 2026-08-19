@@ -148,7 +148,7 @@ Check and record:
    Kubernetes versions once the local cluster is up).
 2. Start:
    ```bash
-   docker run -d --name rancher-e2e --restart=unless-stopped --privileged \
+   docker run --name rancher-e2e --restart=unless-stopped --privileged \
      -p <HTTP_PORT>:80 -p <HTTPS_PORT>:443 rancher/rancher:stable
    ```
 3. Wait for readiness (poll `https://localhost:<HTTPS_PORT>/ping` with `curl -sk`,

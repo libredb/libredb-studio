@@ -150,7 +150,7 @@ Download URL pattern:
 
 ```bash
 # Zero-config: the first run prints the generated admin password to the log
-docker run -d --name libredb-studio -p 3000:3000 \
+docker run --name libredb-studio -p 3000:3000 \
   -v libredb-data:/app/data \
   ghcr.io/libredb/libredb-studio:latest
 
@@ -163,7 +163,7 @@ without it, a recreated container generates new credentials.
 Production (strict mode, explicit secrets):
 
 ```bash
-docker run -d --name libredb-studio -p 3000:3000 \
+docker run --name libredb-studio -p 3000:3000 \
   -e AUTH_BOOTSTRAP=off \
   -e JWT_SECRET=change-me-to-a-random-32-char-string \
   -e ADMIN_EMAIL=admin@libredb.org \

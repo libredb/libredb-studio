@@ -31,7 +31,7 @@
 
 ```bash
 # Docker（推荐）
-docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest
+docker run -p 3000:3000 ghcr.io/libredb/libredb-studio:latest
 
 # 或者用 Node.js 24+（不装 Docker）
 npx @libredb/studio
@@ -181,7 +181,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 
 | 方式 | 命令 |
 | :--- | :--- |
-| **Docker** | `docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest` |
+| **Docker** | `docker run -p 3000:3000 ghcr.io/libredb/libredb-studio:latest` |
 | **npx** | `npx @libredb/studio` |
 | **Helm** | `helm install libredb oci://ghcr.io/libredb/charts/libredb-studio` |
 | **Homebrew** | `brew trust libredb/tap && brew install libredb/tap/libredb-studio` |

@@ -179,7 +179,7 @@ Recommended for production, teams, and high-availability deployments.
 
 ```bash
 # Start a PostgreSQL instance (if you don't have one)
-docker run -d --name libredb-pg \
+docker run --name libredb-pg \
   -e POSTGRES_DB=libredb \
   -e POSTGRES_USER=libredb \
   -e POSTGRES_PASSWORD=secret \
