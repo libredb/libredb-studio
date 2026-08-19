@@ -2647,3 +2647,20 @@ Done when either the image can pick its family without that failure mode — an 
 a path that currently has none — or the decision is closed as permanent and this entry is deleted.
 The alternative that needs no code is to leave the default and keep the opt-in documented, which is
 what ships today.
+
+### U16. release-artifacts.yml's Playwright installs lost `--with-deps` without a live run to prove it
+
+The deb/rpm/snap channel E2Es in `release-artifacts.yml` now run `bunx playwright install chromium`
+instead of `--with-deps chromium`, the same edit made in `docker-build-push.yml`. The reasoning is
+identical and the evidence is real - `ubuntu-latest` ships Google Chrome, so chromium's shared
+libraries are already present, and `playwright.channel.config.ts` is a chromium-only project list
+that never resolves the webkit project which is what actually needs extra packages.
+
+What is missing is a live run. `release-artifacts.yml` triggers only on a tag, so neither a PR nor a
+branch push exercises it; the ci.yml and docker-build-push.yml edits were both verified by real runs
+on the branch, and this one was not. If chromium fails to launch there, the failure surfaces as a red
+channel E2E during a release rather than before it - `run_playwright` calls `playwright test`
+directly, so it fails loudly rather than skipping, but it fails at the worst moment.
+
+Done when the next release's channel E2Es pass on deb, rpm and snap, and this entry is deleted - or
+they fail and `--with-deps` comes back for those three jobs only.

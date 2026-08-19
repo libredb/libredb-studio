@@ -16,6 +16,7 @@ jobs:
   lint-and-build:
     name: Lint, Typecheck and Build
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - name: Checkout code
@@ -115,6 +116,7 @@ jobs:
   test:
     name: Unit & Integration Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - name: Checkout code
@@ -166,15 +168,32 @@ jobs:
     name: E2E Tests
     needs: [lint-and-build]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Runs INSIDE Playwright's own image so `playwright install` never touches
+    # apt. `--with-deps` used to pull ~111 MB of system libraries from
+    # azure.archive.ubuntu.com on every run; when that mirror degrades - as it
+    # did on 2026-08-18/19, down to 21.8 kB/s - the step took 86 minutes and
+    # twice ran into the 6-hour job default, against 12 seconds of actual
+    # browser download and 3 minutes of actual tests. The image ships those
+    # libraries prebuilt, so the apt path is removed rather than retried.
+    # The tag MUST track @playwright/test in package.json: a mismatch only
+    # costs a re-download into PLAYWRIGHT_BROWSERS_PATH (the install step below
+    # is the fail-safe), never a broken job.
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
 
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
+      # oven-sh/setup-bun is not usable inside the Playwright image: it
+      # extracts bun from a .zip via @actions/tool-cache, which shells out to
+      # `unzip` - a binary this image does not ship, and installing it would
+      # put apt back on the critical path, which is the whole point of moving
+      # here. npm resolves bun through platform tarballs instead, so it needs
+      # no unzip. Keep the version in step with the setup-bun pins elsewhere.
       - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: "1.3.14"
+        run: npm install -g bun@1.3.14
 
       - name: Install dependencies
         uses: ./.github/actions/bun-install
@@ -189,7 +208,10 @@ jobs:
         # --config=playwright.channel.config.ts - a chromium-only project
         # list that never resolves the webkit-security project - so they stay
         # chromium-only on purpose.
-        run: bunx playwright install --with-deps chromium webkit
+        # No --with-deps: the container image already carries the system
+        # libraries. This step is now only a fail-safe for a tag/package
+        # version drift, and is a no-op when they agree.
+        run: bunx playwright install chromium webkit
 
       - name: Run E2E tests
         run: bunx playwright test
@@ -214,6 +236,7 @@ jobs:
   engine-payload:
     name: Engine Smoke - Build Payload
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -252,6 +275,7 @@ jobs:
     name: Engine Smoke (Node ${{ matrix.node-version }})
     needs: [engine-payload]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -292,25 +316,31 @@ jobs:
     name: Channel E2E (tarball + npx)
     needs: [engine-payload]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Same Playwright image as the e2e job above, for the same reason (no apt
+    # on the critical path). Safe here because the tarball and npx channels
+    # only need node + bun; the docker/deb/rpm/snap channels elsewhere need a
+    # daemon or a package manager and therefore stay on the bare runner.
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "24"
+      # No actions/setup-node: the Playwright image already ships Node 24
+      # (24.18.1 at v1.62.1-noble), and setup-node would unpack a Node tarball
+      # with `xz`, which this image does not ship either.
 
+      # npm rather than oven-sh/setup-bun - see the e2e job's note on unzip.
       - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: "1.3.14"
+        run: npm install -g bun@1.3.14
 
       - name: Install dependencies
         uses: ./.github/actions/bun-install
 
       - name: Install Playwright browsers
-        run: bunx playwright install --with-deps chromium
+        # Fail-safe only - see the e2e job's note on the container image.
+        run: bunx playwright install chromium
 
       - name: Download payload artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -327,6 +357,7 @@ jobs:
   helm-lint:
     name: Helm Chart Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -449,6 +480,7 @@ jobs:
       && (github.event.pull_request.head.repo.full_name == github.repository
         || github.event_name == 'push')
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
