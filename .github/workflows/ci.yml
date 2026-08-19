@@ -214,7 +214,13 @@ jobs:
         run: bunx playwright install chromium webkit
 
       - name: Run E2E tests
-        run: bunx playwright test
+        # --grep-invert: e2e/functional-smoke.spec.ts needs a Docker daemon,
+        # which a container job does not have. It has its own job below. Being
+        # explicit matters: the spec's own `test.skip(!dockerAvailable())` would
+        # let it vanish silently here (it did - PR #435 turned 0 skipped into 1
+        # skipped with CI still green), and a test that disappears without
+        # saying so is worse than one that is openly not run.
+        run: bunx playwright test --grep-invert "Functional smoke"
         env:
           JWT_SECRET: test-secret-for-ci-build-only-32ch
           ADMIN_EMAIL: admin@libredb.org
@@ -227,6 +233,54 @@ jobs:
         if: always()
         with:
           name: playwright-report
+          path: playwright-report/
+
+  # The product's reason to exist, end to end: boot the app, create a real
+  # PostgreSQL connection through the modal, run SQL, see rows. Split out of the
+  # e2e job because the spec starts its own throwaway postgres with
+  # `docker run -p 127.0.0.1:54329:5432` - that binds the HOST loopback, and a
+  # container job has its own network namespace and cannot reach it. Keeping
+  # this on the bare runner is what lets the spec stay free of any CI-only
+  # branch, which is the whole point of a test that claims to exercise the real
+  # path.
+  functional-smoke:
+    name: Functional Smoke (PostgreSQL)
+    needs: [lint-and-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Install Playwright browsers
+        # chromium only and no --with-deps: ubuntu-latest ships Google Chrome,
+        # so chromium's shared libraries are already present, and this job runs
+        # no webkit - webkit is the browser that needs the extra packages whose
+        # apt download made these jobs take 86 minutes (PR #435).
+        run: bunx playwright install chromium
+
+      - name: Run functional smoke
+        run: bunx playwright test --project=chromium --grep "Functional smoke"
+        env:
+          JWT_SECRET: test-secret-for-ci-build-only-32ch
+          ADMIN_EMAIL: admin@libredb.org
+          ADMIN_PASSWORD: test-admin
+          USER_EMAIL: user@libredb.org
+          USER_PASSWORD: test-user
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: playwright-report-functional-smoke
           path: playwright-report/
 
   # The engines floor in package.json (>=24.0.0) is a tested claim: build the
