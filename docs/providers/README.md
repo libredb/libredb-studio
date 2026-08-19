@@ -159,3 +159,79 @@ docker compose -f database-compose.yml --profile druid up -d
 
 For the engines that have no provider of their own, use the `compat` profile and connect as the driver
 named in the [Wire-compatible engines](#wire-compatible-engines) table above.
+
+### If Studio itself runs in a container, `localhost` is the wrong host
+
+Every `Host` in the table above is written for a Studio that runs **on the host** — `bun dev`,
+`bun run start`, or the npm package. Inside a container, `localhost` is that container's own loopback
+and nothing is listening on it: a plain `docker run -p 3000:3000 ghcr.io/libredb/libredb-studio` reaches
+none of these services (measured — `curl localhost:9200` from an unrelated container answers no HTTP
+status at all, not a refusal you could mistake for a credential problem).
+
+Pick one of three, in this order of preference.
+
+**1. Join the fixture's network and address services by name.** The best answer, and the only one that
+needs no host ports at all: compose puts every service on `libredb-studio_default` with its service
+name as a DNS name.
+
+```bash
+docker run -p 3000:3000 --network libredb-studio_default libredb/libredb-studio
+```
+
+Then use the **service name** as the host and the **in-container** port — which is not always the port
+in the table above:
+
+| Provider | Host inside the network | Port inside the network |
+|---|---|---|
+| PostgreSQL | `postgres` | 5432 |
+| MySQL | `mysql` | 3306 |
+| Oracle | `oracle` | 1521 |
+| SQL Server | `mssql` | 1433 |
+| MongoDB | `mongodb` | 27017 |
+| Redis | `redis` | 6379 |
+| Couchbase | `couchbase` | 8091 |
+| ClickHouse | `clickhouse` | 8123 |
+| Apache Druid | `druid-router` | 8888 |
+| Elasticsearch | `elasticsearch` | 9200 |
+| OpenSearch | `opensearch` | **9200** |
+
+> **OpenSearch is 9200 here, not 9201.** The 9201 in the table above is a *host* port published to
+> dodge a collision with the `elasticsearch` service. Inside the network there is no collision, so the
+> port is the product's own. Verified: `http://opensearch:9200/` reports distribution `opensearch`,
+> number `3.8.0`.
+>
+> Credentials and database names do not change — only host and port do. And the network exists only
+> once compose has created it, so start the fixture before Studio; the name is
+> `<project>_default`, which is `libredb-studio_default` when compose is run from this repository and
+> `<your-directory>_default` otherwise (`docker network ls` says which).
+
+**2. Reach the published host ports through the host gateway.** Use this when Studio must stay off the
+fixture's network — a container you did not start, or services split across several compose projects.
+On Docker Desktop `host.docker.internal` already resolves; on Linux it does not, and the flag below is
+what creates it:
+
+```bash
+docker run -p 3000:3000 --add-host=host.docker.internal:host-gateway libredb/libredb-studio
+```
+
+Now the table at the top of this section is correct as written, with `host.docker.internal` in place of
+`localhost` — including OpenSearch on **9201**, because these are the published host ports. Verified on
+Linux: 9200 and 9201 both answer HTTP 200 through that name.
+
+**3. `--network host`.** Makes `localhost` mean the host's loopback, so the table applies unchanged:
+
+```bash
+docker run --network host ghcr.io/libredb/libredb-studio
+```
+
+Last because of what it costs: **Linux only** (on Docker Desktop the "host" is the VM, not your
+machine), no `-p` mapping (the app binds the host's port 3000 directly), and the container shares the
+host's whole network namespace, which is a far wider grant than reaching one database.
+
+Whichever you pick, [`docker-compose.yml`](../../docker-compose.yml) in the repository root is the
+shape to copy for a real deployment: Studio and its Postgres sit on one compose network and address
+each other by service name, so nothing depends on a published host port existing.
+
+One collision to know about if you run both files: that root compose file and the fixture both name a
+container `libredb-postgres`, so the second one to start fails with *"container name is already in
+use"*. Rename one, or run only the fixture and point Studio's `STORAGE_*` variables at it.
