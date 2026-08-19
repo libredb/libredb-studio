@@ -234,9 +234,9 @@ export function getPublicOrigin(request: Request): string {
 /**
  * Build the OIDC provider's logout URL.
  * Auth0: /v2/logout?client_id=...&returnTo=...
- * Generic: /protocol/openid-connect/logout?post_logout_redirect_uri=...&client_id=...
+ * Generic: use the discovered end_session_endpoint.
  */
-export function buildLogoutUrl(returnTo: string): string | null {
+export async function buildLogoutUrl(returnTo: string): Promise<string | null> {
   try {
     const config = getOIDCConfig();
     const issuerUrl = new URL(config.issuer);
@@ -258,10 +258,11 @@ export function buildLogoutUrl(returnTo: string): string | null {
       return logoutUrl.toString();
     }
 
-    // Generic OIDC (Keycloak, Okta, Azure AD, etc.) — RP-Initiated Logout
-    const logoutUrl = new URL("/protocol/openid-connect/logout", config.issuer);
-    logoutUrl.searchParams.set("client_id", config.clientId);
-    logoutUrl.searchParams.set("post_logout_redirect_uri", returnTo);
+    // Generic OIDC — RP-Initiated Logout via the provider's discovered endpoint
+    const discovered = await discoverProvider(config);
+    const logoutUrl = client.buildEndSessionUrl(discovered, {
+      post_logout_redirect_uri: returnTo,
+    });
     return logoutUrl.toString();
   } catch (error) {
     logger.warn("Failed to build OIDC logout URL", {

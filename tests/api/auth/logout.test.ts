@@ -13,7 +13,7 @@ mock.module("@/lib/auth", () => ({
 }));
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const mockBuildLogoutUrl = mock((_returnTo: string) => null as string | null);
+const mockBuildLogoutUrl = mock(async (_returnTo: string) => null as string | null);
 
 const mockGetPublicOrigin = mock((req: Request) => new URL(req.url).origin);
 
@@ -114,7 +114,7 @@ describe("POST /api/auth/logout (oidc)", () => {
   });
 
   test("returns redirectUrl when OIDC logout URL is available", async () => {
-    mockBuildLogoutUrl.mockReturnValue(
+    mockBuildLogoutUrl.mockResolvedValue(
       "https://auth0.com/v2/logout?client_id=abc&returnTo=http://localhost:3000/login",
     );
 
@@ -127,7 +127,7 @@ describe("POST /api/auth/logout (oidc)", () => {
   });
 
   test("calls buildLogoutUrl with correct returnTo", async () => {
-    mockBuildLogoutUrl.mockReturnValue("https://auth0.com/v2/logout");
+    mockBuildLogoutUrl.mockResolvedValue("https://auth0.com/v2/logout");
 
     await POST(makeRequest("http://localhost:3000/api/auth/logout") as never);
 
@@ -135,7 +135,7 @@ describe("POST /api/auth/logout (oidc)", () => {
   });
 
   test("returns success without redirectUrl when buildLogoutUrl returns null", async () => {
-    mockBuildLogoutUrl.mockReturnValue(null);
+    mockBuildLogoutUrl.mockResolvedValue(null);
 
     const res = await POST(makeRequest() as never);
     const data = await parseResponseJSON<{ success: boolean; redirectUrl?: string }>(res);
@@ -146,7 +146,7 @@ describe("POST /api/auth/logout (oidc)", () => {
   });
 
   test("calls logout() even in OIDC mode", async () => {
-    mockBuildLogoutUrl.mockReturnValue("https://auth0.com/v2/logout");
+    mockBuildLogoutUrl.mockResolvedValue("https://auth0.com/v2/logout");
 
     await POST(makeRequest() as never);
 
