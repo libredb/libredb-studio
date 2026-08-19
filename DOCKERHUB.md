@@ -20,7 +20,7 @@
 
 > 📖 **Full documentation, source, and issues:** <https://github.com/libredb/libredb-studio>
 
-Query **PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB and Redis** from your browser — with AI-powered query assistance, interactive ER diagrams, schema diff, a virtualized data grid, RBAC, OIDC SSO, and a live monitoring dashboard. A lightweight, secure bridge between heavy desktop tools (DataGrip/DBeaver) and minimal CLIs.
+Query **PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch and OpenSearch** from your browser — with AI-powered query assistance, interactive ER diagrams, schema diff, a virtualized data grid, RBAC, OIDC SSO, and a live monitoring dashboard. A lightweight, secure bridge between heavy desktop tools (DataGrip/DBeaver) and minimal CLIs.
 
 ---
 
@@ -69,6 +69,26 @@ volumes:
 
 A ready-to-use, fully-commented compose file is in the repo: [`docker-compose.example.yml`](https://github.com/libredb/libredb-studio/blob/main/docker-compose.example.yml).
 
+### Reaching your databases from inside the container
+
+**`localhost` in the connection dialog means *this container*, not your machine.** A database on the host, or in another container, is not there — so a connection that works from a terminal fails here, and it fails as a timeout rather than as anything that mentions the host. This is the first thing to check when a container-run Studio cannot connect to a database you know is up.
+
+Pick whichever fits how the database runs:
+
+| Where the database runs | What to put in **Host** | How to start Studio |
+| :--- | :--- | :--- |
+| Another container, same Docker network | the **service or container name** (`postgres`, `my-mysql`) with the port **inside** the container | `docker run -p 3000:3000 --network <that-network> …` |
+| On the host, or a container publishing a host port | `host.docker.internal` | `docker run -p 3000:3000 --add-host=host.docker.internal:host-gateway …` |
+| Anywhere the host can reach (Linux only) | `localhost` works as written | `docker run --network host …` (no `-p`; the app binds the host's port 3000) |
+| A managed service (RDS, Atlas, Neon, …) | its real hostname | nothing special — it is reachable from anywhere |
+
+Two things worth knowing before you pick:
+
+- **The port inside a network is the engine's own, not the one you published.** A compose file that publishes `9201:9200` to dodge a collision on the host is still `9200` between containers, and a Postgres published on `5433` is still `5432` there.
+- **`host.docker.internal` resolves by itself only on Docker Desktop.** On Linux the `--add-host=host.docker.internal:host-gateway` flag above is what creates it.
+
+The network route is the one to prefer for a real deployment: put Studio and its databases on one network, address them by name, and nothing depends on a published port existing. [`docker-compose.yml`](https://github.com/libredb/libredb-studio/blob/main/docker-compose.yml) in the repository is that shape.
+
 ---
 
 ## Image tags
@@ -76,7 +96,7 @@ A ready-to-use, fully-commented compose file is in the repo: [`docker-compose.ex
 | Tag | Pushed from | Use |
 |-----|-------------|-----|
 | `latest` | `main` | Latest stable build |
-| `X.Y.Z` | `main` / release | Pin an exact version, e.g. `docker pull libredb/libredb-studio:0.9.16` (recommended for production) |
+| `X.Y.Z` | `main` / release | Pin an exact version, e.g. `docker pull libredb/libredb-studio:0.12.0` (recommended for production) |
 | `dev` | `feat/**`, `fix/**` branches | Bleeding-edge / preview (`linux/amd64` only) |
 | `sha-<commit>` | every build | Exact immutable commit |
 
@@ -87,15 +107,40 @@ A ready-to-use, fully-commented compose file is in the repo: [`docker-compose.ex
 
 ## Supported databases
 
+Twelve engines share one interface, and three of them are read-only because their own SQL is.
+
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
 | **PostgreSQL** | `pg` | EXPLAIN plans, transactions, query cancellation, SSL/TLS, SSH tunnel |
 | **MySQL** | `mysql2` | EXPLAIN plans, transactions, `KILL QUERY`, SSL/TLS, SSH tunnel |
 | **Oracle** | `oracledb` (thin) | `FETCH FIRST` pagination, `V$` monitoring, `ANALYZE`, transactions |
 | **SQL Server** | `mssql` | `OFFSET FETCH`, `sys.dm_*` DMVs, `DBCC CHECKDB`, Azure SQL auto-detect |
-| **SQLite** | `better-sqlite3` | File-based or in-memory databases |
+| **SQLite** | `bun:sqlite` / `node:sqlite` | File-based or in-memory databases; the driver follows the runtime, with a `LIBREDB_SQLITE_DRIVER` override |
 | **MongoDB** | `mongodb` | JSON query editor, find/aggregate/insert/update/delete |
-| **Redis** | `ioredis` | Command editor, key browser, INFO monitoring |
+| **Redis** | `ioredis` | Command editor, non-blocking `SCAN` key browser, `INFO` monitoring, per-type command generation |
+| **Couchbase** | none — HTTP | SQL++ query editor, bucket/scope/collection browser, cluster health |
+| **ClickHouse** | none — HTTP | Full SQL IDE over the HTTP interface, part/compression sizes, `system.*` monitoring |
+| **Apache Druid** | none — HTTP | Read-only SQL IDE over the SQL endpoint, datasource and segment browser |
+| **Elasticsearch** | none — HTTP | Read-only SQL IDE over `_sql`, mapping-driven index/field explorer, cluster health with per-index document counts and store sizes |
+| **OpenSearch** | none — HTTP | The same read-only IDE over `_plugins/_sql`, from the same provider module; `LIMIT … OFFSET` paging works here |
+| **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
+
+**Read-only where the engine is.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` anywhere in their grammar, so inline editing and DDL are reported as unsupported instead of failing when used. Everything else — the query editor, the object browser, ER diagrams, schema diff and monitoring — works wherever the engine has something to answer with.
+
+### Engines with no provider of their own
+
+These speak the wire protocol of a driver above, so they connect through it unchanged: pick that driver in the connection dialog. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+
+| Engine | Connect as | Support |
+| :--- | :--- | :--- |
+| MariaDB | `mysql` | Full |
+| Citus | `postgres` | Full — but statistics describe the coordinator, so a distributed table's row count and size are wrong rather than missing |
+| Valkey · DragonflyDB · KeyDB | `redis` | Full |
+| FerretDB | `mongodb` | Full — sign in with the backend PostgreSQL credentials |
+| CockroachDB | `postgres` | Partial — editor, metrics, slow queries and sessions work; the object browser and size panels are blank |
+| Materialize · RisingWave | `postgres` | Query editor only |
+
+Details, probed versions and each caveat: [`docs/providers/README.md`](https://github.com/libredb/libredb-studio/blob/main/docs/providers/README.md).
 
 ---
 
@@ -104,13 +149,13 @@ A ready-to-use, fully-commented compose file is in the repo: [`docker-compose.ex
 - **Professional SQL IDE** — Monaco editor (VS Code engine), schema-aware autocomplete, multi-tab workspace, Visual EXPLAIN.
 - **Interactive ER diagrams** — real FK edges, cardinality, auto-layout (ELK.js), PNG/SVG export.
 - **Schema diff & migration** — compare snapshots/connections and auto-generate migration SQL.
-- **Read-only database agent** — state an objective, and the run drafts SQL, reads the results and composes a report whose claims cite them. Three workflows (investigate / optimize / assess), a visible statement-and-time budget, and writes refused before the database is reached. **Agent mode reads PostgreSQL and SQLite only** — they are the only engines with a database-native read-only execution profile, and on any other engine an Agent-mode run ends `engine-unsupported`; Plan mode is toolless, runs no statement of yours and works on every connection — it is *grounded* in your schema on PostgreSQL and SQLite, and says so when it is not. Standalone image only. [Guide](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_GUIDE.md) · [What leaves the machine](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_DATA_FLOW.md).
+- **Read-only database agent** — state an objective, and the run drafts SQL, reads the results and composes a report whose claims cite them. Three workflows (investigate / optimize / assess), a visible statement-and-time budget, and writes refused before the database is reached. **Agent mode reads PostgreSQL and SQLite only** — they are the only engines with a database-native read-only execution profile, and on any other engine an Agent-mode run ends `engine-unsupported`; Plan mode is toolless, runs no statement of yours, and is **grounded in your own schema on every engine** — it reads the inventory before the model's first turn and asks for one statement in that engine's own language, or refuses with `NO STATEMENT:` and the question that would unblock it. Standalone image only. [Guide](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_GUIDE.md) · [What leaves the machine](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_DATA_FLOW.md).
 - **Model-backed helpers** — query safety analysis, EXPLAIN-in-plain-English, AI-generated schema docs, data-profile summaries. Gemini / OpenAI / Ollama / custom; with no model configured — no `LLM_*` variables at all — no AI call is made. A key is required for Gemini and OpenAI only: Ollama and a custom endpoint count as a configured model without one, which enables the AI features — and the agent too, once its ledger path is writable.
 - **Pro data grid** — virtualized millions of rows, inline editing, per-column filters, pivot table, CSV/JSON export.
 - **Data visualization** — 8 chart types with aggregation and saved-chart dashboards.
 - **Data privacy & masking** — automatic sensitive-column detection, RBAC-enforced masking, export protection.
 - **Auth & SSO** — local email/password or OIDC (Auth0, Keycloak, Okta, Azure AD, Zitadel) with PKCE and role mapping.
-- **DBA toolkit (admin)** — live monitoring dashboard, threshold alerts, one-click VACUUM/ANALYZE/REINDEX, full audit trail.
+- **DBA toolkit (admin)** — live monitoring dashboard, threshold alerts, full audit trail, and one-click maintenance in each engine's own terms (VACUUM/ANALYZE/REINDEX on PostgreSQL, `OPTIMIZE TABLE` on MySQL, and nothing offered where an engine has no maintenance statement to run).
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/libredb/libredb-studio/main/public/screenshots/erd-diagram.png" alt="Interactive ER Diagram" width="100%" />
