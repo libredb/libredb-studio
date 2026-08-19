@@ -461,6 +461,39 @@ function previewClaims(input: unknown): readonly AgentReportClaim[] {
 }
 
 /**
+ * Which table a held report should be asked to profile.
+ *
+ * This used to be `inventory[0]` and that was measured to be the reason the ask fails.
+ * `qwen3:8b` was held twice on `database-assessment`, ignored both, and lost all five
+ * repeats; the notice was telling it to profile `current_dept_emp` — the first entry in
+ * the sample database's snapshot, a VIEW the catalog read describes with no columns —
+ * while the report it was trying to submit was about `dept_emp` and its 450,000 rows.
+ *
+ * So the table comes from the report itself: a claim naming a table is the model saying
+ * which table it cares about, and that is also the one this verdict wants established,
+ * since what it scores is whether the claims rest on counts. Asking about anything else is
+ * asking for busywork, and a model is right to decline busywork.
+ *
+ * The fallbacks descend in how much they know. A table the snapshot actually DESCRIBES
+ * comes before one it merely lists, because a zero-column entry is exactly the view that
+ * caused this; and `undefined` leaves the notice to its generic wording, which asks for "a
+ * table this run's inventory lists" rather than naming one wrongly.
+ *
+ * Matched on word boundaries so `dept_emp` is not found inside `current_dept_emp`, and
+ * case-insensitively because a model writes prose about `Department`, not `department`.
+ */
+function tableToProfile(
+  inventory: readonly { readonly name: string; readonly columns: readonly unknown[] }[],
+  claims: readonly AgentReportClaim[],
+): string | undefined {
+  const said = claims.map((entry) => entry.claim).join(" ");
+  const spokenOf = inventory.find((entry) =>
+    new RegExp(`\\b${entry.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(said),
+  );
+  return (spokenOf ?? inventory.find((entry) => entry.columns.length > 0) ?? inventory[0])?.name;
+}
+
+/**
  * What a run is told about a shortfall it is one call away from fixing.
  *
  * `null` for every shortfall this cannot honestly ask about, and that list is the #350
@@ -1903,7 +1936,6 @@ const AGENT_UNREPORTED_CALL_CEILING = 12;
  */
 const AGENT_VERDICT_HOLD_LIMIT = 2;
 
-
 /**
  * What a narrowed run keeps BESIDES `compose_report`: whatever its own verdict requires.
  *
@@ -2796,12 +2828,10 @@ export async function runInvestigation(
         // table instead of asking the model to pick one. The snapshot is optional on the
         // event, and a run without one is told the generic form rather than nothing.
         const inventory = sofar.events.flatMap((event) =>
-          event.kind === "context-captured" && event.snapshot !== undefined
-            ? event.snapshot.tables.map((entry) => entry.name)
-            : [],
+          event.kind === "context-captured" && event.snapshot !== undefined ? event.snapshot.tables : [],
         );
         const spoken = would.flatMap((shortfall) => {
-          const advice = shortfallNotice(shortfall, inventory[0]);
+          const advice = shortfallNotice(shortfall, tableToProfile(inventory, previewClaims(call.input)));
           return advice === null ? [] : [{ shortfall, advice }];
         })[0];
         if (spoken !== undefined) {

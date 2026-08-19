@@ -531,6 +531,41 @@ describe("a run that reports past the notice is asked again, up to a bound", () 
     expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-database-assessment.1", unmet: [] });
   });
 
+  test("and it asks for the table the report is actually about", async () => {
+    /*
+      The bug the repeated ask uncovered, and the reason repeating it alone changed nothing.
+
+      `qwen3:8b` was measured again after the second ask shipped: still 0/5, and now the
+      ledger showed the notice firing TWICE and being ignored twice. What it was asking for
+      was the problem. The notice named `inventory[0]` — the first table in the snapshot —
+      and on the sample database that is `current_dept_emp`, a VIEW the catalog read
+      describes with no columns at all. Meanwhile the model's pending report was about
+      `dept_emp`: 450,000 rows, five percent of its `dept_no` values referencing no
+      department. We were telling it to go profile something it had no interest in, and it
+      declined, which is not unreasonable of it.
+
+      So the notice asks about the table the report is ALREADY making claims about. That is
+      both likelier to be obeyed and more correct: what this verdict wants established is the
+      claims being made, not an arbitrary table.
+
+      This fixture's first table is `engineering`, which every other test here also reports
+      on — which is exactly why the evals never caught it. Reporting on a later table is what
+      makes the two candidates different.
+    */
+    const run = await open("sqlite");
+
+    const drive = await run.drive([
+      callsTool("run_read_query", { sql: "SELECT count(*) FROM research", rationale: "by hand" }),
+      reportOnAll("The research table is missing most of its second column."),
+      profiles("research", "basic"),
+      reportOnAll("The research table has a sparsely populated column."),
+    ]);
+
+    const held = drive.events.filter((event) => event.kind === "call-held");
+    expect(held[0]?.reason).toContain('"research"');
+    expect(held[0]?.reason).not.toContain("engineering");
+  });
+
   test("the asking stops, so a model that will not profile still gets its honest verdict", async () => {
     const run = await open("sqlite");
 
