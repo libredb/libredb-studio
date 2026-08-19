@@ -40,9 +40,21 @@ will not re-bump a version that is already in sync to repair it.
 ```bash
 # 1. package.json "version" -> the new version, by hand
 # 2. charts/libredb-studio/Chart.yaml artifacthub.io/changes -> rewrite by hand, see below
+# 3. charts/libredb-studio/Chart.yaml description -> check the engine list, see below
 bun run chart:bump            # Chart.yaml version+appVersion, image tag, chart README, operator chart copy
 make -C operator bundle       # CSV version + controller image tag (reads package.json)
 ```
+
+**Check `Chart.yaml`'s `description` against the engines that ship.** It is the string Rancher renders
+on its Apps catalog card and ArtifactHub shows beside the chart, `chart:bump` never touches it, and it
+has been left behind before: it still named seven engines after Couchbase, ClickHouse and Druid had
+shipped, and was corrected only in chart 0.1.38, whose entire content is that sentence. Correcting it
+on its own costs a whole chart version, because the #167 gate requires a `version:` bump for any
+packaged-file edit once the current version is released - so **here** is where it is free, since this
+step moves `version:` anyway. The chart `keywords` are the same check: ArtifactHub search matches on
+them, and an engine missing there is an engine nobody finds. Read the engine count from `SHIPPED` in `src/lib/db/compatibility.ts` (minus the embedded
+`libredb`) rather than from any prose, and check the same list in `README.md`, `DOCKERHUB.md` and
+`deploy/rancher/CATALOG_LISTING.md` while you are here.
 
 **Rewrite `artifacthub.io/changes` by hand, every release.** `chart:bump` *does* rewrite it, but only
 to the single generic line `Track app release <version> (appVersion bump; default image tag follows)`
@@ -222,6 +234,7 @@ true on a tag ref.
 | Trap | What happens |
 |---|---|
 | `artifacthub.io/changes` left to `chart:bump` | ArtifactHub shows one generic `Track app release` line as the whole changelog - and on a release flagged `containsSecurityUpdates`, that is the text an operator upgrades or does not upgrade on. Frozen once the chart publishes (#167) |
+| `Chart.yaml`'s `description` left as it was | It names the engines and `chart:bump` never touches it, so it goes stale silently - and it is what Rancher's Apps card and ArtifactHub display. Fixing it later needs a chart version of its own (#167); this release is the free moment. Read the count from `SHIPPED` in `src/lib/db/compatibility.ts`, minus `libredb` |
 | Chart hand-edited AFTER `chart:bump` | `operator/helm-charts/` keeps the pre-edit copy, `chart:check` fails on the mismatch, and `chart:bump` will not re-bump an already-in-sync version to fix it. Edit first, bump last |
 | Chart version already released | Republishing rewrites the released chart's gh-pages index digest and OCI content (#167). `chart:check` blocks it; `force_republish` is the only escape hatch, for an asset-uploaded-but-index-failed run |
 | Unquoted `{}:[],&*#?\|-<>=!%@` in a changes entry | ArtifactHub hard-skips that chart version, permanently |

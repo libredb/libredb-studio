@@ -1,8 +1,8 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis
+description: Web-based SQL IDE for cloud-native teams supporting twelve engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch and OpenSearch
 type: application
-version: 0.1.37
+version: 0.1.38
 appVersion: "0.12.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -20,6 +20,11 @@ keywords:
   - sqlite
   - oracle
   - mssql
+  - couchbase
+  - clickhouse
+  - druid
+  - elasticsearch
+  - opensearch
   - web-ide
 maintainers:
   - name: cevheri
@@ -28,7 +33,11 @@ annotations:
   artifacthub.io/category: database
   artifacthub.io/license: MIT
   artifacthub.io/prerelease: "false"
-  artifacthub.io/containsSecurityUpdates: "true"
+  # False for this chart version, and that is a statement rather than a default:
+  # 0.1.38 changes chart metadata only and installs the same 0.12.0 image 0.1.37
+  # installs, so it carries no security fix of its own. The app-level fixes are
+  # recorded on 0.1.37, which is the chart version that first shipped them.
+  artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
       image: ghcr.io/libredb/libredb-studio:0.12.0
@@ -43,11 +52,9 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Agent runs now ground their plan on the connected database's own schema on every supported engine, so a drafted statement names objects that exist rather than ones the model assumed"
-    - "An agent run reads its workflow from the objective instead of asking for it, and an Operate run is given a schema inventory before its first turn"
-    - "A light theme ships alongside the dark one through a shared token layer, and four defects that let a query fail silently are fixed"
-    - "Security: monaco-editor moves to 0.56.0 so the bundled DOMPurify leaves 3.2.7, JWT_SECRET is read per call rather than memoized once, and every field an export writes is escaped"
-    - "Fixes a SQL Server connection addressed by an IP address, which this release would otherwise have broken: the image moves to Node 26, which refuses an IP as the TLS SNI server name, and the pinned tedious sent one on the encrypt path. Addressing a server by hostname was never affected"
+    - "Chart metadata only, and no application change: the appVersion stays 0.12.0 and the deployed image is the same one 0.1.37 installs"
+    - "The chart description named seven engines and twelve ship - Couchbase, ClickHouse, Apache Druid, Elasticsearch and OpenSearch were missing from the text Rancher and ArtifactHub render beside this chart"
+    - "Those five engines are searchable now: they are keywords on the chart rather than only prose"
     - "Track app release 0.12.0 (appVersion bump; default image tag follows)"
 dependencies:
   - name: postgresql
