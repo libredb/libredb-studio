@@ -68,7 +68,7 @@
       "parent": "Database Provider System",
       "page_notes": [
         "Redis maps onto the SQL-oriented provider interface by convention: getSchema() uses a non-blocking SCAN (never KEYS *) and groups key prefixes as 'tables'; health/metrics come from INFO; slow queries / sessions from SLOWLOG GET / CLIENT LIST. See docs/providers/redis.md.",
-        "MongoDB and Redis extend BaseDatabaseProvider directly (NOT SQLBaseProvider). Reference docs/providers/mongodb.md and docs/providers/redis.md for the authoritative query formats and limitations."
+        "MongoDB, Redis and the embedded LibreDB extend BaseDatabaseProvider directly (NOT SQLBaseProvider) - they are the three providers with no SQL grammar. Reference docs/providers/mongodb.md, docs/providers/redis.md and docs/providers/libredb.md for the authoritative query formats and limitations."
       ]
     },
     {

@@ -185,7 +185,8 @@ having **no statistics**, never as empty. On SQLite the statistics exist only af
 
 **Every engine, read one of two ways.** On **PostgreSQL and SQLite** the server composes catalog
 statements and reads them through the same audited, read-only path an Agent run uses. On every other
-connection — MySQL, Oracle, SQL Server, MongoDB, Redis, ClickHouse, Couchbase, Druid, LibreDB — it
+connection — MySQL, Oracle, SQL Server, MongoDB, Redis, ClickHouse, Couchbase, Druid,
+Elasticsearch, OpenSearch, LibreDB — it
 asks that connection's own provider to describe its schema, which is the reading the sidebar already
 performs when it lists your tables, and composes no statement at all. Grounding is no longer decided
 by the engine, and that changed in #414; what decides it now is whether the reading succeeds. A run

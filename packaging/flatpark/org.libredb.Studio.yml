@@ -15,7 +15,9 @@ finish-args:
   - --socket=fallback-x11
   - --device=dri
   # network is the core function: LibreDB Studio connects to PostgreSQL, MySQL,
-  # SQL Server, Oracle, MongoDB and Redis over TCP, and to an AI provider when
+  # SQL Server, Oracle, MongoDB and Redis over their own TCP protocols, to
+  # Couchbase, ClickHouse, Apache Druid, Elasticsearch and OpenSearch over HTTP,
+  # and to an AI provider when
   # the user configures one with their own API key. It also covers 127.0.0.1,
   # so a database running on the host is reachable without any filesystem
   # permission.

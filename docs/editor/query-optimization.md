@@ -166,7 +166,7 @@ A rule that could **not** be established is not guessed from a neighbouring dial
 at the compatibility default below, and it is listed here rather than left implicit. The default is per
 **fact**, not per dialect: a dialect whose `#` rule is known can still be undecided about its brackets.
 
-The two non-SQL types, **MongoDB and Redis, have no SQL grammar at all** and are left out of the rows
+The three non-SQL types, **MongoDB, Redis and LibreDB, have no SQL grammar at all** and are left out of the rows
 below: their providers never reach these readers on the query path, and the confirmation gate — which
 reads whatever is in the editor — asks `readsSqlText()` before applying any span-based rule to their
 text, so a JSON document or a Redis command is not judged by a SQL reader that cannot parse it. The

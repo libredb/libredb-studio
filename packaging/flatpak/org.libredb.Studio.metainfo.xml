@@ -35,7 +35,12 @@
       <li>Microsoft SQL Server</li>
       <li>Oracle Database</li>
       <li>MongoDB</li>
-      <li>Redis</li>
+      <li>Redis, Valkey, DragonflyDB and KeyDB</li>
+      <li>Couchbase</li>
+      <li>ClickHouse</li>
+      <li>Apache Druid (read-only)</li>
+      <li>Elasticsearch (read-only)</li>
+      <li>OpenSearch (read-only)</li>
     </ul>
     <p>What you get:</p>
     <ul>

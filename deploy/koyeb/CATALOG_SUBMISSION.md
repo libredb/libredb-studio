@@ -51,7 +51,8 @@ a backup.
 > Hi Koyeb team,
 >
 > We maintain **LibreDB Studio**, an open-source, web-based SQL IDE for
-> cloud-native teams (PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB,
+> cloud-native teams (PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis,
+> Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch,
 > Redis, with AI-assisted querying). It's free and Apache/MIT-style open source:
 > https://github.com/libredb/libredb-studio
 >

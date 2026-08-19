@@ -23,7 +23,7 @@ section: database
 priority: optional
 maintainer: cevheri <cevheribozoglan@gmail.com>
 description: |
-  Web-based SQL IDE for PostgreSQL, MySQL, SQLite, Oracle, SQL Server,
+  Web-based SQL IDE for twelve engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server,
   MongoDB, and Redis with AI query assistance.
   Ships the standalone Next.js server with a bundled private Node.js
   runtime (no external dependencies) and a systemd unit (libredb-studio)
