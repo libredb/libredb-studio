@@ -170,6 +170,7 @@ describe("the bar this workflow is judged against is stated to the model", () =>
     const drive = await run.drive([
       reportCitingWhatWasOffered("The data looks incomplete in places."),
       reportCitingWhatWasOffered("The data looks incomplete in places."),
+      reportCitingWhatWasOffered("The data looks incomplete in places."),
     ]);
 
     expect(drive.verdict).toEqual({
@@ -248,6 +249,7 @@ describe("THE GATE: the verifier fails the run when the template's own artifact 
       */
       const drive = await run.drive([
         callsTool("run_read_query", { sql: "SELECT 1", rationale: "a look" }),
+        reportOn("The schema has eight tables and looks reasonable."),
         reportOn("The schema has eight tables and looks reasonable."),
         reportOn("The schema has eight tables and looks reasonable."),
       ]);
@@ -463,8 +465,11 @@ describe("the verdict is previewed before the report lands, not after the run di
     // `no-table-profile` for `no-report` would be the worse outcome, not a smaller one.
     const run = await open("sqlite");
 
+    // Three reports: the run is held twice — a model that ignored the first ask gets a
+    // second — and the third is let through so the gate can close on it.
     const drive = await run.drive([
       callsTool("run_read_query", { sql: "SELECT count(*) FROM engineering", rationale: "counting by hand" }),
+      reportOnAll("The engineering table looks sparsely populated."),
       reportOnAll("The engineering table looks sparsely populated."),
       reportOnAll("The engineering table looks sparsely populated."),
     ]);
@@ -487,5 +492,57 @@ describe("the verdict is previewed before the report lands, not after the run di
       "report-composed",
       "run-finished",
     ]);
+  });
+});
+
+describe("a run that reports past the notice is asked again, up to a bound", () => {
+  /*
+    Measured at five repeats on three models, and the shape is identical every time:
+
+      inspect_schema, inspect_schema
+      call-held            <- the notice fires and the run is narrowed to {profile_table, compose_report}
+      report-composed      <- and the model reports anyway
+      no-table-profile
+
+    `qwen3:8b`, `qwen3:14b` and `qwen3.5:4b` lose this surface 5 times out of 5, so it is not
+    variance: told once, left holding only the two tools its verdict accepts, the model picks
+    the report again. One ask was a guess, and fifteen consecutive losses are the answer to it.
+
+    BOUNDED at three, and the bound is what separates this from the change reverted earlier
+    today. That one repeated the ask on SILENCE, which every run passes through, and eighteen
+    tests failed because every run took two more turns. This fires only where a report is being
+    submitted that its own verdict would reject — a run already losing — so a run that is about
+    to pass cannot reach it. What an uncooperative model costs is two extra turns before the
+    same verdict it was going to get.
+  */
+  test("a second report without a profile is held too", async () => {
+    const run = await open("sqlite");
+
+    const drive = await run.drive([
+      callsTool("run_read_query", { sql: "SELECT count(*) FROM engineering", rationale: "by hand" }),
+      reportOnAll("The engineering table looks sparsely populated."),
+      reportOnAll("The engineering table looks sparsely populated."),
+      profiles("engineering", "basic"),
+      reportOnAll("The engineering table has a sparsely populated column."),
+    ]);
+
+    // Held twice, and the run still ended by clearing its own bar.
+    expect(drive.events.filter((event) => event.kind === "call-held")).toHaveLength(2);
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-database-assessment.1", unmet: [] });
+  });
+
+  test("the asking stops, so a model that will not profile still gets its honest verdict", async () => {
+    const run = await open("sqlite");
+
+    const drive = await run.drive([
+      callsTool("run_read_query", { sql: "SELECT count(*) FROM engineering", rationale: "by hand" }),
+      ...Array.from({ length: 5 }, () => reportOnAll("The engineering table looks sparsely populated.")),
+    ]);
+
+    expect(drive.stopReason).toBe("report-composed");
+    expect(drive.verdict.unmet).toEqual(["no-table-profile"]);
+    // Three asks and no more: the bound is what keeps an uncooperative run from spending its
+    // budget on being asked.
+    expect(drive.events.filter((event) => event.kind === "call-held").length).toBeLessThanOrEqual(3);
   });
 });

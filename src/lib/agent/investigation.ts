@@ -1880,6 +1880,29 @@ interface ModelTurn {
  */
 const AGENT_UNREPORTED_CALL_CEILING = 12;
 
+/**
+ * How many times a report may be held for the verdict it would earn before it is let through.
+ *
+ * Was once, and five repeats on three models say once is not enough. `qwen3:8b`, `qwen3:14b`
+ * and `qwen3.5:4b` lose `database-assessment` 5 times out of 5, and every ledger has the same
+ * shape: the notice fires, the run is narrowed to the two tools its verdict accepts, and the
+ * model reports again anyway. Fifteen consecutive losses is not variance.
+ *
+ * TWO, not three, and the difference was measured in the eval scripts rather than reasoned
+ * about: at three, a run that will not comply pays three wasted turns before its report is
+ * allowed through, and the gate evals had to be extended twice to see it. Two changes the
+ * behaviour the ledgers complain about — a model that ignored one ask gets a second — at half
+ * the cost to a model that will never comply.
+ *
+ * The bound is also what separates this from the repeated-ask on SILENCE reverted
+ * earlier today. That one sat on a path every run passes through, and eighteen tests failed
+ * because every run gained two turns. This fires only where a report is being submitted that
+ * its own verdict would reject — a run that is already losing — so a run about to pass cannot
+ * reach it at all. What an uncooperative model pays is two extra turns before the same
+ * verdict it was going to get.
+ */
+const AGENT_VERDICT_HOLD_LIMIT = 2;
+
 
 /**
  * What a narrowed run keeps BESIDES `compose_report`: whatever its own verdict requires.
@@ -2472,8 +2495,8 @@ export async function runInvestigation(
   let compareReminded = false;
   /** The cite-what-you-read notice, once per drive; see `citeWhatYouReadNotice`. */
   let citeReminded = false;
-  /** The verdict-preview notice, once per drive; see `shortfallsIfReported`. */
-  let previewReminded = false;
+  /** How many times a report has been held for the verdict it would earn; see `shortfallsIfReported`. */
+  let previewHolds = 0;
   /**
    * Whether the run has been narrowed to what would finish it; see
    * `AGENT_NARROWED_EXTRA_TOOLS`. Set once and never cleared — a run narrowed for
@@ -2766,7 +2789,7 @@ export async function runInvestigation(
       // The verdict this report would earn, asked of the verifier before it lands. Read
       // first among the report checks: it is the general case, and the purpose-written
       // notices below answer the shortfalls it deliberately declines to speak for.
-      if (call.toolName === "compose_report" && !previewReminded) {
+      if (call.toolName === "compose_report" && previewHolds < AGENT_VERDICT_HOLD_LIMIT) {
         const { record: sofar } = await service.resume(context.runId);
         const would = shortfallsIfReported(record, sofar.events, previewClaims(call.input));
         // A name from the inventory the run was handed, so the notice can point at a real
@@ -2782,7 +2805,7 @@ export async function runInvestigation(
           return advice === null ? [] : [{ shortfall, advice }];
         })[0];
         if (spoken !== undefined) {
-          previewReminded = true;
+          previewHolds += 1;
           /*
             Narrowed as well as told, and this is the pairing the ledger argued for.
 

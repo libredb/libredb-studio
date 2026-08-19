@@ -212,6 +212,7 @@ describe("an index answers on the plan it diagnosed", () => {
         recommends(),
         reportOn("The listing reads the whole table."),
         reportOn("The listing reads the whole table."),
+        reportOn("The listing reads the whole table."),
       ]);
 
       expect(drive.verdict).toEqual({
