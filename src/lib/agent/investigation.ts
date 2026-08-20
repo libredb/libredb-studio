@@ -520,6 +520,7 @@ function shortfallNotice(
   shortfall: AgentGoalShortfall,
   table: string | undefined,
   plansInspected: number,
+  readingsHeld: number,
 ): ShortfallAdvice | null {
   if (shortfall === "no-table-profile") {
     const named = table === undefined ? "a table this run's inventory lists" : `"${table}"`;
@@ -533,6 +534,39 @@ function shortfallNotice(
       // left holding everything, `qwen3.5:4b` called `inspect_schema` four times and
       // `run_read_query` three without ever profiling.
       narrow: true,
+    };
+  }
+  if (shortfall === "no-reading") {
+    // Only for a run that read NOTHING. A run holding artifacts and citing the inventory
+    // instead earns the same verdict, but the useful sentence there is
+    // `citeWhatYouReadNotice`, which can name the ids it actually has. Saying "this run has
+    // taken no reading" to a run that took six is the false self-description this file
+    // keeps catching — and three evals caught it here within a minute.
+    if (readingsHeld > 0) return null;
+    /*
+      The hole `citeWhatYouReadNotice` deliberately leaves, and it is worth an entire cell.
+
+      That notice fires only when the run HOLDS a usable artifact, because a run with
+      nothing to cite would be asked for the impossible. Right — and it means a run that
+      took NO reading and reported off the captured inventory holds nothing, hears nothing,
+      and dies of `no-reading` never having been told the bar exists.
+
+      `lfm2:24b` loses `operations` five times out of five, and all five ledgers are four
+      events long: started, context captured, report composed, finished, in five seconds. It
+      answers from the inventory it was handed and never calls `inspect_operations`. It is a
+      24B model that reads competently on other surfaces, so this is not capacity — it is a
+      run answering on turn one because nothing said the answer had to rest on a reading.
+
+      NOT narrowed, and that is load-bearing: `AGENT_NARROWED_EXTRA_TOOLS.operations` is
+      empty, so narrowing here would remove `inspect_operations` — the one tool this
+      sentence asks for. The same trap `no-plan-evidence` documents one branch below.
+    */
+    return {
+      said: [
+        "This workflow is scored on what the ENGINE reports about itself, and this run has taken no reading: the schema inventory in this conversation was captured for you before your first turn and citing it establishes nothing about what the engine is doing.",
+        "Your compose_report call was not run. Call inspect_operations first — sessions, slow-queries, table-stats, index-stats, storage or health — then cite the artifact id it returns in a claim, and then call compose_report.",
+      ].join(" "),
+      narrow: false,
     };
   }
   if (shortfall === "no-plan-comparison") {
@@ -2949,6 +2983,7 @@ export async function runInvestigation(
             sofar.events.filter(
               (event) => event.kind === "tool-completed" && event.artifact.operationId === "sql.explain.estimate",
             ).length,
+            sofar.events.filter((event) => event.kind === "tool-completed").length,
           );
           return advice === null ? [] : [{ shortfall, advice }];
         })[0];
