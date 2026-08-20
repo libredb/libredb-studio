@@ -23,7 +23,7 @@
 | **Transactions** | Not exposed (the engine has none) |
 | **Maintenance** | None — nothing in `MaintenanceType` has a SQL-reachable analogue ([§8](#8-maintenance)) |
 | **Query cancellation** | No `cancelQuery`. An abort closes **this client's** socket; the cluster keeps working ([§3.8](#38-the-deadline-is-the-clients-and-only-the-clients)) |
-| **Verified against** | **OpenSearch 3.8.0** (security disabled, stock single node — `GET /` reported distribution `opensearch`, number `3.8.0`, build_date `2026-08-01`), indices `probe_orders` (1 doc) and `probe_shapes` (2 docs, an object, a `nested` and a multi-field), measured 2026-08-19 |
+| **Verified against** | **OpenSearch 3.8.0**, image `opensearchproject/opensearch:3.8.0` (security disabled, stock single node — `GET /` reported distribution `opensearch`, number `3.8.0`, build_date `2026-08-01`), software licence **Apache-2.0** (the image ships the Apache License, Version 2.0 as `/usr/share/opensearch/LICENSE.txt`) with no subscription tier to confuse it with, indices `probe_orders` (1 doc) and `probe_shapes` (2 docs, an object, a `nested` and a multi-field), measured 2026-08-19 |
 | **Source** | [`src/lib/db/providers/sql/search/`](../../src/lib/db/providers/sql/search/) |
 | **Tests** | [`tests/integration/db/opensearch-provider.test.ts`](../../tests/integration/db/opensearch-provider.test.ts) + [`tests/unit/db/search/`](../../tests/unit/db/search/) |
 | **Tracking issue** | [#424 — Search providers, Phase 1](https://github.com/libredb/libredb-studio/issues/424) |
@@ -33,7 +33,7 @@
 ## 1. Overview
 
 OpenSearch is the Apache-2.0 fork of Elasticsearch 7.10. Its **SQL surface is a bundled plugin** —
-`POST /_plugins/_sql`, present on a stock node with nothing to install and no licence to hold — and
+`POST /_plugins/_sql`, present on a stock node with nothing to install and no tier gate — and
 that endpoint is the whole query surface this provider speaks. Schema and monitoring come from the
 REST APIs instead (`_cat/indices`, `<index>/_mapping`, `_cluster/health`, `_cluster/stats`), because
 the mapping is the index's own declaration while a `SELECT` only ever describes a statement
@@ -231,7 +231,7 @@ Adopting `@opensearch-project/opensearch` later is one new file implementing the
 
 The upstream product has ES|QL (`POST /_query`); **this one has none at all** — the path answers 405.
 A surface only one of the two products has cannot be the shared query language, while the SQL endpoint
-is present on both with no licence, so `queryLanguage` is `sql` on both type-ids. That also buys Monaco
+is present on both with no tier gate, so `queryLanguage` is `sql` on both type-ids. That also buys Monaco
 SQL highlighting, the shared limiter, the `"sql"` tab type and saved queries with no additional code.
 
 ### 3.4 The success envelope: `schema`/`datarows`, a separate alias, and a count
@@ -1084,6 +1084,13 @@ Both services run together on purpose: every claim this document records is a cl
 two answered differently, and that can only be re-measured side by side. This service publishes
 **9201** on the host because both products ship on 9200 in the container.
 
+**Under which licence.** The licence the pinned image ships is **Apache-2.0**:
+`/usr/share/opensearch/LICENSE.txt` inside the image is the Apache License, Version 2.0. There is no
+subscription tier here to confuse with the software licence, which is the distinction the upstream
+product forces
+([elasticsearch.md §11.4](./elasticsearch.md#114-optional-reproducing-the-live-pass)), and nothing
+in it constrains this provider either way.
+
 Two configuration details are load-bearing:
 
 - `DISABLE_SECURITY_PLUGIN: "true"` — the fork's own switch, **not** the upstream
@@ -1239,4 +1246,5 @@ because the provider exposes no `cancelQuery`
 - Mappings: <https://docs.opensearch.org/latest/field-types/>
 - `_cat/indices`: <https://docs.opensearch.org/latest/api-reference/cat/cat-indices/>
 - Query insights (`top_queries`): <https://docs.opensearch.org/latest/observing-your-data/query-insights/index/>
+- Apache License, Version 2.0: <https://www.apache.org/licenses/LICENSE-2.0>
 - Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Couchbase](./couchbase.md) · [ClickHouse](./clickhouse.md) · [Apache Druid](./druid.md) · [Apache Trino](./trino.md) · [Elasticsearch](./elasticsearch.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)

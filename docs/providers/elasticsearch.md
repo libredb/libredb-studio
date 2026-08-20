@@ -22,7 +22,7 @@
 | **Transactions** | Not exposed (Elasticsearch has none) |
 | **Maintenance** | None — nothing in `MaintenanceType` has a SQL-reachable analogue ([§8](#8-maintenance)) |
 | **Query cancellation** | No `cancelQuery`. An abort closes **this client's** socket; the cluster keeps working ([§3.8](#38-the-deadline-is-the-clients-and-only-the-clients)) |
-| **Verified against** | **Elasticsearch 9.1.4** (basic licence, security disabled), indices `probe_orders` (1 doc), `probe_shapes` (2 docs, an object and a multi-field), `probe_buckets` (1500 docs), measured 2026-08-19 |
+| **Verified against** | **Elasticsearch 9.1.4**, image `docker.elastic.co/elasticsearch/elasticsearch:9.1.4` - the **default** build flavour, not `oss` (`GET /` reports `build_flavor` `default`), software licence **Elastic License 2.0** (the image's own `/usr/share/elasticsearch/LICENSE.txt`), subscription tier **basic** and self-generated (`GET /_license` reports type `basic`, status `active`, issuer `elasticsearch`), security disabled; indices `probe_orders` (1 doc), `probe_shapes` (2 docs, an object and a multi-field), `probe_buckets` (1500 docs), measured 2026-08-19 |
 | **Source** | [`src/lib/db/providers/sql/search/`](../../src/lib/db/providers/sql/search/) |
 | **Tests** | [`tests/integration/db/elasticsearch-provider.test.ts`](../../tests/integration/db/elasticsearch-provider.test.ts) + [`tests/unit/db/search/`](../../tests/unit/db/search/) |
 | **Tracking issue** | [#424 — Search providers, Phase 1](https://github.com/libredb/libredb-studio/issues/424) |
@@ -32,7 +32,7 @@
 ## 1. Overview
 
 Elasticsearch is a distributed search and analytics engine. Its **SQL surface is a first-party HTTP
-endpoint** — `POST /_sql?format=json` — available on a basic licence with no plugin to install, and
+endpoint** — `POST /_sql?format=json` — available on the basic tier with no plugin to install, and
 that endpoint is the whole query surface this provider speaks. Schema and monitoring come from the
 REST APIs instead (`_cat/indices`, `<index>/_mapping`, `_cluster/health`, `_cluster/stats`), because
 the mapping is the index's own declaration while a `SELECT` only ever describes a statement
@@ -111,7 +111,7 @@ ElasticsearchProvider (search/index.ts:953)      OpenSearchProvider (search/inde
 ```
 
 `SearchProvider` extends `SQLBaseProvider` because the query language really is SQL — measured, the
-endpoint answers a `POST`ed statement with declared columns and positional rows on a basic licence —
+endpoint answers a `POST`ed statement with declared columns and positional rows on the basic tier —
 and because the shared limiter's `LIMIT n` is correct here. The abstract base is **not exported**: the
 factory constructs a type-id, and a type-id is one of the two concrete classes, which is what keeps
 both exports honestly thin (each one names its product and nothing else).
@@ -229,10 +229,10 @@ rule that no method branches on `this.dialect` at all — it reads `this.spec`.
 
 ### 3.3 SQL, and not ES|QL
 
-ES|QL exists on this product (`POST /_query`, and it works on a basic licence — measured) and is
+ES|QL exists on this product (`POST /_query`, and it works on the basic tier — measured) and is
 deliberately unused. **OpenSearch has no ES|QL at all**, and a surface only one of the two products
-has cannot be the shared query language, while the SQL endpoint is available on both without a
-licence. Declaring `queryLanguage: "sql"` also buys Monaco SQL highlighting, the shared limiter, the
+has cannot be the shared query language, while the SQL endpoint is available on both with no paid
+tier. Declaring `queryLanguage: "sql"` also buys Monaco SQL highlighting, the shared limiter, the
 `"sql"` tab type and saved queries with no additional code.
 
 ### 3.4 The success envelope: positional rows, and a duplicate name that must not vanish
@@ -914,7 +914,7 @@ difference — `OFFSET` — has no field in `ProviderCapabilities` to declare it
 
 | Capability | Value | Why |
 |---|---|---|
-| `queryLanguage` | `sql` | Elasticsearch SQL over the HTTP endpoint, no licence gate ([§3.3](#33-sql-and-not-esql)) |
+| `queryLanguage` | `sql` | Elasticsearch SQL over the HTTP endpoint, no tier gate ([§3.3](#33-sql-and-not-esql)) |
 | `supportsExplain` | **`false`** | No `explainFormat` is declared either, which hides both button and tab ([§3.10](#310-no-explain-even-though-elasticsearch-answers-one)) |
 | `supportsExternalQueryLimiting` | `true` | `LIMIT n` is correct here; the one form that is not is refused by `prepareQuery()` ([§5.5](#55-the-preparequery-override-there-is-no-second-page)) |
 | `supportsCreateTable` | **`false`** | Not in the grammar ([§5.6](#56-this-grammar-does-not-write)) |
@@ -1091,6 +1091,18 @@ header is ignored there, so no 401/403 body could ever be captured
 The health check waits for **yellow**, not green: a single node with a replica requested is yellow
 forever, so waiting for green would hang.
 
+**Which distribution, and under which licence.** The pinned image is the **default** build flavour -
+`GET /` reports `build_flavor` `default`, not `oss` - and the licence it ships is **Elastic License
+2.0**, the first line of `/usr/share/elasticsearch/LICENSE.txt` inside the image
+(<https://www.elastic.co/licensing/elastic-license>). The limitation that bears on this question is
+the one on providing the software to third parties as a hosted or managed service (the licence
+states two others, on the licence-key functionality and on removing notices), and it binds a
+would-be host of Elasticsearch rather than an HTTP client of one: this provider speaks HTTP to a
+server the user runs, and links, bundles and redistributes nothing. The **basic** that
+`GET /_license` reports (type `basic`, status `active`, issuer `elasticsearch`, issued to
+`docker-cluster`) is a different thing again - a self-generated **subscription tier**, not the
+software licence - and it is the tier the `_sql` endpoint is available on.
+
 Seed the three probe indices with the document API — there is no `CREATE TABLE` here:
 
 ```bash
@@ -1222,4 +1234,5 @@ because the provider exposes no `cancelQuery` ([§3.8](#38-the-deadline-is-the-c
 - SQL REST API: <https://www.elastic.co/guide/en/elasticsearch/reference/current/sql-rest.html>
 - Mapping: <https://www.elastic.co/guide/en/elasticsearch/reference/current/mapping.html>
 - `_cat/indices`: <https://www.elastic.co/guide/en/elasticsearch/reference/current/cat-indices.html>
+- Elastic License 2.0: <https://www.elastic.co/licensing/elastic-license>
 - Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Couchbase](./couchbase.md) · [ClickHouse](./clickhouse.md) · [Apache Druid](./druid.md) · [Apache Trino](./trino.md) · [OpenSearch](./opensearch.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)

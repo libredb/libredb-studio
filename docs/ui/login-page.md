@@ -36,7 +36,7 @@ src/app/login/
 │  (pg) PostgreSQL (my) MySQL │ <- every engine,     │
 │  (lt) SQLite ... (lb)LibreDB│    icon + label      │
 │                             │   │  OIDC: SSO   │   │
-│  11        24        2      │ <- derived counts    │
+│  14        24        2      │ <- derived counts    │
 │  engines   channels  modes  │   │  or email/pw │   │
 │  <one qualifying line each> │   └──────────────┘   │
 │  Runs on Linux · macOS · …  │                      │
@@ -78,7 +78,7 @@ to undo from the outside:
 │   └──────────────┘   │
 │                      │
 │   [PG] [MySQL] ...   │  <- every engine
-│   11 engines · 24 …  │  <- the same claims,
+│   14 engines · 24 …  │  <- the same claims,
 │                      │     joined into a line
 │   Open source · gh…  │
 │   (gh)(in)(X)(yt)…   │

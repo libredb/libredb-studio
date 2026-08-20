@@ -11,7 +11,7 @@ interface WireCompatibilityHintProps {
 
 /**
  * Tells the user that the driver they just selected also serves other engines
- * (issue #424, Phase 0). It exists because the connection dialog offers eleven
+ * (issue #424, Phase 0). It exists because the connection dialog offers fourteen
  * driver buttons and none of them says "MariaDB", so a MariaDB user has no way to
  * know that MySQL is the right button.
  *

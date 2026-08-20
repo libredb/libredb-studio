@@ -98,12 +98,13 @@ Upstash, PlanetScale, Azure Cosmos DB and Amazon DocumentDB. Their status is tra
 What to type into the connection dialog for **every shipped provider**, against
 [`database-compose.yml`](../../database-compose.yml). One row per type-id, so the table covers the
 same set as the table at the top of this file and a new provider is a new row rather than a re-drawn
-grid. Each row was verified against the running container on 2026-08-19 — the credentials are the
-ones the fixture actually accepts, not the ones its environment block asks for (twice those differ;
-see the notes).
+grid. Each row was verified against the running container on 2026-08-19, and the Trino row on
+2026-08-20 — the credentials are the ones the fixture actually accepts, not the ones its environment
+block asks for (twice those differ; see the notes).
 
-Start the eleven always-on services with a plain `docker compose -f database-compose.yml up -d`; the
-`Profile` column names the ones that need asking for.
+Start the twelve always-on services with a plain `docker compose -f database-compose.yml up -d` -
+eleven engine containers plus the one-shot `couchbase-init` seed sidecar; the `Profile` column names
+the ones that need asking for.
 
 | Provider | Compose service | Host | Port | User | Password | Database / service | Profile |
 |---|---|---|---|---|---|---|---|

@@ -31,12 +31,12 @@ LibreDB Studio
 **Search results summary** (limit 100):
 
 <!-- limit:100 -->
-Open-source SQL IDE with AI for 12 engines: PostgreSQL, MySQL, SQL Server, Oracle, MongoDB, Redis+
+Open-source SQL IDE with AI for 13 engines: PostgreSQL, MySQL, SQL Server, Oracle, MongoDB, Redis+
 
 **Short description** (limit 256):
 
 <!-- limit:256 -->
-Open-source, self-hosted SQL IDE for cloud-native teams. Connect to twelve engines - PostgreSQL, MySQL, SQL Server, Oracle, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch - explore schemas and write queries with AI help.
+Open-source, self-hosted SQL IDE for cloud-native teams. Connect to thirteen engines - PostgreSQL, MySQL, SQL Server, Oracle, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino - explore schemas and query with AI help.
 
 **Description** (limit 5000, HTML): see [description.html](description.html) —
 the limit is asserted by the unit test.
@@ -75,7 +75,7 @@ Planned captions:
 1. `hero-editor` — "Write and run SQL with schema-aware autocomplete and a virtualized result grid."
 2. `nl2sql` — "Turn a plain-English question into SQL with AI assistance."
 3. `erd-diagram` — "Explore relationships with an automatically generated ERD."
-4. `connection-modal` — "Connect to twelve engines, from PostgreSQL and SQL Server to Elasticsearch."
+4. `connection-modal` — "Connect to thirteen engines, from PostgreSQL and SQL Server to Apache Trino."
 5. `data-profiler` — "Profile table data: distributions, null ratios and outliers at a glance."
 
 ## Plan (§7.6)

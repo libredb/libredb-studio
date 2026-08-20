@@ -5,7 +5,7 @@ import { render, cleanup, screen } from "@testing-library/react";
 import type { WireCompatibleEngine } from "@/lib/db/compatibility";
 
 /**
- * The hint answers one user question - "I have MariaDB, which of these eleven
+ * The hint answers one user question - "I have MariaDB, which of these fourteen
  * buttons do I press?" - so the tests assert what a user can read, not markup.
  *
  * The registry is mocked rather than read, because the real one is data that

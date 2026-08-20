@@ -52,8 +52,8 @@ a backup.
 >
 > We maintain **LibreDB Studio**, an open-source, web-based SQL IDE for
 > cloud-native teams (PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis,
-> Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch,
-> Redis, with AI-assisted querying). It's free and Apache/MIT-style open source:
+> Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino,
+> with AI-assisted querying). It's free and Apache/MIT-style open source:
 > https://github.com/libredb/libredb-studio
 >
 > We already ship a working **Deploy to Koyeb** button (prebuilt GHCR image

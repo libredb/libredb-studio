@@ -23,9 +23,9 @@ metadata:
     categories: Database, Developer Tools
     containerImage: ghcr.io/libredb/libredb-studio-operator:0.12.0
     createdAt: "2026-08-19T11:25:23Z"
-    description: Open-source web-based SQL IDE for twelve engines - PostgreSQL, MySQL,
-      Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
-      Elasticsearch and OpenSearch - with AI-powered query assistance.
+    description: Open-source web-based SQL IDE for thirteen engines - PostgreSQL,
+      MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Apache
+      Druid, Elasticsearch, OpenSearch and Apache Trino - with AI-powered query assistance.
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: helm.sdk.operatorframework.io/v1
     repository: https://github.com/libredb/libredb-studio
@@ -49,7 +49,7 @@ spec:
   description: |
     LibreDB Studio is an open-source, web-based SQL IDE. Query PostgreSQL,
     MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse,
-    Apache Druid, Elasticsearch and OpenSearch from the browser —
+    Apache Druid, Elasticsearch, OpenSearch and Apache Trino from the browser —
     with AI-powered query assistance (natural-language-to-SQL, explain, fix),
     an ERD viewer, schema diff and a data profiler. No desktop client required.
 

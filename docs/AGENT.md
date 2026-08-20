@@ -535,7 +535,7 @@ not in the inventory. Since #414 the WORDING varies with the engine's `queryLang
 not: on a `json` engine the run is asked for one statement or command in that engine's own language —
 a MongoDB aggregation rather than a SELECT — and told that this engine speaks no SQL, while the tag
 stays the canonical type-id in both arms. That is deliberate rather than an oversight: `isQueryFenceTag`
-is a total record over `DatabaseType`, so all eleven ids pass it, whereas a draft the model fenced as
+is a total record over `DatabaseType`, so all fourteen ids pass it, whereas a draft the model fenced as
 ```` ```javascript ```` passes nothing and records no `plan-statement-drafted` event at all — the run
 would score as having drafted nothing while the user is looking at a statement. A run that cannot answer from the
 inventory takes the other legitimate ending: a line beginning `NO STATEMENT:` saying exactly what is
@@ -2052,7 +2052,7 @@ src/lib/agent/
 ├── runtime.ts            # composition root: the only place that assembles a tool context
 ├── tools.ts              # the four tools + server-side selection; the only database reach,
                           #   the model's tools and the server's own grounding reads alike
-├── composed-sql.ts       # the SQL the SERVER writes, per dialect — two of the eleven
+├── composed-sql.ts       # the SQL the SERVER writes, per dialect — two of the fourteen
 ├── sqlite-ddl.ts         # reading SQLite's stored DDL back into an inventory
 ├── execution-policy.ts   # the frozen policy and the run-level ceilings
 ├── deadline.ts           # the wall-clock deadline and the timeout clamp

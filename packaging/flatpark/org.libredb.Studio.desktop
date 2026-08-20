@@ -7,6 +7,6 @@ Exec=libredb-studio
 Icon=org.libredb.Studio
 Terminal=false
 Categories=Development;Database;
-Keywords=SQL;Database;PostgreSQL;MySQL;SQLite;MongoDB;Redis;Oracle;SQLServer;ClickHouse;Couchbase;Druid;Elasticsearch;OpenSearch;IDE;Query;
+Keywords=SQL;Database;PostgreSQL;MySQL;SQLite;MongoDB;Redis;Oracle;SQLServer;ClickHouse;Couchbase;Druid;Elasticsearch;OpenSearch;Trino;IDE;Query;
 StartupNotify=true
 StartupWMClass=libredb-studio-desktop

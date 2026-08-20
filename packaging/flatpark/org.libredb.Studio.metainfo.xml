@@ -50,6 +50,7 @@
       <li>Apache Druid (read-only)</li>
       <li>Elasticsearch (read-only)</li>
       <li>OpenSearch (read-only)</li>
+      <li>Apache Trino</li>
     </ul>
     <p>What you get:</p>
     <ul>
