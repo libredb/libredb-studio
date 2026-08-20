@@ -443,6 +443,49 @@ describe("a catalog read that matched nothing is refused, not answered with an e
     expect(drive.kinds).not.toContain("tool-completed");
   });
 
+  /*
+    The same refusal, told a different question, and getting it wrong the other way.
+
+    An index inventory that comes back empty does not mean the object is missing. It means
+    the tables exist and carry no secondary index — which is an ANSWER to an optimization
+    question, not a failure of one. The sample database declares no `CREATE INDEX` anywhere,
+    so `kind: "indexes"` on it returns zero rows every time, and the model was told "There is
+    no object of that name in this database" and sent looking for a misspelling it had not
+    made.
+
+    That is not a rare corner. `query-optimization`'s first rule ORDERS this call, so it is
+    the opening turn of 79 of the 133 optimization runs measured, and it is answered with a
+    false sentence whose own advice — check the inventory and inspect a name it lists —
+    cannot help, because the inventory lists no indexes either. Since sampling went
+    deterministic the dead opening became a dead CERTAINTY: `qwen3:8b` opened this way in 10
+    of 10 runs and lost every one.
+
+    It stays a refusal rather than becoming a citable empty artifact: that is the
+    `empty-evidence` regression the test above exists for, and nothing here reopens it. What
+    changes is only that the sentence is true.
+  */
+  test("sqlite: an index inventory that is empty says so, rather than denying the object", async () => {
+    const run = await open("sqlite", {
+      catalogAnswer: (sql) =>
+        sql.includes("type='index'") || sql.includes('type="index"')
+          ? { rows: [], fields: [], rowCount: 0, executionTime: 1 }
+          : null,
+    });
+
+    const drive = await run.drive([
+      callsTool("inspect_schema", { kind: "indexes" }, "call_indexes"),
+      answersProse("Nothing is indexed, so there is nothing to read there."),
+      answersProse("Still nothing."),
+      answersProse("Still nothing."),
+    ]);
+
+    const said = drive.transcripts[1] ?? "";
+    expect(said).toContain("no secondary index");
+    expect(said).not.toContain("no object of that name");
+    // Still a refusal, so there is no empty catalog artifact to rest a report on.
+    expect(drive.kinds).not.toContain("tool-completed");
+  });
+
   test("sqlite: an empty RESULT is still an answer, because that is a fact about the data", async () => {
     // The distinction the refusal above must not blur. A read that ran and found no rows has
     // established something; a catalog lookup that matched no object has established nothing.

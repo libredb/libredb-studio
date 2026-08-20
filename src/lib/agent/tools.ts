@@ -257,6 +257,14 @@ export type AgentToolUnavailableCode =
   | "TABLE_NOT_INVENTORIED"
   /** A catalog read matched no object at all, so there is nothing to inspect or cite. */
   | "CATALOG_MATCHED_NOTHING"
+  /**
+   * An index or relation inventory that exists and declares nothing.
+   *
+   * Split from `CATALOG_MATCHED_NOTHING` because the two say opposite things: that one denies
+   * the object, and this one confirms it and reports an absence. "No secondary index" is an
+   * answer to an optimization question rather than a failed lookup.
+   */
+  | "CATALOG_INVENTORY_EMPTY"
   /** The profile ran, and its aggregate row could not be read back. */
   | "PROFILE_UNREADABLE"
   /** The requested column offset is past the end of the table. */
@@ -835,6 +843,20 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
   // evidence object wrong was answered with a sentence about statements.
   INVALID_TOOL_INPUT:
     "The arguments did not match the shape this tool declares, so nothing was done. Correct them and call the tool again.",
+  /*
+    The true sentence for an inventory that exists and is empty.
+
+    Split from `CATALOG_MATCHED_NOTHING` because that one denies the OBJECT, and here the
+    objects are present and simply carry nothing. "No secondary index" answers an optimization
+    question; it is not a missing name. The old sentence sent 79 of 133 measured optimization
+    runs looking for a misspelling on their opening turn.
+
+    It also closes the door rather than leaving it ajar: the run is told the inventory it was
+    already handed carries the same fact, so there is nothing further to read and no reason to
+    ask again with a different spelling.
+  */
+  CATALOG_INVENTORY_EMPTY:
+    "That inventory is empty: the objects exist and declare none of these, so nothing was inspected. This database has no secondary index and no declared foreign key beyond what the schema inventory in this conversation already shows — reading it again with another spelling will return the same nothing. Treat the absence as a finding: it is an answer about how this database is built, and you may state it in a claim citing that inventory.",
   CATALOG_MATCHED_NOTHING:
     "There is no object of that name in this database, so nothing was inspected. Check the inventory this run was given and inspect a name it lists — a name from the objective may be the name of a query or a report rather than of a table.",
   UNVERIFIABLE_EVIDENCE: `At least one evidence reference does not match anything this run produced. Cite an artifact this run actually read, or the schema snapshot it captured. ${AGENT_EVIDENCE_CONTRACT}`,
@@ -1843,6 +1865,28 @@ async function readCatalog(
     says so in the opening note rather than being refused.
   */
   if (!grounding && outcome.kind === "completed" && outcome.artifact.summary.rowCount === 0) {
+    /*
+      Which empty answer this is, because the two mean opposite things.
+
+      Zero rows from a COLUMN read means the object was not found — the case above. Zero rows
+      from an index or relation read means the objects were found and carry none, which is an
+      ANSWER to an optimization question rather than a failure of one. Telling a run "there is
+      no object of that name" when it asked which indexes exist is false, and it sends the
+      model hunting a misspelling it did not make.
+
+      That is not a corner. `query-optimization`'s first rule ORDERS an index read, the sample
+      database declares no `CREATE INDEX` anywhere, so the call returns zero rows every time:
+      it is the opening turn of 79 of the 133 optimization runs measured, answered with a
+      false sentence whose own advice cannot help, because the inventory it points at lists no
+      indexes either. Since sampling went deterministic the dead opening became a dead
+      certainty — `qwen3:8b` opened this way in 10 of 10 runs and lost all ten.
+
+      Both stay refusals rather than becoming citable empty artifacts: that is the
+      `empty-evidence` regression this function's docblock records, and nothing here reopens
+      it. What changes is that the sentence is true.
+    */
+    const kind = (parsed.value as { kind?: string }).kind;
+    if (kind === "indexes" || kind === "relations") return unavailable("CATALOG_INVENTORY_EMPTY", kind);
     return unavailable("CATALOG_MATCHED_NOTHING");
   }
   return outcome;
