@@ -130,7 +130,7 @@ Thirteen external engines share one interface, and three of them are read-only b
 
 ### Engines with no provider of their own
 
-Fifteen further engines speak the wire protocol of one of the fourteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has twelve rows rather than fifteen because engines that behave identically share a row; all fifteen are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+Sixteen further engines speak the wire protocol of one of the fourteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has thirteen rows rather than sixteen because engines that behave identically share a row; all sixteen are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |
@@ -140,6 +140,7 @@ Fifteen further engines speak the wire protocol of one of the fourteen drivers a
 | Citus | `postgres` | Full — but statistics describe the coordinator, so a distributed table's row count and size are wrong rather than missing |
 | TimescaleDB | `postgres` | Full — but the statistics describe the empty parent table, so a hypertable's row count and size are wrong rather than missing, and every chunk shows up in the object browser |
 | YugabyteDB | `postgres` | Full — but row counts and sizes read 0 until you run `ANALYZE`, and index sizes always read 0 bytes |
+| AlloyDB Omni | `postgres` | Full. Row counts and sizes are exact, but the version panel cannot be told apart from a stock PostgreSQL 17 because `version()` names AlloyDB nowhere, eight of AlloyDB's own `google_ml` tables appear in the object browser, and the slow-query panel stays empty until `pg_stat_statements` is installed |
 | Valkey · DragonflyDB · KeyDB | `redis` | Full |
 | FerretDB | `mongodb` | Full — sign in with the backend PostgreSQL credentials |
 | StarRocks | `mysql` | Partial — editor, table list, column metadata, table and storage stats, metrics and slow queries work; the overview, health, session and monitoring panels do not, the version reads MySQL 5.1, and row counts, sizes and indexes are empty |

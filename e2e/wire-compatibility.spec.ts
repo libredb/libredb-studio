@@ -9,9 +9,11 @@ import { test, expect } from "@playwright/test";
  * connection dialog. This spec asserts the real registry, rendered inside the real
  * dialog, in a real browser.
  *
- * It also guards the negative case. PostgreSQL has three verified relatives with
+ * It also guards the negative case. Several of PostgreSQL's verified relatives have
  * reduced support, and one of them (CockroachDB) must never be presented as though
- * it worked fully - that is the exact overclaim the issue forbids.
+ * it worked fully - that is the exact overclaim the issue forbids. The count is left
+ * out on purpose: it moved from three to four the moment Apache Cloudberry landed as
+ * partial, and a number in a comment nobody greps ages silently.
  */
 test.describe("Wire compatibility hint", () => {
   test.beforeEach(async ({ page }) => {

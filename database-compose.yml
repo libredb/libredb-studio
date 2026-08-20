@@ -597,6 +597,37 @@ services:
     ports:
       - "15435:5432"
 
+  # AlloyDB Omni is Google's downloadable AlloyDB, and it needs nothing unusual to
+  # run: `POSTGRES_PASSWORD` is the only variable the probe behind this entry set.
+  # No licence key, no `ulimit` change, no memory floor, and no `shm_size` - unlike
+  # the cloudberry service above, which needs one. Sign in as user `postgres` with
+  # the password below, database `postgres` (the entrypoint's default when
+  # POSTGRES_DB is unset).
+  #
+  # The tag is pinned, and the pin is free: the registry carries 87 tags including
+  # 15.x, 16.x, 17.5.0 and 17.7.0, and 17.9.0's digest is currently the same digest
+  # `:latest` serves. Only 17.9.0 was probed.
+  #
+  # `SELECT version()` here says "PostgreSQL 17.9" and nothing else - the string
+  # names AlloyDB nowhere - so the overview cannot be told apart from a stock
+  # PostgreSQL 17. Confirm which server you are on from the `alloydb.*` settings, or
+  # from this tag.
+  #
+  # Two things a probe here should expect. The columnar engine is OFF: switching it
+  # on takes ALTER SYSTEM plus a container restart, not a reload. And an agent run
+  # needs a least-privilege role created by hand, because the image's own `postgres`
+  # superuser is refused as too broad - after which the grounding read is refused
+  # anyway, at 536 rows against a 200-row budget, most of them the extension views
+  # this image installs into `public` itself (B52).
+  alloydb:
+    image: google/alloydbomni:17.9.0
+    container_name: libredb-alloydb
+    profiles: ["compat"]
+    environment:
+      POSTGRES_PASSWORD: probe
+    ports:
+      - "15436:5432"
+
   # -- MySQL wire ----------------------------------------------------------
 
   mariadb:

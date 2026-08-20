@@ -42,6 +42,7 @@ const COMPOSE_SERVICE_BY_ENGINE: Readonly<Record<string, string>> = {
   TimescaleDB: "timescaledb",
   YugabyteDB: "yugabytedb",
   "Apache Cloudberry (incubating)": "cloudberry",
+  "AlloyDB Omni": "alloydb",
   MariaDB: "mariadb",
   TiDB: "tidb",
   StarRocks: "starrocks",

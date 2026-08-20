@@ -88,10 +88,14 @@ export interface WireCompatibleEngine {
 /**
  * Verified relatives, each measured by a live gate-4 probe on 2026-08-18, with
  * TimescaleDB, YugabyteDB, TiDB and StarRocks added from a second probe run on
- * 2026-08-20, and Apache Cloudberry and Vitess from a third run the same day.
+ * 2026-08-20, Apache Cloudberry and Vitess from a third run the same day, and
+ * AlloyDB Omni from a fourth run the same day.
  * Names still awaiting an instance are tracked in issue #424, never here: there
  * is no "pending" state on purpose, because a reader cannot tell a pending entry
- * from a probed one.
+ * from a probed one. A name that WAS probed and did not earn an entry has no
+ * representation here either - Cloud Spanner's PostgreSQL dialect answered 1 of 15
+ * surfaces - so that result is recorded in `docs/providers/README.md` beside this
+ * table, with the number that refused it.
  */
 export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
   {
@@ -172,6 +176,23 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "The overview's database size reads 62 MB against roughly 900 KB of user tables, which is catalog and segment overhead rather than your data.",
       "The agent cannot ground a run: connecting as the cluster's own gpadmin is refused because the execution profile reads that role as too broad, and a least-privilege agent role is refused at 289 rows against a 200-row budget, 282 of those rows belonging to Cloudberry's own gp_toolkit schema.",
       "Apache publishes build images only, so the probe ran on a third-party image (woblerr/cloudberry:2.1.0-incubating); no image from the project itself was measured.",
+    ],
+  },
+  {
+    name: "AlloyDB Omni",
+    via: "postgres",
+    tier: "full",
+    probedVersion: "PostgreSQL 17.9 (AlloyDB Omni 17.9.0)",
+    caveats: [
+      'The version panel cannot be told apart from a stock PostgreSQL 17: version() reports only "PostgreSQL 17.9 on x86_64-pc-linux-gnu" and names AlloyDB nowhere, so the product identity is visible only in the alloydb.* settings and in the image tag.',
+      "Row counts and sizes are exact, checked against the engine: 2000 rows read as 2000, and 270336 total bytes as 270336 (180224 table plus 90112 index). Foreign keys are both read back and enforced.",
+      "Eight of AlloyDB's own google_ml tables appear in the object browser, so it lists 10 objects for 2 user tables: auth_info, embed_gen_progress, embed_gen_settings, model_family_info, models, native_models, proxy_models_query_mapping and supported_vertex_models.",
+      "The browser understates what the image installed: outside the system schemas there are 70 objects for 2 user tables, because 49 extension VIEWS are installed into public itself (g_columnar_* x27, google_db_advisor_* x18, g_agg_stat_statements, g_lap_timer, hypopg_list_indexes and a columnar vectorized-join view), plus 4 views in ai and 11 more in google_ml. They are hidden only because the schema query filters table_type = 'BASE TABLE'.",
+      "Those eight google_ml tables are readable by a role with no grants at all: a LOGIN role given only CONNECT, with ALL revoked on schema public, still lists them and answered SELECT count(*) FROM google_ml.supported_vertex_models with 15 rows.",
+      'The slow-query panel is always empty and health says why: pg_stat_statements ships with the image but is not installed in it, reported as "pg_stat_statements extension not enabled".',
+      "The columnar engine is off by default and turning it on needs ALTER SYSTEM plus a restart, not a reload. With it on, the on-disk sizes stay exact but do not count the columnar copy.",
+      "The agent cannot ground a run: the image's own postgres superuser is refused as too broad, and a least-privilege role acquires both profiles but has its schema capture refused at 536 rows against a 200-row budget, of which only 7 are the user's - 341 of the rest are the 49 extension views installed into public itself, so narrowing the capture to public alone still refuses at 348 rows (B52).",
+      "Probed on the 17.9.0 image only; the 15.x and 16.x lines were not probed.",
     ],
   },
   {

@@ -2774,7 +2774,7 @@ directly, so it fails loudly rather than skipping, but it fails at the worst mom
 Done when the next release's channel E2Es pass on deb, rpm and snap, and this entry is deleted - or
 they fail and `--with-deps` comes back for those three jobs only.
 
-### B52. The PostgreSQL grounding capture's row cap is reached by the server's own catalogs, not by a wide user schema
+### B52. The PostgreSQL grounding capture's row cap is reached by what the image ships, not by a wide user schema
 
 `composeCatalogRead` records a known limitation with a number: the PostgreSQL projection is one row
 per COLUMN against `maxResultRows: 200`, so an unnarrowed call "overflows at roughly 25 tables of
@@ -2809,13 +2809,73 @@ too broad (`is_superuser`, `reads_server_files`, `writes_server_files`, `execute
 row budget is only reached after a least-privilege `agentUser` has been created by hand - and it is
 then reached anyway.
 
-The consequence is that the agent is unusable out of the box on both TimescaleDB and Cloudberry, and
-the same shape will appear on any PostgreSQL-wire server with wide catalogs of its own. Two candidate
-fixes, both listed in the existing comment as belonging to the consuming layer: aggregate columns per
-table so the projection is one row per OBJECT (symmetric with the SQLite side), or have the capture
-exclude the schemas the object browser already treats as internal. The second is narrower and would
-not change what a caller parses - and it now has two schema sets to exclude rather than one, which is
-an argument for the first.
+**A third engine settles which fix is viable, and it is not the schemas.** Measured on 2026-08-20
+against `google/alloydbomni:17.9.0` (AlloyDB Omni 17.9.0, PostgreSQL 17.9) with the same two user
+tables: `CATALOG_READ_REFUSED`, "Read-only execution exceeded the row budget: 536 rows > 200 allowed".
+Only **7 of those 536 rows are the user's** - `customers` 3 columns and `orders` 4. As the agent role
+sees it the total splits `public` **348**, `google_ml` 144, `ai` 44 - and **341 of the 348 in `public`
+are the 49 extension views the image installs into `public` itself**, not into a schema of its own.
 
-Done when a plan run against a stock TimescaleDB and one against a stock Cloudberry both report a
-captured schema naming the user's tables, and this entry is deleted.
+That is what makes this measurement decisive rather than a third repetition. On TimescaleDB (473 of
+478 in `_timescaledb_*`) and on Cloudberry (282 of 289 in `gp_toolkit`) the overflow sits in a
+separate internal schema, so the second candidate fix - have the capture exclude the schemas the
+object browser already treats as internal - would rescue both. Here it rescues nothing: narrowing the
+capture to `schema=public` still refuses, at **348 rows against the 200 allowed**, because the views
+are in the user's own schema. The only selector that fits is a single table (`schema=public
+table=orders` projects 4 rows), which is not a schema capture at all. **So of the two candidate fixes
+only the first survives: aggregate columns per table so the projection is one row per OBJECT
+(symmetric with the SQLite side).** The schema-exclusion fix is refuted by the AlloyDB Omni
+measurement and should not be attempted.
+
+Two controls keep the AlloyDB numbers attributable. Plain PostgreSQL 18.4, run in the same pass,
+projects **7 rows** and captures its 2 tables, so the path is fine. And the `relations` capture kind
+projects 0 rows as the agent role and 3 as a superuser on AlloyDB - but the plain PostgreSQL baseline
+behaves identically, so that is PostgreSQL's own privilege rule and **not** an AlloyDB property.
+
+AlloyDB Omni also fails the same step earlier as Cloudberry, for the same reason: as the image's own
+`postgres` superuser both `agent-read-only` and `agent-operations` are refused with
+`PROFILE_PRIVILEGES_TOO_BROAD` (`is_superuser`, `reads_server_files`, `writes_server_files`,
+`executes_programs`). With a hand-made least-privilege role both profiles acquire and `queryReadOnly`
+is present, so the boundary itself works - and the capture is then refused anyway.
+
+The consequence is that the agent is unusable out of the box on TimescaleDB, Cloudberry and AlloyDB
+Omni, and the same shape will appear on any PostgreSQL-wire server whose image ships wide catalogs or
+wide extension views before the user creates anything. Both candidate fixes were listed in the
+existing comment as belonging to the consuming layer; after the third measurement only the
+one-row-per-OBJECT aggregation is left standing.
+
+Done when a plan run against a stock TimescaleDB, one against a stock Cloudberry and one against a
+stock AlloyDB Omni all report a captured schema naming the user's tables, and this entry is deleted.
+
+### B54. A refused grounding capture leaves no trace in the run's own ledger, so B52 cannot be diagnosed from the record
+
+`docs/llms/setup.md` states the rule this entry breaks: "Every run writes its ledger to
+`.workflow-data`, and that is the authority on what a run did." For a capture that SUCCEEDS that is
+true - `investigation.ts` records a `context-captured` event carrying the fingerprint, the table count
+and the whole snapshot. For a capture that is REFUSED it is not: the `capture.kind === "unavailable"`
+branch pushes `planningUngroundedNote(capture.detail, ...)` into the model's prompt and returns
+without recording anything at all.
+
+Measured on 2026-08-20 against a live AlloyDB Omni 17.9.0, in the browser, with a least-privilege
+agent role. The two ledgers side by side are the whole argument:
+
+- Vitess, capture succeeded: `context-captured`, `fingerprint ctx_3ce059ca...`, `tableCount 2`, plus
+  the full snapshot.
+- AlloyDB Omni, capture refused: four events - `run-opened`, `run-started`, `closing-statement`,
+  `run-finished` - and nothing between the second and the third. The 849-byte ledger names no
+  catalog read, no reason code and no row count.
+
+So the only record that the run was ungrounded is the model's own sentence, "This run was given no
+inventory of this database". The reason it was ungrounded - `CATALOG_READ_REFUSED`, 536 rows against
+a 200-row budget, 341 of them extension views in `public` - is computed in `context-snapshot.ts`,
+handed to the model, and then dropped. It is not in the ledger and it is not in the server log
+either: grepping the run's own log for `CATALOG_READ_REFUSED`, `row budget` and `536` finds nothing.
+
+That is worse than a gap in telemetry, because this repo has already recorded the trap it walks into:
+a missing event reads as work that was not needed rather than knowledge that was lost. An operator
+diagnosing B52 on TimescaleDB, Cloudberry or AlloyDB Omni today has to reproduce the run outside the
+product to learn why it had no schema.
+
+Done when a refused capture records an event carrying its `reasonCode` and, where the reason is the
+row budget, the two numbers - rows projected and rows allowed - and a plan run whose capture was
+refused can be explained from its ledger alone, and this entry is deleted.

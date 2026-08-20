@@ -62,6 +62,7 @@ the support column records how much of the product actually worked:
 | Citus | `postgres` | Full | citus 14.1-1 on PostgreSQL 18.4 | All surfaces answer. **Row counts and sizes for a distributed table are wrong, not missing** — PostgreSQL statistics describe the empty coordinator parent, not the shards. `citus_tables` and `citus_schemas` show up in the browser. |
 | TimescaleDB | `postgres` | Full | TimescaleDB 2.29.2 on PostgreSQL 17.11 | All surfaces answer. **A hypertable's row count and size are wrong, not missing** — the statistics describe the empty parent table, not the chunks. Every chunk shows up as its own table and index, along with the `_timescaledb_catalog` and `_timescaledb_cache` schemas. The overview shows PostgreSQL's version, not the extension's. **The agent cannot ground a run here** — the extension's catalogs answer 473 of 478 rows in the grounding read, over its 200-row budget, on a stock install. |
 | YugabyteDB | `postgres` | Full | YugabyteDB 2.25.2.0-b0 (advertises PostgreSQL 15.12) | All surfaces answer, foreign keys included. **Row counts and sizes read 0 until you run `ANALYZE`** — nothing collects statistics automatically, so a full database looks empty. Index sizes always read 0 bytes (index storage lives in DocDB) and the overview's database size reads 0 bytes. Index types read `lsm`, which is the real storage rather than a misreading. |
+| AlloyDB Omni | `postgres` | Full | PostgreSQL 17.9 (AlloyDB Omni 17.9.0) | All fifteen surfaces answer, and the numbers are exact: 2000 rows read as 2000 and 270336 bytes as 270336 (180224 table plus 90112 index), with a foreign key both read back and enforced by the engine. **The version panel cannot be told apart from a stock PostgreSQL 17** - `version()` reports `PostgreSQL 17.9 on x86_64-pc-linux-gnu` and names AlloyDB nowhere; the product is identifiable only from the `alloydb.*` settings and the image tag. The object browser lists 10 objects for 2 user tables, the 8 extras being AlloyDB's own `google_ml` tables - and **that understates what is installed**: outside the system schemas there are 70 objects, because 49 extension views live in `public` itself (`g_columnar_*`, `google_db_advisor_*`, `hypopg_list_indexes` and more), which the browser hides only because its schema query filters `table_type = 'BASE TABLE'`. A role with no grants at all - `LOGIN` plus `CONNECT`, `ALL` revoked on `public` - still lists those `google_ml` tables and reads them (`SELECT count(*) FROM google_ml.supported_vertex_models` answered 15 to it). The slow-query panel is empty because `pg_stat_statements` ships with the image but is not installed in it, which health reports honestly. The columnar engine is off by default and needs `ALTER SYSTEM` plus a restart; with it on the on-disk sizes stay exact but do not count the columnar copy. **The agent cannot ground a run here**: the image's own `postgres` superuser is refused as too broad, and a least-privilege role - which does acquire both profiles - has its capture refused at 536 rows against a 200-row budget, only 7 of them the user's, and narrowing the capture to `public` alone still refuses at 348 (B52). Probed on the 17.9.0 image only; the 15.x and 16.x lines were not. |
 | Valkey | `redis` | Full | Valkey 9.1.1 | Behaves as Redis. The overview shows the Redis emulation level (7.2.4), not the Valkey version. |
 | DragonflyDB | `redis` | Full | DragonflyDB df-v1.40.1 | Overview shows the emulation level (7.4.0). Max connections reads 0 (no usable `maxclients` in `INFO`), and active sessions show a numeric id instead of a username (`CLIENT LIST` omits `user=`). |
 | KeyDB | `redis` | Full | KeyDB 6.3.4 | Publishes no version field of its own, so the overview is indistinguishable from a Redis 6 server. A session's command can appear without its subcommand. |
@@ -79,12 +80,39 @@ the second column:
 docker compose -f database-compose.yml --profile compat up -d
 ```
 
-**Not yet measured.** The following speak a wire protocol we ship but had no reachable instance
-during the Phase 0 run, so they are deliberately absent from the table above rather than assumed to
-work: SingleStore (its dev image needs a licence key), OceanBase (a multi-GB image with a high
-memory floor), and every managed-only service — Amazon Redshift, Aurora, AlloyDB, Neon, Supabase, Cloud SQL, Cloud
-Spanner, Azure SQL Database, Microsoft Fabric, Azure Synapse, Azure SQL Managed Instance, Amazon
-ElastiCache, Upstash, PlanetScale, Azure Cosmos DB and Amazon DocumentDB. Their status is tracked in
+**Absent from the table for two different reasons**, which are worth keeping apart: an engine we
+could not reach is not the same as an engine we reached and refused.
+
+**Measured, and refused a row.** The probe ran and the result did not earn an entry, so there is no
+tier and no version column for it - the number is the finding:
+
+- **Google Cloud Spanner, PostgreSQL dialect** - **1 of 15 surfaces**, probed on 2026-08-20 through
+  the `postgres` driver against `gcr.io/cloud-spanner-pg-adapter/pgadapter-emulator:v0.55.2` (the
+  Cloud Spanner **emulator** behind PGAdapter 0.55.2; the managed service was not probed and inherits
+  nothing from this). It does not reach even query-editor-only: pressing Run fails, because the editor
+  always attaches a `queryId` and the provider then issues `SELECT pg_backend_pid()` first, which
+  Spanner rejects as an unsupported function. Test Connection fails on a connection that works, since
+  it reads `pg_stat_activity`. The object browser is empty (`regclass` is an unsupported type), no
+  monitoring panel answers at all, no row count or size is obtainable anywhere - the emulated
+  `pg_class` reports 0 rows for a 2000-row table and even ground truth is unreadable - Explain fails
+  on `BUFFERS`, and Cancel can never work because the backend PID it needs is unreadable. Agent and
+  plan mode fail closed, which is correct: the role-privilege verification in `connect()` cannot run
+  (`current_setting(text)` is unsupported), so acquisition is refused and the user is told the
+  connection failed. Foreign keys **are** enforced by the engine, but the app can never display them
+  because the schema read fails. **One result is worse than a failure: Vacuum reports "VACUUM
+  completed successfully" when Spanner has no vacuum and nothing happened** - PGAdapter swallows the
+  statement. Analyze, by contrast, correctly reports itself unsupported. Fixture notes for anyone
+  repeating this: `numeric` takes no precision or scale (so `decimal(10,2)` is rejected), there is no
+  `ANALYZE`, the emulator authenticates nobody and has no role vocabulary at all (`CREATE ROLE`
+  answers "Statement is not supported."), and nothing survives a restart because the database is in
+  memory.
+
+**No instance was reachable**, so these are deliberately absent rather than assumed to work:
+SingleStore (its dev image needs a licence key), OceanBase (a multi-GB image with a high memory
+floor), and every managed-only service - Amazon Redshift, Aurora, AlloyDB (the managed service; the
+downloadable **AlloyDB Omni** is in the table above), Neon, Supabase, Cloud SQL, Azure SQL Database,
+Microsoft Fabric, Azure Synapse, Azure SQL Managed Instance, Amazon ElastiCache, Upstash,
+PlanetScale, Azure Cosmos DB and Amazon DocumentDB. Their status is tracked in
 [#424](https://github.com/libredb/libredb-studio/issues/424).
 
 ## Cross-cutting docs

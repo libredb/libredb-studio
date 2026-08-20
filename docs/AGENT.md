@@ -2225,8 +2225,8 @@ classifier's real-world agreement rate was measured — and they are the same ki
   resumed drive starts with all three false. The guards are the part that keeps being got wrong —
   both new notices shipped with a condition that named one thing and read another, and both were
   caught in review rather than by a gate.
-- **B52** — the composed PostgreSQL grounding capture is refused by the SERVER's own catalogs rather
-  than by a wide user schema, and it has now been measured on two different servers.
+- **B52** — the composed PostgreSQL grounding capture is refused by what the IMAGE ships rather
+  than by a wide user schema, and it has now been measured on three different servers.
   `composeCatalogRead` projects one row per COLUMN against `maxResultRows: 200` and refuses rather
   than truncates, which its own comment estimates as "roughly 25 tables of eight columns". Measured on
   2026-08-20 against a stock TimescaleDB 2.29.2 (PostgreSQL 17.11) with TWO user tables:
@@ -2244,8 +2244,31 @@ classifier's real-world agreement rate was measured — and they are the same ki
   you and it is a superuser, so the execution profile refuses the role as unverified or too broad
   (`is_superuser`, `reads_server_files`, `writes_server_files`, `executes_programs`) and an agent run
   there needs a hand-made least-privilege `agentUser` before it can even reach the row budget - and
-  then hits it. The agent is therefore unusable out of the box on either engine, and the same shape
-  will appear on any PostgreSQL whose own catalogs are wide before the user has created anything.
+  then hits it. Measured a third time the same day on AlloyDB Omni 17.9.0 (PostgreSQL 17.9), which is
+  the instance that decides the fix: the read is refused at **536 rows against the 200 allowed** with
+  only **7** of them the user's, and the overflow is **not** in an internal schema - 341 of the 348
+  rows attributed to `public` are the 49 extension views the image installs into `public` itself, with
+  `google_ml` 144 and `ai` 44 behind them. Narrowing the capture to `schema=public` therefore still
+  refuses, at 348 rows, so the candidate fix of excluding the schemas the object browser treats as
+  internal - which would have rescued both TimescaleDB and Cloudberry - is refuted here, and the only
+  surviving fix is to aggregate columns per table so the projection is one row per OBJECT. AlloyDB
+  Omni is a superuser-login image too, so it hits Cloudberry's first wall as well. Two controls keep
+  those numbers attributable: plain PostgreSQL 18.4 in the same pass projects 7 rows and captures its
+  2 tables, and the 0-rows-as-agent-role result on the `relations` kind reproduces identically on that
+  baseline, so it is PostgreSQL's privilege rule and not an AlloyDB property. The agent is therefore
+  unusable out of the box on all three, and the same shape will appear on any PostgreSQL whose image
+  ships wide catalogs or wide extension views before the user has created anything.
+- **B54** — a REFUSED grounding capture records nothing in the run's own ledger, so the failure above
+  cannot be diagnosed from the record. A capture that succeeds writes `context-captured` with its
+  fingerprint, table count and snapshot; the `capture.kind === "unavailable"` branch pushes the
+  ungrounded note into the model's prompt and returns without recording anything. Measured on the same
+  AlloyDB Omni run: the ledger holds four events - `run-opened`, `run-started`, `closing-statement`,
+  `run-finished` - and its 849 bytes name no catalog read, no reason code and no row count, while the
+  Vitess ledger beside it carries `context-captured` with `ctx_3ce059ca...` and `tableCount 2`. The
+  reason (`CATALOG_READ_REFUSED`, 536 against 200) is computed, handed to the model and dropped; it is
+  not in the server log either. So the only trace is the model's own sentence, and this repo has
+  already recorded why that is dangerous - a missing event reads as work that was not needed rather
+  than knowledge that was lost.
 
 ## Related documentation
 
