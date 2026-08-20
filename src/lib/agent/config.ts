@@ -67,7 +67,7 @@ export const AGENT_WORLD_TARGET_ENV = "WORKFLOW_TARGET_WORLD";
  * place in the agent tree that reads the environment — `tests/unit/agent-documentation.test.ts`
  * asserts exactly that, and it caught this read in the wrong file.
  */
-export const AGENT_TURN_TIMEOUT_ENV = "AGENT_MODEL_TURN_TIMEOUT_MS";
+const AGENT_TURN_TIMEOUT_ENV = "AGENT_MODEL_TURN_TIMEOUT_MS";
 
 /**
  * The configured per-turn ceiling, or `undefined` when nothing usable was set.

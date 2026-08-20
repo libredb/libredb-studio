@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MODEL_PROFILES, samplingFor } from "@/lib/agent/models";
+import { MODEL_PROFILES, ceilingFor, samplingFor } from "@/lib/agent/models";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 
 /**
@@ -59,6 +59,27 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     // (`qwen3.8` and `qwen3.8:latest`). A profile keyed on the exact string would silently
     // stop applying the day a tag changed.
     expect(samplingFor("qwen3:8b", "query-optimization")).toEqual(samplingFor("QWEN3:8B", "query-optimization"));
+  });
+
+  test("a model that reads past its budget gets its own ceiling", () => {
+    /*
+      `gemma4:26b`, database-assessment, 4 of 5. Its two ledgers side by side:
+
+        passed:  profiled 4 tables, then reported
+        lost:    profiled 11 — employee, department, dept_emp, dept_manager, salary, title,
+                 several of them twice — then ended `model-stopped` with no report
+
+      The general ceiling that exists for exactly this is 12 unreported calls, at which point
+      the run is narrowed to what would finish it. The losing run stopped at 11: one call
+      under, so the mechanism written for it never fired.
+
+      Moving the global ceiling to 11 would change every model's run to fix one cell, which is
+      the trade this repository has already paid for twice. The ceiling belongs in this
+      model's own file, where it costs nobody else a byte.
+    */
+    expect(ceilingFor("gemma4:26b")).toBeLessThan(11);
+    expect(ceilingFor("qwen3:8b")).toBe(12);
+    expect(ceilingFor("some-model-released-tomorrow:70b")).toBe(12);
   });
 
   test("every profile states what measured it", () => {

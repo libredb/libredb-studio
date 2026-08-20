@@ -29,7 +29,26 @@ export interface AgentModelProfile {
   readonly sampling?: Partial<AgentSampling>;
   /** Sampling for named surfaces only, which is the narrowest an override can be. */
   readonly perWorkflow?: Partial<Record<AgentRunWorkflowType, Partial<AgentSampling>>>;
+  /**
+   * How many calls this model may make without reporting before the run is narrowed to the
+   * tools that would finish it.
+   *
+   * A model that reads more thoroughly than the run has room for needs this lower than the
+   * default. `gemma4:26b` is the measured case: its passing assessments profile four tables,
+   * and the one that lost profiled eleven and had nothing left to report with — one call
+   * under the general ceiling of 12, so the guard never fired.
+   */
+  readonly unreportedCallCeiling?: number;
 }
+
+/**
+ * The general ceiling, which is what every locked cell was measured against.
+ *
+ * Twelve is deliberately generous: it is a backstop against a run that is looping rather than
+ * a budget for a run that is working, and a model that needs it lower says so in its own file
+ * rather than lowering it for everyone.
+ */
+export const DEFAULT_UNREPORTED_CALL_CEILING = 12;
 
 /**
  * Deterministic, and the setting five locked cells were won on.

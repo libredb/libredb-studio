@@ -56,7 +56,7 @@ import {
   reusableSnapshot,
 } from "./context-snapshot";
 import { agentModelTurnTimeoutMs } from "./config";
-import { samplingFor } from "./models";
+import { ceilingFor, samplingFor } from "./models";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
 import { type AgentGoalShortfall, verifyRunGoal } from "./goal-verifier";
 import { type AgentInventoryNoun, inventoryNoun } from "./inventory-noun";
@@ -1972,19 +1972,23 @@ interface ModelTurn {
   readonly assistantMessages: readonly ModelMessage[];
 }
 
-/**
- * How many tool calls a run may make, with nothing recorded, before it is narrowed.
- *
- * Read off the distribution rather than chosen: across 43 answered runs on 25 models the
- * most tool calls any of them made was SIX, while the runs that ended `no-report`
- * without ever stopping ran to 7, 9, 11, 20 and 57 — one still drafting SQL on its last
- * turn. Twelve is double the observed ceiling for a healthy run, so it cannot plausibly
- * interrupt one, and it still catches a loop long before the run's own budget ends.
- *
- * This is the half `AGENT_REPORT_REMINDER_NOTICE` cannot reach: that notice fires when a
- * model STOPS talking, and a model reading itself out of budget never stops.
- */
-const AGENT_UNREPORTED_CALL_CEILING = 12;
+/*
+  How many tool calls a run may make, with nothing recorded, before it is narrowed, now lives
+  per model in `models/profile.ts` and is read through `ceilingFor`.
+
+  The general value is still 12 and still read off the distribution rather than chosen: across
+  43 answered runs on 25 models the most tool calls any of them made was SIX, while the runs
+  that ended `no-report` without ever stopping ran to 7, 9, 11, 20 and 57 — one still drafting
+  SQL on its last turn. Twelve is double the observed ceiling for a healthy run, so it cannot
+  plausibly interrupt one, and it still catches a loop long before the run's own budget ends.
+
+  It moved because 12 was one call too generous for one model and nobody else should pay to fix
+  that: `gemma4:26b` lost an assessment having profiled eleven tables and stopped at 11, so this
+  guard never fired, and its own file now asks for 9.
+
+  This is the half `AGENT_REPORT_REMINDER_NOTICE` cannot reach: that notice fires when a model
+  STOPS talking, and a model reading itself out of budget never stops.
+*/
 
 /**
  * How many times a report may be held for the verdict it would earn before it is let through.
@@ -2650,7 +2654,7 @@ export async function runInvestigation(
    * it spent the ones that got it here.
    */
   let narrowed = false;
-  /** Tool calls made so far, which is what `AGENT_UNREPORTED_CALL_CEILING` is read against. */
+  /** Tool calls made so far, which is what this model's own ceiling is read against. */
   let toolCallsMade = 0;
   /**
    * Whether `present_answer` has been CALLED, which is not the same as answered: a
@@ -2908,7 +2912,7 @@ export async function runInvestigation(
     // A run that has read this much and recorded nothing is looping rather than working,
     // so it is narrowed to what would finish it. Announced once, like every other notice,
     // because a set that shrinks without a word looks to the model like a broken server.
-    if (!narrowed && toolCallsMade >= AGENT_UNREPORTED_CALL_CEILING) {
+    if (!narrowed && toolCallsMade >= ceilingFor(model.modelId)) {
       narrowed = true;
       if (!reportReminded) {
         reportReminded = true;
