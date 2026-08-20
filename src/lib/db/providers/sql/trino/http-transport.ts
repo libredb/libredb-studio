@@ -87,7 +87,17 @@ const STATEMENT_PATH = "/v1/statement";
  */
 const QUERY_PATH = "/v1/query";
 
-/** The statement travels as its own text: no JSON envelope, no trailing semicolon. */
+/**
+ * The statement travels as its own text, with no JSON envelope around it.
+ *
+ * It also travels VERBATIM: nothing here edits it, and the endpoint takes exactly
+ * one statement with no terminator. Measured on 476, `SELECT 1;` is a
+ * `SYNTAX_ERROR` (`mismatched input ';'`) where `SELECT 1` succeeds - so a
+ * trailing semicolon is the caller's to remove, and every caller inside this
+ * product has already had it removed by `splitStatements()`, which consumes it as
+ * the delimiter. See `docs/BACKLOG.md` D5 for why the seam does not strip one
+ * itself and what would have to be true to change that.
+ */
 const SQL_CONTENT_TYPE = "text/plain";
 const JSON_ACCEPT = "application/json";
 

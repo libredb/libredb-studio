@@ -394,6 +394,12 @@ Measured: `SELECT 1;` answers `line 1:9: mismatched input ';'`. That is what
 `statementTerminator: "none"` declares, and it is mandatory rather than cosmetic — without it the
 shared query generators emit statements this engine refuses.
 
+The transport does **not** strip one for you: the statement reaches the coordinator verbatim. Every
+caller inside the product has already had it removed, because `splitStatements()` consumes the
+semicolon as its delimiter, so this is only reachable by a consumer of the published package calling
+`query()` directly. Recorded as `docs/BACKLOG.md` D5 rather than silently absorbed, because the
+endpoint takes exactly one statement and a strip is a smaller change than it first looks.
+
 `identifierQuoting: "double"` is declared explicitly for the neighbouring reason (#424 Phase 1's
 lesson): the generators otherwise derive the quote character from `defaultPort`, and `8080` is a
 generic HTTP port that says nothing about a dialect. Trino quotes with `"`, and a backtick is not a

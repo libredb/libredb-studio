@@ -215,6 +215,35 @@ work: this is a connection-form feature, not a grounding one. Done when the Mong
 carries an optional auth-database field that reaches the URI, with the tri-sync the provider rule
 requires (code, `docs/providers/mongodb.md`, `tests/integration/db/mongodb-provider.test.ts`).
 
+### D5. A trailing semicolon reaches Trino unchanged, and Trino is the one engine that refuses it
+
+Measured against Trino 476: `SELECT 1;` answers `SYNTAX_ERROR`, `line 1:9: mismatched input ';'`,
+while `SELECT 1` succeeds. `TrinoHttpTransport` sends the statement text verbatim and strips
+nothing, so `provider.query("SELECT 1;")` fails on Trino and succeeds on every other SQL engine
+we ship.
+
+**Not reachable through the product**, which is why it is here rather than in the provider PR:
+`splitStatements()` (`src/lib/sql/statement-splitter.ts:132`) consumes the semicolon as the
+delimiter, so nothing typed in the editor ever carries one to a provider. The exposure is the
+published library surface — `@libredb/studio` exports the providers, and a consumer calling
+`query()` directly gets an engine-specific failure with no hint that the semicolon caused it.
+
+Two things make it worth recording rather than dismissing. The comment at
+`src/lib/db/providers/sql/trino/http-transport.ts` describing the request body reads "no trailing
+semicolon", which states the requirement without anything enforcing it — corrected in the same
+change that filed this entry, so the comment no longer implies a strip that does not happen. And
+the provider already absorbs one Trino grammar quirk for the caller: `prepareQuery()` transposes
+`LIMIT n OFFSET m` into `OFFSET m LIMIT n` because only the second order parses. Absorbing one and
+not the other is the inconsistency, not the semicolon itself.
+
+Done when the transport drops a single trailing semicolon before the statement leaves it (a
+statement whose text is otherwise unchanged, so nothing that reads the statement back is
+surprised), with a test that proves `SELECT 1;` and `SELECT 1` reach the wire identically, and
+`docs/providers/trino.md` saying so. Deliberately NOT a general statement splitter: `SELECT 1;
+SELECT 2` must keep failing, because the endpoint takes exactly one statement.
+
+Found reviewing #438 against the live cluster; not raised by the external review of that PR.
+
 ---
 
 ## Value interpolation
