@@ -278,6 +278,15 @@ async function startRun(
   mode: "agent" | "planning" = "agent",
   workflowType?: AgentRunWorkflowType,
   autoExecute?: boolean,
+  /*
+    The PROSE protocol, which had no test coverage at all until now.
+
+    `toolProtocol: "prompted"` is the path every `deepseek-r1` distill takes, because none of
+    them can emit `tool_calls`. Four of the 25 measured models go through it and between them
+    they lock 2 cells of 24 — and the reason no test ever caught why is that no test ever ran
+    this branch. Adding the parameter is the cheap half of fixing that.
+  */
+  toolProtocol?: "native" | "prompted",
 ): Promise<AgentRunRecord> {
   return boot.service.start({
     mode,
@@ -286,6 +295,7 @@ async function startRun(
     objective: OBJECTIVE,
     ...(workflowType === undefined ? {} : { workflowType }),
     ...(autoExecute === undefined ? {} : { autoExecute }),
+    ...(toolProtocol === undefined ? {} : { toolProtocol }),
   });
 }
 
@@ -4256,6 +4266,52 @@ describe("a run that will not record what it read is narrowed to what would fini
     });
 
     expect(namedIn(script, 12).sort()).toEqual(["compose_report", "profile_table"]);
+  });
+
+  test("a prompted run is told the set shrank, so it is not offered tools it may no longer call", async () => {
+    /*
+      The bug this pins, found by audit and confirmed in code.
+
+      A prompted run cannot emit `tool_calls`, so the tools are declared to it as PROSE: one
+      contract message, built once from the full selection and pushed before the loop. When
+      narrowing fires, the native path re-declares the smaller set to the SDK — but the
+      prompted path passes `undefined` and leaves the original contract standing, while
+      `handleCall` enforces the narrowed set regardless of protocol.
+
+      So a narrowed prompted run reads a contract listing `run_read_query`, calls it, and is
+      answered "There is no tool called run_read_query in this run." Every `deepseek-r1`
+      distill takes this path; between the four of them they lock 2 cells out of 24.
+
+      The fix re-declares the contract at the moment of narrowing, which is the same thing
+      the native path gets for free by handing the SDK a smaller set.
+    */
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent", "database-assessment", undefined, "prompted");
+    // Driven in the protocol this run actually speaks: a prompted call is a JSON object in
+    // ordinary text, and a native `tool_calls` reply would leave the SDK waiting for a tool
+    // result this path never writes. Narrowing is tripped by the report reminder rather than
+    // by the twelve-call ceiling, which is the same `narrowed = true` two turns sooner.
+    const promptedCall = (name: string, args: Record<string, unknown>) =>
+      answersProse(JSON.stringify({ action: name, arguments: args }));
+    const script = scriptedModel(
+      promptedCall("profile_table", { table: "orders" }),
+      answersProse("The orders table looks fine to me."),
+      answersProse("Nothing further."),
+      answersProse("Done."),
+    );
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    // The turn after narrowing must carry a contract that no longer offers the reading tools,
+    // and must still offer the two the verdict accepts.
+    const afterNarrowing = promptText(script.turns[2] as Turn);
+    expect(afterNarrowing).toContain("profile_table");
+    expect(afterNarrowing).toContain("compose_report");
+    expect(afterNarrowing.slice(afterNarrowing.lastIndexOf("profile_table"))).not.toContain("run_read_query");
   });
 
   test("an optimization keeps every instrument its verdict accepts, including the one-call route", async () => {

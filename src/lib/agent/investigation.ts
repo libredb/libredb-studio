@@ -2302,6 +2302,21 @@ export async function runInvestigation(
     no readings. It also keeps `instructions` byte-for-byte what it was for every run.
   */
   if (contract !== null) messages.push({ role: "user", content: contract });
+  /**
+   * Whether the smaller tool set has been declared to a PROMPTED run yet.
+   *
+   * The native path re-declares for free: `takeTurn` is handed `narrowedTools(record)` and
+   * the SDK sends the shorter list, so the model simply stops being offered what it may no
+   * longer call. A prompted run has no such channel — its tools are one prose contract
+   * pushed above, built once from the FULL selection — while `handleCall` enforces the
+   * narrowed set regardless of protocol.
+   *
+   * So a narrowed prompted run read a contract listing `run_read_query`, called it, and was
+   * answered "There is no tool called run_read_query in this run." Every `deepseek-r1`
+   * distill takes this path; between the four of them they lock 2 cells of 24. Confirmed in
+   * code by audit before it was fixed here.
+   */
+  let narrowingDeclared = false;
   const priorProgress = describePriorProgress(record);
   if (priorProgress !== null) messages.push({ role: "user", content: priorProgress });
 
@@ -2764,6 +2779,21 @@ export async function runInvestigation(
     // Whichever bound is smaller applies, and which one it was decides what the user
     // is told: a call that never returned is not a run that used its time.
     const turnBudgetMs = Math.min(remainingMs, turnTimeoutMs);
+    // The prompted path's equivalent of handing the SDK a shorter list. Once, and only
+    // where a contract exists to replace: a run whose narrowed set is empty has nothing to
+    // declare, and `promptedToolContract` answers `null` for that.
+    if (prompted && narrowed && !narrowingDeclared) {
+      const smaller = promptedToolContract(
+        selectAgentTools(record).filter((definition) => narrowedToolNames(record).has(definition.name)),
+      );
+      if (smaller !== null) {
+        narrowingDeclared = true;
+        messages.push({
+          role: "user",
+          content: `The tools available to this run have been reduced. From now on ONLY these may be called, and any other name will be refused.\n\n${smaller}`,
+        });
+      }
+    }
     // Built after the context, because in planning mode the rules depend on whether
     // there WAS one: a run told to plan against an inventory it was not given is the
     // same defect as a run given one and never told to use it (#350).
