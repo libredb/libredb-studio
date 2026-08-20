@@ -75,20 +75,19 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(ceilingFor("some-model-released-tomorrow:70b")).toBe(12);
   });
 
-  test("a model that stops mid-run twice gets told to report twice", () => {
+  test("one report reminder, until a measurement earns a second", () => {
     /*
-      `gemma4:26b`, database-assessment, ten measured runs. Every losing run ends the same way:
-      it profiles its tables, runs its counts, then produces a turn with no call and no report
-      and the drive concludes `model-stopped` with `no-report` unmet.
+      `gemma4:26b` was given two, on the reading that its losing assessments stop with the
+      evidence gathered and most of the run budget unspent. Measured: 2 of 5, against 4 of 5 at
+      the defaults. The reminder does reach the model — its calls rose from 8 to 11 — and it
+      spends the turn on more profiling rather than on the report, which cost two of the five
+      runs their deadline. Deleted, and the numbers kept in the profile.
 
-      The drive already answers that turn once, with the report reminder. This model needs the
-      second one: it has the evidence, it has the run's remaining time — the losing runs used
-      36 seconds of it — and what it lacks is a turn in which it does the one call left.
-
-      Per-model rather than global, because making every run of every model spend an extra turn
-      is the trade that has twice cost this repository a locked cell.
+      The knob stays wired. It is the second override measured and removed on this one cell,
+      and the point of keeping both records is that the next attempt starts from what the
+      ledgers actually say rather than from the same guess.
     */
-    expect(reportReminderLimitFor("gemma4:26b")).toBe(2);
+    expect(reportReminderLimitFor("gemma4:26b")).toBe(1);
     expect(reportReminderLimitFor("qwen3:8b")).toBe(1);
     expect(reportReminderLimitFor("some-model-released-tomorrow:70b")).toBe(1);
   });
