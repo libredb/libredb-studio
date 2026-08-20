@@ -86,7 +86,9 @@ export interface WireCompatibleEngine {
 }
 
 /**
- * Verified relatives, each measured by a live gate-4 probe on 2026-08-18.
+ * Verified relatives, each measured by a live gate-4 probe on 2026-08-18, with
+ * TimescaleDB, YugabyteDB, TiDB and StarRocks added from a second probe run on
+ * 2026-08-20.
  * Names still awaiting an instance are tracked in issue #424, never here: there
  * is no "pending" state on purpose, because a reader cannot tell a pending entry
  * from a probed one.
@@ -134,6 +136,30 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     ],
   },
   {
+    name: "TimescaleDB",
+    via: "postgres",
+    tier: "full",
+    probedVersion: "TimescaleDB 2.29.2 on PostgreSQL 17.11",
+    caveats: [
+      "Row counts and sizes for a hypertable are wrong rather than missing: PostgreSQL statistics describe the empty parent table, not the chunks the rows live in.",
+      "Every chunk of a hypertable appears as its own table and index, so the object browser fills with _timescaledb_internal chunks and the _timescaledb_catalog and _timescaledb_cache schemas.",
+      "The overview shows the PostgreSQL version, not the TimescaleDB extension version.",
+      "The agent cannot ground a run on a stock install: its schema capture is one row per column against a 200-row budget, and the extension's own catalogs answer 473 of 478 rows before the user has created anything.",
+    ],
+  },
+  {
+    name: "YugabyteDB",
+    via: "postgres",
+    tier: "full",
+    probedVersion: "YugabyteDB 2.25.2.0-b0 (advertises PostgreSQL 15.12)",
+    caveats: [
+      "Row counts and sizes read 0 until someone runs ANALYZE on the table, so a full database can look empty in the object browser.",
+      "Index sizes always read 0 bytes, before and after ANALYZE: index storage lives in DocDB, where pg_relation_size() cannot see it.",
+      "The overview's database size reads 0 bytes even with populated tables.",
+      "Index types read lsm rather than btree - that is YugabyteDB's real storage, not a misreading.",
+    ],
+  },
+  {
     name: "MariaDB",
     via: "mysql",
     tier: "full",
@@ -141,6 +167,34 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     caveats: [
       "The version shown is MariaDB's full build string, including its OS suffix, not a MySQL-style number.",
       "Verified on MariaDB 12.3 only; the 10.x information_schema surface was not probed.",
+    ],
+  },
+  {
+    name: "TiDB",
+    via: "mysql",
+    tier: "full",
+    probedVersion: "8.0.11-TiDB-v8.5.1",
+    caveats: [
+      "A freshly loaded table reads 0 rows and 0 B until TiDB's own background statistics collection catches up; the numbers correct themselves with no ANALYZE.",
+      "Max connections reads 0, because TiDB's max_connections defaults to 0 meaning unlimited.",
+      "The slow-query panel is always empty: TiDB keeps its slow log in information_schema.SLOW_QUERY, not in the performance_schema view the provider reads.",
+      "Storage stats list a phantom InnoDB entry at ibdata1:12M:autoextend, which is a MySQL default echoed back by a server that has no InnoDB.",
+      "The Explain panel does not work: TiDB rejects EXPLAIN FORMAT='json' outright, so the editor's plan request fails while the query itself runs normally.",
+      "Probed on a standalone --store=unistore server only; a PD + TiKV deployment was not probed.",
+    ],
+  },
+  {
+    name: "StarRocks",
+    via: "mysql",
+    tier: "partial",
+    probedVersion: "StarRocks 3.3.22-753696f (version() reports 5.1.0)",
+    caveats: [
+      "The version shown is MySQL 5.1: version() returns a fictitious compatibility number, and the real build is only in current_version(), which the provider does not call.",
+      "The overview and health panels are unavailable: StarRocks refuses their statements through the prepared-statement protocol the provider uses.",
+      "Active sessions and the monitoring dashboard are unavailable: StarRocks has no information_schema.PROCESSLIST.",
+      "Row counts and sizes are always 0: information_schema.TABLES reports 0 rows and 0 bytes for a populated table.",
+      "No index information at all: StarRocks exposes no secondary-index catalog, so the object browser and the index panel show none.",
+      "The Explain panel does not work: StarRocks does not parse EXPLAIN FORMAT='json', so the editor's plan request fails while the query itself runs normally.",
     ],
   },
   {

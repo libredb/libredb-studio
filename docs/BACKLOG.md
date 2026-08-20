@@ -2519,7 +2519,7 @@ ungrounded with the reason, exactly as the provider path now does, with a test p
 A plan run on the seeded `Demo (LibreDB)` connection (`data/demo.libredb`, type `libredb`) is
 ungrounded on every attempt: it writes no `context-captured` event at all and answers with the
 refusal it is instructed to give — "this run was given no inventory of this database". The provider
-path reaches this engine like the other eight, so the reading is attempted; it simply cannot open the
+path reaches this engine like the other eleven, so the reading is attempted; it simply cannot open the
 file.
 
 Measured on 2026-08-17, against `@libredb/libredb` 0.2.2 and a copy of the seeded file:
@@ -2744,3 +2744,33 @@ directly, so it fails loudly rather than skipping, but it fails at the worst mom
 
 Done when the next release's channel E2Es pass on deb, rpm and snap, and this entry is deleted - or
 they fail and `--with-deps` comes back for those three jobs only.
+
+### B52. The PostgreSQL grounding capture's row cap is reached by an extension's catalogs, not by a wide schema
+
+`composeCatalogRead` records a known limitation with a number: the PostgreSQL projection is one row
+per COLUMN against `maxResultRows: 200`, so an unnarrowed call "overflows at roughly 25 tables of
+eight columns". That estimate frames the cap as something a large user schema reaches.
+
+Measured on 2026-08-20 against a stock `timescale/timescaledb:latest-pg17` (TimescaleDB 2.29.2 on
+PostgreSQL 17.11), it is reached with **two user tables**. `information_schema.columns` outside
+`pg_catalog` and `information_schema` answers **478 rows**, of which **473 belong to the extension**
+- `timescaledb_information` 163, `_timescaledb_internal` 146, `_timescaledb_catalog` 139,
+`_timescaledb_config` 17, `timescaledb_experimental` 8 - and **5 are the user's**. The read is
+refused rather than truncated, by design, so `captureFromProvider` returns an unavailable capture and
+the plan run answers ungrounded with "This run was given no inventory of this database."
+
+Verified as extension-caused rather than product-wide: the identical run against plain PostgreSQL 18
+with the same least-privilege role captured "3 tables, fingerprint ctx_0d63" and named them. Granting
+the agent role USAGE and SELECT on the three internal schemas does not change the outcome, which
+confirms this is the row cap and not a privilege.
+
+The consequence is that the agent is unusable on TimescaleDB out of the box, and the same shape will
+appear on any PostgreSQL carrying a catalog-heavy extension. Two candidate fixes, both listed in the
+existing comment as belonging to the consuming layer: aggregate columns per table so the projection
+is one row per OBJECT (symmetric with the SQLite side), or have the capture exclude the schemas the
+object browser already treats as internal. The second is narrower and would not change what a caller
+parses.
+
+Done when a plan run against a stock TimescaleDB reports a captured schema naming the user's tables,
+and this entry is deleted.
+

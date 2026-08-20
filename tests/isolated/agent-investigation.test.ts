@@ -1278,7 +1278,7 @@ describe("planning mode runs no statement of the user's", () => {
 
     /*
       #414. A dialect with no catalog plan is no longer refused on the dialect: it asks
-      its PROVIDER for the same inventory, and on nine engines it gets one. Everything
+      its PROVIDER for the same inventory, and on twelve type-ids it gets one. Everything
       the run is then TOLD has to change with it, because four separate sentences were
       written for the composed path and are false on this one — how the reading was
       taken, what language to answer in, what an empty relations block means, and what
@@ -4105,7 +4105,7 @@ describe("a presentation the model serialized reaches the tool through the SDK",
   #414's own bound, and the one invariant whose whole point is that this change did NOT
   widen agent mode.
 
-  Grounding reached the nine engines the read-only profile refuses, because the schema
+  Grounding reached the twelve type-ids the read-only profile refuses, because the schema
   capture asks for `agent-operations` — a profile whose acquisition does not require
   `queryReadOnly`. Agent mode's TOOLS are unchanged: `inspect_schema` and
   `run_read_query` compose SQL and acquire `agent-read-only`, which those engines cannot

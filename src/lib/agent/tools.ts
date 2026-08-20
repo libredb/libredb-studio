@@ -1556,7 +1556,7 @@ export type AgentProviderSchemaRead =
  *
  * The sibling of `readCatalogForGrounding`, for the engines that one cannot serve.
  * A catalog read is a statement the server composes per dialect, and it is composed
- * for two of the eleven; everywhere else a run had no inventory at all and was told
+ * for two of the fourteen; everywhere else a run had no inventory at all and was told
  * so. This is the other reading the product already knows how to take, brought inside
  * the same pipeline rather than called beside it: `runAuditedAgentCall` applies the
  * mode check, the repair ledger, the deadline admission, the budget clamp, the

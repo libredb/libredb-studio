@@ -799,7 +799,7 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded
   connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode still opens on
   every connection — the model is toolless there, so no profile has to be acquired for it — and since
-  #414 its **grounding** no longer takes this path at all on the other nine: it asks the provider to
+  #414 its **grounding** no longer takes this path at all on the other twelve: it asks the provider to
   describe its schema, which needs no read-only statement profile, so a Plan run on MongoDB or MySQL
   is ordinarily grounded while an Agent run on the same connection still cannot read anything. Where
   the reading does fail — a provider that cannot describe itself, a description that overran its

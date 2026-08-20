@@ -713,7 +713,7 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
     grounding rather than the run.
 
     Plan mode's promise is that it opens and answers on every connection, and on these
-    nine engines it did — because it reached no database at all. Letting an unreachable
+    twelve type-ids it did — because it reached no database at all. Letting an unreachable
     host or a half-configured `agentUser` out of the capture would lose a plan run to an
     improvement, and on the profile error it would lose it under "the agent cannot run on
     this database engine", said about an engine plan mode demonstrably works on.

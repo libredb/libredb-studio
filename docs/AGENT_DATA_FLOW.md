@@ -44,7 +44,7 @@ if it only lists the good news.
 | Surface | What it sends | Fenced? |
 | --- | --- | --- |
 | `POST /api/agent/classify`, **before any run exists** | Your objective, and nothing else. One short completion that asks the model to name one of the five workflows. It fires when you press **Start** with the workflow left on **Automatic**, which is the default; naming a workflow yourself under **Advanced** skips it entirely. See [the classification, before any run](#the-classification-before-any-run) | No — it carries no database content to fence. Your objective is sent as the user message, and the server's instructions tell the model to treat that text as data to classify and never as instructions to it |
-| Any **run**, in either mode, on **any** engine | Your objective, and a schema inventory (table, column, index identifiers and column types) with its relations graph (identifiers only). **Since #414 that inventory leaves on every engine**, where before it left on PostgreSQL and SQLite alone: those two are read with catalog statements the server composes, and the other nine by asking the connection's own provider to describe its schema. On **MongoDB and Couchbase** the provider works out a collection's fields from a **sample of your own documents** — no value from them is in the message, but the **existence** of a field there is derived from your data rather than read from a catalog, which is a weaker claim than the other nine engines' and is why that reading has its own operation id (`db.schema.read`) an operator can deny alone. When the reading cannot be taken — a refusal, a provider that cannot describe its own schema, a description that overran the time the run granted it — nothing of the schema leaves and a server sentence saying which of those happened goes in its place. See [the schema inventory](#3-the-schema-inventory--identifiers-and-types-fenced) | Everything derived from the database is wrapped in an untrusted-content fence before it reaches a prompt |
+| Any **run**, in either mode, on **any** engine | Your objective, and a schema inventory (table, column, index identifiers and column types) with its relations graph (identifiers only). **Since #414 that inventory leaves on every engine**, where before it left on PostgreSQL and SQLite alone: those two are read with catalog statements the server composes, and the other twelve by asking the connection's own provider to describe its schema. On **MongoDB and Couchbase** the provider works out a collection's fields from a **sample of your own documents** — no value from them is in the message, but the **existence** of a field there is derived from your data rather than read from a catalog, which is a weaker claim than a catalog reading's and is why that reading has its own operation id (`db.schema.read`) an operator can deny alone. When the reading cannot be taken — a refusal, a provider that cannot describe its own schema, a description that overran the time the run granted it — nothing of the schema leaves and a server sentence saying which of those happened goes in its place. See [the schema inventory](#3-the-schema-inventory--identifiers-and-types-fenced) | Everything derived from the database is wrapped in an untrusted-content fence before it reaches a prompt |
 | An **agent run** | The above, plus the rows of each read the model performed, up to 200 per read; engine error text; server-written refusals; server-minted ids | Same fence |
 | An **agent run opened as Operate** | Your objective; a **schema inventory reduced to its own names and index names** (no column names, no column types, no relations graph), read whichever of the two ways that engine is read and named with whichever noun that engine's provider declares — tables, collections, datasources, key patterns; in Plan mode the engine's **row-count estimates** for those same tables where the engine holds any — PostgreSQL and SQLite — and nothing per column; and the rows of each curated reading — which, for the `sessions` and `slow-queries` kinds, include **other database users' in-flight statement text and their database usernames**. See [the operations workflow](#5a-the-operations-workflow-what-a-curated-reading-sends) | Same fence: the inventory and every reading's rows are database content and are fenced |
 | `POST /api/ai/explain` | Your statement, the EXPLAIN plan, the schema context the browser holds, the engine type | No |
@@ -225,9 +225,17 @@ cannot be taken at all — a provider that cannot describe itself, a description
 a refusal — nothing of the schema leaves and a server-written note says so in its place.
 
 **Two readings produce it, and which one runs is the dialect's decision** (#414). On PostgreSQL and
-SQLite the server composes a catalog statement per kind and executes it read-only. On the other nine
-engines it invokes `db.schema.read`, which calls the connection's own `provider.getSchema()` — the
-inspection the sidebar performs when it lists your tables — and composes no statement at all. What
+SQLite the server composes a catalog statement per kind and executes it read-only. On the other
+twelve it invokes `db.schema.read`, which calls the connection's own `provider.getSchema()` — the
+inspection the sidebar performs when it lists your tables — and composes no statement at all.
+**Twelve counts type-ids the factory can build, not engines a user would name**: `SHIPPED` holds
+fourteen, `CATALOG_PLANS` serves two of them, and the remainder is what this second reading covers.
+Every other "twelve" said about grounding in these docs counts the same thing. Two things it does
+NOT count. The wire-compatible engines of
+[`docs/providers/README.md`](./providers/README.md) are not extra members — TiDB is grounded because it
+arrives as `mysql`, and it is that type-id that is counted. And one of the twelve, the embedded
+`libredb`, is reached by this path but cannot complete it: the file takes an exclusive lock, so the
+grounding provider never connects and the run is honestly ungrounded (`docs/BACKLOG.md` B49). What
 leaves this process is the same KIND of thing either way, identifiers and types and nothing else, but
 two properties differ and are stated here rather than left to be discovered:
 
@@ -483,7 +491,7 @@ The frozen execution policies are the ceiling on one run's egress, one row per w
 | Bound | Value | What it caps |
 | --- | --- | --- |
 | `maxResultRows` / `maxResultBytes` | 200 rows / 256 KiB | The most one read can return — and therefore the most one tool result can send |
-| `maxStatementsPerRun` | 18-45, by workflow | Reads per drive, grounding reads and repairs included — the composed catalog reads and, since #414, the one `db.schema.read` call that replaces them on the other nine engines. The figures did not move for it: that path is the cheapest of the three, so nothing had to be bought (`docs/AGENT.md`, the budget arithmetic) |
+| `maxStatementsPerRun` | 18-45, by workflow | Reads per drive, grounding reads and repairs included — the composed catalog reads and, since #414, the one `db.schema.read` call that replaces them on the other twelve. The figures did not move for it: that path is the cheapest of the three, so nothing had to be bought (`docs/AGENT.md`, the budget arithmetic) |
 | `AGENT_CONTEXT_PACK_MAX_CHARS` | 6000 | The fenced schema inventory |
 | `MAX_ER_CHARS` | 2000 | The fenced relations block |
 | `AGENT_MAX_OBJECTIVE_LENGTH` | 4000 | Your objective |

@@ -39,17 +39,18 @@
     <p>Databases it speaks:</p>
     <ul>
       <li>PostgreSQL</li>
-      <li>MySQL and MariaDB</li>
+      <li>MySQL, MariaDB and TiDB</li>
       <li>SQLite</li>
       <li>Microsoft SQL Server</li>
       <li>Oracle Database</li>
-      <li>MongoDB</li>
+      <li>MongoDB and FerretDB</li>
       <li>Redis, Valkey, DragonflyDB and KeyDB</li>
       <li>Couchbase</li>
       <li>ClickHouse</li>
       <li>Apache Druid (read-only)</li>
       <li>Elasticsearch (read-only)</li>
       <li>OpenSearch (read-only)</li>
+      <li>Apache Trino</li>
     </ul>
     <p>What you get:</p>
     <ul>

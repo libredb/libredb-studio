@@ -20,7 +20,7 @@
 
 > 📖 **Full documentation, source, and issues:** <https://github.com/libredb/libredb-studio>
 
-Query **PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch and OpenSearch** from your browser — with AI-powered query assistance, interactive ER diagrams, schema diff, a virtualized data grid, RBAC, OIDC SSO, and a live monitoring dashboard. A lightweight, secure bridge between heavy desktop tools (DataGrip/DBeaver) and minimal CLIs.
+Query **PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch and Apache Trino** from your browser — with AI-powered query assistance, interactive ER diagrams, schema diff, a virtualized data grid, RBAC, OIDC SSO, and a live monitoring dashboard. A lightweight, secure bridge between heavy desktop tools (DataGrip/DBeaver) and minimal CLIs.
 
 ---
 
@@ -107,7 +107,7 @@ The network route is the one to prefer for a real deployment: put Studio and its
 
 ## Supported databases
 
-Twelve engines share one interface, and three of them are read-only because their own SQL is.
+Thirteen external engines share one interface, and three of them are read-only because their own SQL is. The table below has fourteen rows: the fourteenth is the embedded LibreDB store, which ships inside the image rather than being a server you connect out to.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -123,20 +123,25 @@ Twelve engines share one interface, and three of them are read-only because thei
 | **Apache Druid** | none — HTTP | Read-only SQL IDE over the SQL endpoint, datasource and segment browser |
 | **Elasticsearch** | none — HTTP | Read-only SQL IDE over `_sql`, mapping-driven index/field explorer, cluster health with per-index document counts and store sizes |
 | **OpenSearch** | none — HTTP | The same read-only IDE over `_plugins/_sql`, from the same provider module; `LIMIT … OFFSET` paging works here |
+| **Apache Trino** | none — HTTP | Full SQL IDE over the client protocol, every configured catalog in one tree, `EXPLAIN (FORMAT JSON)` plans, `system.runtime` monitoring and query cancellation |
 | **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
 
 **Read-only where the engine is.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` anywhere in their grammar, so inline editing and DDL are reported as unsupported instead of failing when used. Everything else — the query editor, the object browser, ER diagrams, schema diff and monitoring — works wherever the engine has something to answer with.
 
 ### Engines with no provider of their own
 
-These speak the wire protocol of a driver above, so they connect through it unchanged: pick that driver in the connection dialog. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+Thirteen further engines — a different thirteen from the drivers above — speak the wire protocol of one of those drivers, so they connect through it unchanged: pick that driver in the connection dialog. The table has ten rows rather than thirteen because engines that behave identically share a row; all thirteen are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |
 | MariaDB | `mysql` | Full |
+| TiDB | `mysql` | Full — but a freshly loaded table reads 0 rows and 0 B until TiDB's background statistics catch up, the slow-query panel stays empty, and only a standalone `--store=unistore` server was probed |
 | Citus | `postgres` | Full — but statistics describe the coordinator, so a distributed table's row count and size are wrong rather than missing |
+| TimescaleDB | `postgres` | Full — but the statistics describe the empty parent table, so a hypertable's row count and size are wrong rather than missing, and every chunk shows up in the object browser |
+| YugabyteDB | `postgres` | Full — but row counts and sizes read 0 until you run `ANALYZE`, and index sizes always read 0 bytes |
 | Valkey · DragonflyDB · KeyDB | `redis` | Full |
 | FerretDB | `mongodb` | Full — sign in with the backend PostgreSQL credentials |
+| StarRocks | `mysql` | Partial — editor, table list, column metadata, table and storage stats, metrics and slow queries work; the overview, health, session and monitoring panels do not, the version reads MySQL 5.1, and row counts, sizes and indexes are empty |
 | CockroachDB | `postgres` | Partial — editor, metrics, slow queries and sessions work; the object browser and size panels are blank |
 | Materialize · RisingWave | `postgres` | Query editor only |
 
