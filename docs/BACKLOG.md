@@ -770,6 +770,32 @@ shipped product, and the entry is deleted then and not before.
 
 ---
 
+## Release pipeline
+
+### R1. No CI job installs the released chart artifact with a Helm 3 client
+
+The CI Helm matrix pins six of its seven `azure/setup-helm` sites to Helm 4.1.3 and keeps
+`helm-release.yml` -> `lint-test` on Helm 3.16 on purpose, because our users install with Helm 3.
+`tests/unit/helm-pin-matrix.test.ts` locks that split. What the Helm 3 job actually proves is
+narrower than the marker at the site used to claim: `ct install --charts charts/libredb-studio`
+installs the chart SOURCE directory, never the `.tgz` that `release-github-pages` packages with
+Helm 4 and never the OCI artifact `release-oci` pushes. So no job anywhere performs `helm install`
+with a Helm 3 client against a released byte.
+
+The gap is believed narrow — a Helm 4 package differs from a Helm 3 one only in preserved source
+mtimes; extracted trees, `tar` member lists, `helm3 lint --strict`, `helm3 show chart`,
+`helm3 template` and a `helm3 pull` of the pushed OCI artifact were all verified equivalent by hand
+before the pins were raised. But "verified once by hand" is not a gate, and nothing would catch a
+future Helm 4 packaging change that a Helm 3 client rejects at install time.
+
+Done when `helm-index-check.yml` (which today only curls the index and compares sha256, running no
+Helm client at all) also runs a pinned Helm 3.16 `helm repo add` + `helm pull` + `helm install` of
+the published chart version against a kind cluster — or when an equivalent post-publish smoke lands
+elsewhere and this entry is deleted.
+
+---
+
+
 ## Chart configuration surface
 
 These were found while reviewing #362, which added the Gateway API `HTTPRoute` template, and its

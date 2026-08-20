@@ -101,16 +101,17 @@ jobs:
         if: steps.version.outputs.skip != 'true'
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: v3.16.0
+          version: v4.1.3
 
       - name: Vendor embedded chart dependencies
         # charts/*.tgz is gitignored; without this the image ships the chart
         # with its declared postgresql dependency missing, and helm silently
         # installs without the subchart when postgresql.enabled=true.
+        # --skip-refresh: the `helm repo add` in the same block already fetched the index; Helm 4's `dependency build` re-fetches it by default and takes no --timeout.
         if: steps.version.outputs.skip != 'true'
         run: |
-          helm repo add bitnami https://charts.bitnami.com/bitnami
-          helm dependency build operator/helm-charts/libredb-studio
+          helm repo add bitnami https://charts.bitnami.com/bitnami --timeout 5m
+          helm dependency build operator/helm-charts/libredb-studio --skip-refresh
 
       - name: Set up QEMU
         if: steps.version.outputs.skip != 'true'

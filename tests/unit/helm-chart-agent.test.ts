@@ -319,9 +319,11 @@ describe("the guard's blind spots are real, and completely listed", () => {
 describe("an operator is told where run history lives", () => {
   test("the install notes carry it, guarded on persistence being off", () => {
     // Asserted against the template source rather than rendered output on purpose:
-    // `helm template` does not print NOTES.txt in Helm 3 (CI pins v3.16.0) and does
-    // in Helm 4, so an assertion on stdout would pass on one machine and fail on the
-    // other. What must not silently disappear is the note and its condition.
+    // `helm template` prints no NOTES.txt at all, and the dry-run path that would
+    // render it behaves differently across Helm majors - which contributors run
+    // freely, and helm-release's ct install job still pins to Helm 3.16. An
+    // assertion on stdout would pass on one machine and fail on the other. What
+    // must not silently disappear is the note and its condition.
     const notes = read("charts/libredb-studio/templates/NOTES.txt");
     const block = notes.split(/^{{- if and \(include "libredb-studio\.agentPossible"/m)[1] ?? "";
     expect(block).toContain("persistenceEnabled");

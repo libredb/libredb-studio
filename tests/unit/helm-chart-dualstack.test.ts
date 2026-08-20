@@ -314,13 +314,14 @@ describe("charts/libredb-studio dual-stack needs the pod to listen on :: (#432)"
 });
 
 describe("charts/libredb-studio install notes warn about an unbound IPv6 address (#432)", () => {
-  // `helm template` never emits NOTES.txt and `helm install --dry-run=client`
-  // cannot render it without a cluster: Helm 3.16 - the version CI pins - calls
-  // IsReachable() before it renders anything, so the dry run dies on
-  // "Kubernetes cluster unreachable" even for a chart created by `helm create`.
-  // (Helm 4 does not, which is exactly how this went green locally and red in
-  // CI.) So render the real NOTES.txt through the one path that needs no
-  // cluster on either version: a throwaway copy of the chart in which the
+  // `helm template` never emits NOTES.txt, and `helm install --dry-run=client`
+  // renders it only on Helm 4: Helm 3.16 calls IsReachable() before it renders
+  // anything, so the dry run dies on "Kubernetes cluster unreachable" even for
+  // a chart created by `helm create`. CI's test lane now runs Helm 4, but
+  // contributors run whatever helm they have, and helm-release's ct install job
+  // is still Helm 3.16 on purpose - so this stays written to hold on BOTH
+  // majors: render the real NOTES.txt through the one path that needs no
+  // cluster on either version, a throwaway copy of the chart in which the
   // file's own bytes are wrapped in a named template and emitted as a
   // ConfigMap. Helm does the rendering, the template text is the shipped one,
   // and nothing here reimplements the condition under test.

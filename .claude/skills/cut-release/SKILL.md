@@ -122,6 +122,11 @@ curl -sSL -o /dev/null -w '%{http_code}\n' https://charts.bitnami.com/bitnami/in
 gh run rerun <run-id> --failed
 ```
 
+Those seven sites do **not** all pin the same Helm CLI. Six run Helm 4.1.3; `helm-release.yml`'s
+`lint-test` job stays on Helm 3.16 on purpose, because its two `ct install` runs are the only place
+the chart is installed into a cluster and our users install with Helm 3. The split is enforced by
+`tests/unit/helm-pin-matrix.test.ts` in the required test lane - do not unify the odd one out.
+
 ## Phase 3 - Draft release with hand-written notes
 
 Create the draft BEFORE pushing the tag. `release-artifacts` reuses an existing draft for the tag and
