@@ -41,7 +41,26 @@ exit 0
 `,
   );
   chmodSync(join(bin, "bun"), 0o755);
-  return { bin, log };
+  /*
+    A fake `sleep` beside it, recording how long it was asked to wait.
+
+    The backoff used to be checked by timing the script: two attempts with a 1s backoff had
+    to finish under 1900ms, on the reasoning that a second backoff would push it past 2000.
+    That is a proxy for the claim, and it measures the MACHINE as much as the script -- it
+    failed at 1907ms on a loaded laptop, with nothing wrong. `bin` is first on the replaced
+    PATH, so stubbing `sleep` the same way `bun` is stubbed turns the claim into something
+    counted rather than timed: exact, instant, and true regardless of load.
+  */
+  const sleeps = join(root, "sleeps.log");
+  writeFileSync(
+    join(bin, "sleep"),
+    `#!/usr/bin/env bash
+echo "$1" >> ${JSON.stringify(sleeps)}
+exit 0
+`,
+  );
+  chmodSync(join(bin, "sleep"), 0o755);
+  return { bin, log, sleeps };
 }
 
 function run(bin: string, env: Record<string, string> = {}) {
@@ -96,11 +115,12 @@ describe("scripts/ci-install.sh", () => {
 
   test("does not sleep after the final attempt", () => {
     // A backoff after the last failure is pure dead time in a red job.
-    const { bin } = stubBun("never");
-    const started = Bun.nanoseconds();
+    const { bin, sleeps } = stubBun("never");
+
     run(bin, { CI_INSTALL_ATTEMPTS: "2", CI_INSTALL_BACKOFF_SECONDS: "1" });
-    const elapsedMs = (Bun.nanoseconds() - started) / 1_000_000;
-    // One backoff of 1s between the two attempts, none after the second.
-    expect(elapsedMs).toBeLessThan(1900);
+
+    // One backoff BETWEEN the two attempts and none after the second: the waits are read
+    // off the stub rather than inferred from how long the run took.
+    expect(readFileSync(sleeps, "utf8").trimEnd().split("\n").filter(Boolean)).toEqual(["1"]);
   });
 });
