@@ -3,6 +3,7 @@ import {
   MODEL_PROFILES,
   ceilingFor,
   holdsReportWithoutTime,
+  remindsWithoutTools,
   planStatementRetriesFor,
   reportReminderLimitFor,
   reportReserveMsFor,
@@ -149,6 +150,22 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(holdsReportWithoutTime("deepseek-r1:8b")).toBe(false);
     expect(holdsReportWithoutTime("qwen3:8b")).toBe(true);
     expect(holdsReportWithoutTime("some-model-released-tomorrow:70b")).toBe(true);
+  });
+
+  test("a run that called nothing is reminded only where answering that way was measured", () => {
+    /*
+      The drive withholds the report reminder from a run that called no tool, because such a
+      run has usually stopped and telling it spends a turn to find out. `nemotron-3.5-lightning:30b`
+      is where that reads wrong: asked what tables exist, it named all eight correctly in 29
+      seconds out of the inventory it was handed, called nothing, and was scored `no-report`
+      for the channel rather than for the content.
+
+      True for that model only. A turn spent on a run that really has stopped is a turn taken
+      from every other model's reading.
+    */
+    expect(remindsWithoutTools("nemotron-3.5-lightning:30b")).toBe(true);
+    expect(remindsWithoutTools("qwen3:8b")).toBe(false);
+    expect(remindsWithoutTools("some-model-released-tomorrow:70b")).toBe(false);
   });
 
   test("every profile states what measured it", () => {

@@ -59,6 +59,7 @@ import { agentModelTurnTimeoutMs } from "./config";
 import {
   ceilingFor,
   holdsReportWithoutTime,
+  remindsWithoutTools,
   planStatementRetriesFor,
   reportReminderLimitFor,
   reportReserveMsFor,
@@ -2743,7 +2744,17 @@ export async function runInvestigation(
   };
 
   const remindToReport = (assistant: readonly ModelMessage[]): boolean => {
-    if (reportReminders >= reportReminderLimitFor(model.modelId) || !anyToolCalled) return false;
+    /*
+      The no-tool gate, and the one model it reads wrong.
+
+      A run that called nothing is normally a run that stopped, and telling it to report
+      spends a turn to find that out. `nemotron-3.5-lightning:30b` answers the investigation
+      question straight out of the inventory it was handed — all eight tables, correctly, in
+      29 seconds — and calls nothing, so it arrives here looking exactly like a run that gave
+      up. Its profile says otherwise, and nothing else changes.
+    */
+    if (!anyToolCalled && !remindsWithoutTools(model.modelId)) return false;
+    if (reportReminders >= reportReminderLimitFor(model.modelId)) return false;
     if (turns >= maxTurns || resources.deadline.remainingMs() <= 0) return false;
     reportReminders += 1;
     // Narrowed as well as told. Reminded runs that kept the whole set went back to

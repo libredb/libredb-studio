@@ -79,6 +79,17 @@ export interface AgentModelProfile {
    * report at all.
    */
   readonly holdReportWithoutTime?: boolean;
+  /**
+   * Whether a run that answered without calling anything is still told to report.
+   *
+   * The drive withholds the report reminder from a run that called no tool, and the reasoning
+   * holds for most models: a run that established nothing is stopping, not hesitating, and a
+   * second telling spends a turn to learn that. `nemotron-3.5-lightning:30b` is the case it
+   * gets wrong. Asked what tables exist, it answered correctly in 29 seconds — all eight,
+   * named — from the inventory the run was handed, called nothing, and was scored `no-report`
+   * for using the wrong channel rather than for having nothing to say.
+   */
+  readonly remindWithoutTools?: boolean;
 }
 
 /**
@@ -125,6 +136,15 @@ export const DEFAULT_REPORT_RESERVE_MS = 20_000;
  * turns are long enough to hit that says so in its own file.
  */
 export const DEFAULT_HOLD_REPORT_WITHOUT_TIME = true;
+
+/**
+ * Withheld, which is what every locked cell was measured against.
+ *
+ * A run that called nothing has usually stopped, and reminding it spends a turn to confirm
+ * that. The exception is a model that answers the question straight out of the inventory it
+ * was given, which looks identical from here and is not the same thing at all.
+ */
+export const DEFAULT_REMIND_WITHOUT_TOOLS = false;
 
 /**
  * Deterministic, and the setting five locked cells were won on.

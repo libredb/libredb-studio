@@ -52,6 +52,7 @@ import {
   DEFAULT_PLAN_STATEMENT_RETRIES,
   DEFAULT_REPORT_REMINDER_LIMIT,
   DEFAULT_HOLD_REPORT_WITHOUT_TIME,
+  DEFAULT_REMIND_WITHOUT_TOOLS,
   DEFAULT_REPORT_RESERVE_MS,
   DEFAULT_SAMPLING,
   DEFAULT_UNREPORTED_CALL_CEILING,
@@ -141,6 +142,16 @@ export function reportReserveMsFor(modelId: string): number {
  */
 export function holdsReportWithoutTime(modelId: string): boolean {
   return MODEL_PROFILES[modelId.toLowerCase()]?.holdReportWithoutTime ?? DEFAULT_HOLD_REPORT_WITHOUT_TIME;
+}
+
+/**
+ * Whether this model hears the report reminder even when it called no tool.
+ *
+ * False everywhere but the one model measured answering from the inventory without reaching
+ * for anything, so switching it on changed no other model's run.
+ */
+export function remindsWithoutTools(modelId: string): boolean {
+  return MODEL_PROFILES[modelId.toLowerCase()]?.remindWithoutTools ?? DEFAULT_REMIND_WITHOUT_TOOLS;
 }
 
 /**
