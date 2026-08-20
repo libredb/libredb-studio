@@ -2774,3 +2774,30 @@ parses.
 
 Done when a plan run against a stock TimescaleDB reports a captured schema naming the user's tables,
 and this entry is deleted.
+
+### B53. The agent docs say "the other nine engines", and the right replacement is not the obvious one
+
+Since #414 the grounding capture has two paths: PostgreSQL and SQLite are read with catalog
+statements the server composes, and every other engine by asking its provider to describe itself.
+Ten sites state the second set's size as **nine**: `docs/AGENT.md` (4), `docs/AGENT_DATA_FLOW.md`
+(3), `src/lib/agent/investigation.ts` (2) and `src/lib/agent/schema-stats.ts` (1), with matching
+wording in `tests/unit/lib/agent/context-snapshot.test.ts` and
+`tests/isolated/agent-investigation.test.ts`.
+
+Nine was right when the factory built eleven type-ids: 11 - 2 = 9. It now builds fourteen, so the
+number is stale.
+
+**The trap is which number replaces it.** Counting the thirteen EXTERNAL engines gives 13 - 2 = 11.
+Counting every type-id the factory can build, which is what the original nine did, gives
+14 - 2 = 12. The two differ by the embedded `libredb`, and the sentences never say which basis they
+use - that is the whole defect, not just the digit. A reviewer already proposed eleven on the
+external reading; twelve is what preserves the original meaning.
+
+Deciding it needs one more judgement: B49 records that a `libredb` connection can never be grounded
+at all, because `lib.open()` holds an exclusive file lock. So "the other twelve engines" is
+arithmetically faithful but describes a path one of the twelve cannot actually complete, while
+"eleven" silently redefines the set. Whichever is chosen, each site should name its basis rather
+than leave a bare numeral - the same claim discipline #424 applies to published engine counts.
+
+Done when every site above states a number and what it counts, the two test files agree, and this
+entry is deleted.

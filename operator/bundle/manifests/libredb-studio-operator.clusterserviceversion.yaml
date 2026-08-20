@@ -345,6 +345,12 @@ spec:
   - oracle
   - sql-server
   - sqlite
+  - couchbase
+  - clickhouse
+  - druid
+  - elasticsearch
+  - opensearch
+  - trino
   links:
   - name: Website
     url: https://libredb.org

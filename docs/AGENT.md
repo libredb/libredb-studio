@@ -2235,6 +2235,12 @@ classifier's real-world agreement rate was measured — and they are the same ki
   and YugabyteDB both captured their schemas under the same least-privilege role, and granting that
   role the internal schemas changed nothing. The agent is therefore unusable on a stock TimescaleDB,
   and the same shape will appear on any PostgreSQL carrying a catalog-heavy extension.
+- **B53** — ten sites in these docs and in `src/lib/agent/` say the composed grounding path leaves
+  "the other **nine** engines" to their providers. Nine was 11 type-ids minus PostgreSQL and SQLite;
+  the factory now builds fourteen. The replacement is not obvious: the thirteen external engines give
+  eleven, while the original basis - every type-id, embedded `libredb` included - gives twelve, and
+  no site says which it counts. B49 complicates the choice, since a `libredb` connection cannot be
+  grounded at all. Recorded in `docs/BACKLOG.md` rather than patched to a digit nobody has decided.
 
 ## Related documentation
 

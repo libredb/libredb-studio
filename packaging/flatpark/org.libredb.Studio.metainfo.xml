@@ -39,11 +39,11 @@
     <p>Databases it speaks:</p>
     <ul>
       <li>PostgreSQL</li>
-      <li>MySQL and MariaDB</li>
+      <li>MySQL, MariaDB and TiDB</li>
       <li>SQLite</li>
       <li>Microsoft SQL Server</li>
       <li>Oracle Database</li>
-      <li>MongoDB</li>
+      <li>MongoDB and FerretDB</li>
       <li>Redis, Valkey, DragonflyDB and KeyDB</li>
       <li>Couchbase</li>
       <li>ClickHouse</li>

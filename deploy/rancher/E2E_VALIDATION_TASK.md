@@ -275,10 +275,12 @@ Common conventions for every scenario:
 - Since 2026-08-18 that branch carries chart 0.1.36 (appVersion 0.11.0), so the default
   install works zero-config there as it does from the live Helm repo. The scenario still
   only previews catalog presentation - installing from it is S1's job, not this one.
-- **Known and expected:** the card's description line comes from `Chart.yaml`, which
-  still names seven engines while the app-readme names ten. That mismatch is tracked in
-  `CATALOG_LISTING.md`; do NOT report it as a rendering failure. Record a
-  screenshot/API dump of the card.
+- **Known and expected:** the card's description line comes from `Chart.yaml`, which now
+  names thirteen engines, while the app-readme still names ten. The ten-engine wording is
+  deliberate and version-scoped — the catalog prose describes a released version and stays
+  at ten until a tag ships Elasticsearch, OpenSearch and Apache Trino — so this mismatch is
+  expected, is tracked in `CATALOG_LISTING.md`, and must NOT be reported as a rendering
+  failure. Record a screenshot/API dump of the card.
 
 ## Phase 4 - UI evidence (best effort, do not block the matrix)
 

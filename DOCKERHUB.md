@@ -107,7 +107,7 @@ The network route is the one to prefer for a real deployment: put Studio and its
 
 ## Supported databases
 
-Thirteen engines share one interface, and three of them are read-only because their own SQL is.
+Thirteen external engines share one interface, and three of them are read-only because their own SQL is. The table below has fourteen rows: the fourteenth is the embedded LibreDB store, which ships inside the image rather than being a server you connect out to.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -130,7 +130,7 @@ Thirteen engines share one interface, and three of them are read-only because th
 
 ### Engines with no provider of their own
 
-These speak the wire protocol of a driver above, so they connect through it unchanged: pick that driver in the connection dialog. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+Thirteen further engines — a different thirteen from the drivers above — speak the wire protocol of one of those drivers, so they connect through it unchanged: pick that driver in the connection dialog. The table has ten rows rather than thirteen because engines that behave identically share a row; all thirteen are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |
