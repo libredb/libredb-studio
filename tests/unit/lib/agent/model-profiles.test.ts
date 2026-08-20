@@ -4,6 +4,7 @@ import {
   ceilingFor,
   planStatementRetriesFor,
   reportReminderLimitFor,
+  reportReserveMsFor,
   samplingFor,
 } from "@/lib/agent/models";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
@@ -114,6 +115,24 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(planStatementRetriesFor("qwen3:14b")).toBe(1);
     expect(planStatementRetriesFor("qwen3:8b")).toBe(0);
     expect(planStatementRetriesFor("some-model-released-tomorrow:70b")).toBe(0);
+  });
+
+  test("the report reserve is raised to fit a reasoning model's turn", () => {
+    /*
+      `deepseek-r1:8b`, query-optimization. Both losing runs end deadline-exceeded at 450
+      seconds having already drafted and run the statement and recorded two index
+      recommendations — the analysis done, nothing filed. The turn gaps in those ledgers are 81,
+      54, 100, 52 and 156 seconds.
+
+      The loop's answer to that shape is the reserve notice: within so much of a ceiling, the
+      run is told this is its last turn and to report with what it has. The general reserve is
+      20 seconds, which is shorter than every turn this model takes, so the sentence reached a
+      run that could not act on it. Raised to its slowest observed turn, and only here: on a
+      model whose turns take 15 seconds the same reserve is idle clock taken out of every run.
+    */
+    expect(reportReserveMsFor("deepseek-r1:8b")).toBe(160_000);
+    expect(reportReserveMsFor("qwen3:8b")).toBe(20_000);
+    expect(reportReserveMsFor("some-model-released-tomorrow:70b")).toBe(20_000);
   });
 
   test("every profile states what measured it", () => {

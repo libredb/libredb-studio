@@ -1,26 +1,41 @@
 /**
- * `deepseek-r1:8b` — measured at the defaults, and pinned to them.
+ * `deepseek-r1:8b` — a much larger report reserve, because its turns are minutes long.
  *
- * 4 of 6 modes locked, 26 of 29 runs passed.
+ * Five surfaces lock 5/5. `query-optimization` loses both of its failing runs the same way,
+ * and neither is a failure of analysis. Timed from their ledgers, in seconds from run start:
  *
- *     Investigate 5/5 · Optimize 2/4 · Assess 5/5 · Operate 4/5 · Analyze 5/5 · Plan 5/5
+ *     run A:  81 first call · 135 statement drafted and run · 142 and 242 two index
+ *             recommendations · 294 another call · 450 deadline-exceeded, nothing reported
+ *     run B:  69 · 108 · 164 and 264 two recommendations · 374 and 385 statements drafted
+ *             and run · 450 deadline-exceeded, nothing reported
  *
- * Still open: Optimize, Operate.
+ * Both diagnosed the statement and recommended indexes. Both then ran out of clock with the
+ * work done and nothing filed. The gaps between those entries are what this model's turns
+ * cost: 81, 54, 100, 52, 156 seconds — a reasoning model thinking out loud before it acts.
  *
- * Nothing here differs from the default, and that is exactly why the file exists. The default
- * is a shared value, and a shared value is what has twice cost this repository a locked cell:
- * pinning sampling to 0 won five cells and lost one, and reordering a workflow's rules won
- * nothing and lost one. Those numbers above were obtained at temperature 0, top_p 1, and a
- * ceiling of 12 unreported calls. Writing them here means a later change to the defaults
- * cannot silently invalidate them — this model keeps what it was measured with until a new
- * measurement says otherwise.
+ * The loop has a mechanism for exactly this: within the reserve of a ceiling it tells the run
+ * that this is its last turn and to report with what it has. The general reserve is twenty
+ * seconds, sized for a turn on this workload, and this model has no twenty-second turns. The
+ * notice arrives at a run that cannot complete a turn to act on it.
+ *
+ * 160 seconds, which is its slowest observed turn, so the sentence lands while a full turn
+ * remains. That is a third of the 450-second budget spent on a warning, and it stays in this
+ * file for that reason: on a model whose turns take 15 seconds the same reserve would be
+ * mostly idle clock taken out of the reading half of every run.
  */
 
 import { DEFAULT_SAMPLING, DEFAULT_UNREPORTED_CALL_CEILING, type AgentModelProfile } from "./profile";
 
 export const DEEPSEEK_R1_8B: AgentModelProfile = {
   measured:
-    "4/6 modes locked, 26/29 runs passed at these settings. Investigate 5/5 · Optimize 2/4 · Assess 5/5 · Operate 4/5 · Analyze 5/5 · Plan 5/5.",
+    "5/6 modes locked. Investigate 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5 · " +
+    "Optimize 2/4. Both losing optimization runs end deadline-exceeded at 450s having already " +
+    "drafted and run the statement and recorded two index recommendations, so the analysis was " +
+    "done and only the report was missing. Turn gaps measured from those two ledgers: 81, 54, " +
+    "100, 52 and 156 seconds. The report reserve that exists for this is 20 seconds, which is " +
+    "shorter than any turn this model takes, so the last-turn notice reached a run with no turn " +
+    "left; it is raised to its slowest observed turn instead.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  reportReserveMs: 160_000,
 };

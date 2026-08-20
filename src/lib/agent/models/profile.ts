@@ -57,6 +57,17 @@ export interface AgentModelProfile {
    * statement or the explicit refusal that plan mode scores.
    */
   readonly planStatementRetries?: number;
+  /**
+   * How much of the run's clock is reserved for the report, in milliseconds.
+   *
+   * The general reserve is sized for a turn on this workload, and a reasoning model's turn is
+   * not that turn. `deepseek-r1:8b` is the measured case: its query-optimization runs spend
+   * 50 to 160 seconds inside a single model call, so a notice delivered with 20 seconds left
+   * arrives at a run that cannot complete a turn to act on it. Both of its losing runs had
+   * already drafted the statement and recorded two index recommendations, and died on the
+   * deadline with the analysis done and nothing filed.
+   */
+  readonly reportReserveMs?: number;
 }
 
 /**
@@ -84,6 +95,16 @@ export const DEFAULT_REPORT_REMINDER_LIMIT = 1;
  * itself. Offering another turn to every model would change 24 models' runs to reach one.
  */
 export const DEFAULT_PLAN_STATEMENT_RETRIES = 0;
+
+/**
+ * Twenty seconds, which is what `AGENT_REPORT_RESERVE_MS` has always been and what every
+ * locked cell was measured against.
+ *
+ * Held here as well so a profile overriding it is read next to the value it replaces. Raising
+ * it for everyone would move the reserve on 24 models to rescue one, and the reserve is time
+ * taken out of the reading half of every run.
+ */
+export const DEFAULT_REPORT_RESERVE_MS = 20_000;
 
 /**
  * Deterministic, and the setting five locked cells were won on.

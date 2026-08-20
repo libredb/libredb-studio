@@ -51,6 +51,7 @@ import {
   type AgentSampling,
   DEFAULT_PLAN_STATEMENT_RETRIES,
   DEFAULT_REPORT_REMINDER_LIMIT,
+  DEFAULT_REPORT_RESERVE_MS,
   DEFAULT_SAMPLING,
   DEFAULT_UNREPORTED_CALL_CEILING,
 } from "./profile";
@@ -119,6 +120,16 @@ export function reportReminderLimitFor(modelId: string): number {
  */
 export function planStatementRetriesFor(modelId: string): number {
   return MODEL_PROFILES[modelId.toLowerCase()]?.planStatementRetries ?? DEFAULT_PLAN_STATEMENT_RETRIES;
+}
+
+/**
+ * How much of this model's run clock is held back for the report.
+ *
+ * Its own resolver rather than a field read at the call site, so a profile that raises it says
+ * so in one place and the drive keeps asking one question at a time.
+ */
+export function reportReserveMsFor(modelId: string): number {
+  return MODEL_PROFILES[modelId.toLowerCase()]?.reportReserveMs ?? DEFAULT_REPORT_RESERVE_MS;
 }
 
 /**

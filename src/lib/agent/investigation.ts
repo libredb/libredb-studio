@@ -56,7 +56,7 @@ import {
   reusableSnapshot,
 } from "./context-snapshot";
 import { agentModelTurnTimeoutMs } from "./config";
-import { ceilingFor, planStatementRetriesFor, reportReminderLimitFor, samplingFor } from "./models";
+import { ceilingFor, planStatementRetriesFor, reportReminderLimitFor, reportReserveMsFor, samplingFor } from "./models";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
 import { type AgentGoalShortfall, verifyRunGoal } from "./goal-verifier";
 import { type AgentInventoryNoun, inventoryNoun } from "./inventory-noun";
@@ -70,12 +70,7 @@ import {
 import { PLAN_NO_STATEMENT_MARKER, readPlanStatement } from "./plan-draft";
 import { validatePlanStatement } from "./plan-statement";
 import { packSchemaStatistics, readSchemaStatistics } from "./schema-stats";
-import {
-  AGENT_MODEL_TURN_TIMEOUT_MS,
-  AGENT_REPORT_RESERVE_MS,
-  AGENT_REPORT_RESERVE_TURNS,
-  AGENT_WORKFLOW_BUDGETS,
-} from "./execution-policy";
+import { AGENT_MODEL_TURN_TIMEOUT_MS, AGENT_REPORT_RESERVE_TURNS, AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
 import { type AgentModel, mapAgentModelError } from "./model-adapter";
 import {
   type AgentRunInvocation,
@@ -2703,7 +2698,7 @@ export async function runInvestigation(
    */
   const announceReserve = (remainingMs: number): void => {
     if (reserveAnnounced || record.mode !== "agent") return;
-    if (maxTurns - turns > AGENT_REPORT_RESERVE_TURNS && remainingMs > AGENT_REPORT_RESERVE_MS) return;
+    if (maxTurns - turns > AGENT_REPORT_RESERVE_TURNS && remainingMs > reportReserveMsFor(model.modelId)) return;
     reserveAnnounced = true;
     messages.push({ role: "user", content: notice(AGENT_REPORT_RESERVE_NOTICE) });
   };
