@@ -203,3 +203,88 @@ describe("a tool call the model wrote as its payload rather than as a call", () 
     expect(readPromptedPayload('{"table": "engineering"}', [])).toBeNull();
   });
 });
+
+describe("what these models actually write, read off their ledgers", () => {
+  /*
+    Both of the cases below were recovered from real losing runs, and both are runs where the
+    model had DONE the work and lost the cell on the envelope its answer arrived in. That is
+    the measured shape of the largest loss class on this path: four `deepseek-r1` distills
+    lock 2 cells out of 24 between them, and the ledgers are full of correct payloads that
+    were never read.
+
+    Every recovered call still goes through `AGENT_TOOL_DEFINITIONS` and the audited
+    pipeline afterwards, exactly as a native call does. Reading is not granting: a recovered
+    report citing an artifact this run never produced is refused by the citation contract
+    like any other.
+  */
+  const report = definition(
+    "compose_report",
+    "Compose the run's findings and finish.",
+    z.strictObject({
+      claims: z.array(z.strictObject({ claim: z.string().min(1), evidence: z.array(z.looseObject({})).min(1) })).min(1),
+    }),
+  );
+  const schema = definition(
+    "inspect_schema",
+    "Read the catalog.",
+    z.strictObject({ kind: z.string().optional(), table: z.string().optional() }),
+  );
+
+  test("a payload whose last brace never arrived is still read", () => {
+    /*
+      `deepseek-r1:8b`, database-assessment: 498 characters of closing prose holding six `{`
+      and five `}`. Two well-formed claims, each citing an artifact id from one of its own
+      two `profile_table` calls — and the outermost brace missing, because the endpoint cut
+      the reply off. `objectsIn` only emitted a candidate when depth returned to zero, so
+      both readers saw nothing and the run scored `no-report`.
+
+      Tolerated LAST, after every well-formed candidate, so a complete reply is read exactly
+      as it was before: this can only add a reading where there was none.
+    */
+    const truncated =
+      '{"action": "compose_report", "arguments": {"claims": [{"claim": "The employee table holds 1000 rows.",' +
+      ' "evidence": [{"source": "artifact", "correlationId": "0563d4a6-1111-4222-8333-444444444444"}]}]}';
+
+    const action = readPromptedAction(truncated);
+    if (action === null) throw new Error("expected the truncated payload to be recovered");
+    expect(action.name).toBe("compose_report");
+    expect((action.input as { claims?: unknown[] }).claims).toHaveLength(1);
+  });
+
+  test("a call wrapped in an envelope is read out of it", () => {
+    /*
+      `deepseek-r1:7b`, investigation: the intended call is legible twice over — the key
+      names a tool this run holds, and the nested `arguments` object fits that tool's schema
+      — but the outermost object fits nothing, so nothing was recovered and the run ended
+      having called no tool at all. It is the only model in the fleet with no agent cell at
+      any score, and this is what its turns look like.
+
+      Note what it echoed back as arguments: `type`, `properties`, `$schema`. Those come
+      from the JSON Schema the prose contract prints for each tool. A 7B model reads that as
+      part of the payload — worth knowing separately, but not what this test fixes.
+    */
+    const enveloped = JSON.stringify({
+      actions: {
+        inspect_schema: {
+          arguments: { kind: "columns", table: "employee" },
+          type: "object",
+          properties: { kind: "string", table: "string" },
+        },
+      },
+    });
+
+    const action = readPromptedAction(enveloped, [schema, report]);
+    expect(action).toEqual({ name: "inspect_schema", input: { kind: "columns", table: "employee" } });
+  });
+
+  test("an envelope naming two held tools is refused rather than guessed", () => {
+    // The rule the rest of this reader keeps: exactly one fit, or nothing. An envelope is a
+    // weaker signal than a schema match, so it may not become the place ambiguity is
+    // resolved by picking.
+    const ambiguous = JSON.stringify({
+      actions: { inspect_schema: { arguments: { table: "a" } }, compose_report: { arguments: { claims: [] } } },
+    });
+
+    expect(readPromptedAction(ambiguous, [schema, report])).toBeNull();
+  });
+});

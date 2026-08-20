@@ -121,6 +121,23 @@ function objectsIn(text: string): string[] {
     }
   }
 
+  /*
+    A last candidate for an object whose closing braces never arrived, appended AFTER every
+    well-formed one so a complete reply is read exactly as it was before.
+
+    Measured: a `deepseek-r1:8b` assessment closed with 498 characters holding six `{` and
+    five `}` — two well-formed claims, each citing an artifact id from one of its own
+    `profile_table` calls, and the outermost brace missing because the reply was cut off.
+    Both readers saw nothing and the run scored `no-report`. The work was done; one byte was
+    missing.
+
+    Closing what the model left open is safe because it changes no VALUE: braces are
+    appended, and the result still has to parse and still has to satisfy a tool's schema, so
+    a truncation that lost a required field is refused exactly as it was. What this cannot do
+    is invent a field.
+  */
+  if (depth > 0 && start >= 0) found.push(`${text.slice(start)}${"}".repeat(depth)}`);
+
   return found;
 }
 
@@ -160,7 +177,7 @@ export const PROMPTED_ACTION_SHAPE = z.object({
  * A missing `arguments` reads as `{}` rather than as a refusal, so a tool that takes no
  * argument still dispatches. Everything past this point is the caller's to validate.
  */
-export function readPromptedAction(text: string): PromptedAction | null {
+export function readPromptedAction(text: string, tools: readonly AgentToolDefinition[] = []): PromptedAction | null {
   for (const candidate of objectsIn(text).reverse()) {
     let parsed: unknown;
     try {
@@ -169,10 +186,59 @@ export function readPromptedAction(text: string): PromptedAction | null {
       continue;
     }
     const action = actionSchema.safeParse(parsed);
-    if (!action.success) continue;
-    return { name: action.data.action, input: action.data.arguments ?? {} };
+    if (action.success) return { name: action.data.action, input: action.data.arguments ?? {} };
+    const enveloped = readEnvelope(parsed, tools);
+    if (enveloped !== null) return enveloped;
   }
   return null;
+}
+
+/**
+ * A call the model wrapped in an envelope of its own invention.
+ *
+ * Measured on `deepseek-r1:7b`, the only model in the fleet with no agent cell at any
+ * score. Its investigation turns look like this:
+ *
+ *     {"actions": {"inspect_schema": {"arguments": {"kind": "columns", "table": "employee"},
+ *                                     "type": "object", "properties": {…}}}}
+ *
+ * The intended call is legible twice over — the KEY names a tool this run holds, and the
+ * nested `arguments` fits that tool's schema — but the outermost object fits nothing, so
+ * nothing was recovered and the run ended having called no tool at all.
+ *
+ * Keyed on the tool NAME rather than on a list of blessed envelope shapes, because the
+ * shapes are whatever a model improvises while the name is the part that has to be right
+ * either way. The rule the rest of this reader keeps is kept here too: exactly one held tool
+ * named, or nothing. An envelope is a weaker signal than a schema match, so it may not
+ * become the place ambiguity gets resolved by guessing.
+ *
+ * Depth-bounded because the search is over a structure the model invented, and an
+ * unbounded walk of one would be a promise about arbitrary nesting that nothing here needs.
+ */
+function readEnvelope(parsed: unknown, tools: readonly AgentToolDefinition[]): PromptedAction | null {
+  if (tools.length === 0 || typeof parsed !== "object" || parsed === null) return null;
+  const held = new Set<string>(tools.map((definition) => definition.name));
+  const named: PromptedAction[] = [];
+
+  const visit = (node: unknown, depth: number): void => {
+    if (depth > 3 || typeof node !== "object" || node === null || Array.isArray(node)) return;
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (held.has(key) && typeof value === "object" && value !== null && !Array.isArray(value)) {
+        const inner = value as Record<string, unknown>;
+        // The arguments under whichever key the model reached for; the whole object when it
+        // used none, which is the other shape these turns take.
+        const args = ["arguments", "parameters", "input", "args"]
+          .map((alias) => inner[alias])
+          .find((candidate) => typeof candidate === "object" && candidate !== null && !Array.isArray(candidate));
+        named.push({ name: key as PromptedAction["name"], input: args ?? inner });
+        continue;
+      }
+      visit(value, depth + 1);
+    }
+  };
+  visit(parsed, 0);
+
+  return named.length === 1 ? (named[0] ?? null) : null;
 }
 
 /**

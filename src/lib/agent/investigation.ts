@@ -2825,7 +2825,20 @@ export async function runInvestigation(
       A reply that names nothing stays prose, which is the correct reading: a model told it
       may answer without acting sometimes does.
     */
-    const promptedAction = prompted && turn.toolCalls.length === 0 ? readPromptedAction(turn.text) : null;
+    /*
+      Read on BOTH protocols, and handed the run's tools.
+
+      The gate used to be `prompted &&`, which left a gap the ledgers show: a NATIVE model
+      that narrates a `{"action": "compose_report", …}` object instead of calling — measured
+      on several — was never read, even though `readPromptedPayload` on the next line has
+      always run for both protocols. There was no reason for the two readers to disagree
+      about which runs they serve.
+
+      The tools are passed so an envelope can be recognised by the tool NAME inside it; see
+      `readEnvelope`. Both readers only run where the turn produced no tool call at all, so
+      neither can change a byte of what a working run does.
+    */
+    const promptedAction = turn.toolCalls.length === 0 ? readPromptedAction(turn.text, selectAgentTools(record)) : null;
     /*
       A payload the model wrote instead of calling with it, recovered by schema.
 
