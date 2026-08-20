@@ -273,6 +273,76 @@ number, not a missing one.
 Done when a per-index size on Vitess reads what `INNODB_INDEXES` holds for that index, or the panel
 reports the size as unavailable rather than 0, and this entry is deleted.
 
+### D7. Three providers answer the performance panel with a fabricated cache hit ratio
+
+`getPerformanceMetrics` has a `catch` in the MySQL provider that returns `cacheHitRatio: 99`
+(`src/lib/db/providers/sql/mysql.ts:851-857`, comment "Fallback if performance_schema is not
+available"), and the MongoDB provider has the same literal in the same position
+(`document/mongodb.ts:851-858`, which at least logs the error first). The embedded provider is the
+third and mildest case: `embedded/libredb.ts:526` returns `cacheHitRatio: 100` unconditionally. In
+every one of the three the number reaches the panel indistinguishable from a measured one.
+
+Measured on 2026-08-20 against a live OceanBase Community Edition 4.4.2.1 through the shipped `mysql`
+provider: the tenant has no `performance_schema` database at all (`ERROR 1049 Unknown database
+'performance_schema'`), so that `catch` is not an edge case there - it is the only path, and the
+panel reports **99 percent cache hit, 0 queries per second, 0 buffer pool, 0 deadlocks** on every
+refresh, forever. A reader has nothing to distinguish it from a healthy measurement.
+
+This is the failure class #424 exists to refuse, stated in that issue as "a missing panel is honest; a
+populated wrong one is not", and it is the reason Citus and TimescaleDB are recorded as problems
+despite answering every surface. The same argument applies to our own fallback, and it is worse here
+because the engine is not the author of the number - we are.
+
+Done when a provider that cannot measure the cache hit ratio reports it as unavailable rather than as
+a figure, on all three sites, and this entry is deleted.
+
+### D8. The MySQL provider sends every statement through the prepared protocol, and two registered engines lose panels to it
+
+Every read in `src/lib/db/providers/sql/mysql.ts` goes through mysql2's `conn.execute` - the binary
+PREPARED statement protocol - and never `conn.query`, the text protocol. There is no site that
+chooses: `getHealth` at line 638, `getOverview` at 769-798, `getPerformanceMetrics` at 825-841, the
+maintenance statement at 739 and the editor's own query path at 440 all call `execute`, including for
+statements that carry no parameters at all.
+
+Measured on 2026-08-20 against a live SingleStore 9.1.1
+(`ghcr.io/singlestore-labs/singlestoredb-dev:0.2.82`) through the shipped `mysql` provider, both ways
+on the same connection:
+
+| Statement | `conn.execute` | `conn.query` |
+|---|---|---|
+| `SHOW STATUS LIKE 'Uptime'` | fails | succeeds |
+| `SHOW VARIABLES LIKE 'max_connections'` | fails | succeeds |
+| `EXPLAIN FORMAT=JSON <select>` | fails | succeeds |
+| `EXPLAIN <select>` | fails | succeeds |
+| `OPTIMIZE TABLE orders` | fails | succeeds |
+| `CHECK TABLE orders` | fails | succeeds |
+| `ANALYZE TABLE orders` | succeeds | succeeds |
+
+Every failure is the same engine message, `This command is not supported in the prepared statement
+protocol yet`. The last row is the tell: `ANALYZE TABLE` is the one maintenance action that works on
+SingleStore today, and it is also the one statement in that list the prepared protocol accepts.
+
+The user-visible cost on SingleStore is **five of its six defects**: Test Connection, health, the
+overview and the monitoring dashboard are all unavailable, and so is the Explain panel, whose
+statement `src/lib/explain/mysql-json.ts:9` builds as `EXPLAIN FORMAT=JSON` and then runs down the
+same `execute` path. Two of three maintenance actions go with them.
+
+**This is not SingleStore-only, which is what makes it worth fixing.** The already-registered
+StarRocks row in `docs/providers/README.md` records its overview and health failures as being on the
+prepared-statement protocol - the same cause, met on a different engine in an earlier probe run and
+written up there as that engine's own quirk. So one change - routing parameterless `SHOW`, `EXPLAIN`, `OPTIMIZE`
+and `CHECK` statements through the text protocol - would touch two registered engines at once.
+
+**The recovery is plausible and unimplemented, and the difference matters.** What the probe measured
+is that those statements succeed on `conn.query` against a live SingleStore. It did NOT measure the
+provider working that way: nothing was changed and nothing was re-run through the panels. So the
+claim here is that six surfaces and two maintenance actions across SingleStore and StarRocks are
+candidates for recovery, not that they would recover.
+
+Done when a parameterless statement the provider issues is sent over the text protocol, the
+SingleStore and StarRocks rows in `docs/providers/README.md` are re-probed and re-written against
+what that build reports, and this entry is deleted.
+
 ---
 
 ## Value interpolation

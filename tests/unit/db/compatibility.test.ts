@@ -47,6 +47,8 @@ const COMPOSE_SERVICE_BY_ENGINE: Readonly<Record<string, string>> = {
   TiDB: "tidb",
   StarRocks: "starrocks",
   Vitess: "vitess",
+  OceanBase: "oceanbase",
+  SingleStore: "singlestore",
   Valkey: "valkey",
   DragonflyDB: "dragonfly",
   KeyDB: "keydb",

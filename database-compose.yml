@@ -697,6 +697,77 @@ services:
     ports:
       - "33577:33577"
 
+  # THE DOCUMENTED RUN COMMAND FOR THIS IMAGE FAILS, and the `ulimits` block below is
+  # the whole reason this entry is longer than the others. The container's default
+  # soft `nofile` is 1024 and OceanBase's own deployer requires at least 20000, so
+  # without the override the boot dies after about 12 seconds with `OBD-1007` and no
+  # server ever listens. Keep the ulimit, or the next person repeats that failure.
+  #
+  # The memory floor is real too: the project documents 2 cores and 8 GB as the
+  # minimum, and the probe behind this entry ran with a 12 GB limit. `MODE=mini` is
+  # what makes a single container viable at all - it is the small-footprint
+  # deployment, and it creates ONE user tenant named `test`.
+  #
+  # So sign in as `root@test`, no password, database `test` - the BUSINESS tenant,
+  # not `sys`. Connecting to the `sys` tenant instead shows nine databases including
+  # Oracle-mode artifacts (LBACSYS, ORAAUDITOR, SYS, ocs, sys_external_tbs) that a
+  # user tenant does not have. OceanBase speaks the MySQL protocol on 2881, not 3306.
+  # Wait for `boot success!` in the log before connecting; the container is up long
+  # before the server is.
+  #
+  # The tag is pinned, and the pin is free: 4.4.2-lts had the same digest as
+  # `:latest` at probe time. 507 MB compressed, 1.5 GB on disk.
+  #
+  # A probe here should expect no performance_schema database at all - health is the
+  # one surface that fails outright (ERROR 1049) - and every size reading 0 B,
+  # because information_schema.TABLES reports DATA_LENGTH 0 and INDEX_LENGTH 0. Row
+  # counts are correct after `ANALYZE TABLE t`, which must be the MySQL-mode form:
+  # the Oracle-mode `ANALYZE TABLE t COMPUTE STATISTICS` is rejected with ERROR 1235.
+  oceanbase:
+    image: oceanbase/oceanbase-ce:4.4.2-lts
+    container_name: libredb-oceanbase
+    profiles: ["compat"]
+    environment:
+      MODE: mini
+    ulimits:
+      nofile:
+        soft: 655350
+        hard: 655350
+    ports:
+      - "12881:2881"
+
+  # NO LICENCE KEY IS NEEDED, which is worth stating because issue #424 recorded the
+  # opposite as the reason this engine went unprobed. The dev image self-licenses
+  # with `ROOT_PASSWORD` as the only variable set: its log records
+  # `SetLicenseV4: Expiration = unlimited` and `Options = 72 (Developer Image
+  # edition)`, and every query in the probe behind this entry ran. There is one
+  # harmless WARN about exceeding a 1-unit capacity licence.
+  #
+  # SingleStore speaks the MySQL protocol on 3306, which the always-on `mysql`
+  # service already claims on the host, hence 13306 here. 8080 is its own Studio UI,
+  # published on 18081 for the same reason. Sign in as user `root` with the password
+  # below, database `probe` after you create one. No `ulimit` change is needed here,
+  # unlike the oceanbase service above; the probe behind this entry ran the container
+  # with `--cpus=8`.
+  #
+  # A probe here should expect five surfaces to fail on ONE cause that is ours, not
+  # SingleStore's: the provider sends every statement through mysql2's binary
+  # prepared protocol, and SingleStore answers `This command is not supported in the
+  # prepared statement protocol yet` to the parameterless SHOW and EXPLAIN
+  # statements that Test Connection, health, the overview and the monitoring
+  # dashboard need (D8 in docs/BACKLOG.md). Row counts and sizes read 0 for a
+  # populated table because information_schema.TABLES is left zeroed, and `ANALYZE`
+  # does not change it.
+  singlestore:
+    image: ghcr.io/singlestore-labs/singlestoredb-dev:0.2.82
+    container_name: libredb-singlestore
+    profiles: ["compat"]
+    environment:
+      ROOT_PASSWORD: "Probe123pass!"
+    ports:
+      - "13306:3306"
+      - "18081:8080"
+
   # -- Redis wire ----------------------------------------------------------
 
   valkey:

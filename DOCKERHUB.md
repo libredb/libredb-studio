@@ -130,7 +130,7 @@ Thirteen external engines share one interface, and three of them are read-only b
 
 ### Engines with no provider of their own
 
-Sixteen further engines speak the wire protocol of one of the fourteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has thirteen rows rather than sixteen because engines that behave identically share a row; all sixteen are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+Eighteen further engines speak the wire protocol of one of the fourteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has fifteen rows rather than eighteen because engines that behave identically share a row; all eighteen are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |
@@ -146,6 +146,8 @@ Sixteen further engines speak the wire protocol of one of the fourteen drivers a
 | StarRocks | `mysql` | Partial — editor, table list, column metadata, table and storage stats, metrics and slow queries work; the overview, health, session and monitoring panels do not, the version reads MySQL 5.1, and row counts, sizes and indexes are empty |
 | CockroachDB | `postgres` | Partial — editor, metrics, slow queries and sessions work; the object browser and size panels are blank |
 | Apache Cloudberry (incubating) | `postgres` | Partial. Row counts and sizes are correct after `ANALYZE`, but the monitoring dashboard and the table and index statistics all fail on one MPP planner restriction, and a foreign key is read back as though enforced when the engine does not enforce it |
+| OceanBase | `mysql` | Partial - fourteen of the fifteen surfaces return without throwing but only twelve do their job; health fails outright because the tenant has no `performance_schema` database at all, every size reads 0 B, and row counts are correct only once `ANALYZE TABLE` has run |
+| SingleStore | `mysql` | Partial - ten of the fifteen surfaces answer, and five of the failures are ours rather than SingleStore's: the provider's prepared-statement protocol takes down Test Connection, health, the overview, the monitoring dashboard and Explain. Row counts and sizes are missing rather than wrong, a 2000-row table reading 0 rows and 0 B, and foreign keys do not exist at all |
 | Materialize · RisingWave | `postgres` | Query editor only |
 
 Details, probed versions and each caveat: [`docs/providers/README.md`](https://github.com/libredb/libredb-studio/blob/main/docs/providers/README.md).
