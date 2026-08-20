@@ -485,6 +485,45 @@ services:
     # `system` and `jmx` are configured too. Point a connection's Database field at `tpch`;
     # `jmx` is what makes the overview's uptime readable, so leave that catalog in place.
 
+  cassandra:
+    # Pinned to the exact build the provider was live-verified against, the same rule
+    # the clickhouse, elasticsearch and trino services follow: the error codes, the
+    # `system_views` table set, the type codes for `duration` and `vector`, and the
+    # size_estimates behaviour recorded in docs/providers/cassandra.md are claims about
+    # 5.0.9 (`system.local.release_version`), not about Cassandra in general.
+    image: cassandra:5.0
+    container_name: libredb-cassandra
+    restart: unless-stopped
+    environment:
+      CASSANDRA_CLUSTER_NAME: libredb-probe
+      # 2G of a 4G limit. The image otherwise sizes the heap from the HOST's memory,
+      # which on a developer machine claims several gigabytes for a probe node.
+      MAX_HEAP_SIZE: 2G
+      # HEAP_NEWSIZE is deliberately NOT set. Cassandra 5.0 runs G1 by default and logs
+      # "heap_newsize is erroneously set" while ignoring it, so setting it only adds a
+      # warning to every start.
+    ports:
+      # 9042 is the native protocol, the only one this provider speaks. 7000/7001 are
+      # internode and 7199 is JMX - the latter is what `nodetool` uses, and no
+      # maintenance operation here goes through it (see the provider's empty
+      # maintenanceOperations). The old Thrift port 9160 no longer exists.
+      - "9042:9042"
+    mem_limit: 4g
+    healthcheck:
+      # `nodetool status` reporting UN (Up/Normal) for a node is the condition that
+      # actually matters: `cqlsh` connects a second later, and the native port accepts
+      # a socket well before either. MEASURED FROM COLD: 206 seconds to UN on this
+      # image, so any fixed sleep a future gate writes will be wrong - the retries
+      # below cover 300s and the healthcheck is what a `depends_on` must wait for.
+      test: ["CMD-SHELL", "nodetool status | grep -q '^UN'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    # No seed sidecar: the provider's live pass creates its own keyspace. The gate-4
+    # probe used `probe` with customers (500 rows), orders (2000), events (10
+    # partitions x 50 clustering rows), a secondary index and a 28-column type matrix.
+
   # ==========================================================================
   # Wire-compatible engines (issue #424, Phase 0)
   #

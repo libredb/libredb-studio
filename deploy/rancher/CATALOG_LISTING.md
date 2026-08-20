@@ -20,21 +20,28 @@ partner contact.
 > ten-engine wording against a version older than 0.11.0 — send the eight-engine
 > variant instead.
 >
-> **The count is now thirteen on `main`, and that wording waits for a release.**
+> **The count is now fourteen on `main`, and that wording waits for a release.**
 > Elasticsearch, OpenSearch and Apache Trino shipped on `main` with
-> [#424](https://github.com/libredb/libredb-studio/issues/424) Phases 1 and 2 and are in
-> the `SHIPPED` record in `src/lib/db/compatibility.ts`, but the catalog page describes a
-> released version. So the prose below stays at ten until a tag carries the three, and
-> then both the short and long descriptions gain "Elasticsearch, OpenSearch and Apache
-> Trino" and the feature bullet becomes thirteen. Read the number from `SHIPPED` (minus
+> [#424](https://github.com/libredb/libredb-studio/issues/424) Phases 1 and 2, and Apache
+> Cassandra with Phase 4; all four are in the `SHIPPED` record in
+> `src/lib/db/compatibility.ts`, but the catalog page describes a released version. So the
+> prose below stays at ten until a tag carries them, and then both the short and long
+> descriptions gain "Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra" and the
+> feature bullet becomes fourteen. Read the number from `SHIPPED` (minus
 > the embedded `libredb`) rather than from this file, and state the scope with it: on the
 > two search engines LibreDB Studio queries and browses — their SQL has no `INSERT`,
 > `UPDATE` or `CREATE TABLE` — so "manage data across …" must not be extended to include
 > them.
 >
-> The chart's own `description` in `Chart.yaml` already names all thirteen, and that is
-> the string Rancher renders on the Apps catalog card, so it reaches users on the next
-> chart release rather than through this file.
+> The chart's own `description` in `Chart.yaml` names thirteen and **has not been updated
+> for Cassandra**, deliberately: `charts/libredb-studio/` is a packaged path, so editing it
+> requires a `Chart.yaml` version bump in the same PR (#167's required check) plus the
+> README `--version` examples and the `operator/helm-charts` mirror. That is a
+> release-coupled change and it belongs to whoever cuts the next chart, not to the PR that
+> added the engine. The same applies to every marketplace and packaging description that
+> spells the count (`deploy/azure`, `deploy/railway`, `deploy/caprover`, `packaging/*`,
+> `desktop/src-tauri/tauri.conf.json`, the operator CSVs): all of them describe a released
+> artifact. Read the number from `SHIPPED` when you update them.
 
 ## Listing facts
 

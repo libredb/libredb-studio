@@ -44,6 +44,11 @@ src/lib/db/
 │   │   │   ├── transport.ts    #   SearchTransport seam + neutral result types + error categories
 │   │   │   ├── http-transport.ts # The one HTTP implementation (fetch); the dialect table lives here
 │   │   │   └── introspect.ts   #   _cat/indices + _mapping -> tables and columns
+│   │   ├── cassandra/          # Apache Cassandra Strategy (CQL over the native protocol)
+│   │   │   ├── index.ts        #   CassandraProvider
+│   │   │   ├── transport.ts    #   CassandraTransport seam + neutral result + fault categories
+│   │   │   ├── driver-transport.ts # The one file that imports cassandra-driver
+│   │   │   └── introspect.ts   #   system_schema + system_views -> schema and monitoring
 │   │   └── trino/              # Apache Trino Strategy (SQL over the client protocol, no driver)
 │   │       ├── index.ts        #   TrinoProvider
 │   │       ├── transport.ts    #   TrinoTransport seam + error categories + the dialect descriptor
@@ -90,6 +95,13 @@ BaseDatabaseProvider (abstract)
 `SQLBaseProvider` provides SQL-specific helpers (LIMIT injection, identifier escaping, placeholder generation). Non-SQL databases like MongoDB, Redis, and LibreDB extend `BaseDatabaseProvider` directly. LibreDB is embedded (opened in-process from a file, like SQLite) but, having no SQL, it is a key-value-style provider rather than a SQL one.
 
 Couchbase is the one provider that speaks a SQL dialect (SQL++) without extending `SQLBaseProvider`: SQL++ quotes identifiers with doubled backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting and expresses its SQL-ness through `queryLanguage: 'sql'` in the capabilities instead. See [providers/couchbase.md](./providers/couchbase.md).
+
+Cassandra is the counter-example to the whole HTTP/driver framing: it needs a driver (a binary
+protocol over TCP) and still extends `SQLBaseProvider`, because the base class is about statement
+TEXT and CQL agrees with it on identifier quoting and on `LIMIT n`. Its `prepareQuery()` override
+carries three dialect traps rather than one - no `OFFSET` at all, `ALLOW FILTERING` must stay last,
+and a line comment must be closed by a newline (CQL has `//` as well as `--`) - and the seam behind
+it is a driver adapter rather than an HTTP one. See [providers/cassandra.md](./providers/cassandra.md).
 
 Being driver-free and reached over HTTP is not what decides the base class. `ClickHouseProvider`, `DruidProvider` and `TrinoProvider` add no driver either, and all three extend `SQLBaseProvider`: double-quoted identifiers are correct in each dialect, so identifier escaping and the placeholder style are inherited rather than rewritten. Two of them override only `prepareQuery()`, and for opposite reasons. Druid rejects `OFFSET n LIMIT m` — a statement that already ends in an `OFFSET` is therefore sent unlimited instead of being rewritten into a syntax error. Trino rejects the other order: its grammar is `[ OFFSET count ] [ LIMIT count ]`, so measured on 476 `... LIMIT 3 OFFSET 1` answers `mismatched input 'OFFSET'` while the transposed form returns the rows, and the override transposes what the shared limiter emitted rather than rewriting the statement. See [providers/clickhouse.md](./providers/clickhouse.md), [providers/druid.md](./providers/druid.md) and [providers/trino.md](./providers/trino.md).
 
@@ -155,6 +167,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | Elasticsearch | `elasticsearch` | Search (SQL, read-only) | [providers/elasticsearch.md](./providers/elasticsearch.md) |
 | OpenSearch | `opensearch` | Search (SQL, read-only) | [providers/opensearch.md](./providers/opensearch.md) |
 | Apache Trino | `trino` | SQL (federated query engine) | [providers/trino.md](./providers/trino.md) |
+| Apache Cassandra | `cassandra` | SQL-shaped (CQL, wide-column) | [providers/cassandra.md](./providers/cassandra.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface
@@ -328,7 +341,7 @@ Provider-specific behaviour — pooling model, SSL/encryption, pagination, monit
 maintenance operations, and known limitations — is documented per provider under
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
 Oracle, SQL Server, SQLite, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch,
-OpenSearch, Apache Trino, or LibreDB.
+OpenSearch, Apache Trino, Apache Cassandra, or LibreDB.
 
 Not every provider has every feature, and the docs record the absences rather than glossing over
 them. Druid is the sharpest case: its SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, no

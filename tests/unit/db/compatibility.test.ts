@@ -70,6 +70,18 @@ describe("wire-compatibility registry", () => {
     expect(SHIPPED_DATABASE_TYPES.length).toBe(new Set(SHIPPED_DATABASE_TYPES).size);
   });
 
+  test("ScyllaDB is not recorded as a Cassandra relative, because no probe ran", () => {
+    // It speaks the CQL wire and `cassandra-driver` connects to it, which is exactly
+    // the "connects, therefore supported" claim this registry exists to refuse. The
+    // parts of the Cassandra provider most likely to differ are the ones that are not
+    // the wire: `system_views` is Cassandra's own virtual-table set, and
+    // `gossip_generation` is a Cassandra field. Until a gate-4 probe runs, the honest
+    // state is untested (#424 Phase 4).
+    expect(SHIPPED_DATABASE_TYPES).toContain("cassandra");
+    expect(compatibleEnginesFor("cassandra")).toEqual([]);
+    expect(WIRE_COMPATIBLE_ENGINES.map((engine) => engine.name.toLowerCase())).not.toContain("scylladb");
+  });
+
   test("every entry names a driver we actually ship", () => {
     for (const engine of WIRE_COMPATIBLE_ENGINES) {
       expect(SHIPPED_DATABASE_TYPES).toContain(engine.via);

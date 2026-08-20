@@ -46,7 +46,10 @@ export function quoteIdentifier(name: string, dialect: DatabaseType | undefined)
       // tpch.sf1.nation LIMIT 1` returns the column, `SELECT 1 AS "a""b"` names it
       // `a"b`, and a backtick is refused in the engine's own words - "backquoted
       // identifiers are not supported; use double quotes to quote identifiers"),
-      // and the document/key-value providers
+      // Cassandra (measured on 5.0.9: `SELECT "id" FROM probe.customers` returns the
+      // column, a backtick is "no viable alternative at character '`'", and a
+      // double-quoted STRING is a syntax error - so `"` is the name quote and nothing
+      // else), and the document/key-value providers
       // whose generators fall back to it. An undefined dialect lands here too —
       // a generator with no connection to name one can claim only the standard.
       return `"${name.replace(/"/g, '""')}"`;

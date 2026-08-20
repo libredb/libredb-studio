@@ -37,6 +37,10 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   clickhouse: true,
   druid: true,
   trino: true,
+  // Apache Cassandra (#424 Phase 4). ScyllaDB speaks the same CQL wire and is
+  // deliberately NOT recorded as a relative here: that claim needs its own gate-4
+  // probe, and this registry holds nothing that was not measured.
+  cassandra: true,
   // Two ids served by ONE provider module (`providers/sql/search/`), which is the
   // first time "shipped" here does not mean one provider file per id. They are still
   // two entries because the tri-sync invariant is per type-id - each has its own doc

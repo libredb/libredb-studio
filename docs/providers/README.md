@@ -19,13 +19,14 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | Elasticsearch | `elasticsearch` | SQL (search) | none (HTTP: `_sql` + REST) | SQL (Elasticsearch SQL) | [elasticsearch.md](./elasticsearch.md) |
 | OpenSearch | `opensearch` | SQL (search) | none (HTTP: `_plugins/_sql` + REST) | SQL (OpenSearch SQL plugin) | [opensearch.md](./opensearch.md) |
 | Apache Trino | `trino` | SQL (federated query engine) | none (HTTP: the client protocol, `POST /v1/statement`) | SQL (Trino) | [trino.md](./trino.md) |
+| Apache Cassandra | `cassandra` | SQL (wide-column) | `cassandra-driver` (pure JS) | SQL-shaped (CQL) | [cassandra.md](./cassandra.md) |
 | LibreDB | `libredb` | Embedded (Key-Value) | `@libredb/libredb` | JSON (command grammar) | [libredb.md](./libredb.md) |
 
 ## Conventions
 
 - **Filename = canonical type-id** (`postgres.md`, `mssql.md`, …), mirroring the source file
   (`src/lib/db/providers/<family>/<type-id>.ts`, or a `<type-id>/` directory when a provider is
-  split across modules, as Couchbase, ClickHouse, Druid and Trino are). The official product name (e.g.
+  split across modules, as Couchbase, ClickHouse, Druid, Trino and Cassandra are). The official product name (e.g.
   "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
   — `providers/sql/search/` is `elasticsearch` and `opensearch` — and each type-id still gets its own
   document, because the tri-sync invariant is per type-id and each doc is the prime reference for its
@@ -74,6 +75,14 @@ the support column records how much of the product actually worked:
 | Apache Cloudberry (incubating) | `postgres` | Partial | PostgreSQL 14.4 (Apache Cloudberry 2.1.0-incubating) | Twelve of the fifteen surfaces answer. The monitoring dashboard, table statistics and index statistics all fail with one engine error, `query plan with multiple segworker groups is not supported`, which is Cloudberry's MPP planner restriction rather than a version gap. **Row counts and sizes after `ANALYZE` are correct** (2000 rows for 2000; 576 KB for 589824 bytes), so this is not the kind of engine whose statistics mislead; what they read before `ANALYZE` was not probed. Two `pg_ext_aux` tables appear in the browser, so it lists 4 objects for 2 user tables, and the overview's database size reads 62 MB against roughly 900 KB of user tables. **A foreign key is read back as if enforced and is not**: Cloudberry accepts the constraint with a warning that it will not enforce it, and an orphan insert then succeeds. **The agent cannot ground a run here**: the usual `gpadmin` login is refused because the execution profile reads a superuser as too broad, and a least-privilege role is refused at 289 rows against a 200-row budget, 282 of them in Cloudberry's own `gp_toolkit`. What the run reports for the first of those is that the engine offers no read-only execution profile, which describes the role rather than the engine (B47). The three failing panels report the planner error as a connection error, which the connection is not. Apache publishes build images only, so the probe ran on a third-party image. |
 | Materialize | `postgres` | Query editor only | Materialize 26.37.0 | No pg statistics catalog and no size functions, and `MATERIALIZED` is reserved, which our schema query uses. Editor only. |
 | RisingWave | `postgres` | Query editor only | RisingWave 3.0.3 | No pg statistics catalog, differently typed size functions, and a parameterised `LIMIT` is rejected. Editor only. |
+
+**ScyllaDB is deliberately absent**, and it is the clearest illustration of the rule above: it speaks
+the CQL wire protocol and `cassandra-driver` connects to it, which is exactly the kind of "connects,
+therefore supported" claim this table exists to refuse. The parts of the Cassandra provider most
+likely to differ are the parts that are *not* the wire — `system_views` is Cassandra's own set of
+virtual tables, `gossip_generation` is a Cassandra field, and Scylla's version string is not
+`release_version`-shaped. Until a probe runs, the honest state is *untested*, not *unsupported*
+([cassandra.md §11](./cassandra.md#11-scylladb-is-not-this-provider--yet)).
 
 Reproduce any row with the `compat` profile of the container fixture, then connect as the driver in
 the second column:

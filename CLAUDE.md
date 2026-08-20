@@ -6,7 +6,7 @@ Guidance for Claude Code in this repo — conventions, rules, and gotchas only. 
 
 ## Project Overview
 
-Web-based SQL IDE for cloud-native teams: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino (plus the embedded LibreDB) + AI query assistance. Runs **two ways** — a standalone Next.js app AND a published npm package (CLI plus an embeddable library surface); `build:lib` (tsup) produces the package dist. The two modes render different chrome, so a UI change verified in one is not verified in the other.
+Web-based SQL IDE for cloud-native teams: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra (plus the embedded LibreDB) + AI query assistance. Runs **two ways** — a standalone Next.js app AND a published npm package (CLI plus an embeddable library surface); `build:lib` (tsup) produces the package dist. The two modes render different chrome, so a UI change verified in one is not verified in the other.
 
 ## Branching & PRs
 
@@ -63,7 +63,7 @@ After every code change, run all six locally before claiming done — they match
 ## Architecture
 
 - **Stack:** Next.js 16 (App Router) + React 19 + TypeScript; Tailwind 4 + Shadcn/UI; Monaco editor; TanStack Table + react-virtual; `jose` JWT + `openid-client` OIDC.
-- **DB drivers:** `pg`, `mysql2`, **`bun:sqlite`/`node:sqlite`** (the DB provider, runtime-selected; `LIBREDB_SQLITE_DRIVER` overrides) / `better-sqlite3` (the storage layer), `oracledb`, `mssql`, `mongodb`, `ioredis`.
+- **DB drivers:** `pg`, `mysql2`, `cassandra-driver` (pure JS, external in both build configs), **`bun:sqlite`/`node:sqlite`** (the DB provider, runtime-selected; `LIBREDB_SQLITE_DRIVER` overrides) / `better-sqlite3` (the storage layer), `oracledb`, `mssql`, `mongodb`, `ioredis`.
 - **Layout:** full tree + data flow in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Key dirs: `src/lib/db` (DB providers, Strategy Pattern), `src/lib/llm` (LLM providers), `src/lib/storage` (pluggable persistence), `src/workspace` + `src/exports` (the npm-package library surface), `src/proxy.ts` (RBAC middleware).
 - **Path alias:** `@/*` → `./src/*`.
 

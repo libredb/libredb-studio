@@ -2949,3 +2949,49 @@ product to learn why it had no schema.
 Done when a refused capture records an event carrying its `reasonCode` and, where the reason is the
 row budget, the two numbers - rows projected and rows allowed - and a plan run whose capture was
 refused can be explained from its ledger alone, and this entry is deleted.
+
+### U17. Four things the Cassandra provider declined to do, and the one grammar fact this repo cannot express
+
+The provider shipped in #424 Phase 4 with four bounded absences. None is a defect - each is the
+honest answer to something measured on Apache Cassandra 5.0.9 - but each is a thing a later change
+could take further, and one of them is a shared-reader limitation rather than a provider decision.
+
+**1. `SqlGrammar` cannot express CQL's comment rules, so the provider works around them.** Two facts,
+both measured: CQL has a THIRD line-comment form, `//`, which the readers in `src/lib/sql/` know
+nothing about; and a line comment of EITHER form must be closed by a NEWLINE - `SELECT * FROM
+probe.customers LIMIT 3 -- note` with nothing after it is `line 1:45 mismatched character '<EOF>'
+expecting set null`, while the same text plus `\n` returns the rows. The shared limiter's
+insert-before-trailing-trivia rewrite (#280) therefore turns a VALID statement into a syntax error on
+this one engine, because `sql.trim()` drops the newline that closed the comment.
+`CassandraProvider.prepareQuery` declines to rewrite any statement whose rewritten form would end
+inside a line comment, which is fail-safe (the statement runs unbounded and `wasLimited: false` says
+so). Widening `SqlGrammar` with a `lineComment` fact would fix it properly and would change how every
+dialect's comments are read, so it is a change with its own tests rather than a rider on a provider.
+
+**2. A statement whose last clause is `PER PARTITION LIMIT n` is left unbounded.** The shared reader
+sees a trailing `LIMIT n` and reports the statement as already bounded, so nothing is injected. `...
+PER PARTITION LIMIT 2 LIMIT 3` is valid CQL (measured), so a bound COULD be added - but only by
+stripping the clause the reader matched, which would corrupt the statement. Fixing it needs the
+reader to distinguish the two clauses.
+
+**3. TLS is wired and unverified.** `cassandraClientOptions` maps the connection's SSL mode onto the
+driver's `sslOptions` (`require` -> `rejectUnauthorized: false`, `verify-*` -> `true`, plus a CA when
+one is supplied), and the shape is pinned by unit tests. Neither probe instance speaks TLS, so no
+handshake was ever performed. The alternative - ignoring the form's SSL panel - would have sent
+plaintext to a TLS port silently, which is worse.
+
+**4. Tracing is not exposed.** Cassandra's only substitute for EXPLAIN is `{traceQuery: true}` plus
+`system_traces.sessions` / `system_traces.events`, which describes a statement that has ALREADY RUN.
+It is a profile, not a plan, and `supportsExplain` is false. If it is ever surfaced it must not be
+called EXPLAIN and must not be wired to `explainFormat`.
+
+Also open, and tracked here rather than as an issue: **ScyllaDB has no gate-4 probe.** It speaks the
+CQL wire and `cassandra-driver` connects to it, which is exactly the "connects, therefore supported"
+claim `src/lib/db/compatibility.ts` refuses to record. The parts most likely to differ are the ones
+that are not the wire: `system_views` is Cassandra's own virtual-table set, `gossip_generation` is a
+Cassandra field, and Scylla's version string is not `release_version`-shaped. And there is **no
+`e2e/cassandra-provider.spec.ts`**, unlike Trino: the container takes about 206 seconds to reach
+`nodetool status` UN from cold, which is longer than any existing e2e fixture waits.
+
+Done when each of the four has either been taken further or judged settled, when ScyllaDB has been
+probed or ruled out, and this entry is deleted.

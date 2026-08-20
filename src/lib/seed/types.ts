@@ -37,6 +37,7 @@ const SeedDatabaseType = z.enum([
   "elasticsearch",
   "opensearch",
   "trino",
+  "cassandra",
 ]);
 
 export const SeedDefaultsSchema = z.object({
@@ -70,6 +71,11 @@ export const SeedConnectionSchema = z.object({
   ssl: SSLConfigSchema,
   serviceName: z.string().optional(),
   instanceName: z.string().optional(),
+  // Cassandra only, and REQUIRED by that driver rather than optional to it: a seeded
+  // Cassandra connection without it cannot open at all. Optional here because the
+  // other thirteen type-ids have no use for the field; the provider is what refuses a
+  // connection that omits it.
+  localDataCenter: z.string().optional(),
 });
 
 export const SeedConfigSchema = z

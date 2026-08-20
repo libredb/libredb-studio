@@ -333,3 +333,29 @@ export const LibreDBIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <path d="M10 18.5h4" />
   </svg>
 );
+
+/**
+ * Cassandra's eye, reduced to its outline.
+ *
+ * The project's own mark is an almond-shaped eye with a ringed pupil, and that is
+ * what this draws: two arcs meeting at the corners, a circle for the iris and a
+ * filled centre. No text, and no attempt at the gradient - a single-stroke mark at
+ * weight 1.5 is what every other icon here is, and the eye reads at 14px.
+ */
+export const CassandraIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M2.5 12c2.6-3.7 5.8-5.5 9.5-5.5s6.9 1.8 9.5 5.5" />
+    <path d="M2.5 12c2.6 3.7 5.8 5.5 9.5 5.5s6.9-1.8 9.5-5.5" />
+    <circle cx="12" cy="12" r="3.4" />
+    <circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none" />
+  </svg>
+);

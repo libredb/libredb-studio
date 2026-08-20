@@ -99,6 +99,16 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     label: "OpenSearch",
     reason: "OpenSearch SQL reads only; change a field by reindexing into an index whose mapping declares it.",
   },
+  // Measured on Cassandra 5.0.9: `ALTER TABLE probe.customers ALTER name TYPE blob`
+  // answers 8704, "Altering column types is no longer supported" - the operation was
+  // REMOVED from the engine (it corrupted data), not merely unimplemented. The
+  // PostgreSQL branch this id would otherwise inherit emits `ALTER COLUMN … TYPE …`,
+  // which is not even in CQL's ALTER grammar, so there is no statement to emit at all.
+  cassandra: {
+    label: "Apache Cassandra",
+    reason:
+      "Cassandra no longer supports altering a column's type; add a new column and migrate the values, or recreate the table.",
+  },
   mongodb: {
     label: "MongoDB",
     reason: "Collections are schemaless, so there is no column definition to change.",
@@ -115,6 +125,12 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
 
 function generateColumnDef(col: ColumnDiff, dialect: DatabaseType): string {
   const type = col.targetType || col.sourceType || "TEXT";
+  // A CQL column definition is a name and a type, full stop. Measured on 5.0.9:
+  // `name TEXT NOT NULL`, `name TEXT UNIQUE` and `name TEXT DEFAULT 'x'` are each
+  // "no viable alternative at input" - none of the three qualifiers exists in the
+  // grammar. Nullability is not a column property there (only a primary-key
+  // component cannot be null) and there are no defaults at all.
+  if (dialect === "cassandra") return `${escapeIdentifier(col.columnName, dialect)} ${type}`;
   const nullable = col.targetNullable === false ? " NOT NULL" : "";
   const defaultVal = col.targetDefault ? ` DEFAULT ${col.targetDefault}` : "";
   return `${escapeIdentifier(col.columnName, dialect)} ${type}${nullable}${defaultVal}`;
@@ -171,7 +187,11 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
   table.columns
     .filter((c) => c.action === "added")
     .forEach((col) => {
-      lines.push(`ALTER TABLE ${id} ADD COLUMN ${generateColumnDef(col, dialect)};`);
+      // CQL spells it without the COLUMN keyword, measured on 5.0.9: `ADD COLUMN extra
+      // TEXT` is "line 1:42 mismatched input 'TEXT' expecting EOF" while `ADD extra
+      // text` succeeds.
+      const keyword = dialect === "cassandra" ? "ADD" : "ADD COLUMN";
+      lines.push(`ALTER TABLE ${id} ${keyword} ${generateColumnDef(col, dialect)};`);
     });
 
   // Removed columns
@@ -181,7 +201,10 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
       if (dialect === "sqlite") {
         lines.push(`-- SQLite: Cannot drop column "${col.columnName}" directly. Requires table recreation.`);
       } else {
-        lines.push(`ALTER TABLE ${id} DROP COLUMN ${escapeIdentifier(col.columnName, dialect)};`);
+        // Same measurement in the other direction: `DROP COLUMN extra` is "mismatched
+        // input 'extra' expecting EOF" on CQL, while `DROP extra` succeeds.
+        const keyword = dialect === "cassandra" ? "DROP" : "DROP COLUMN";
+        lines.push(`ALTER TABLE ${id} ${keyword} ${escapeIdentifier(col.columnName, dialect)};`);
       }
     });
 

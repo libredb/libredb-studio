@@ -576,6 +576,7 @@ describe("useConnectionForm", () => {
     elasticsearch: true,
     opensearch: true,
     trino: true,
+    cassandra: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {
@@ -920,6 +921,74 @@ describe("useConnectionForm", () => {
     );
     const body = JSON.parse(testCall![1]!.body as string);
     expect(body.serviceName).toBe("MYSERVICE");
+  });
+
+  // ── buildConnection with Cassandra localDataCenter ─────────────────────
+
+  test("buildConnection includes the Cassandra localDataCenter", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 20 } },
+    });
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setType("cassandra");
+      result.current.setLocalDataCenter("datacenter1");
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const testCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/test-connection"),
+    );
+    const body = JSON.parse(testCall![1]!.body as string);
+    expect(body.localDataCenter).toBe("datacenter1");
+  });
+
+  test("a localDataCenter typed for another engine is not sent", async () => {
+    // The field is Cassandra's alone. Carrying it onto a PostgreSQL connection would
+    // store a topology answer that engine has no use for, exactly as `serviceName`
+    // stays on Oracle.
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 20 } },
+    });
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setType("postgres");
+      result.current.setLocalDataCenter("datacenter1");
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const testCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/test-connection"),
+    );
+    const body = JSON.parse(testCall![1]!.body as string);
+    expect(body.localDataCenter).toBeUndefined();
+  });
+
+  test("populates the Cassandra localDataCenter in edit mode", () => {
+    const conn: DatabaseConnection = {
+      id: "c1",
+      name: "Ring",
+      type: "cassandra",
+      host: "cassandra.internal",
+      port: 9042,
+      database: "probe",
+      localDataCenter: "eu-west-1",
+      createdAt: new Date(),
+    };
+
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, editConnection: conn }));
+
+    expect(result.current.localDataCenter).toBe("eu-west-1");
   });
 
   // ── buildConnection with MSSQL instanceName ────────────────────────────

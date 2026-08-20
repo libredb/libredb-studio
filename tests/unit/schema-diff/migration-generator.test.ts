@@ -750,6 +750,40 @@ describe("generateMigrationSQL: ClickHouse ALTER", () => {
   });
 });
 
+describe("generateMigrationSQL: Cassandra spells ADD and DROP without the COLUMN keyword", () => {
+  // All three measured on 5.0.9. `ALTER TABLE probe.tmp_ok ADD COLUMN extra TEXT` is
+  // "line 1:42 mismatched input 'TEXT' expecting EOF" and `... DROP COLUMN extra` is
+  // "mismatched input 'extra' expecting EOF", while `ADD extra text` and
+  // `DROP extra` both succeed. The keyword is simply not in CQL's ALTER grammar, so
+  // inheriting the shared spelling would emit two statements the server refuses.
+  test("an added column uses CQL's own ADD spelling", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "cassandra");
+
+    expect(sql).toContain('ALTER TABLE "users" ADD "phone" varchar(20);');
+    expect(sql).not.toContain("ADD COLUMN");
+  });
+
+  test("a removed column uses CQL's own DROP spelling", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "cassandra");
+
+    expect(sql).toContain('ALTER TABLE "users" DROP "legacy_col";');
+    expect(sql).not.toContain("DROP COLUMN");
+  });
+
+  test("a created table carries no NOT NULL and no DEFAULT, because CQL has neither", () => {
+    // Measured: `CREATE TABLE probe.t (id UUID PRIMARY KEY, name TEXT NOT NULL)` is
+    // "no viable alternative at input 'NOT'", and the same shape with `DEFAULT 'x'`
+    // or `UNIQUE` fails the same way. A CQL column definition is a name and a type.
+    const sql = generateMigrationSQL(makeAddedTableDiff(), "cassandra");
+
+    expect(sql).toContain('"id" integer');
+    expect(sql).not.toContain("NOT NULL");
+    expect(sql).not.toContain("DEFAULT");
+    // The primary key still has to be declared: a CQL table without one is refused.
+    expect(sql).toContain('PRIMARY KEY ("id")');
+  });
+});
+
 /**
  * Exhaustive by construction, in the spirit of `PICKER_COVERAGE` in
  * `tests/hooks/use-connection-form.test.ts`: a new `DatabaseType` fails typecheck here until it is
@@ -777,6 +811,11 @@ const MODIFIED_COLUMN_COVERAGE: Record<DatabaseType, { label: string; reason: st
   // comment sends the user to a reindex rather than to a statement.
   elasticsearch: { label: "Elasticsearch", reason: "reindexing into an index" },
   opensearch: { label: "OpenSearch", reason: "reindexing into an index" },
+  // Measured on Cassandra 5.0.9, and the reason is the engine's own sentence:
+  // `ALTER TABLE probe.customers ALTER name TYPE blob` answers "Altering column types
+  // is no longer supported". The PostgreSQL branch's text would not even parse
+  // (`ALTER COLUMN` is not in CQL's grammar), so nothing portable can be emitted.
+  cassandra: { label: "Apache Cassandra", reason: "no longer supports altering a column's type" },
   mongodb: { label: "MongoDB", reason: "schemaless" },
   redis: { label: "Redis", reason: "no column definitions" },
   libredb: { label: "LibreDB", reason: "JSON command grammar" },

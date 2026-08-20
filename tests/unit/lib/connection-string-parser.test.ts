@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { parseConnectionString, detectConnectionStringType } from "@/lib/connection-string-parser";
+import { parseConnectionString, detectConnectionStringType, ENGINE_URI_SCHEMES } from "@/lib/connection-string-parser";
 
 // ─── parseConnectionString ──────────────────────────────────────────────────
 
@@ -442,6 +442,24 @@ describe("parseConnectionString", () => {
       // toggle at all.
       expect(detectConnectionStringType("http://localhost:8080")).toBe("clickhouse");
       expect(parseConnectionString("http://localhost:8080")!.type).toBe("clickhouse");
+    });
+  });
+
+  // ── Cassandra: deliberately no scheme (issue #424 Phase 4) ──────────────
+
+  describe("Cassandra has no connection-string form", () => {
+    // The driver takes contact points plus a REQUIRED `localDataCenter`, and no URI
+    // convention in use carries the second - so any `cassandra://` form this parser
+    // read would drop the one field without which the driver refuses to connect. The
+    // provider says supportsConnectionString: false and its UI config says
+    // showConnectionStringToggle: false, so nothing in the product produces one either.
+    test("does not invent a cassandra:// scheme", () => {
+      expect(parseConnectionString("cassandra://localhost:9042/probe")).toBeNull();
+      expect(detectConnectionStringType("cassandra://localhost:9042/probe")).toBeNull();
+    });
+
+    test("cassandra is absent from the published scheme map", () => {
+      expect(ENGINE_URI_SCHEMES.cassandra).toBeUndefined();
     });
   });
 

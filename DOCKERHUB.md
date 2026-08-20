@@ -107,7 +107,7 @@ The network route is the one to prefer for a real deployment: put Studio and its
 
 ## Supported databases
 
-Thirteen external engines share one interface, and three of them are read-only because their own SQL is. The table below has fourteen rows: the fourteenth is the embedded LibreDB store, which ships inside the image rather than being a server you connect out to.
+Fourteen external engines share one interface, and three of them are read-only because their own SQL is. The table below has fifteen rows: the fifteenth is the embedded LibreDB store, which ships inside the image rather than being a server you connect out to.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -124,6 +124,7 @@ Thirteen external engines share one interface, and three of them are read-only b
 | **Elasticsearch** | none — HTTP | Read-only SQL IDE over `_sql`, mapping-driven index/field explorer, cluster health with per-index document counts and store sizes |
 | **OpenSearch** | none — HTTP | The same read-only IDE over `_plugins/_sql`, from the same provider module; `LIMIT … OFFSET` paging works here |
 | **Apache Trino** | none — HTTP | Full SQL IDE over the client protocol, every configured catalog in one tree, `EXPLAIN (FORMAT JSON)` plans, `system.runtime` monitoring and query cancellation |
+| **Apache Cassandra** | `cassandra-driver` (pure JS) | CQL editor over the native protocol, keyspace browser with partition and clustering keys marked, `system_views` monitoring. No row counts and no sizes: the only figures Cassandra publishes are partition estimates and whole mebibytes, so neither is shown rather than shown wrong |
 | **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
 
 **Read-only where the engine is.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` anywhere in their grammar, so inline editing and DDL are reported as unsupported instead of failing when used. Everything else — the query editor, the object browser, ER diagrams, schema diff and monitoring — works wherever the engine has something to answer with.

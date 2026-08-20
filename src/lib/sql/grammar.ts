@@ -251,6 +251,57 @@ const TRINO_GRAMMAR: SqlGrammar = {
 };
 
 /**
+ * Established the same way as the three rows above and for the same reason - the
+ * server IS the source - and probed BEFORE any Cassandra provider code existed
+ * (2026-08-20, Apache Cassandra 5.0.9, `system.local.release_version`, over the
+ * native protocol). Every fact below is a statement the server answered, not a
+ * reading taken from a neighbouring dialect.
+ *
+ * One CQL fact has no field here to hold it, and it is worth naming because it bites
+ * the same readers: CQL has a THIRD comment form, `//`, and a line comment of EITHER
+ * form must be closed by a NEWLINE. Measured, `SELECT * FROM probe.customers LIMIT 3
+ * -- note` with nothing after it is a syntax error ("line 1:45 mismatched character
+ * '<EOF>' expecting set null"), and the same text with a trailing `\n` returns the
+ * rows. So on this one engine the shared limiter's insert-before-trailing-trivia
+ * rewrite (#280) can turn a VALID statement into a syntax error, because it trims the
+ * newline that closed the comment. `SqlGrammar` cannot express either fact, and
+ * widening it would change how every dialect's comments are read, so the Cassandra
+ * provider's own `prepareQuery` declines to rewrite a statement that would end inside
+ * a line comment. See `providers/sql/cassandra/index.ts`.
+ */
+const CASSANDRA_GRAMMAR: SqlGrammar = {
+  // `#` opens NOTHING and is not an identifier character either. Three probes:
+  // `… WHERE id = 1 # trailing` -> "line 1:44 no viable alternative at character
+  // '#'"; `SELECT # x\n id …` -> the same at 1:7; `SELECT id#a …` -> the same at 1:9.
+  // So the rest of the line is not hidden, which is the only thing the readers here
+  // ask. The compatibility default would leave every `#` run AMBIGUOUS, and since
+  // #297 an unreadable span is a confirmation PROMPT rather than silence - a prompt on
+  // a statement CQL refuses outright.
+  hash: "code",
+  // A SUBSCRIPT, and both halves of that reading were measured. It is read THROUGH to
+  // a term: `SELECT [id] FROM probe.customers WHERE id = 1` answers a column named
+  // `[id]` of type `list` holding `[1]` - the brackets built a collection literal from
+  // the column - and `SELECT [1, 2] …` is refused with "Cannot infer type for term
+  // [1, 2] in selection clause", a complaint about TYPING a term the parser already
+  // read. It NESTS: `SELECT [[id]] …` answers `[[1]]`. A literal inside it is a
+  // literal: `SELECT ['a]b'] …` reaches the same type-inference complaint, so the `]`
+  // inside the string did not close the run - which is precisely what the
+  // identifier reading, stopping at the first `]`, cannot do. CQL subscripts
+  // collections for real as well (`m['k']`), and names are quoted with `"` (measured:
+  // `SELECT "id" FROM probe.customers` returns the column, a backtick is "no viable
+  // alternative at character '`'", and a double-quoted STRING is a syntax error).
+  bracket: "subscript",
+  // FLAT: `SELECT /* a /* b */ id FROM probe.customers WHERE id = 1` returns the row,
+  // so the first `*/` closed the run. A nesting reader would have seen an
+  // unterminated comment and refused to bound the statement.
+  blockComment: "flat",
+  // `… WHERE name = q'{it''s}'` is "line 1:45 no viable alternative at input
+  // '{it's}'" - the form does not exist here, so those characters are a name followed
+  // by an ordinary string.
+  alternateQuoting: false,
+};
+
+/**
  * The established readings, one row per fact per dialect.
  *
  * A dialect absent from this table is at the compatibility default because its
@@ -374,6 +425,7 @@ const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
   elasticsearch: ELASTICSEARCH_GRAMMAR,
   opensearch: OPENSEARCH_GRAMMAR,
   trino: TRINO_GRAMMAR,
+  cassandra: CASSANDRA_GRAMMAR,
 };
 
 /**
@@ -402,6 +454,16 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * `trino` is deliberately absent for the same reason as the two search ids: the editor
  * text is the exact bytes `POST /v1/statement` receives, and the provider extends
  * `SQLBaseProvider`.
+ *
+ * `cassandra` is deliberately absent too, and it is the closest call in this set. CQL
+ * genuinely lacks JOIN, OFFSET, EXPLAIN and subqueries - each measured as a syntax
+ * error on 5.0.9 - but this set is not about vocabulary: it asks whether the text is
+ * SQL-SHAPED, so that a SQL span reader can find where a literal ends and where a
+ * comment hides a write. CQL is written with the same statement keywords, the same
+ * `'…'` literals with doubled quotes, the same `"…"` quoted names and the same `--`
+ * and `/* *\/` comments, so that reading is correct here. Listing it would switch the
+ * SQL checks off for text that IS SQL - the mirror of the defect this set exists to
+ * fix.
  *
  * `elasticsearch` and `opensearch` are deliberately ABSENT: their editor text is SQL
  * (measured - both answer `POST`ed statements with columns and rows, and both

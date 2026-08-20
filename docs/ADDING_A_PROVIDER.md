@@ -166,10 +166,10 @@ directly; reshaping rows inside the transport would have broken schema loading. 
 
 ```typescript
 // Before:
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra';
 
 // After (example: adding CockroachDB):
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cockroachdb';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'cockroachdb';
 ```
 
 ### 1.2 — Add to `QueryTab.type` if needed
@@ -317,7 +317,7 @@ Then add the type to the selectable list that drives the ConnectionModal picker:
 // Append to the existing list - do not retype it, or you will drop a provider from the picker.
 const selectableTypes: DatabaseType[] = [
   'postgres', 'mysql', 'sqlite', 'oracle', 'mssql', 'mongodb', 'couchbase', 'redis', 'libredb',
-  'clickhouse', 'druid', 'elasticsearch', 'opensearch', 'trino',
+  'clickhouse', 'druid', 'elasticsearch', 'opensearch', 'trino', 'cassandra',
   'cockroachdb',
 ];
 ```
@@ -340,6 +340,8 @@ bun add <driver-package>
 # Apache Druid needs no driver — plain SQL over POST /druid/v2/sql (Router 8888 or Broker 8082)
 # Elasticsearch / OpenSearch need no driver — SQL over _sql / _plugins/_sql (port 9200)
 # Apache Trino needs no driver — SQL over its client protocol, POST /v1/statement (port 8080)
+# bun add cassandra-driver  (Apache Cassandra — a binary protocol over TCP, so a driver is not
+#                            optional; this one is pure JS, which is the next best thing)
 ```
 
 If your engine exposes a documented HTTP API, weigh it against the native driver before adding a
@@ -646,12 +648,27 @@ document store).
 
 Assessed against the rubric in [Prerequisites](#prerequisites). Anything not listed almost certainly needs a driver.
 
+Cassandra is the entry this table never had, and it is worth a paragraph for the opposite reason to
+Druid's: nothing about the DRIVER decision was interesting - a binary protocol over TCP cannot be
+reached by `fetch`, so `cassandra-driver` was never optional - and everything about the CAPABILITY
+decisions was. Six of them came out "no", each with a measurement behind it: no EXPLAIN (the keyword
+is not in the grammar), no cancellation (the protocol has no cancel frame and the driver publishes no
+method), no maintenance (every operation is a `nodetool` action over JMX), no create-table (the modal
+emits five type names CQL does not have), no inline row edit (CQL needs the WHOLE primary key
+restricted and the editor guesses one column), and **no row count and no size anywhere** - the one
+that shaped the whole provider, because Cassandra publishes figures that look exactly like both and
+are neither. The generalisable lesson is the reverse of the driver rubric: score the CAPABILITIES the
+same way, and count how many of them the engine can actually promise before writing the provider that
+declares them. See [cassandra.md](./providers/cassandra.md).
+
 **Shipped since this list was written:** Couchbase
 ([#263](https://github.com/libredb/libredb-studio/issues/263)), ClickHouse
 ([#264](https://github.com/libredb/libredb-studio/issues/264)), Apache Druid
 ([#265](https://github.com/libredb/libredb-studio/issues/265)), Elasticsearch + OpenSearch
-([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 1) and Apache Trino
-([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 2).
+([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 1) Apache Trino
+([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 2) and Apache Cassandra
+([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 4 - the first phase to add a
+runtime dependency, and a pure-JS one).
 
 Druid is worth a paragraph, because it **corrected this table's own verdict**. The entry that stood
 here rated it strong but predicted that `EXPLAIN PLAN FOR` "returns a native-query translation rather
@@ -790,6 +807,14 @@ has an established grammar or reads at the default, and whether its query text i
 > This list is maintained by hand and has been wrong before: it long claimed "no other files should
 > need changes", while Couchbase (#263) and ClickHouse (#264) each touched 27 files under `src/` and
 > `tests/`, and Druid (#265) roughly two dozen of its own. Trust the grep over this list.
+>
+> Cassandra (#424 Phase 4) found three surfaces the grep over `trino` reached and this list does not
+> name, all of them because it added a connection FIELD (`localDataCenter`) rather than only a
+> type-id: `src/hooks/use-connection-payload.ts` and `src/lib/storage/connection-secrets.ts` both
+> carry an exhaustive `Record<keyof DatabaseConnection, …>` that stops compiling until the new field
+> is classified, and `src/lib/seed/connection-filter.ts` maps seed fields onto a connection BY HAND,
+> so a field omitted there is silently dropped from every managed connection. The first two fail
+> `typecheck`; the third fails nothing at all, which is why it now has a test.
 
 What the Strategy Pattern *does* spare you is **provider logic**: no route, no shared component and no
 existing provider needs to know your engine exists. If you find yourself adding a `=== '<type-id>'`

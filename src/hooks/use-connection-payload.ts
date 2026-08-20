@@ -54,6 +54,10 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   connectionString: "resolution",
   serviceName: "resolution",
   instanceName: "resolution",
+  // Which data centre the driver balances against. It decides which NODES a
+  // statement reaches, and a wrong value refuses the connection outright, so two
+  // connections differing only here are not the same connection.
+  localDataCenter: "resolution",
   // The role a run executes as. A copy that carries its own is a different execution
   // profile even when it points at the same database (#328).
   agentUser: "resolution",

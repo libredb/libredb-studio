@@ -30,6 +30,12 @@ export interface ParsedConnection {
  * page that `parseConnectionString` below rejects - a claim the product does not honour,
  * which is the class of defect issue #425 exists to remove.
  *
+ * Cassandra is absent for a different reason again, and a stronger one: its driver needs
+ * a REQUIRED `localDataCenter` alongside the contact points (measured on 4.9.0 - it
+ * refuses to construct a client without one), and no URI convention in use carries that
+ * field. A `cassandra://host:9042/keyspace` form would therefore parse into a connection
+ * that cannot open, which is worse than no paste at all.
+ *
  * Trino is the sharpest version of that gap, and worth naming because it looks like it
  * belongs here: it HAS a canonical URL, `jdbc:trino://host:port/catalog/schema`. That is
  * a JDBC URL and not a URI - `new URL()` reads its scheme as `jdbc:` - and stripping the

@@ -58,7 +58,7 @@ defaults:                    # Optional — merged into every connection
 connections:
   - id: "analytics-pg"       # Required, unique, lowercase slug [a-z0-9-]
     name: "Analytics DB"      # Required, display name in UI
-    type: postgres            # Required: postgres|mysql|sqlite|mongodb|redis|oracle|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino
+    type: postgres            # Required: postgres|mysql|sqlite|mongodb|redis|oracle|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra
     host: "${PG_HOST}"
     port: 5432
     database: analytics
@@ -74,6 +74,7 @@ connections:
       rejectUnauthorized: true
     # serviceName: "ORCL"     # Oracle only
     # instanceName: "MSSQL$"  # SQL Server only
+    # localDataCenter: "datacenter1"  # Cassandra only - REQUIRED there
 
   - id: "dev-mysql"
     name: "Dev MySQL"
@@ -114,6 +115,21 @@ connections:
     # with authentication switched off, so a password without TLS breaks a
     # connection that works without one.
     # No `connectionString`: jdbc:trino:// is not a form this build parses.
+
+  - id: "events-ring"
+    name: "Cassandra Ring"
+    type: cassandra
+    host: "${CASSANDRA_HOST}"
+    port: 9042                     # The native protocol
+    database: events               # The KEYSPACE, pinned for the session. Without it an
+                                   # unqualified table name resolves to nothing.
+    localDataCenter: datacenter1   # REQUIRED: the driver refuses to connect without it,
+                                   # and a stock single-node install reports datacenter1.
+    user: "${CASSANDRA_USER}"
+    roles: ["*"]
+    environment: production
+    # No `connectionString`: no URI convention carries localDataCenter, so a pasted
+    # one would produce a connection that cannot open.
 ```
 
 ### Field Reference
@@ -128,7 +144,7 @@ connections:
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | — | Database type: `postgres`, `mysql`, `sqlite`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino` |
+| `connections[].type` | Yes | — | Database type: `postgres`, `mysql`, `sqlite`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**) |
@@ -143,6 +159,7 @@ connections:
 | `connections[].ssl` | No | from defaults | SSL configuration |
 | `connections[].serviceName` | No | — | Oracle service name |
 | `connections[].instanceName` | No | — | SQL Server instance name |
+| `connections[].localDataCenter` | No¹ | — | Cassandra local data centre (`datacenter1`). ¹Optional in the schema because no other engine has it, and **required by the Cassandra provider**: the driver refuses to connect without one |
 
 ---
 

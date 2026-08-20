@@ -419,6 +419,15 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("trino");
   });
 
+  test('creates provider for type "cassandra"', async () => {
+    // `database` carries the KEYSPACE and `localDataCenter` is required by the
+    // driver, so a connection missing it cannot be constructed at all.
+    const conn = makeConnection("cassandra", { port: 9042, database: "probe", localDataCenter: "datacenter1" });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider).toBeDefined();
+    expect(provider.type).toBe("cassandra");
+  });
+
   test('creates provider for type "libredb"', async () => {
     const conn = makeConnection("libredb", { database: "/tmp/test.libredb" });
     const provider = await createDatabaseProvider(conn);

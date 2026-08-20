@@ -26,6 +26,7 @@ import {
   ChevronDown,
   Terminal,
   Settings2,
+  Server,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getDBConfig, isFileBased } from "@/lib/db-ui-config";
@@ -105,6 +106,8 @@ export function ConnectionModal({
     setServiceName,
     instanceName,
     setInstanceName,
+    localDataCenter,
+    setLocalDataCenter,
 
     // SSH Tunnel
     showSSH,
@@ -143,8 +146,14 @@ export function ConnectionModal({
   // `iceberg`, `tpch`), and the field is the one thing a user cannot guess - a
   // coordinator with no catalog selected resolves no table at all.
   const isTrino = type === "trino";
-  const databaseFieldLabel = isCouchbase ? "Bucket" : isTrino ? "Catalog" : "Database";
-  const databaseFieldPlaceholder = isTrino ? "tpch" : "db";
+  // Cassandra pins one KEYSPACE the same way (issue #424 Phase 4). "Database" is the
+  // wrong word here too: a keyspace carries the replication settings, not just a
+  // namespace, and without one pinned an unqualified table name resolves to nothing
+  // at all - measured on 5.0.9, "No keyspace has been specified. USE a keyspace, or
+  // explicitly specify keyspace.tablename".
+  const isCassandra = type === "cassandra";
+  const databaseFieldLabel = isCouchbase ? "Bucket" : isTrino ? "Catalog" : isCassandra ? "Keyspace" : "Database";
+  const databaseFieldPlaceholder = isTrino ? "tpch" : isCassandra ? "probe" : "db";
   const connectionUriPlaceholder = isCouchbase
     ? "couchbase://localhost:8091/travel-sample  or  couchbases://cb.<id>.cloud.couchbase.com/..."
     : "mongodb://localhost:27017/mydb  or  mongodb+srv://...";
@@ -481,7 +490,42 @@ export function ConnectionModal({
                         The Trino catalog to open, such as tpch or hive. Its schemas are the level below.
                       </p>
                     )}
+                    {isCassandra && (
+                      <p className="text-xs text-fg-muted">
+                        The keyspace to open. Tables inside it are the level below; statements can still name any
+                        keyspace in full.
+                      </p>
+                    )}
                   </div>
+
+                  {/*
+                    Rendered in the open, not behind the Advanced accordion that holds
+                    Oracle's service name and SQL Server's instance name. Those two are
+                    refinements; this one is mandatory - `cassandra-driver` refuses to
+                    build a load-balancing policy without it, so a connection with this
+                    empty cannot open at all.
+                  */}
+                  {isCassandra && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Server strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="localDataCenter" className="text-xs font-medium text-fg-muted">
+                          Local Data Center
+                        </Label>
+                      </div>
+                      <Input
+                        id="localDataCenter"
+                        value={localDataCenter}
+                        onChange={(e) => setLocalDataCenter(e.target.value)}
+                        placeholder="datacenter1"
+                        className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
+                      />
+                      <p className="text-xs text-fg-muted">
+                        Required: the Cassandra driver refuses to connect without it. A stock single-node install
+                        reports datacenter1; the server lists the ones it has if this is wrong.
+                      </p>
+                    </div>
+                  )}
                 </>
               )}
             </>

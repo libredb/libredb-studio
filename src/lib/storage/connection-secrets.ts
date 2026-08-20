@@ -35,6 +35,10 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   sshTunnel: "nested",
   serviceName: "public",
   instanceName: "public",
+  // A data-centre NAME (`datacenter1`), which the server publishes itself in
+  // `system.local.data_center` and prints in the driver's own error message when it
+  // is wrong. Nothing about it is a credential.
+  localDataCenter: "public",
   managed: "public",
   seedId: "public",
   agentUser: "public",

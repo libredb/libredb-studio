@@ -520,6 +520,39 @@ describe("Trino (declared capabilities, port 8080) generation", () => {
 });
 
 // ============================================================================
+// Apache Cassandra (issue #424 Phase 4) - the engine that needed NO branch, and the
+// tests that establish that rather than assuming it. Port 9042 is Cassandra's alone,
+// so the port heuristic is not asked to answer for two dialects, and every string
+// below was run against a live 5.0.9 over the native protocol.
+// ============================================================================
+
+describe("Apache Cassandra (port 9042) generation", () => {
+  const cassandraCaps = makeCaps({ defaultPort: 9042 });
+
+  test("the fallthrough statement is valid CQL, terminator included", () => {
+    // Measured: `SELECT * FROM probe.customers LIMIT 50;` returns rows - CQL accepts
+    // a trailing semicolon on a single statement - and `LIMIT n` is its own row bound.
+    // So no `statementTerminator` is declared and no branch is added.
+    expect(generateTableQuery("customers", cassandraCaps)).toBe("SELECT * FROM customers LIMIT 50;");
+  });
+
+  test("a keyspace-qualified name keeps its separator", () => {
+    expect(quoteQualifiedName("probe.customers", cassandraCaps)).toBe("probe.customers");
+  });
+
+  test("names are double-quoted only when they would not round-trip bare", () => {
+    // The default branch, and it is measured-correct here rather than inherited by
+    // luck: `SELECT "id" FROM probe.customers` returns the column, the bare form
+    // works too, and a backtick is "no viable alternative at character '`'". A
+    // quoted name in CQL is case-SENSITIVE, which is why a mixed-case one must be
+    // quoted and a lowercase one must not.
+    expect(quoteIdentifier("id", cassandraCaps)).toBe("id");
+    expect(quoteIdentifier("CustomerId", cassandraCaps)).toBe('"CustomerId"');
+    expect(quoteIdentifier("Weird", cassandraCaps)).not.toContain("`");
+  });
+});
+
+// ============================================================================
 // quoteIdentifier (dialect-aware, quote-only-when-needed)
 // ============================================================================
 

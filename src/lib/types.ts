@@ -18,6 +18,14 @@ export type DatabaseType =
   // because their grammars really do disagree (OFFSET, string escapes, `#`, `[…]`).
   | "elasticsearch"
   | "opensearch"
+  // Apache Cassandra (issue #424 Phase 4). A wide-column store whose CQL is
+  // SQL-SHAPED but not SQL: no JOIN, no OFFSET, no EXPLAIN and no subquery are in
+  // the grammar at all (each measured on 5.0.9). It is still a `SQLBaseProvider`
+  // dialect, because what the editor sends IS the statement text and the shared
+  // limiter's `LIMIT n` is correct CQL. The connection's `database` field pins one
+  // KEYSPACE, and `localDataCenter` is a field only this engine has - the driver
+  // refuses to connect without it.
+  | "cassandra"
   // Apache Trino (issue #424 Phase 2). A QUERY ENGINE rather than a store: what the
   // connection's `database` field pins is a Trino CATALOG (`tpch`, `hive`, `iceberg`),
   // the way a PostgreSQL connection pins a database, and the schemas inside it are the
@@ -83,6 +91,17 @@ export interface DatabaseConnection {
   sshTunnel?: SSHTunnelConfig;
   serviceName?: string; // Oracle: service name (e.g. ORCL, XEPDB1)
   instanceName?: string; // MSSQL: named instance (e.g. SQLEXPRESS)
+  /**
+   * Cassandra: the local data centre the driver balances against (e.g. `datacenter1`).
+   *
+   * Not an optimisation and not an optional refinement: `cassandra-driver` REFUSES to
+   * connect without it ("'localDataCenter' is not defined in Client options and also
+   * was not specified in constructor", measured on 4.9.0), and names the data centres
+   * it did find when the value is wrong. No other engine here needs a topology answer
+   * from the connection, which is why it is a field of its own rather than a reuse of
+   * `serviceName`.
+   */
+  localDataCenter?: string;
   managed?: boolean; // true = admin-controlled, read-only in UI
   seedId?: string; // stable reference to seed config ID
   agentUser?: string; // optional least-privilege role for the agent read-only execution profile (#328)

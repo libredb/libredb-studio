@@ -541,6 +541,62 @@ carries a plain statement. Four things differ from the other SQL providers:
 
 ---
 
+##### Apache Cassandra Query Format
+
+Cassandra speaks CQL over the native protocol (port `9042`), so the `sql` field carries a plain CQL
+statement. Five things differ from the other SQL providers:
+
+- **A `localDataCenter` is REQUIRED on the connection.** No other engine here has such a field.
+  `cassandra-driver` refuses to construct a client without one (`'localDataCenter' is not defined in
+  Client options and also was not specified in constructor`), and names the data centres it did find
+  when the value is wrong. A stock single-node install reports `datacenter1`.
+- **`database` is the KEYSPACE**, pinned for the session exactly as a PostgreSQL connection pins one
+  database. Without it an unqualified table name resolves to nothing (`No keyspace has been
+  specified`), and a keyspace that does not exist fails the CONNECT rather than the first statement.
+- **There is no `connectionString`**: no URI convention carries `localDataCenter`, so one would parse
+  into a connection that cannot open.
+- **No positional parameters.** CQL binds `?` through a prepared statement this client does not send,
+  so a request carrying `params` is refused with that reason rather than having its values spliced
+  into the statement.
+- **`OFFSET` does not exist**, so a request with a non-zero `offset` is refused: there is no second
+  page to ask for. `ALLOW FILTERING` must stay the last clause, so the auto-limiter's `LIMIT n` is
+  moved in front of it, and a statement that would end inside a line comment is sent unrewritten
+  (CQL has `//` as well as `--`, and neither may be closed by end of input).
+
+```json
+{
+  "connection": {
+    "type": "cassandra",
+    "host": "localhost",
+    "port": 9042,
+    "database": "probe",
+    "localDataCenter": "datacenter1"
+  },
+  "sql": "SELECT id, name FROM probe.customers WHERE id = 1"
+}
+```
+
+**Notes:**
+- **No row count and no size are reported anywhere** - not in `GET /api/db/schema`, not in the
+  overview, and the table, index and storage panels answer `[]`. Cassandra publishes partition
+  estimates (measured at 143 for a 500-row clustered table) and whole mebibytes (`1 MiB` for 19,476
+  bytes), and neither is a number this API will pass on. See
+  [`docs/providers/cassandra.md`](providers/cassandra.md#32-there-is-no-honest-row-count-and-no-honest-size).
+- `columnTypes` are the wire's declared CQL types (`int`, `bigint`, `list<int>`, `map<varchar, int>`,
+  `duration`, `vector<float, 3>`). A `blob` is rendered as `0x…`, a `bigint`/`decimal`/`varint` as its
+  exact digits in a string (`Number()` would round them), a `vector` as an array of numbers and a
+  `duration` as its CQL literal (`1mo2d3h`).
+- A write answers no columns and no row count: the protocol reports neither, so `rowCount` is 0
+  rather than an invented figure.
+- `POST /api/db/maintenance` accepts NOTHING: every Cassandra maintenance operation (compaction,
+  repair, flush, cleanup) is a `nodetool` action on a node over JMX, not a statement.
+- `POST /api/db/cancel` answers "cancellation is not supported for this database type": the protocol
+  has no cancel frame and CQL has no `KILL`.
+- There is no EXPLAIN: the keyword is not in the grammar at all.
+- Full reference: [`docs/providers/cassandra.md`](providers/cassandra.md).
+
+---
+
 ##### Redis Query Format
 
 Redis is a key-value store, so the `sql` field carries a Redis command instead of SQL. Two interchangeable formats are accepted.
@@ -1118,7 +1174,7 @@ interface DatabaseConnection {
   createdAt: Date;         // Creation timestamp
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra';
 ```
 
 ### TableSchema

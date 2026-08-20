@@ -37,6 +37,13 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // the value. Trino spells its backslash escapes in the separate `U&'fo\\+0000F6'`
   // form, exactly as Druid does.
   trino: "standard",
+  // Measured on Cassandra 5.0.9 (2026-08-20), both directions. Doubling is the
+  // escape: `… WHERE name = 'O''Brien'` runs and matches nothing, so the literal
+  // closed at the doubled pair. A backslash is DATA: `… WHERE name = 'a\\b'` runs,
+  // and `… WHERE name = 'a\\'` runs too - the statement reached the server's
+  // filtering check, which is only possible if the backslash did not escape the
+  // quote that closed the literal.
+  cassandra: "standard",
   // These three declare `queryLanguage: "json"`, so no statement is ever built for
   // them to read. What a generator emits for such a connection is portable SQL
   // meant to run elsewhere, and the standard form is the only thing it can claim.
@@ -113,6 +120,14 @@ export function quoteLiteral(value: string, dialect: DatabaseType | undefined): 
  * `PREPARE`/`EXECUTE` plus an `X-Trino-Prepared-Statement` header, but the provider's
  * transport seam carries the statement alone, so `TrinoProvider.query()` REFUSES a
  * non-empty params array outright. Emitting `?` here would build a statement whose
+ * placeholder the provider then declines to fill.
+ *
+ * `cassandra` falls to `null` on the same terms, and its version of the reason is the
+ * plainest: CQL really does bind `?` positionally and `cassandra-driver` really does
+ * bind an array against it - through a PREPARED statement, which is exactly what the
+ * transport does not send (`prepare: false`, so a one-shot statement costs one round
+ * trip and no server-side cache entry). `CassandraProvider.query()` therefore refuses a
+ * non-empty params array outright, and emitting `?` here would build a statement whose
  * placeholder the provider then declines to fill.
  *
  * `elasticsearch` and `opensearch` fall to that `null` too, and for a sharper reason

@@ -14,6 +14,7 @@ import {
   ElasticsearchIcon,
   OpenSearchIcon,
   TrinoIcon,
+  CassandraIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 
@@ -35,6 +36,10 @@ export interface DatabaseUIConfig {
     | "connectionString"
     | "serviceName"
     | "instanceName"
+    // Cassandra only, and it is REQUIRED rather than advanced: `cassandra-driver`
+    // refuses to construct a load-balancing policy without a local data centre, so a
+    // connection with this empty cannot open at all.
+    | "localDataCenter"
   )[];
 }
 
@@ -195,6 +200,31 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // one, the way a PostgreSQL connection pins a database. The form labels it
     // "Catalog" rather than "Database" - see ConnectionModal.tsx.
     connectionFields: ["host", "port", "user", "password", "database"],
+  },
+  cassandra: {
+    icon: CassandraIcon,
+    // Cassandra's own mark is a mid-cyan eye (#1287B1). sky-400 is mssql's and the
+    // distinct-colour assertion in tests/unit/lib/db-ui-config.test.ts rules a
+    // duplicate out, so sky-300 is the nearest free shade.
+    color: "text-sky-300",
+    // The project's own name, vendor word included, exactly as "Apache Druid" is
+    // spelled here: the ASF name is how this engine is universally written.
+    label: "Apache Cassandra",
+    // The native protocol port. There is no second protocol to reach: the old Thrift
+    // port (9160) is gone from 4.0 onwards, and 7000/7001 are internode.
+    defaultPort: "9042",
+    // No URI to paste. The driver takes contact points plus a REQUIRED
+    // `localDataCenter`, and no URI convention in use carries the second; `cassandra://`
+    // is in no branch of connection-string-parser.ts, so the toggle would promise a
+    // paste the form cannot honour.
+    showConnectionStringToggle: false,
+    // `database` IS offered and it holds a KEYSPACE - the same mapping Trino makes
+    // onto a catalog. Measured on 5.0.9: with no keyspace pinned, `SELECT … FROM
+    // customers` answers "No keyspace has been specified. USE a keyspace, or
+    // explicitly specify keyspace.tablename", and a keyspace that does not exist
+    // fails the CONNECT rather than the first statement. The form labels it
+    // "Keyspace" - see ConnectionModal.tsx.
+    connectionFields: ["host", "port", "user", "password", "database", "localDataCenter"],
   },
   libredb: {
     icon: LibreDBIcon,

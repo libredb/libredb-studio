@@ -126,6 +126,8 @@ const mockHandleTestConnection = mock(async () => {});
 const mockHandleConnect = mock(async () => {});
 const mockHandlePasteConnectionString = mock(() => {});
 
+const mockSetLocalDataCenter = mock(() => {});
+
 let mockFormOverrides: Record<string, unknown> = {};
 
 function getDefaultForm() {
@@ -174,6 +176,8 @@ function getDefaultForm() {
     setServiceName: mockSetServiceName,
     instanceName: "",
     setInstanceName: mockSetInstanceName,
+    localDataCenter: "",
+    setLocalDataCenter: mockSetLocalDataCenter,
     showSSH: false,
     setShowSSH: mockSetShowSSH,
     sshEnabled: false,
@@ -720,6 +724,49 @@ describe("ConnectionModal", () => {
 
     expect(queryByText("Catalog Name")).toBeNull();
     expect(queryByText(/refuses a password over plain HTTP/)).toBeNull();
+  });
+
+  // ── 34c. Cassandra asks for the one field its driver cannot start without ──
+  //
+  // `cassandra-driver` 4.9.0 refuses to connect with no local data centre at all
+  // ("'localDataCenter' is not defined in Client options and also was not specified in
+  // constructor", measured), and names the data centres it DID find when the value is
+  // wrong. No other engine here needs a topology answer from the connection, so the
+  // field is rendered in the open rather than behind the Advanced accordion.
+
+  test("Cassandra type labels the database field Keyspace and asks for the data centre", () => {
+    mockFormOverrides = { type: "cassandra" };
+    const props = createDefaultProps();
+    const { queryByText, container } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText("Keyspace Name")).not.toBeNull();
+    expect(queryByText("Database Name")).toBeNull();
+    const keyspaceInput = container.querySelector("#database") as HTMLInputElement | null;
+    expect(keyspaceInput!.placeholder).toBe("probe");
+
+    const dataCentre = container.querySelector("#localDataCenter") as HTMLInputElement | null;
+    expect(dataCentre).not.toBeNull();
+    expect(dataCentre!.placeholder).toBe("datacenter1");
+    expect(queryByText(/refuses to connect without/)).not.toBeNull();
+  });
+
+  test("editing the data centre reaches the form state", () => {
+    mockFormOverrides = { type: "cassandra" };
+    const props = createDefaultProps();
+    const { container } = render(React.createElement(ConnectionModal, props));
+
+    const dataCentre = container.querySelector("#localDataCenter") as HTMLInputElement;
+    fireEvent.change(dataCentre, { target: { value: "eu-west-1" } });
+
+    expect(mockSetLocalDataCenter).toHaveBeenCalledWith("eu-west-1");
+  });
+
+  test("no other type carries the Cassandra fields", () => {
+    const props = createDefaultProps();
+    const { queryByText, container } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText("Keyspace Name")).toBeNull();
+    expect(container.querySelector("#localDataCenter")).toBeNull();
   });
 
   // ── 35. Browser autofill stays out of the credential fields ───────────────

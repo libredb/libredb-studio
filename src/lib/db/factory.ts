@@ -119,6 +119,14 @@ export async function createDatabaseProvider(
       return new TrinoProvider(connection, options);
     }
 
+    case "cassandra": {
+      // The explicit /index specifier keeps this dynamic import statically
+      // analysable: a bare directory resolves only at runtime, which the bundler
+      // cannot trace into a chunk.
+      const { CassandraProvider } = await import("./providers/sql/cassandra/index");
+      return new CassandraProvider(connection, options);
+    }
+
     // Search engines - two type-ids, ONE implementation module (issue #424 Phase 1).
     // The explicit /index specifier keeps this dynamic import statically
     // analysable: a bare directory resolves only at runtime, which the bundler
@@ -164,7 +172,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/unit/db/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, clickhouse, druid, trino, elasticsearch, opensearch, mongodb, couchbase, redis, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, libredb`,
         connection.type,
       );
   }

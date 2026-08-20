@@ -18,6 +18,7 @@ const ALL_TYPES: DatabaseType[] = [
   "elasticsearch",
   "opensearch",
   "trino",
+  "cassandra",
 ];
 
 describe("db-ui-config", () => {
@@ -110,6 +111,27 @@ describe("db-ui-config", () => {
       expect(getDBConfig("trino").connectionFields).toContain("database");
     });
 
+    test("cassandra asks for the data centre its driver refuses to start without", () => {
+      expect(getDBConfig("cassandra").label).toBe("Apache Cassandra");
+      expect(getDBConfig("cassandra").defaultPort).toBe("9042");
+      expect(getDBConfig("cassandra").connectionFields).toEqual([
+        "host",
+        "port",
+        "user",
+        "password",
+        "database",
+        "localDataCenter",
+      ]);
+    });
+
+    test("cassandra offers no connection-string paste, because there is no URI to paste", () => {
+      // `cassandra-driver` takes contact points plus a REQUIRED localDataCenter, and no
+      // URI convention carries the second. Offering the toggle would promise a paste
+      // the parser refuses (`cassandra://` is in no branch of
+      // connection-string-parser.ts).
+      expect(getDBConfig("cassandra").showConnectionStringToggle).toBe(false);
+    });
+
     test("every provider carries a distinct colour class", () => {
       const colors = ALL_TYPES.map((type) => getDBConfig(type).color);
       expect(new Set(colors).size).toBe(colors.length);
@@ -190,6 +212,7 @@ describe("db-showcase", () => {
         "mssql",
         "elasticsearch",
         "opensearch",
+        "cassandra",
         "couchbase",
         "clickhouse",
         "druid",

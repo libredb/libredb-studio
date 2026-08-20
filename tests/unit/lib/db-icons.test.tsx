@@ -16,6 +16,7 @@ import {
   ElasticsearchIcon,
   OpenSearchIcon,
   TrinoIcon,
+  CassandraIcon,
 } from "@/components/icons/db-icons";
 
 describe("db-icons", () => {
@@ -36,6 +37,7 @@ describe("db-icons", () => {
     { name: "ElasticsearchIcon", Component: ElasticsearchIcon },
     { name: "OpenSearchIcon", Component: OpenSearchIcon },
     { name: "TrinoIcon", Component: TrinoIcon },
+    { name: "CassandraIcon", Component: CassandraIcon },
   ];
 
   for (const { name, Component } of icons) {

@@ -56,6 +56,11 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // engine this product does not speak, and `fenceTagEngine` is what decides whether
   // a plan's deliverable was written for THIS connection.
   trino: true,
+  // A ```cassandra block holds a CQL statement the editor can run. The `cql` alias
+  // below is registered as a QUERY tag but NOT as an engine, for the reason `sql`
+  // is not: CQL is a language, and ScyllaDB speaks it too, so reading `cql` as
+  // "this was written for Cassandra" would put a claim in the model's mouth.
+  cassandra: true,
 });
 
 /**
@@ -79,6 +84,7 @@ const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "sqlserver",
   "mongo",
   "n1ql",
+  "cql",
 ]);
 
 /**

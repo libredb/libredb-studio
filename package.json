@@ -173,6 +173,7 @@
     "@xyflow/react": "^12.11.3",
     "@zumer/snapdom": "2.15.0",
     "better-sqlite3": "^13.0.3",
+    "cassandra-driver": "^4.9.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

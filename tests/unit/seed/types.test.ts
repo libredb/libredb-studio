@@ -80,6 +80,7 @@ describe("SeedConnectionSchema", () => {
       "clickhouse",
       "druid",
       "trino",
+      "cassandra",
     ];
     for (const type of allTypes) {
       const result = SeedConnectionSchema.safeParse({ ...validConn, type });
@@ -139,6 +140,40 @@ describe("SeedDefaultsSchema", () => {
 
   it("rejects invalid environment", () => {
     const result = SeedDefaultsSchema.safeParse({ environment: "unknown" });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("SeedConnectionSchema: Cassandra's localDataCenter", () => {
+  // The driver refuses to connect without it, so a seeded Cassandra connection that
+  // could not carry it would be a managed connection nobody can open. It is optional
+  // in the SCHEMA - every other engine has no use for it - and required by the
+  // provider, which is where the refusal belongs.
+  it("accepts a seeded connection that names its data centre", () => {
+    const result = SeedConnectionSchema.safeParse({
+      id: "ring",
+      name: "Ring",
+      type: "cassandra",
+      host: "cassandra.internal",
+      port: 9042,
+      database: "probe",
+      localDataCenter: "datacenter1",
+      roles: ["*"],
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a data centre that is not a string", () => {
+    const result = SeedConnectionSchema.safeParse({
+      id: "ring",
+      name: "Ring",
+      type: "cassandra",
+      host: "cassandra.internal",
+      localDataCenter: 1,
+      roles: ["*"],
+    });
+
     expect(result.success).toBe(false);
   });
 });
