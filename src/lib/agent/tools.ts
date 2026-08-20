@@ -840,8 +840,22 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
   UNVERIFIABLE_EVIDENCE: `At least one evidence reference does not match anything this run produced. Cite an artifact this run actually read, or the schema snapshot it captured. ${AGENT_EVIDENCE_CONTRACT}`,
   UNVERIFIABLE_PLAN:
     "At least one of those references is not an estimated plan this run produced. Inspect the plan of each statement first, then compare the two artifacts those inspections returned.",
+  /*
+    Offers names instead of a tool, and the tool it used to offer is the reason.
+
+    This said "Call inspect_schema for it first" — and the comment just below, written for
+    the sibling refusal, already states why that is wrong: the `no-table-profile` hold
+    narrows a run to `profile_table` and `compose_report`, so `inspect_schema` is gone. The
+    measured sequence was two dead refusals in a row: held and narrowed, asked for a
+    profile, names a table slightly wrong, told to call a tool it no longer holds, calls
+    it, told there is no such tool.
+
+    The inventory is in hand at the refusal site, so the call site appends names from it.
+    Not gated on whether the run was narrowed: a run that cannot spell a table is helped by
+    seeing the spellings either way.
+  */
   TABLE_NOT_INVENTORIED:
-    "That table is not in the schema inventory this run captured. Call inspect_schema for it first, then profile it by the name the inventory uses.",
+    "That table is not in the schema inventory this run captured, so nothing was profiled. Profile one the inventory lists, spelled the way it spells it.",
   // Says what to change, which is the whole of it: the call this replaces was repeated
   // verbatim three times because the sentence it got named nothing that could be edited.
   // It also may not send the model to `inspect_schema` — a held run has been narrowed out
@@ -884,10 +898,23 @@ const UNAVAILABLE_TEXT: Readonly<Record<AgentToolUnavailableCode, string>> = Obj
     "A chart needs at least two rows and this result has fewer, so a chart of it would render an empty state. Present the answer as a table: one row is a complete answer, not a lesser one.",
   CHART_SHAPE_MISMATCH:
     "That chart type does not fit the columns named: a pie takes exactly one y column, and a scatter needs a numeric x as well as a numeric y. Choose a type that fits the columns, or present the answer as a table.",
+  /*
+    Both of these name `compose_report`, and that is the whole correction.
+
+    They used to end "Stop calling tools and finish with what has already been established"
+    and "Ask for something cheaper, or finish now." Finishing IS a tool call: `compose_report`
+    is ledger-only, reaches no database, and is short-circuited before the deadline gate is
+    consulted, so it is still available to a run with nothing left. A model that reads those
+    sentences literally answers in prose instead, and prose is scored `no-report` — the
+    largest single shortfall measured, blocking 28 of the cells that do not lock.
+
+    So each says which call still works, and why it works, rather than telling a run to stop
+    doing the only thing that can still end it well.
+  */
   RUN_DEADLINE_EXCEEDED:
-    "The run has spent its whole time budget. Stop calling tools and finish with what has already been established.",
+    "The run has spent its whole time budget, so no further reading is possible. Call compose_report now with what has already been established: it needs no time budget, because it reaches no database. A run that ends without a report answers nothing at all.",
   INSUFFICIENT_TIME_REMAINING:
-    "Too little time is left in the run for a call of this size. Ask for something cheaper, or finish now.",
+    "Too little time is left in the run for a call of this size. Ask for something cheaper, or call compose_report now with what you have — it needs no time budget, because it reaches no database.",
   STATEMENT_ALREADY_FAILED:
     "This exact statement has already failed in this run. Draft a different statement rather than sending the same one again.",
   REPAIR_BUDGET_EXHAUSTED:
@@ -2369,7 +2396,12 @@ export function planTableProfile(
       resolved unqualified? — and, when it would, says so and gives the name to use.
     */
     const unqualified = snapshot !== null && inventoriedTable(snapshot, undefined, parsed.value.table) !== null;
-    return unavailable(unqualified ? "TABLE_QUALIFIER_UNKNOWN" : "TABLE_NOT_INVENTORIED");
+    if (unqualified) return unavailable("TABLE_QUALIFIER_UNKNOWN");
+    // The first few names, not all of them: the inventory can hold hundreds, and a refusal
+    // that turns into a catalog dump is a wall of its own. Enough to show the spelling
+    // convention this database uses, which is what a misspelling needs.
+    const offer = (snapshot?.tables ?? []).slice(0, 6).map((entry) => entry.name);
+    return unavailable("TABLE_NOT_INVENTORIED", offer.length === 0 ? undefined : `it lists ${offer.join(", ")}`);
   }
 
   const depth = parsed.value.depth ?? "basic";

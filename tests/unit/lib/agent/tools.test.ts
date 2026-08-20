@@ -824,6 +824,38 @@ describe("runReadQueryTool — the allowed path", () => {
     expect(budget.maxResultBytes).toBe(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultBytes);
   });
 
+  test("a run out of time is told to report, not to stop calling tools", async () => {
+    /*
+      The two deadline refusals used to end "Stop calling tools and finish with what has
+      already been established" and "Ask for something cheaper, or finish now."
+
+      Finishing IS a tool call. `compose_report` is ledger-only — it reaches no database, and
+      the drive short-circuits it before the deadline gate is consulted — so it is available
+      to a run with nothing left in its budget. A model that takes those sentences literally
+      writes prose instead, and prose is scored `no-report`, which is the largest single
+      shortfall in the corpus: 28 of the cells that do not lock are blocked by it.
+
+      So the sentence now names the one call that still works and says why it works. Same
+      refusal, same code, same budget: only the way out is spelled.
+    */
+    // A budget of 1ms and a clock that has already moved past it: exhausted, without
+    // asking the constructor for a zero it refuses.
+    let now = 0;
+    const h = harness({
+      deadline: new AgentRunDeadline(1, () => {
+        now += 1_000;
+        return now;
+      }),
+    });
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT 1" });
+
+    if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+    expect(outcome.reasonCode).toBe("RUN_DEADLINE_EXCEEDED");
+    expect(outcome.modelText).toContain("compose_report");
+    expect(outcome.modelText).not.toContain("Stop calling tools");
+  });
+
   test("returns an artifact reference summarising the result, never the rows", async () => {
     const h = harness();
 
@@ -2350,6 +2382,32 @@ describe("profileTableTool — the model names a table, the server decides the r
 
     if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
     expect(outcome.reasonCode).toBe("TABLE_NOT_INVENTORIED");
+  });
+
+  test("a table the inventory does not list is answered with names it does list", () => {
+    /*
+      The sibling of the qualifier bug, and the comment one line below it in
+      `UNAVAILABLE_TEXT` already stated the rule this one broke: a refusal may not send a
+      held run to `inspect_schema`, because the `no-table-profile` hold narrows the run to
+      `profile_table` and `compose_report` and takes that tool away.
+
+      `TABLE_NOT_INVENTORIED` kept saying "Call inspect_schema for it first". So the sequence
+      a measured assessment run walks is: held and narrowed, asked for a profile, names a
+      table slightly wrong, told to call a tool it no longer holds, calls it, and is told
+      there is no such tool. Two refusals in a row, neither of them actionable.
+
+      The inventory is right there, so the refusal now offers from it. Naming real tables is
+      also the more useful answer in an un-narrowed run, which is why this is not gated on
+      whether the run was narrowed — a run that cannot spell a table is helped by seeing the
+      spellings either way.
+    */
+    const outcome = plan(harness(), { table: "secrets" });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.reasonCode).toBe("TABLE_NOT_INVENTORIED");
+    expect(outcome.modelText).not.toContain("inspect_schema");
+    // The fixture's inventory, offered back so there is something to act on.
+    expect(outcome.modelText).toContain("orders");
   });
 
   test("a qualifier the inventory has never heard of is refused by naming the entry that exists", () => {
