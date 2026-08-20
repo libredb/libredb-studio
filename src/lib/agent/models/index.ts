@@ -51,6 +51,7 @@ import {
   type AgentSampling,
   DEFAULT_PLAN_STATEMENT_RETRIES,
   DEFAULT_REPORT_REMINDER_LIMIT,
+  DEFAULT_HOLD_REPORT_WITHOUT_TIME,
   DEFAULT_REPORT_RESERVE_MS,
   DEFAULT_SAMPLING,
   DEFAULT_UNREPORTED_CALL_CEILING,
@@ -130,6 +131,16 @@ export function planStatementRetriesFor(modelId: string): number {
  */
 export function reportReserveMsFor(modelId: string): number {
   return MODEL_PROFILES[modelId.toLowerCase()]?.reportReserveMs ?? DEFAULT_REPORT_RESERVE_MS;
+}
+
+/**
+ * Whether this model's reports may be held when no turn remains to act on the holding.
+ *
+ * Named for what it decides rather than for the model that needed it, so the next measurement
+ * that lands here reads as a second case and not as an exception to a special case.
+ */
+export function holdsReportWithoutTime(modelId: string): boolean {
+  return MODEL_PROFILES[modelId.toLowerCase()]?.holdReportWithoutTime ?? DEFAULT_HOLD_REPORT_WITHOUT_TIME;
 }
 
 /**

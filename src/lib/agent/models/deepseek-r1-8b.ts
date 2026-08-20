@@ -22,6 +22,20 @@
  * remains. That is a third of the 450-second budget spent on a warning, and it stays in this
  * file for that reason: on a model whose turns take 15 seconds the same reserve would be
  * mostly idle clock taken out of the reading half of every run.
+ *
+ * That alone was measured and was not enough, and the run it produced said why:
+ *
+ *     113s  statement drafted and run
+ *     190s  a rewrite recommendation recorded
+ *     383s  compose_report CALLED — and held, with the notice to inspect a plan first
+ *     450s  deadline, no report
+ *
+ * The report was written. This server refused it and asked for a plan, and a model whose turns
+ * take 100 seconds had 67 left. The hold is what teaches a run what its report is missing and
+ * it has won cells doing exactly that, but a run with no turn left cannot be taught anything —
+ * so `holdReportWithoutTime` is off here, and a report arriving inside this model's reserve
+ * lands instead of being sent back. A report scoring one shortfall shows the user more than
+ * `no-report` does.
  */
 
 import { DEFAULT_SAMPLING, DEFAULT_UNREPORTED_CALL_CEILING, type AgentModelProfile } from "./profile";
@@ -34,8 +48,12 @@ export const DEEPSEEK_R1_8B: AgentModelProfile = {
     "done and only the report was missing. Turn gaps measured from those two ledgers: 81, 54, " +
     "100, 52 and 156 seconds. The report reserve that exists for this is 20 seconds, which is " +
     "shorter than any turn this model takes, so the last-turn notice reached a run with no turn " +
-    "left; it is raised to its slowest observed turn instead.",
+    "left; it is raised to its slowest observed turn instead. That alone measured 0/1 and the " +
+    "run said why: it CALLED compose_report at 383s, was held with the notice to inspect a " +
+    "plan first, and had 67 seconds against a 100-second turn. So a report arriving inside " +
+    "this model's reserve is no longer held.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
   reportReserveMs: 160_000,
+  holdReportWithoutTime: false,
 };

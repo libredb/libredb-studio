@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   MODEL_PROFILES,
   ceilingFor,
+  holdsReportWithoutTime,
   planStatementRetriesFor,
   reportReminderLimitFor,
   reportReserveMsFor,
@@ -133,6 +134,21 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(reportReserveMsFor("deepseek-r1:8b")).toBe(160_000);
     expect(reportReserveMsFor("qwen3:8b")).toBe(20_000);
     expect(reportReserveMsFor("some-model-released-tomorrow:70b")).toBe(20_000);
+  });
+
+  test("a report is held for its verdict, unless the run has no turn to act on the holding", () => {
+    /*
+      The hold is what teaches a run what its report is missing, and several locked cells came
+      from it. `deepseek-r1:8b` is where it backfired: it called `compose_report` at 383 seconds
+      of a 450-second run, was held and told to inspect a plan first, and its turns take 100
+      seconds. The verdict went from one shortfall to `no-report`, and the user got nothing
+      where a partial report was already written.
+
+      Off for that model only. Everywhere else a held report is a report about to be improved.
+    */
+    expect(holdsReportWithoutTime("deepseek-r1:8b")).toBe(false);
+    expect(holdsReportWithoutTime("qwen3:8b")).toBe(true);
+    expect(holdsReportWithoutTime("some-model-released-tomorrow:70b")).toBe(true);
   });
 
   test("every profile states what measured it", () => {

@@ -68,6 +68,17 @@ export interface AgentModelProfile {
    * deadline with the analysis done and nothing filed.
    */
   readonly reportReserveMs?: number;
+  /**
+   * Whether a report may be held for the verdict it would earn when no turn is left to act on
+   * the holding.
+   *
+   * True everywhere, because the hold is what teaches a run what its report is missing. False
+   * where the teaching cannot land: `deepseek-r1:8b` called `compose_report` at 383 seconds of
+   * a 450-second run, was held and told to inspect a plan first, and had no 100-second turn
+   * left to do it in. The hold turned a report that would have scored one shortfall into no
+   * report at all.
+   */
+  readonly holdReportWithoutTime?: boolean;
 }
 
 /**
@@ -105,6 +116,15 @@ export const DEFAULT_PLAN_STATEMENT_RETRIES = 0;
  * taken out of the reading half of every run.
  */
 export const DEFAULT_REPORT_RESERVE_MS = 20_000;
+
+/**
+ * Held, which is what every locked cell was measured against.
+ *
+ * A run that is told what its report is missing usually fixes it, and that is where several
+ * locked cells came from. The exception is a run with no turn left, and only a model whose
+ * turns are long enough to hit that says so in its own file.
+ */
+export const DEFAULT_HOLD_REPORT_WITHOUT_TIME = true;
 
 /**
  * Deterministic, and the setting five locked cells were won on.

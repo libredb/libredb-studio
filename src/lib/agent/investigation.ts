@@ -56,7 +56,14 @@ import {
   reusableSnapshot,
 } from "./context-snapshot";
 import { agentModelTurnTimeoutMs } from "./config";
-import { ceilingFor, planStatementRetriesFor, reportReminderLimitFor, reportReserveMsFor, samplingFor } from "./models";
+import {
+  ceilingFor,
+  holdsReportWithoutTime,
+  planStatementRetriesFor,
+  reportReminderLimitFor,
+  reportReserveMsFor,
+  samplingFor,
+} from "./models";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
 import { type AgentGoalShortfall, verifyRunGoal } from "./goal-verifier";
 import { type AgentInventoryNoun, inventoryNoun } from "./inventory-noun";
@@ -2980,11 +2987,27 @@ export async function runInvestigation(
       // a tool it has not got (#350).
       if (holdsTool(call.toolName)) anyToolCalled = true;
       if (call.toolName === "present_answer") answerAttempted = true;
+      /*
+        Whether a report may be held at all right now.
+
+        Every hold below spends a turn: the call is not run, the model is told what to do
+        instead, and it acts on the next turn. That is worth a turn while there is one.
+        `deepseek-r1:8b` is the measured case, twice over — held at 383 seconds of a 450-second
+        run and told to inspect a plan, then held at 379 seconds and told to compare two, with
+        turns that take 100 seconds. Each time a written report became `no-report`.
+
+        Read once and applied to all three holds, because the reasoning does not distinguish
+        between them and a gate on one site would have been found by the next measurement. Off
+        by default, so no other model's run changes.
+      */
+      const noTimeToHold =
+        !holdsReportWithoutTime(model.modelId) && resources.deadline.remainingMs() <= reportReserveMsFor(model.modelId);
       // A run whose workflow answers by presenting, which read something and is about
       // to report without presenting it, is one call short of an answer. Checked here
       // and not after the call, because `compose_report` ends the run.
       if (
         call.toolName === "compose_report" &&
+        !noTimeToHold &&
         !presentReminded &&
         !answerAttempted &&
         AGENT_WORKFLOW_PRESENTS_ANSWER[record.workflowType]
@@ -3017,10 +3040,20 @@ export async function runInvestigation(
           continue;
         }
       }
-      // The verdict this report would earn, asked of the verifier before it lands. Read
-      // first among the report checks: it is the general case, and the purpose-written
-      // notices below answer the shortfalls it deliberately declines to speak for.
-      if (call.toolName === "compose_report" && previewHolds < AGENT_VERDICT_HOLD_LIMIT) {
+      /*
+        The verdict this report would earn, asked of the verifier before it lands. Read
+        first among the report checks: it is the general case, and the purpose-written
+        notices below answer the shortfalls it deliberately declines to speak for.
+
+        A hold spends a turn, so it is worth nothing to a run that has none. `deepseek-r1:8b`
+        is the measured case: it called `compose_report` at 383 seconds of a 450-second run,
+        was held and told to inspect a plan first, and its turns take 100 seconds. The hold
+        converted a report scoring one shortfall into `no-report`. Where a profile says so,
+        a report arriving inside the model's own reserve is let through instead — the notice
+        it would have been given cannot be acted on, and the run has more to show with the
+        report than without it.
+      */
+      if (call.toolName === "compose_report" && previewHolds < AGENT_VERDICT_HOLD_LIMIT && !noTimeToHold) {
         const { record: sofar } = await service.resume(context.runId);
         const would = shortfallsIfReported(record, sofar.events, previewClaims(call.input));
         // A name from the inventory the run was handed, so the notice can point at a real
@@ -3074,7 +3107,7 @@ export async function runInvestigation(
       // A run about to report on none of what it read is one citation short of its bar.
       // Checked before the plan notices because it is the more basic mistake: a report
       // resting on nothing the run established fails every workflow, comparison or not.
-      if (call.toolName === "compose_report" && !citeReminded) {
+      if (call.toolName === "compose_report" && !noTimeToHold && !citeReminded) {
         const { record: sofar } = await service.resume(context.runId);
         // Every artifact this run holds, with how many rows it came back with — the same
         // fold `restsOnlyOnEmptyResults` performs, read here while the report can still
@@ -3112,7 +3145,7 @@ export async function runInvestigation(
       // A run whose verdict wants a comparison, holding the two plans that would make
       // one, is one call short of it. Checked here for the same reason the present
       // notice is: `compose_report` ends the run.
-      if (call.toolName === "compose_report" && !compareReminded && holdsTool("compare_plans")) {
+      if (call.toolName === "compose_report" && !noTimeToHold && !compareReminded && holdsTool("compare_plans")) {
         const { record: sofar } = await service.resume(context.runId);
         const plans = sofar.events.flatMap((event) =>
           event.kind === "tool-completed" && event.artifact.operationId === "sql.explain.estimate"
