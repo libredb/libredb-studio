@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting thirteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch and Apache Trino
 type: application
-version: 0.1.41
+version: 0.1.42
 appVersion: "0.12.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -35,7 +35,7 @@ annotations:
   artifacthub.io/license: MIT
   artifacthub.io/prerelease: "false"
   # False for this chart version, and that is a statement rather than a default:
-  # 0.1.41 changes which address the container binds and installs the same
+  # 0.1.42 changes which address the container binds and installs the same
   # 0.12.0 image 0.1.37 installs, so it carries no security fix of its own. It
   # does widen exposure in one narrow way worth reading before upgrading - a
   # host that firewalls IPv4 but not IPv6 now sees the port over IPv6 - but
@@ -58,10 +58,10 @@ annotations:
   artifacthub.io/changes: |
     - "The container picks its own bind address: the ConfigMap now writes an empty HOSTNAME, and the image's entrypoint resolves one at startup, preferring a dual-stack :: (#432)"
     - "It proves dual-stack instead of assuming it - a throwaway :: listener that an IPv4 client must actually connect to - and falls back to 0.0.0.0 when the namespace has no IPv6, or when :: is IPv6-only while a non-loopback IPv4 address exists"
-    - "New config.bindAddress value overrules that: :: forces dual-stack, 0.0.0.0 pins IPv4 and restores what every chart before 0.1.41 did unconditionally. extraEnv HOSTNAME still wins over both"
+    - "New config.bindAddress value overrules that: :: forces dual-stack, 0.0.0.0 pins IPv4 and restores what every chart before 0.1.42 did unconditionally. extraEnv HOSTNAME still wins over both"
     - "A dual-stack Service therefore needs no second setting any more. The install-notes warning is inverted: it now fires on an IPv6 Service paired with a bind address pinned to an IPv4 literal"
     - "Behaviour change on upgrade: a release with a dual-stack or IPv6 Service starts answering on its IPv6 address, and a host that firewalls IPv4 only will see the port over IPv6"
-    - "No application change: the appVersion stays 0.12.0. Chart 0.1.41 against an older pinned image.tag is safe - an empty HOSTNAME is what those images already treat as unset, so they bind 0.0.0.0 exactly as before"
+    - "No application change: the appVersion stays 0.12.0. Chart 0.1.42 against an older pinned image.tag is safe - an empty HOSTNAME is what those images already treat as unset, so they bind 0.0.0.0 exactly as before"
 dependencies:
   - name: postgresql
     version: "16.x.x"

@@ -74,7 +74,7 @@ Every native channel is **local-first**: the server binds to `127.0.0.1` by defa
 exposing it on the network is an explicit opt-in. That is a deliberate choice about a process
 sharing a user's machine, and it has not changed. (The Docker image and the Helm chart are the
 exception - a container binds all of its own addresses and is isolated by container networking
-instead. Since chart 0.1.41 and the image that ships with it, that set is not hardcoded: the container's
+instead. Since chart 0.1.42 and the image that ships with it, that set is not hardcoded: the container's
 entrypoint resolves a bind address at startup and prefers `::`, all addresses of both families.)
 `HOSTNAME` is the bind address wherever the server is started directly - Docker, Helm, npx, the
 systemd units and Snap; the `.deb`/`.rpm` and Homebrew wrappers and the Windows launcher take
@@ -322,7 +322,7 @@ auth provider, persistence and the single-replica constraint. Full values refere
 [`docs/HELM_CHART.md`](HELM_CHART.md).
 
 On a dual-stack cluster, set `service.ipFamilyPolicy` (and optionally `service.ipFamilies`) - that
-is the whole recipe since chart 0.1.41, because the container resolves its own bind address and
+is the whole recipe since chart 0.1.42, because the container resolves its own bind address and
 prefers `::`. The pairing to avoid is the opposite one: an IPv4 literal in `config.bindAddress` (or
 in an `extraEnv` `HOSTNAME` entry, which wins over it) in front of a dual-stack Service advertises
 an IPv6 address that refuses every connection, and the install notes warn about exactly that. See

@@ -323,7 +323,7 @@ Kubernetes populates the IPv6 EndpointSlice from the pod's own IPv6 address
 without ever checking what the process bound, so this is the condition under
 which an IPv4-only listener turns into a silent misconfiguration: a green
 install whose IPv6 address refuses every connection, on a pod that - probed
-only on its primary IP - stays Ready. Since chart 0.1.41 the container resolves
+only on its primary IP - stays Ready. Since chart 0.1.42 the container resolves
 its own address and prefers a verified dual-stack "::", so this can only happen
 when the release pins IPv4 explicitly; NOTES.txt warns about exactly that
 pairing.

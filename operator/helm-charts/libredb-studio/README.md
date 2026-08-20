@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.41 \
+  --version 0.1.42 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -295,7 +295,7 @@ helm install libredb libredb/libredb-studio \
 
 ### IPv6 and dual-stack
 
-Dual-stack used to be two settings. Since chart **0.1.41** it is one: the address families the
+Dual-stack used to be two settings. Since chart **0.1.42** it is one: the address families the
 **Service** is allocated from. The address the **pod** listens on is no longer a values decision —
 the ConfigMap writes an empty `HOSTNAME`, and the container resolves its own address at startup,
 preferring `::`:
@@ -319,7 +319,7 @@ image:
 |---|---|
 | `""` (default) | the container resolves it, preferring a verified dual-stack `::` |
 | `"::"` | force a dual-stack listener, no probe |
-| `"0.0.0.0"` | pin the container to IPv4 — what every chart before 0.1.41 did unconditionally |
+| `"0.0.0.0"` | pin the container to IPv4 — what every chart before 0.1.42 did unconditionally |
 
 `extraEnv` still wins over `config.bindAddress`: it renders an explicit `env` entry, which
 overrides the ConfigMap key of the same name. As in the `extraEnv` examples further down, a second

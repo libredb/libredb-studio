@@ -103,7 +103,7 @@ config:
   # non-loopback IPv4 address exists, and it logs one line naming the address
   # it picked and the evidence for it. Set this only to overrule that: "::"
   # forces a dual-stack listener, "0.0.0.0" pins the container to IPv4 and is
-  # what releases before chart 0.1.41 did unconditionally. A pinned IPv4
+  # what releases before chart 0.1.42 did unconditionally. A pinned IPv4
   # literal alongside a dual-stack Service is the one combination that breaks,
   # and NOTES.txt warns about it.
   bindAddress: ""
@@ -284,7 +284,7 @@ service:
   # (on update it inherits the live Service's policy), and an explicit
   # SingleStack is read as intent to TRUNCATE - it releases the secondary
   # clusterIP of a Service that is already dual-stack.
-  # THE POD MUST LISTEN ON BOTH FAMILIES TOO, and since chart 0.1.41 it does
+  # THE POD MUST LISTEN ON BOTH FAMILIES TOO, and since chart 0.1.42 it does
   # without a second setting: config.bindAddress defaults to empty, the
   # container proves a dual-stack listener at startup and binds "::". Nothing
   # in Kubernetes checks what address the container bound - on a dual-stack
