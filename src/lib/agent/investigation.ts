@@ -56,7 +56,7 @@ import {
   reusableSnapshot,
 } from "./context-snapshot";
 import { agentModelTurnTimeoutMs } from "./config";
-import { ceilingFor, samplingFor } from "./models";
+import { ceilingFor, reportReminderLimitFor, samplingFor } from "./models";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
 import { type AgentGoalShortfall, verifyRunGoal } from "./goal-verifier";
 import { type AgentInventoryNoun, inventoryNoun } from "./inventory-noun";
@@ -2637,8 +2637,13 @@ export async function runInvestigation(
   let reserveAnnounced = false;
   /** Whether a tool this run HOLDS has been called; see `remindToReport`. */
   let anyToolCalled = false;
-  /** The report reminder is a one-shot per drive too; see `AGENT_REPORT_REMINDER_NOTICE`. */
-  let reportReminded = false;
+  /**
+   * How many times this drive has told the run to report; see `AGENT_REPORT_REMINDER_NOTICE`.
+   *
+   * A count rather than a flag because the limit is the model's, not the drive's:
+   * `reportReminderLimitFor` reads it, and it is 1 for every model but one.
+   */
+  let reportReminders = 0;
   /** The present-before-report notice, once per drive; see `AGENT_PRESENT_BEFORE_REPORT_NOTICE`. */
   let presentReminded = false;
   /** The compare-before-report notice, once per drive; see `compareBeforeReportNotice`. */
@@ -2712,9 +2717,9 @@ export async function runInvestigation(
   };
 
   const remindToReport = (assistant: readonly ModelMessage[]): boolean => {
-    if (reportReminded || !anyToolCalled) return false;
+    if (reportReminders >= reportReminderLimitFor(model.modelId) || !anyToolCalled) return false;
     if (turns >= maxTurns || resources.deadline.remainingMs() <= 0) return false;
-    reportReminded = true;
+    reportReminders += 1;
     // Narrowed as well as told. Reminded runs that kept the whole set went back to
     // reading; see `AGENT_NARROWED_EXTRA_TOOLS`.
     narrowed = true;
@@ -2914,8 +2919,8 @@ export async function runInvestigation(
     // because a set that shrinks without a word looks to the model like a broken server.
     if (!narrowed && toolCallsMade >= ceilingFor(model.modelId)) {
       narrowed = true;
-      if (!reportReminded) {
-        reportReminded = true;
+      if (reportReminders === 0) {
+        reportReminders += 1;
         messages.push({ role: "user", content: notice(AGENT_REPORT_REMINDER_NOTICE) });
       }
     }

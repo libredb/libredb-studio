@@ -49,6 +49,7 @@ import { QWEN3_8B } from "./qwen3-8b";
 import {
   type AgentModelProfile,
   type AgentSampling,
+  DEFAULT_REPORT_REMINDER_LIMIT,
   DEFAULT_SAMPLING,
   DEFAULT_UNREPORTED_CALL_CEILING,
 } from "./profile";
@@ -97,6 +98,16 @@ export const MODEL_PROFILES: Readonly<Record<string, AgentModelProfile>> = Objec
  */
 export function ceilingFor(modelId: string): number {
   return MODEL_PROFILES[modelId.toLowerCase()]?.unreportedCallCeiling ?? DEFAULT_UNREPORTED_CALL_CEILING;
+}
+
+/**
+ * How many times this model may be told to report before the drive lets it stop.
+ *
+ * Its own resolver for the same reason `ceilingFor` is: the drive asks about one thing at a
+ * time, and a function that answered two questions would be called where only one was wanted.
+ */
+export function reportReminderLimitFor(modelId: string): number {
+  return MODEL_PROFILES[modelId.toLowerCase()]?.reportReminderLimit ?? DEFAULT_REPORT_REMINDER_LIMIT;
 }
 
 /**

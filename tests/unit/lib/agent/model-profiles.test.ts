@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MODEL_PROFILES, ceilingFor, samplingFor } from "@/lib/agent/models";
+import { MODEL_PROFILES, ceilingFor, reportReminderLimitFor, samplingFor } from "@/lib/agent/models";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 
 /**
@@ -61,25 +61,36 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(samplingFor("qwen3:8b", "query-optimization")).toEqual(samplingFor("QWEN3:8B", "query-optimization"));
   });
 
-  test("a model that reads past its budget gets its own ceiling", () => {
+  test("the unreported-call ceiling is the general one until a measurement moves it", () => {
     /*
-      `gemma4:26b`, database-assessment, 4 of 5. Its two ledgers side by side:
-
-        passed:  profiled 4 tables, then reported
-        lost:    profiled 11 — employee, department, dept_emp, dept_manager, salary, title,
-                 several of them twice — then ended `model-stopped` with no report
-
-      The general ceiling that exists for exactly this is 12 unreported calls, at which point
-      the run is narrowed to what would finish it. The losing run stopped at 11: one call
-      under, so the mechanism written for it never fired.
-
-      Moving the global ceiling to 11 would change every model's run to fix one cell, which is
-      the trade this repository has already paid for twice. The ceiling belongs in this
-      model's own file, where it costs nobody else a byte.
+      No model overrides it today, and one tried. `gemma4:26b` was given a ceiling of 9 on the
+      reading that its losing assessment had profiled eleven tables and run out of room; five
+      fresh runs at 9 came back 3 of 5, and their ledgers said why the change could not have
+      helped: every one of them made EIGHT calls. The ceiling never fired at 12 and it never
+      fired at 9 either, so what was measured was noise, and the override was deleted rather
+      than kept as a number with a story attached to it. See `gemma4-26b.ts`.
     */
-    expect(ceilingFor("gemma4:26b")).toBeLessThan(11);
+    expect(ceilingFor("gemma4:26b")).toBe(12);
     expect(ceilingFor("qwen3:8b")).toBe(12);
     expect(ceilingFor("some-model-released-tomorrow:70b")).toBe(12);
+  });
+
+  test("a model that stops mid-run twice gets told to report twice", () => {
+    /*
+      `gemma4:26b`, database-assessment, ten measured runs. Every losing run ends the same way:
+      it profiles its tables, runs its counts, then produces a turn with no call and no report
+      and the drive concludes `model-stopped` with `no-report` unmet.
+
+      The drive already answers that turn once, with the report reminder. This model needs the
+      second one: it has the evidence, it has the run's remaining time — the losing runs used
+      36 seconds of it — and what it lacks is a turn in which it does the one call left.
+
+      Per-model rather than global, because making every run of every model spend an extra turn
+      is the trade that has twice cost this repository a locked cell.
+    */
+    expect(reportReminderLimitFor("gemma4:26b")).toBe(2);
+    expect(reportReminderLimitFor("qwen3:8b")).toBe(1);
+    expect(reportReminderLimitFor("some-model-released-tomorrow:70b")).toBe(1);
   });
 
   test("every profile states what measured it", () => {

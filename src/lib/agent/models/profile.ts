@@ -39,6 +39,15 @@ export interface AgentModelProfile {
    * under the general ceiling of 12, so the guard never fired.
    */
   readonly unreportedCallCeiling?: number;
+  /**
+   * How many times a drive may answer a no-call turn with the report reminder.
+   *
+   * One is enough for a model that stopped because it forgot; it is not enough for a model
+   * that stops as its habit. `gemma4:26b` is the measured case: across ten assessments every
+   * losing run gathered its evidence, produced a turn with neither a call nor a report, took
+   * the single reminder, and stopped again — with most of the run's time still unspent.
+   */
+  readonly reportReminderLimit?: number;
 }
 
 /**
@@ -49,6 +58,15 @@ export interface AgentModelProfile {
  * rather than lowering it for everyone.
  */
 export const DEFAULT_UNREPORTED_CALL_CEILING = 12;
+
+/**
+ * One reminder, which is what every locked cell was measured against.
+ *
+ * A reminder costs a turn out of a fixed run budget, so a second one is not free: it is time
+ * taken from a run that might have used it to read. A model that needs two says so in its own
+ * file, where the cost lands on that model's runs alone.
+ */
+export const DEFAULT_REPORT_REMINDER_LIMIT = 1;
 
 /**
  * Deterministic, and the setting five locked cells were won on.

@@ -1,38 +1,39 @@
 /**
- * `gemma4:26b` — a lower unreported-call ceiling, because it reads past its budget.
+ * `gemma4:26b` — told to report twice, because once is not how this model stops.
  *
- * Five surfaces lock 5/5. `database-assessment` is 4 of 5, and its two ledgers side by side
- * say exactly what the fifth run did differently:
+ * Five surfaces lock 5/5. `database-assessment` has been measured ten times and sits around
+ * three or four, and every losing ledger ends the same shape:
  *
- *     passed:  profiled 4 tables, then reported
- *     lost:    profiled 11 — employee, department, dept_emp, dept_manager, salary, title,
- *              several of them twice — then ended `model-stopped` with no report at all
+ *     profile 4 tables · count 4 things · a turn with no call and no report · model-stopped
  *
- * It is not failing to assess. It assesses more thoroughly than the run has room for, and
- * then has nothing left to report with. The mechanism written for precisely this is the
- * unreported-call ceiling: once a run has made that many calls without reporting, it is
- * narrowed to the tools that would finish it. The general ceiling is 12. The losing run
- * stopped at 11 — one call under, so the guard it needed never fired.
+ * It is not failing to assess. It gathers the evidence and then declines to file it. The drive
+ * already answers that turn with the report reminder, and this model takes the reminder and
+ * stops again — the losing runs spend 36 seconds of a budget measured in minutes, so what they
+ * run out of is not time. Two reminders, so the run gets a second chance at the one call left.
  *
- * Nine, not eleven, and the margin is the point: the passing run finished in four calls, so
- * there is a wide gap between what this model needs and where the ceiling has to sit. Setting
- * it at 11 would have caught this one run and left no room for the next one to be slightly
- * greedier.
+ * A ceiling of 9 unreported calls was tried here first, on the reading that an earlier losing
+ * run had profiled eleven tables and left itself nothing to report with. Five runs at 9 came
+ * back 3 of 5, and their ledgers showed why the change could not have mattered: every one made
+ * eight calls, so the ceiling never fired at 12 and would not have fired at 9. That override
+ * is deleted rather than kept. The eleven-table run was one run, and the difference between
+ * 4/5 and 3/5 on five runs is noise — reading a mechanism into it was the mistake.
  *
- * Deliberately in this file rather than in the global constant. Lowering the ceiling for
- * everyone would change every run of every model to win one cell, and that trade has already
- * been paid for twice here — a rules reorder took this same model from 5/5 to 3/5 on another
- * surface and had to be reverted. Nothing outside this file changes.
+ * Per-model rather than global for both. A second reminder spends a turn out of every run's
+ * fixed budget, and paying that on 25 models to win one cell is the trade this repository has
+ * already lost twice — a rules reorder took this same model from 5/5 to 3/5 on another surface
+ * and had to be reverted. Nothing outside this file changes.
  */
 
 import type { AgentModelProfile } from "./profile";
 
 export const GEMMA4_26B: AgentModelProfile = {
   measured:
-    "database-assessment 4/5. The four passing runs profile 3-4 tables and report; the losing " +
-    "run profiled 11 (six tables, several twice) and ended model-stopped with no report. The " +
-    "unreported-call ceiling that exists for this is 12 and the run stopped at 11, one under, " +
-    "so it never fired. Its other five surfaces lock 5/5 at every default, so nothing else is " +
-    "overridden here.",
-  unreportedCallCeiling: 9,
+    "database-assessment, ten runs, three or four passing. Every losing run profiles its " +
+    "tables, runs its counts, then produces a turn with neither a tool call nor a report and " +
+    "ends model-stopped with no-report unmet, having used 36 seconds of the run budget. It " +
+    "takes the single report reminder and stops again, so it is given two. A ceiling of 9 " +
+    "unreported calls was measured here first and deleted: five runs came back 3/5 and all " +
+    "five made eight calls, so neither 12 nor 9 could have fired. Its other five surfaces " +
+    "lock 5/5 at every default, so nothing else is overridden here.",
+  reportReminderLimit: 2,
 };
