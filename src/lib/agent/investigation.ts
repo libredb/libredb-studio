@@ -432,7 +432,7 @@ const planningOperationsContextNote = (noun: AgentInventoryNoun): string =>
  * A NEWLINE joins the diagnosis to the advice, and it is load-bearing rather than
  * formatting. `fenceUntrustedContent` ends with its terminator marker and no trailing
  * newline, so a `detail` that is a fenced database error — an ordinary outcome on the
- * nine engines #414 grounds through their providers — would otherwise continue the
+ * twelve type-ids #414 grounds through their providers — would otherwise continue the
  * terminator line with this server's own prose. The whole point of the marker is to be
  * a line the model can see the untrusted content end at; a sentence sharing that line
  * is a sentence inside the boundary the fence exists to draw.
@@ -666,7 +666,7 @@ interface PlanningGrounding {
  *
  * FOUR sentences since #414, over the same two axes as `PLANNING_SNAPSHOT_PREFACE`,
  * and this record was left one-dimensional when that one was made 2x2 — which put the
- * two halves of one conversation in direct contradiction on nine engines. The rules
+ * two halves of one conversation in direct contradiction on twelve of the fourteen
  * said the inventory came "through the same read-only catalog path the agent mode
  * uses" and the message under them said it came from the engine's own inspection.
  * Both halves of the first were false there: no catalog statement is composed on a
