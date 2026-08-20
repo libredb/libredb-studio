@@ -4258,7 +4258,7 @@ describe("a run that will not record what it read is narrowed to what would fini
     expect(namedIn(script, 12).sort()).toEqual(["compose_report", "profile_table"]);
   });
 
-  test("an optimization keeps both instruments its verdict accepts", async () => {
+  test("an optimization keeps every instrument its verdict accepts, including the one-call route", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b, "agent", "query-optimization");
     const script = scriptedModel(...Array.from({ length: 13 }, reads), answersProse("still reading"));
@@ -4269,7 +4269,20 @@ describe("a run that will not record what it read is narrowed to what would fini
       resources: b.resources,
     });
 
-    expect(namedIn(script, 12).sort()).toEqual(["compare_plans", "compose_report", "recommend_change"]);
+    /*
+      `propose_rewrite` is on this list deliberately, and it is the only one of the three a
+      narrowed run can still USE from nothing. Narrowing takes `inspect_plan` away, so a
+      held optimization run left with only `compare_plans` and `recommend_change` is holding
+      two tools that both require a plan artifact it can no longer obtain — it can either
+      cite a plan it already read or do nothing at all. The composite route reads its own
+      plans, so it is the escape this surface needs most: it locks on 5 of 25 models.
+    */
+    expect(namedIn(script, 12).sort()).toEqual([
+      "compare_plans",
+      "compose_report",
+      "propose_rewrite",
+      "recommend_change",
+    ]);
   });
 
   test("an analysis keeps present_answer, which is the half its verdict scores separately", async () => {

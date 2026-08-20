@@ -8,6 +8,7 @@ import {
   promptText,
   reportCitingWhatWasOffered,
   reportOn,
+  reportOnAll,
 } from "../isolated/fixtures/agent-scripted-model";
 import { chatToolCallStream } from "../isolated/fixtures/agent-transport";
 
@@ -101,6 +102,102 @@ const optimizationArc = () => [
   recommends(),
   reportOn("The listing reads the whole table because last_name is unindexed."),
 ];
+
+describe("the whole comparison in one call, because the chain is what fails", () => {
+  /*
+    `query-optimization` is the worst-locking surface measured: 5 of 25 models, against
+    10-13 for every other one. It is also the longest chain — `inspect_plan`, `inspect_plan`
+    on a rewrite, `compare_plans` naming BOTH artifact ids, then `compose_report` citing
+    them — and the only call in the codebase that needs two server-minted ids at once.
+
+    The lock rate tracks chain length rather than subject difficulty, and `operations` is
+    the proof: it is the best surface precisely because the server does the reading and the
+    model authors no SQL. So this makes the optimization bar reachable the same way, with a
+    composite call the server chains itself:
+
+        propose_rewrite({ original, rewritten, rationale })
+
+    Two statements in, and the server inspects both plans, records both artifacts, and
+    records the comparison. The model never holds an id, never sequences three calls, and
+    cannot get the pairing wrong.
+
+    Nothing is loosened. Both plans are still real `sql.explain.estimate` readings through
+    the audited path, the comparison event the verifier reads is the same one
+    `compare_plans` writes, and the run still has to report and cite. `inspect_plan` and
+    `compare_plans` stay offered, so a model that wants to explore step by step still can —
+    this is a shorter road to the same bar, not a different bar.
+  */
+  for (const engine of ["postgres", "sqlite"] as const) {
+    test(`${engine}: two statements in one call satisfy the comparison bar`, async () => {
+      const run = await open(engine);
+
+      const drive = await run.drive([
+        (turn: Turn) => {
+          void turn;
+          return chatToolCallStream(
+            "propose_rewrite",
+            JSON.stringify({
+              original: SLOW,
+              rewritten: FAST,
+              rationale: "Selecting only the key lets the index cover the read.",
+            }),
+            "call_propose",
+          );
+        },
+        reportOnAll("The rewrite reaches the same rows by index instead of scanning."),
+      ]);
+
+      // Both plans were read by the SERVER, on the audited path, in one turn.
+      expect(drive.kinds.filter((kind) => kind === "tool-completed")).toHaveLength(2);
+      expect(drive.events.some((event) => event.kind === "plan-comparison")).toBe(true);
+      expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
+    });
+  }
+
+  test("the two statements must differ: a comparison of one plan with itself is refused", async () => {
+    // The same guarantee `IDENTICAL_PLANS` gives the manual route. A composite call may not
+    // become the way to record a before/after that has neither.
+    const run = await open("sqlite");
+
+    const drive = await run.drive([
+      (turn: Turn) => {
+        void turn;
+        return chatToolCallStream(
+          "propose_rewrite",
+          JSON.stringify({ original: SLOW, rewritten: SLOW, rationale: "no change at all" }),
+          "call_propose",
+        );
+      },
+      // Two, because narrating instead of reporting earns the report reminder and the
+      // drive takes another turn for it.
+      answersProse("I could not compare those."),
+      answersProse("Still nothing to compare."),
+    ]);
+
+    expect(drive.transcripts[1]).toContain("same");
+    expect(drive.events.some((event) => event.kind === "plan-comparison")).toBe(false);
+  });
+
+  test("an investigation asking for it is told there is no such tool", async () => {
+    // The workflow axis holds: this is the optimization template's tool, not agent mode's.
+    const run = await openEvalRun({ objective: "What is in here?" });
+    runs.push(run);
+
+    const drive = await run.drive([
+      (turn: Turn) => {
+        void turn;
+        return chatToolCallStream(
+          "propose_rewrite",
+          JSON.stringify({ original: SLOW, rewritten: FAST, rationale: "no" }),
+          "call_propose",
+        );
+      },
+      answersProse("Nothing to propose."),
+    ]);
+
+    expect(drive.transcripts[1]).toContain("There is no tool called");
+  });
+});
 
 describe("the optimization arc, on both reference engines", () => {
   for (const engine of ["postgres", "sqlite"] as const) {

@@ -1325,6 +1325,14 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
   investigation: "Report what the evidence supports, and nothing further.",
   "query-optimization": [
     'Read the existing indexes with inspect_schema and kind="indexes" — a multi-statement PRAGMA or SHOW is refused before the database.',
+    // Named FIRST, and this order is the change. Everything below describes the
+    // step-by-step route, which is where this surface comes apart: it locks on 5 of 25
+    // models against 10-13 for every other one, and it is the only route in this run that
+    // asks the model to hold two server-minted ids and pair them in one call. The
+    // one-call route reaches the same bar and asks for neither, so it is what a model
+    // reading these rules top to bottom should meet first. The `operations` rules are the
+    // precedent: they lead by naming the one instrument, and that surface leads the table.
+    "The shortest way to answer is propose_rewrite: pass the slow statement and your rewritten form, and the server inspects both plans and records the comparison for you. It takes no artifact id.",
     "Inspect the plan of the current statement, then of your rewrite, and call compare_plans with the two artifact ids. They must name two different plans.",
     "An index cannot be compared that way: its second plan would need the index to already exist, and this run creates nothing. Recommend it instead, citing the inspect_plan artifact whose access path the index is meant to change.",
     "Every plan you can obtain is an ESTIMATE: nothing is executed, and there are no timings. Say so rather than implying a measurement.",
@@ -2000,7 +2008,11 @@ const AGENT_VERDICT_HOLD_LIMIT = 2;
  */
 const AGENT_NARROWED_EXTRA_TOOLS: Readonly<Record<AgentRunWorkflowType, readonly AgentToolName[]>> = Object.freeze({
   investigation: [],
-  "query-optimization": ["compare_plans", "recommend_change"],
+  // `propose_rewrite` is kept when a held optimization run is narrowed, because it is the
+  // one call that can still satisfy this verdict without the run holding an id: a narrowed
+  // run has lost `inspect_plan`, so leaving only the manual pair leaves the very models
+  // this surface loses holding two tools they cannot use.
+  "query-optimization": ["propose_rewrite", "compare_plans", "recommend_change"],
   "database-assessment": ["profile_table"],
   operations: [],
   "data-analysis": ["present_answer"],
@@ -3072,6 +3084,7 @@ async function handleCall(input: {
   // because they perform no effect, so there is nothing to write ahead of.
   if (call.toolName === "compose_report") return composeReport(service, context, call.input);
   if (call.toolName === "compare_plans") return comparePlans(service, context, call.input);
+  if (call.toolName === "propose_rewrite") return proposeRewrite(input);
   if (call.toolName === "recommend_change") return recommendChange(service, context, call.input);
   if (call.toolName === "present_answer") return presentAnswer(service, context, call.input);
   // Profiling DOES reach a database, but its statement is composed from the run's
@@ -3243,6 +3256,108 @@ async function comparePlans(service: AgentRunService, context: AgentToolContext,
   });
   return { kind: "answered", text: outcome.modelText };
 }
+
+/**
+ * A rewrite judged in one call: the server inspects both plans and records the comparison.
+ *
+ * Written as two RECURSIVE `handleCall`s rather than by reaching for the tool layer
+ * directly, and that is the whole of the design. Every guarantee a manual `inspect_plan`
+ * carries then applies unchanged — the drafted statement on the ledger, the derived step
+ * id, the audited operation, the deadline admission, the duplicate protection, the repair
+ * budget — because it IS a manual `inspect_plan`, twice, with the server supplying the
+ * sequencing the model kept getting wrong. Nothing new reaches a database from here.
+ *
+ * The comparison is then the existing `comparePlans`, handed the two ids the server just
+ * minted, so the `plan-comparison` event the verifier reads is the same event the manual
+ * route writes. There is no second definition of what a comparison is.
+ *
+ * Reading the ids off the ledger rather than out of the two results is deliberate: a
+ * replayed call ("this exact call was already made in this run") returns prose and no
+ * artifact, so a run that proposes the same rewrite twice must still find its plans. The
+ * last two estimates are what the ledger holds either way.
+ */
+async function proposeRewrite(input: {
+  readonly service: AgentRunService;
+  readonly context: AgentToolContext;
+  readonly record: AgentRunRecord;
+  readonly call: { readonly toolCallId: string; readonly toolName: string; readonly input: unknown };
+  readonly known: Set<string>;
+  readonly notAttempted: Set<string>;
+  readonly narrowed: boolean;
+}): Promise<CallResult> {
+  const { service, context, call } = input;
+  const parsed = readRewriteProposal(call.input);
+  if (parsed === null) return { kind: "answered", text: AGENT_REWRITE_SHAPE_NOTICE };
+  // The same guarantee `IDENTICAL_PLANS` gives the manual route, applied before either
+  // plan is read: a before and an after that are one statement is neither.
+  if (parsed.original.trim() === parsed.rewritten.trim()) {
+    return { kind: "answered", text: AGENT_REWRITE_IDENTICAL_NOTICE };
+  }
+
+  /*
+    Both readings' own words are KEPT and handed back with the comparison, which was not
+    obvious and is the difference between this tool working and being a trap.
+
+    A first version swallowed them: the server had the ids, so why show them? Because the
+    report still has to cite. `verifyQueryOptimizationGoal` builds on the investigation
+    baseline, where every claim cites an artifact this run read or the snapshot it
+    captured — so a run whose plans exist but whose ids it was never shown can compare and
+    then not report, which trades one shortfall for another. Caught by the eval that drives
+    the whole arc.
+
+    What this tool removes is the PAIRING — holding two ids at once and getting the
+    before/after the right way round in one call, the only place in this layer that asks
+    for that. Citing one id in a claim is the ordinary thing every surface already does.
+  */
+  const readings: string[] = [];
+  for (const [side, sql] of [
+    ["before", parsed.original],
+    ["after", parsed.rewritten],
+  ] as const) {
+    const step = await handleCall({
+      ...input,
+      call: { toolCallId: `${call.toolCallId}_${side}`, toolName: "inspect_plan", input: { sql } },
+    });
+    // A cancellation or a refusal ends the composite where it stands, and the refusal's own
+    // words are what the model reads: it names which statement the engine would not plan.
+    if (step.kind !== "answered") return step;
+    if (!step.text.startsWith("Stored as artifact")) {
+      return { kind: "answered", text: `The ${side} statement could not be planned. ${step.text}` };
+    }
+    readings.push(step.text);
+  }
+
+  const { record: sofar } = await service.resume(context.runId);
+  const plans = sofar.events.flatMap((event) =>
+    event.kind === "tool-completed" && event.artifact.operationId === "sql.explain.estimate"
+      ? [event.artifact.correlationId]
+      : [],
+  );
+  const before = plans.at(-2);
+  const after = plans.at(-1);
+  if (before === undefined || after === undefined || before === after) {
+    return { kind: "answered", text: AGENT_REWRITE_IDENTICAL_NOTICE };
+  }
+  const compared = await comparePlans(service, context, { before, after });
+  if (compared.kind !== "answered") return compared;
+  return { kind: "answered", text: [...readings, compared.text].join("\n\n") };
+}
+
+/** The proposal, read permissively; `rewriteProposalSchema` is the authority a moment later. */
+function readRewriteProposal(input: unknown): { readonly original: string; readonly rewritten: string } | null {
+  if (typeof input !== "object" || input === null) return null;
+  const { original, rewritten, rationale } = input as Record<string, unknown>;
+  if (typeof original !== "string" || original.length === 0) return null;
+  if (typeof rewritten !== "string" || rewritten.length === 0) return null;
+  if (typeof rationale !== "string" || rationale.length === 0) return null;
+  return { original, rewritten };
+}
+
+const AGENT_REWRITE_SHAPE_NOTICE =
+  'propose_rewrite takes three strings and nothing was done: {"original":"<the slow statement>","rewritten":"<your rewrite of it>","rationale":"<why the rewrite should reach its rows differently>"}. No artifact id belongs in this call.';
+
+const AGENT_REWRITE_IDENTICAL_NOTICE =
+  "Both statements are the same, so there is no before and no after and nothing was compared. Rewrite the statement so the engine could reach its rows differently — a narrower projection, a different predicate — and propose that. If no rewrite exists, recommend an index instead, citing the plan of the original.";
 
 /** A proposed change, recorded and offered to the user. Nothing here executes it. */
 async function recommendChange(
