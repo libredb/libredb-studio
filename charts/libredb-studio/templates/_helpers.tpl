@@ -290,10 +290,10 @@ That is the safe direction now that the default is dual-stack - the warning
 exists for a deliberate IPv4 pin, which is always visible in these values.
 */}}
 {{- define "libredb-studio.effectiveBindAddress" -}}
-{{- $bind := .Values.config.bindAddress | default "" | toString }}
+{{- $bind := .Values.config.bindAddress | default "" | toString | trim }}
 {{- range .Values.extraEnv }}
 {{- if eq (.name | default "" | toString) "HOSTNAME" }}
-{{- $bind = .value | default "" | toString }}
+{{- $bind = .value | default "" | toString | trim }}
 {{- end }}
 {{- end }}
 {{- $bind }}

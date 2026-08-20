@@ -28,8 +28,10 @@
  * rpm, Homebrew, Snap, Windows) bind 127.0.0.1 by design (#134) and must never
  * inherit container bind policy.
  */
+import { realpathSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
+import { pathToFileURL } from "node:url";
 
 /** How long the dual-stack probe may take before we decide on evidence alone. */
 const DEFAULT_PROBE_TIMEOUT_MS = 250;
@@ -271,7 +273,28 @@ export async function main({ env, systemHostname, probe, interfaces, stdout, std
   return 0;
 }
 
+/**
+ * Whether this module is the program being run, rather than an import.
+ *
+ * Comparing `import.meta.url` against a hand-built `file://${argv[1]}` is wrong
+ * in two ways that both end with the resolver silently printing nothing (the
+ * entrypoint then warns and falls back to 0.0.0.0, i.e. the pre-#432 default):
+ * a path component containing a space or any other character a URL must encode
+ * makes the naive string differ, and `import.meta.url` is already realpath'd
+ * while `argv[1]` is not, so invoking through a symlink never matches. Both are
+ * measured, and `pathToFileURL` alone fixes only the first - hence the realpath.
+ */
+export function isDirectExecution(argv1, moduleUrl) {
+  if (!argv1) return false;
+  try {
+    return pathToFileURL(realpathSync(argv1)).href === moduleUrl;
+  } catch {
+    // An unreadable or vanished argv[1] is not this module, and must not throw.
+    return false;
+  }
+}
+
 // Run only when executed directly, so importing this file in a test is inert.
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+if (isDirectExecution(process.argv[1], import.meta.url)) {
   await main({});
 }

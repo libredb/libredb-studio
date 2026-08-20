@@ -36,7 +36,17 @@
  *    both the address it chose and the evidence it chose it on.
  */
 import { describe, expect, test } from "bun:test";
-import { chooseBindAddress, listNonLoopbackIPv4, main, probeDualStack } from "../../docker/bind-address.mjs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  chooseBindAddress,
+  isDirectExecution,
+  listNonLoopbackIPv4,
+  main,
+  probeDualStack,
+} from "../../docker/bind-address.mjs";
 
 /** Looks like what Docker exports as HOSTNAME for every container process. */
 const CONTAINER_ID = "3f9a1c2b4d5e";
@@ -453,3 +463,60 @@ function fakeHangingConnection() {
   };
   return socket;
 }
+
+/**
+ * The guard that decides whether the module runs or is merely imported. It is
+ * the whole feature's on/off switch: when it says "imported" in the container,
+ * the resolver prints nothing, the entrypoint warns and falls back to 0.0.0.0,
+ * and #432 is silently back. Both failure shapes below were measured against a
+ * naive `import.meta.url === \`file://${process.argv[1]}\`` comparison, which is
+ * what this replaced.
+ */
+describe("isDirectExecution - the module's own on/off switch", () => {
+  const here = fileURLToPath(import.meta.url);
+  const hereUrl = pathToFileURL(here).href;
+
+  test("no argv[1] is never direct execution", () => {
+    expect(isDirectExecution(undefined, hereUrl)).toBe(false);
+    expect(isDirectExecution("", hereUrl)).toBe(false);
+  });
+
+  test("the module run as itself is direct execution", () => {
+    expect(isDirectExecution(here, hereUrl)).toBe(true);
+  });
+
+  test("a different file is not", () => {
+    expect(isDirectExecution(here, pathToFileURL(join(dirname(here), "other.mjs")).href)).toBe(false);
+  });
+
+  test("a path that must be URL-encoded still matches - the naive comparison does not", () => {
+    const dir = mkdtempSync(join(tmpdir(), "libredb-guard with space-"));
+    try {
+      const file = join(dir, "bind.mjs");
+      writeFileSync(file, "");
+      const url = pathToFileURL(file).href;
+      expect(url).toContain("%20");
+      expect(url).not.toBe(`file://${file}`);
+      expect(isDirectExecution(file, url)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("invocation through a symlink matches - import.meta.url is already realpath'd", () => {
+    const dir = mkdtempSync(join(tmpdir(), "libredb-guard-link-"));
+    try {
+      const target = join(dir, "bind.mjs");
+      const link = join(dir, "link.mjs");
+      writeFileSync(target, "");
+      symlinkSync(target, link);
+      expect(isDirectExecution(link, pathToFileURL(target).href)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("an argv[1] that cannot be resolved is not direct execution, and does not throw", () => {
+    expect(isDirectExecution(join(tmpdir(), "libredb-does-not-exist-432.mjs"), hereUrl)).toBe(false);
+  });
+});

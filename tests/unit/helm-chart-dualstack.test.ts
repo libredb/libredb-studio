@@ -472,6 +472,20 @@ describe("charts/libredb-studio install notes warn about an IPv4-pinned pod (#43
     expect(notes(IPV4_PIN)).not.toContain("WARNING");
   });
 
+  // The chart and the container must agree on what counts as "the operator
+  // chose an address". The resolver trims before deciding, so a whitespace-only
+  // value is "nobody chose" there and the pod comes up dual-stack; a chart that
+  // read it as an IPv4 literal would warn about a pin that does not exist, and
+  // the two halves of #432's fix would be telling the operator different things.
+  test("a whitespace-only bindAddress is not an IPv4 pin, matching the resolver's trim", () => {
+    expect(notes([...DUAL_STACK, "--set-string", "config.bindAddress=   "])).not.toContain("WARNING");
+  });
+
+  test("a whitespace-only extraEnv HOSTNAME is not an IPv4 pin either", () => {
+    const args = [...DUAL_STACK, "--set", "extraEnv[0].name=HOSTNAME", "--set-string", "extraEnv[0].value=  "];
+    expect(notes(args)).not.toContain("WARNING");
+  });
+
   test("an explicit SingleStack policy does not warn", () => {
     expect(notes(["--set", "service.ipFamilyPolicy=SingleStack", ...IPV4_PIN])).not.toContain("WARNING");
   });
