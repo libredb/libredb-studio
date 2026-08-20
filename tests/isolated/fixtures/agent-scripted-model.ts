@@ -86,9 +86,20 @@ export function scriptedModel(...turns: readonly ScriptedTurn[]): ScriptedModel 
   return { fetch: fetchImpl, turns: seen };
 }
 
-/** The ratified OpenAI adapter over a scripted transport. */
-export async function modelOver(fetchImpl: FetchDouble, apiUrl = "https://api.openai.com/v1"): Promise<AgentModel> {
-  const config = { provider: "openai", apiKey: "sk-test", model: "gpt-4o-mini", apiUrl } as const;
+/**
+ * The ratified OpenAI adapter over a scripted transport.
+ *
+ * The model NAME is settable because the drive reads settings per model now
+ * (`src/lib/agent/models/`), and a fixture that could only ever be `gpt-4o-mini` could only
+ * ever exercise the defaults — every override would be reachable in a resolver unit test and
+ * nowhere in a run.
+ */
+export async function modelOver(
+  fetchImpl: FetchDouble,
+  apiUrl = "https://api.openai.com/v1",
+  modelName = "gpt-4o-mini",
+): Promise<AgentModel> {
+  const config = { provider: "openai", apiKey: "sk-test", model: modelName, apiUrl } as const;
   return {
     provider: "openai",
     modelId: config.model,

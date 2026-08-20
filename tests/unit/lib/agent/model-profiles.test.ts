@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { MODEL_PROFILES, ceilingFor, reportReminderLimitFor, samplingFor } from "@/lib/agent/models";
+import {
+  MODEL_PROFILES,
+  ceilingFor,
+  planStatementRetriesFor,
+  reportReminderLimitFor,
+  samplingFor,
+} from "@/lib/agent/models";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 
 /**
@@ -90,6 +96,24 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(reportReminderLimitFor("gemma4:26b")).toBe(1);
     expect(reportReminderLimitFor("qwen3:8b")).toBe(1);
     expect(reportReminderLimitFor("some-model-released-tomorrow:70b")).toBe(1);
+  });
+
+  test("a plan that names no statement is retried only where a measurement asked for it", () => {
+    /*
+      `qwen3:14b` locks five surfaces and loses `plan` 4 of 5 on one shortfall, `no-statement`.
+      Its losing run is not a bad plan — it lists all eight tables, their columns, both join
+      tables and which key each relation travels on, and it marks the two column-less views as
+      views. What it never writes is a runnable statement or the explicit `NO STATEMENT:`
+      refusal, and plan mode's bar is one of those two.
+
+      Planning has no notice for that today: the run produces its prose and the drive concludes.
+      One extra turn is offered here, and only to the model measured needing it — a planning run
+      costs 15 seconds, so the turn is cheap, but spending it on 24 models that already clear
+      the bar is the trade this repository has twice lost a cell to.
+    */
+    expect(planStatementRetriesFor("qwen3:14b")).toBe(1);
+    expect(planStatementRetriesFor("qwen3:8b")).toBe(0);
+    expect(planStatementRetriesFor("some-model-released-tomorrow:70b")).toBe(0);
   });
 
   test("every profile states what measured it", () => {

@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
-import { DEPARTMENTS, type EvalEngine, type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
-import { answersProse } from "../isolated/fixtures/agent-scripted-model";
+import {
+  DEPARTMENTS,
+  type EvalDrive,
+  type EvalEngine,
+  type EvalRun,
+  openEvalRun,
+} from "../isolated/fixtures/agent-eval-harness";
+import { type ScriptedTurn, answersProse, modelOver, scriptedModel } from "../isolated/fixtures/agent-scripted-model";
 
 /**
  * Plan mode, driven end to end against the run loop, on every engine the harness
@@ -168,5 +174,68 @@ describe("a plan run on an engine this server cannot ground says so", () => {
     // planning run has no tools, and naming one it does not have is the #350 failure.
     expect(sent).not.toContain("inspect_schema");
     expect(drive.status).toBe("succeeded");
+  });
+});
+
+describe("a plan that names no statement is asked for one, where its model was measured needing it", () => {
+  /*
+    `qwen3:14b`, plan, 4 of 5. Its losing run answered the objective completely — all eight
+    tables, both join tables, the key every relation travels on — and never wrote the
+    deliverable, so the verdict was `no-statement`. Planning had no notice for that: the prose
+    arrived, `conclude` filed it as the closing statement, and the run was over.
+
+    The turn is offered per model (`planStatementRetries`, 0 everywhere else), so this is
+    driven through `modelOver`'s model name rather than the fixture default.
+  */
+  const PROSE = "The department table holds dept_no and dept_name, and dept_emp joins it to employee.";
+  const FENCED = "Here is the plan.\n\n```sql\nSELECT dept_no, COUNT(*) FROM dept_emp GROUP BY dept_no;\n```";
+
+  /**
+   * `driveModel` carries no transcripts of its own — `drive` fills them from the script it
+   * built — so the scripted transport is returned beside the drive and the turns are read off
+   * it. What the model was SENT is the whole assertion here, so it cannot be left out.
+   */
+  async function drivePlan(
+    modelName: string,
+    script: readonly ScriptedTurn[],
+  ): Promise<{ drive: EvalDrive; sent: readonly string[] }> {
+    const run = await openPlan("sqlite");
+    const scripted = scriptedModel(...script);
+    const drive = await run.driveModel(await modelOver(scripted.fetch, "https://api.openai.com/v1", modelName));
+    return { drive, sent: scripted.turns.map((turn) => turn.transcript) };
+  }
+
+  test("qwen3:14b is told what a plan is scored on, and its second turn is what the run files", async () => {
+    const { drive, sent } = await drivePlan("qwen3:14b", [answersProse(PROSE), answersProse(FENCED)]);
+
+    // The notice offers BOTH endings. A notice asking only for SQL would push a model whose
+    // inventory cannot answer into inventing a table name, which is the failure
+    // `verifyPlanningGoal` accepts refusals to avoid.
+    const told = sent[1] ?? "";
+    expect(told).toContain("names no statement");
+    expect(told).toContain("NO STATEMENT:");
+    // And the run ends on the statement rather than on the prose that skipped it.
+    expect(drive.kinds).toContain("plan-statement-drafted");
+    expect(drive.status).toBe("succeeded");
+  });
+
+  test("a model nobody measured keeps the one turn it had", async () => {
+    // The whole point of the per-model file: introducing this mechanism changed no run of any
+    // model but the one whose ledgers earned it. Same prose, same engine, one turn.
+    const { drive, sent } = await drivePlan("gpt-4o-mini", [answersProse(PROSE)]);
+
+    expect(sent.length).toBe(1);
+    expect(drive.kinds).not.toContain("plan-statement-drafted");
+  });
+
+  test("qwen3:14b that refused instead of drafting is not asked again", async () => {
+    // A refusal IS an ending plan mode scores, so asking for a statement after one would
+    // spend a turn telling a passing run it had failed. Read with `readPlanStatement`, the
+    // same reader the verifier uses, so the two cannot disagree about what a refusal is.
+    const { sent } = await drivePlan("qwen3:14b", [
+      answersProse("NO STATEMENT: this database records no budget, so the question cannot be answered from it."),
+    ]);
+
+    expect(sent.length).toBe(1);
   });
 });

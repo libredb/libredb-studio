@@ -49,6 +49,7 @@ import { QWEN3_8B } from "./qwen3-8b";
 import {
   type AgentModelProfile,
   type AgentSampling,
+  DEFAULT_PLAN_STATEMENT_RETRIES,
   DEFAULT_REPORT_REMINDER_LIMIT,
   DEFAULT_SAMPLING,
   DEFAULT_UNREPORTED_CALL_CEILING,
@@ -108,6 +109,16 @@ export function ceilingFor(modelId: string): number {
  */
 export function reportReminderLimitFor(modelId: string): number {
   return MODEL_PROFILES[modelId.toLowerCase()]?.reportReminderLimit ?? DEFAULT_REPORT_REMINDER_LIMIT;
+}
+
+/**
+ * How many extra turns this model's PLAN runs get when they named no statement.
+ *
+ * Zero unless a profile says otherwise, so introducing the mechanism changed no run of any
+ * model but the one whose ledgers asked for it.
+ */
+export function planStatementRetriesFor(modelId: string): number {
+  return MODEL_PROFILES[modelId.toLowerCase()]?.planStatementRetries ?? DEFAULT_PLAN_STATEMENT_RETRIES;
 }
 
 /**

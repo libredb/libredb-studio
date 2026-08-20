@@ -56,7 +56,7 @@ import {
   reusableSnapshot,
 } from "./context-snapshot";
 import { agentModelTurnTimeoutMs } from "./config";
-import { ceilingFor, reportReminderLimitFor, samplingFor } from "./models";
+import { ceilingFor, planStatementRetriesFor, reportReminderLimitFor, samplingFor } from "./models";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
 import { type AgentGoalShortfall, verifyRunGoal } from "./goal-verifier";
 import { type AgentInventoryNoun, inventoryNoun } from "./inventory-noun";
@@ -324,6 +324,28 @@ function planningEngine(context: AgentToolContext): PlanningEngine {
  * kind agent mode keeps being caught in. See `AGENT_REPORT_RESERVE_NOTICE` for the
  * other sentence this run may hear about ending.
  */
+/**
+ * What a PLAN run is told when its prose carried neither a statement nor a refusal.
+ *
+ * Plan mode's deliverable is a plan the user can act on, which means one of exactly two
+ * endings: a fenced statement this engine could run, or the `NO STATEMENT:` refusal for a
+ * question the inventory does not support. `qwen3:14b` is the measured case, and its losing
+ * run is why this exists at all — it described all eight tables, both join tables and the key
+ * every relation travels on, and then stopped, having answered the question and skipped the
+ * deliverable.
+ *
+ * The refusal is offered as plainly as the statement, and deliberately: a notice that asked
+ * only for SQL would push a model whose inventory cannot answer into inventing a table name
+ * to satisfy it, which is the failure `verifyPlanningGoal` accepts refusals to avoid.
+ *
+ * Offered only where a profile asks for it (`planStatementRetriesFor`, 0 for every model but
+ * one), so introducing it changed no other model's run.
+ */
+const AGENT_PLAN_STATEMENT_NOTICE = [
+  "Your plan describes the database but names no statement, and a plan is scored on what the user can run: it must end either with a fenced code block holding one statement for this engine, or with an explicit refusal.",
+  `Write the statement in a fenced block now, or begin a line with ${PLAN_NO_STATEMENT_MARKER} and say what the database does not support.`,
+].join(" ");
+
 const AGENT_REPORT_REMINDER_NOTICE = [
   "You have called this run's tools and then written your findings as prose, which records nothing: a run reports by CALLING compose_report, and text outside that call is not a report.",
   "Call compose_report now with what you established.",
@@ -2652,6 +2674,8 @@ export async function runInvestigation(
   let citeReminded = false;
   /** How many times a report has been held for the verdict it would earn; see `shortfallsIfReported`. */
   let previewHolds = 0;
+  /** How many times this drive has asked a PLAN run for its statement; see `askForPlanStatement`. */
+  let planStatementAsks = 0;
   /**
    * Whether the run has been narrowed to what would finish it; see
    * `AGENT_NARROWED_EXTRA_TOOLS`. Set once and never cleared — a run narrowed for
@@ -2725,6 +2749,30 @@ export async function runInvestigation(
     narrowed = true;
     messages.push(...assistant);
     messages.push({ role: "user", content: notice(AGENT_REPORT_REMINDER_NOTICE) });
+    return true;
+  };
+
+  /**
+   * Gives a PLAN run one more turn when its prose named neither statement nor refusal.
+   *
+   * Bounded by the model's own `planStatementRetries`, which is 0 for every model but the one
+   * whose ledgers earned it. The other bounds are the same three `remindToReport` applies and
+   * load-bearing for the same reasons: an agent run has no plan deliverable to miss, an
+   * operations plan is prose by decision (`verifyPlanningGoal` exempts it), and a run with no
+   * turn left cannot act on what it is told.
+   *
+   * The reading is `readPlanStatement`, the same reader `recordPlanStatement` and the verifier
+   * use, so this cannot ask for a statement the run already wrote — a disagreement between the
+   * notice and the verdict would spend a turn telling a passing run it had failed.
+   */
+  const askForPlanStatement = (assistant: readonly ModelMessage[]): boolean => {
+    if (record.mode === "agent" || record.workflowType === "operations") return false;
+    if (planStatementAsks >= planStatementRetriesFor(model.modelId)) return false;
+    if (turns >= maxTurns || resources.deadline.remainingMs() <= 0) return false;
+    if (text.length === 0 || readPlanStatement(text, context.connection.type).kind !== "absent") return false;
+    planStatementAsks += 1;
+    messages.push(...assistant);
+    messages.push({ role: "user", content: notice(AGENT_PLAN_STATEMENT_NOTICE) });
     return true;
   };
 
@@ -2910,6 +2958,10 @@ export async function runInvestigation(
       // A run that used its tools and then narrated is one call short of a report;
       // one that established nothing has nothing to be reminded about.
       if (remindToReport(turn.assistantMessages)) return null;
+      // A plan that answered the question and skipped the deliverable, where this model was
+      // measured needing the reminder. Before `conclude`, because conclude is where the prose
+      // becomes the run's closing statement and there is no second reading of it.
+      if (askForPlanStatement(turn.assistantMessages)) return null;
       return conclude("succeeded", "model-stopped");
     }
 

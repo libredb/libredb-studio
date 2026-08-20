@@ -48,6 +48,15 @@ export interface AgentModelProfile {
    * the single reminder, and stopped again — with most of the run's time still unspent.
    */
   readonly reportReminderLimit?: number;
+  /**
+   * How many extra turns a PLAN run gets when its prose named no statement and no refusal.
+   *
+   * Zero by default, because a run that answered its objective is not obviously owed another
+   * turn, and 24 models clear this bar unaided. `qwen3:14b` is the measured case: its losing
+   * plan describes all eight tables and every relation and then stops without the fenced
+   * statement or the explicit refusal that plan mode scores.
+   */
+  readonly planStatementRetries?: number;
 }
 
 /**
@@ -67,6 +76,14 @@ export const DEFAULT_UNREPORTED_CALL_CEILING = 12;
  * file, where the cost lands on that model's runs alone.
  */
 export const DEFAULT_REPORT_REMINDER_LIMIT = 1;
+
+/**
+ * No extra turn, which is what every locked plan cell was measured against.
+ *
+ * A plan run that produced prose has answered or it has not, and the verifier reads that for
+ * itself. Offering another turn to every model would change 24 models' runs to reach one.
+ */
+export const DEFAULT_PLAN_STATEMENT_RETRIES = 0;
 
 /**
  * Deterministic, and the setting five locked cells were won on.
