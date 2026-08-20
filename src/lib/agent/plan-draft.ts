@@ -175,6 +175,21 @@ export function readPlanStatement(text: string, dialect?: DatabaseType): PlanSta
   let block: FencedBlock | null = null;
   let refusal: string | null = null;
   /*
+    Set when a refusal marker was read whose OWN line carried nothing after it, so the
+    reason may still arrive on a later line.
+
+    Measured on four losing runs across `qwen3:4b`, `qwen3.5:4b` and `nemotron3:33b`, all
+    ending the same way: the marker, a line break, then the explanation and the question.
+    Every one of those runs did what plan mode asks and every one was scored as having said
+    nothing, because this reader only ever looked at the remainder of the marker's own line.
+
+    The #396 rule is unchanged — a marker with nothing after it ANYWHERE is still `absent`,
+    since the convention exists so the run says what it lacks. Only where "after it" may be
+    has moved. A fence does not answer for it either: prose is what is being waited for, and
+    a run that followed its marker with a code block has still not said what is missing.
+  */
+  let awaitingReason = false;
+  /*
     The lines that were never inside a fence, kept for the unfenced reading below.
 
     Collected here rather than re-scanned afterwards, and that is what makes the relaxed
@@ -214,7 +229,14 @@ export function readPlanStatement(text: string, dialect?: DatabaseType): PlanSta
       // mark: "Tell me which column records the rental price." is a proper request and
       // carries none.
       const refused = REFUSAL_LINE.exec(line);
-      if (refused !== null && refused[1].trim().length > 0) refusal = refused[1].trim();
+      if (refused !== null) {
+        const said = refused[1].trim();
+        if (said.length > 0) refusal = said;
+        else awaitingReason = true;
+      } else if (awaitingReason && line.trim().length > 0) {
+        refusal = line.trim();
+        awaitingReason = false;
+      }
     }
     plain.push(line);
   }

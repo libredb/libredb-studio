@@ -238,6 +238,43 @@ describe("the drafted statement is read out of the closing prose", () => {
     expect(draft).toEqual({ kind: "statement", sql: "SELECT 'NO STATEMENT: none' AS note", tag: "sql" });
   });
 
+  /*
+    Measured, and it is our defect rather than the models'. `no-statement` blocks four cells
+    and four of the losing runs across THREE models — `qwen3:4b`, `qwen3.5:4b`,
+    `nemotron3:33b` — end with exactly this:
+
+        NO STATEMENT:
+        The provided schema inventory includes the complete answer to the question, so a
+        runnable SQL query is not needed. The question that would allow writing such a
+        statement is: "..."
+
+    The marker line ends where it ends and the explanation starts on the next line. Every one
+    of those runs did what plan mode asks — refused, said what was missing, asked the one
+    question — and every one was scored as having said nothing, because this reader looked
+    only at the remainder of the marker's OWN line and found it empty.
+
+    The #396 rule the empty check exists for is untouched: a marker with nothing after it
+    ANYWHERE is still `absent`, because the convention exists so the run says what it lacks
+    and a token that says nothing is not the ending the mode is for. What changes is where
+    "after it" is allowed to be.
+  */
+  test("a refusal whose reason begins on the next line is still a refusal", () => {
+    expect(readPlanStatement("NO STATEMENT:\nThe inventory has no table of payments.")).toEqual({
+      kind: "refusal",
+      detail: "The inventory has no table of payments.",
+    });
+    // Trailing space after the marker, and a blank line before the reason: both measured.
+    expect(readPlanStatement("NO STATEMENT: \n\nThe inventory has no table of payments.")).toEqual({
+      kind: "refusal",
+      detail: "The inventory has no table of payments.",
+    });
+  });
+
+  test("a marker with nothing after it anywhere is still not a refusal", () => {
+    expect(readPlanStatement("NO STATEMENT:")).toEqual({ kind: "absent" });
+    expect(readPlanStatement("NO STATEMENT:\n\n   \n")).toEqual({ kind: "absent" });
+  });
+
   test("only the first refusal line is read, so a run repeating itself says one thing", () => {
     expect(readPlanStatement("NO STATEMENT: first.\nNO STATEMENT: second.")).toEqual({
       kind: "refusal",
