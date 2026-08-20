@@ -27,24 +27,32 @@
  *   4. The values.schema.json entries are what make `helm lint --strict` and
  *      every render reject a typo (`preferdualstack`, `ipv6`, three entries,
  *      a duplicate) before it reaches the API server.
- *   5. A dual-stack Service in front of a container that only bound 0.0.0.0
- *      advertises an IPv6 address that answers every connection with a TCP
- *      RST: Kubernetes never checks what the process bound, the pod has an
+ *   5. A dual-stack Service in front of a container that only bound an IPv4
+ *      address advertises an IPv6 address that answers every connection with a
+ *      TCP RST: Kubernetes never checks what the process bound, the pod has an
  *      IPv6 address on a dual-stack cluster, so the IPv6 EndpointSlice is
  *      populated and kube-proxy routes to a port nothing listens on - and
  *      kubelet's probes only ever hit the primary podIP, so the pod stays
- *      Ready forever. The documented recipe is therefore the pair: the
- *      Service fields plus `extraEnv: HOSTNAME: "::"`, which wins over the
- *      ConfigMap's HOSTNAME because an explicit `env` entry beats `envFrom`.
- *      That pairing is locked here so the recipe in the chart README cannot
- *      rot away from the templates.
- *   6. Because that pairing is silent when it is broken - green install, IPv6
- *      EndpointSlice populated, pod Ready, every IPv6 connection refused - the
- *      install notes have to say so at the moment somebody asks for it. Any
- *      values that give the Service an IPv6 address without a HOSTNAME override
- *      must print the warning, and setting the override must silence it, the
- *      way NOTES.txt already warns about the other two combinations the chart
- *      renders but cannot make work (sqlite + replicas, sqlite + autoscaling).
+ *      Ready forever. Since chart 0.1.41 the Service fields are the WHOLE
+ *      recipe: the ConfigMap ships `HOSTNAME: ""`, the sentinel for "nobody
+ *      chose", and the image's entrypoint resolves a bind address that it
+ *      proves is dual-stack before it uses it. Three parts of that contract
+ *      are locked here, because each can be broken silently: the default
+ *      renders an EMPTY HOSTNAME (not `0.0.0.0`, and not an omitted key - an
+ *      omitted key would let the container id or pod name a runtime injects
+ *      reach the server as a bind address), `config.bindAddress` renders
+ *      through to it, and an `extraEnv` HOSTNAME still overrides it because an
+ *      explicit `env` entry beats `envFrom`.
+ *   6. The pairing that stays silently broken is the INVERSE one: an IPv4
+ *      literal pinned in `config.bindAddress`, or in an `extraEnv` HOSTNAME
+ *      that wins over it, in front of a Service that asks for an IPv6 address -
+ *      green install, IPv6 EndpointSlice populated, pod Ready, every IPv6
+ *      connection refused. So the install notes must warn on exactly that
+ *      pairing and on nothing else: the default dual-stack render must stay
+ *      quiet (warning about it would train operators to ignore the notes),
+ *      the way NOTES.txt already warns about the other two combinations the
+ *      chart renders but cannot make work (sqlite + replicas, sqlite +
+ *      autoscaling).
  *
  * Exercises the real `helm template` output against the actual chart - no
  * reimplementation of the templating logic (same approach as
@@ -73,6 +81,7 @@ const DUAL_STACK = [
 interface RenderedManifest {
   kind: string;
   metadata: { name: string };
+  data?: Record<string, string>;
   spec?: {
     type?: string;
     ipFamilyPolicy?: string;
@@ -292,28 +301,71 @@ describe("charts/libredb-studio Service address families: schema validation (#43
   });
 });
 
-describe("charts/libredb-studio dual-stack needs the pod to listen on :: (#432)", () => {
+describe("charts/libredb-studio config.bindAddress reaches the container (#432)", () => {
   function appEnv(args: string[]): Array<{ name: string; value?: string }> {
     const deployment = renderDocs(args).find((doc) => doc.kind === "Deployment");
     return deployment?.spec?.template?.spec?.containers?.[0]?.env ?? [];
   }
 
-  // The image and the chart ConfigMap both say 0.0.0.0, which is IPv4 only.
-  // Nothing about enabling dual-stack Services may change that on its own.
-  test("the dual-stack Service alone does not touch the container's bind address", () => {
+  function configData(args: string[]): Record<string, string> {
+    const configMap = renderDocs(args).find((doc) => doc.kind === "ConfigMap" && doc.metadata.name.endsWith("-config"));
+    if (!configMap) {
+      throw new Error("app ConfigMap not found in render output");
+    }
+    return configMap.data ?? {};
+  }
+
+  // Empty, and PRESENT. Rendering "0.0.0.0" here would pin every install back
+  // to IPv4 and undo #432; omitting the key entirely would be worse than
+  // either, because the container then inherits whatever HOSTNAME the runtime
+  // injects - a pod name or a container id - as its bind address.
+  test("the default ConfigMap ships an empty HOSTNAME, not 0.0.0.0", () => {
+    expect(configData([])).toHaveProperty("HOSTNAME", "");
+  });
+
+  test("the default render leaves the resolver in charge even with a dual-stack Service", () => {
+    expect(configData(DUAL_STACK).HOSTNAME).toBe("");
     expect(appEnv(DUAL_STACK).find((entry) => entry.name === "HOSTNAME")).toBeUndefined();
   });
 
-  // The documented recipe: an explicit env entry beats the envFrom ConfigMap
-  // key of the same name, so extraEnv is all it takes.
+  // The chart-level way to overrule the resolver, in both directions.
+  test("config.bindAddress=:: renders through to HOSTNAME", () => {
+    expect(configData(["--set-string", "config.bindAddress=::"]).HOSTNAME).toBe("::");
+  });
+
+  test("config.bindAddress=0.0.0.0 pins the container back to IPv4", () => {
+    expect(configData(["--set", "config.bindAddress=0.0.0.0"]).HOSTNAME).toBe("0.0.0.0");
+  });
+
+  // An explicit env entry beats the envFrom ConfigMap key of the same name, so
+  // extraEnv remains the last word whatever the ConfigMap says.
   test("extraEnv HOSTNAME=:: renders alongside the dual-stack Service", () => {
     const args = [...DUAL_STACK, "--set", "extraEnv[0].name=HOSTNAME", "--set-string", "extraEnv[0].value=::"];
     expect(appEnv(args).find((entry) => entry.name === "HOSTNAME")?.value).toBe("::");
     expect(service(args).spec?.ipFamilies).toEqual(["IPv4", "IPv6"]);
   });
+
+  test("extraEnv HOSTNAME still renders when config.bindAddress is set too", () => {
+    const args = [
+      "--set",
+      "config.bindAddress=0.0.0.0",
+      "--set",
+      "extraEnv[0].name=HOSTNAME",
+      "--set-string",
+      "extraEnv[0].value=::",
+    ];
+    expect(configData(args).HOSTNAME).toBe("0.0.0.0");
+    expect(appEnv(args).find((entry) => entry.name === "HOSTNAME")?.value).toBe("::");
+  });
+
+  test("a non-string bindAddress fails schema validation", () => {
+    const run = helmTemplate(["--set-json", "config.bindAddress=true"]);
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr).toContain("bindAddress");
+  });
 });
 
-describe("charts/libredb-studio install notes warn about an unbound IPv6 address (#432)", () => {
+describe("charts/libredb-studio install notes warn about an IPv4-pinned pod (#432)", () => {
   // `helm template` never emits NOTES.txt, and `helm install --dry-run=client`
   // renders it only on Helm 4: Helm 3.16 calls IsReachable() before it renders
   // anything, so the dry run dies on "Kubernetes cluster unreachable" even for
@@ -358,59 +410,98 @@ describe("charts/libredb-studio install notes warn about an unbound IPv6 address
     return rendered.data?.notes ?? "";
   }
 
-  const HOSTNAME_ENV = ["--set", "extraEnv[0].name=HOSTNAME", "--set-string", "extraEnv[0].value=::"];
+  /** The pin that must be warned about, delivered through the chart value. */
+  const IPV4_PIN = ["--set", "config.bindAddress=0.0.0.0"];
+  /** The same pin delivered through extraEnv, which wins over the value. */
+  const IPV4_PIN_ENV = ["--set", "extraEnv[0].name=HOSTNAME", "--set-string", "extraEnv[0].value=0.0.0.0"];
 
   test("the default install prints no address-family warning", () => {
     expect(notes([])).not.toContain("IPv6");
   });
 
-  // The single most likely way to hold this wrong: the policy alone renders
-  // cleanly, so nothing else in the terminal ever mentions the bind address.
-  test("ipFamilyPolicy=PreferDualStack alone warns", () => {
-    const output = notes(["--set", "service.ipFamilyPolicy=PreferDualStack"]);
-    expect(output).toContain("WARNING");
-    expect(output).toContain("HOSTNAME");
+  // The whole point of #432: asking for a dual-stack Service is now ONE
+  // setting, so the notes must stay quiet about it. A warning here would be
+  // advice to do nothing, and notes that cry wolf stop being read.
+  test("a dual-stack Service on its own prints no warning", () => {
+    expect(notes(DUAL_STACK)).not.toContain("WARNING");
+    expect(notes(["--set", "service.ipFamilyPolicy=PreferDualStack"])).not.toContain("WARNING");
+    expect(notes(["--set", "service.ipFamilyPolicy=RequireDualStack"])).not.toContain("WARNING");
+    expect(notes(["--set-json", 'service.ipFamilies=["IPv6"]'])).not.toContain("WARNING");
   });
 
-  test("RequireDualStack alone warns", () => {
-    expect(notes(["--set", "service.ipFamilyPolicy=RequireDualStack"])).toContain("HOSTNAME");
+  test("an explicitly dual-stack bind address prints no warning either", () => {
+    expect(notes([...DUAL_STACK, "--set-string", "config.bindAddress=::"])).not.toContain("WARNING");
+  });
+
+  // The one pairing that is still silently broken: the Service advertises an
+  // IPv6 address, the container is pinned to a listener that cannot answer it.
+  test("an IPv4 pin under a dual-stack Service warns", () => {
+    const output = notes([...DUAL_STACK, ...IPV4_PIN]);
+    expect(output).toContain("WARNING");
+    expect(output).toContain("0.0.0.0");
+  });
+
+  test("the policy alone plus an IPv4 pin warns", () => {
+    expect(notes(["--set", "service.ipFamilyPolicy=PreferDualStack", ...IPV4_PIN])).toContain("WARNING");
+  });
+
+  test("RequireDualStack plus an IPv4 pin warns", () => {
+    expect(notes(["--set", "service.ipFamilyPolicy=RequireDualStack", ...IPV4_PIN])).toContain("WARNING");
   });
 
   // A single IPv6 family needs no policy, so the render guard never sees it.
-  test("a single IPv6 family with no policy warns", () => {
-    expect(notes(["--set-json", 'service.ipFamilies=["IPv6"]'])).toContain("HOSTNAME");
+  test("a single IPv6 family with no policy warns about an IPv4 pin", () => {
+    expect(notes(["--set-json", 'service.ipFamilies=["IPv6"]', ...IPV4_PIN])).toContain("WARNING");
   });
 
-  test("both fields together warn", () => {
-    expect(notes(DUAL_STACK)).toContain("HOSTNAME");
+  // Any IPv4 literal, not just the old default: 127.0.0.1 in a container is
+  // reachable from nothing at all, and the warning must name what it found.
+  test("a loopback pin warns and names the address it found", () => {
+    const output = notes([...DUAL_STACK, "--set-string", "config.bindAddress=127.0.0.1"]);
+    expect(output).toContain("WARNING");
+    expect(output).toContain("127.0.0.1");
   });
 
   test("the warning carries the recipe that fixes it", () => {
-    const output = notes(DUAL_STACK);
-    expect(output).toContain("extraEnv[0].name=HOSTNAME");
+    const output = notes([...DUAL_STACK, ...IPV4_PIN]);
+    expect(output).toContain("config.bindAddress");
     expect(output).toContain("::");
   });
 
+  test("an IPv4 pin without an IPv6 Service does not warn", () => {
+    expect(notes(IPV4_PIN)).not.toContain("WARNING");
+  });
+
   test("an explicit SingleStack policy does not warn", () => {
-    expect(notes(["--set", "service.ipFamilyPolicy=SingleStack"])).not.toContain("IPv6");
+    expect(notes(["--set", "service.ipFamilyPolicy=SingleStack", ...IPV4_PIN])).not.toContain("WARNING");
   });
 
   test("a single IPv4 family does not warn", () => {
-    expect(notes(["--set-json", 'service.ipFamilies=["IPv4"]'])).not.toContain("IPv6");
+    expect(notes(["--set-json", 'service.ipFamilies=["IPv4"]', ...IPV4_PIN])).not.toContain("WARNING");
   });
 
-  // The pair is complete: warning gone once the bind address is set.
-  test("extraEnv HOSTNAME silences the warning", () => {
-    expect(notes([...DUAL_STACK, ...HOSTNAME_ENV])).not.toContain("WARNING");
+  // extraEnv beats envFrom in the cluster, so the resolver here must read it
+  // the same way - in BOTH directions, or the warning follows the wrong value.
+  test("an extraEnv HOSTNAME of :: silences a config.bindAddress pin", () => {
+    const output = notes([
+      ...DUAL_STACK,
+      ...IPV4_PIN,
+      "--set",
+      "extraEnv[0].name=HOSTNAME",
+      "--set-string",
+      "extraEnv[0].value=::",
+    ]);
+    expect(output).not.toContain("WARNING");
   });
 
-  test("extraEnv HOSTNAME silences it for the policy-only case too", () => {
-    expect(notes(["--set", "service.ipFamilyPolicy=PreferDualStack", ...HOSTNAME_ENV])).not.toContain("WARNING");
+  test("an extraEnv HOSTNAME of 0.0.0.0 warns even when config.bindAddress is ::", () => {
+    const output = notes([...DUAL_STACK, "--set-string", "config.bindAddress=::", ...IPV4_PIN_ENV]);
+    expect(output).toContain("WARNING");
+    expect(output).toContain("0.0.0.0");
   });
 
-  // Only the key is read: an operator who set HOSTNAME at all decided the bind
-  // address deliberately, whatever they chose.
-  test("a HOSTNAME entry after another extraEnv entry still silences it", () => {
+  // The helper scans the whole list, so a HOSTNAME that is not entry 0 counts.
+  test("an IPv4 HOSTNAME after another extraEnv entry still warns", () => {
     const output = notes([
       ...DUAL_STACK,
       "--set",
@@ -420,12 +511,12 @@ describe("charts/libredb-studio install notes warn about an unbound IPv6 address
       "--set",
       "extraEnv[1].name=HOSTNAME",
       "--set-string",
-      "extraEnv[1].value=::",
+      "extraEnv[1].value=0.0.0.0",
     ]);
-    expect(output).not.toContain("WARNING");
+    expect(output).toContain("WARNING");
   });
 
-  test("an unrelated extraEnv entry does not silence it", () => {
+  test("an unrelated extraEnv entry leaves the default unpinned and quiet", () => {
     const output = notes([
       ...DUAL_STACK,
       "--set",
@@ -433,15 +524,10 @@ describe("charts/libredb-studio install notes warn about an unbound IPv6 address
       "--set",
       "extraEnv[0].value=https://libredb.example.com",
     ]);
-    expect(output).toContain("HOSTNAME");
+    expect(output).not.toContain("WARNING");
   });
 });
 
-// scripts/sync-chart-version.mjs holds the operator's embedded chart
-// byte-for-byte identical to charts/libredb-studio. That copy carries no
-// vendored subchart, so it cannot be rendered here; the three files this
-// feature touches are compared byte-for-byte instead, which catches a hand-edit
-// that reached only one of the two trees.
 describe("operator/helm-charts/libredb-studio mirrors the dual-stack surface (#432)", () => {
   for (const file of [
     "templates/service.yaml",

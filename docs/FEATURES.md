@@ -92,7 +92,7 @@
 *   **Kubernetes Support:** Pre-configured `standalone` Next.js mode plus an official Helm chart for production orchestration.
 *   **Local Development Pro:** Integrated `docker-compose` setup for consistent environment across the entire team.
 *   **Multi-Channel Distribution:** Beyond Docker/Helm, install via `npx @libredb/studio`, the Homebrew tap, `.deb`/`.rpm` packages (systemd service), or Snap — all backed by the same standalone server payload. See [`docs/DISTRIBUTION.md`](DISTRIBUTION.md).
-*   **Zero-Config First Run:** Missing `JWT_SECRET`/`ADMIN_PASSWORD` are generated at boot and printed once; native channels bind to `127.0.0.1` by default, while Docker/Helm bind `0.0.0.0`. Set `AUTH_BOOTSTRAP=off` for strict production mode requiring explicit secrets.
+*   **Zero-Config First Run:** Missing `JWT_SECRET`/`ADMIN_PASSWORD` are generated at boot and printed once; native channels bind to `127.0.0.1` by default, while Docker/Helm resolve their own address at startup and prefer a dual-stack `::`. Set `AUTH_BOOTSTRAP=off` for strict production mode requiring explicit secrets.
 
 ### 12. Advanced Query History (DBA-Level)
 *   **Full Audit Trail:** Searchable history of every query executed, including SQL content, success status, and error details.

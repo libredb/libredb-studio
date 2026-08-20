@@ -315,7 +315,7 @@ docker run \
 
   > **Registry**: `ghcr.io/libredb/libredb-studio` is the primary image (no pull rate limits — preferred for Kubernetes/CI). The same image is also mirrored to Docker Hub as [`libredb/libredb-studio`](https://hub.docker.com/r/libredb/libredb-studio?tag=latest) for convenience.
 
-  > **IPv6**: the container listens on `0.0.0.0` (IPv4 only). Add `-e HOSTNAME=::` for a dual-stack listener — details, and the Kubernetes equivalent, in [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md#network-exposure-bind-address).
+  > **IPv6**: the container picks its own bind address at startup and prefers `::`, which serves IPv4 and IPv6 through one socket — so an IPv6-only host needs no flags. It falls back to `0.0.0.0` where the namespace has no usable IPv6, and logs which it chose. Add `-e HOSTNAME=0.0.0.0` to pin it to IPv4 — details, and the Kubernetes equivalent, in [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md#network-exposure-bind-address).
 
   Open [http://localhost:3000](http://localhost:3000) and login with `admin@libredb.org` / `LibreDB.2026`.
 

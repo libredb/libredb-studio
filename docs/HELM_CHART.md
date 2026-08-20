@@ -168,7 +168,7 @@ Most non-sensitive configuration flows through a ConfigMap (the seed-connection 
 |----------|--------|-------------|
 | `NODE_ENV` | Fixed `production` | Always |
 | `PORT` | `service.targetPort` | Always |
-| `HOSTNAME` | ConfigMap writes `0.0.0.0`; `extraEnv` overrides it (`::` for a dual-stack listener) | Always |
+| `HOSTNAME` | `config.bindAddress` — empty by default, which is the "let the image resolve it" sentinel; `extraEnv` overrides it | Always |
 | `NEXT_TELEMETRY_DISABLED` | Fixed `1` | Always |
 | `NODE_OPTIONS` | Fixed `--max-old-space-size=384` | Always |
 | `NEXT_PUBLIC_AUTH_PROVIDER` | `authProvider` | Always |
@@ -180,17 +180,14 @@ Most non-sensitive configuration flows through a ConfigMap (the seed-connection 
 | `LLM_PROVIDER/MODEL/API_URL` | `config.llm*` | When set |
 | `OIDC_*` | `config.oidc*` | When `authProvider=oidc` |
 
-"Fixed" above describes what the ConfigMap writes, not what the container ends up with: the ConfigMap arrives through `envFrom`, `extraEnv` renders into the container's `env:` list, and an explicit `env` entry always wins over an `envFrom` key of the same name. Any row above can therefore be overridden through `extraEnv`, though only some are safe to: `PORT` is rendered from `service.targetPort` and also drives the container's named `http` port and all three probes, so overriding it through `extraEnv` alone moves the app off the port the probes still target and the pod never becomes Ready. The one case with a documented recipe is `HOSTNAME`, whose ConfigMap value `0.0.0.0` listens on IPv4 only:
+"Fixed" above describes what the ConfigMap writes, not what the container ends up with: the ConfigMap arrives through `envFrom`, `extraEnv` renders into the container's `env:` list, and an explicit `env` entry always wins over an `envFrom` key of the same name. Any row above can therefore be overridden through `extraEnv`, though only some are safe to: `PORT` is rendered from `service.targetPort` and also drives the container's named `http` port and all three probes, so overriding it through `extraEnv` alone moves the app off the port the probes still target and the pod never becomes Ready. `HOSTNAME` is the one row whose ConfigMap value is deliberately **empty**. Empty is a sentinel, not an omission: it means "nobody chose", and the container's entrypoint then resolves its own bind address, preferring `::` — which it proves is dual-stack by connecting an IPv4 client to a throwaway `::` listener, rather than inferring it from a sysctl. It falls back to `0.0.0.0` when the namespace has no IPv6, or when `::` really is IPv6-only while a non-loopback IPv4 address exists. The key is written rather than omitted so that a pod name injected as `HOSTNAME` by the runtime can never reach the server; `config.bindAddress` overrules the resolver:
 
 ```yaml
-extraEnv:
-  - name: HOSTNAME
-    value: "::"
+config:
+  bindAddress: "0.0.0.0"   # or "::" to force dual-stack; "" (default) resolves it
 ```
 
-`::` listens on every IPv6 address and, where the pod's network namespace has the default `net.ipv6.bindv6only=0`, answers IPv4 through the same socket; under `bindv6only=1` it is IPv6 only, so it stays an opt-in rather than the chart default.
-
-> **Dual-stack is two settings, not one — set both.** `service.ipFamilyPolicy` (`PreferDualStack` / `RequireDualStack`) and `service.ipFamilies` give the Service an IPv6 address; `extraEnv` `HOSTNAME: "::"` makes the pod listen on one. Kubernetes never inspects what the container bound, so a dual-stack Service in front of an IPv4-only listener populates an IPv6 EndpointSlice from the pod's IPv6 address and kube-proxy routes IPv6 traffic to a socket that is not there — the client gets `connection refused`. It never self-heals and it is invisible to the probes, because the kubelet probes the pod's *primary* IP (IPv4 on a typical IPv4-primary cluster), so the pod reports Ready while its IPv6 path is dead. Values reference and a copy-pasteable recipe: the chart [`README.md`](../charts/libredb-studio/README.md#ipv6-and-dual-stack).
+> **Dual-stack is one setting now, not two.** `service.ipFamilyPolicy` (`PreferDualStack` / `RequireDualStack`) and `service.ipFamilies` give the Service an IPv6 address, and that is all an operator has to set — the pod listens on both families by default. What an operator must *not* do is the inverse pairing: `config.bindAddress` (or an `extraEnv` `HOSTNAME`) pinned to an IPv4 literal alongside a dual-stack Service. Kubernetes never inspects what the container bound, so such a Service populates an IPv6 EndpointSlice from the pod's IPv6 address and kube-proxy routes IPv6 traffic to a socket that is not there — the client gets `connection refused`. It never self-heals and it is invisible to the probes, because the kubelet probes the pod's *primary* IP (IPv4 on a typical IPv4-primary cluster), so the pod reports Ready while its IPv6 path is dead. `NOTES.txt` warns on exactly that combination at install time. Values reference: the chart [`README.md`](../charts/libredb-studio/README.md#ipv6-and-dual-stack).
 
 **The chart follows the application's zero-config default** (`config.authBootstrap: ""` omits `AUTH_BOOTSTRAP`, so missing `JWT_SECRET`/`ADMIN_PASSWORD` are generated at first boot): a default-values install is fully working, which certified catalogs such as the Rancher partner-charts repository require. The architectural consequence for this document is that the deployment may only reference Secret keys that actually exist — the env entries for `JWT_SECRET`, `ADMIN_PASSWORD`, `USER_EMAIL`, `USER_PASSWORD` render only when their value is set or an `existingSecret` is used, and a mandatory `secretKeyRef` is reserved for the one combination where a missing key really is an error (strict mode with `authProvider=local`).
 

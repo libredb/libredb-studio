@@ -129,6 +129,10 @@
           "enum": ["debug", "info", "warn", "error"],
           "description": "Log level"
         },
+        "bindAddress": {
+          "type": "string",
+          "description": "Address the container listens on, written to HOSTNAME. Empty (the default) lets the image resolve it and prefer a verified dual-stack \"::\"; set \"::\" to force that, or an IPv4 literal such as \"0.0.0.0\" to pin the container to IPv4."
+        },
         "storageProvider": {
           "type": "string",
           "enum": ["local", "sqlite", "postgres"],

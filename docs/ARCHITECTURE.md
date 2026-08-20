@@ -283,7 +283,7 @@ src/
 
 ## 6. Deployment
 
-- **Docker / Helm**: Multi-stage Bun build with standalone Next.js output; these channels bind `0.0.0.0` (IPv4 only), with `HOSTNAME` as the override — it takes IPv6 literals, and `::` gives a dual-stack listener. Canonical image `ghcr.io/libredb/libredb-studio`.
+- **Docker / Helm**: Multi-stage Bun build with standalone Next.js output; these channels resolve their bind address in the container entrypoint, preferring a dual-stack `::` that they verify by connecting an IPv4 client to a throwaway listener, and falling back to `0.0.0.0` where the namespace has no usable IPv6. `HOSTNAME` (chart: `config.bindAddress`) overrules that and is honoured verbatim. Canonical image `ghcr.io/libredb/libredb-studio`.
 - **Native channels** (`bin/studio.js` npx launcher, Homebrew tap, `.deb`/`.rpm`, Snap, standalone tarballs; sources under `bin/` and `packaging/`): local-first, bind `127.0.0.1` by default unless `--host`/`HOSTNAME` opts in. The npx launcher ships as a pure library and downloads the SHA256-verified standalone server tarball from GitHub Releases. Full matrix and per-channel details in [`docs/DISTRIBUTION.md`](DISTRIBUTION.md).
 - **Health Check**: `GET /api/db/health`
 - **Stateless API**: API routes are stateless, suitable for horizontal scaling
