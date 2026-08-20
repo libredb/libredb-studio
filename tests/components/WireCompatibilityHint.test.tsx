@@ -14,8 +14,9 @@ import type { WireCompatibleEngine } from "@/lib/db/compatibility";
  * maintainer to delete it.
  *
  * "ExampleStore" is deliberately not a real product. An earlier version used TiDB,
- * which reads as a probe result to anyone skimming - and TiDB is a name #424 lists
- * as explicitly NOT measured, so the fixture contradicted the record it sits beside.
+ * which reads as a probe result to anyone skimming - and a fixture that names a real
+ * engine states a tier for it, which only a probe may do. (TiDB has since been probed
+ * and is a real registry entry, at a tier this fixture does not claim.)
  */
 const MOCK: WireCompatibleEngine[] = [
   { name: "MariaDB", via: "mysql", tier: "full", probedVersion: "12.3.2-MariaDB-ubu2404", caveats: [] },
@@ -57,7 +58,7 @@ describe("WireCompatibilityHint", () => {
 
   test("announces that some engines carry caveats instead of listing them inline", () => {
     render(<WireCompatibilityHint type="mysql" />);
-    // The dialog must not imply untested parity, but sixteen caveat lines would
+    // The dialog must not imply untested parity, but every caveat line would
     // drown the form: the detail belongs in the docs compatibility table.
     expect(screen.getByTestId("wire-compat-caveat-notice")).toBeTruthy();
     expect(screen.queryByText(/SLOWLOG is empty/)).toBeNull();

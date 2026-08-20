@@ -2225,6 +2225,16 @@ classifier's real-world agreement rate was measured — and they are the same ki
   resumed drive starts with all three false. The guards are the part that keeps being got wrong —
   both new notices shipped with a condition that named one thing and read another, and both were
   caught in review rather than by a gate.
+- **B52** — the composed PostgreSQL grounding capture is refused by an EXTENSION's catalogs rather
+  than by a wide user schema. `composeCatalogRead` projects one row per COLUMN against
+  `maxResultRows: 200` and refuses rather than truncates, which its own comment estimates as
+  "roughly 25 tables of eight columns". Measured on 2026-08-20 against a stock TimescaleDB 2.29.2
+  (PostgreSQL 17.11) with TWO user tables: `information_schema.columns` answers 478 rows, of which
+  473 belong to the extension's own schemas and 5 to the user, so the capture is refused and the
+  plan run answers ungrounded. Verified as extension-caused, not path-caused: plain PostgreSQL 18
+  and YugabyteDB both captured their schemas under the same least-privilege role, and granting that
+  role the internal schemas changed nothing. The agent is therefore unusable on a stock TimescaleDB,
+  and the same shape will appear on any PostgreSQL carrying a catalog-heavy extension.
 
 ## Related documentation
 

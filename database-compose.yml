@@ -546,6 +546,32 @@ services:
     ports:
       - "4566:4566"
 
+  # TimescaleDB is an extension, not a fork: the server is a stock PostgreSQL 17 and
+  # `SELECT version()` says so. The extension version comes from pg_extension, which
+  # is why the probed version records both.
+  timescaledb:
+    image: timescale/timescaledb:latest-pg17
+    container_name: libredb-timescaledb
+    profiles: ["compat"]
+    environment:
+      POSTGRES_PASSWORD: probe
+      POSTGRES_DB: probe
+    ports:
+      - "15432:5432"
+
+  # `yugabyted` is the single-node launcher: it starts the master and the tserver in
+  # one container, and --background=false keeps it in the foreground so Docker owns
+  # the process and the container does not exit immediately. YSQL listens on 5433,
+  # NOT the PostgreSQL default 5432 - connecting to 5432 here reaches nothing. Sign
+  # in as user `yugabyte`, database `yugabyte`, no password.
+  yugabytedb:
+    image: yugabytedb/yugabyte:2.25.2.0-b359
+    container_name: libredb-yugabytedb
+    profiles: ["compat"]
+    command: bin/yugabyted start --background=false
+    ports:
+      - "15433:5433"
+
   # -- MySQL wire ----------------------------------------------------------
 
   mariadb:
@@ -562,6 +588,29 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  # TiDB needs no PD and no TiKV to run here: --store=unistore is its embedded
+  # single-node storage engine, so this is one container like every other entry, and
+  # an empty --path keeps that store in memory. TiDB speaks the MySQL protocol on
+  # 4000, not 3306. Sign in as user `root`, no password. The probe behind this entry
+  # ran on unistore only, never against a PD + TiKV cluster.
+  tidb:
+    image: pingcap/tidb:v8.5.1
+    container_name: libredb-tidb
+    profiles: ["compat"]
+    command: ["--store=unistore", "--path=", "--host=0.0.0.0"]
+    ports:
+      - "14000:4000"
+
+  # allin1 is StarRocks in one container - the frontend and the backend together -
+  # and it is the form the probe behind this entry ran against. StarRocks speaks the
+  # MySQL protocol on 9030, not 3306. Sign in as user `root`, no password.
+  starrocks:
+    image: starrocks/allin1-ubuntu:3.3-latest
+    container_name: libredb-starrocks
+    profiles: ["compat"]
+    ports:
+      - "19030:9030"
 
   # -- Redis wire ----------------------------------------------------------
 

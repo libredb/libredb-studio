@@ -134,9 +134,13 @@ These speak the wire protocol of a driver above, so they connect through it unch
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |
 | MariaDB | `mysql` | Full |
+| TiDB | `mysql` | Full — but a freshly loaded table reads 0 rows and 0 B until TiDB's background statistics catch up, the slow-query panel stays empty, and only a standalone `--store=unistore` server was probed |
 | Citus | `postgres` | Full — but statistics describe the coordinator, so a distributed table's row count and size are wrong rather than missing |
+| TimescaleDB | `postgres` | Full — but the statistics describe the empty parent table, so a hypertable's row count and size are wrong rather than missing, and every chunk shows up in the object browser |
+| YugabyteDB | `postgres` | Full — but row counts and sizes read 0 until you run `ANALYZE`, and index sizes always read 0 bytes |
 | Valkey · DragonflyDB · KeyDB | `redis` | Full |
 | FerretDB | `mongodb` | Full — sign in with the backend PostgreSQL credentials |
+| StarRocks | `mysql` | Partial — editor, table list, column metadata, table and storage stats, metrics and slow queries work; the overview, health, session and monitoring panels do not, the version reads MySQL 5.1, and row counts, sizes and indexes are empty |
 | CockroachDB | `postgres` | Partial — editor, metrics, slow queries and sessions work; the object browser and size panels are blank |
 | Materialize · RisingWave | `postgres` | Query editor only |
 

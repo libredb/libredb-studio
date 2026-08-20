@@ -57,11 +57,15 @@ the support column records how much of the product actually worked:
 | Engine | Connect as | Support | Probed version | What to expect |
 |--------|-----------|---------|----------------|----------------|
 | MariaDB | `mysql` | Full | 12.3.2-MariaDB-ubu2404 | Behaves as MySQL throughout. The version shown is MariaDB's full build string. Only 12.3 was probed; the 10.x `information_schema` surface was not. |
+| TiDB | `mysql` | Full | 8.0.11-TiDB-v8.5.1 | All surfaces answer. A freshly loaded table reads **0 rows and 0 B until TiDB's background statistics catch up** — they correct themselves, with no `ANALYZE`. Max connections reads 0 (TiDB's default, meaning unlimited), the slow-query panel is always empty (TiDB's slow log lives in `information_schema.SLOW_QUERY`), and storage stats list a phantom `InnoDB` entry. The Explain panel does not work either — TiDB rejects `EXPLAIN FORMAT='json'` — though the query itself runs normally. Probed on a standalone `--store=unistore` server only; PD + TiKV was not probed. |
 | Citus | `postgres` | Full | citus 14.1-1 on PostgreSQL 18.4 | All surfaces answer. **Row counts and sizes for a distributed table are wrong, not missing** — PostgreSQL statistics describe the empty coordinator parent, not the shards. `citus_tables` and `citus_schemas` show up in the browser. |
+| TimescaleDB | `postgres` | Full | TimescaleDB 2.29.2 on PostgreSQL 17.11 | All surfaces answer. **A hypertable's row count and size are wrong, not missing** — the statistics describe the empty parent table, not the chunks. Every chunk shows up as its own table and index, along with the `_timescaledb_catalog` and `_timescaledb_cache` schemas. The overview shows PostgreSQL's version, not the extension's. **The agent cannot ground a run here** — the extension's catalogs answer 473 of 478 rows in the grounding read, over its 200-row budget, on a stock install. |
+| YugabyteDB | `postgres` | Full | YugabyteDB 2.25.2.0-b0 (advertises PostgreSQL 15.12) | All surfaces answer, foreign keys included. **Row counts and sizes read 0 until you run `ANALYZE`** — nothing collects statistics automatically, so a full database looks empty. Index sizes always read 0 bytes (index storage lives in DocDB) and the overview's database size reads 0 bytes. Index types read `lsm`, which is the real storage rather than a misreading. |
 | Valkey | `redis` | Full | Valkey 9.1.1 | Behaves as Redis. The overview shows the Redis emulation level (7.2.4), not the Valkey version. |
 | DragonflyDB | `redis` | Full | DragonflyDB df-v1.40.1 | Overview shows the emulation level (7.4.0). Max connections reads 0 (no usable `maxclients` in `INFO`), and active sessions show a numeric id instead of a username (`CLIENT LIST` omits `user=`). |
 | KeyDB | `redis` | Full | KeyDB 6.3.4 | Publishes no version field of its own, so the overview is indistinguishable from a Redis 6 server. A session's command can appear without its subcommand. |
 | FerretDB | `mongodb` | Full | FerretDB 2.7.0 (MongoDB 7.0.77 wire) | Every monitoring surface answers. Sign in with the **backend PostgreSQL** credentials — `authMechanism=PLAIN` is rejected. The version shown is the advertised MongoDB wire version. Needs its own backend, so it is two containers. |
+| StarRocks | `mysql` | Partial | StarRocks 3.3.22-753696f | The editor, the table list, column metadata, table and storage stats, performance metrics and slow queries all work. **The version reads MySQL 5.1** — `version()` returns a fictitious 5.1.0 and the real build is only in `current_version()`. The overview, health, active-session and monitoring panels all fail (the first two on the prepared-statement protocol, the other two on a missing `information_schema.PROCESSLIST`). Row counts and sizes are hard zeros, checked directly, no index is reported at all, and the Explain panel does not work (`EXPLAIN FORMAT='json'` does not parse). |
 | CockroachDB | `postgres` | Partial | CockroachDB CCL v26.2.5 | Editor, error handling, performance metrics, slow queries and sessions all work. The **object browser and every size/health panel are blank**: `pg_total_relation_size()`, `pg_size_pretty()`, `pg_postmaster_start_time()` and `pg_tablespace_location()` do not exist there. |
 | Materialize | `postgres` | Query editor only | Materialize 26.37.0 | No pg statistics catalog and no size functions, and `MATERIALIZED` is reserved, which our schema query uses. Editor only. |
 | RisingWave | `postgres` | Query editor only | RisingWave 3.0.3 | No pg statistics catalog, differently typed size functions, and a parameterised `LIMIT` is rejected. Editor only. |
@@ -75,11 +79,10 @@ docker compose -f database-compose.yml --profile compat up -d
 
 **Not yet measured.** The following speak a wire protocol we ship but had no reachable instance
 during the Phase 0 run, so they are deliberately absent from the table above rather than assumed to
-work: YugabyteDB and TimescaleDB (image pulls did not complete), TiDB (needs a PD + TiKV cluster),
-SingleStore (dev image needs a licence key), StarRocks and OceanBase (multi-GB images), and every
-managed-only service — Amazon Redshift, Aurora, AlloyDB, Neon, Supabase, Cloud SQL, Cloud Spanner,
-Azure SQL Database, Microsoft Fabric, Azure Synapse, Azure SQL Managed Instance, Amazon ElastiCache,
-Upstash, PlanetScale, Azure Cosmos DB and Amazon DocumentDB. Their status is tracked in
+work: SingleStore (its dev image needs a licence key), OceanBase (a multi-GB image with a high
+memory floor), and every managed-only service — Amazon Redshift, Aurora, AlloyDB, Neon, Supabase, Cloud SQL, Cloud
+Spanner, Azure SQL Database, Microsoft Fabric, Azure Synapse, Azure SQL Managed Instance, Amazon
+ElastiCache, Upstash, PlanetScale, Azure Cosmos DB and Amazon DocumentDB. Their status is tracked in
 [#424](https://github.com/libredb/libredb-studio/issues/424).
 
 ## Cross-cutting docs
