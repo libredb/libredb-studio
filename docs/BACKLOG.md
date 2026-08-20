@@ -244,6 +244,35 @@ SELECT 2` must keep failing, because the endpoint takes exactly one statement.
 
 Found reviewing #438 against the live cluster; not raised by the external review of that PR.
 
+### D6. The MySQL index-size query assumes InnoDB names its table after the database you connected to
+
+`INDEX_SIZES_SQL` in `src/lib/db/providers/sql/mysql.ts:246` filters
+`information_schema.INNODB_TABLES.NAME LIKE ?`, and `getIndexStats` passes `` `${schema}/%` `` at
+line 966 - the connection's own database, followed by a slash. That is InnoDB's naming convention on
+a single MySQL server, and the query treats it as universal.
+
+Measured on 2026-08-20 against Vitess 24.0.2 (`vitess/vttestserver:v24.0.2-mysql80`, keyspace
+`probe`): **every per-index size reads 0 bytes**, because Vitess names the InnoDB table after the
+physical shard database, so the rows are `vt_probe_0/orders` and `LIKE 'probe/%'` matches none of
+them. The same query returns 35 rows against a real MySQL 9 control, so the statement is fine; the
+parameter's assumption is not.
+
+**The defect is ours, not Vitess's.** Vitess publishes the sizes, under the name its own storage
+uses. The provider asks for a name only an unsharded single-server MySQL has, and then swallows the
+mismatch: the size lookup sits in a `try {} catch {}` whose comment reads "INNODB_SYS tables not
+available", so a full result set of zero matched rows is indistinguishable from a server that has no
+such catalog. The join key repeats the assumption a second time - the map is keyed on
+`INNODB_TABLES.NAME` and looked up at line 976 with `${r.schema_name}/${r.table_name}` taken from
+`information_schema.STATISTICS`, so a matched row would still need the two catalogs to agree on the
+schema name.
+
+The user-visible result is the class this repo treats as worse than a blank panel: the index rows
+themselves come from `STATISTICS`, which answers, so every index lists with a size of 0 B. A wrong
+number, not a missing one.
+
+Done when a per-index size on Vitess reads what `INNODB_INDEXES` holds for that index, or the panel
+reports the size as unavailable rather than 0, and this entry is deleted.
+
 ---
 
 ## Value interpolation
@@ -2745,7 +2774,7 @@ directly, so it fails loudly rather than skipping, but it fails at the worst mom
 Done when the next release's channel E2Es pass on deb, rpm and snap, and this entry is deleted - or
 they fail and `--with-deps` comes back for those three jobs only.
 
-### B52. The PostgreSQL grounding capture's row cap is reached by an extension's catalogs, not by a wide schema
+### B52. The PostgreSQL grounding capture's row cap is reached by the server's own catalogs, not by a wide user schema
 
 `composeCatalogRead` records a known limitation with a number: the PostgreSQL projection is one row
 per COLUMN against `maxResultRows: 200`, so an unnarrowed call "overflows at roughly 25 tables of
@@ -2759,18 +2788,34 @@ PostgreSQL 17.11), it is reached with **two user tables**. `information_schema.c
 refused rather than truncated, by design, so `captureFromProvider` returns an unavailable capture and
 the plan run answers ungrounded with "This run was given no inventory of this database."
 
-Verified as extension-caused rather than product-wide: the identical run against plain PostgreSQL 18
+Verified as server-caused rather than product-wide: the identical run against plain PostgreSQL 18
 with the same least-privilege role captured "3 tables, fingerprint ctx_0d63" and named them. Granting
 the agent role USAGE and SELECT on the three internal schemas does not change the outcome, which
 confirms this is the row cap and not a privilege.
 
-The consequence is that the agent is unusable on TimescaleDB out of the box, and the same shape will
-appear on any PostgreSQL carrying a catalog-heavy extension. Two candidate fixes, both listed in the
-existing comment as belonging to the consuming layer: aggregate columns per table so the projection
-is one row per OBJECT (symmetric with the SQLite side), or have the capture exclude the schemas the
-object browser already treats as internal. The second is narrower and would not change what a caller
-parses.
+**A second engine reproduces it, and it is not an extension.** Measured on 2026-08-20 against
+`woblerr/cloudberry:2.1.0-incubating` (Apache Cloudberry 2.1.0-incubating, PostgreSQL 14.4) with the
+same two user tables: the read is refused as `CATALOG_READ_REFUSED`, "Read-only execution exceeded the
+row budget: 289 rows > 200 allowed". Of those **289 rows**, **282 belong to Cloudberry's own
+`gp_toolkit` schema** and 7 to the user's two tables. The figure is per-role and is meaningless
+without one: the same read as `gpadmin` answers **481 rows** - 470 `gp_toolkit`, 7 `public`, 4
+`pg_ext_aux` - because that role can see more. Cloudberry is a PostgreSQL fork rather than a
+PostgreSQL carrying an extension, so what generalises is narrower than the first measurement
+suggested: any PostgreSQL-wire server whose own catalogs are wide before the user creates anything.
 
-Done when a plan run against a stock TimescaleDB reports a captured schema naming the user's tables,
-and this entry is deleted.
+Cloudberry also fails one step earlier, which matters for anyone trying to work around this. Its usual
+login is `gpadmin`, a superuser, and the agent's execution profile refuses that role as unverified or
+too broad (`is_superuser`, `reads_server_files`, `writes_server_files`, `executes_programs`). So the
+row budget is only reached after a least-privilege `agentUser` has been created by hand - and it is
+then reached anyway.
 
+The consequence is that the agent is unusable out of the box on both TimescaleDB and Cloudberry, and
+the same shape will appear on any PostgreSQL-wire server with wide catalogs of its own. Two candidate
+fixes, both listed in the existing comment as belonging to the consuming layer: aggregate columns per
+table so the projection is one row per OBJECT (symmetric with the SQLite side), or have the capture
+exclude the schemas the object browser already treats as internal. The second is narrower and would
+not change what a caller parses - and it now has two schema sets to exclude rather than one, which is
+an argument for the first.
+
+Done when a plan run against a stock TimescaleDB and one against a stock Cloudberry both report a
+captured schema naming the user's tables, and this entry is deleted.

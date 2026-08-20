@@ -2225,16 +2225,27 @@ classifier's real-world agreement rate was measured — and they are the same ki
   resumed drive starts with all three false. The guards are the part that keeps being got wrong —
   both new notices shipped with a condition that named one thing and read another, and both were
   caught in review rather than by a gate.
-- **B52** — the composed PostgreSQL grounding capture is refused by an EXTENSION's catalogs rather
-  than by a wide user schema. `composeCatalogRead` projects one row per COLUMN against
-  `maxResultRows: 200` and refuses rather than truncates, which its own comment estimates as
-  "roughly 25 tables of eight columns". Measured on 2026-08-20 against a stock TimescaleDB 2.29.2
-  (PostgreSQL 17.11) with TWO user tables: `information_schema.columns` answers 478 rows, of which
-  473 belong to the extension's own schemas and 5 to the user, so the capture is refused and the
-  plan run answers ungrounded. Verified as extension-caused, not path-caused: plain PostgreSQL 18
-  and YugabyteDB both captured their schemas under the same least-privilege role, and granting that
-  role the internal schemas changed nothing. The agent is therefore unusable on a stock TimescaleDB,
-  and the same shape will appear on any PostgreSQL carrying a catalog-heavy extension.
+- **B52** — the composed PostgreSQL grounding capture is refused by the SERVER's own catalogs rather
+  than by a wide user schema, and it has now been measured on two different servers.
+  `composeCatalogRead` projects one row per COLUMN against `maxResultRows: 200` and refuses rather
+  than truncates, which its own comment estimates as "roughly 25 tables of eight columns". Measured on
+  2026-08-20 against a stock TimescaleDB 2.29.2 (PostgreSQL 17.11) with TWO user tables:
+  `information_schema.columns` answers 478 rows, of which 473 belong to the extension's own schemas
+  and 5 to the user, so the capture is refused and the plan run answers ungrounded. Verified as
+  server-caused, not path-caused: plain PostgreSQL 18 and YugabyteDB both captured their schemas under
+  the same least-privilege role, and granting that role the internal schemas changed nothing.
+  Reproduced the same day on Apache Cloudberry 2.1.0-incubating (PostgreSQL 14.4), which is a fork
+  rather than an extension, so the shape is not one product's: with the same two user tables the read
+  is refused as `CATALOG_READ_REFUSED` at **289 rows against the 200 allowed**, **282** of those rows
+  belonging to Cloudberry's own `gp_toolkit` schema and 7 to the user's two tables. The total is
+  per-role and only means something with the role named: the same read as `gpadmin` answers 481 rows,
+  470 of them `gp_toolkit`, 7 `public` and 4 `pg_ext_aux`. Cloudberry also puts a second wall in front
+  of the first, which a user hitting it needs to know about: `gpadmin` is the login the engine gives
+  you and it is a superuser, so the execution profile refuses the role as unverified or too broad
+  (`is_superuser`, `reads_server_files`, `writes_server_files`, `executes_programs`) and an agent run
+  there needs a hand-made least-privilege `agentUser` before it can even reach the row budget - and
+  then hits it. The agent is therefore unusable out of the box on either engine, and the same shape
+  will appear on any PostgreSQL whose own catalogs are wide before the user has created anything.
 
 ## Related documentation
 

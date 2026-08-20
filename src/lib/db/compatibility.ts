@@ -88,7 +88,7 @@ export interface WireCompatibleEngine {
 /**
  * Verified relatives, each measured by a live gate-4 probe on 2026-08-18, with
  * TimescaleDB, YugabyteDB, TiDB and StarRocks added from a second probe run on
- * 2026-08-20.
+ * 2026-08-20, and Apache Cloudberry and Vitess from a third run the same day.
  * Names still awaiting an instance are tracked in issue #424, never here: there
  * is no "pending" state on purpose, because a reader cannot tell a pending entry
  * from a probed one.
@@ -160,6 +160,21 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     ],
   },
   {
+    name: "Apache Cloudberry (incubating)",
+    via: "postgres",
+    tier: "partial",
+    probedVersion: "PostgreSQL 14.4 (Apache Cloudberry 2.1.0-incubating)",
+    caveats: [
+      'The monitoring dashboard, table statistics and index statistics are unavailable: all three fail with the same engine error, "query plan with multiple segworker groups is not supported", which is Cloudberry\'s MPP planner restriction rather than a missing catalog.',
+      "Row counts and sizes read after ANALYZE are correct - 2000 rows for 2000 rows and 576 KB for 589824 bytes - so the object browser here is not the kind that misleads; what they read before ANALYZE was not probed.",
+      "Two internal tables appear in the object browser, pg_ext_aux.pg_pax_fastsequence and pg_ext_aux.pg_pax_tables, so it lists 4 objects for 2 user tables.",
+      "A foreign key is read back as if it were enforced but is not: Cloudberry accepts ALTER TABLE ... ADD CONSTRAINT with a warning that referential integrity constraints are not supported, and an orphan insert then succeeds.",
+      "The overview's database size reads 62 MB against roughly 900 KB of user tables, which is catalog and segment overhead rather than your data.",
+      "The agent cannot ground a run: connecting as the cluster's own gpadmin is refused because the execution profile reads that role as too broad, and a least-privilege agent role is refused at 289 rows against a 200-row budget, 282 of those rows belonging to Cloudberry's own gp_toolkit schema.",
+      "Apache publishes build images only, so the probe ran on a third-party image (woblerr/cloudberry:2.1.0-incubating); no image from the project itself was measured.",
+    ],
+  },
+  {
     name: "MariaDB",
     via: "mysql",
     tier: "full",
@@ -195,6 +210,20 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "Row counts and sizes are always 0: information_schema.TABLES reports 0 rows and 0 bytes for a populated table.",
       "No index information at all: StarRocks exposes no secondary-index catalog, so the object browser and the index panel show none.",
       "The Explain panel does not work: StarRocks does not parse EXPLAIN FORMAT='json', so the editor's plan request fails while the query itself runs normally.",
+    ],
+  },
+  {
+    name: "Vitess",
+    via: "mysql",
+    tier: "full",
+    probedVersion: "8.0.43-Vitess (Vitess 24.0.2)",
+    caveats: [
+      "Cancelling a running query does nothing: vtgate refuses KILL QUERY with VT07001 and the statement runs to completion, so a 5 second SLEEP still took its full 5003 ms after the cancel.",
+      "Table and index statistics name the physical shard database (vt_probe_0), not the keyspace the connection points at.",
+      "Per-index sizes always read 0 bytes: the size query matches information_schema.INNODB_TABLES.NAME against '<database>/%', and Vitess names the InnoDB table after the shard database, so on a keyspace called probe nothing matches.",
+      "Setting a session variable can fail where reading it works: SET @@cte_max_recursion_depth is rejected with VT05006 unknown system variable, while SELECT @@cte_max_recursion_depth answers 1000.",
+      "Probed on an unsharded single-shard keyspace only (show vitess_shards returns probe/0); nothing here is measured about a sharded keyspace.",
+      "No permission-error class could be measured, and the reason is the test image rather than Vitess: vttestserver accepts any username with any password and grants it full rights, and CREATE USER is a vtgate parse error, so no restricted role could be created to test with.",
     ],
   },
   {

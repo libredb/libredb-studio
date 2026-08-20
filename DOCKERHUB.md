@@ -130,12 +130,13 @@ Thirteen external engines share one interface, and three of them are read-only b
 
 ### Engines with no provider of their own
 
-Thirteen further engines — a different thirteen from the drivers above — speak the wire protocol of one of those drivers, so they connect through it unchanged: pick that driver in the connection dialog. The table has ten rows rather than thirteen because engines that behave identically share a row; all thirteen are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+Fifteen further engines speak the wire protocol of one of the fourteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has twelve rows rather than fifteen because engines that behave identically share a row; all fifteen are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |
 | MariaDB | `mysql` | Full |
 | TiDB | `mysql` | Full — but a freshly loaded table reads 0 rows and 0 B until TiDB's background statistics catch up, the slow-query panel stays empty, and only a standalone `--store=unistore` server was probed |
+| Vitess | `mysql` | Full. Row counts and sizes are exact, but a running query cannot be cancelled: vtgate refuses `KILL QUERY` and the statement runs to completion. Per-index sizes read 0 bytes, and only an unsharded single-shard keyspace was probed |
 | Citus | `postgres` | Full — but statistics describe the coordinator, so a distributed table's row count and size are wrong rather than missing |
 | TimescaleDB | `postgres` | Full — but the statistics describe the empty parent table, so a hypertable's row count and size are wrong rather than missing, and every chunk shows up in the object browser |
 | YugabyteDB | `postgres` | Full — but row counts and sizes read 0 until you run `ANALYZE`, and index sizes always read 0 bytes |
@@ -143,6 +144,7 @@ Thirteen further engines — a different thirteen from the drivers above — spe
 | FerretDB | `mongodb` | Full — sign in with the backend PostgreSQL credentials |
 | StarRocks | `mysql` | Partial — editor, table list, column metadata, table and storage stats, metrics and slow queries work; the overview, health, session and monitoring panels do not, the version reads MySQL 5.1, and row counts, sizes and indexes are empty |
 | CockroachDB | `postgres` | Partial — editor, metrics, slow queries and sessions work; the object browser and size panels are blank |
+| Apache Cloudberry (incubating) | `postgres` | Partial. Row counts and sizes are correct after `ANALYZE`, but the monitoring dashboard and the table and index statistics all fail on one MPP planner restriction, and a foreign key is read back as though enforced when the engine does not enforce it |
 | Materialize · RisingWave | `postgres` | Query editor only |
 
 Details, probed versions and each caveat: [`docs/providers/README.md`](https://github.com/libredb/libredb-studio/blob/main/docs/providers/README.md).

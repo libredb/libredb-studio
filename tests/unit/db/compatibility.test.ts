@@ -17,6 +17,40 @@ import {
 } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
 import { isQueryFenceTag } from "@/lib/sql/fence-tags";
+import { parse as parseYaml } from "yaml";
+
+/**
+ * The compose service that reproduces each registry entry.
+ *
+ * The docs section makes this a promise in one sentence - "Reproduce any row with
+ * the `compat` profile of the container fixture" - and until now nothing held the
+ * fixture to it. That gap has already shipped once on the other half of the file:
+ * `redis` was a published engine with no compose service at all, fixed in #426
+ * only because someone went looking.
+ *
+ * The mapping is written out rather than slugged from the name, because two of the
+ * services are not the name lowercased: DragonflyDB runs as `dragonfly` and
+ * FerretDB as `ferretdb`. A slug function would need those exceptions encoded
+ * inside it anyway, and it would quietly invent a service name for the next entry
+ * instead of failing until a human declares one.
+ */
+const COMPOSE_SERVICE_BY_ENGINE: Readonly<Record<string, string>> = {
+  Citus: "citus",
+  CockroachDB: "cockroachdb",
+  Materialize: "materialize",
+  RisingWave: "risingwave",
+  TimescaleDB: "timescaledb",
+  YugabyteDB: "yugabytedb",
+  "Apache Cloudberry (incubating)": "cloudberry",
+  MariaDB: "mariadb",
+  TiDB: "tidb",
+  StarRocks: "starrocks",
+  Vitess: "vitess",
+  Valkey: "valkey",
+  DragonflyDB: "dragonfly",
+  KeyDB: "keydb",
+  FerretDB: "ferretdb",
+};
 
 describe("wire-compatibility registry", () => {
   test("the shipped list holds every database type the product declares", () => {
@@ -102,6 +136,26 @@ describe("wire-compatibility registry", () => {
     for (const engine of WIRE_COMPATIBLE_ENGINES) {
       expect(docs).toContain(engine.name);
       expect(docs).toContain(engine.probedVersion.replace(/ \(.*\)$/, ""));
+    }
+  });
+
+  test("every registry entry declares the compose service that reproduces it", () => {
+    // Keys exactly equal names, in both directions: a new registry entry cannot be
+    // added without saying which service brings its engine up, and a service left
+    // declared after its entry is deleted fails here too.
+    expect(Object.keys(COMPOSE_SERVICE_BY_ENGINE).sort()).toEqual(WIRE_COMPATIBLE_ENGINES.map((e) => e.name).sort());
+  });
+
+  test("every declared compose service exists in the fixture under the compat profile", async () => {
+    // `compat` is the part that matters. A service present but outside the profile
+    // would start on a plain `docker compose up`, which the fixture's own comment
+    // promises it does not, and would not start on the documented command at all.
+    const fixture = parseYaml(await Bun.file("database-compose.yml").text()) as {
+      services: Record<string, { profiles?: readonly string[] }>;
+    };
+    for (const service of Object.values(COMPOSE_SERVICE_BY_ENGINE)) {
+      expect(Object.keys(fixture.services)).toContain(service);
+      expect(fixture.services[service]?.profiles ?? []).toContain("compat");
     }
   });
 

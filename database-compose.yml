@@ -572,6 +572,31 @@ services:
     ports:
       - "15433:5433"
 
+  # THIRD-PARTY IMAGE, stated because it is unusual here: Apache publishes only
+  # BUILD images for Cloudberry - you compile the server inside them - so the
+  # project itself ships nothing runnable, and this is a community image. The probe
+  # behind this entry ran on it; nothing is claimed about an Apache-built server.
+  #
+  # Boot takes about two minutes before Postgres answers: the entrypoint initialises
+  # a coordinator and its segments first. `shm_size: 1gb` is what the probe ran with,
+  # the segment processes communicating through shared memory. Sign in as user
+  # `gpadmin`, password `probe`, database `probe`.
+  #
+  # `gpadmin` is a superuser, and the agent's execution profile refuses it as too
+  # broad, so an agent run here needs a least-privilege role created by hand - and
+  # even then the grounding read is refused, because gp_toolkit alone answers more
+  # rows than its budget allows (B52).
+  cloudberry:
+    image: woblerr/cloudberry:2.1.0-incubating
+    container_name: libredb-cloudberry
+    profiles: ["compat"]
+    shm_size: 1gb
+    environment:
+      CLOUDBERRY_PASSWORD: probe
+      CLOUDBERRY_DATABASE_NAME: probe
+    ports:
+      - "15435:5432"
+
   # -- MySQL wire ----------------------------------------------------------
 
   mariadb:
@@ -611,6 +636,35 @@ services:
     profiles: ["compat"]
     ports:
       - "19030:9030"
+
+  # vttestserver is Vitess in one container: it brings up the topology, a vtctld, a
+  # vtgate and a mysqld for the keyspace named in KEYSPACES, so this entry needs no
+  # cluster of its own.
+  #
+  # The tag is PINNED deliberately. The rolling `:mysql80` tag serves a
+  # 25.0.0-SNAPSHOT built from main - not a release, and not reproducible - so the
+  # probe behind this entry ran on v24.0.2 and this file names it.
+  #
+  # PORT is the base of the range vttestserver allocates, and vtgate's MySQL port is
+  # 33577, which is what this entry publishes; 3306 reaches nothing. Sign in as user
+  # `root`, no password, database `probe`. NUM_SHARDS=1 is the shape that was probed:
+  # a sharded keyspace was not.
+  #
+  # This fixture cannot be used to test a permission error. vttestserver accepts any
+  # username with any password and grants it full rights, and CREATE USER is a vtgate
+  # parse error, so no restricted role can be made here. That is the fixture, not
+  # Vitess.
+  vitess:
+    image: vitess/vttestserver:v24.0.2-mysql80
+    container_name: libredb-vitess
+    profiles: ["compat"]
+    environment:
+      PORT: 33574
+      KEYSPACES: probe
+      NUM_SHARDS: 1
+      MYSQL_BIND_HOST: 0.0.0.0
+    ports:
+      - "33577:33577"
 
   # -- Redis wire ----------------------------------------------------------
 
