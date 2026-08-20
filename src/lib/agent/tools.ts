@@ -129,21 +129,6 @@ export type AgentToolName =
   | "profile_table"
   /** Query optimization only: two estimated plans of the same question. */
   | "compare_plans"
-  /**
-   * Query optimization only: the whole comparison in one call, chained by the server.
-   *
-   * The measured reason it exists. `query-optimization` locks on 5 of 25 models against
-   * 10-13 for every other surface, and it is the longest chain: two `inspect_plan` calls,
-   * then `compare_plans` naming BOTH artifact ids, then a report citing them. It is the
-   * only call in this layer that needs two server-minted ids at once, and the lock rate
-   * across all six surfaces tracks chain length rather than subject difficulty —
-   * `operations` leads precisely because the server does the reading there.
-   *
-   * So this is the same bar reached by a shorter road: two statements in, and the server
-   * inspects both plans and records the comparison itself. `inspect_plan` and
-   * `compare_plans` stay offered, so a run that wants to walk the steps still may.
-   */
-  | "propose_rewrite"
   /** Query optimization only: a change the user may apply. Never executed here. */
   | "recommend_change"
   /** Operations only: one curated reading of what the engine says about itself. */
@@ -515,19 +500,6 @@ const planComparisonSchema = z.strictObject({
 });
 
 /**
- * A rewrite proposed as two statements, with no ids in it at all.
- *
- * Flat and three fields wide on purpose: this exists because the id-passing chain is what
- * models fail, so the shape it replaces that chain with may not reintroduce a nested
- * object, a union, or anything the model has to copy from a previous turn.
- */
-const rewriteProposalSchema = z.strictObject({
-  original: z.string().min(1),
-  rewritten: z.string().min(1),
-  rationale: z.string().min(1),
-});
-
-/**
  * The chart types a spec may ask for, as a total record over the durable union.
  *
  * A record rather than a bare list, for the reason `EVENT_KINDS` is one: the compiler
@@ -698,12 +670,6 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
     inputSchema: profileSelectorSchema,
     operationId: "sql.table.profile",
   },
-  propose_rewrite: {
-    name: "propose_rewrite",
-    description:
-      "Propose a rewrite of one slow statement and have it judged in a single call. Pass the original statement and your rewritten form; the server asks the engine for the ESTIMATED plan of each, stores both, and records the before/after comparison for you. Nothing is executed and no timings exist. You do not pass or read any artifact id — that is the point of this tool. The two statements must differ.",
-    inputSchema: rewriteProposalSchema,
-  },
   compare_plans: {
     name: "compare_plans",
     description:
@@ -765,7 +731,6 @@ const NO_TOOLS: readonly AgentToolDefinition[] = Object.freeze([]);
  */
 const QUERY_OPTIMIZATION_TOOLS: readonly AgentToolDefinition[] = Object.freeze([
   ...AGENT_MODE_TOOLS,
-  AGENT_TOOL_DEFINITIONS.propose_rewrite,
   AGENT_TOOL_DEFINITIONS.compare_plans,
   AGENT_TOOL_DEFINITIONS.recommend_change,
 ]);

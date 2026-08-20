@@ -274,10 +274,6 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
       "run_read_query",
       "inspect_plan",
       "compose_report",
-      // The composite comparison, offered BEFORE the step-by-step pair: a model reading
-      // this list top to bottom meets the one-call route first, and this surface locks on
-      // 5 of 25 models precisely because the step-by-step one is where they come apart.
-      "propose_rewrite",
       "compare_plans",
       "recommend_change",
     ]);
@@ -345,31 +341,16 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
       undefined,
       undefined,
       undefined,
-      undefined,
     ]);
   });
 
-  test("exactly the five ledger-only tools declare no operation", () => {
+  test("exactly the four ledger-only tools declare no operation", () => {
     const withoutOperation = Object.values(AGENT_TOOL_DEFINITIONS)
       .filter((tool) => tool.operationId === undefined)
       .map((tool) => tool.name)
       .sort();
 
-    /*
-      `propose_rewrite` belongs on this list and that is the point of its design. It is the
-      only tool that causes two database reads without declaring a reach of its own,
-      because it does not have one: it calls `inspect_plan` through the same dispatch a
-      model would, so the operation, the audit entry, the step id and the deadline
-      admission all belong to that tool. A fifth operation id appearing here would mean it
-      had grown its own path to a database, which is the thing to catch.
-    */
-    expect(withoutOperation).toEqual([
-      "compare_plans",
-      "compose_report",
-      "present_answer",
-      "propose_rewrite",
-      "recommend_change",
-    ]);
+    expect(withoutOperation).toEqual(["compare_plans", "compose_report", "present_answer", "recommend_change"]);
   });
 
   test("the returned set is frozen, so a caller cannot push a tool into it", () => {

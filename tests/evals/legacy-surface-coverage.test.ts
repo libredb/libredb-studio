@@ -391,10 +391,6 @@ describe("what the removed panels did that these runs do not", () => {
       // type in `tests/unit/lib/agent/tools.test.ts`.
       "present_answer",
       "profile_table",
-      // The composite comparison. It reaches a database only THROUGH `inspect_plan`, which
-      // is why it carries no operationId of its own — the operation ids asserted below are
-      // still four, and this member adding a fifth would mean it had grown its own reach.
-      "propose_rewrite",
       "recommend_change",
       "run_read_query",
     ]);
