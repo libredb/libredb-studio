@@ -56,6 +56,7 @@ import {
   reusableSnapshot,
 } from "./context-snapshot";
 import { agentModelTurnTimeoutMs } from "./config";
+import { samplingFor } from "./models";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
 import { type AgentGoalShortfall, verifyRunGoal } from "./goal-verifier";
 import { type AgentInventoryNoun, inventoryNoun } from "./inventory-noun";
@@ -2106,27 +2107,36 @@ async function takeTurn(
     therefore undefined — so there is no interaction with tool calling, and the native path
     that every locked cell was measured on is not sent a single different byte.
   */
-  constrainTo?: z.ZodType,
+  constrainTo: z.ZodType | undefined,
+  /*
+    Which surface this turn belongs to, for `samplingFor` only.
+
+    Passed rather than read off the record because `takeTurn` is handed no record: it is the
+    one function here that talks to a model and nothing else, and widening it to the whole
+    run to reach one field would undo that.
+  */
+  workflow: AgentRunWorkflowType | undefined,
 ): Promise<ModelTurn> {
+  /*
+    Sampling is per MODEL now, not one number for all 25 of them.
+
+    It was unset for a long time, so every run inherited Ollama's 0.8, and pinning it to 0
+    won five cells: a cell locks only at 5/5 consecutive passes, so the bar is a variance
+    test as much as a capability one. Then the same change cost `qwen3:8b` its
+    `query-optimization` cell, 3/5 down to 0/5 — at 0.8 it opened with `inspect_plan` on 3 of
+    5 runs and answered all three; at 0 it opened with `inspect_schema` on 10 of 10 and lost
+    every one. Determinism pinned it to the losing branch rather than letting it wander into
+    the winning one.
+
+    Both measurements are true and no global number holds both, which is what
+    `models/index.ts` exists for. The default is unchanged and is what every locked cell was
+    measured on; a model appears there only when a measurement forced it to.
+  */
+  const sampling = samplingFor(agentModel.modelId, workflow);
   const stream = streamText({
     model: agentModel.model,
-    /*
-      Sampled deterministically, and it was never set until now.
-
-      Nothing in this loop stated a temperature, so every run measured so far inherited
-      Ollama's defaults — temperature 0.8, top_p 0.9. That is the wrong setting for what
-      this loop is judged on. A cell counts as working only at 5/5 consecutive passes,
-      which makes the bar a variance test as much as a capability one, and 26 of the cells
-      that do not lock sit at 4/5: one run away. A twelve-step tool chain sampled at 0.8 is
-      a large, avoidable source of exactly that flapping.
-
-      Choosing a tool and filling in its arguments is a structural task, not a creative
-      one — there is nothing here that a sample is supposed to explore. The prose a run
-      writes into its claims is not sampled away either: what temperature buys in prose is
-      variety, and a report wants the most likely sentence, not a surprising one.
-    */
-    temperature: 0,
-    topP: 1,
+    temperature: sampling.temperature,
+    topP: sampling.topP,
     // Constrained decoding, where a shape was asked for. `Output.object` is what makes the
     // SDK send `response_format`, and it composes here precisely because this branch offers
     // no tools.
@@ -2833,6 +2843,7 @@ export async function runInvestigation(
       // rather than deleted from `takeTurn`, because the seam is correct and the cost was in
       // the model, not the wiring.
       undefined,
+      record.workflowType,
     );
     text = turn.text;
     if (turn.aborted) return conclude("failed", turnBudgetMs < remainingMs ? "model-timeout" : "deadline-exceeded");
