@@ -545,6 +545,11 @@ describe("charts/libredb-studio install notes warn about an IPv4-pinned pod (#43
 describe("operator/helm-charts/libredb-studio mirrors the dual-stack surface (#432)", () => {
   for (const file of [
     "templates/service.yaml",
+    // configmap.yaml carries `HOSTNAME: {{ .Values.config.bindAddress | quote }}`,
+    // the single line that lets the image resolve its own bind address at all. A
+    // mirror still pinning the old hardcoded 0.0.0.0 would ship this feature dead
+    // to every operator install, with nothing else in the suite noticing.
+    "templates/configmap.yaml",
     "templates/NOTES.txt",
     "templates/_helpers.tpl",
     "values.yaml",

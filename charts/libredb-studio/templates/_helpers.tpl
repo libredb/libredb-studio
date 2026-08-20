@@ -284,10 +284,16 @@ config.bindAddress; both are read here, value included, because the value is
 now what matters - empty means "the image resolves it and prefers a verified
 dual-stack ::".
 
-Blind spot, same as agentPossible: a HOSTNAME delivered through extraEnvFrom is
-invisible here, so such a release is treated as unpinned and sees no warning.
-That is the safe direction now that the default is dual-stack - the warning
-exists for a deliberate IPv4 pin, which is always visible in these values.
+Blind spot, same as agentPossible: a HOSTNAME whose value the chart cannot read
+at template time is invisible here, so such a release is treated as unpinned and
+sees no warning. Two shapes reach that: extraEnvFrom, and an extraEnv entry using
+valueFrom (a secretKeyRef or configMapKeyRef - legal, since extraEnv items are
+free-form EnvVar objects). Neither is new; the key-presence check this replaced
+stayed silent on them too. It is left silent rather than warned on because the
+value may perfectly well be "::", and a warning aimed at a deliberate IPv4 pin
+should not fire at someone who supplied the right answer through a secret. An
+operator who does pin IPv4 that way keeps the diagnosis: the container prints the
+address it bound and why.
 */}}
 {{- define "libredb-studio.effectiveBindAddress" -}}
 {{- $bind := .Values.config.bindAddress | default "" | toString | trim }}

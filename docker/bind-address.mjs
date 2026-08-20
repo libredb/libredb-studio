@@ -61,6 +61,12 @@ function describeError(error) {
  * own hostname, so a value that differs from `os.hostname()` is the only signal
  * that a human set it. That is what lets `-e HOSTNAME=0.0.0.0` keep an existing
  * deployment on IPv4 while an untouched container is auto-resolved.
+ *
+ * The known cost, measured: naming the container after the address you also pin
+ * (`--hostname 0.0.0.0 -e HOSTNAME=0.0.0.0`) makes the two indistinguishable, so
+ * the pin is dropped and the address is auto-resolved instead. Use LIBREDB_BIND,
+ * which carries no second meaning. The choice is never hidden either way - the
+ * startup line names the address and the reason it was picked.
  */
 function explicitChoice(libredbBind, hostnameEnv, systemHostname) {
   const bind = trimmed(libredbBind);
