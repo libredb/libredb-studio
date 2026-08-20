@@ -2076,6 +2076,23 @@ async function takeTurn(
 ): Promise<ModelTurn> {
   const stream = streamText({
     model: agentModel.model,
+    /*
+      Sampled deterministically, and it was never set until now.
+
+      Nothing in this loop stated a temperature, so every run measured so far inherited
+      Ollama's defaults — temperature 0.8, top_p 0.9. That is the wrong setting for what
+      this loop is judged on. A cell counts as working only at 5/5 consecutive passes,
+      which makes the bar a variance test as much as a capability one, and 26 of the cells
+      that do not lock sit at 4/5: one run away. A twelve-step tool chain sampled at 0.8 is
+      a large, avoidable source of exactly that flapping.
+
+      Choosing a tool and filling in its arguments is a structural task, not a creative
+      one — there is nothing here that a sample is supposed to explore. The prose a run
+      writes into its claims is not sampled away either: what temperature buys in prose is
+      variety, and a report wants the most likely sentence, not a surprising one.
+    */
+    temperature: 0,
+    topP: 1,
     // Constrained decoding, where a shape was asked for. `Output.object` is what makes the
     // SDK send `response_format`, and it composes here precisely because this branch offers
     // no tools.

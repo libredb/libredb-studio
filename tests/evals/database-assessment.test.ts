@@ -478,6 +478,35 @@ describe("the verdict is previewed before the report lands, not after the run di
     expect(drive.verdict.unmet).toEqual(["no-table-profile"]);
   });
 
+  test("every turn is sampled deterministically, because the bar is consistency", async () => {
+    /*
+      The agent loop never set a sampling temperature, so every run so far inherited Ollama's
+      defaults: temperature 0.8, top_p 0.9.
+
+      That is the wrong setting for what this harness measures. A cell counts as working only
+      at 5/5 consecutive passes, which makes it a variance test as much as a capability one,
+      and 26 of the cells that do not lock sit at 4/5 — one run away. A twelve-step tool chain
+      sampled at 0.8 is a large avoidable source of exactly the flapping that keeps them
+      there. Choosing a tool and filling its arguments is a structural task, not a creative
+      one: there is no upside to sampling it.
+
+      Asserted on the request body rather than on an outcome, because that is where it either
+      is or is not — a default this loop never states is a default nobody notices.
+    */
+    const seen: unknown[] = [];
+    const run = await open("sqlite");
+
+    await run.drive([
+      (turn) => {
+        seen.push({ temperature: turn.body.temperature, topP: turn.body.top_p });
+        return answersProse("looking at the schema")(turn);
+      },
+      answersProse("still looking"),
+    ]);
+
+    expect(seen[0]).toEqual({ temperature: 0, topP: 1 });
+  });
+
   test("a report that already meets its bar is not delayed by a turn", async () => {
     const run = await open("sqlite");
 
