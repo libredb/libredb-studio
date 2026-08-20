@@ -1426,14 +1426,14 @@ deliverable (`pin.strategy: local_file` for the version-pinned `fly.toml`; `none
   workflows that exist on the chosen ref) and the GHCR package is public, which
   community catalog CI requires. From 0.9.60 on the tag ref carries the
   operator and the normal tag-pinned dispatch chain applies. What is still open
-  is upstream: the operatorhub.io bundle PR
-  ([k8s-operatorhub/community-operators#8794](https://github.com/k8s-operatorhub/community-operators/pull/8794))
-  and the OpenShift catalog PR
+  upstream is the operatorhub.io bundle PR
+  ([k8s-operatorhub/community-operators#8794](https://github.com/k8s-operatorhub/community-operators/pull/8794)).
+  The OpenShift catalog PR
   ([community-operators-prod#10581](https://github.com/redhat-openshift-ecosystem/community-operators-prod/pull/10581),
-  the second half of the FBC release whose bundle merged as #10497) both wait
-  on maintainer review. Flip `operatorhub-community` in
-  `distribution/channels.yaml` from `pending` to `live` once the listings are
-  visible, and remember `release-config.yaml` for every later release (see
+  the second half of the FBC release whose bundle merged as #10497) has since
+  merged, so the OpenShift console listing is live. Flip `operatorhub-community` in
+  `distribution/channels.yaml` from `pending` to `live` once the operatorhub.io
+  listing is visible too, and remember `release-config.yaml` for every later release (see
   [An FBC release is two upstream PRs](#an-fbc-release-is-two-upstream-prs)).
 - **Snap Store listing screenshots**: the description and icon ship with the snap
   (`snap/snapcraft.yaml`, `public/logo.svg`), but screenshots are a manual upload in the
