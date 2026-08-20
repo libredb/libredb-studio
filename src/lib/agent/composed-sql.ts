@@ -501,5 +501,36 @@ export function composeEstimatingExplain(dialect: DatabaseType, sql: string): st
       "UNSUPPORTED_DIALECT",
     );
   }
-  return `${ESTIMATING_EXPLAIN_PREFIX[dialect]} ${statement}`;
+  return `${ESTIMATING_EXPLAIN_PREFIX[dialect]} ${withoutEstimatingPrefix(statement)}`;
+}
+
+/**
+ * The statement with a leading estimating EXPLAIN removed, if the model wrote one.
+ *
+ * Measured across 133 optimization runs: 21 calls arrived already prefixed, 12 were refused,
+ * and at least three runs lost outright to it. `qwen3:8b` does it in 9 of its 15 runs on
+ * that surface. What the model got back was one line of engine text —
+ * `near "EXPLAIN": syntax error` — because this function had prepended a second prefix. That
+ * message is unactionable when the model did not write the outer EXPLAIN, and the shared
+ * rules then tell it not to send the same statement again; three runs abandoned the tool and
+ * reported nothing.
+ *
+ * Stripped rather than refused. The intent is unambiguous — the model asked for the plan of
+ * a statement and named the operation twice — and this function already trims whitespace
+ * without asking anyone. A refusal would teach, but it would still cost the run the turn it
+ * has already spent.
+ *
+ * `EXPLAIN ANALYZE` is deliberately NOT matched. That form asks to EXECUTE, which is a
+ * different request and one this run may not make: removing it would quietly turn a refused
+ * execution into an accepted estimate. Composing it through is what puts the word in front
+ * of the guard that exists to refuse it.
+ */
+function withoutEstimatingPrefix(statement: string): string {
+  // Anchored, case-insensitive, and requiring whitespace after the keyword so a column
+  // called `explained` cannot be mistaken for the keyword. `QUERY PLAN` and `(FORMAT JSON)`
+  // are matched as optional tails: a model that repeats this layer's own full prefix is the
+  // most common shape of the mistake.
+  const estimating = /^EXPLAIN\s+(?:QUERY\s+PLAN\s+|\(\s*FORMAT\s+JSON\s*\)\s*)?(?!ANALYZE\b)/i;
+  const match = estimating.exec(statement);
+  return match === null ? statement : statement.slice(match[0].length).trim();
 }

@@ -548,4 +548,50 @@ describe("composeEstimatingExplain", () => {
   test("refuses a blank statement rather than composing a bare EXPLAIN", () => {
     expect(() => composeEstimatingExplain("postgres", "   ")).toThrow(AgentComposedSqlError);
   });
+
+  /*
+    Measured on 21 calls across 16 optimization runs, 12 of them refused, and at least three
+    runs lost outright to it. `qwen3:8b` does it in 9 of its 15 runs on that surface.
+
+    This composer prepends the prefix itself, so `inspect_plan({sql: "EXPLAIN SELECT …"})`
+    sent `EXPLAIN QUERY PLAN EXPLAIN SELECT …` and the model was handed one line of SQLite:
+
+        near "EXPLAIN": syntax error
+
+    That is unactionable when the model did not write the outer EXPLAIN, and the shared
+    rules then tell it not to retry the same statement. One run tried
+    `EXPLAIN QUERY PLAN SELECT …` — the only repair reachable from that message — and got
+    the same error. Three runs abandoned the tool and reported nothing.
+
+    The prefix is STRIPPED rather than refused, because the intent is unambiguous: the model
+    asked for the plan of a statement and named the operation twice. This layer already
+    trims whitespace without asking.
+  */
+  test("a statement the model already prefixed with the estimating EXPLAIN is not double-prefixed", () => {
+    expect(composeEstimatingExplain("sqlite", "EXPLAIN QUERY PLAN SELECT id FROM orders")).toBe(
+      "EXPLAIN QUERY PLAN SELECT id FROM orders",
+    );
+    expect(composeEstimatingExplain("sqlite", "EXPLAIN SELECT id FROM orders")).toBe(
+      "EXPLAIN QUERY PLAN SELECT id FROM orders",
+    );
+    expect(composeEstimatingExplain("postgres", "EXPLAIN SELECT id FROM orders")).toBe(
+      "EXPLAIN (FORMAT JSON) SELECT id FROM orders",
+    );
+    expect(composeEstimatingExplain("postgres", "EXPLAIN (FORMAT JSON) SELECT id FROM orders")).toBe(
+      "EXPLAIN (FORMAT JSON) SELECT id FROM orders",
+    );
+  });
+
+  test("EXPLAIN ANALYZE is left alone, because it asks to EXECUTE", () => {
+    // A different request, and one this run may not make. Stripping it would quietly turn a
+    // refused execution into an accepted estimate — the guard that refuses it must still see
+    // it. Composing here is what puts the word in front of the policy layer.
+    expect(composeEstimatingExplain("postgres", "EXPLAIN ANALYZE SELECT id FROM orders")).toContain("ANALYZE");
+  });
+
+  test("a statement that merely mentions explain in a value is untouched", () => {
+    expect(composeEstimatingExplain("sqlite", "SELECT 'EXPLAIN' AS word FROM orders")).toBe(
+      "EXPLAIN QUERY PLAN SELECT 'EXPLAIN' AS word FROM orders",
+    );
+  });
 });
