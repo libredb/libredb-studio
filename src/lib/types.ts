@@ -17,7 +17,14 @@ export type DatabaseType =
   // path is product-specific and the wrong one never reaches a SQL engine - and
   // because their grammars really do disagree (OFFSET, string escapes, `#`, `[…]`).
   | "elasticsearch"
-  | "opensearch";
+  | "opensearch"
+  // Apache Trino (issue #424 Phase 2). A QUERY ENGINE rather than a store: what the
+  // connection's `database` field pins is a Trino CATALOG (`tpch`, `hive`, `iceberg`),
+  // the way a PostgreSQL connection pins a database, and the schemas inside it are the
+  // schema level. PrestoDB is deliberately NOT this id - the transport builds its
+  // header names from a dialect descriptor's prefix, so that fork is a descriptor away
+  // rather than a rewrite.
+  | "trino";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 

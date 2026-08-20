@@ -42,7 +42,11 @@ export function quoteIdentifier(name: string, dialect: DatabaseType | undefined)
       // The SQL standard form, and what the remaining dialects use: PostgreSQL,
       // SQLite, Oracle, ClickHouse, Druid, Elasticsearch (measured: `FROM
       // "probe_orders"` and `SELECT "note.keyword"` both answer 200, and a backtick is
-      // refused outright), and the document/key-value providers
+      // refused outright), Trino (measured on 476: `SELECT "nationkey" FROM
+      // tpch.sf1.nation LIMIT 1` returns the column, `SELECT 1 AS "a""b"` names it
+      // `a"b`, and a backtick is refused in the engine's own words - "backquoted
+      // identifiers are not supported; use double quotes to quote identifiers"),
+      // and the document/key-value providers
       // whose generators fall back to it. An undefined dialect lands here too —
       // a generator with no connection to name one can claim only the standard.
       return `"${name.replace(/"/g, '""')}"`;

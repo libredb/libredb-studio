@@ -31,6 +31,12 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // the backslash, which is only possible if the `\` did not escape the quote that
   // closed the literal; and `SELECT 'a\'` returns `a\`.
   elasticsearch: "standard",
+  // Measured on Trino 476 (2026-08-20), both directions: `SELECT 'O''Brien' AS a`
+  // answers `O'Brien`, so doubling is the escape; `SELECT 'a\\b' AS a` answers the two
+  // characters `a\\b`, so a backslash is DATA and doubling it would add a second one to
+  // the value. Trino spells its backslash escapes in the separate `U&'fo\\+0000F6'`
+  // form, exactly as Druid does.
+  trino: "standard",
   // These three declare `queryLanguage: "json"`, so no statement is ever built for
   // them to read. What a generator emits for such a connection is portable SQL
   // meant to run elsewhere, and the standard form is the only thing it can claim.
@@ -102,6 +108,12 @@ export function quoteLiteral(value: string, dialect: DatabaseType | undefined): 
  * and MongoDB, Redis and the embedded engine declare `queryLanguage: "json"`, so
  * no SQL statement binds anything for them. It is the signal to quote the value
  * with `quoteLiteral` instead — never to emit a placeholder nothing will bind.
+ *
+ * `trino` falls to `null` for that same sharper reason. Trino really does bind, through
+ * `PREPARE`/`EXECUTE` plus an `X-Trino-Prepared-Statement` header, but the provider's
+ * transport seam carries the statement alone, so `TrinoProvider.query()` REFUSES a
+ * non-empty params array outright. Emitting `?` here would build a statement whose
+ * placeholder the provider then declines to fill.
  *
  * `elasticsearch` and `opensearch` fall to that `null` too, and for a sharper reason
  * than "no form exists": both endpoints really do bind `?` (measured - ES takes

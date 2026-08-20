@@ -79,6 +79,7 @@ describe("SeedConnectionSchema", () => {
       "couchbase",
       "clickhouse",
       "druid",
+      "trino",
     ];
     for (const type of allTypes) {
       const result = SeedConnectionSchema.safeParse({ ...validConn, type });

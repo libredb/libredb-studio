@@ -26,6 +26,7 @@ describe("fenceTagEngine", () => {
       "couchbase",
       "clickhouse",
       "druid",
+      "trino",
     ] satisfies DatabaseType[];
 
     for (const engine of engines) expect(fenceTagEngine(engine)).toBe(engine);

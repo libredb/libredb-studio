@@ -50,6 +50,12 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // is what decides whether a plan's deliverable was written for this connection.
   elasticsearch: true,
   opensearch: true,
+  // A ```trino block holds a statement this editor can run: the fenced text goes
+  // straight to `POST /v1/statement`. No alias is registered below - `presto` is the
+  // tempting one and it is exactly the wrong one, because PrestoDB is a separate
+  // engine this product does not speak, and `fenceTagEngine` is what decides whether
+  // a plan's deliverable was written for THIS connection.
+  trino: true,
 });
 
 /**

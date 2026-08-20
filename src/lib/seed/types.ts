@@ -36,6 +36,7 @@ const SeedDatabaseType = z.enum([
   "druid",
   "elasticsearch",
   "opensearch",
+  "trino",
 ]);
 
 export const SeedDefaultsSchema = z.object({

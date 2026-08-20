@@ -575,6 +575,7 @@ describe("useConnectionForm", () => {
     // product can otherwise open (issue #424 Phase 1).
     elasticsearch: true,
     opensearch: true,
+    trino: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

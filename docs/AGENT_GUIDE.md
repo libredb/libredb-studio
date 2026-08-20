@@ -186,7 +186,7 @@ having **no statistics**, never as empty. On SQLite the statistics exist only af
 **Every engine, read one of two ways.** On **PostgreSQL and SQLite** the server composes catalog
 statements and reads them through the same audited, read-only path an Agent run uses. On every other
 connection — MySQL, Oracle, SQL Server, MongoDB, Redis, ClickHouse, Couchbase, Druid,
-Elasticsearch, OpenSearch, LibreDB — it
+Elasticsearch, OpenSearch, Trino, LibreDB — it
 asks that connection's own provider to describe its schema, which is the reading the sidebar already
 performs when it lists your tables, and composes no statement at all. Grounding is no longer decided
 by the engine, and that changed in #414; what decides it now is whether the reading succeeds. A run
@@ -199,7 +199,7 @@ workflow including **Operate**.
 now two different sentences, and the difference is the whole of what changed:
 
 - **Grounding — every engine.** What a Plan run is TOLD about your database. It needs no read-only
-  statement path, because the provider reading sends no statement, so it reaches all eleven engines.
+  statement path, because the provider reading sends no statement, so it reaches all fourteen engines.
 - **Agent mode — PostgreSQL and SQLite.** What a run may DO by itself. Its tools execute statements
   and need a database-native read-only path, which only those two providers implement, so a
   schema-workflow Agent run on any other engine still ends *"The agent cannot run on this database
@@ -794,7 +794,7 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   (`src/lib/db/factory.ts:473`), which the runtime reports as `engine-unsupported`
   (`src/lib/agent/runtime.ts:242`) — the rail says so in as many words
   (`src/components/agent/timeline.ts:341`). So on MySQL, Oracle, SQL Server, MongoDB, Redis,
-  ClickHouse, Druid and Couchbase an Agent-mode run cannot read anything. It also covers the bundled
+  ClickHouse, Druid, Trino and Couchbase an Agent-mode run cannot read anything. It also covers the bundled
   **LibreDB sample** connection, whose provider implements no `queryReadOnly`
   (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded
   connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode still opens on

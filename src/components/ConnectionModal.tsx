@@ -138,7 +138,13 @@ export function ConnectionModal({
   // Couchbase pins one bucket per connection (issue #262, decision 4), so the shared
   // `database` field holds a bucket name and the form must say so.
   const isCouchbase = type === "couchbase";
-  const databaseFieldLabel = isCouchbase ? "Bucket" : "Database";
+  // Trino pins one CATALOG the same way (issue #424 Phase 2). "Database" would be the
+  // wrong word twice over: a Trino catalog is a whole external system (`hive`,
+  // `iceberg`, `tpch`), and the field is the one thing a user cannot guess - a
+  // coordinator with no catalog selected resolves no table at all.
+  const isTrino = type === "trino";
+  const databaseFieldLabel = isCouchbase ? "Bucket" : isTrino ? "Catalog" : "Database";
+  const databaseFieldPlaceholder = isTrino ? "tpch" : "db";
   const connectionUriPlaceholder = isCouchbase
     ? "couchbase://localhost:8091/travel-sample  or  couchbases://cb.<id>.cloud.couchbase.com/..."
     : "mongodb://localhost:27017/mydb  or  mongodb+srv://...";
@@ -438,6 +444,21 @@ export function ConnectionModal({
                         autoComplete="new-password"
                         className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs"
                       />
+                      {/*
+                        Measured on Trino 476 with authentication DISABLED: a request
+                        carrying `Authorization: Basic` over plain HTTP is answered 401,
+                        "Password not allowed for insecure authentication". So a
+                        password is a TLS-only credential here, and typing one into an
+                        http:// connection BREAKS a connection that would otherwise
+                        work. The provider refuses the combination outright; this says
+                        so before the user reaches that error.
+                      */}
+                      {isTrino && (
+                        <p className="text-xs text-fg-muted">
+                          Trino refuses a password over plain HTTP. Enable TLS below, or leave this empty to connect as
+                          an unauthenticated user.
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -452,9 +473,14 @@ export function ConnectionModal({
                       id="database"
                       value={database}
                       onChange={(e) => setDatabase(e.target.value)}
-                      placeholder="db"
+                      placeholder={databaseFieldPlaceholder}
                       className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
                     />
+                    {isTrino && (
+                      <p className="text-xs text-fg-muted">
+                        The Trino catalog to open, such as tpch or hive. Its schemas are the level below.
+                      </p>
+                    )}
                   </div>
                 </>
               )}

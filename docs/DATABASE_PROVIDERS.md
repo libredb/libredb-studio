@@ -39,11 +39,16 @@ src/lib/db/
 │   │   │   ├── transport.ts    #   DruidTransport seam + neutral result types + error categories
 │   │   │   ├── http-transport.ts # The one HTTP implementation (fetch)
 │   │   │   └── introspect.ts   #   INFORMATION_SCHEMA datasources + sys.servers/segments/tasks
-│   │   └── search/             # Elasticsearch + OpenSearch Strategy (SQL over HTTP, no driver)
-│   │       ├── index.ts        #   ElasticsearchProvider, OpenSearchProvider (two ids, one module)
-│   │       ├── transport.ts    #   SearchTransport seam + neutral result types + error categories
-│   │       ├── http-transport.ts # The one HTTP implementation (fetch); the dialect table lives here
-│   │       └── introspect.ts   #   _cat/indices + _mapping -> tables and columns
+│   │   ├── search/             # Elasticsearch + OpenSearch Strategy (SQL over HTTP, no driver)
+│   │   │   ├── index.ts        #   ElasticsearchProvider, OpenSearchProvider (two ids, one module)
+│   │   │   ├── transport.ts    #   SearchTransport seam + neutral result types + error categories
+│   │   │   ├── http-transport.ts # The one HTTP implementation (fetch); the dialect table lives here
+│   │   │   └── introspect.ts   #   _cat/indices + _mapping -> tables and columns
+│   │   └── trino/              # Apache Trino Strategy (SQL over the client protocol, no driver)
+│   │       ├── index.ts        #   TrinoProvider
+│   │       ├── transport.ts    #   TrinoTransport seam + error categories + the dialect descriptor
+│   │       ├── http-transport.ts # The one HTTP implementation (fetch); the nextUri page loop
+│   │       └── introspect.ts   #   information_schema tree + system.runtime/metadata + jmx monitoring
 │   ├── document/               # Document Database Providers
 │   │   ├── mongodb.ts          # MongoDB Strategy
 │   │   └── couchbase/          # Couchbase Strategy (SQL++ over REST, no driver)
@@ -74,7 +79,8 @@ BaseDatabaseProvider (abstract)
 │   ├── ClickHouseProvider                  │
 │   ├── DruidProvider                       │
 │   ├── ElasticsearchProvider               │
-│   └── OpenSearchProvider                  │
+│   ├── OpenSearchProvider                  │
+│   └── TrinoProvider                       │
 ├── MongoDBProvider ────────────────────────┤ Document Database
 ├── CouchbaseProvider ──────────────────────┤ Document Database (SQL++ over REST)
 ├── RedisProvider ──────────────────────────┤ Key-Value Store
@@ -85,7 +91,7 @@ BaseDatabaseProvider (abstract)
 
 Couchbase is the one provider that speaks a SQL dialect (SQL++) without extending `SQLBaseProvider`: SQL++ quotes identifiers with doubled backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting and expresses its SQL-ness through `queryLanguage: 'sql'` in the capabilities instead. See [providers/couchbase.md](./providers/couchbase.md).
 
-Being driver-free and reached over HTTP is not what decides the base class. `ClickHouseProvider` and `DruidProvider` add no driver either, and both extend `SQLBaseProvider`: double-quoted identifiers and `LIMIT n OFFSET m` are correct in both dialects, so identifier escaping, the `LIMIT` builder and the placeholder style are inherited rather than rewritten. Druid overrides only `prepareQuery()`, and only because it rejects `OFFSET n LIMIT m` — a statement that already ends in an `OFFSET` is therefore sent unlimited instead of being rewritten into a syntax error. See [providers/clickhouse.md](./providers/clickhouse.md) and [providers/druid.md](./providers/druid.md).
+Being driver-free and reached over HTTP is not what decides the base class. `ClickHouseProvider`, `DruidProvider` and `TrinoProvider` add no driver either, and all three extend `SQLBaseProvider`: double-quoted identifiers are correct in each dialect, so identifier escaping and the placeholder style are inherited rather than rewritten. Two of them override only `prepareQuery()`, and for opposite reasons. Druid rejects `OFFSET n LIMIT m` — a statement that already ends in an `OFFSET` is therefore sent unlimited instead of being rewritten into a syntax error. Trino rejects the other order: its grammar is `[ OFFSET count ] [ LIMIT count ]`, so measured on 476 `... LIMIT 3 OFFSET 1` answers `mismatched input 'OFFSET'` while the transposed form returns the rows, and the override transposes what the shared limiter emitted rather than rewriting the statement. See [providers/clickhouse.md](./providers/clickhouse.md), [providers/druid.md](./providers/druid.md) and [providers/trino.md](./providers/trino.md).
 
 The search providers are the same pattern with one twist: **two type-ids, one module.** `ElasticsearchProvider` and `OpenSearchProvider` are thin subclasses of an internal base in `providers/sql/search/`, because measured against live servers the two products differ only in wire detail (endpoint path, envelope keys, fault names — one row each in the transport's dialect table) and in exactly one thing above the wire. That one thing is `OFFSET`: `LIMIT 2 OFFSET 1` is HTTP 200 on OpenSearch 3.8.0 and HTTP 400 `parsing_exception` on Elasticsearch 9.1.4, so `prepareQuery()` is overridden to **refuse** the second page on Elasticsearch rather than send a clause the grammar has no rule for, or silently drop it and hand the editor page one to append as if it were page two. The difference is declared as a per-product trait, never asked as `this.dialect === …` — the same rule `CLAUDE.md` states for `=== 'mongodb'`. See [providers/elasticsearch.md](./providers/elasticsearch.md) and [providers/opensearch.md](./providers/opensearch.md).
 
@@ -128,7 +134,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Thirteen type-ids are supported by twelve provider modules — `elasticsearch` and `opensearch` share
+Fourteen type-ids are supported by thirteen provider modules — `elasticsearch` and `opensearch` share
 one, `providers/sql/search/`. The count is derived from the exhaustive `SHIPPED` record in
 [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice. For
 the per-provider reference (driver, pooling, query format,
@@ -148,6 +154,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | Apache Druid | `druid` | SQL (read-only) | [providers/druid.md](./providers/druid.md) |
 | Elasticsearch | `elasticsearch` | Search (SQL, read-only) | [providers/elasticsearch.md](./providers/elasticsearch.md) |
 | OpenSearch | `opensearch` | Search (SQL, read-only) | [providers/opensearch.md](./providers/opensearch.md) |
+| Apache Trino | `trino` | SQL (federated query engine) | [providers/trino.md](./providers/trino.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface
@@ -321,7 +328,7 @@ Provider-specific behaviour — pooling model, SSL/encryption, pagination, monit
 maintenance operations, and known limitations — is documented per provider under
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
 Oracle, SQL Server, SQLite, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch,
-OpenSearch, or LibreDB.
+OpenSearch, Apache Trino, or LibreDB.
 
 Not every provider has every feature, and the docs record the absences rather than glossing over
 them. Druid is the sharpest case: its SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, no
@@ -339,6 +346,17 @@ the cache counters live in stats APIs outside the transport seam. `getPerformanc
 `{}` rather than zeroes is load-bearing: `DEFAULT_THRESHOLDS` scores `cacheHitRatio` with
 `direction: "below"`, so a "neutral" 0 would paint a critical cache fault on every healthy cluster,
 while an absent ratio reads as healthy.
+
+Trino states its absences from a different direction: it is a query **engine**, so what it cannot
+report is not missing but owned by somebody else. It stores nothing, so `databaseSize` is the string
+`"N/A"` and the storage panel lists the *catalogs* with their connectors instead of bytes. Its
+`information_schema` holds eight views and neither `table_constraints` nor `key_column_usage`
+(measured), so no connector can declare a key through it — `declaresForeignKeys` and
+`supportsInlineRowEdit` are both `false`, and `getIndexStats()` returns `[]` without sending a
+statement at all. `getPerformanceMetrics()` reports `queriesPerSecond` and omits every other field
+for the same reason the search providers omit theirs: there are no transactions, no buffer pool, no
+locks and no checkpoints to measure. The one operation it can genuinely perform is `kill`, verified
+end to end. See [providers/trino.md](./providers/trino.md).
 
 ## Security Considerations
 

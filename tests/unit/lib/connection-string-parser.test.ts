@@ -416,6 +416,35 @@ describe("parseConnectionString", () => {
     });
   });
 
+  // ── Trino: deliberately no scheme (issue #424 Phase 2) ──────────────────
+
+  describe("Trino has no connection-string form", () => {
+    // Trino DOES have a canonical URL - `jdbc:trino://host:port/catalog/schema` - and
+    // that is exactly why nothing was added here: it is a JDBC URL, not a URI this
+    // parser's `new URL()` path can read, and stripping the `jdbc:` prefix to make it
+    // one would invent a scheme no Trino tool emits. The provider's capabilities say
+    // supportsConnectionString: false and its UI config says
+    // showConnectionStringToggle: false, so nothing in the product produces one either.
+    test("does not invent a trino:// scheme", () => {
+      expect(parseConnectionString("trino://localhost:8080/tpch")).toBeNull();
+      expect(detectConnectionStringType("trino://localhost:8080/tpch")).toBeNull();
+    });
+
+    test("does not read Trino's own JDBC URL", () => {
+      expect(parseConnectionString("jdbc:trino://localhost:8080/tpch/sf1")).toBeNull();
+      expect(detectConnectionStringType("jdbc:trino://localhost:8080/tpch/sf1")).toBeNull();
+    });
+
+    test("http:// and https:// stay ClickHouse, even on the coordinator port", () => {
+      // Same consequence Druid records: the generic HTTP schemes were claimed by
+      // ClickHouse first (issue #264), and two engines cannot own one scheme. A Trino
+      // connection is made through the form fields, which is why its form has no paste
+      // toggle at all.
+      expect(detectConnectionStringType("http://localhost:8080")).toBe("clickhouse");
+      expect(parseConnectionString("http://localhost:8080")!.type).toBe("clickhouse");
+    });
+  });
+
   // ── ADO.NET format ──────────────────────────────────────────────────────
 
   describe("ADO.NET format", () => {

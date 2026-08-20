@@ -150,18 +150,25 @@ id, so no reader can grow a dialect test of its own.
 
 | Character | Established reading | Dialects |
 |-----------|--------------------|----------|
-| `#` | opens a line comment | MySQL, MariaDB, ClickHouse (which also has `#!`) |
-| `#` | ordinary code — a jsonb/geometric operator, an identifier character, a temp-table name, a bind-variable prefix | PostgreSQL, Oracle, SQL Server, SQLite |
+| `#` | opens a line comment | MySQL, MariaDB, ClickHouse (which also has `#!`), OpenSearch |
+| `#` | ordinary code — a jsonb/geometric operator, an identifier character, a temp-table name, a bind-variable prefix, or a character the parser simply refuses | PostgreSQL, Oracle, SQL Server, SQLite, Elasticsearch, Trino |
 | `q'…'` | a string literal (alternate quoting): the delimiter after the tag opens the body and its partner followed by `'` closes it, so the body carries apostrophes unescaped — `[ ] { } ( ) < >` pair up, any other character closes with itself, either letter case of the tag, and `nq'…'` is the same form for the national character set | Oracle only |
 | `q'…'` | not a form at all — a name followed by an ordinary string, which is what those characters are there | everything else, including the default |
-| `[…]` | a quoted **name**: everything between the brackets is the identifier (`SELECT [a--b] FROM t` selects a column called `a--b`) and the run does not nest. The doubled `]` this reading honours is SQL Server's escape — SQLite stops at the first `]` and has none, so `[a]]b]` reads as one name where SQLite reads `[a]` and then junk, which it rejects either way | SQL Server, SQLite |
-| `[…]` | an **array literal or subscript**: it nests (`[[1,2],[3,4]]`), nothing inside it is escaped, and a literal inside it is a literal (`m['a]b']`) | ClickHouse, PostgreSQL |
+| `[…]` | a quoted **name**: everything between the brackets is the identifier (`SELECT [a--b] FROM t` selects a column called `a--b`) and the run does not nest. The doubled `]` this reading honours is SQL Server's escape — SQLite stops at the first `]` and has none, so `[a]]b]` reads as one name where SQLite reads `[a]` and then junk, which it rejects either way | SQL Server, SQLite, OpenSearch |
+| `[…]` | an **array literal or subscript**: it nests (`[[1,2],[3,4]]`), nothing inside it is escaped, and a literal inside it is a literal (`m['a]b']`) | ClickHouse, PostgreSQL, Trino |
 | `/* … /* … */ … */` | one **nesting** comment: a `/*` inside a comment opens another and the run continues until the depth returns to zero, so a region that already contains comments can be commented out. A run short of a closer is undeterminable rather than closed early | PostgreSQL, SQL Server, ClickHouse |
 | `/* … /* … */ … */` | a **flat** comment: the first `*/` ends it, and everything after that is the statement's own code | MySQL, MariaDB, SQLite, Oracle, and the default |
 
 Each row was established from an authoritative source: the engine's own documentation, or its
 driver's own tokenizer under `node_modules` (node-oracledb accepts `#` inside an identifier; the
 SQLite amalgamation classifies `#` as a bind-variable prefix and `[` as a "`[...]` style quoted id").
+For the engines that ARE an HTTP endpoint — Elasticsearch, OpenSearch and Trino — the grammar was
+asked directly instead: each fact is a statement the live server answered, not an inference. Trino's
+four were probed on 2026-08-20 against 476, and two of them are the opposite of what a neighbouring
+dialect would have suggested: `SELECT 1 AS a # trailing` is `line 1:15: mismatched input '#'`, so `#`
+hides nothing and is `code`; and `SELECT [customer] FROM tpch.sf1.nation` fails with "Column
+'customer' cannot be resolved" while `SELECT ARRAY[ARRAY[1,2],ARRAY[3,4]][1][2]` answers `2`, so the
+brackets are a nesting subscript and never a name quote.
 A rule that could **not** be established is not guessed from a neighbouring dialect — the dialect stays
 at the compatibility default below, and it is listed here rather than left implicit. The default is per
 **fact**, not per dialect: a dialect whose `#` rule is known can still be undecided about its brackets.
@@ -176,8 +183,8 @@ gate's keyword tests still run on that text.
 |------|-----------------------------------|--------------------------------------------------|
 | `#` | Couchbase, Druid, the embedded LibreDB provider | — |
 | `q'…'` | nobody | everything except Oracle: the form is Oracle's alone, so "not a literal" is the correct reading for the rest |
-| `[…]` | MySQL, Oracle, Couchbase, Druid, LibreDB | SQL Server and SQLite, whose rule the default already applied |
-| `/* … */` nesting | Couchbase, Druid, LibreDB | MySQL, SQLite and Oracle, whose flat rule the default already applied — each established from its own source rather than assumed to agree |
+| `[…]` | MySQL, Oracle, Elasticsearch, Couchbase, Druid, LibreDB | SQL Server, SQLite and OpenSearch, whose rule the default already applied |
+| `/* … */` nesting | Couchbase, Druid, LibreDB | MySQL, SQLite, Oracle, Elasticsearch, OpenSearch and Trino, whose flat rule the default already applied — each established from its own source rather than assumed to agree |
 
 The distinction is visible in `src/lib/sql/grammar.ts` too: an established fact is written out in that
 dialect's row, an undecided one is written `DEFAULT_SQL_GRAMMAR.<fact>`.

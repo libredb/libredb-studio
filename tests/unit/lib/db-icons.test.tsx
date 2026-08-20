@@ -15,6 +15,7 @@ import {
   DruidIcon,
   ElasticsearchIcon,
   OpenSearchIcon,
+  TrinoIcon,
 } from "@/components/icons/db-icons";
 
 describe("db-icons", () => {
@@ -34,6 +35,7 @@ describe("db-icons", () => {
     // icon is only covered because its name was added here (#424 Phase 1).
     { name: "ElasticsearchIcon", Component: ElasticsearchIcon },
     { name: "OpenSearchIcon", Component: OpenSearchIcon },
+    { name: "TrinoIcon", Component: TrinoIcon },
   ];
 
   for (const { name, Component } of icons) {

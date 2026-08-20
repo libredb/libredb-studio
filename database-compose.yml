@@ -447,6 +447,44 @@ services:
     # provider hides both; the second one carries no leading dot, so the dot convention alone
     # does not catch it.
 
+  # ---------------------------------------------------------------------------------------
+  # Apache Trino (issue #424, Phase 2). One container is the whole cluster: the coordinator
+  # runs the worker in-process by default, which is enough to answer every statement the
+  # provider sends. Nothing else is needed to exercise it.
+  # ---------------------------------------------------------------------------------------
+  trino:
+    # Pinned to the exact build the provider was live-verified against, the same rule the
+    # clickhouse and elasticsearch services follow: the fault names, the page count of an
+    # exchange, the `SHOW STATS` shape and the 401 body recorded in docs/providers/trino.md
+    # are claims about 476, not about Trino in general. `version()` here returns the bare
+    # string "476", so the pin and the engine's own answer are the same token.
+    image: trinodb/trino:476
+    container_name: libredb-trino
+    restart: unless-stopped
+    ports:
+      # 8080 is the client protocol AND the web UI - one port, two surfaces, which is why
+      # the provider's default port is a generic number and the dialect is declared rather
+      # than inferred from it. There is no second protocol port to publish: Trino has no
+      # native wire beyond this HTTP one.
+      - "8080:8080"
+    healthcheck:
+      # The image's own script, not a bare `curl /v1/info`. Measured on a cold start: the
+      # statement endpoint answers at ~3.0s, `/v1/info` starts answering 200 at ~5.9s while
+      # still reporting `"starting": true`, and only at ~8.8s does it report false. A plain
+      # `curl -sf http://localhost:8080/v1/info` would therefore call the service healthy
+      # three seconds before it can plan a query. This script reads the port out of
+      # /etc/trino/config.properties and greps for `"starting": false`, which is the
+      # condition that actually matters.
+      test: ["CMD", "/usr/lib/trino/bin/health-check"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    # No seed sidecar, and no `depends_on`: the image ships the `tpch` catalog configured, so
+    # `tpch.tiny.nation` (25 rows) and `tpch.tiny.lineitem` (60175 rows) are queryable the
+    # moment the healthcheck passes - generated on read, never stored. `tpcds`, `memory`,
+    # `system` and `jmx` are configured too. Point a connection's Database field at `tpch`;
+    # `jmx` is what makes the overview's uptime readable, so leave that catalog in place.
+
   # ==========================================================================
   # Wire-compatible engines (issue #424, Phase 0)
   #

@@ -377,9 +377,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       setTestResult({
         success: false,
         // One scheme per branch in connection-string-parser.ts, and nothing else.
-        // Elasticsearch and OpenSearch are absent on purpose: they are addressed by
-        // host and port like Druid, and `http(s)://` already resolves to ClickHouse
-        // there, so listing them would promise a paste this form cannot honour.
+        // Elasticsearch, OpenSearch and Trino are absent on purpose: all three are
+        // addressed by host and port like Druid, and `http(s)://` already resolves to
+        // ClickHouse there, so listing them would promise a paste this form cannot
+        // honour. Trino's own `jdbc:trino://…` is a JDBC URL the parser does not read.
         message:
           "Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, couchbase://, clickhouse://, http(s)://, redis://, oracle://, mssql://",
       });
@@ -434,6 +435,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "druid",
     "elasticsearch",
     "opensearch",
+    "trino",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

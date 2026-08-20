@@ -1,8 +1,8 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting twelve engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch and OpenSearch
+description: Web-based SQL IDE for cloud-native teams supporting thirteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch and Apache Trino
 type: application
-version: 0.1.39
+version: 0.1.40
 appVersion: "0.12.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -25,6 +25,7 @@ keywords:
   - druid
   - elasticsearch
   - opensearch
+  - trino
   - web-ide
 maintainers:
   - name: cevheri

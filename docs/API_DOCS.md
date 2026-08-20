@@ -26,12 +26,12 @@
 
 ## Overview
 
-LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, and Redis.
+LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, and Redis.
 
 ### Key Features
 
 - **JWT Authentication** - Secure token-based authentication stored in HTTP-only cookies
-- **Multi-Database Support** - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Redis
+- **Multi-Database Support** - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Redis
 - **AI-Powered Insights** - EXPLAIN explanations, query-safety analysis and schema docs, streamed
 - **Real-time Health Monitoring** - Database metrics and performance insights
 
@@ -487,6 +487,60 @@ things differ from the other SQL providers:
 
 ---
 
+##### Apache Trino Query Format
+
+Trino speaks SQL over its own client protocol (`POST /v1/statement`, port `8080`), so the `sql` field
+carries a plain statement. Four things differ from the other SQL providers:
+
+- **`database` is the CATALOG.** Trino's hierarchy is catalog -> schema -> table, and a connection
+  pins one catalog exactly as a PostgreSQL connection pins one database. Schemas inside it are the
+  schema level, and every table is named `schema.table`. A statement may still name any other
+  catalog in full: `SELECT * FROM other_catalog.some_schema.t` runs unchanged. A connection with no
+  catalog runs fully qualified statements fine, but `GET /api/db/schema` refuses with the reason.
+- **There is no `connectionString`.** `jdbc:trino://host:port/catalog/schema` exists, but the shared
+  parser does not accept it, so a connection is `host` + `port` (+ optional `database`, `username`).
+  A **`password` requires `ssl: true`**: the coordinator answers `401 Password not allowed for
+  insecure authentication` over plain HTTP even with authentication switched off, so a password on
+  an `http://` connection is refused by the provider rather than sent and rejected.
+- **No positional parameters.** Trino binds through `PREPARE`/`EXECUTE` and a prepared-statement
+  header this client does not send, so a request carrying `params` is refused with that reason
+  rather than having its values spliced into the SQL.
+- **`OFFSET` comes before `LIMIT`.** Trino's grammar is `[ OFFSET count ] [ LIMIT count ]` and only
+  that way round, so the auto-limiter's output is transposed before it is sent. A trailing semicolon
+  is a syntax error and is never emitted.
+
+```json
+{
+  "connection": {
+    "type": "trino",
+    "host": "localhost",
+    "port": 8080,
+    "database": "tpch"
+  },
+  "sql": "SELECT nationkey, name FROM tpch.tiny.nation ORDER BY 1"
+}
+```
+
+**Notes:**
+- A **failed statement arrives as HTTP 200** from the coordinator, with the failure inside the
+  document. The provider classifies from the body, never from the status, and surfaces the engine's
+  own wording (`line 1:15: Table 'tpch.tiny.nope' does not exist`) without the Java stack that
+  travels beside it.
+- A duplicate output name is disambiguated rather than dropped: `fields` carries `id` and `id (2)`.
+- `columnTypes` are Trino's rendered type strings verbatim: `bigint`, `varchar(25)`,
+  `array(integer)`, `row(x integer, y varchar)`. Values are passed through as the wire encodes them
+  - `decimal` as a string, `varbinary` as base64, `timestamp` as `2020-01-01 10:00:00.000` in UTC.
+- `SET SESSION`, `USE`, `PREPARE` and `DEALLOCATE` succeed and then affect nothing: every statement
+  is its own stateless exchange. The response carries a `warning` saying so.
+- `POST /api/db/maintenance` accepts `kill` only, and its target is a query id from the sessions
+  panel. Nothing else has a Trino analogue: it owns no storage to reclaim, and `ANALYZE` is the
+  connector's decision rather than the engine's.
+- `POST /api/db/cancel` works: cancelling is `DELETE /v1/query/{id}` and abandoning a request does
+  **not** stop the work on the cluster.
+- Full reference: [`docs/providers/trino.md`](providers/trino.md).
+
+---
+
 ##### Redis Query Format
 
 Redis is a key-value store, so the `sql` field carries a Redis command instead of SQL. Two interchangeable formats are accepted.
@@ -695,6 +749,8 @@ admin routes use.
 The handler validates against the target provider's capabilities: `type` is required (`{ "error": "Maintenance type is required" }`), the provider must support maintenance at all, and the requested operation must be in that provider's supported set (see the matrix above) — otherwise a `400` is returned listing what the provider does support.
 
 A `druid` connection fails the second check whatever the `type` is, with `{ "error": "Maintenance operations not supported for this database" }`: no maintenance operation is reachable from Druid SQL, so its supported set is empty by design. Compaction and retention are Coordinator and task concerns, and Druid publishes no catalog of running queries, so there is no id for `kill` to name.
+
+A `trino` connection passes it for `kill` and fails it for everything else, which is the difference between an empty supported set and a set of one: `CALL system.runtime.kill_query` really terminates a statement (verified end to end - the target then fails `ADMINISTRATIVELY_KILLED`), while vacuum, reindex, optimize, check and analyze all describe work that belongs to the connector behind a catalog rather than to the engine.
 
 ---
 
@@ -1057,12 +1113,12 @@ interface DatabaseConnection {
   port?: number;           // Port number
   user?: string;           // Username
   password?: string;       // Password
-  database?: string;       // Database name (Couchbase: the bucket; Druid: unused, it has one catalog)
+  database?: string;       // Database name (Couchbase: the bucket; Druid: unused, it has one catalog; Trino: the CATALOG)
   connectionString?: string; // Full connection string (alternative; Druid has no URI form, host + port only)
   createdAt: Date;         // Creation timestamp
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino';
 ```
 
 ### TableSchema

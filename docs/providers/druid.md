@@ -1572,4 +1572,4 @@ cancellation as unsupported because the provider exposes no `cancelQuery`
 - Metadata tables (`INFORMATION_SCHEMA`, `sys`): <https://druid.apache.org/docs/latest/querying/sql-metadata-tables>
 - `EXPLAIN PLAN FOR`: <https://druid.apache.org/docs/latest/querying/sql-translation>
 - Native batch ingestion: <https://druid.apache.org/docs/latest/ingestion/native-batch>
-- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Couchbase](./couchbase.md) · [ClickHouse](./clickhouse.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)
+- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Couchbase](./couchbase.md) · [ClickHouse](./clickhouse.md) · [Apache Trino](./trino.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)

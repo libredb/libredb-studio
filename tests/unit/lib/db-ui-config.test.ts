@@ -17,6 +17,7 @@ const ALL_TYPES: DatabaseType[] = [
   "druid",
   "elasticsearch",
   "opensearch",
+  "trino",
 ];
 
 describe("db-ui-config", () => {
@@ -92,6 +93,21 @@ describe("db-ui-config", () => {
       // (issue #265, live-verified against Druid 37.0.0). A database selector would be
       // a control with no effect, so the field is absent rather than ignored.
       expect(getDBConfig("druid").connectionFields).not.toContain("database");
+    });
+
+    test("trino exposes its label, coordinator port and connection fields", () => {
+      expect(getDBConfig("trino").label).toBe("Trino");
+      expect(getDBConfig("trino").defaultPort).toBe("8080");
+      expect(getDBConfig("trino").connectionFields).toEqual(["host", "port", "user", "password", "database"]);
+    });
+
+    test("trino keeps the database field, because it selects the catalog", () => {
+      // The opposite of Druid, and the reason the two HTTP engines differ here: a Trino
+      // coordinator fronts MANY catalogs (measured on 476: `SHOW CATALOGS` answers
+      // jmx, memory, system, tpcds, tpch), and a connection pins one the way a
+      // PostgreSQL connection pins a database. Without the field every connection would
+      // open on whatever the coordinator defaults to, which is nothing.
+      expect(getDBConfig("trino").connectionFields).toContain("database");
     });
 
     test("every provider carries a distinct colour class", () => {
@@ -177,6 +193,7 @@ describe("db-showcase", () => {
         "couchbase",
         "clickhouse",
         "druid",
+        "trino",
         "libredb",
       ]);
     });

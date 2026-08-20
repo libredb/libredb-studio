@@ -36,6 +36,7 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   mssql: true,
   clickhouse: true,
   druid: true,
+  trino: true,
   // Two ids served by ONE provider module (`providers/sql/search/`), which is the
   // first time "shipped" here does not mean one provider file per id. They are still
   // two entries because the tri-sync invariant is per type-id - each has its own doc

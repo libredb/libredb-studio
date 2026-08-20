@@ -13,6 +13,11 @@ describe("quoteIdentifier", () => {
     expect(quoteIdentifier("name", "sqlite")).toBe('"name"');
     expect(quoteIdentifier("name", "oracle")).toBe('"name"');
     expect(quoteIdentifier("name", "clickhouse")).toBe('"name"');
+    // Trino, measured on 476: `SELECT "nationkey" FROM tpch.sf1.nation LIMIT 1` returns
+    // the column, and a backtick is refused outright - "backquoted identifiers are not
+    // supported; use double quotes to quote identifiers". So the standard default arm
+    // is the right one for this id, and it is asserted rather than assumed.
+    expect(quoteIdentifier("name", "trino")).toBe('"name"');
     expect(quoteIdentifier("name", "mysql")).toBe("`name`");
     expect(quoteIdentifier("name", "mssql")).toBe("[name]");
   });
@@ -27,6 +32,8 @@ describe("quoteIdentifier", () => {
 
   test("doubles an embedded closing quote character", () => {
     expect(quoteIdentifier('a"b', "postgres")).toBe('"a""b"');
+    // Measured on Trino 476: `SELECT 1 AS "a""b"` answers a column named `a"b`.
+    expect(quoteIdentifier('a"b', "trino")).toBe('"a""b"');
     expect(quoteIdentifier("a`b", "mysql")).toBe("`a``b`");
     expect(quoteIdentifier("a]b", "mssql")).toBe("[a]]b]");
   });

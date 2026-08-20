@@ -18,13 +18,14 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | Apache Druid | `druid` | SQL (analytics) | none (HTTP: SQL endpoint) | SQL (Calcite) | [druid.md](./druid.md) |
 | Elasticsearch | `elasticsearch` | SQL (search) | none (HTTP: `_sql` + REST) | SQL (Elasticsearch SQL) | [elasticsearch.md](./elasticsearch.md) |
 | OpenSearch | `opensearch` | SQL (search) | none (HTTP: `_plugins/_sql` + REST) | SQL (OpenSearch SQL plugin) | [opensearch.md](./opensearch.md) |
+| Apache Trino | `trino` | SQL (federated query engine) | none (HTTP: the client protocol, `POST /v1/statement`) | SQL (Trino) | [trino.md](./trino.md) |
 | LibreDB | `libredb` | Embedded (Key-Value) | `@libredb/libredb` | JSON (command grammar) | [libredb.md](./libredb.md) |
 
 ## Conventions
 
 - **Filename = canonical type-id** (`postgres.md`, `mssql.md`, …), mirroring the source file
   (`src/lib/db/providers/<family>/<type-id>.ts`, or a `<type-id>/` directory when a provider is
-  split across modules, as Couchbase, ClickHouse and Druid are). The official product name (e.g.
+  split across modules, as Couchbase, ClickHouse, Druid and Trino are). The official product name (e.g.
   "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
   — `providers/sql/search/` is `elasticsearch` and `opensearch` — and each type-id still gets its own
   document, because the tri-sync invariant is per type-id and each doc is the prime reference for its
@@ -101,7 +102,7 @@ grid. Each row was verified against the running container on 2026-08-19 — the 
 ones the fixture actually accepts, not the ones its environment block asks for (twice those differ;
 see the notes).
 
-Start the eight always-on services with a plain `docker compose -f database-compose.yml up -d`; the
+Start the eleven always-on services with a plain `docker compose -f database-compose.yml up -d`; the
 `Profile` column names the ones that need asking for.
 
 | Provider | Compose service | Host | Port | User | Password | Database / service | Profile |
@@ -117,12 +118,17 @@ Start the eight always-on services with a plain `docker compose -f database-comp
 | Apache Druid | `druid-router` | localhost | 8888 | *none* | *none* | *none* | `druid` |
 | Elasticsearch | `elasticsearch` | localhost | 9200 | *none* | *none* | *none* | — |
 | OpenSearch | `opensearch` | localhost | **9201** | *none* | *none* | *none* | — |
+| Apache Trino | `trino` | localhost | 8080 | *none* | *none* | `tpch` (catalog) | — |
 | SQLite | *no service* | — | — | — | — | a file path on the Studio host | — |
 | LibreDB | *no service* | — | — | — | — | a directory on the Studio host | — |
 
 *none* means leave the field empty. It is never a default that happens to be blank: Druid loads no
-security extension in a default install, both search services run with their security plugin off, and
-the `redis` service sets no `requirepass` (verified: `CONFIG GET requirepass` answers empty).
+security extension in a default install, both search services run with their security plugin off, the
+`trino` service runs with authentication disabled, and the `redis` service sets no `requirepass`
+(verified: `CONFIG GET requirepass` answers empty). **Never put a password on a plain-HTTP Trino
+connection**: the coordinator answers `401 Password not allowed for insecure authentication` even
+with authentication off, so a password breaks a connection that works without one
+([trino.md §4.3](./trino.md#43-tls-and-the-password-rule)).
 
 **The two embedded providers have no container, and that is the whole point of them.** SQLite takes a
 path resolved *in the Studio process* and LibreDB a directory; neither reaches a network. Both also
@@ -149,6 +155,13 @@ can prove: a bogus `Basic` header is ignored there (HTTP 200 on both, measured),
 can ever be captured from these containers. Neither offers a `Database` field at all — an index has no
 namespace above it. Details in [elasticsearch.md](./elasticsearch.md) and
 [opensearch.md](./opensearch.md).
+
+**Trino's `Database` field is a CATALOG, not a database.** The fixture ships `tpch`, `tpcds`,
+`memory`, `system` and `jmx` configured, and `tpch` is the one to type: it generates its rows on
+read, so `tpch.tiny.nation` (25 rows) answers immediately with no seed step. The tree shows the
+schemas of that one catalog; every other catalog stays reachable from the editor by qualifying names
+in full. Leave `jmx` configured — it is the only SQL-reachable source for the overview's uptime.
+Details in [trino.md](./trino.md).
 
 **Druid is seven containers, not one.** It has no single-container mode, so the whole block carries
 `profiles: ["druid"]` and a plain `up -d` leaves it out. The dialog only ever needs the Router:
@@ -194,6 +207,7 @@ in the table above:
 | Apache Druid | `druid-router` | 8888 |
 | Elasticsearch | `elasticsearch` | 9200 |
 | OpenSearch | `opensearch` | **9200** |
+| Apache Trino | `trino` | 8080 |
 
 > **OpenSearch is 9200 here, not 9201.** The 9201 in the table above is a *host* port published to
 > dodge a collision with the `elasticsearch` service. Inside the network there is no collision, so the

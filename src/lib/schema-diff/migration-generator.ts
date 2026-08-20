@@ -69,6 +69,19 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     label: "Apache Druid",
     reason: "Druid SQL has no ALTER TABLE; rewrite the datasource with REPLACE INTO through an MSQ task.",
   },
+  // Measured 2026-08-20 on Trino 476, and the entry exists because the PostgreSQL
+  // branch this id would otherwise inherit emits text Trino cannot even PARSE:
+  // `ALTER TABLE ... ALTER COLUMN id TYPE varchar` is "line 1:50: mismatched input
+  // 'TYPE'. Expecting: '.', 'DROP', 'SET'". Trino's own spelling
+  // (`ALTER COLUMN id SET DATA TYPE varchar`) parses and then hands the question to
+  // the catalog, which answered "This connector does not support setting column
+  // types" - so there is no single statement a portable migration could carry, and
+  // which one would work is a property of the catalog rather than of Trino.
+  trino: {
+    label: "Trino",
+    reason:
+      "Whether a column can be retyped is the connector's answer, not Trino's; run the change in the system the catalog points at.",
+  },
   // Measured 2026-08-19: `ALTER TABLE probe_orders ADD COLUMN x INT` and
   // `... MODIFY COLUMN customer TEXT` are refused by both grammars - Elasticsearch
   // 9.1.4 with `parsing_exception`, "mismatched input 'ALTER' expecting {'(',

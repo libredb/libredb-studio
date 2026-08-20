@@ -111,6 +111,14 @@ export async function createDatabaseProvider(
       return new DruidProvider(connection, options);
     }
 
+    case "trino": {
+      // The explicit /index specifier keeps this dynamic import statically
+      // analysable: a bare directory resolves only at runtime, which the bundler
+      // cannot trace into a chunk.
+      const { TrinoProvider } = await import("./providers/sql/trino/index");
+      return new TrinoProvider(connection, options);
+    }
+
     // Search engines - two type-ids, ONE implementation module (issue #424 Phase 1).
     // The explicit /index specifier keeps this dynamic import statically
     // analysable: a bare directory resolves only at runtime, which the bundler
@@ -156,7 +164,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/unit/db/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, clickhouse, druid, elasticsearch, opensearch, mongodb, couchbase, redis, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, clickhouse, druid, trino, elasticsearch, opensearch, mongodb, couchbase, redis, libredb`,
         connection.type,
       );
   }

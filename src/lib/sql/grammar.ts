@@ -168,12 +168,13 @@ const SQLITE_GRAMMAR: SqlGrammar = {
 };
 
 /**
- * The two search engines are the only rows here established by LIVE PROBE rather
+ * The two search engines and Trino are the rows here established by LIVE PROBE rather
  * than from documentation or a bundled driver: their SQL surfaces are HTTP endpoints
  * on a running cluster, so the grammar can be asked directly, and asking it beats
- * every other source. All probes ran 2026-08-19 against Elasticsearch 9.1.4 and
+ * every other source. The search probes ran 2026-08-19 against Elasticsearch 9.1.4 and
  * OpenSearch 3.8.0, and they DISAGREE about two of the four facts - which is the
- * reason the one provider implementation still has two rows here.
+ * reason the one provider implementation still has two rows here. The Trino probes ran
+ * 2026-08-20 against 476; that row sits below, after OpenSearch's.
  */
 const ELASTICSEARCH_GRAMMAR: SqlGrammar = {
   // `#` opens NOTHING: `SELECT 1 # x` is a `parsing_exception`, "mismatched input
@@ -216,6 +217,36 @@ const OPENSEARCH_GRAMMAR: SqlGrammar = {
   // FLAT, same probe and same answer as Elasticsearch.
   blockComment: "flat",
   // `SELECT q'{it's}'` is refused, "Illegal SQL expression".
+  alternateQuoting: false,
+};
+/**
+ * Established the same way and for the same reason as the two search rows: the engine
+ * IS an HTTP endpoint, so the grammar was asked directly rather than read off a
+ * document. All four probes ran 2026-08-20 against Trino 476 through
+ * `POST /v1/statement`, and every one of them is a statement rather than an inference.
+ */
+const TRINO_GRAMMAR: SqlGrammar = {
+  // `#` opens NOTHING, in either position: `SELECT 1 AS a # trailing` is "line 1:15:
+  // mismatched input '#'" and `SELECT # x` is "line 1:8: mismatched input '#'". So the
+  // rest of the line is not hidden, which is the only thing the readers here ask.
+  // Leaving it at the compatibility default would also make every `#` run AMBIGUOUS,
+  // and since #297 an unreadable span is a confirmation PROMPT rather than silence -
+  // a prompt on a statement this engine simply refuses.
+  hash: "code",
+  // A SUBSCRIPT, and both halves of that rule were measured rather than one inferred
+  // from the other. It subscripts: `SELECT ARRAY[1,2][1]` answers 1. It NESTS:
+  // `SELECT ARRAY[ARRAY[1,2],ARRAY[3,4]][1][2]` answers 2. And it is emphatically not
+  // a name quote - `SELECT [customer] FROM tpch.sf1.nation` fails with "Column
+  // 'customer' cannot be resolved", so the brackets were read THROUGH to an
+  // expression, which the identifier reading could never do. Names here are quoted
+  // with `"` (`identifier.ts` leaves this id on the standard default).
+  bracket: "subscript",
+  // FLAT: `SELECT /* a /* b */ 1 AS a` returns the column, so the first `*/` closed
+  // the run. A nesting reader would have seen an unterminated comment and refused to
+  // bound the statement.
+  blockComment: "flat",
+  // `SELECT q'{it''s}'` is "line 1:8: Unknown resolvedType: q" - the form does not
+  // exist here, so those characters are a name followed by an ordinary string.
   alternateQuoting: false,
 };
 
@@ -342,6 +373,7 @@ const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
   sqlite: SQLITE_GRAMMAR,
   elasticsearch: ELASTICSEARCH_GRAMMAR,
   opensearch: OPENSEARCH_GRAMMAR,
+  trino: TRINO_GRAMMAR,
 };
 
 /**
@@ -366,6 +398,10 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * `BaseDatabaseProvider` and never call `prepareQuery`. They reach the confirmation
  * gate, though, because both execution paths ask about whatever is in the editor
  * before running it (#297).
+ *
+ * `trino` is deliberately absent for the same reason as the two search ids: the editor
+ * text is the exact bytes `POST /v1/statement` receives, and the provider extends
+ * `SQLBaseProvider`.
  *
  * `elasticsearch` and `opensearch` are deliberately ABSENT: their editor text is SQL
  * (measured - both answer `POST`ed statements with columns and rows, and both

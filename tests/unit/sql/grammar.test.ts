@@ -41,6 +41,14 @@ describe("resolveSqlGrammar", () => {
     ["oracle", "code"],
     ["mssql", "code"],
     ["sqlite", "code"],
+    // Trino, probed 2026-08-20 on 476: `#` opens nothing in either position.
+    // `SELECT 1 AS a # trailing` is "line 1:15: mismatched input '#'" and
+    // `SELECT # x` is "line 1:8: mismatched input '#'", so the rest of the line is
+    // not hidden - which is the only thing the readers in this folder ask. Leaving it
+    // at the compatibility default would ALSO make every `#` run ambiguous, and since
+    // #297 an unreadable span is a confirmation PROMPT - on a statement the engine
+    // simply refuses.
+    ["trino", "code"],
   ])("%s reads `#` as %s", (type, hash) => {
     expect(resolveSqlGrammar(type).hash).toBe(hash);
   });
@@ -93,7 +101,7 @@ describe("resolveSqlGrammar", () => {
     expect(resolveSqlGrammar("oracle").alternateQuoting).toBe(true);
   });
 
-  test.each<DatabaseType>(["mysql", "clickhouse", "postgres", "mssql", "sqlite"])(
+  test.each<DatabaseType>(["mysql", "clickhouse", "postgres", "mssql", "sqlite", "trino"])(
     "%s does not read `q'…'` as a literal",
     (type) => {
       expect(resolveSqlGrammar(type).alternateQuoting).toBe(false);
@@ -130,6 +138,13 @@ describe("resolveSqlGrammar", () => {
     ["sqlite", "quoted-identifier"],
     ["clickhouse", "subscript"],
     ["postgres", "subscript"],
+    // Trino, probed on 476, and BOTH halves of the rule were measured rather than one
+    // inferred from the other. It subscripts: `SELECT ARRAY[1,2][1]` answers 1. It
+    // NESTS: `SELECT ARRAY[ARRAY[1,2],ARRAY[3,4]][1][2]` answers 2. And it is not a
+    // name quote: `SELECT [customer] FROM tpch.sf1.nation` fails with "Column
+    // 'customer' cannot be resolved" - the brackets were read THROUGH to an
+    // expression, which the identifier reading could never do.
+    ["trino", "subscript"],
   ])("%s reads `[…]` as %s", (type, bracket) => {
     expect(resolveSqlGrammar(type).bracket).toBe(bracket);
   });
@@ -180,6 +195,10 @@ describe("resolveSqlGrammar", () => {
     ["mysql", "flat"],
     ["sqlite", "flat"],
     ["oracle", "flat"],
+    // Trino, probed on 476: `SELECT /* a /* b */ 1 AS a` returns the column, so the
+    // FIRST `*/` closed the run. A nesting reader would have seen an unterminated
+    // comment and refused to bound the statement.
+    ["trino", "flat"],
   ])("%s closes a block comment the %s way", (type, blockComment) => {
     expect(resolveSqlGrammar(type).blockComment).toBe(blockComment);
   });
@@ -242,6 +261,10 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   // implementation still needs two rows.
   elasticsearch: "established",
   opensearch: "established",
+  // Established the same way, and for the same reason: the coordinator IS the source.
+  // Probed 2026-08-20 against Trino 476 - see the TRINO_GRAMMAR comments in
+  // `grammar.ts` for the statement behind each of the four facts.
+  trino: "established",
   // No authoritative source was established for these, so they read as SQL under
   // the compatibility grammar. See the module doc in `grammar.ts`.
   couchbase: "default",
@@ -275,6 +298,9 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   // confirmation gate's SQL reading off for text that is SQL.
   elasticsearch: true,
   opensearch: true,
+  // SQL, and nothing but: the editor text is what goes to `POST /v1/statement`, and
+  // the provider extends SQLBaseProvider.
+  trino: true,
   mongodb: false,
   redis: false,
 };

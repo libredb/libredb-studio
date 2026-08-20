@@ -67,11 +67,11 @@ LibreDB Studioは逆向きです。**データをツールのところへ持っ�
 
 ## 主な機能
 
-### 12のエンジン、1つのインターフェース
+### 13のエンジン、1つのインターフェース
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch
+PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino
 
-スキーマエクスプローラ、ER図、スキーマ差分、モニタリングは全SQLエンジンで共通です。MongoDBとRedisはSQLエンジンではないため、ER図とスキーマ差分はありません。Druid、Elasticsearch、OpenSearchはHTTP SQL APIに貼り付けられるURIがないためhostとportで設定する二重の例外で、生成されるマイグレーションもDDLを出力せず制約を明示します（Couchbaseのスキーマレスなコレクションも同様）。検索クラスタのER図は箱だけで線がありません。インデックスは外部キーを宣言せず、エンジンのモデルにも宣言できる外部キーが存在しないためです。
+スキーマエクスプローラ、ER図、スキーマ差分、モニタリングは全SQLエンジンで共通です。MongoDBとRedisはSQLエンジンではないため、ER図とスキーマ差分はありません。Druid、Elasticsearch、OpenSearch、TrinoはこのビルドがパースできるURI形式を持たないためhostとportで設定する二重の例外で、生成されるマイグレーションもDDLを出力せず制約を明示します（Couchbaseのスキーマレスなコレクションも同様）。検索クラスタのER図は箱だけで線がありません。インデックスは外部キーを宣言せず、エンジンのモデルにも宣言できる外部キーが存在しないためです。
 
 | データベース | ドライバ | 機能 |
 | :--- | :--- | :--- |
@@ -86,9 +86,10 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 | **Apache Druid** | ドライバなし、HTTPのみ（`POST /druid/v2/sql`） | 読み取り専用SQL IDE、ネイティブクエリのEXPLAINツリー、`INFORMATION_SCHEMA`、`sys.*`監視 |
 | **Elasticsearch** | ドライバなし、HTTPのみ（`POST /_sql?format=json`、9200） | 読み取り専用SQL IDE、mappingベースのインデックス／フィールドエクスプローラ、クラスタヘルスとインデックスごとのドキュメント数・ストアサイズ。EXPLAINなし、メンテナンス操作なし、スロークエリ／セッションパネルなし。Elasticsearch SQLには`OFFSET`もないため、2ページ目以降は取得できません |
 | **OpenSearch** | ドライバなし、HTTPのみ（`POST /_plugins/_sql`、9200） | Elasticsearchと同じproviderモジュールによる、同じ読み取り専用SQL IDEとエクスプローラ。こちらは`LIMIT n OFFSET m`が使えるため、ページングも使えます |
+| **Apache Trino** | ドライバなし、HTTPのみ（クライアントプロトコル、`POST /v1/statement`、8080） | 設定済みの全カタログに対するフルSQL IDE、接続がピン留めしたカタログの`information_schema`スキーマツリー、`system.runtime`と`jmx`による監視、`SHOW STATS`による実際の行数、クエリキャンセルと`kill_query`メンテナンス。Trinoはクエリエンジンであり自身は何も保存しないため、主キー・外部キー・インデックスをどこにも宣言しません（ER図は箱だけで線がなく、インライン行編集は無効、サイズ系パネルはカタログ名を示します）。失敗したステートメントもHTTP 200で返り、認証を無効にしたクラスタでも平文HTTP上のパスワードは拒否されます |
 | **Redis** | `ioredis` | コマンドエディタ、キーブラウザ、INFOベースの監視 |
 
-> **トランスポート層のセキュリティはエンジンごとではなく横断的な機能です。** SSHトンネルはproviderが接続する前に張られ、接続先はローカルのエンドポイントに書き換えられます。つまりエンジンに依存せず、hostとportが設定された接続であれば適用されます。接続文字列で入力した接続（MongoDB、Couchbase、ClickHouseで選択できます）はhostもportも持たないためトンネルされません。SQLiteも同様です。SSL/TLSパネルが実際に効くのはPostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearchです。Oracle、MongoDB、Redisはこの設定を無視するため、この3つで暗号化されるかどうかはダイアログの選択ではなく接続文字列の内容次第になります。
+> **トランスポート層のセキュリティはエンジンごとではなく横断的な機能です。** SSHトンネルはproviderが接続する前に張られ、接続先はローカルのエンドポイントに書き換えられます。つまりエンジンに依存せず、hostとportが設定された接続であれば適用されます。接続文字列で入力した接続（MongoDB、Couchbase、ClickHouseで選択できます）はhostもportも持たないためトンネルされません。SQLiteも同様です。SSL/TLSパネルが実際に効くのはPostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trinoです。Trinoでは任意ではなく必須に近い意味を持ちます。コーディネータが平文HTTP上のパスワードを拒否するためです。Oracle、MongoDB、Redisはこの設定を無視するため、この3つで暗号化されるかどうかはダイアログの選択ではなく接続文字列の内容次第になります。
 
 > RedisがこのSQL指向のインターフェースに乗るのは規約によるものです。`getSchema()` はブロッキングしない `SCAN`（**`KEYS *` は使いません**）でキーのプレフィックスを「テーブル」としてまとめ、ヘルスとメトリクスは `INFO`、スロークエリとセッションは `SLOWLOG GET` / `CLIENT LIST` から取得します。
 

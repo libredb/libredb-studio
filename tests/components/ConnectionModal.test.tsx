@@ -683,6 +683,45 @@ describe("ConnectionModal", () => {
     expect(queryByText("Bucket Name")).toBeNull();
   });
 
+  // ── 34b. Trino labels the same field as the CATALOG it actually is ────────
+  //
+  // Not cosmetic, and not the same claim Couchbase makes. A Trino catalog is a whole
+  // external system - `hive`, `iceberg`, `tpch` - and it is the one value a user
+  // cannot guess: a coordinator with no catalog pinned resolves no table at all.
+  // Measured on 476, `SHOW CATALOGS` on the probe cluster answers five of them.
+
+  test("Trino type labels the database field Catalog and says what belongs in it", () => {
+    mockFormOverrides = { type: "trino" };
+    const props = createDefaultProps();
+    const { queryByText, container } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText("Catalog Name")).not.toBeNull();
+    expect(queryByText("Database Name")).toBeNull();
+    const databaseInput = container.querySelector("#database") as HTMLInputElement | null;
+    expect(databaseInput!.placeholder).toBe("tpch");
+    expect(queryByText(/The Trino catalog to open/)).not.toBeNull();
+  });
+
+  test("Trino warns that a password needs TLS, before the connection can 401 on it", () => {
+    // Measured on 476 with authentication DISABLED: `Authorization: Basic` over plain
+    // HTTP is answered 401, "Password not allowed for insecure authentication". So
+    // typing a password into an http:// connection BREAKS one that would otherwise
+    // work, which is the one failure mode a form must not produce silently.
+    mockFormOverrides = { type: "trino" };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText(/refuses a password over plain HTTP/)).not.toBeNull();
+  });
+
+  test("no other type carries the Trino hints", () => {
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText("Catalog Name")).toBeNull();
+    expect(queryByText(/refuses a password over plain HTTP/)).toBeNull();
+  });
+
   // ── 35. Browser autofill stays out of the credential fields ───────────────
   // These are server credentials, not the user's own login: Chrome's heuristic
   // sees "Username" + type=password and injects saved site passwords. Only

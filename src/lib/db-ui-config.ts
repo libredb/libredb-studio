@@ -13,6 +13,7 @@ import {
   DruidIcon,
   ElasticsearchIcon,
   OpenSearchIcon,
+  TrinoIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 
@@ -169,6 +170,31 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     defaultPort: "9200",
     showConnectionStringToggle: false,
     connectionFields: ["host", "port", "user", "password"],
+  },
+  trino: {
+    icon: TrinoIcon,
+    // Trino's own mark is a magenta-pink (#DD00A1); pink-400 is the nearest free
+    // shade, and the distinct-colour assertion in tests/unit/lib/db-ui-config.test.ts
+    // rules a duplicate out.
+    color: "text-pink-400",
+    // The product's own name, with no vendor word in front of it: "Trino" is what the
+    // project calls itself, unlike "Apache Druid".
+    label: "Trino",
+    // The coordinator's HTTP port, and the SAME number under TLS: a secured cluster
+    // serves on whatever port its operator chose, so inventing a well-known HTTPS
+    // alternative would point credentials at a port nothing is listening on.
+    defaultPort: "8080",
+    // No URI to paste. Trino's canonical URL is a JDBC one
+    // (`jdbc:trino://host:port/catalog/schema`), which the shared parser does not
+    // accept, and http:// / https:// already resolve to ClickHouse in
+    // connection-string-parser.ts. Two engines cannot own one scheme.
+    showConnectionStringToggle: false,
+    // `database` IS offered here, which is where this id parts company with Druid and
+    // the two search engines: a coordinator fronts MANY catalogs (measured on 476,
+    // `SHOW CATALOGS` answers jmx, memory, system, tpcds, tpch) and a connection pins
+    // one, the way a PostgreSQL connection pins a database. The form labels it
+    // "Catalog" rather than "Database" - see ConnectionModal.tsx.
+    connectionFields: ["host", "port", "user", "password", "database"],
   },
   libredb: {
     icon: LibreDBIcon,

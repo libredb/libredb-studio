@@ -19,12 +19,15 @@ Three decisions. The first is the consequential one, which is why it is first.
 
 1. **Does it need a driver at all?** Score the engine against the rubric below. A database with a
    first-class HTTP API can be supported with no dependency at all, and that is worth real effort to
-   establish before you start. Four shipped providers need no driver: SQLite uses the built-in
-   `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts`, and three reach the engine over HTTP with
+   establish before you start. Seven shipped type-ids need no driver: SQLite uses the built-in
+   `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts`, and the rest reach the engine over HTTP with
    nothing but `fetch`/`node:https` — Couchbase over the documented REST endpoints
    ([couchbase.md](./providers/couchbase.md)), ClickHouse over its HTTP interface
-   ([clickhouse.md](./providers/clickhouse.md)), and Apache Druid over `POST /druid/v2/sql`
-   ([druid.md](./providers/druid.md)). If it does need one, it will be something like `pg`,
+   ([clickhouse.md](./providers/clickhouse.md)), Apache Druid over `POST /druid/v2/sql`
+   ([druid.md](./providers/druid.md)), Elasticsearch and OpenSearch over their SQL endpoints
+   ([elasticsearch.md](./providers/elasticsearch.md) · [opensearch.md](./providers/opensearch.md)),
+   and Apache Trino over its own client protocol
+   ([trino.md](./providers/trino.md)). If it does need one, it will be something like `pg`,
    `mysql2`, `mongodb`, `ioredis`, `oracledb` or `mssql`.
 
 2. **Which base class?**
@@ -33,8 +36,8 @@ Three decisions. The first is the consequential one, which is why it is first.
      `this.type` — identifier and string escaping, `LIMIT` clause building, placeholder style,
      read-only and DDL detection — plus a `prepareQuery()` that applies the shared query limiter.
      None of it touches a pool, a driver or a connection, so **an HTTP transport is no reason to
-     avoid it.** A standard-SQL engine reached over HTTP, such as ClickHouse or Apache Druid, should
-     extend it and get all of that for free. Druid is the clearest case of how little is left over:
+     avoid it.** A standard-SQL engine reached over HTTP, such as ClickHouse, Apache Druid or Apache Trino,
+     should extend it and get all of that for free. Druid is the clearest case of how little is left over:
      double-quoted identifiers and `LIMIT n OFFSET m` are both correct Druid SQL, so
      `escapeIdentifier()` and `buildLimitClause()` are inherited unchanged and `prepareQuery()` is
      the only override — for a single dialect trap, not for the transport.
@@ -163,10 +166,10 @@ directly; reshaping rows inside the transport would have broken schema loading. 
 
 ```typescript
 // Before:
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino';
 
 // After (example: adding CockroachDB):
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'cockroachdb';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cockroachdb';
 ```
 
 ### 1.2 — Add to `QueryTab.type` if needed
@@ -204,7 +207,8 @@ is kept in sync with its per-provider doc). Don't copy a skeleton from this guid
 |-------------------|--------|------------------|-----------|
 | Pooled SQL (wire-protocol DB) | `SQLBaseProvider` | `postgres.ts` / `mysql.ts` | [postgres.md](./providers/postgres.md) · [mysql.md](./providers/mysql.md) |
 | Embedded / file SQL | `SQLBaseProvider` | `sqlite.ts` | [sqlite.md](./providers/sqlite.md) |
-| SQL database reached over HTTP (no driver) | `SQLBaseProvider` | `sql/clickhouse/` or `sql/druid/` | [clickhouse.md](./providers/clickhouse.md) · [druid.md](./providers/druid.md) |
+| SQL database reached over HTTP (no driver) | `SQLBaseProvider` | `sql/clickhouse/`, `sql/druid/` or `sql/trino/` | [clickhouse.md](./providers/clickhouse.md) · [druid.md](./providers/druid.md) · [trino.md](./providers/trino.md) |
+| SQL over HTTP where a **second product** speaks the same protocol | `SQLBaseProvider` | `sql/search/` (two ids, one module) or `sql/trino/` (one id, a dialect descriptor ready for the second) | [elasticsearch.md](./providers/elasticsearch.md) · [trino.md](./providers/trino.md) |
 | Document store | `BaseDatabaseProvider` | `mongodb.ts` | [mongodb.md](./providers/mongodb.md) |
 | Document store reached over HTTP/REST (no driver) | `BaseDatabaseProvider` | `document/couchbase/` | [couchbase.md](./providers/couchbase.md) |
 | Key-value store | `BaseDatabaseProvider` | `redis.ts` | [redis.md](./providers/redis.md) |
@@ -313,7 +317,7 @@ Then add the type to the selectable list that drives the ConnectionModal picker:
 // Append to the existing list - do not retype it, or you will drop a provider from the picker.
 const selectableTypes: DatabaseType[] = [
   'postgres', 'mysql', 'sqlite', 'oracle', 'mssql', 'mongodb', 'couchbase', 'redis', 'libredb',
-  'clickhouse', 'druid',
+  'clickhouse', 'druid', 'elasticsearch', 'opensearch', 'trino',
   'cockroachdb',
 ];
 ```
@@ -334,6 +338,8 @@ bun add <driver-package>
 # Couchbase needs no driver — it speaks the Query and management REST APIs over fetch/node:https
 # ClickHouse needs no driver — plain SQL over its HTTP interface (port 8123)
 # Apache Druid needs no driver — plain SQL over POST /druid/v2/sql (Router 8888 or Broker 8082)
+# Elasticsearch / OpenSearch need no driver — SQL over _sql / _plugins/_sql (port 9200)
+# Apache Trino needs no driver — SQL over its client protocol, POST /v1/statement (port 8080)
 ```
 
 If your engine exposes a documented HTTP API, weigh it against the native driver before adding a
@@ -629,12 +635,12 @@ For the authoritative, code-verified reference for each shipped provider (extend
 driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
 docs — they are the single source of truth and are kept in sync with the code:
 
-**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · redis · mongodb · couchbase · clickhouse · druid · libredb
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · libredb
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
 provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), or
-a driverless provider reached over HTTP (clickhouse or druid for SQL, couchbase for a document
-store).
+a driverless provider reached over HTTP (clickhouse, druid or trino for SQL, couchbase for a
+document store).
 
 ## Driver-free candidates
 
@@ -643,8 +649,9 @@ Assessed against the rubric in [Prerequisites](#prerequisites). Anything not lis
 **Shipped since this list was written:** Couchbase
 ([#263](https://github.com/libredb/libredb-studio/issues/263)), ClickHouse
 ([#264](https://github.com/libredb/libredb-studio/issues/264)), Apache Druid
-([#265](https://github.com/libredb/libredb-studio/issues/265)) and Elasticsearch + OpenSearch
-([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 1).
+([#265](https://github.com/libredb/libredb-studio/issues/265)), Elasticsearch + OpenSearch
+([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 1) and Apache Trino
+([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 2).
 
 Druid is worth a paragraph, because it **corrected this table's own verdict**. The entry that stood
 here rated it strong but predicted that `EXPLAIN PLAN FOR` "returns a native-query translation rather
@@ -675,14 +682,42 @@ Elasticsearch and a `SQLFeatureNotSupportedException` (`unsupported`) on OpenSea
 index is HTTP 400 on one and 404 on the other, which is why that provider classifies errors from the
 body and never from the status.
 
+Trino closed the entry that had stood at the top of this table, and it is worth a paragraph because
+**the product question really was the blocker, and the answer was a mapping rather than a feature**.
+"A catalog is another system, so what a connection pins is a product question" was correct. The answer
+is that the connection's `database` field pins **one catalog**, exactly as it pins one database on
+PostgreSQL, and the tree stays two levels; the alternative — fanning `information_schema` across every
+catalog — is unbounded in practice, because `jmx.current` alone publishes one table per MBean and one
+sidebar refresh would then depend on every configured connector being reachable. Cross-catalog queries
+still work, because a fully qualified name never needed the pin.
+
+The `nextUri` polling this table warned about is real and worse than it sounds: the loop terminates on
+the **absence of a link**, never on a state — `SELECT version()` takes five pages, a page reporting
+`FINISHED` can still carry a link, and the column declaration and the rows arrive on different pages.
+Two more measured traps generalise to any engine like it. A failed statement is an **HTTP 200** with
+the failure in the document, so nothing may infer success from a status. And a request the server
+refuses *before* it becomes a statement answers **plain text**, so an error path that `JSON.parse`s the
+body throws a second, misleading error on top of the first.
+
+The fragmented auth matrix turned into one hard rule: a password is a **TLS-only** credential, because
+the coordinator answers `401 Password not allowed for insecure authentication` over plain HTTP even
+with authentication switched off. Sending it anyway breaks a connection that works without it, so the
+transport refuses that configuration rather than the server doing it later.
+
+The lesson for the next candidate with a sibling product: **make the protocol's own naming a
+descriptor before you need it.** Trino generates its header family from the product name
+(`X-Trino-User`), and so does the transport — from `TrinoDialect.headerPrefix`, with no finished header
+name written down anywhere. PrestoDB is therefore a new entry in a table rather than a second
+transport, and it is a separate type-id when it comes. See [trino.md](./providers/trino.md).
+
 | Candidate | Verdict |
 |---|---|
-| **Trino / Starburst** | Highest strategic value — one provider fronts S3, Iceberg, Delta and Hive. Unscheduled on purpose: a catalog is another *system*, so what a connection pins is a product question. Also a `nextUri` polling protocol and a fragmented auth matrix |
+| **PrestoDB** | Shipped-adjacent: the `trino` transport already builds its headers from a dialect prefix, so this is a descriptor, a doc and an integration test. A separate type-id, because `version()` and the fault vocabulary differ |
 | **Snowflake / BigQuery / Databricks SQL** | REST SQL APIs exist and the data model fits; auth is the wall (key-pair JWT, service-account signing, OAuth) and that is where the no-dependency promise ends |
 | **CouchDB, ArangoDB, SurrealDB, Qdrant, Weaviate** | All HTTP, all non-SQL or only partially SQL. Feasible, but each needs its own query grammar the way MongoDB and LibreDB do |
 
 Contributions are welcome for any of these. Open an issue with the rubric score first, so the design
-decisions are settled before code exists — that is what let the Couchbase, ClickHouse, Druid and
+decisions are settled before code exists — that is what let the Couchbase, ClickHouse, Druid, Trino and
 search providers each land as a single reviewable PR.
 
 ---
@@ -706,11 +741,13 @@ The integration points, all of which need an entry. This is the list the Strateg
       published engine count silently undercount; it is listed here because the count in `README.md`
       and `docs/BRAND_MESSAGING.md` is derived from it and has to move in the same PR
 - [ ] `package.json` — the driver, **if** it needs one. A driver-free provider leaves it untouched, and
-      five shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch` and `opensearch` each
-      add nothing here
+      six shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch` and `trino`
+      each add nothing here
 - [ ] `database-compose.yml` — a service, so the next person can repeat the live pass. A distributed
       engine contributes a `profiles: [...]` set instead, as Druid's seven services do, so the default
-      stack does not grow for everyone
+      stack does not grow for everyone. Check what the image ships before writing a healthcheck: the
+      ClickHouse image has no `curl` and the Trino image ships its own `health-check` script that waits
+      for `"starting": false`, which a bare `curl /v1/info` would not
 
 **Conditionally, and each one is easy to miss because the code still compiles without it:**
 

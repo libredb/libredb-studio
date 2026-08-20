@@ -410,6 +410,15 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("druid");
   });
 
+  test('creates provider for type "trino"', async () => {
+    // `database` carries the CATALOG, the way a PostgreSQL connection carries a
+    // database: a coordinator fronts many of them and a connection pins one.
+    const conn = makeConnection("trino", { port: 8080, database: "tpch" });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider).toBeDefined();
+    expect(provider.type).toBe("trino");
+  });
+
   test('creates provider for type "libredb"', async () => {
     const conn = makeConnection("libredb", { database: "/tmp/test.libredb" });
     const provider = await createDatabaseProvider(conn);

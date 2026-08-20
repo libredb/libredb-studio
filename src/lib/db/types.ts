@@ -95,7 +95,8 @@ export type ExplainFormat =
   | "sqlite-queryplan"
   | "couchbase-json"
   | "clickhouse-json"
-  | "druid-native";
+  | "druid-native"
+  | "trino-json";
 
 export interface ProviderCapabilities {
   queryLanguage: "sql" | "json";

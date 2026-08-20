@@ -2637,7 +2637,7 @@ The server gates on `isTransactionProvider(provider)`, a runtime shape check no 
 `ProviderCapabilities` has no `supportsTransactions`.
 
 Done when a provider declares whether it has transactions, `Studio.tsx` omits the trio and the sandbox
-toggle where it does not, and the eleven providers' docs each state their answer. Deliberately not
+toggle where it does not, and every provider's doc states its answer. Deliberately not
 folded into #424: the capability has to be added to every provider at once, which is a wider change
 than the PR that found it.
 

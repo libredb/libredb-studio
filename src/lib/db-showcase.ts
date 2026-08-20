@@ -31,11 +31,16 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   couchbase: 9,
   clickhouse: 10,
   druid: 11,
+  // Ahead of the embedded store and behind the three analytical ones: Trino is the
+  // name an evaluator is most likely to already know out of this last group, because
+  // it is the engine a data platform is usually met THROUGH rather than one more
+  // store to choose between.
+  trino: 12,
   // Last on purpose: the embedded store is the least recognisable name here. It is
   // still shown - it is a shipped provider with a doc (docs/providers/libredb.md), an
   // icon and a slot in the connection picker, so omitting it would make the login page
   // contradict the app (issue #425, step 2).
-  libredb: 12,
+  libredb: 13,
 };
 
 /**

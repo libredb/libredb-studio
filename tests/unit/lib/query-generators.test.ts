@@ -458,6 +458,68 @@ describe("Druid (8888) generation", () => {
 });
 
 // ============================================================================
+// Trino (issue #424 Phase 2) - the first engine here that reaches the generators
+// through DECLARED capabilities alone: 8080 is a generic HTTP port and no branch
+// may infer a dialect from it, so `identifierQuoting: "double"` and
+// `statementTerminator: "none"` are what steer every string below. Each was run
+// against Trino 476 through POST /v1/statement and accepted.
+// ============================================================================
+
+describe("Trino (declared capabilities, port 8080) generation", () => {
+  const trinoCaps = makeCaps({
+    defaultPort: 8080,
+    identifierQuoting: "double",
+    statementTerminator: "none",
+  });
+
+  test("generateTableQuery emits no trailing semicolon", () => {
+    // Not cosmetic. Measured: `SELECT * FROM tpch.sf1.nation LIMIT 50;` is
+    // "line 1:39: mismatched input ';'. Expecting: <EOF>" - the terminator is not in
+    // Trino's grammar, so a generated statement carrying one cannot run at all.
+    expect(generateTableQuery("nation", trinoCaps)).toBe("SELECT * FROM nation LIMIT 50");
+  });
+
+  test("generateSelectQuery emits the column list unquoted and no terminator", () => {
+    // Live: the same five lines answer the two columns. Unquoted lowercase names
+    // round-trip because Trino folds an unquoted identifier to lower case.
+    expect(generateSelectQuery("nation", sampleColumns, trinoCaps)).toBe(
+      "SELECT\n  id,\n  name\nFROM nation\nWHERE 1=1\nLIMIT 100",
+    );
+  });
+
+  test("quoteIdentifier quotes only a name that would not round-trip bare", () => {
+    // The declared "double" arm, reached before the port heuristic. Measured on 476:
+    // `SELECT nationkey FROM tpch.sf1.nation LIMIT 1` and `SELECT "nationkey" ...`
+    // both return the column, so quoting a plain lowercase name would only add noise.
+    expect(quoteIdentifier("nationkey", trinoCaps)).toBe("nationkey");
+    expect(quoteIdentifier("NationKey", trinoCaps)).toBe('"NationKey"');
+    expect(quoteIdentifier("weird name", trinoCaps)).toBe('"weird name"');
+  });
+
+  test("quoteIdentifier doubles an embedded double quote so it cannot terminate its quoting", () => {
+    // Verified via `SELECT 1 AS "a""b"`, which returns the column name `a"b`.
+    expect(quoteIdentifier('a"b', trinoCaps)).toBe('"a""b"');
+  });
+
+  test("quoteQualifiedName keeps the catalog.schema.table separators intact", () => {
+    // Three levels rather than two, which is what a catalog adds: measured,
+    // `SELECT * FROM tpch.sf1.nation LIMIT 50` resolves fully qualified.
+    expect(quoteQualifiedName("tpch.sf1.nation", trinoCaps)).toBe("tpch.sf1.nation");
+    expect(quoteQualifiedName("tpch.sf1.Nation", trinoCaps)).toBe('tpch.sf1."Nation"');
+  });
+
+  test("a backtick is never emitted for this dialect", () => {
+    // The trap #424 Phase 1 recorded, in the other direction: the port cannot say
+    // which quote character an HTTP engine uses. Measured, Trino refuses a backtick
+    // outright - "backquoted identifiers are not supported; use double quotes to
+    // quote identifiers" - so a generator that guessed MySQL's form from a generic
+    // port would produce a statement no Trino coordinator can parse.
+    expect(quoteIdentifier("Weird", trinoCaps)).not.toContain("`");
+    expect(generateSelectQuery("nation", sampleColumns, trinoCaps)).not.toContain("`");
+  });
+});
+
+// ============================================================================
 // quoteIdentifier (dialect-aware, quote-only-when-needed)
 // ============================================================================
 

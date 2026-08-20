@@ -217,6 +217,36 @@ export const DruidIcon: React.FC<IconProps> = ({ className, ...props }) => (
 );
 
 /**
+ * Trino's rabbit, reduced to a head and two ears.
+ *
+ * The brand mark is a full rabbit in three-quarter view with a shaded body; at the
+ * 14px (`w-3.5`) size the sidebar renders a DB icon at, a body reads as a smudge under
+ * the ears, so only the head survives - the two long upright ears are what makes it
+ * identifiable, and nothing else in this set has a pair of vertical lobes.
+ *
+ * Drawn as three closed outlines (two ears, one head) rather than one silhouette, for
+ * the reason `DruidIcon` records: a single path joining the ears to the head loses the
+ * notch between them at icon size, and the notch is the whole read.
+ */
+export const TrinoIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M8.5 11.5C7.2 9.6 6.5 7.2 6.8 4.8c.1-.8.9-1.2 1.5-.7 1.8 1.5 3 3.6 3.4 5.9" />
+    <path d="M15.5 11.5c1.3-1.9 2-4.3 1.7-6.7-.1-.8-.9-1.2-1.5-.7-1.8 1.5-3 3.6-3.4 5.9" />
+    <path d="M12 10.5c3 0 5.5 2.4 5.5 5.3S15 21 12 21s-5.5-2.3-5.5-5.2S9 10.5 12 10.5Z" />
+    <circle cx="12" cy="16.8" r="1" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+/**
  * Elastic's banded-disc mark, reduced to its seams.
  *
  * Read off the official logo's own geometry (`Elasticsearch_logo.svg`, the five
