@@ -168,6 +168,32 @@ export const PROMPTED_ACTION_SHAPE = z.object({
 });
 
 /**
+ * The arguments, plus whatever the model wrote one level too high.
+ *
+ * `deepseek-r1:7b`, query-optimization: thirty-five `recommend_change` refusals in one run,
+ * all reporting the same three fields, until the deadline ended it. Read with the refusal
+ * detail the ledger now carries, those three are not three mistakes — `change: invalid value;
+ * statement: expected string; rationale: expected string` is an EMPTY arguments object, listed
+ * three issues at a time. The model had written every one of those fields, beside `action`
+ * instead of inside `arguments`, and the reply was discarded whole.
+ *
+ * The same mistake by half is measurable too: reproduced through this module's own contract
+ * text, the model built `arguments` correctly and left `evidence` outside it.
+ *
+ * Only ever ADDITIVE, which is what makes this safe to apply to every prompted run rather
+ * than to the model that showed it: a field the model placed correctly is never replaced, and
+ * a reply that already parsed parses to exactly what it did before. Everything recovered here
+ * still has to satisfy the tool's schema — this decides where the model's words were meant to
+ * go, never what they say.
+ */
+function withStrayFields(parsed: unknown, args: Record<string, unknown> | undefined): Record<string, unknown> {
+  const siblings = Object.fromEntries(
+    Object.entries(parsed as Record<string, unknown>).filter(([key]) => key !== "action" && key !== "arguments"),
+  );
+  return { ...siblings, ...(args ?? {}) };
+}
+
+/**
  * The action a prompted turn settled on, or null if the reply was prose.
  *
  * Reads the LAST action-shaped object in the text, and that direction is the point: a
@@ -186,7 +212,7 @@ export function readPromptedAction(text: string, tools: readonly AgentToolDefini
       continue;
     }
     const action = actionSchema.safeParse(parsed);
-    if (action.success) return { name: action.data.action, input: action.data.arguments ?? {} };
+    if (action.success) return { name: action.data.action, input: withStrayFields(parsed, action.data.arguments) };
     const enveloped = readEnvelope(parsed, tools);
     if (enveloped !== null) return enveloped;
   }

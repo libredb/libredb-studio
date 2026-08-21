@@ -117,6 +117,52 @@ describe("reading an action back out of a model's prose", () => {
   test("missing arguments read as an empty object, so a no-argument tool still dispatches", () => {
     expect(readPromptedAction('{"action": "compose_report"}')).toEqual({ name: "compose_report", input: {} });
   });
+
+  /*
+    The fields a model wrote one level too high, and what they cost before they were read.
+
+    `deepseek-r1:7b`, query-optimization: THIRTY-FIVE `recommend_change` refusals in a single
+    run, every one of them saying the same three fields did not match, until the run hit its
+    deadline. The refusal detail is what made it readable — `change: invalid value; statement:
+    expected string; rationale: expected string` is not three separate mistakes, it is an
+    arguments object with nothing in it at all, listed three at a time.
+
+    Nothing was missing from the reply. The model had named the right tool, chosen the right
+    kind of change, written a statement and a rationale, and cited an artifact its own run
+    produced; it had simply written those beside `action` rather than inside `arguments`, and
+    the whole call was discarded for it.
+
+    This reads them, and it can only ADD: an object that already carries `arguments` keeps
+    exactly what it had, and a sibling never replaces a field the model put in the right
+    place. Nothing that parsed before parses differently.
+  */
+  test("fields written beside the action, rather than inside it, are still the arguments", () => {
+    expect(
+      readPromptedAction('{"action": "recommend_change", "change": "index", "statement": "CREATE INDEX ..."}'),
+    ).toEqual({ name: "recommend_change", input: { change: "index", statement: "CREATE INDEX ..." } });
+  });
+
+  test("a field that escaped the arguments object is folded back into it", () => {
+    /*
+      The same mistake by half. Reproduced against the model through the product's own
+      contract text: it built `arguments` correctly and then put `evidence` outside, which
+      leaves a call that is complete in the reply and incomplete by the time it is validated.
+    */
+    expect(
+      readPromptedAction(
+        '{"action": "recommend_change", "arguments": {"change": "index", "statement": "CREATE INDEX ..."}, "evidence": [{"correlationId": "a1"}]}',
+      ),
+    ).toEqual({
+      name: "recommend_change",
+      input: { change: "index", statement: "CREATE INDEX ...", evidence: [{ correlationId: "a1" }] },
+    });
+  });
+
+  test("a sibling never overrides what the model put in the right place", () => {
+    expect(
+      readPromptedAction('{"action": "compose_report", "arguments": {"claims": ["inside"]}, "claims": ["outside"]}'),
+    ).toEqual({ name: "compose_report", input: { claims: ["inside"] } });
+  });
 });
 
 describe("a tool call the model wrote as its payload rather than as a call", () => {
