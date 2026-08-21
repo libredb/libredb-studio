@@ -1,35 +1,33 @@
 /**
- * `mistral-small3.2:24b` — sampled on data-analysis, because determinism pins it to stopping.
+ * `mistral-small3.2:24b` — sampled on data-analysis, because determinism pinned it to stopping.
  *
- * Four surfaces lock 5/5. Two do not, and both lose to the same thing: the model narrates or
- * gives up rather than filing. `data-analysis` is 0 of 5, alternating `no-answer` and
- * `no-report`, and one of its ledgers is the whole diagnosis:
+ * Four surfaces lock 5/5. `data-analysis` is 0 of 5, alternating `no-answer` and `no-report`,
+ * and it took two measurements to get past the first cause and find the second.
  *
- *     took a reading · called compose_report · HELD, told to present the answer first
- *     · stopped. 21 seconds of a 630-second budget.
+ * **First cause, fixed.** At temperature 0 the run took a reading, called `compose_report`, was
+ * held with the notice to present its answer first, and STOPPED — 21 seconds into a 630-second
+ * budget, so neither time nor tools were missing. Refused once, it gave up, and determinism
+ * meant it gave up identically every run. That is the shape `qwen3:8b` showed on
+ * query-optimization, where sampling at 0.8 recovered the cell. At 0.7 the stopping is gone:
+ * the run now reads seven times, drafts a real aggregate, and composes its report.
  *
- * It had the time and it had the tools. Refused once, it stops — and at temperature 0 it stops
- * every time, because there is no other branch for it to find. That is the shape `qwen3:8b`
- * showed on query-optimization, where determinism pinned it to a losing opening in 10 runs out
- * of 10 and sampling at 0.8 recovered the cell.
+ * **Second cause, open.** It still loses, on `no-answer`, and the second measurement's ledger
+ * holds no `call-held` at all — the hold that would have asked for the answer never fired.
+ * The reason is a blind spot this drive documents in `answerAttempted`: a REFUSED
+ * `present_answer` writes no ledger event, so a call the tool declined is indistinguishable
+ * from a call never made, and the flag it sets disables the hold for the rest of the run.
  *
- * So 0.7 here, on this surface only. Its four locked surfaces keep the deterministic default,
- * because a cell that locks 5/5 deterministically has nothing to gain from variance and
- * something to lose.
+ * So the run almost certainly calls `present_answer`, is refused, and reports instead. Which
+ * of the five refusals it hit — invalid input, an unknown artifact, an artifact that is not a
+ * data read, a statement that cannot be found behind it, or a rejected chart spec — is not
+ * recorded anywhere, and each one implies a different fix.
  *
- * Measured at 0.7: the stopping is gone. The run took its reading, was held, and composed the
- * report on the very next turn instead of giving up — which is what the sampling was for. It
- * still lost, on `no-answer`, because it never called `present_answer`.
+ * Nothing further is set here until that is visible. A second `presentReminderLimit` was tried
+ * and removed: it aims at a hold that is not firing, so it could not have helped, and an
+ * override with no measurement behind it is exactly what this directory refuses to hold.
  *
- * That is a second, separate refusal and it gets a second telling. The hold that asks for the
- * answer fires once by default, and this model reports straight through it: held, told to
- * present first, it files the report anyway and the answer pane lands empty. Two holds here,
- * one everywhere else, because a second is a turn spent arguing with a model that has already
- * declined.
- *
- * `query-optimization` is left alone for now: its five losses spread across three different
- * shortfalls (`no-report`, `no-plan-comparison`, `empty-evidence`), which is not one cause
- * with one setting behind it.
+ * `query-optimization` is left alone too: its five losses spread across `no-report`,
+ * `no-plan-comparison` and `empty-evidence`, which is not one cause with one setting behind it.
  */
 
 import { DEFAULT_UNREPORTED_CALL_CEILING, type AgentModelProfile } from "./profile";
@@ -37,17 +35,14 @@ import { DEFAULT_UNREPORTED_CALL_CEILING, type AgentModelProfile } from "./profi
 export const MISTRAL_SMALL3_2_24B: AgentModelProfile = {
   measured:
     "4/6 modes locked. Investigate 5/5 · Assess 5/5 · Operate 5/5 · Plan 5/5 · Analyze 0/5 · " +
-    "Optimize 0/5. The analysis ledgers alternate no-answer and no-report, and one shows the " +
-    "mechanism: it took a reading, called compose_report, was held with the notice to present " +
-    "the answer first, and stopped — 21 seconds into a 630-second budget, so neither time nor " +
-    "tools were missing. At temperature 0 it stops the same way every run, which is the shape " +
-    "qwen3:8b showed before sampling recovered its cell, so this surface samples at 0.7. " +
-    "Optimize is untouched: its five losses span no-report, no-plan-comparison and " +
-    "empty-evidence, which is not one cause. At 0.7 the stopping stopped — the run composed its " +
-    "report on the turn after the hold rather than giving up — and it lost on no-answer " +
-    "instead, having never called present_answer through a hold that fires once, so it is " +
-    "given two.",
+    "Optimize 0/5. At temperature 0 the analysis run was held once, told to present its answer " +
+    "before reporting, and stopped — 21 seconds into a 630-second budget. Sampled at 0.7 that " +
+    "stopping is gone: it reads seven times, drafts an aggregate and composes the report. It " +
+    "still loses on no-answer, and that ledger records NO hold at all, which means present_answer " +
+    "was called and refused: a refused call writes no event but still sets the flag that " +
+    "disables the hold. Which of the five refusals it hit is not recorded, so nothing more is " +
+    "set here. Optimize is untouched: its losses span no-report, no-plan-comparison and " +
+    "empty-evidence, which is not one cause.",
   perWorkflow: { "data-analysis": { temperature: 0.7, topP: 0.9 } },
-  presentReminderLimit: 2,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
 };

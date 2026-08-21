@@ -169,17 +169,18 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(remindsWithoutTools("some-model-released-tomorrow:70b")).toBe(false);
   });
 
-  test("the answer is asked for twice only where once was measured going unheard", () => {
+  test("the answer is asked for once, and no measurement has earned a second", () => {
     /*
-      `mistral-small3.2:24b`, data-analysis. Held and told to present its answer before
-      reporting, it composes the report on the next turn anyway, and the run lands with an
-      empty answer pane and a `no-answer` verdict. The telling was heard and declined, so it
-      is given a second.
+      `mistral-small3.2:24b` was given two, on the reading that it reports straight through the
+      first telling. Then its ledger was read properly: there is no hold in it at all. The hold
+      never fired, so a second could not have helped.
 
-      One everywhere else: a second hold is a turn spent arguing with a model that has already
-      supplied what it was asked for.
+      Why it did not fire is the finding, and it is a blind spot rather than a bug in the limit:
+      a REFUSED `present_answer` writes no ledger event but still sets `answerAttempted`, so a
+      call the tool declined disables the hold for the rest of the run and leaves no trace of
+      having done so. Until that refusal is recorded, no setting here can be aimed at anything.
     */
-    expect(presentReminderLimitFor("mistral-small3.2:24b")).toBe(2);
+    expect(presentReminderLimitFor("mistral-small3.2:24b")).toBe(1);
     expect(presentReminderLimitFor("qwen3:8b")).toBe(1);
     expect(presentReminderLimitFor("some-model-released-tomorrow:70b")).toBe(1);
   });
