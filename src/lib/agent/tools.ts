@@ -1105,6 +1105,26 @@ function invalidEvidenceInput(problems: string, example?: string): AgentToolOutc
 }
 
 /**
+ * A minimal, VALID `compare_plans` call for this run, or nothing when it holds fewer than two.
+ *
+ * The two most recent plans, in the order the drive's own notice names them: a run that took
+ * five is choosing between its latest readings, and the first plan it took is the one it has
+ * moved on from.
+ *
+ * Nothing when there is only one plan, deliberately. There is no valid call to show, and what
+ * such a run needs is the hold's sentence rather than a shape it cannot fill.
+ */
+function exampleCompareCall(events: readonly AgentRunEvent[]): string | undefined {
+  const plans: string[] = [];
+  for (const event of events) {
+    if (event.kind === "tool-completed" && event.artifact.operationId === "sql.explain.estimate")
+      plans.push(event.artifact.correlationId);
+  }
+  if (plans.length < 2) return undefined;
+  return JSON.stringify({ before: plans.at(-2), after: plans.at(-1) });
+}
+
+/**
  * A minimal, VALID `recommend_change` call for this run, or nothing when it holds no plan.
  *
  * The index arm, because that is the one an optimization verdict accepts without a comparison:
@@ -2632,7 +2652,16 @@ export function comparePlansTool(
   }
 
   const parsed = parseToolInput(planComparisonSchema, input);
-  if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
+  if (!parsed.ok) {
+    // The last id-bearing tool to get a worked call. `lfm2:24b` failed the shape of this one
+    // three times in a single run while also failing `recommend_change` four times -- both
+    // routes through the plan bar, neither buildable.
+    const example = offersRefusalExamples(context.modelId) ? exampleCompareCall(run.events) : undefined;
+    return unavailable(
+      "INVALID_TOOL_INPUT",
+      example === undefined ? parsed.problems : `${parsed.problems}. A call this run could make right now: ${example}`,
+    );
+  }
   // One plan cited as both sides is not a before and an after. Without this, a
   // comparison of a plan with itself records a valid `plan-comparison` and the goal
   // verifier marks the run answered on a single inspected plan — which defeats the

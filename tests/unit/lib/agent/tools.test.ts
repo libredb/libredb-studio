@@ -748,6 +748,70 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       expect(outcome.modelText).not.toContain("A call this run could make right now");
     });
 
+    test("compare_plans offers the two ids a run holding two plans can compare", () => {
+      /*
+        The last id-bearing tool to carry a worked call. `lfm2:24b` failed the shape of this one
+        three times in a single run while also failing `recommend_change` four times — both
+        routes through the plan bar, neither buildable — and by then it had been held twice and
+        tried after each hold. It is not declining to answer.
+
+        A run holding fewer than two plans is given nothing, which the test below pins: there is
+        no valid call to show, and what that run needs is the hold's own sentence.
+      */
+      const h = harness();
+      const plan = (id: string) =>
+        ({
+          kind: "tool-completed",
+          atMs: 2,
+          stepId: `step_${id}`,
+          artifact: {
+            correlationId: id,
+            operationId: "sql.explain.estimate",
+            connectionId: "conn-1",
+            createdAtMs: 2,
+            summary: { rowCount: 1, columns: ["detail"], truncated: false },
+          },
+        }) as unknown as AgentRunEvent;
+
+      const outcome = comparePlansTool(
+        { ...h.context, modelId: "lfm2:24b" },
+        { runId: h.context.runId, events: [plan("corr-before"), plan("corr-after")] },
+        { before: "corr-before" },
+      );
+
+      if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+      expect(outcome.modelText).toContain("A call this run could make right now");
+      expect(outcome.modelText).toContain("corr-before");
+      expect(outcome.modelText).toContain("corr-after");
+    });
+
+    test("a run holding one plan is offered no comparison to copy", () => {
+      // With one plan there is no valid call to show. The sentence such a run needs is the
+      // hold's — inspect a second plan, or recommend an index citing the one it has.
+      const h = harness();
+      const onePlan = {
+        kind: "tool-completed",
+        atMs: 2,
+        stepId: "step_only",
+        artifact: {
+          correlationId: "corr-only",
+          operationId: "sql.explain.estimate",
+          connectionId: "conn-1",
+          createdAtMs: 2,
+          summary: { rowCount: 1, columns: ["detail"], truncated: false },
+        },
+      } as unknown as AgentRunEvent;
+
+      const outcome = comparePlansTool(
+        { ...h.context, modelId: "lfm2:24b" },
+        { runId: h.context.runId, events: [onePlan] },
+        { before: "corr-only" },
+      );
+
+      if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+      expect(outcome.modelText).not.toContain("A call this run could make right now");
+    });
+
     test("recommend_change offers the index call a one-plan run can actually make", () => {
       /*
         The arm an optimization verdict accepts without a comparison: a run holding ONE plan
