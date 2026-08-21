@@ -38,9 +38,31 @@ export const GEMMA4_26B: AgentModelProfile = {
     "reminder does reach the model and it goes back to reading rather than filing, so the " +
     "cause is not a forgotten call or a shortage of turns. Call count does not separate " +
     "winners from losers either: a run that reported in 26 seconds made 11 calls, as many as " +
-    "one that reported nothing. Its other five surfaces lock 5/5 at these defaults.",
+    "one that reported nothing. Its other five surfaces lock 5/5 at these defaults. Measured " +
+    "again at 4/5 once the stopping turn became readable: the losing run profiled nine tables, " +
+    "ran two queries, then returned an EMPTY completion — no call, no text — at eleven calls, " +
+    "one under the general ceiling. Its ceiling is 10 on that reading.",
   sampling: DEFAULT_SAMPLING,
-  unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  /*
+    Ten, and this is the second time a ceiling has been set here — the first was a guess and
+    this one is not.
+
+    Earlier the same day a ceiling of 9 was set on the reading that one losing run had profiled eleven
+    tables, and it was deleted a measurement later: five fresh runs all made EIGHT calls, so
+    neither 12 nor 9 could have fired and what had been measured was noise.
+
+    What was missing then was the ledger entry that now exists. The losing run in the latest
+    five profiled NINE tables, ran two queries, and then returned a turn with no tool call and
+    no text at all — an empty completion, which is why `model-stopped-saying` recorded nothing
+    for it. Eleven calls, one under the general ceiling, and nothing left in the model to spend
+    a twelfth on.
+
+    So the distribution is now visible rather than assumed: this model's passing assessments
+    finish in about eight calls and its losing one goes to eleven and empties out. Ten catches
+    the second without touching the first, and the point of the number is that gap — a run
+    narrowed at ten still has the turn it needs to file what it already has.
+  */
+  unreportedCallCeiling: 10,
   reportReminderLimit: 1,
   notices: { ...BASELINE_NOTICES },
 };

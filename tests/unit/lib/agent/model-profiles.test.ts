@@ -73,16 +73,20 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(samplingFor("qwen3:8b", "query-optimization")).toEqual(samplingFor("QWEN3:8B", "query-optimization"));
   });
 
-  test("the unreported-call ceiling is the general one until a measurement moves it", () => {
+  test("the unreported-call ceiling moves only where a ledger showed it firing", () => {
     /*
-      No model overrides it today, and one tried. `gemma4:26b` was given a ceiling of 9 on the
-      reading that its losing assessment had profiled eleven tables and run out of room; five
-      fresh runs at 9 came back 3 of 5, and their ledgers said why the change could not have
-      helped: every one of them made EIGHT calls. The ceiling never fired at 12 and it never
-      fired at 9 either, so what was measured was noise, and the override was deleted rather
-      than kept as a number with a story attached to it. See `gemma4-26b.ts`.
+      `gemma4:26b` overrides it, on the second attempt and for a different reason than the
+      first. The first was a guess: 9, read off a single losing run that had profiled eleven
+      tables. Five fresh runs at 9 came back 3 of 5 and said why it could not have helped —
+      every one made EIGHT calls, so neither 12 nor 9 ever fired — and it was deleted.
+
+      What was missing was a ledger entry that did not exist yet. With the stopping turn
+      recorded, the losing run reads plainly: nine tables profiled, two queries, then an EMPTY
+      completion at eleven calls — no tool call and no text, one under the general ceiling, with
+      nothing left to spend a twelfth on. Ten catches that and clears the eight-call runs, and
+      the gap between the two numbers is the reason ten rather than eleven.
     */
-    expect(ceilingFor("gemma4:26b")).toBe(12);
+    expect(ceilingFor("gemma4:26b")).toBe(10);
     expect(ceilingFor("qwen3:8b")).toBe(12);
     expect(ceilingFor("some-model-released-tomorrow:70b")).toBe(12);
   });
