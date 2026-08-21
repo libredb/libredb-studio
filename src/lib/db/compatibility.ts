@@ -255,6 +255,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     probedVersion: "12.3.2-MariaDB-ubu2404",
     caveats: [
       "The version shown is MariaDB's full build string, including its OS suffix, not a MySQL-style number.",
+      "performance_schema ships OFF (@@performance_schema = 0), so the cache-hit, queries-per-second and buffer-pool figures are absent and the slow-query list is empty until the server is started with performance_schema=ON. Everything the schema tree, sizes, sessions and EXPLAIN need comes from information_schema and is unaffected.",
       "Verified on MariaDB 12.3 only; the 10.x information_schema surface was not probed.",
     ],
   },

@@ -26,6 +26,7 @@ import {
 } from "../../types";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
+import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 
 /**
  * mysql2 3.23 narrowed `execute`'s values parameter from `any` to a concrete
@@ -195,6 +196,51 @@ const SLOW_QUERIES_BODY_SQL = `
         FROM performance_schema.events_statements_summary_by_digest
         WHERE SCHEMA_NAME = ?
         ORDER BY SUM_TIMER_WAIT DESC`;
+
+/**
+ * Vendor names that a MySQL-protocol server puts into its own `VERSION()` string.
+ *
+ * `mysql2` serves MySQL and its wire-compatible relatives alike, and `VERSION()`
+ * is the only thing that says which one answered. MySQL returns a bare number
+ * ("8.0.35"), so the overview has to supply the vendor; these four supply it
+ * themselves, and prefixing "MySQL" onto their answer asserted the wrong vendor
+ * outright - a MariaDB 12.3 server read as "MySQL 12.3.2-MariaDB-ubu2404".
+ *
+ * The list is exactly the self-identifying strings `WIRE_COMPATIBLE_ENGINES`
+ * records from a live probe: MariaDB `12.3.2-MariaDB-ubu2404`, TiDB
+ * `8.0.11-TiDB-v8.5.1`, Vitess `8.0.43-Vitess`, OceanBase
+ * `5.7.25-OceanBase_CE-v4.4.2.1`. StarRocks and SingleStore are deliberately
+ * absent: both answer `VERSION()` with a plain MySQL number and nothing to key
+ * on, which the compatibility table already records as their behaviour.
+ */
+const SELF_IDENTIFYING_VERSION = /mariadb|tidb|vitess|oceanbase/i;
+
+/**
+ * How the overview names the server: the string as the server gave it when that
+ * already names a vendor, `MySQL <version>` when it does not.
+ */
+function labelServerVersion(version: string): string {
+  return SELF_IDENTIFYING_VERSION.test(version) ? version : `MySQL ${version}`;
+}
+
+/**
+ * A `performance_schema` reading, or `undefined` when there was nothing to read.
+ *
+ * MariaDB ships `performance_schema` OFF by default and the tables still exist,
+ * so the metric queries are a bare `SELECT (subquery)` that answers one row of
+ * NULLs rather than throwing. `parseInt(x || "0")` turned each of those NULLs
+ * into a measurement nobody took, which is the fault #448 and #452 removed from
+ * the panels; this keeps the provider from manufacturing one in the first place.
+ */
+function measuredNumber(value: unknown): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
 
 // The LIMIT clause is interpolated at the call site in getActiveSessions().
 const ACTIVE_SESSIONS_BODY_SQL = `
@@ -645,7 +691,7 @@ export class MySQLProvider extends SQLBaseProvider {
       const databaseSize = `${sizeRows[0]?.size_mb || 0} MB`;
 
       const [hitRows] = await conn.execute<RowDataPacket[]>(BUFFER_CACHE_HIT_RATIO_SQL);
-      const cacheHitRatio = `${(hitRows[0]?.hit_ratio || 99).toFixed(1)}%`;
+      const cacheHitRatio = formatCacheHitRatio(measuredNumber(hitRows[0]?.hit_ratio));
 
       let slowQueries: SlowQuery[] = [];
       try {
@@ -801,7 +847,7 @@ export class MySQLProvider extends SQLBaseProvider {
       );
 
       return {
-        version: `MySQL ${version}`,
+        version: labelServerVersion(version),
         uptime,
         startTime: new Date(Date.now() - uptimeSeconds * 1000),
         activeConnections,
@@ -821,40 +867,40 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
+      // Every reading below is optional on purpose. A server with performance_schema
+      // OFF - MariaDB's default - answers each of these with NULL rather than
+      // failing, and a metric nobody measured must stay absent instead of arriving
+      // as a number the panels would rate (#424, and the rule #448/#452 settled).
+
       // Calculate cache hit ratio from InnoDB buffer pool
       const [hitRows] = await conn.execute<RowDataPacket[]>(BUFFER_CACHE_HIT_RATIO_SQL);
-      const cacheHitRatio = parseFloat(hitRows[0]?.hit_ratio || "99");
+      const hitRatio = measuredNumber(hitRows[0]?.hit_ratio);
 
       // Get buffer pool usage
       const [poolRows] = await conn.execute<RowDataPacket[]>(BUFFER_POOL_PAGES_SQL);
-      const dataPages = parseInt(poolRows[0]?.data_pages || "0");
-      const totalPages = parseInt(poolRows[0]?.total_pages || "1");
-      const bufferPoolUsage = (dataPages / totalPages) * 100;
+      const dataPages = measuredNumber(poolRows[0]?.data_pages);
+      const totalPages = measuredNumber(poolRows[0]?.total_pages);
 
       // Get queries per second
       const [qpsRows] = await conn.execute<RowDataPacket[]>(QUERIES_PER_SECOND_SQL);
-      const queries = parseInt(qpsRows[0]?.queries || "0");
-      const uptime = parseInt(qpsRows[0]?.uptime || "1");
-      const queriesPerSecond = queries / uptime;
+      const queries = measuredNumber(qpsRows[0]?.queries);
+      const uptime = measuredNumber(qpsRows[0]?.uptime);
 
-      // Get deadlocks
+      // Get deadlocks. SHOW STATUS answers this with or without performance_schema,
+      // so a 0 here is a measurement and is reported as one.
       const [deadlockRows] = await conn.execute<RowDataPacket[]>("SHOW STATUS LIKE 'Innodb_deadlocks'");
-      const deadlocks = parseInt(deadlockRows[0]?.Value || "0");
+      const deadlocks = measuredNumber(deadlockRows[0]?.Value);
 
       return {
-        cacheHitRatio: Math.min(100, Math.max(0, cacheHitRatio)),
-        queriesPerSecond: Math.round(queriesPerSecond * 100) / 100,
-        bufferPoolUsage: Math.round(bufferPoolUsage * 100) / 100,
-        deadlocks,
+        ...(hitRatio === undefined ? {} : { cacheHitRatio: Math.min(100, Math.max(0, hitRatio)) }),
+        ...(queries === undefined || !uptime ? {} : { queriesPerSecond: round2(queries / uptime) }),
+        ...(dataPages === undefined || !totalPages ? {} : { bufferPoolUsage: round2((dataPages / totalPages) * 100) }),
+        ...(deadlocks === undefined ? {} : { deadlocks }),
       };
     } catch {
-      // Fallback if performance_schema is not available
-      return {
-        cacheHitRatio: 99,
-        queriesPerSecond: 0,
-        bufferPoolUsage: 0,
-        deadlocks: 0,
-      };
+      // performance_schema is absent entirely rather than merely off: nothing was
+      // measured, so nothing is reported.
+      return {};
     } finally {
       conn.release();
     }

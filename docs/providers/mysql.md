@@ -44,6 +44,34 @@ which is the SQL reference implementation. The headline differences:
 | Queries-per-second metric | `undefined` (needs sampling) | Reported (`Queries`/`Uptime`) |
 | BLOB/binary values | driver-native | sanitized to `0x…` hex strings |
 
+### 1.1 MariaDB and the other MySQL-protocol engines
+
+This provider is what a MariaDB connection uses: there is no `mariadb` type id, and choosing MySQL in
+the connection dialog is the documented way to reach it. `mysql2` speaks the protocol both servers
+share, and the connection dialog's `WireCompatibilityHint` names the engines this driver has been
+measured against. The full per-engine table is in [`README.md`](./README.md#wire-compatible-engines);
+two behaviours belong here because they are this provider's code, not the engine's.
+
+**The overview does not rename the server.** `VERSION()` is the only thing that says which engine
+answered. MySQL returns a bare number (`8.0.35`), so `labelServerVersion()` supplies the vendor;
+MariaDB, TiDB, Vitess and OceanBase return a build string that already names themselves
+(`12.3.2-MariaDB-ubu2404`), and that string is passed through unchanged. Prefixing it would assert a
+vendor the server never claimed. StarRocks and SingleStore are deliberately not in that list: both
+answer with a plain MySQL number and give nothing to key on.
+
+**`performance_schema` is OFF by default on MariaDB.** Measured on `mariadb:12.3`
+(`@@performance_schema` = 0): the `performance_schema` tables exist, so the metric queries do not
+fail — they return a row of NULLs. Cache-hit ratio, queries/sec and buffer-pool usage are therefore
+absent rather than zero, and the slow-query list is empty. `information_schema`, `PROCESSLIST`,
+`EXPLAIN FORMAT=JSON`, schema introspection, sizes and row counts are unaffected. Start the server
+with `performance_schema=ON` to get the monitoring figures.
+
+The one metric that goes the other way is `deadlocks`: it comes from `SHOW STATUS LIKE
+'Innodb_deadlocks'`, which MariaDB publishes and MySQL does not, so it is the single performance
+figure a default MariaDB reports and a MySQL server does not.
+
+---
+
 ---
 
 ## 2. Architecture
@@ -274,7 +302,7 @@ All monitoring reads from `SHOW STATUS`/`SHOW VARIABLES`, `information_schema`, 
 |--------|----------------|-------|
 | `getHealth()` | `SHOW STATUS`, `information_schema.TABLES`/`PROCESSLIST`, `performance_schema` | connections, size (MB), InnoDB buffer hit %, top-5 slow queries, 10 sessions |
 | `getOverview()` | `VERSION()`, `SHOW STATUS/VARIABLES`, `information_schema` | version, uptime, conns, max_conns, size, table/index counts |
-| `getPerformanceMetrics()` | `performance_schema.global_status` | cache-hit %, **queries/sec** (`Queries`/`Uptime`), buffer-pool %, deadlocks |
+| `getPerformanceMetrics()` | `performance_schema.global_status`, `SHOW STATUS` | cache-hit %, **queries/sec** (`Queries`/`Uptime`), buffer-pool %, deadlocks. Every field optional — see the degradation note below |
 | `getSlowQueries()` | `performance_schema.events_statements_summary_by_digest` | per-digest stats |
 | `getActiveSessions()` | `information_schema.PROCESSLIST` | pid, user, db, host, command, duration |
 | `getTableStats()` | `information_schema.TABLES` | sizes; bloat **estimated from `DATA_FREE`** (no live/dead tuples, no last-vacuum/analyze) |
@@ -283,10 +311,18 @@ All monitoring reads from `SHOW STATUS`/`SHOW VARIABLES`, `information_schema`, 
 
 **Graceful degradation — note the *different* failure modes:**
 - `getHealth()` slow-queries: try/catch → a single placeholder row (*"Performance schema not available"*).
+- `getHealth()` cache-hit ratio: `formatCacheHitRatio()` → `"N/A"` when nothing was measured.
 - `getSlowQueries()`: try/catch → **empty array** `[]`.
-- `getPerformanceMetrics()`: the whole method is wrapped — on any failure it returns **static defaults**
-  (`cacheHitRatio: 99`, `queriesPerSecond/bufferPoolUsage/deadlocks: 0`). These defaults can read as
-  "healthy" even when `performance_schema` is simply off — see [Known limitations](#14-known-limitations--future-work).
+- `getPerformanceMetrics()`: **every field is omitted rather than defaulted.** A server with
+  `performance_schema` OFF answers the `global_status` sub-selects with NULL instead of failing, so
+  each reading is taken through `measuredNumber()` and a field with nothing behind it is left out of
+  the object entirely. `deadlocks` comes from `SHOW STATUS`, which answers either way, so a `0` there
+  is a real measurement and is reported *where the server publishes one*. If `performance_schema` is
+  absent outright the whole method returns `{}`. This is the rule #448 and #452 settled: ABSENCE and
+  ZERO are different inputs, and only the first is invisible to the panels.
+- `deadlocks` reads `Innodb_deadlocks`, which is **MariaDB's** status variable. MySQL does not publish
+  it — measured as an empty `SHOW STATUS` result on both 8.0.46 and 26.7.0 — so the field is absent on
+  MySQL and present on MariaDB. It is the one metric that survives `performance_schema` being off.
 
 ---
 
@@ -437,8 +473,10 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   counter (MySQL has no `pg_stat_user_indexes.idx_scan` equivalent).
 - **Row counts (`TABLE_ROWS`) are engine estimates** for InnoDB, not exact counts.
 - **Table bloat is estimated from `DATA_FREE`** (free space), an approximation.
-- **`getPerformanceMetrics()` falls back to static defaults** (`99`/`0`/`0`/`0`) when
-  `performance_schema` is unavailable, which can misleadingly read as a healthy server.
+- **`getPerformanceMetrics()` reports nothing when `performance_schema` is off.** The panels show
+  the metrics as unmeasured rather than inventing values for them, which is correct but means a
+  MariaDB server (see below) has no cache-hit, QPS or buffer-pool reading until it is started with
+  `performance_schema=ON`.
 - **`cancelQuery()` returns `true` on `KILL QUERY` success** without confirming the target was
   actually executing.
 - **Cloud SSL auto-detect uses `rejectUnauthorized: false`** — encrypted but **not** authenticated

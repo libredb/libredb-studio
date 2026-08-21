@@ -6,6 +6,7 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import type { DatabaseConnection } from "@/lib/types";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 
 // ============================================================================
 // Mock mysql2/promise BEFORE importing the provider
@@ -323,6 +324,48 @@ function defaultMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
   return Promise.resolve([[{ id: 1, name: "test" }], [{ name: "id" }, { name: "name" }]]);
 }
 
+/**
+ * MariaDB answers `SELECT VERSION()` with its own build string. Measured on
+ * `mariadb:12.3` (`12.3.2-MariaDB-ubu2404`), which is the version
+ * `WIRE_COMPATIBLE_ENGINES` records for MariaDB.
+ */
+function mariaDBMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
+  if (sql.trim().toLowerCase().includes("version()")) {
+    return Promise.resolve([[{ version: "12.3.2-MariaDB-ubu2404" }], [{ name: "version" }]]);
+  }
+  return defaultMockExecute(sql);
+}
+
+/**
+ * What a server with `performance_schema` OFF actually returns. MariaDB ships it
+ * disabled by default, and the tables still EXIST there: every query below is a
+ * bare `SELECT (subquery)` with no FROM, so it answers one row of NULLs rather
+ * than throwing or returning nothing. Measured on `mariadb:12.3` with
+ * `@@performance_schema` = 0.
+ */
+function perfSchemaDisabledMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
+  const normalized = sql.trim().toLowerCase();
+
+  if (normalized.includes("performance_schema.global_status")) {
+    if (normalized.includes("innodb_buffer_pool_reads") && normalized.includes("hit_ratio")) {
+      return Promise.resolve([[{ hit_ratio: null }], []]);
+    }
+    if (normalized.includes("data_pages") && normalized.includes("total_pages")) {
+      return Promise.resolve([[{ data_pages: null, total_pages: null }], []]);
+    }
+    if (normalized.includes("queries") && normalized.includes("uptime")) {
+      return Promise.resolve([[{ queries: null, uptime: null }], []]);
+    }
+    return Promise.resolve([[{ hit_ratio: null }], []]);
+  }
+
+  if (normalized.includes("events_statements_summary_by_digest")) {
+    return Promise.resolve([[], []]);
+  }
+
+  return defaultMockExecute(sql);
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -504,6 +547,24 @@ describe("MySQLProvider", () => {
       expect(typeof health.cacheHitRatio).toBe("string");
       expect(Array.isArray(health.slowQueries)).toBe(true);
       expect(Array.isArray(health.activeSessions)).toBe(true);
+    });
+
+    test("reports the cache hit ratio as measured when performance_schema answers", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      expect(health.cacheHitRatio).toBe("99.5");
+    });
+
+    test("reports the cache hit ratio as unavailable when performance_schema is disabled", async () => {
+      mockExecuteFn = perfSchemaDisabledMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      expect(health.cacheHitRatio).toBe(CACHE_HIT_RATIO_UNAVAILABLE);
     });
   });
 
@@ -699,6 +760,49 @@ describe("MySQLProvider", () => {
       expect(overview.startTime).toBeInstanceOf(Date);
     });
 
+    test("does not call a MariaDB server MySQL", async () => {
+      mockExecuteFn = mariaDBMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      // The driver is mysql2 and the wire protocol is MySQL's, but the SERVER is not
+      // MySQL and the panel must not assert that it is.
+      expect(overview.version).not.toContain("MySQL");
+      expect(overview.version).toContain("MariaDB");
+      expect(overview.version).toContain("12.3.2");
+    });
+
+    test("leaves every measured self-identifying version string as the server gave it", async () => {
+      // The exact strings WIRE_COMPATIBLE_ENGINES recorded from a live probe.
+      const probed = ["12.3.2-MariaDB-ubu2404", "8.0.11-TiDB-v8.5.1", "8.0.43-Vitess", "5.7.25-OceanBase_CE-v4.4.2.1"];
+
+      for (const version of probed) {
+        mockExecuteFn = (sql: string) =>
+          sql.trim().toLowerCase().includes("version()")
+            ? Promise.resolve([[{ version }], [{ name: "version" }]])
+            : defaultMockExecute(sql);
+
+        provider = new MySQLProvider(makeMySQLConfig());
+        await provider.connect();
+        const overview = await provider.getOverview();
+        await provider.disconnect();
+
+        expect(overview.version).toBe(version);
+      }
+    });
+
+    test("still names MySQL when the server does not name itself", async () => {
+      // StarRocks answers VERSION() with a plain "5.1.0" and SingleStore with a
+      // MySQL number too: there is nothing to key on, so the prefix stays.
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const overview = await provider.getOverview();
+
+      expect(overview.version).toBe("MySQL 8.0.35");
+    });
+
     test("formats uptime correctly", async () => {
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
@@ -730,6 +834,62 @@ describe("MySQLProvider", () => {
       expect(typeof metrics.queriesPerSecond).toBe("number");
       // 50000 / 86400 ≈ 0.58
       expect(metrics.queriesPerSecond).toBeGreaterThan(0);
+    });
+
+    test("omits the metrics performance_schema cannot answer when it is disabled", async () => {
+      mockExecuteFn = perfSchemaDisabledMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const metrics = await provider.getPerformanceMetrics();
+
+      // ABSENCE and ZERO are different inputs (#448, #452). A server with
+      // performance_schema off has measured nothing, so nothing is reported -
+      // not a confident 99% hit ratio, not a 0% buffer pool, not 0 QPS.
+      expect(metrics.cacheHitRatio).toBeUndefined();
+      expect(metrics.bufferPoolUsage).toBeUndefined();
+      expect(metrics.queriesPerSecond).toBeUndefined();
+
+      // Deadlocks come from SHOW STATUS, which answers with or without
+      // performance_schema, so this 0 is a measurement and stays.
+      expect(metrics.deadlocks).toBe(0);
+    });
+
+    test("omits deadlocks on a server that does not publish Innodb_deadlocks", async () => {
+      // `Innodb_deadlocks` is MariaDB's status variable. MySQL does not publish it -
+      // measured as an empty SHOW STATUS result on both 8.0.46 and 26.7.0 - so the
+      // old `parseInt(row?.Value || "0")` reported a deadlock count MySQL never gave.
+      mockExecuteFn = (sql: string) =>
+        sql.trim().toLowerCase().includes("show status like 'innodb_deadlocks'")
+          ? Promise.resolve([[], []])
+          : defaultMockExecute(sql);
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const metrics = await provider.getPerformanceMetrics();
+
+      expect(metrics.deadlocks).toBeUndefined();
+      // The performance_schema readings are unaffected: still measured, still reported.
+      expect(metrics.cacheHitRatio).toBe(99.5);
+      expect(metrics.bufferPoolUsage).toBe(80);
+    });
+
+    test("omits every metric when the performance_schema query fails outright", async () => {
+      mockExecuteFn = (sql: string) => {
+        if (sql.trim().toLowerCase().includes("performance_schema")) {
+          return Promise.reject(new Error("Table 'performance_schema.global_status' doesn't exist"));
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const metrics = await provider.getPerformanceMetrics();
+
+      expect(metrics.cacheHitRatio).toBeUndefined();
+      expect(metrics.bufferPoolUsage).toBeUndefined();
+      expect(metrics.queriesPerSecond).toBeUndefined();
+      expect(metrics.deadlocks).toBeUndefined();
     });
   });
 
