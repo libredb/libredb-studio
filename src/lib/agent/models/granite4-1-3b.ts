@@ -24,5 +24,25 @@ export const GRANITE4_1_3B: AgentModelProfile = {
     "4/6 modes locked, 23/30 runs passed at these settings. Investigate 5/5 · Optimize 3/5 · Assess 5/5 · Operate 5/5 · Analyze 0/5 · Plan 5/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  /*
+    The second model to earn this, and its ledger is the clearest case yet.
+
+    One query-optimization run, read end to end now that declines, reminders and stopping prose
+    are all recorded:
+
+        run_read_query   refused by the database
+        inspect_plan     one plan
+        compare_plans    IDENTICAL_PLANS — it compared the plan with itself
+        recommend_change INVALID_TOOL_INPUT, three times
+        compose_report   held (one plan), then INVALID_TOOL_INPUT, twice
+        and then it wrote the whole report as PROSE — claim, evidence, and the real
+        artifact id of the plan it had inspected
+
+    So it knows the content and cannot produce the shape: five schema refusals in one run, and
+    a paragraph at the end that says exactly what `compose_report` was asking for. An example
+    is the one thing it was never given, and on `lfm2:24b` an example collapsed a loop of
+    twenty-eight identical refusals into one.
+  */
+  refusalExamples: true,
   notices: { ...BASELINE_NOTICES },
 };
