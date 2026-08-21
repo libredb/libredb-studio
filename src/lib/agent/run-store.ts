@@ -110,6 +110,7 @@ const EVENT_KINDS: ReadonlySet<string> = new Set(
     "call-held": true,
     "call-declined": true,
     "model-stopped-saying": true,
+    "guidance-issued": true,
     "closing-statement": true,
     "plan-statement-drafted": true,
     "answer-composed": true,

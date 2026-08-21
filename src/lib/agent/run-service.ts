@@ -103,6 +103,9 @@ export type AgentRunNarrativeEvent = Extract<
       // above are: nothing was executed and no step settled -- the run is recording a fact
       // about its own ending, which is the largest unexplained group in the measurements.
       | "model-stopped-saying"
+      // A sentence the drive said on a turn nothing was refused. Narrative like the entries
+      // above: no effect ran and no step settled, and the run is recording a decision it made.
+      | "guidance-issued"
       // Both reach no database and settle no step: they record what the run has
       // ALREADY established, which is exactly what a narrative entry is.
       | "plan-comparison"

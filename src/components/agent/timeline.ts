@@ -63,6 +63,19 @@ export type AgentTimelineTone = "neutral" | "progress" | "refused" | "done";
 type PlanStatementEvent = Extract<AgentRunEvent, { kind: "plan-statement-drafted" }>;
 
 /**
+ * What each sentence the drive says is called in the rail, in the reader's terms.
+ *
+ * A table rather than the notice's own text: the wording is per model now
+ * (`lib/agent/models/notices.ts`), and a rail that printed the paragraph would be handing the
+ * user prose written for a model to act on.
+ */
+const GUIDANCE_HEADLINE: Record<Extract<AgentRunEvent, { kind: "guidance-issued" }>["notice"], string> = {
+  "report-reminder": "Asked to file its report",
+  "plan-statement": "Asked for a runnable statement",
+  "report-reserve": "Told this is its last turn",
+};
+
+/**
  * What a surface needs to render the statement a PLAN run drafted, taken from the
  * ledger's own record of it (item 7 of the plan-mode SQL-generator design of
  * 2026-08-15).
@@ -901,6 +914,17 @@ function describeEvent(
         tone: "refused",
         headline: `Declined ${event.tool}`,
         detail: event.reasonCode,
+      };
+    case "guidance-issued":
+      return {
+        /*
+          Something this server said, on a turn where it refused nothing. Neutral, because
+          nothing was turned back — a held call gets the `refused` tone and says so — and named
+          rather than quoted: the wording is per model now, and a rail that printed the whole
+          sentence would be repeating a paragraph the user did not ask to read.
+        */
+        tone: "neutral",
+        headline: GUIDANCE_HEADLINE[event.notice],
       };
     case "model-stopped-saying":
       return {

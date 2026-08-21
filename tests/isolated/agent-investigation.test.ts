@@ -436,6 +436,7 @@ describe("a fresh run drives the investigation arc", () => {
       // `no-report` runs ended in — and `closing-statement` is what the run leaves behind for
       // a reader. An agent run's stopping prose is discarded by the verdict, so without the
       // first entry the largest failure group in the measurements had no explanation in it.
+      "guidance-issued",
       "model-stopped-saying",
       "closing-statement",
       "run-finished",

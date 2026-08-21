@@ -342,6 +342,7 @@ describe("an engine that cannot serve a reading", () => {
       "run-started",
       "tool-invoked",
       "tool-refused",
+      "guidance-issued",
       "model-stopped-saying",
       "closing-statement",
       "run-finished",

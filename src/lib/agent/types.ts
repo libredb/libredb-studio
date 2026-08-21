@@ -607,6 +607,28 @@ export type AgentRunEvent =
     })
   | (AgentRunEventBase & {
       /**
+       * A sentence the drive told the run, on a turn it did not refuse anything.
+       *
+       * The last invisible thing in the loop. `call-held` covers the notices attached to a
+       * REFUSED call, and every other one — the report reminder, the plan-statement ask, the
+       * reserve warning — was pushed into the conversation and left no trace, so a ledger could
+       * not distinguish a run that ignored a reminder from a run that never got one.
+       *
+       * It cost a diagnosis to lack. `granite4.1:3b` was held on one plan, did exactly what
+       * the hold asked (an index recommendation citing that plan), then stopped without
+       * reporting — and whether the drive had told it to report was unanswerable from the
+       * record, which is the difference between a model that declines and a mechanism that
+       * never fired.
+       *
+       * `notice` names WHICH sentence rather than carrying it: the wording is per model now
+       * (`models/notices.ts`) and a ledger repeating it in full would age badly and read as
+       * this server's own prose.
+       */
+      readonly kind: "guidance-issued";
+      readonly notice: "report-reminder" | "plan-statement" | "report-reserve";
+    })
+  | (AgentRunEventBase & {
+      /**
        * The model's closing prose, recorded because it is otherwise lost.
        *
        * Deliberately NOT a report: it carries no citations and claims none, which is

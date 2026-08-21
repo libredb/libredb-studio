@@ -144,6 +144,10 @@ describe("#341 F2: the run investigates competently and finishes without composi
       "statement-drafted",
       "tool-invoked",
       "tool-completed",
+      // The drive told it to report, and that telling is now an entry rather than a silent
+      // push into the conversation: without it a reader cannot tell a model that ignored the
+      // instruction from one that never got it.
+      "guidance-issued",
       "model-stopped-saying",
       "closing-statement",
       "run-finished",

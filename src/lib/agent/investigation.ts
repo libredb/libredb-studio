@@ -2704,11 +2704,12 @@ export async function runInvestigation(
    * version or the verifier. A planning run is never told: it has no `compose_report`
    * to call, so this would be an instruction the mode cannot follow (#350).
    */
-  const announceReserve = (remainingMs: number): void => {
+  const announceReserve = async (remainingMs: number): Promise<void> => {
     if (reserveAnnounced || record.mode !== "agent") return;
     if (maxTurns - turns > AGENT_REPORT_RESERVE_TURNS && remainingMs > reportReserveMsFor(model.modelId)) return;
     reserveAnnounced = true;
     messages.push({ role: "user", content: notice(AGENT_REPORT_RESERVE_NOTICE) });
+    await service.recordEvent(runId, { kind: "guidance-issued", notice: "report-reserve" });
   };
 
   /**
@@ -2743,7 +2744,7 @@ export async function runInvestigation(
     });
   };
 
-  const remindToReport = (assistant: readonly ModelMessage[]): boolean => {
+  const remindToReport = async (assistant: readonly ModelMessage[]): Promise<boolean> => {
     /*
       The no-tool gate, and the one model it reads wrong.
 
@@ -2762,6 +2763,7 @@ export async function runInvestigation(
     narrowed = true;
     messages.push(...assistant);
     messages.push({ role: "user", content: notice(noticesFor(model.modelId).reportReminder) });
+    await service.recordEvent(runId, { kind: "guidance-issued", notice: "report-reminder" });
     return true;
   };
 
@@ -2778,7 +2780,7 @@ export async function runInvestigation(
    * use, so this cannot ask for a statement the run already wrote — a disagreement between the
    * notice and the verdict would spend a turn telling a passing run it had failed.
    */
-  const askForPlanStatement = (assistant: readonly ModelMessage[]): boolean => {
+  const askForPlanStatement = async (assistant: readonly ModelMessage[]): Promise<boolean> => {
     if (record.mode === "agent" || record.workflowType === "operations") return false;
     if (planStatementAsks >= planStatementRetriesFor(model.modelId)) return false;
     if (turns >= maxTurns || resources.deadline.remainingMs() <= 0) return false;
@@ -2786,6 +2788,7 @@ export async function runInvestigation(
     planStatementAsks += 1;
     messages.push(...assistant);
     messages.push({ role: "user", content: notice(noticesFor(model.modelId).planStatement) });
+    await service.recordEvent(runId, { kind: "guidance-issued", notice: "plan-statement" });
     return true;
   };
 
@@ -2876,7 +2879,7 @@ export async function runInvestigation(
     // After the context, so the inventory a first turn is given still arrives before
     // the sentence telling it to finish, and before the turn is counted, because the
     // notice rides on this turn rather than costing one.
-    announceReserve(remainingMs);
+    await announceReserve(remainingMs);
     turns += 1;
     // Whichever bound is smaller applies, and which one it was decides what the user
     // is told: a call that never returned is not a run that used its time.
@@ -2970,11 +2973,11 @@ export async function runInvestigation(
     if (calls.length === 0) {
       // A run that used its tools and then narrated is one call short of a report;
       // one that established nothing has nothing to be reminded about.
-      if (remindToReport(turn.assistantMessages)) return null;
+      if (await remindToReport(turn.assistantMessages)) return null;
       // A plan that answered the question and skipped the deliverable, where this model was
       // measured needing the reminder. Before `conclude`, because conclude is where the prose
       // becomes the run's closing statement and there is no second reading of it.
-      if (askForPlanStatement(turn.assistantMessages)) return null;
+      if (await askForPlanStatement(turn.assistantMessages)) return null;
       /*
         What it said as it stopped, recorded before the ending that discards it.
 
@@ -3014,6 +3017,7 @@ export async function runInvestigation(
       if (reportReminders === 0) {
         reportReminders += 1;
         messages.push({ role: "user", content: notice(noticesFor(model.modelId).reportReminder) });
+        await service.recordEvent(runId, { kind: "guidance-issued", notice: "report-reminder" });
       }
     }
 
