@@ -1095,6 +1095,27 @@ function invalidEvidenceInput(problems: string, example?: string): AgentToolOutc
 }
 
 /**
+ * A minimal, VALID `present_answer` call for this run, or nothing when it holds no result the
+ * answer tool would accept.
+ *
+ * The id has to be one the tool will TAKE, not merely one the run produced: `present_answer`
+ * refuses a plan, a profile and a catalog read, so an example built from the newest artifact
+ * would hand a run that just profiled a table the very id it is about to be refused for. So
+ * this looks for a completed data read with a statement of the model's behind it, which is
+ * exactly what the tool accepts, and offers nothing when there is none.
+ */
+function exampleAnswerCall(events: readonly AgentRunEvent[]): string | undefined {
+  const drafted = new Set(events.flatMap((event) => (event.kind === "statement-drafted" ? [event.stepId] : [])));
+  let latest: string | undefined;
+  for (const event of events) {
+    if (event.kind === "tool-completed" && event.artifact.operationId === ANSWER_OPERATION && drafted.has(event.stepId))
+      latest = event.artifact.correlationId;
+  }
+  if (latest === undefined) return undefined;
+  return JSON.stringify({ artifact: latest, presentation: { kind: "table" } });
+}
+
+/**
  * A minimal, VALID `compose_report` call for this run, or nothing when it has read nothing.
  *
  * The claim text is deliberately a placeholder and says so: the shape is what the refusal
@@ -3029,10 +3050,26 @@ export function presentAnswerTool(
 
   const parsed = parseToolInput(presentAnswerSchema, readSerializedPresentation(input));
   if (!parsed.ok) {
+    /*
+      The same worked example the report refusal carries, for the same measured reason and one
+      call earlier in the arc.
+
+      `lfm2:24b` was the case that showed both halves in one run. Refused on `compose_report`,
+      it took the example and got the report right on its next turn — the loop of twenty-eight
+      identical refusals was gone. It was then refused on `present_answer`, which had no
+      example, and it never tried again: the run scored `no-answer` having done every piece of
+      the work. A contract restated is what a model has already failed to apply; an instance is
+      what it can copy.
+    */
+    const example = exampleAnswerCall(run.events);
     return {
       kind: "unavailable",
       reasonCode: "INVALID_TOOL_INPUT",
-      modelText: `${UNAVAILABLE_TEXT.INVALID_TOOL_INPUT} ${AGENT_ANSWER_CONTRACT}`,
+      modelText: [
+        UNAVAILABLE_TEXT.INVALID_TOOL_INPUT,
+        AGENT_ANSWER_CONTRACT,
+        ...(example === undefined ? [] : [`A call this run could make right now: ${example}`]),
+      ].join(" "),
     };
   }
 

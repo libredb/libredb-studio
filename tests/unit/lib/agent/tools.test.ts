@@ -678,6 +678,35 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       expect(outcome.modelText).toContain("<what you found, in one sentence>");
     });
 
+    test("present_answer offers the same example, one call earlier in the arc", () => {
+      /*
+        `lfm2:24b` showed both halves in a single run. Refused on `compose_report` it took the
+        example and got the report right on its next turn — the loop of twenty-eight identical
+        refusals was gone. It was then refused on `present_answer`, which carried no example,
+        and never tried again: the run scored `no-answer` having done every piece of the work.
+
+        The id offered here is one this tool will ACCEPT — a completed data read with a
+        statement of the model's behind it — and not merely the newest artifact, which for a
+        run that has just profiled a table would be the very id it is about to be refused for.
+      */
+      const h = harness();
+      const events: AgentRunEvent[] = [
+        { kind: "statement-drafted", atMs: 1, stepId: "step_1", sql: "SELECT 1", rationale: "read" },
+        artifactEvent,
+      ] as unknown as AgentRunEvent[];
+
+      const outcome = presentAnswerTool(
+        h.context,
+        { runId: h.context.runId, autoExecute: false, events },
+        { artifact: "corr-real" },
+      );
+
+      if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+      expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
+      expect(outcome.modelText).toContain("A call this run could make right now");
+      expect(outcome.modelText).toContain("corr-real");
+    });
+
     test("a run holding no result yet is given no example, rather than one it cannot use", () => {
       // An example citing an id this run never produced would fail the citation check on the
       // very next turn, which teaches the wrong lesson twice.
