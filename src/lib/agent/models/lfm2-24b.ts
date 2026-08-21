@@ -21,7 +21,14 @@ import { DEFAULT_SAMPLING, DEFAULT_UNREPORTED_CALL_CEILING, type AgentModelProfi
 
 export const LFM2_24B: AgentModelProfile = {
   measured:
-    "1/6 modes locked, 12/30 runs passed at these settings. Investigate 5/5 · Optimize 1/5 · Assess 3/5 · Operate 0/5 · Analyze 0/5 · Plan 3/5.",
+    "1/6 modes locked. Investigate 5/5 · Optimize 1/5 · Assess 3/5 · Operate 0/5 · Analyze 0/5 · " +
+    "Plan 3/5. Optimize was measured four times in one evening and every fix moved it one bar " +
+    "further rather than winning it. Two compare-before-report holds took it from 1/5 to 3/4. A " +
+    "worked call for compare_plans turned its shape refusals into an id refusal " +
+    "(UNVERIFIABLE_PLAN) and it recorded a recommendation for the first time. The run after that " +
+    "lost on empty-evidence, held with the notice that every result its report cited came back " +
+    "with NO rows. So the protocol failures are gone — it can build the calls now — and what is " +
+    "left is that its statements return nothing, which no setting in this file reaches.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
   /*
