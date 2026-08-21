@@ -133,12 +133,18 @@ describe("#341 F2: the run investigates competently and finishes without composi
       answersProse("Engineering has the most employees, at 41."),
     ]);
 
+    // One entry more than this arc used to write, and it is the one that makes the scenario
+    // legible: `model-stopped-saying` records what the model said as it stopped. Of 277 runs
+    // measured at `no-report`, 190 ended exactly here and 122 of those had used their tools
+    // first — the work done and unfiled — and until this entry existed a reader of the ledger
+    // could not tell a model that thought it had reported from one that had simply finished.
     expect(drive.kinds).toEqual([
       "run-started",
       "context-captured",
       "statement-drafted",
       "tool-invoked",
       "tool-completed",
+      "model-stopped-saying",
       "closing-statement",
       "run-finished",
     ]);

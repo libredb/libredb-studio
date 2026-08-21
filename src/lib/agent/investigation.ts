@@ -2975,6 +2975,33 @@ export async function runInvestigation(
       // measured needing the reminder. Before `conclude`, because conclude is where the prose
       // becomes the run's closing statement and there is no second reading of it.
       if (askForPlanStatement(turn.assistantMessages)) return null;
+      /*
+        What it said as it stopped, recorded before the ending that discards it.
+
+        The largest unexplained group in the measurements: of 277 runs scoring `no-report`, 190
+        ended here and 122 of those had used their tools first — the work done and unfiled. Why
+        was invisible, because a run that ends this way keeps no prose: `conclude` writes a
+        `closing-statement` only when there is text to keep, and on these runs the verdict then
+        throws it away.
+      */
+      /*
+        Agent mode only, and that bound is the whole reason the entry exists rather than a
+        caution. A PLANNING run's prose IS its deliverable: `conclude` keeps it as
+        `closing-statement` and the verdict reads it there. Recording it twice would write the
+        same paragraph into the ledger under two names and teach a reader that the second one
+        means something.
+
+        An agent run is the case where the prose is lost — the verdict wants a report, this is
+        not one, and nothing keeps it.
+      */
+      if (record.mode === "agent" && turn.text.trim().length > 0) {
+        await service.recordEvent(runId, {
+          kind: "model-stopped-saying",
+          // Bounded, because a stopping turn can carry an essay and this is a diagnostic
+          // rather than a transcript.
+          text: turn.text.trim().slice(0, 2_000),
+        });
+      }
       return conclude("succeeded", "model-stopped");
     }
 

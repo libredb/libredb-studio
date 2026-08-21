@@ -99,6 +99,10 @@ export type AgentRunNarrativeEvent = Extract<
       // `tool-refused`; before this, a ledger tool that declined wrote nothing at all, and
       // a reader could not tell a call the tool sent back from a call never made.
       | "call-declined"
+      // What the model said on the turn it stopped. Narrative for the same reason the two
+      // above are: nothing was executed and no step settled -- the run is recording a fact
+      // about its own ending, which is the largest unexplained group in the measurements.
+      | "model-stopped-saying"
       // Both reach no database and settle no step: they record what the run has
       // ALREADY established, which is exactly what a narrative entry is.
       | "plan-comparison"

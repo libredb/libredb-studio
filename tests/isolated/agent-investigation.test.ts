@@ -430,8 +430,13 @@ describe("a fresh run drives the investigation arc", () => {
       "statement-drafted",
       "tool-invoked",
       "tool-completed",
-      // This run ends on prose rather than a report, and that prose is now the only
-      // thing it leaves behind — which is exactly the case that used to vanish.
+      // This run ends on prose rather than a report, and the prose is now written twice on
+      // purpose, under two names that mean different things. `model-stopped-saying` is the
+      // diagnostic — what the model said as it STOPPED, the shape 190 of 277 measured
+      // `no-report` runs ended in — and `closing-statement` is what the run leaves behind for
+      // a reader. An agent run's stopping prose is discarded by the verdict, so without the
+      // first entry the largest failure group in the measurements had no explanation in it.
+      "model-stopped-saying",
       "closing-statement",
       "run-finished",
     ]);

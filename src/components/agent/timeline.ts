@@ -902,6 +902,21 @@ function describeEvent(
         headline: `Declined ${event.tool}`,
         detail: event.reasonCode,
       };
+    case "model-stopped-saying":
+      return {
+        /*
+          What the model said as it stopped without filing anything. Neutral rather than
+          refused: nothing was turned back and nothing failed — the run simply ended, and the
+          entry exists so a reader can see WHY rather than staring at a run that trails off.
+
+          Carried as `prose`, because these are the model's own words: `detail` is the field
+          for this application's sentences, and putting a model's paragraph there once rendered
+          an entire markdown answer as one run of literal characters.
+        */
+        tone: "neutral",
+        headline: "Stopped after saying",
+        prose: event.text,
+      };
     case "closing-statement":
       return {
         // Content the run produced, so it reads like the report entry rather than

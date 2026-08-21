@@ -584,6 +584,29 @@ export type AgentRunEvent =
     })
   | (AgentRunEventBase & {
       /**
+       * What the model said on the turn it stopped, when it called nothing and reported nothing.
+       *
+       * The largest unexplained group in this whole effort. Of 277 runs that scored
+       * `no-report`, 190 ended `model-stopped` — not out of time, not out of turns, not refused
+       * — and 122 of those had USED their tools first. The work was done and unfiled, and what
+       * the model said as it stopped was nowhere: `closing-statement` is only written when the
+       * drive concludes with prose it keeps, and these runs are exactly the ones whose prose the
+       * verdict then discards.
+       *
+       * So a reader could not tell apart the three things this shape can be, each needing a
+       * different fix: a model that wrote its report as prose and thought it had filed it, a
+       * model that said it was finished, and a model that asked a question and waited for an
+       * answer that was never coming.
+       *
+       * Bounded, because a stopping turn can carry a whole essay and this is a diagnostic and
+       * not a transcript. Written at the moment of stopping rather than derived afterwards: the
+       * turn's messages do not survive the drive.
+       */
+      readonly kind: "model-stopped-saying";
+      readonly text: string;
+    })
+  | (AgentRunEventBase & {
+      /**
        * The model's closing prose, recorded because it is otherwise lost.
        *
        * Deliberately NOT a report: it carries no citations and claims none, which is

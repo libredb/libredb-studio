@@ -74,6 +74,14 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
   // A call the server turned back, carrying the verifier's own name for what was missing.
   // `shortfall` is optional because the purpose-written notices answer conditions the
   // verifier has no vocabulary for — a run holding two plans and citing neither, say.
+  // What the model said on the turn it stopped without filing anything. The three entries here
+  // now cover the three ways a run can produce nothing and each used to look identical from the
+  // ledger: the drive turned a call back, a tool declined one, or the model simply stopped.
+  "model-stopped-saying": {
+    kind: "model-stopped-saying",
+    atMs: 2,
+    text: "I have finished reviewing the schema.",
+  },
   // A ledger-only tool that declined, carrying the code it declined under and nothing of the
   // model's. Its sibling above records what the DRIVE turned back; this records what a TOOL
   // did, which used to be written nowhere at all.

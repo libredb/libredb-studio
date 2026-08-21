@@ -335,7 +335,17 @@ describe("an engine that cannot serve a reading", () => {
       answersProse("This server keeps no slow-query statistics."),
     ]);
 
-    expect(drive.kinds).toEqual(["run-started", "tool-invoked", "tool-refused", "closing-statement", "run-finished"]);
+    // `model-stopped-saying` is one entry more than this arc used to write, and it belongs to
+    // this scenario as much as the refusal does: the run was refused, said something, and
+    // stopped. Which of those three the reader is looking at used to be a guess.
+    expect(drive.kinds).toEqual([
+      "run-started",
+      "tool-invoked",
+      "tool-refused",
+      "model-stopped-saying",
+      "closing-statement",
+      "run-finished",
+    ]);
     expect(drive.status).toBe("succeeded");
     // Nothing was cited, so the run is honestly recorded as not having answered —
     // the workflow's bar is a cited reading, and it took none.
