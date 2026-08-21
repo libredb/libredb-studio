@@ -1105,6 +1105,33 @@ function invalidEvidenceInput(problems: string, example?: string): AgentToolOutc
 }
 
 /**
+ * A minimal, VALID `recommend_change` call for this run, or nothing when it holds no plan.
+ *
+ * The index arm, because that is the one an optimization verdict accepts without a comparison:
+ * a run holding ONE plan satisfies its bar by recommending an index that cites that plan, and
+ * that is exactly the call `granite4.1:3b` failed on the shape of four times in a single run
+ * while its prose showed it knew what to say.
+ *
+ * The statement is a placeholder naming no table on purpose. This layer knows which plan the
+ * run holds; it does not know which column the model thinks should be indexed, and inventing
+ * one would be this server writing a recommendation and attributing it to the model.
+ */
+function exampleRecommendCall(events: readonly AgentRunEvent[]): string | undefined {
+  let plan: string | undefined;
+  for (const event of events) {
+    if (event.kind === "tool-completed" && event.artifact.operationId === "sql.explain.estimate")
+      plan = event.artifact.correlationId;
+  }
+  if (plan === undefined) return undefined;
+  return JSON.stringify({
+    change: "index",
+    statement: "CREATE INDEX <name> ON <table> (<column>)",
+    rationale: "<why this index answers the objective>",
+    evidence: [{ source: "artifact", correlationId: plan }],
+  });
+}
+
+/**
  * A minimal, VALID `present_answer` call for this run, or nothing when it holds no result the
  * answer tool would accept.
  *
@@ -2647,7 +2674,12 @@ export function recommendChangeTool(
   }
 
   const parsed = parseToolInput(recommendationSchema, input);
-  if (!parsed.ok) return invalidEvidenceInput(parsed.problems);
+  if (!parsed.ok) {
+    return invalidEvidenceInput(
+      parsed.problems,
+      offersRefusalExamples(context.modelId) ? exampleRecommendCall(run.events) : undefined,
+    );
+  }
   if (!matchesCard(parsed.value.change, parsed.value.statement)) {
     return unavailable("RECOMMENDATION_SHAPE_MISMATCH");
   }

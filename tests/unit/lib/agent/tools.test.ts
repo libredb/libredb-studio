@@ -748,6 +748,48 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       expect(outcome.modelText).not.toContain("A call this run could make right now");
     });
 
+    test("recommend_change offers the index call a one-plan run can actually make", () => {
+      /*
+        The arm an optimization verdict accepts without a comparison: a run holding ONE plan
+        satisfies its bar by recommending an index that cites that plan.
+
+        `granite4.1:3b` failed the shape of that call four times in a single run — while its
+        closing prose showed it knew exactly what to recommend — and the example had been given
+        to `compose_report` and `present_answer` but not to this tool. With the report example
+        alone, the next measurement got its report through and still lost the cell here.
+
+        The statement in the example names no table, deliberately: this layer knows which plan
+        the run holds and not which column the model wants indexed, and filling that in would be
+        the server writing the recommendation and filing it under the model's name.
+      */
+      const h = harness();
+      const planEvent = {
+        kind: "tool-completed",
+        atMs: 2,
+        stepId: "step_plan",
+        artifact: {
+          correlationId: "corr-plan",
+          operationId: "sql.explain.estimate",
+          connectionId: "conn-1",
+          createdAtMs: 2,
+          summary: { rowCount: 1, columns: ["detail"], truncated: false },
+        },
+      } as unknown as AgentRunEvent;
+
+      const outcome = recommendChangeTool(
+        { ...h.context, modelId: "granite4.1:3b" },
+        { runId: h.context.runId, events: [planEvent] },
+        { change: "index", statement: "CREATE INDEX i ON orders (id)", rationale: "scan", evidence: ["corr-plan"] },
+      );
+
+      if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+      expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
+      expect(outcome.modelText).toContain("A call this run could make right now");
+      expect(outcome.modelText).toContain("corr-plan");
+      // The plan's id, and no invented table name.
+      expect(outcome.modelText).toContain("<table>");
+    });
+
     test("recommend_change tells a wrong-shaped citation what the shape is", () => {
       const h = harness();
 
