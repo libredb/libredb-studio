@@ -317,6 +317,17 @@ const RUNNING_QUERY_RESULT = result(
   ],
 );
 
+/** The same view with three rows, for the assertions a one-row reply cannot make. */
+const MANY_RUNNING = result(
+  declare(["thread_id", TEXT], ["queued_micros", BIGINT], ["running_micros", BIGINT], ["task", TEXT]),
+  ["one", "two", "three"].map((name, index) => ({
+    thread_id: `Native-Transport-Requests-${name}`,
+    queued_micros: types.Long.fromString("43"),
+    running_micros: types.Long.fromString(`${1118 + index}`),
+    task: "QUERY SELECT * FROM system_views.queries [pageSize = 5000] at consistency LOCAL_ONE",
+  })),
+);
+
 // ============================================================================
 // The session stand-in
 // ============================================================================
@@ -1135,9 +1146,31 @@ describe("getActiveSessions", () => {
   });
 
   test("the caller's limit bounds the list", async () => {
-    const { provider } = await connectedProvider();
+    // Bounded against a THREE-row reply, because the one-row fixture cannot tell a
+    // bound from its absence: every limit above zero returns that single row, so an
+    // assertion made on it holds whatever the guard does.
+    const { provider } = await connectedProvider(healthyReplies({ [CASSANDRA_RUNNING_QUERY_CQL]: MANY_RUNNING }));
 
-    expect(await provider.getActiveSessions({ limit: 0 })).toHaveLength(1);
+    expect(await provider.getActiveSessions({ limit: 2 })).toHaveLength(2);
+    expect(await provider.getActiveSessions()).toHaveLength(3);
+  });
+
+  test("a limit of zero is a limit, not a missing one", async () => {
+    // Three SQL siblings were read to settle what zero means, and all three honour it:
+    // PostgreSQL passes it to `LIMIT $2`, MSSQL to `SELECT TOP`, Oracle to
+    // `ROWNUM <= 0` - each answering no rows. Substituting the default here would make
+    // this the one engine where asking for none returns fifty.
+    const { provider } = await connectedProvider(healthyReplies({ [CASSANDRA_RUNNING_QUERY_CQL]: MANY_RUNNING }));
+
+    expect(await provider.getActiveSessions({ limit: 0 })).toEqual([]);
+  });
+
+  test("a negative limit falls back to the default, because it is not an amount", async () => {
+    // The guard the three SQL siblings do NOT have: they would hand a negative straight
+    // to the server. Nothing asks for it, and keeping it costs one comparison.
+    const { provider } = await connectedProvider(healthyReplies({ [CASSANDRA_RUNNING_QUERY_CQL]: MANY_RUNNING }));
+
+    expect(await provider.getActiveSessions({ limit: -1 })).toHaveLength(3);
   });
 });
 

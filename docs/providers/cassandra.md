@@ -495,6 +495,18 @@ performance`. `system_schema.columns` separates the two roles by `kind` (`partit
 `generateMigrationSQL` with the connection's type and never consults capabilities, so
 `migration-generator.ts` declines there itself and emits `-- Apache Cassandra: Cannot generate
 CREATE TABLE for "<table>". …` in place of DDL that would run and quietly repartition the data.
+Two more shapes are left out of a Cassandra migration for the same reason. The **transaction
+wrapper** is not emitted: `BEGIN;` is `line 1:5 mismatched input ';' expecting K_BATCH` and
+`COMMIT;` is `no viable alternative at input 'COMMIT'` (measured), and CQL's only grouping,
+`BEGIN BATCH … APPLY BATCH`, is not a transaction and takes no DDL — so there is nothing to
+translate the wrapper into. **Foreign-key statements** are not emitted either: `ADD CONSTRAINT …
+FOREIGN KEY` is `line 1:48 mismatched input 'FOREIGN' expecting EOF` and `DROP CONSTRAINT IF EXISTS`
+is `mismatched input 'IF'`. That second one needs a branch even though [§6.2](#62-indexes-and-the-one-thing-they-never-are)
+reports `declaresForeignKeys: false`, because the report never reaches the generator:
+`SchemaDiff.tsx` takes the dialect from the **current connection** and the diff from a snapshot that
+may belong to a **different** one, so a Cassandra connection compared against a PostgreSQL snapshot
+carries relational keys into a CQL migration. Each is replaced by a comment naming the reason.
+
 The `ALTER` paths **do** emit runnable CQL, and each spelling was probed: an added column becomes
 `ALTER TABLE <t> ADD <col> <type>` because `ADD COLUMN extra TEXT` is `mismatched input 'TEXT'
 expecting EOF` while `ADD extra text` parses, a removed one becomes `ALTER TABLE <t> DROP <col>` for

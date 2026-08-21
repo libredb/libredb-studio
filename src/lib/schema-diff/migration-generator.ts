@@ -7,13 +7,21 @@
  *
  * - Dialect-aware: the modified-column path, which branches per engine and names
  *   the limitation in a comment where an engine has no such statement (#269); the
- *   `ADD` / `DROP` keyword, which CQL spells without `COLUMN`; and `CREATE TABLE`,
- *   which is refused outright for Cassandra (see CASSANDRA_NO_CREATE_TABLE).
- * - Not yet: the transaction wrapper (`BEGIN;` / `COMMIT;`, which is only valid
- *   for PostgreSQL and MySQL — MSSQL spells it `BEGIN TRANSACTION`, Oracle opens a
- *   PL/SQL block and auto-commits DDL anyway, and six type ids have no
- *   transactional DDL at all), the rest of `ADD COLUMN` and `DROP COLUMN`, and the
- *   index/FK fallbacks that emit `DROP INDEX IF EXISTS`.
+ *   `ADD` / `DROP` keyword, which CQL spells without `COLUMN`; `CREATE TABLE`,
+ *   which is refused outright for Cassandra (see CASSANDRA_NO_CREATE_TABLE); and,
+ *   for Cassandra only, the transaction wrapper and the foreign-key statements,
+ *   both of which CQL has no grammar for.
+ * - Not yet: the transaction wrapper for everyone ELSE (`BEGIN;` / `COMMIT;` is
+ *   only valid for PostgreSQL and MySQL — MSSQL spells it `BEGIN TRANSACTION`,
+ *   Oracle opens a PL/SQL block and auto-commits DDL anyway, and five remaining
+ *   type ids have no transactional DDL at all), the rest of `ADD COLUMN` and
+ *   `DROP COLUMN`, and the index/FK fallbacks that emit `DROP INDEX IF EXISTS`.
+ *
+ * Cassandra is ahead of the others here for a reason worth stating: it is the one
+ * dialect whose OTHER statements were each measured against a live server, so the
+ * wrapper and the FK lines would have been the only unrunnable lines in an
+ * otherwise runnable migration. Elsewhere they are one problem among several, and
+ * the emitted forms still want checking against a live server first.
  *
  * So the output is correct for PostgreSQL, largely correct for MySQL and SQLite,
  * and can be unrunnable elsewhere. Tracked rather than fixed here because the
@@ -349,6 +357,18 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
     .filter((fk) => fk.action === "added")
     .forEach((fk) => {
       const constraintName = escapeIdentifier(`fk_${table.tableName}_${fk.columnName}`, dialect);
+      // Cassandra has no foreign key to add: `ADD CONSTRAINT ... FOREIGN KEY` is
+      // "mismatched input 'FOREIGN' expecting EOF" (measured on 5.0.9), which is also
+      // why the provider reports `declaresForeignKeys: false`. This branch exists
+      // because that report does not reach here: `SchemaDiff.tsx` reads the dialect
+      // from the current connection and the diff from a snapshot that may be another
+      // connection's, so a relational schema's keys arrive with a CQL dialect.
+      if (dialect === "cassandra") {
+        lines.push(
+          `-- Apache Cassandra: Cannot add a foreign key on ${escapeIdentifier(fk.columnName, dialect)}. The clause is not in CQL's grammar; enforce the relationship in the application.`,
+        );
+        return;
+      }
       lines.push(
         `ALTER TABLE ${id} ADD CONSTRAINT ${constraintName} FOREIGN KEY (${escapeIdentifier(fk.columnName, dialect)}) REFERENCES ${escapeIdentifier(fk.targetReferencedTable || "", dialect)}(${escapeIdentifier(fk.targetReferencedColumn || "", dialect)});`,
       );
@@ -363,6 +383,10 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
         lines.push(`ALTER TABLE ${id} DROP FOREIGN KEY ${constraintName};`);
       } else if (dialect === "sqlite") {
         lines.push(`-- SQLite: Cannot drop foreign key directly. Requires table recreation.`);
+      } else if (dialect === "cassandra") {
+        // `DROP CONSTRAINT IF EXISTS fk_x` is "mismatched input 'IF' expecting EOF"
+        // (measured), and dropping what was never declarable is not a statement.
+        lines.push(`-- Apache Cassandra: Cannot drop a foreign key. CQL never declared one.`);
       } else {
         lines.push(`ALTER TABLE ${id} DROP CONSTRAINT IF EXISTS ${constraintName};`);
       }
@@ -384,7 +408,21 @@ export function generateMigrationSQL(diff: SchemaDiff, dialect: DatabaseType): s
   );
   sections.push("");
 
-  if (dialect !== "sqlite") {
+  // ONE definition, read twice: the opening and the closing halves of this wrapper used
+  // to be two independent conditions, which is a shape that can diverge into a `BEGIN;`
+  // with no `COMMIT;`.
+  //
+  // SQLite runs its own transaction; Cassandra has no transaction at all. Measured on
+  // 5.0.9: `BEGIN;` is "line 1:5 mismatched input ';' expecting K_BATCH" and `COMMIT;`
+  // is "no viable alternative at input 'COMMIT'". The only grouping CQL has is
+  // `BEGIN BATCH ... APPLY BATCH`, which is not a transaction and takes no DDL, so
+  // there is nothing to translate the wrapper INTO - it can only be left out. The
+  // wrapper is still wrong for the other engines named in the module docstring; that
+  // stays tracked there, and unlike them Cassandra emits DDL this generator was taught
+  // to spell correctly, so the wrapper would be the only unrunnable line in it.
+  const wrapsInTransaction = dialect !== "sqlite" && dialect !== "cassandra";
+
+  if (wrapsInTransaction) {
     sections.push("BEGIN;");
     sections.push("");
   }
@@ -417,7 +455,7 @@ export function generateMigrationSQL(diff: SchemaDiff, dialect: DatabaseType): s
     });
   }
 
-  if (dialect !== "sqlite") {
+  if (wrapsInTransaction) {
     sections.push("COMMIT;");
   }
 

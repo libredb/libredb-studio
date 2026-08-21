@@ -459,7 +459,13 @@ export async function getActiveSessions(
   const limit = Math.trunc(options.limit ?? DEFAULT_SESSION_LIMIT);
   const rows = await readRows(transport, CASSANDRA_RUNNING_QUERY_CQL);
 
-  return rows.slice(0, limit > 0 ? limit : DEFAULT_SESSION_LIMIT).map((row) => {
+  // A zero is honoured, a negative is not. The three SQL siblings that take this option
+  // all pass a zero straight through - PostgreSQL to `LIMIT $2`, MSSQL to `SELECT TOP`,
+  // Oracle to `ROWNUM <= 0` - so all three answer no rows, and substituting the default
+  // would make this the one engine where asking for none returns fifty. A negative is
+  // not an amount at all, and unlike those three this list is sliced locally, so it
+  // costs one comparison to refuse it rather than hand it to `slice` backwards.
+  return rows.slice(0, limit < 0 ? DEFAULT_SESSION_LIMIT : limit).map((row) => {
     // Microseconds, so the millisecond figure the panel wants is a division rather
     // than a cast - and it is kept fractional: a 1118µs statement is 1.118ms, and
     // rounding it to 1 would hide the only precision the server offered.

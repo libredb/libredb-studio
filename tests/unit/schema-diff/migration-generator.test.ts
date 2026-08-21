@@ -782,6 +782,38 @@ describe("generateMigrationSQL: Cassandra spells ADD and DROP without the COLUMN
     expect(sql).not.toContain("NOT NULL");
     expect(sql).not.toContain("DEFAULT");
   });
+
+  test("no transaction wrapper, because CQL has neither BEGIN nor COMMIT", () => {
+    // Measured on 5.0.9: `BEGIN;` answers "line 1:5 mismatched input ';' expecting
+    // K_BATCH" and `COMMIT;` answers "no viable alternative at input 'COMMIT'". CQL's
+    // only grouping is `BEGIN BATCH ... APPLY BATCH`, which is not a transaction and
+    // takes no DDL. The shared wrapper is gated on `!== "sqlite"` alone, so Cassandra
+    // inherited it the moment the type id existed - putting a statement the server
+    // refuses on the first line of a migration whose ALTERs otherwise run.
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "cassandra");
+
+    expect(sql).not.toContain("BEGIN;");
+    expect(sql).not.toContain("COMMIT;");
+  });
+
+  test("no foreign-key statement, because the clause is not in the grammar", () => {
+    // Measured on 5.0.9: `ALTER TABLE probe.customers ADD CONSTRAINT fk_x FOREIGN KEY
+    // (id) REFERENCES probe.orders (id)` is "line 1:48 mismatched input 'FOREIGN'
+    // expecting EOF", and `DROP CONSTRAINT IF EXISTS fk_x` is "mismatched input 'IF'".
+    //
+    // Reachable even though the provider reports `declaresForeignKeys: false`, which is
+    // what makes this worth a branch: `SchemaDiff.tsx` takes the dialect from the CURRENT
+    // connection and the diff from a snapshot that may belong to a DIFFERENT one, so a
+    // Cassandra connection compared against a PostgreSQL snapshot carries foreign keys
+    // into this generator. The sqlite branch beside it declines the same way.
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "cassandra");
+
+    expect(sql).not.toContain("FOREIGN KEY");
+    expect(sql).not.toContain("ADD CONSTRAINT");
+    expect(sql).not.toContain("DROP CONSTRAINT");
+    expect(sql).toContain("-- Apache Cassandra: Cannot add a foreign key");
+    expect(sql).toContain("-- Apache Cassandra: Cannot drop a foreign key");
+  });
 });
 
 describe("generateMigrationSQL: Cassandra declines CREATE TABLE rather than guess the partitioning", () => {
