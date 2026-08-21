@@ -24,5 +24,11 @@ export const LFM2_24B: AgentModelProfile = {
     "1/6 modes locked, 12/30 runs passed at these settings. Investigate 5/5 · Optimize 1/5 · Assess 3/5 · Operate 0/5 · Analyze 0/5 · Plan 3/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  // Earned on one ledger. This model was refused `INVALID_TOOL_INPUT` twenty-eight times in a
+  // row on a data-analysis run and never changed the shape it sent; with a worked example in
+  // the refusal it took one refusal and got the shape right on the next turn. It has not won
+  // the cell — it also writes SQL this database rejects — but the loop is measurably gone, and
+  // no other model pays for the extra sentence.
+  refusalExamples: true,
   notices: { ...BASELINE_NOTICES },
 };

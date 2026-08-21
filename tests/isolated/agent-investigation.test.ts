@@ -3828,13 +3828,8 @@ describe("a run that would report an answer it never presented", () => {
     */
     const b = boot(freshDataDir());
     const run = await startRun(b, "agent", "data-analysis", true);
-    // A turn longer than this arc used to be, because such a run is no longer told nothing:
-    // it is told it has READ nothing, which is the other arm of the same check and the one
-    // this case actually needs. What it must never hear is the instruction to present, and
-    // that is what the assertion below still pins.
     const script = scriptedModel(
       callsTool("inspect_schema", { schema: "public" }),
-      reportOn("The schema was inspected."),
       reportOn("The schema was inspected."),
       answersProse("done"),
     );
@@ -3853,10 +3848,9 @@ describe("a run that would report an answer it never presented", () => {
     ).toBe(true);
     const sent = script.turns.flatMap((turn) => JSON.stringify(turn.body.messages ?? []));
     expect(sent.some((messages) => messages.includes("This run answers by PRESENTING"))).toBe(false);
-    // What it IS told, once, is that it has read nothing — the arm this case belongs in. Three
-    // models lost this cell arriving here: one read the catalog only, one had every statement
-    // refused by the database, one called nothing at all, and none of them heard a word.
-    expect(sent.some((messages) => messages.includes("it has read none"))).toBe(true);
+    // Nor anything else. A sentence for exactly this shape was written and measured on the
+    // three models that reach it — a catalog-only read, every statement refused, no call at all
+    // — and none recovered, so it was deleted rather than kept switched off.
     // And the report it did compose was composed, not intercepted.
     expect(events.map((event) => event.kind)).toContain("report-composed");
   });

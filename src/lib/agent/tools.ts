@@ -75,6 +75,7 @@ import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } fro
 import type { OperationRegistry } from "@/lib/db/operations/registry";
 import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
+import { offersRefusalExamples } from "./models";
 import type { ColumnSchema, DatabaseConnection, QueryResult, TableSchema } from "@/lib/types";
 import {
   type AgentCatalogKind,
@@ -189,6 +190,15 @@ export type AgentProviderAcquirer = (
  */
 export interface AgentToolContext {
   readonly runId: string;
+  /**
+   * Which model is driving, so a tool can decide per model what to say when it refuses.
+   *
+   * Here rather than passed to each refusal because a tool that says no should not need the
+   * drive to tell it who it is saying no to. Every behaviour added from here defaults to what
+   * was measured before it and turns on per model, which is what stopped a change from winning
+   * one cell and quietly costing another.
+   */
+  readonly modelId: string;
   /** The run's PERSISTED mode. The only thing that decides which tools exist. */
   readonly mode: AgentRunMode;
   /**
@@ -3061,7 +3071,7 @@ export function presentAnswerTool(
       the work. A contract restated is what a model has already failed to apply; an instance is
       what it can copy.
     */
-    const example = exampleAnswerCall(run.events);
+    const example = offersRefusalExamples(context.modelId) ? exampleAnswerCall(run.events) : undefined;
     return {
       kind: "unavailable",
       reasonCode: "INVALID_TOOL_INPUT",
@@ -3134,7 +3144,11 @@ export function composeReportTool(
   }
 
   const parsed = parseToolInput(reportSchema, input);
-  if (!parsed.ok) return invalidEvidenceInput(parsed.problems, exampleReportCall(run.events));
+  if (!parsed.ok)
+    return invalidEvidenceInput(
+      parsed.problems,
+      offersRefusalExamples(context.modelId) ? exampleReportCall(run.events) : undefined,
+    );
 
   const claims: AgentReportClaim[] = [];
   for (const claim of parsed.value.claims) {

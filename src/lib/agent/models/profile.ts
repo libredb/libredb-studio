@@ -111,6 +111,16 @@ export interface AgentModelProfile {
    * keep it and the models it hurt keep what they had.
    */
   readonly notices?: Partial<AgentNotices>;
+  /**
+   * Whether a refused call is handed a worked example built from this run's ledger.
+   *
+   * OFF by default for the same reason. Measured on `lfm2:24b`, where it collapsed a loop of
+   * twenty-eight identical `INVALID_TOOL_INPUT` refusals into one — the model took the example
+   * and got the shape right on its next turn. That is a real effect on a real ledger and it did
+   * not win the cell, so it is on for that model and off everywhere else until another
+   * measurement says otherwise.
+   */
+  readonly refusalExamples?: boolean;
 }
 
 /**
@@ -126,8 +136,6 @@ export interface AgentNotices {
   readonly planStatement: string;
   /** An answer-presenting run about to report a result it read but never presented. */
   readonly presentBeforeReport: string;
-  /** An answer-presenting run about to report having read no data at all. */
-  readonly readBeforeReport: string;
 }
 
 /**
@@ -174,6 +182,9 @@ export const DEFAULT_REPORT_RESERVE_MS = 20_000;
  * turns are long enough to hit that says so in its own file.
  */
 export const DEFAULT_HOLD_REPORT_WITHOUT_TIME = true;
+
+/** Off, for the same reason, and on where a ledger showed the loop it ends. */
+export const DEFAULT_REFUSAL_EXAMPLES = false;
 
 /**
  * Withheld, which is what every locked cell was measured against.

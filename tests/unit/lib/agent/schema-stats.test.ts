@@ -86,6 +86,7 @@ function harness(
   return {
     context: {
       runId: "run-1",
+      modelId: "unmeasured-model-for-tests",
       mode,
       workflowType: "investigation",
       actor: { sessionId: "session-1", role: "user" },

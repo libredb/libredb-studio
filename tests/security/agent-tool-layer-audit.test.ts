@@ -72,6 +72,7 @@ function context(
   const provider = { queryReadOnly: mock(run) } as unknown as DatabaseProvider;
   return {
     runId: "run-1",
+    modelId: "unmeasured-model-for-tests",
     mode: "agent",
     workflowType: "investigation",
     actor: { sessionId: SESSION_SENTINEL, role: "user" },

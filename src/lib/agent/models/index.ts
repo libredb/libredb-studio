@@ -54,6 +54,7 @@ import {
   DEFAULT_PLAN_STATEMENT_RETRIES,
   DEFAULT_REPORT_REMINDER_LIMIT,
   DEFAULT_HOLD_REPORT_WITHOUT_TIME,
+  DEFAULT_REFUSAL_EXAMPLES,
   DEFAULT_PRESENT_REMINDER_LIMIT,
   DEFAULT_REMIND_WITHOUT_TOOLS,
   DEFAULT_REPORT_RESERVE_MS,
@@ -176,6 +177,16 @@ export function presentReminderLimitFor(modelId: string): number {
  */
 export function noticesFor(modelId: string): AgentNotices {
   return { ...BASELINE_NOTICES, ...MODEL_PROFILES[modelId.toLowerCase()]?.notices };
+}
+
+/**
+ * Whether this model's refusals carry a worked example from its own ledger.
+ *
+ * The tool layer asks by model id rather than being handed a flag, so a tool that refuses does
+ * not need the drive to tell it who it is refusing.
+ */
+export function offersRefusalExamples(modelId: string): boolean {
+  return MODEL_PROFILES[modelId.toLowerCase()]?.refusalExamples ?? DEFAULT_REFUSAL_EXAMPLES;
 }
 
 /**

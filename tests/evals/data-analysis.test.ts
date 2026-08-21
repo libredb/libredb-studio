@@ -162,49 +162,35 @@ describe("a run whose present_answer was REFUSED is still asked to present", () 
   });
 });
 
-describe("a run that reports having read nothing is told so", () => {
+describe("a run that reports having read nothing is left alone", () => {
   /*
-    The empty arm of the present-before-report check, found by sweeping this cell across ten
-    models. Three of them lost `no-answer` without ever reading the data, and each arrived
-    there differently: `lfm2:24b` drafted three statements and had all three refused by the
-    database, `mistral-small3.2:24b` read only the schema, `deepseek-r1:14b` called nothing.
+    The empty arm of the present-before-report check, and the measurement that closed it.
 
-    A run in that state is already lost — the verdict wants an answer, an answer is a reading
-    presented, and there is no reading — and it was told nothing at all, because the hold only
-    spoke to runs that HAD read. Held against the same counter as its sibling, so a run cannot
-    collect one of each.
+    Sweeping this cell across ten models turned up three that lost `no-answer` without ever
+    reading the data, each arriving differently: `lfm2:24b` drafted three statements and had all
+    three refused by the database, `mistral-small3.2:24b` read only the catalog,
+    `deepseek-r1:14b` called nothing. A sentence was written for them — "you have read none" —
+    and measured on all three. Not one recovered: their runs lose either way, relabelled
+    `no-report` instead of `no-answer`.
+
+    So the sentence and its switch are gone rather than kept switched off. An unearned behaviour
+    is the thing `models/profile.ts` exists to refuse, and this test is what keeps it from
+    quietly coming back: a run that read nothing is not held, and its report lands.
   */
-  test("the report is held, and the notice separates the catalog from the data", async () => {
+  test("the report is not held, because no measurement earned a hold there", async () => {
     const run = await open({ autoExecute: true });
 
     const drive = await run.drive([
-      // The schema is the catalog, not the data: this is the shape two of the three models hit.
+      // The schema is the catalog, not the data: the shape two of the three models hit.
       callsTool("inspect_schema", {}, "call_schema"),
-      reportOn("The north region brought in the most revenue."),
-      READS,
-      // The LAST id, not the first. This run holds the schema read's artifact as well, and
-      // that one is a catalog read the answer tool refuses — the very distinction the notice
-      // above draws. Presenting it would exercise the refusal instead of the recovery.
-      (turn: Turn): Response =>
-        chatToolCallStream(
-          "present_answer",
-          JSON.stringify({ artifact: correlationIdsIn(turn.transcript).at(-1), presentation: { kind: "table" } }),
-          "call_answer_after_read",
-        ),
       reportOn("The north region brought in the most revenue."),
     ]);
 
-    const told = drive.transcripts[2] ?? "";
-    expect(told).toContain("it has read none");
-    expect(told).toContain("run_read_query");
-    // And the recovery the notice exists to make possible actually happens: the run reads,
-    // and the answer it could not give before the hold is recorded after it.
-    //
-    // The verdict is deliberately not asserted. Whether this run scores also depends on what
-    // its report cites, which is a different rule with its own tests — and a test that pinned
-    // the verdict here would fail the day the citation rule changed, for a reason that has
-    // nothing to do with the hold under test.
-    expect(drive.kinds).toContain("answer-composed");
+    expect(drive.kinds).not.toContain("call-held");
+    expect(drive.kinds).toContain("report-composed");
+    // And it scores nothing, which is the honest outcome: an analysis that read no data has no
+    // answer to present, and no sentence this server writes changed that on any of the three.
+    expect(drive.verdict.outcome).toBe("unanswered");
   });
 });
 

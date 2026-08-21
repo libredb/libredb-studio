@@ -39,8 +39,4 @@ export const BASELINE_NOTICES: AgentNotices = Object.freeze({
     "This run answers by PRESENTING a result, and nothing has been presented yet: a report on its own is scored as having answered nothing.",
     "Your compose_report call was not run. Call present_answer first, with the artifact id of the result that answers the objective, and then call compose_report.",
   ].join(" "),
-  readBeforeReport: [
-    "This run answers by reading data and presenting the result, and it has read none: a report resting on the schema alone is scored as having answered nothing, and a statement the database refused is not a reading.",
-    "Your compose_report call was not run. Call run_read_query with a statement that answers the objective, then present_answer with the id of its result, then compose_report.",
-  ].join(" "),
 });

@@ -130,6 +130,9 @@ function harness(
 
   const context: AgentToolContext = {
     runId: "run-1",
+    // A model with no profile, so these tests read the DEFAULTS. A named model here would
+    // quietly test one model's settings and call the result the tool's behaviour.
+    modelId: "unmeasured-model-for-tests",
     mode: "agent",
     workflowType: "investigation",
     actor: { sessionId: "session-1", role: "user" },
@@ -662,10 +665,12 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
         model that copies it and edits the prose gets a call that passes the citation check
         rather than one that fails it a turn later.
       */
+      // Driven as the model whose ledger earned it. The behaviour is per model — off until a
+      // measurement turns it on — so the fixture has to name which model is being refused.
       const h = harness();
 
       const outcome = composeReportTool(
-        h.context,
+        { ...h.context, modelId: "lfm2:24b" },
         { runId: h.context.runId, events: [artifactEvent] },
         { claims: [{ claim: "Engineering is largest.", evidence: ["corr-real"] }] },
       );
@@ -696,7 +701,7 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       ] as unknown as AgentRunEvent[];
 
       const outcome = presentAnswerTool(
-        h.context,
+        { ...h.context, modelId: "lfm2:24b" },
         { runId: h.context.runId, autoExecute: false, events },
         { artifact: "corr-real" },
       );
@@ -713,9 +718,30 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       const h = harness();
 
       const outcome = composeReportTool(
-        h.context,
+        { ...h.context, modelId: "lfm2:24b" },
         { runId: h.context.runId, events: [] },
         { claims: [{ claim: "Nothing read.", evidence: ["corr-real"] }] },
+      );
+
+      if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+      expect(outcome.modelText).not.toContain("A call this run could make right now");
+    });
+
+    test("a model that has not earned the example is not given one", () => {
+      /*
+        The rule every behaviour added from here obeys: it arrives OFF, carrying whatever was
+        measured before it, and turns on for the model a measurement earned it for.
+
+        Two changes landed today without that switch. One of them then looked like it had cost a
+        cell that had been won hours earlier, and there was no way to keep the win and spare the
+        loss — which is the whole reason these files exist.
+      */
+      const h = harness();
+
+      const outcome = composeReportTool(
+        h.context,
+        { runId: h.context.runId, events: [artifactEvent] },
+        { claims: [{ claim: "Engineering is largest.", evidence: ["corr-real"] }] },
       );
 
       if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
@@ -2701,6 +2727,9 @@ function curatedHarness(
   let tick = 1_000;
   const context: AgentToolContext = {
     runId: "run-1",
+    // A model with no profile, so these tests read the DEFAULTS. A named model here would
+    // quietly test one model's settings and call the result the tool's behaviour.
+    modelId: "unmeasured-model-for-tests",
     mode: "agent",
     workflowType: "operations",
     actor: { sessionId: "session-1", role: "user" },

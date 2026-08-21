@@ -160,6 +160,7 @@ function harness(type: DatabaseType, answer?: (sql: string) => Promise<QueryResu
   return {
     context: {
       runId: "run-1",
+      modelId: "unmeasured-model-for-tests",
       mode: "agent",
       workflowType: "investigation",
       actor: { sessionId: "session-1", role: "user" },
@@ -550,6 +551,7 @@ describe("captureContextSnapshot — the provider's own inventory", () => {
     return {
       context: {
         runId: "run-1",
+        modelId: "unmeasured-model-for-tests",
         mode: "agent",
         workflowType: "investigation",
         actor: { sessionId: "session-1", role: "user" },

@@ -127,7 +127,7 @@ import type { ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseType, TableSchema } from "@/lib/types";
 
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
-export type AgentToolResources = Omit<AgentToolContext, "runId" | "mode" | "workflowType" | "actor">;
+export type AgentToolResources = Omit<AgentToolContext, "runId" | "modelId" | "mode" | "workflowType" | "actor">;
 
 export interface AgentInvestigationOptions {
   readonly service: AgentRunService;
@@ -2317,6 +2317,7 @@ export async function runInvestigation(
   const context: AgentToolContext = {
     ...resources,
     runId: record.runId,
+    modelId: model.modelId,
     mode: record.mode,
     workflowType: record.workflowType,
     actor: record.actor,
@@ -3053,15 +3054,18 @@ export async function runInvestigation(
           repeatedly is still held only as many times as its model allows.
         */
         const presented = sofar.events.some((event) => event.kind === "answer-composed");
-        if (!presented) {
-          // Which of the two things is missing decides which sentence is said. Both are held
-          // against the same counter, because they are the same hold at different distances
-          // from an answer and a run should not be able to collect one of each.
-          // This model's own wording, from its own file. Two sentences, and which one is said is
-          // decided here rather than in the file: what is missing is a fact about the run, and
-          // only how to say it is a fact about the model.
-          const said = noticesFor(model.modelId);
-          const text = hasReading ? said.presentBeforeReport : said.readBeforeReport;
+        /*
+          A run that read and did not present. The other arm — a run that read NOTHING — was
+          given a sentence of its own for a while and it is gone: three models were measured
+          arriving there (`lfm2:24b` with every statement refused by the database,
+          `mistral-small3.2:24b` reading only the catalog, `deepseek-r1:14b` calling nothing)
+          and not one of them recovered. Their runs lose either way, labelled `no-report`
+          instead of `no-answer`, so the machinery was deleted rather than kept switched off:
+          an unearned behaviour is exactly what `models/profile.ts` refuses to accumulate.
+        */
+        if (hasReading && !presented) {
+          // This model's own wording, from its own file.
+          const text = noticesFor(model.modelId).presentBeforeReport;
           presentReminders += 1;
           await holdCall(call.toolName, text);
           messages.push(prompted ? promptedResultMessage(call, notice(text)) : toolResultMessage(call, text));
