@@ -1802,6 +1802,20 @@ function describeIssues(issues: readonly z.core.$ZodIssue[]): string {
     const where = issue.path.length === 0 ? "the arguments object" : issue.path.join(".");
     if (issue.code === "invalid_type") return `${where}: expected ${issue.expected}`;
     if (issue.code === "unrecognized_keys") return `${where}: remove ${issue.keys.join(", ")}`;
+    /*
+      A closed set is named, because "invalid value" was not something a model could act on.
+
+      `deepseek-r1:7b` was refused `recommend_change` thirty-two times in one run on this
+      issue alone — one field, the same sentence every time, until the deadline. Zod reports
+      one code here for two different mistakes, an absent field and a value outside the set,
+      so neither the model nor a reader of the ledger could tell which; and the two words it
+      did get back never included the only two words that would have worked.
+
+      Naming what WOULD have worked is the move this whole effort turns on — the worked
+      example does it, the citable-id list does it — and a closed set is its cheapest case:
+      the permitted values are in the schema, already in hand at the point of refusal.
+    */
+    if (issue.code === "invalid_value") return `${where}: expected one of ${issue.values.join(", ")}`;
     return `${where}: ${issue.code.replaceAll("_", " ")}`;
   });
   return `the fields that did not match — ${named.join("; ")}`;

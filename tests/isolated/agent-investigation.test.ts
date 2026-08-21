@@ -4462,6 +4462,42 @@ describe("a run is told to report only when it holds something to report from", 
     expect(declined?.kind === "call-declined" && declined.detail).toContain("claims");
   });
 
+  test("a field the schema offers a closed set for is refused with that set named", async () => {
+    /*
+      What the first version of this refusal could not distinguish, found by reading it.
+
+      `deepseek-r1:7b` produced thirty-two `recommend_change` refusals in one run reading
+      `change: invalid value` — and that sentence covers two different mistakes, an absent
+      field and a value outside the set, because Zod reports one code for both. Neither the
+      reader nor the MODEL could tell which it was, and the model is the one that had to act
+      on it: it was told its `change` was wrong thirty-two times without ever being told that
+      `index` and `rewrite` are the only two things it could be.
+
+      Naming what would have worked is the move that carried this whole effort — it is what
+      the worked example does, and what the citable-id list does. A closed set is the cheapest
+      case of it: the values are in the schema, and the refusal already had them in hand.
+    */
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent", "query-optimization");
+    const script = scriptedModel(
+      callsTool("recommend_change", { statement: "CREATE INDEX ON salary (dept_no)" }),
+      answersProse("understood"),
+      answersProse("understood"),
+    );
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    // The model reads the same sentence the ledger keeps, so one assertion covers both.
+    expect(script.turns[1]?.transcript ?? "").toContain("index, rewrite");
+    const view = await b.store.read(run.runId);
+    const declined = view?.record.events.find((event) => event.kind === "call-declined");
+    expect(declined?.kind === "call-declined" && declined.detail).toContain("one of index, rewrite");
+  });
+
   test("the model measured answering from an inventory keeps hearing it unconditionally", async () => {
     /*
       The regression this is here to make impossible. `nemotron-3.5-lightning:30b` won two
