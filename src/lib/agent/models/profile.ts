@@ -91,6 +91,21 @@ export interface AgentModelProfile {
    */
   readonly remindWithoutTools?: boolean;
   /**
+   * Whether the report reminder waits until the run holds something it could cite.
+   *
+   * The reminder above, arriving at a moment nothing could satisfy it. `deepseek-r1:14b` on
+   * database-assessment heard it as the first thing in the run, obeyed, and was declined
+   * `UNVERIFIABLE_EVIDENCE` five times in a row before it had read anything at all; its first
+   * `profile_table` came after the last refusal, and the run ended having spent 503 seconds
+   * proving it could follow an instruction that could not be followed.
+   *
+   * A run with no artifact and no snapshot cannot cite one, and the refusal it earns cannot
+   * even name what it might have cited. Off by default: the reminder's whole value for
+   * `nemotron-3.5-lightning:30b` is that it fires for a run holding an inventory rather than
+   * a reading, and that case must keep working exactly as measured.
+   */
+  readonly requireEvidenceBeforeReminder?: boolean;
+  /**
    * How many times a report may be held to ask for the answer that belongs beside it.
    *
    * One is enough for a model that forgot. `mistral-small3.2:24b` does not forget: held once
@@ -202,6 +217,15 @@ export const DEFAULT_REFUSAL_EXAMPLES = false;
  * was given, which looks identical from here and is not the same thing at all.
  */
 export const DEFAULT_REMIND_WITHOUT_TOOLS = false;
+
+/**
+ * Unconditional, which is what every locked cell was measured against.
+ *
+ * The reminder fires on the run's state as the drive already reads it, and 107 cells locked
+ * that way. Only a model whose ledger shows it obeying the reminder into a wall of refusals
+ * earns the wait, and it earns it alone.
+ */
+export const DEFAULT_REQUIRE_EVIDENCE_BEFORE_REMINDER = false;
 
 /**
  * One, which is what every locked answer-presenting cell was measured against.

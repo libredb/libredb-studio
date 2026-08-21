@@ -38,5 +38,20 @@ export const DEEPSEEK_R1_14B: AgentModelProfile = {
     here, and nothing outside this file changes.
   */
   remindWithoutTools: true,
+  /*
+    And the other half of that switch, which the first measurement could not see.
+
+    Turning the reminder on above means this model hears it on a turn where it called nothing —
+    including the FIRST turn, before it has read anything. Its database-assessment ledger is
+    what that costs: `report-reminder` is the first entry after the run started, then five
+    `compose_report` calls declined `UNVERIFIABLE_EVIDENCE` back to back, then, after all five,
+    the run's first `profile_table`. It obeyed an instruction nothing could satisfy, and the
+    refusal could not even list what to cite because there was nothing to list.
+
+    So the reminder waits here until the run holds an artifact or a snapshot. `nemotron` keeps
+    hearing it unconditionally: its case is a run that answers from an inventory it is already
+    holding, which is evidence, and that model does not carry this field.
+  */
+  requireEvidenceBeforeReminder: true,
   notices: { ...BASELINE_NOTICES },
 };

@@ -4374,3 +4374,76 @@ describe("a run that will not record what it read is narrowed to what would fini
     expect(script.turns[13]?.transcript ?? "").toContain("There is no tool called");
   });
 });
+
+// ─── telling a run to report at a moment it could obey ──────────────────────
+
+/*
+  The reminder is withheld from a run that called nothing, and two models are measured
+  needing it anyway: they answer out of the inventory the run handed them instead of
+  reaching for a tool, which from the drive looks the same as giving up.
+
+  Granting it opened a second hole, and only a model that took the bypass could show it.
+  `deepseek-r1:14b` on database-assessment heard the reminder as the FIRST entry in its
+  ledger — before any read — obeyed, and was declined `UNVERIFIABLE_EVIDENCE` five times
+  running; its first `profile_table` came after the last refusal. A run holding neither
+  artifact nor snapshot cannot cite one, and the refusal that normally lists what to cite
+  had nothing to list.
+
+  So the bypass is split in two, per model: hearing it without tools, and waiting until
+  there is something to cite. These pin both arms, because the value of the first is the
+  run this second one would also stop.
+*/
+describe("a run is told to report only when it holds something to report from", () => {
+  test("a model that waits for evidence is not told to report before it has any", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(answersProse("The tables are department, employee."));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, undefined, "deepseek-r1:14b"),
+      // Ungrounded on purpose: this engine has no catalog composer, so the capture
+      // lands nothing and the run holds exactly what the live one held — nothing.
+      resources: { ...b.resources, connection: { ...CONNECTION, type: "mongodb" } },
+    });
+
+    // One turn: it answered in prose, and was not sent back to write a report it would
+    // have been refused for.
+    expect(script.turns).toHaveLength(1);
+  });
+
+  test("the same model IS told once the inventory is in its hands", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(answersProse("The tables are department, employee."), answersProse("still nothing"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, undefined, "deepseek-r1:14b"),
+      resources: b.resources,
+    });
+
+    // The snapshot IS citable, so the reminder is worth spending a turn on and is sent.
+    expect(script.turns).toHaveLength(2);
+    expect(script.turns[1]?.transcript ?? "").toContain("compose_report");
+  });
+
+  test("the model measured answering from an inventory keeps hearing it unconditionally", async () => {
+    /*
+      The regression this is here to make impossible. `nemotron-3.5-lightning:30b` won two
+      cells on the bypass; it does not carry the wait, and an ungrounded run of it must
+      still be reminded exactly as it was when those cells were measured.
+    */
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(answersProse("All eight tables."), answersProse("still nothing"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, undefined, "nemotron-3.5-lightning:30b"),
+      resources: { ...b.resources, connection: { ...CONNECTION, type: "mongodb" } },
+    });
+
+    expect(script.turns).toHaveLength(2);
+  });
+});

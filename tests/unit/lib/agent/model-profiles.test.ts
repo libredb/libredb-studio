@@ -7,6 +7,7 @@ import {
   noticesFor,
   presentReminderLimitFor,
   remindsWithoutTools,
+  requiresEvidenceBeforeReminder,
   planStatementRetriesFor,
   reportReminderLimitFor,
   reportReserveMsFor,
@@ -174,6 +175,26 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(remindsWithoutTools("nemotron-3.5-lightning:30b")).toBe(true);
     expect(remindsWithoutTools("qwen3:8b")).toBe(false);
     expect(remindsWithoutTools("some-model-released-tomorrow:70b")).toBe(false);
+  });
+
+  test("the models that must hold something before they are told to record it", () => {
+    /*
+      The reminder above, asked for at a moment nothing could satisfy it. `deepseek-r1:14b`,
+      database-assessment: `report-reminder` is the first entry in the ledger after the run
+      started, and what follows is five `compose_report` calls declined `UNVERIFIABLE_EVIDENCE`
+      in a row, then — after the refusals — the run's first `profile_table`.
+
+      It was doing as it was told. There was simply nothing to cite: no artifact, no snapshot,
+      so even the refusal that names citable ids had none to name and repeated the bare rule
+      five times. The run spent 503 seconds and never recovered.
+
+      True for that model only, and the isolation is the point: `nemotron-3.5-lightning:30b`
+      earned the reminder by answering out of an inventory it was holding, which is the case
+      this gate keeps intact. It does not carry the field, so this cannot reach it.
+    */
+    expect(requiresEvidenceBeforeReminder("deepseek-r1:14b")).toBe(true);
+    expect(requiresEvidenceBeforeReminder("nemotron-3.5-lightning:30b")).toBe(false);
+    expect(requiresEvidenceBeforeReminder("some-model-released-tomorrow:70b")).toBe(false);
   });
 
   test("the answer is asked for once, and no measurement has earned a second", () => {

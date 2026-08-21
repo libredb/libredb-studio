@@ -58,6 +58,7 @@ import {
   DEFAULT_COMPARE_REMINDER_LIMIT,
   DEFAULT_PRESENT_REMINDER_LIMIT,
   DEFAULT_REMIND_WITHOUT_TOOLS,
+  DEFAULT_REQUIRE_EVIDENCE_BEFORE_REMINDER,
   DEFAULT_REPORT_RESERVE_MS,
   DEFAULT_SAMPLING,
   DEFAULT_UNREPORTED_CALL_CEILING,
@@ -157,6 +158,18 @@ export function holdsReportWithoutTime(modelId: string): boolean {
  */
 export function remindsWithoutTools(modelId: string): boolean {
   return MODEL_PROFILES[modelId.toLowerCase()]?.remindWithoutTools ?? DEFAULT_REMIND_WITHOUT_TOOLS;
+}
+
+/**
+ * Whether this model is told to report only once the run holds something citable.
+ *
+ * False everywhere but the one model measured obeying the reminder before it had read
+ * anything, so the wait cannot reach a run that was already reminded correctly.
+ */
+export function requiresEvidenceBeforeReminder(modelId: string): boolean {
+  return (
+    MODEL_PROFILES[modelId.toLowerCase()]?.requireEvidenceBeforeReminder ?? DEFAULT_REQUIRE_EVIDENCE_BEFORE_REMINDER
+  );
 }
 
 /**

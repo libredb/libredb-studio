@@ -63,6 +63,7 @@ import {
   noticesFor,
   presentReminderLimitFor,
   remindsWithoutTools,
+  requiresEvidenceBeforeReminder,
   planStatementRetriesFor,
   reportReminderLimitFor,
   reportReserveMsFor,
@@ -2651,6 +2652,7 @@ export async function runInvestigation(
     // inventory that is durably part of some run's own history, not one this process
     // read and failed to write down.
     holdSnapshotForConnection(snapshot, connectionIdentity(context.connection));
+    contextCaptured = true;
     show(snapshot);
   };
 
@@ -2669,6 +2671,11 @@ export async function runInvestigation(
   let reserveAnnounced = false;
   /** Whether a tool this run HOLDS has been called; see `remindToReport`. */
   let anyToolCalled = false;
+  /**
+   * Whether the inventory capture landed, which is the only evidence a run that called
+   * nothing can hold; see `requireEvidenceBeforeReminder`.
+   */
+  let contextCaptured = false;
   /**
    * How many times this drive has told the run to report; see `notices.reportReminder`.
    *
@@ -2755,7 +2762,23 @@ export async function runInvestigation(
       29 seconds — and calls nothing, so it arrives here looking exactly like a run that gave
       up. Its profile says otherwise, and nothing else changes.
     */
-    if (!anyToolCalled && !remindsWithoutTools(model.modelId)) return false;
+    if (!anyToolCalled) {
+      if (!remindsWithoutTools(model.modelId)) return false;
+      /*
+        And the moment that bypass is wrong, which only a model that took it could show.
+
+        A run that has called nothing has no artifact, so the one thing it could cite is the
+        snapshot — and without that it has nothing. `deepseek-r1:14b` heard the reminder as
+        the first entry in its assessment ledger, obeyed it, and was declined
+        `UNVERIFIABLE_EVIDENCE` five times before its first read; the refusal could not even
+        name what to cite, because nothing had been produced to name.
+
+        Per-model, and off by default, because the bypass earns its keep on the run this
+        would also stop: `nemotron-3.5-lightning:30b` answers out of an inventory, and the
+        capture that gives it one is exactly what this waits for.
+      */
+      if (requiresEvidenceBeforeReminder(model.modelId) && !contextCaptured) return false;
+    }
     if (reportReminders >= reportReminderLimitFor(model.modelId)) return false;
     if (turns >= maxTurns || resources.deadline.remainingMs() <= 0) return false;
     reportReminders += 1;
