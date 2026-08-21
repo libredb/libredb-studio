@@ -22,6 +22,16 @@
  * data read, a statement that cannot be found behind it, or a rejected chart spec — is not
  * recorded anywhere, and each one implies a different fix.
  *
+ * **Third measurement, with the refusal now recorded** (`call-declined` exists because of this
+ * cell). The run took a different path again: one `profile_table`, then `compose_report` held
+ * with the citation notice — "you took readings and your report cited none of them" — and then
+ * it stopped. No `present_answer` call at all, so no refusal to read.
+ *
+ * Three measurements, three different losses: stopped after a hold, reported without
+ * presenting, held on citations and stopped. What they share is the shape of the first one:
+ * **this model quits when it is corrected.** Sampling did not fix that, it randomised which
+ * correction it quits on. That is a characteristic and not a setting, so the cell is parked.
+ *
  * Nothing further is set here until that is visible. A second `presentReminderLimit` was tried
  * and removed: it aims at a hold that is not firing, so it could not have helped, and an
  * override with no measurement behind it is exactly what this directory refuses to hold.

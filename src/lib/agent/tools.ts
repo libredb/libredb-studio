@@ -2585,7 +2585,9 @@ export function recommendChangeTool(
     return unavailable("RECOMMENDATION_SHAPE_MISMATCH");
   }
   if (!parsed.value.evidence.every((reference) => verifiedAgainst(run.events, reference))) {
-    return unavailable("UNVERIFIABLE_EVIDENCE");
+    // Both evidence-bearing tools name what is citable, because a model that guessed an id
+    // here will guess the same one at `compose_report` a turn later.
+    return unavailable("UNVERIFIABLE_EVIDENCE", citableEvidence(run.events));
   }
 
   return {
@@ -2684,6 +2686,35 @@ function producedArtifact(events: readonly AgentRunEvent[], correlationId: strin
 const ANSWER_OPERATION: AgentOperationId = "sql.query.read";
 
 /** Does this reference name something the run actually produced? */
+/**
+ * The evidence this run CAN cite, named, for a refusal that would otherwise only say no.
+ *
+ * Measured on `granite4.1:3b`, data-analysis, and it is the clearest instance of a failure
+ * class this repository has already paid for three times: a refusal that states the rule and
+ * not the fix. That run did the analysis correctly — it profiled a table, drafted
+ * `SELECT emp_no, amount FROM salary ORDER BY amount DESC LIMIT 1`, and ran it — then called
+ * `compose_report` FIVE times, was refused `UNVERIFIABLE_EVIDENCE` five times with the same
+ * sentence, and stopped. It was never told which ids existed, so each retry was a fresh guess.
+ *
+ * Newest first, because the id a run wants is almost always the read it just took, and the
+ * bound is there because a long run holds more ids than a refusal can usefully carry.
+ *
+ * Only the run's OWN ids and its own snapshot fingerprint: this is the server quoting its
+ * ledger back, never the model's arguments, so a refusal cannot become a channel for a model
+ * to see anything it did not produce. And it is only ever read by a run that has already
+ * failed the citation check, so no passing run's behaviour can change.
+ */
+function citableEvidence(events: readonly AgentRunEvent[]): string | undefined {
+  const ids: string[] = [];
+  for (const event of events) {
+    if (event.kind === "tool-completed") ids.unshift(event.artifact.correlationId);
+  }
+  const snapshot = events.find((event) => event.kind === "context-captured");
+  const offer = ids.slice(0, 5);
+  if (snapshot !== undefined) offer.push(`the schema snapshot ${snapshot.fingerprint}`);
+  return offer.length === 0 ? undefined : `this run produced ${offer.join(", ")}`;
+}
+
 function verifiedAgainst(events: readonly AgentRunEvent[], reference: AgentEvidenceReference): boolean {
   if (reference.source === "artifact") return producedArtifact(events, reference.correlationId) !== null;
   return events.some((event) => event.kind === "context-captured" && event.fingerprint === reference.fingerprint);
@@ -3038,7 +3069,7 @@ export function composeReportTool(
     // shared with `recommend_change`: two would be two things to keep equal, and the
     // one that drifted would be the one letting an uncited claim through.
     if (!claim.evidence.every((reference) => verifiedAgainst(run.events, reference))) {
-      return unavailable("UNVERIFIABLE_EVIDENCE");
+      return unavailable("UNVERIFIABLE_EVIDENCE", citableEvidence(run.events));
     }
     claims.push({
       claim: claim.claim,

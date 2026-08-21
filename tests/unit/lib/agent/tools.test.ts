@@ -1889,6 +1889,29 @@ describe("composeReportTool — a claim must cite something the run actually pro
     expect(outcome.reasonCode).toBe("UNVERIFIABLE_EVIDENCE");
   });
 
+  test("and the refusal names the ids this run CAN cite, so the retry is not another guess", () => {
+    /*
+      Measured on `granite4.1:3b`, data-analysis. The run did the analysis correctly — profiled
+      a table, drafted `SELECT emp_no, amount FROM salary ORDER BY amount DESC LIMIT 1`, ran it
+      — then called `compose_report` five times, was refused with the same sentence five times,
+      and stopped. Nothing in that sentence said which ids existed, so every retry was a fresh
+      guess at a string.
+
+      The server quotes its own ledger back: the run's artifact ids and its snapshot
+      fingerprint, newest first because the id a run wants is usually the read it just took.
+      Only a run that has already failed this check ever sees it, so no passing run changes.
+    */
+    const h = harness();
+
+    const outcome = composeReportTool(h.context, run, {
+      claims: [{ claim: "Invented", evidence: [{ source: "artifact", correlationId: "corr-does-not-exist" }] }],
+    });
+
+    if (outcome.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(outcome.modelText).toContain("corr-1");
+    expect(outcome.modelText).toContain("schema snapshot");
+  });
+
   /**
    * The evidence check is only worth something if the event log belongs to the run
    * being reported on. Every correlation id below is real — it is just real for a
