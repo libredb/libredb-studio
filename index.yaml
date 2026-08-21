@@ -4,6 +4,79 @@ entries:
   - annotations:
       artifacthub.io/category: database
       artifacthub.io/changes: |
+        - "Four more database engines, fourteen in all: Apache Cassandra over CQL, Apache Trino over its own client protocol with no runtime dependency added, and Elasticsearch and OpenSearch as two engines over one shared SQL transport"
+        - "Eighteen further engines are published as wire-compatible, each measured against a live instance rather than assumed from a protocol - MariaDB, TiDB, Vitess, StarRocks, OceanBase, SingleStore, Citus, TimescaleDB, YugabyteDB, AlloyDB Omni, Apache Cloudberry, CockroachDB, Materialize, RisingWave, Valkey, DragonflyDB, KeyDB and FerretDB - so fourteen drivers now reach thirty-two named products"
+        - "How much of the product each of those eighteen gives you differs per engine and is published per engine: full, partial, or SQL editor only. The connection dialog names the relatives a driver serves, and the docs table records the exact version probed and what was found broken"
+        - "Monitoring stops reporting an absent measurement as a measurement: five panels that printed a confident 0 for engines that keep no such counter now leave the field blank"
+        - "The schema explorer emits Redis commands for Redis instead of SQL it cannot run there, from a generator of its own"
+        - "OIDC logout resolves generic end-session URLs from the provider's discovery document rather than building one by hand"
+        - "The query agent enforces single-drive ownership and refuses appends once a run has closed, and its rail answers first instead of narrating its steps"
+        - "Chart 0.1.44 changes no template: its content is the appVersion move to 0.13.0 and the cassandra keyword that ArtifactHub search needs. The IPv6 bind behaviour is 0.1.42's, unchanged"
+        - "Track app release 0.13.0 (appVersion bump; default image tag follows)"
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:0.13.0
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 0.13.0
+    created: "2026-08-21T15:44:48.13181397Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting fourteen engines
+      - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase,
+      ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache
+      Cassandra
+    digest: e9a0dfe6317b05320ca0c8fe4dd19370833b712434eba0c376a5b385946a769f
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - couchbase
+    - clickhouse
+    - druid
+    - elasticsearch
+    - opensearch
+    - trino
+    - cassandra
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.44/libredb-studio-0.1.44.tgz
+    version: 0.1.44
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
         - "The container picks its own bind address: the ConfigMap now writes an empty HOSTNAME, and the image's entrypoint resolves one at startup, preferring a dual-stack :: (#432)"
         - "It proves dual-stack instead of assuming it - a throwaway :: listener that an IPv4 client must actually connect to - and falls back to 0.0.0.0 when the namespace has no IPv6, or when :: is IPv6-only while a non-loopback IPv4 address exists"
         - "New config.bindAddress value overrules that: :: forces dual-stack, 0.0.0.0 pins IPv4 and restores what every chart before 0.1.42 did unconditionally. extraEnv HOSTNAME still wins over both"
@@ -2390,4 +2463,4 @@ entries:
     urls:
     - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
     version: 0.1.0
-generated: "2026-08-21T13:22:13.829038231Z"
+generated: "2026-08-21T15:44:48.124252099Z"
