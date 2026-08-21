@@ -4428,6 +4428,40 @@ describe("a run is told to report only when it holds something to report from", 
     expect(script.turns[1]?.transcript ?? "").toContain("compose_report");
   });
 
+  test("a refusal about the SHAPE of a call records which fields failed", async () => {
+    /*
+      The code alone could not be diagnosed. `INVALID_TOOL_INPUT` is the largest refusal
+      family on record — around a hundred and fifty across every model measured — and
+      `deepseek-r1:7b` produced eight against `recommend_change` in a single run, holding
+      the tool throughout, while the ledger could only say the shape was wrong eight times.
+      Which part of the object it kept getting wrong was unreadable, so no fix could be
+      aimed at it.
+
+      What goes in stays this server's own vocabulary: the validator's field paths and the
+      types it expected. The arguments that failed them do not, which is why the refusal
+      that lists a result's real column names carries no detail at all — those names are the
+      engine's words.
+    */
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(
+      callsTool("compose_report", { claims: "a sentence" }),
+      answersProse("understood"),
+      answersProse("understood"),
+    );
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    const view = await b.store.read(run.runId);
+    const declined = view?.record.events.find((event) => event.kind === "call-declined");
+    expect(declined?.kind === "call-declined" && declined.reasonCode).toBe("INVALID_TOOL_INPUT");
+    expect(declined?.kind === "call-declined" && declined.detail).toContain("claims");
+  });
+
   test("the model measured answering from an inventory keeps hearing it unconditionally", async () => {
     /*
       The regression this is here to make impossible. `nemotron-3.5-lightning:30b` won two

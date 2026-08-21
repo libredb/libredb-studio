@@ -237,6 +237,14 @@ describe("§4.4 case 1: a chart of a column the result does not have", () => {
       each one implies a different fix.
     */
     expect(drive.kinds).toContain("call-declined");
+    /*
+      This one carries no `detail`, and that is the rule working rather than a gap: the names
+      it refuses with are the ENGINE's, and untrusted text does not enter the ledger under
+      this server's name. Only refusals written in our own vocabulary carry one — see the
+      shape refusal in `report-citation.test.ts`.
+    */
+    const refused = drive.events.find((event) => event.kind === "call-declined");
+    expect(refused?.kind === "call-declined" && refused.detail).toBeUndefined();
   });
 
   test("and the run recovers on the next turn rather than looping to the ceiling", async () => {

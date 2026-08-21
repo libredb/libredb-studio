@@ -3514,15 +3514,24 @@ async function profileTable(
  * implies a different fix.
  *
  * The CODE goes in, never the prose and never the model's arguments: the codes are this
- * server's vocabulary, and they are also what a reader can grep for.
+ * server's vocabulary, and they are also what a reader can grep for. Since #4xx the entry
+ * also carries `detail` when the refusal had one, which is the same vocabulary a step
+ * further in — the validator's own field paths. The code by itself proved undiagnosable:
+ * `deepseek-r1:7b` was refused `INVALID_TOOL_INPUT` on `recommend_change` eight times in a
+ * single run, and the record could not say which part of the object it kept getting wrong.
  */
 async function declined(
   service: AgentRunService,
   runId: string,
   tool: AgentToolName,
-  outcome: { readonly reasonCode: string; readonly modelText: string },
+  outcome: { readonly reasonCode: string; readonly modelText: string; readonly detail?: string },
 ): Promise<CallResult> {
-  await service.recordEvent(runId, { kind: "call-declined", tool, reasonCode: outcome.reasonCode });
+  await service.recordEvent(runId, {
+    kind: "call-declined",
+    tool,
+    reasonCode: outcome.reasonCode,
+    ...(outcome.detail === undefined ? {} : { detail: outcome.detail }),
+  });
   return { kind: "answered", text: outcome.modelText };
 }
 

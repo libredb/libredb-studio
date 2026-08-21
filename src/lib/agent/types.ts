@@ -581,6 +581,20 @@ export type AgentRunEvent =
       readonly kind: "call-declined";
       readonly tool: AgentToolName;
       readonly reasonCode: string;
+      /**
+       * Which FIELDS failed, when the refusal was about the shape of the call.
+       *
+       * The code alone turned out not to be diagnosable. `INVALID_TOOL_INPUT` is the largest
+       * refusal family on record — a hundred and fifty across every model measured — and
+       * `deepseek-r1:7b` produced eight of them in one run, holding the same tool, without
+       * the record saying which part of the object was wrong even once.
+       *
+       * Still the server's own vocabulary and nothing else: these are the schema's field
+       * paths and the types it expected, written by the validator. The model's arguments stay
+       * out, as the code-only rule above intends — what is added is what THIS server said no
+       * about, not what it was sent.
+       */
+      readonly detail?: string;
     })
   | (AgentRunEventBase & {
       /**

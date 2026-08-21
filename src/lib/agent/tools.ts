@@ -307,10 +307,25 @@ export type AgentToolUnavailableCode =
   | AgentDeadlineDenyCode
   | AgentRepairDenyCode;
 
+/**
+ * A refusal that performed nothing, spelled once because six outcomes carried it identically.
+ *
+ * `detail` is what this server said no ABOUT — the validator's field paths, the codes it can
+ * name — and never what it was sent. It exists because the code alone proved undiagnosable:
+ * eight `INVALID_TOOL_INPUT` refusals in one `deepseek-r1:7b` run said the shape was wrong
+ * eight times and never which part.
+ */
+type AgentToolUnavailable = {
+  readonly kind: "unavailable";
+  readonly reasonCode: AgentToolUnavailableCode;
+  readonly modelText: string;
+  readonly detail?: string;
+};
+
 export type AgentToolOutcome =
   | { readonly kind: "completed"; readonly artifact: AgentArtifactReference; readonly modelText: string }
   | { readonly kind: "refused"; readonly refusal: AgentToolRefusal; readonly modelText: string }
-  | { readonly kind: "unavailable"; readonly reasonCode: AgentToolUnavailableCode; readonly modelText: string };
+  | AgentToolUnavailable;
 
 export type AgentTableProfileOutcome =
   | {
@@ -320,7 +335,7 @@ export type AgentTableProfileOutcome =
       readonly modelText: string;
     }
   | { readonly kind: "refused"; readonly refusal: AgentToolRefusal; readonly modelText: string }
-  | { readonly kind: "unavailable"; readonly reasonCode: AgentToolUnavailableCode; readonly modelText: string };
+  | AgentToolUnavailable;
 
 export type AgentPlanComparisonOutcome =
   | {
@@ -329,14 +344,14 @@ export type AgentPlanComparisonOutcome =
       readonly after: AgentPlanSide;
       readonly modelText: string;
     }
-  | { readonly kind: "unavailable"; readonly reasonCode: AgentToolUnavailableCode; readonly modelText: string };
+  | AgentToolUnavailable;
 
 /** Everything a `recommendation` event carries except when it happened. */
 export type AgentRecommendation = Omit<Extract<AgentRunEvent, { kind: "recommendation" }>, "kind" | "atMs">;
 
 export type AgentRecommendationOutcome =
   | { readonly kind: "recommended"; readonly recommendation: AgentRecommendation; readonly modelText: string }
-  | { readonly kind: "unavailable"; readonly reasonCode: AgentToolUnavailableCode; readonly modelText: string };
+  | AgentToolUnavailable;
 
 /** Everything an `answer-composed` event carries except when it happened. */
 export type AgentComposedAnswer = Omit<Extract<AgentRunEvent, { kind: "answer-composed" }>, "kind" | "atMs">;
@@ -346,11 +361,11 @@ type AgentAnswerPresentation = AgentComposedAnswer["presentation"];
 
 export type AgentAnswerOutcome =
   | { readonly kind: "answered"; readonly answer: AgentComposedAnswer; readonly modelText: string }
-  | { readonly kind: "unavailable"; readonly reasonCode: AgentToolUnavailableCode; readonly modelText: string };
+  | AgentToolUnavailable;
 
 export type AgentReportOutcome =
   | { readonly kind: "composed"; readonly claims: readonly AgentReportClaim[]; readonly modelText: string }
-  | { readonly kind: "unavailable"; readonly reasonCode: AgentToolUnavailableCode; readonly modelText: string };
+  | AgentToolUnavailable;
 
 export interface AgentOperationRequest {
   readonly operationId: AgentOperationId;
@@ -1059,7 +1074,12 @@ function unavailable(
   detail?: string,
 ): AgentToolOutcome & { kind: "unavailable" } {
   const base = UNAVAILABLE_TEXT[reasonCode];
-  return { kind: "unavailable", reasonCode, modelText: detail === undefined ? base : `${base} (${detail})` };
+  return {
+    kind: "unavailable",
+    reasonCode,
+    modelText: detail === undefined ? base : `${base} (${detail})`,
+    ...(detail === undefined ? {} : { detail }),
+  };
 }
 
 /**
@@ -1080,6 +1100,9 @@ function invalidEvidenceInput(problems: string, example?: string): AgentToolOutc
   return {
     kind: "unavailable",
     reasonCode: "INVALID_TOOL_INPUT",
+    // The paths alone, without the contract and without the worked call: the ledger wants to
+    // be countable, and the two long blocks below are the same text on every refusal.
+    detail: problems,
     // The failing paths come FIRST, before the contract. This is the refusal a
     // `qwen3:8b` run received thirty-seven times in a row without changing its call, and
     // the contract was already in it every one of those times: restating a rule the model
@@ -2593,7 +2616,7 @@ export interface AgentProfilePlan {
 
 export type AgentProfilePlanOutcome =
   | { readonly kind: "planned"; readonly plan: AgentProfilePlan }
-  | { readonly kind: "unavailable"; readonly reasonCode: AgentToolUnavailableCode; readonly modelText: string };
+  | AgentToolUnavailable;
 
 /** Resolves and composes, and reaches nothing. */
 export function planTableProfile(
