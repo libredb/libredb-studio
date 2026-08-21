@@ -24,5 +24,12 @@ export const QWEN3_5_2B: AgentModelProfile = {
     "2/6 modes locked, 16/30 runs passed at these settings. Investigate 5/5 · Optimize 1/5 · Assess 1/5 · Operate 5/5 · Analyze 0/5 · Plan 4/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  /*
+    Six `no such column` refusals on data-analysis, which is the refusal the worked example and
+    the column advice both answer. Switched on for that reason and no other: the ledger says this
+    model writes statements naming columns that are not there, and the refusal it gets back names
+    neither the columns that are nor a call it could copy.
+  */
+  refusalExamples: true,
   notices: { ...BASELINE_NOTICES },
 };

@@ -24,5 +24,11 @@ export const QWEN3_5_4B: AgentModelProfile = {
     "3/6 modes locked, 24/30 runs passed at these settings. Investigate 5/5 · Optimize 3/5 · Assess 5/5 · Operate 5/5 · Analyze 3/5 · Plan 3/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  /*
+    Eight `no such column` refusals across query-optimization and data-analysis — the most of any
+    model that did not already carry this. Both of its open cells are the ones producing them,
+    which is what makes it worth measuring here rather than anywhere else.
+  */
+  refusalExamples: true,
   notices: { ...BASELINE_NOTICES },
 };

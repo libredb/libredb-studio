@@ -24,5 +24,11 @@ export const GRANITE4_1_8B: AgentModelProfile = {
     "3/6 modes locked, 24/30 runs passed at these settings. Investigate 3/5 · Optimize 2/5 · Assess 5/5 · Operate 4/5 · Analyze 5/5 · Plan 5/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  /*
+    Three `no such column` refusals on data-analysis. The smallest of the four cases selected this
+    way and recorded as such: if the advice moves nothing here it is the weakest evidence of the
+    set, not a verdict on the advice.
+  */
+  refusalExamples: true,
   notices: { ...BASELINE_NOTICES },
 };
