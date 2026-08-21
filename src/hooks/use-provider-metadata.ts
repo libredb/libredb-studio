@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
+import { buildConnectionPayload } from "./use-connection-payload";
 
 export interface ProviderMetadata {
   capabilities: ProviderCapabilities;
@@ -55,7 +56,15 @@ export function useProviderMetadata(connection: DatabaseConnection | null): {
     fetch("/api/db/provider-meta", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(connection),
+      // `buildConnectionPayload`, not the connection object: a managed (seed)
+      // connection reaches the browser with its credentials stripped, and one
+      // defined by `connectionString` alone keeps nothing that identifies a
+      // database at all. Posting that object made the route answer 400 for the
+      // MongoDB seed, leaving capabilities null - which is what made the schema
+      // tree offer SQL labels and generate `SELECT * FROM <collection> LIMIT 50`
+      // against MongoDB. The server resolves `seed:<id>` to its own descriptor,
+      // exactly as the schema, query and monitoring routes are already called.
+      body: JSON.stringify(buildConnectionPayload(connection)),
       signal: controller.signal,
     })
       .then((res) => {

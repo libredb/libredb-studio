@@ -22,7 +22,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S1–S8 · 8
-- [Drivers and connections](#drivers-and-connections) — D1–D8, U17 · 9
+- [Drivers and connections](#drivers-and-connections) — D1–D10, U17 · 11
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X1–X7, U2–U18 · 20
@@ -37,7 +37,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C1–C10 · 10
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K1–K4 · 4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A6 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B54 · 44
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B56 · 46
 
 ---
 
@@ -396,6 +396,31 @@ failure rather than an empty panel.
 stops being gated on health, which is the wider question and should be answered for StarRocks and
 SingleStore in the same pass — and the ScyllaDB row in `docs/providers/README.md` is re-probed
 against that build.
+
+### D10. MongoDB `distinct` takes its field from `options.projection`, and any other spelling silently returns `_id`
+
+`query()`'s `distinct` branch reads the field as
+`query.options?.projection ? Object.keys(query.options.projection)[0] : "_id"`
+(`src/lib/db/providers/document/mongodb.ts`). So the field is carried by the FIRST KEY of a
+projection, which is not what a projection means anywhere else in the envelope, and is documented
+nowhere: `docs/providers/mongodb.md` §3.1 lists `distinct` among the supported operations and shows
+no example of one.
+
+Measured 2026-08-22 against live `mongo:latest`, 120 seeded products in five categories:
+
+| Sent | Answered |
+| --- | --- |
+| `{"operation":"distinct","filter":{},"field":"category"}` | 120 rows of `_id` — the `field` key is ignored and the default stands |
+| `{"operation":"distinct","options":{"projection":{"category":1}}}` | 5 rows: books, clothing, electronics, home, sports |
+
+The first is the failure mode that matters: `field` is the obvious spelling (it is the driver's own
+parameter name), it is accepted without complaint, and the answer is a plausible-looking list of ids
+rather than an error. A user reads it as "this collection has 120 distinct categories".
+
+**Done when:** `distinct` takes its field from a named key, an unknown or missing one is a
+`QueryError` naming what it expected rather than a silent `_id`, and §3.1 shows a `distinct` example.
+The driver's spelling (`field`) is the one to accept; `options.projection` may stay as a compatible
+alias or go, since nothing in the product generates a `distinct` today.
 
 ---
 ### U17. Four things the Cassandra provider declined to do
@@ -2858,6 +2883,13 @@ rows ARE and names no command, pinned by a test ("it names no command and forbid
 - Third position: this is the user's call. The draft is theirs to run, on their own connection, and a
   product that reads for them does not have to think for them.
 
+**Update 2026-08-22.** The SHAPE half of this is fixed and is not what B50 is about: `redis.ts` now
+declares a `statementLanguage`, because a plan run drafted `1) KEYS session:*` / `2) GET session:1` and
+`executeRedisCommand` reads the whole body as one command, so the server answered `ERR unknown command
+'1)'`. That sentence deliberately names no command and forbids none — it names the packaging (one
+command, no numbering, no `redis-cli` prefix) and repeats what the rows ARE. The cost question below is
+untouched by it and still the owner's.
+
 **Done when:** the owner rules, and the reason is recorded next to the derived-groupings rule so the two
 read as one decision.
 
@@ -2999,3 +3031,60 @@ Related: B13, where the capture's own SPEND is missing from the ledger for the s
 **Done when:** a refused capture records an event carrying its `reasonCode` and, where the reason is the
 row budget, the two numbers — rows projected and rows allowed — and a plan run whose capture was refused
 can be explained from its ledger alone.
+
+### B55. A LibreDB plan run drafts `GET users:*`, a command that answers zero rows rather than failing
+
+Measured 2026-08-22 on the embedded LibreDB sample, plan mode, objective *"list every entry under the
+users prefix and read one user by key"*. The run was grounded — `context-captured`, three prefixes
+(`articles:*`, `config:*`, `users:*`) — and drafted:
+
+```libredb
+GET users:*
+```
+
+`dispatchCommand` gives `get` exactly one meaning: `kv.get(parts[1])`, an exact-key lookup with no glob
+of any kind. The key `users:*` does not exist, so the command returns **zero rows and no error** — the
+same silently-wrong class as the MongoDB `$shipping.region` case, and harder to notice because an empty
+result on a key-value store reads as "nothing stored there". The runnable form is `prefix users:`, which
+is what `generateTableQuery` already emits for the same row when a person clicks it.
+
+The cause is the one Redis has too: the inventory's rows are named `users:*`, which reads as a glob the
+grammar does not have. Redis's half was fixed by declaring `ProviderLabels.statementLanguage`
+(`redis.ts`); LibreDB declares none, so the plan contract tells the model only "this engine speaks no
+SQL" and leaves the five verbs — `get`, `put`, `delete`, `prefix`, `range` — to be guessed.
+
+Deferred by the owner on 2026-08-22, explicitly: LibreDB's agent and plan-mode behaviour waits until the
+other providers are done. Recorded here so the deferral is a decision rather than an omission.
+
+**Done when:** `LibreDbProvider.getLabels()` declares a `statementLanguage` that names the five verbs and
+says a key is exact (no glob, no wildcard), with a test pinning it the way `mongodb.ts` and `redis.ts` are
+pinned — and a live plan run on the embedded sample drafts `prefix users:` for this objective.
+
+### B56. Plan grounding is held for the process lifetime, so a schema change is invisible until a restart
+
+`holdSnapshotForConnection` keeps one inventory per connection identity in a bounded map with **no
+expiry**: newest reading wins, eviction is by use, and nothing re-reads. `heldSnapshotForConnection` is
+one of the three places a planning run's grounding comes from, and it is consulted before any capture.
+
+Measured 2026-08-22, twice in one session. MongoDB's schema inference was changed to expand subdocuments
+into dotted paths; `POST /api/db/schema/list` returned `shipping.city` immediately, and the schema tree
+showed it. Two plan runs afterwards still grouped by `$shipping.region`, and their ledgers carry **no**
+`context-captured` event at all — the hold answered, from an inventory read before the change. Restarting
+the process fixed it on the first run: `context-captured` appeared and the draft named `$shipping.city`.
+
+The same shape hit Redis: keys seeded into an empty database were invisible to a plan run until a restart,
+which is what "NO STATEMENT: the `session:*` key pattern is not present in the inventory" meant — a
+correct refusal against a stale inventory.
+
+Two properties make this hard to see rather than merely stale. The hold has no TTL, so on a long-lived
+server the window is unbounded; and B54's gap means a run that used the hold records nothing about where
+its inventory came from, so the ledger cannot distinguish "held, hours old" from "captured just now".
+
+The design intent is real and documented (`context-snapshot.ts`: a run reasons over the inventory its
+claims cite, and a mid-run re-read would leave those claims describing a schema the report no longer
+shows). What is not intended is that a NEW run inherits it indefinitely.
+
+**Done when:** a new run's grounding is either re-captured or explicitly recorded as reused with the age
+of the reading it reused, so a user who just added a collection is not silently planned against the
+database as it was.
+

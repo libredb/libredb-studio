@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import type { DatabaseConnection } from "@/lib/types";
+import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 
 interface PoolStats {
   total: number;
@@ -32,7 +33,10 @@ export function PoolTab({ connection }: PoolTabProps) {
       const res = await fetch("/api/db/pool-stats", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ connection }),
+        // The seed id, not the object: a managed connection arrives here with its
+        // password and connection string stripped, so the object cannot be resolved
+        // to a database once the provider cache is cold.
+        body: JSON.stringify(buildConnectionPayload(connection)),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to fetch pool stats");

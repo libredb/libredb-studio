@@ -91,7 +91,7 @@ describe("useProviderMetadata", () => {
     expect(url).toBe("/api/db/provider-meta");
     expect(options?.method).toBe("POST");
     const body = JSON.parse(options?.body as string);
-    expect(body.id).toBe("conn-1");
+    expect(body.connection.id).toBe("conn-1");
   });
 
   test("sets isLoading true during fetch", async () => {
@@ -327,5 +327,57 @@ describe("useProviderMetadata", () => {
       expect(result.current.isLoading).toBe(false);
     });
     expect(result.current.metadata?.capabilities.supportsInlineRowEdit).toBe(false);
+  });
+  // A managed (seed) connection reaches the browser with every credential stripped:
+  // `GET /api/connections/managed` serves the descriptor, not the secrets. A seed
+  // defined by `connectionString` alone - the MongoDB seed is one - therefore has
+  // NOTHING left that identifies a database, so posting the object answers 400
+  // ("Host or connection string is required for MongoDB") and the hook holds null
+  // capabilities: the schema tree then offers SQL labels and "Select Top 50" writes
+  // `SELECT * FROM customers LIMIT 50;` against MongoDB. Every other consumer of a
+  // managed connection sends `{ connectionId: "seed:<id>" }` and lets the server
+  // resolve it (`buildConnectionPayload`); this one must too.
+  test("sends connectionId for a managed seed connection rather than the redacted object", async () => {
+    const connection = makeConnection({
+      id: "seed:mongo-local",
+      type: "mongodb",
+      host: undefined,
+      port: undefined,
+      database: undefined,
+      managed: true,
+      seedId: "mongo-local",
+    });
+    const fetchMock = mockGlobalFetch({
+      "/api/db/provider-meta": { ok: true, status: 200, json: mockMetadata },
+    });
+
+    const { result } = renderHook(() => useProviderMetadata(connection));
+
+    await waitFor(() => {
+      expect(result.current.metadata).not.toBeNull();
+    });
+
+    const [, options] = fetchMock.mock.calls[0];
+    const body = JSON.parse(options?.body as string);
+    expect(body.connectionId).toBe("seed:mongo-local");
+    expect(body.connection).toBeUndefined();
+  });
+
+  test("sends the connection object for a user connection", async () => {
+    const connection = makeConnection();
+    const fetchMock = mockGlobalFetch({
+      "/api/db/provider-meta": { ok: true, status: 200, json: mockMetadata },
+    });
+
+    const { result } = renderHook(() => useProviderMetadata(connection));
+
+    await waitFor(() => {
+      expect(result.current.metadata).not.toBeNull();
+    });
+
+    const [, options] = fetchMock.mock.calls[0];
+    const body = JSON.parse(options?.body as string);
+    expect(body.connection?.id).toBe("conn-1");
+    expect(body.connectionId).toBeUndefined();
   });
 });

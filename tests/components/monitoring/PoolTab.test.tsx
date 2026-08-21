@@ -118,4 +118,23 @@ describe("PoolTab", () => {
     expect(queryAllByText("0").length).toBe(5);
     expect(queryAllByText("N/A").length).toBe(0);
   });
+  // A managed (seed) connection reaches the browser with `password` and
+  // `connectionString` stripped, so the object alone no longer identifies a
+  // database - a seed defined by connection string has nothing left at all, and
+  // `/api/db/pool-stats` answers 400 CONFIG_ERROR for it whenever the provider
+  // cache is cold. Every other connection-bearing call sends the seed id and lets
+  // the server resolve it (`buildConnectionPayload`).
+  test("sends connectionId for a managed seed connection", async () => {
+    const seedConn = { ...conn, id: "seed:mongo-local", managed: true, seedId: "mongo-local" };
+    render(<PoolTab connection={seedConn} />);
+
+    await waitFor(() => {
+      expect(mockFetch.mock.calls.length).toBeGreaterThan(0);
+    });
+
+    const [, init] = mockFetch.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.connectionId).toBe("seed:mongo-local");
+    expect(body.connection).toBeUndefined();
+  });
 });

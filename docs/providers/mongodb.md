@@ -98,15 +98,28 @@ nested objects/arrays are walked recursively. **Only these types are special-cas
 types (`Long`, `Timestamp`, `UUID`, `RegExp`, `Code`, `DBRef`) fall through as generic objects and
 may render poorly ([Known limitations](#13-known-limitations--future-work)).
 
-### 3.3 Sampling-based, flat schema inference
+### 3.3 Sampling-based schema inference, nested to three levels
 
 MongoDB has no fixed schema, so `getSchema()` ([mongodb.ts:476](../../src/lib/db/providers/document/mongodb.ts))
 **infers** one: it lists collections (skipping `system.*`, capped at 200), and for each samples the
 first **100 documents** to derive field types ([mongodb.ts:510](../../src/lib/db/providers/document/mongodb.ts)).
 Caveats baked into this approach:
 - Fields absent from the sample (or appearing only in unsampled documents) won't show.
-- Inference is **flat** — nested object fields are reported as type `object`, not expanded into
-  dotted sub-fields (the recursion is intentionally disabled).
+- **Subdocuments are expanded into dotted paths**, to `MAX_NESTED_FIELD_DEPTH = 3` counting the top
+  level as 1 — so `shipping`, `shipping.city` and `shipping.geo.lat` are all listed, and
+  `shipping.geo.deep.tooFar` is not. The container at the boundary is still named, so a reader can
+  see that the nesting continues. `shipping.city` is a field name in MQL, and a schema that stopped
+  at `shipping: object` did not name it: a plan run on 2026-08-22 grouped by `$shipping.region`, a
+  path the database does not have, and MongoDB answers that with one null group rather than an
+  error — so the plan read as runnable and was silently wrong.
+- **Arrays are named and left closed.** `items.sku` addresses one value *per array entry*, so it
+  does not mean on an array what the same syntax means on a subdocument; listing it in a flat field
+  list would invite exactly that confusion. Date/ObjectId/Binary/Decimal128 are scalars here and
+  are never descended into.
+- **The field list is capped at `MAX_INFERRED_FIELDS = 200` per collection**, applied after the
+  sort, so what survives is a deterministic prefix and `_id` always survives. Nesting multiplies:
+  60 subdocuments of 10 fields each is 661 rows in the schema tree and 661 lines in an agent run's
+  context window, for one collection.
 - A field with multiple observed types is reported as `mixed(a|b)`. `_id` is marked primary.
 
 ### 3.4 `find` is capped at 100; `aggregate` is not
@@ -194,7 +207,7 @@ injection, no transactions, and no `cancelQuery`. `EXPLAIN` is not supported
 | Collections | `listCollections()` (skip `system.*`, cap 200) — **views included**, see below |
 | Row count | `estimatedDocumentCount()` — **not asked of a view**; absent there |
 | Size | `collStats` command (`size`) — **not asked of a view**; absent there |
-| Columns | inferred from a 100-document sample ([§3.3](#33-sampling-based-flat-schema-inference)), on a view exactly as on a collection |
+| Columns | inferred from a 100-document sample ([§3.3](#33-sampling-based-schema-inference-nested-to-three-levels)), on a view exactly as on a collection |
 | Indexes | `collection.indexes()` (`unique` flag, key fields) — **not asked of a view**; `[]` there |
 | Foreign keys | always `[]` — MongoDB has none to declare, which the provider states as `declaresForeignKeys: false` ([§9](#9-capabilities--labels)) rather than leaving a reader to guess whether the read simply found none |
 
@@ -277,6 +290,14 @@ after inserts/updates/deletes.
 Document vocabulary: entity → *Collection*, row → *document*, select → *Find Documents*, analyze →
 *Validate Collection*, vacuum → *Compact Collection*, search → *Search collections or fields…*.
 
+`statementLanguage` is the one label a person never sees: the agent's plan contract states it
+verbatim to the model. It carries the JSON envelope of [§3.1](#31-json--mql-query-format) and names
+**mongosh** as the form that is excluded. It exists for the reason the search products' does — told
+to write "one runnable statement in this MongoDB database's own query language", a plan run on
+2026-08-22 answered `db.orders.aggregate([{ $group: … }])`, which is correct MongoDB and unrunnable
+here, because `query()` parses the JSON command object and nothing else. Naming only what the
+language *is* did not survive contact with the model's prior; naming what it is not did.
+
 ---
 
 ## 10. Error handling
@@ -354,9 +375,9 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
 
 ## 13. Known limitations & future work
 
-- **Schema is inferred from a 100-document sample, flat.** Fields outside the sample don't appear,
-  and nested object fields are shown as `object` rather than expanded into sub-fields
-  ([§3.3](#33-sampling-based-flat-schema-inference)).
+- **Schema is inferred from a 100-document sample.** Fields outside the sample don't appear;
+  subdocuments are expanded only to depth 3 and only up to 200 fields per collection, and array
+  elements' fields are never expanded ([§3.3](#33-sampling-based-schema-inference-nested-to-three-levels)).
 - **`aggregate` results are unbounded.** Only `find` gets a default 100-document cap; an `aggregate`
   pipeline without `$limit` can return a very large result set
   ([§3.4](#34-find-is-capped-at-100-aggregate-is-not)). *Future:* inject a safety `$limit` / cap

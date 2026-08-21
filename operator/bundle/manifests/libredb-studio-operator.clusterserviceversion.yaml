@@ -21,8 +21,8 @@ metadata:
       ]
     capabilities: Basic Install
     categories: Database, Developer Tools
-    containerImage: ghcr.io/libredb/libredb-studio-operator:0.13.0
-    createdAt: "2026-08-21T14:54:06Z"
+    containerImage: ghcr.io/libredb/libredb-studio-operator:0.13.1
+    createdAt: "2026-08-21T23:18:00Z"
     description: Open-source web-based SQL IDE for fourteen engines - PostgreSQL,
       MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Apache
       Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra - with AI-powered
@@ -35,7 +35,7 @@ metadata:
     operatorframework.io/arch.amd64: supported
     operatorframework.io/arch.arm64: supported
     operatorframework.io/os.linux: supported
-  name: libredb-studio-operator.v0.13.0
+  name: libredb-studio-operator.v0.13.1
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -258,7 +258,7 @@ spec:
                 - --leader-elect
                 - --leader-election-id=libredb-studio-operator
                 - --health-probe-bind-address=:8081
-                image: ghcr.io/libredb/libredb-studio-operator:0.13.0
+                image: ghcr.io/libredb/libredb-studio-operator:0.13.1
                 livenessProbe:
                   httpGet:
                     path: /healthz
@@ -369,4 +369,4 @@ spec:
   provider:
     name: LibreDB
     url: https://libredb.org
-  version: 0.13.0
+  version: 0.13.1

@@ -248,6 +248,30 @@ describe("RedisProvider", () => {
       expect(labels.rowName).toBe("key");
       expect(labels.selectAction).toBe("Scan Keys");
     });
+
+    // `statementLanguage` is stated verbatim in the agent's plan contract, and this
+    // engine needs one for a reason the MongoDB case does not cover: told to write
+    // "one runnable statement in this Redis database's own query language", a live
+    // plan run on 2026-08-22 answered with the right LANGUAGE in the wrong SHAPE —
+    //
+    //   1) KEYS session:*
+    //   2) GET session:1
+    //
+    // `executeRedisCommand` reads the whole body as ONE command, so the server
+    // answered `ERR unknown command '1)'`. The two failures the sentence has to rule
+    // out are therefore the list numbering and the second command, not the verbs.
+    test("declares the one-command statement shape as the statement language", () => {
+      const { statementLanguage } = provider.getLabels();
+
+      expect(statementLanguage).toBeString();
+      // Both accepted forms are named, because the lossless JSON form is what the
+      // generators fall back to for an argument the plain tokenizer cannot carry.
+      expect(statementLanguage).toContain("one");
+      expect(statementLanguage).toContain('"command"');
+      // And the shapes that are not runnable here, named so they are excluded.
+      expect(statementLanguage).toContain("numbering");
+      expect(statementLanguage).toContain("redis-cli");
+    });
   });
 
   // --------------------------------------------------------------------------

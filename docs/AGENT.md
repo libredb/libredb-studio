@@ -2418,6 +2418,23 @@ classifier's real-world agreement rate was measured — and they are the same ki
   not in the server log either. So the only trace is the model's own sentence, and this repo has
   already recorded why that is dangerous - a missing event reads as work that was not needed rather
   than knowledge that was lost.
+- **B55** — a grounded LibreDB plan run drafts `GET users:*`, and `get` is an exact-key lookup with no
+  glob: the key does not exist, so the command answers zero rows and no error. The inventory's rows are
+  NAMED `users:*`, which reads as a glob the grammar does not have, and LibreDB declares no
+  `statementLanguage`, so the five verbs (`get`, `put`, `delete`, `prefix`, `range`) are left to be
+  guessed. MongoDB and Redis were fixed the same way in 0.13.1 - each declares the sentence its
+  statement form needs - and LibreDB's turn was deferred by the owner on 2026-08-22 until the other
+  providers are done.
+- **B56** — a planning run's grounding is HELD for the process lifetime, so a schema that changes is
+  invisible to plan mode until a restart. `holdSnapshotForConnection` keeps one inventory per
+  connection identity with no expiry, and it is consulted before any capture. Measured twice on
+  2026-08-22: after MongoDB's inference began expanding subdocuments, `schema/list` returned
+  `shipping.city` at once and the schema tree showed it, while two plan runs still grouped by
+  `$shipping.region` and recorded no `context-captured` event at all; a restart fixed it on the first
+  run. Redis showed the same shape, refusing an objective about keys that had just been seeded. The
+  design intent - a run reasons over the inventory its claims cite - is not the problem; a NEW run
+  inheriting it indefinitely is, and B54's gap means the ledger cannot tell "held, hours old" from
+  "captured just now".
 
 ## Related documentation
 

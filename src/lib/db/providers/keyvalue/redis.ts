@@ -102,6 +102,21 @@ export class RedisProvider extends BaseDatabaseProvider {
       vacuumGlobalLabel: "Memory Doctor",
       vacuumGlobalTitle: "Memory Analysis",
       vacuumGlobalDesc: "Analyze memory usage and provide optimization suggestions.",
+      // Stated verbatim in the agent's plan contract. Unlike MongoDB's, this sentence
+      // is not about the LANGUAGE - a plan run on 2026-08-22 wrote real Redis
+      // commands - but about the SHAPE it packaged them in:
+      //
+      //   1) KEYS session:*
+      //   2) GET session:1
+      //
+      // `executeRedisCommand` reads the whole body as one command, so the server
+      // answered `ERR unknown command '1)'`. The list numbering and the second
+      // command are what made it unrunnable, so those are what this names. The
+      // prefix-group sentence is here for the same reason `tablesAreDerivedGroupings`
+      // exists: the inventory's rows are named `session:*`, which reads as something
+      // addressable and is not (#427).
+      statementLanguage:
+        'exactly one Redis command, in the plain form `SCAN 0 MATCH session:* COUNT 50` or the lossless form {"command": "GET", "args": ["session:1"]} - one command and no more, with no list numbering, no bullet, no `redis-cli` prefix and no trailing semicolon; and the inventory\'s `prefix:*` rows are groupings this server summarised, not keys, so reach a prefix with SCAN ... MATCH and a key by its real name',
     };
   }
 

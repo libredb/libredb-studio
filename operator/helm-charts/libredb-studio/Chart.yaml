@@ -2,8 +2,8 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting fourteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra
 type: application
-version: 0.1.44
-appVersion: "0.13.0"
+version: 0.1.45
+appVersion: "0.13.1"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -50,7 +50,7 @@ annotations:
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:0.13.0
+      image: ghcr.io/libredb/libredb-studio:0.13.1
       platforms:
         - linux/amd64
         - linux/arm64
@@ -70,7 +70,7 @@ annotations:
     - "OIDC logout resolves generic end-session URLs from the provider's discovery document rather than building one by hand"
     - "The query agent enforces single-drive ownership and refuses appends once a run has closed, and its rail answers first instead of narrating its steps"
     - "Chart 0.1.44 changes no template: its content is the appVersion move to 0.13.0 and the cassandra keyword that ArtifactHub search needs. The IPv6 bind behaviour is 0.1.42's, unchanged"
-    - "Track app release 0.13.0 (appVersion bump; default image tag follows)"
+    - "Track app release 0.13.1 (appVersion bump; default image tag follows)"
 dependencies:
   - name: postgresql
     version: "16.x.x"

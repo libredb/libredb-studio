@@ -514,6 +514,21 @@ The labels rename actions that behave differently here, not generic ones wearing
 *"Scan Keys"* really emits `SCAN`, and *"Generate Command"* really emits Redis commands (§5.3).
 That was not true before #427, when both emitted MongoDB documents under these labels.
 
+`statementLanguage` is the one label no person sees: the agent's plan contract states it verbatim to
+the model. Unlike MongoDB's, it is not about the language — a plan run on 2026-08-22 wrote real Redis
+commands — but about the **shape** they were packaged in:
+
+```
+1) KEYS session:*
+2) GET session:1
+```
+
+`executeRedisCommand` reads the whole body as **one** command (§5), so the server answered
+`ERR unknown command '1)'`. The label therefore names the two things that made it unrunnable — the
+list numbering and the second command — alongside the two accepted forms (plain and the lossless
+`{"command": …, "args": […]}`), and repeats in words what `tablesAreDerivedGroupings` says in a flag:
+a `prefix:*` row is this server's grouping, not a key, so a prefix is reached with `SCAN … MATCH`.
+
 `analyzeGlobalLabel` / `analyzeGlobalTitle` / `analyzeGlobalDesc` (*"Run Info"*, *"Server Info"*,
 *"Get Redis server information and statistics."*) are rendered by the admin Operations tab. The
 `vacuumAction` / `vacuumGlobal*` fields (*"Memory Doctor"*, *"Memory Analysis"*) are still declared
