@@ -75,6 +75,7 @@ import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } fro
 import type { OperationRegistry } from "@/lib/db/operations/registry";
 import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
+import { connectionIdentity, heldSnapshotForConnection } from "./context-snapshot";
 import { offersRefusalExamples } from "./models";
 import type { ColumnSchema, DatabaseConnection, QueryResult, TableSchema } from "@/lib/types";
 import {
@@ -1448,7 +1449,46 @@ class AgentCuratedReadError extends Error {
   }
 }
 
-function statementAdvice(message: string, engine: string): string | undefined {
+/**
+ * The columns a table actually has, for the largest family of database refusal there is.
+ *
+ * Roughly eighty of 368 `database-error` refusals are a column that is not there — `no such
+ * column: salary.dept_no`, `employee.dept_no`, `d.dept_name`. The engine says which name failed
+ * and never which names would have worked, and this process is holding exactly that:
+ * `heldSnapshotForConnection` keeps the inventory for the connection the statement ran against.
+ *
+ * The identifier is extracted from the untrusted message and used ONLY as a lookup key. What
+ * goes back is column names read out of our own snapshot, so no fragment of the engine's text
+ * returns as though this server had verified it.
+ *
+ * A qualifier that matches no table produces nothing rather than a guess. It is usually the
+ * table and sometimes an alias, and resolving an alias would need the statement's FROM clause;
+ * inventing a mapping is worse than saying nothing.
+ */
+function columnsThatExist(message: string, connection: DatabaseConnection): string | undefined {
+  const qualified = /no such column:\s*(\w+)\.(\w+)/i.exec(message);
+  if (qualified === null) return undefined;
+  const [, qualifier, missing] = qualified;
+  const snapshot = heldSnapshotForConnection(connectionIdentity(connection));
+  if (snapshot === null) return undefined;
+  // The inventory names a table as the engine qualifies it — `public.engineering` on
+  // PostgreSQL — while the error names it as the statement wrote it, usually bare. So the last
+  // segment is compared as well, which is what makes the two spellings meet.
+  const wanted = qualifier.toLowerCase();
+  const table = snapshot.tables.find((entry) => {
+    const name = entry.name.toLowerCase();
+    return name === wanted || name.split(".").at(-1) === wanted;
+  });
+  if (table === undefined || table.columns.length === 0) return undefined;
+  // Bounded: a wide table's whole column list would bury the sentence that carries it.
+  const named = table.columns.slice(0, 12).map((column) => column.name);
+  return `"${table.name}" has no ${missing}. Its columns are ${named.join(", ")}.`;
+}
+
+function statementAdvice(message: string, engine: string, connection: DatabaseConnection): string | undefined {
+  // First, because it is the largest family and the most specific thing this layer can say.
+  const columns = columnsThatExist(message, connection);
+  if (columns !== undefined) return columns;
   const overBudget = /row budget: \d+ rows > (\d+) allowed/.exec(message);
   if (overBudget !== null) {
     return `Ask for fewer rows: add LIMIT ${overBudget[1]} (or an aggregate that returns one row) and run it again.`;
@@ -1566,7 +1606,7 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
           reference: fingerprint,
         }),
         ...(offersRefusalExamples(context.modelId)
-          ? [statementAdvice(error.message, context.connection.type) ?? ""]
+          ? [statementAdvice(error.message, context.connection.type, context.connection) ?? ""]
           : []),
       ]
         .filter((part) => part.length > 0)

@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
 import { type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
-import { type Turn, callsTool, reportOn } from "../isolated/fixtures/agent-scripted-model";
+import {
+  type Turn,
+  answersProse,
+  callsTool,
+  modelOver,
+  reportOn,
+  scriptedModel,
+} from "../isolated/fixtures/agent-scripted-model";
 import { chatToolCallStream } from "../isolated/fixtures/agent-transport";
 
 /**
@@ -80,6 +87,77 @@ describe("a drive that dies mid-run leaves a run another process can finish", ()
     const firstTurn = resumed.transcripts[0] ?? "";
     expect(firstTurn).toContain("This run was interrupted and has been resumed");
     expect(firstTurn).toContain("The rows themselves are not delivered again");
+  });
+});
+
+describe("a failed statement is told what the table actually holds", () => {
+  /*
+    The largest refusal in the system, answered. Of 368 `database-error` refusals on record, some
+    eighty are one shape — a column that is not there:
+
+        no such column: salary.dept_no
+        no such column: employee.dept_no
+        no such column: d.dept_name
+
+    The engine says which name failed. It never says which names would have worked, and this
+    process is holding exactly that: the inventory captured for this connection at the top of the
+    run. Naming it is the same move that was worth nineteen cells at the tool layer today, on the
+    busiest path there is.
+
+    Driven rather than unit-tested, and that is forced rather than chosen:
+    `holdSnapshotForConnection` verifies a snapshot's fingerprint before keeping it, so no test
+    can hold a fabricated inventory. Only a real capture will do, which is what a drive does.
+  */
+  test("the columns that exist are named, from the run's own captured inventory", async () => {
+    const run = await open({
+      answer: async () => {
+        throw new QueryError("no such column: engineering.dept_no");
+      },
+    });
+    // Three turns: the read that fails, the report the run makes anyway, and one more for the
+    // drive to conclude on. A refused statement opens a repair turn, so the arc is longer than
+    // the two calls the scenario is about.
+    const scripted = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT dept_no FROM engineering", rationale: "count" }),
+      // Prose rather than a report: the read failed, so this run holds no artifact to cite and
+      // `reportOn` has nothing to build a citation from. What the test is about is the sentence
+      // the refusal sent back, which is already in the transcript by then.
+      answersProse("I could not read that."),
+      answersProse("done"),
+    );
+
+    // A model whose ledger earned the advice; every other model gets the engine's words alone.
+    await run.driveModel(await modelOver(scripted.fetch, "https://api.openai.com/v1", "lfm2:24b"));
+
+    // The fixture's tables carry `id` and `name`, and neither came from the error text: the
+    // qualifier was pulled out of it and used only to find the table in our own snapshot.
+    const told = scripted.turns.at(-1)?.transcript ?? "";
+    expect(told).toContain("has no dept_no");
+    expect(told).toContain("id");
+    expect(told).toContain("name");
+  });
+
+  test("a model that has not earned it gets the engine's words and nothing more", async () => {
+    // The rule every behaviour added today obeys: off by default, on where a ledger earned it.
+    const run = await open({
+      answer: async () => {
+        throw new QueryError("no such column: engineering.dept_no");
+      },
+    });
+    const scripted = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT dept_no FROM engineering", rationale: "count" }),
+      // Prose rather than a report: the read failed, so this run holds no artifact to cite and
+      // `reportOn` has nothing to build a citation from. What the test is about is the sentence
+      // the refusal sent back, which is already in the transcript by then.
+      answersProse("I could not read that."),
+      answersProse("done"),
+    );
+
+    await run.driveModel(await modelOver(scripted.fetch));
+
+    const told = scripted.turns.at(-1)?.transcript ?? "";
+    expect(told).toContain("no such column");
+    expect(told).not.toContain("has no dept_no");
   });
 });
 
