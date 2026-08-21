@@ -140,6 +140,18 @@ describe("§4.4 case 1: a chart of a column the result does not have", () => {
     expect(refusal).toContain("net_total");
     // Nothing was recorded: a refused spec is not a quietly-downgraded table.
     expect(drive.kinds).not.toContain("answer-composed");
+    /*
+      And the refusal itself IS on the ledger now, under the code the server used.
+
+      It used to be nowhere. `present_answer` settles no step, so a refusal from it wrote
+      nothing at all, and a reader could not tell a call the tool sent back from a call the
+      model never made. That cost an evening on `mistral-small3.2:24b`, whose data-analysis
+      runs lose on `no-answer` with neither a hold nor an answer in the ledger: the refused
+      call sets the flag that disables the hold which would have asked again, and left no
+      trace of having done so. Five different refusals produce that same empty trace, and
+      each one implies a different fix.
+    */
+    expect(drive.kinds).toContain("call-declined");
   });
 
   test("and the run recovers on the next turn rather than looping to the ceiling", async () => {

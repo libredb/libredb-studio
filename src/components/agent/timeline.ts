@@ -886,6 +886,22 @@ function describeEvent(
         headline: `Held back ${event.tool}`,
         detail: event.reason,
       };
+    case "call-declined":
+      return {
+        /*
+          The tool said no. Same tone as a held call, because the user-visible fact is the
+          same — this server did not run it — and a second colour for one fact would make the
+          rail harder to read rather than more precise.
+
+          The reason CODE is shown rather than a translation of it. A reader looking at a run
+          that produced no answer needs the word the server used, because that word is what a
+          search of this repository finds; a friendlier paraphrase would be a third name for
+          something that already has two.
+        */
+        tone: "refused",
+        headline: `Declined ${event.tool}`,
+        detail: event.reasonCode,
+      };
     case "closing-statement":
       return {
         // Content the run produced, so it reads like the report entry rather than

@@ -559,6 +559,31 @@ export type AgentRunEvent =
     })
   | (AgentRunEventBase & {
       /**
+       * A ledger-only tool that DECLINED the call, and the code it declined under.
+       *
+       * The sibling of `call-held`, written for the same reason and against the same gap:
+       * `present_answer`, `compose_report`, `compare_plans`, `recommend_change` and
+       * `profile_table` perform no effect, so a refusal from one of them settles no step and
+       * used to write nothing at all. A database tool that declines writes `tool-refused`; a
+       * ledger tool that declines wrote silence.
+       *
+       * Measured cost of that silence, twice in one evening. `mistral-small3.2:24b` loses
+       * data-analysis on `no-answer`, and its ledger holds no hold and no answer — because
+       * `present_answer` was called and refused, which sets `answerAttempted` and disables
+       * the hold that would have asked again, invisibly. Five different refusals produce that
+       * same trace, each implying a different fix, and the ledger could not say which.
+       *
+       * The CODE only, never the model's arguments and never the prose sent back: the codes
+       * are this server's own vocabulary, so an entry cannot carry a model's text into the
+       * record under the server's name. `stepId` is absent because no step exists — that is
+       * what makes these tools ledger-only.
+       */
+      readonly kind: "call-declined";
+      readonly tool: AgentToolName;
+      readonly reasonCode: string;
+    })
+  | (AgentRunEventBase & {
+      /**
        * The model's closing prose, recorded because it is otherwise lost.
        *
        * Deliberately NOT a report: it carries no citations and claims none, which is

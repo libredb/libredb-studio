@@ -93,6 +93,12 @@ export type AgentRunNarrativeEvent = Extract<
       // effect. Without it a held call is invisible, and a reader sees a run that
       // reported once where it in fact tried, was asked for something, and tried again.
       | "call-held"
+      // A ledger-only TOOL that declined, which belongs here for the same reason the hold
+      // above does and closes the same gap one layer down: these tools execute nothing, so
+      // a refusal from one settles no step. A database tool that declines writes
+      // `tool-refused`; before this, a ledger tool that declined wrote nothing at all, and
+      // a reader could not tell a call the tool sent back from a call never made.
+      | "call-declined"
       // Both reach no database and settle no step: they record what the run has
       // ALREADY established, which is exactly what a narrative entry is.
       | "plan-comparison"

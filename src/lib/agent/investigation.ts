@@ -3421,10 +3421,35 @@ async function profileTable(
  * The record is re-read for the same reason the report re-reads it: the artifacts a
  * comparison may cite are exactly the entries added while the loop was running.
  */
+/**
+ * Records that a ledger-only tool declined, and hands the model the tool's own words.
+ *
+ * The gap this closes is the one `call-held` closed for the drive's own refusals. These five
+ * tools perform no effect, so a refusal from one settles no step and used to write nothing:
+ * a database tool that declines writes `tool-refused`, and a ledger tool that declined wrote
+ * silence. `mistral-small3.2:24b` cost an hour to that silence — its data-analysis runs lose
+ * on `no-answer` with no hold and no answer in the ledger, because `present_answer` was
+ * called and refused, which disables the hold that would have asked again and leaves no
+ * trace of having done so. Five different refusals produce that same empty trace and each
+ * implies a different fix.
+ *
+ * The CODE goes in, never the prose and never the model's arguments: the codes are this
+ * server's vocabulary, and they are also what a reader can grep for.
+ */
+async function declined(
+  service: AgentRunService,
+  runId: string,
+  tool: AgentToolName,
+  outcome: { readonly reasonCode: string; readonly modelText: string },
+): Promise<CallResult> {
+  await service.recordEvent(runId, { kind: "call-declined", tool, reasonCode: outcome.reasonCode });
+  return { kind: "answered", text: outcome.modelText };
+}
+
 async function comparePlans(service: AgentRunService, context: AgentToolContext, input: unknown): Promise<CallResult> {
   const { record } = await service.resume(context.runId);
   const outcome = comparePlansTool(context, record, input);
-  if (outcome.kind === "unavailable") return { kind: "answered", text: outcome.modelText };
+  if (outcome.kind === "unavailable") return await declined(service, context.runId, "compare_plans", outcome);
 
   await service.recordEvent(context.runId, {
     kind: "plan-comparison",
@@ -3442,7 +3467,7 @@ async function recommendChange(
 ): Promise<CallResult> {
   const { record } = await service.resume(context.runId);
   const outcome = recommendChangeTool(context, record, input);
-  if (outcome.kind === "unavailable") return { kind: "answered", text: outcome.modelText };
+  if (outcome.kind === "unavailable") return await declined(service, context.runId, "recommend_change", outcome);
 
   await service.recordEvent(context.runId, { kind: "recommendation", ...outcome.recommendation });
   return { kind: "answered", text: outcome.modelText };
@@ -3463,7 +3488,7 @@ async function recommendChange(
 async function presentAnswer(service: AgentRunService, context: AgentToolContext, input: unknown): Promise<CallResult> {
   const { record } = await service.resume(context.runId);
   const outcome = presentAnswerTool(context, record, input);
-  if (outcome.kind === "unavailable") return { kind: "answered", text: outcome.modelText };
+  if (outcome.kind === "unavailable") return await declined(service, context.runId, "present_answer", outcome);
 
   await service.recordEvent(context.runId, { kind: "answer-composed", ...outcome.answer });
   return { kind: "answered", text: outcome.modelText };
@@ -3476,7 +3501,7 @@ async function composeReport(service: AgentRunService, context: AgentToolContext
   const { record } = await service.resume(context.runId);
 
   const outcome = composeReportTool(context, record, input);
-  if (outcome.kind === "unavailable") return { kind: "answered", text: outcome.modelText };
+  if (outcome.kind === "unavailable") return await declined(service, context.runId, "compose_report", outcome);
 
   await service.recordEvent(context.runId, { kind: "report-composed", claims: outcome.claims });
   return { kind: "reported" };

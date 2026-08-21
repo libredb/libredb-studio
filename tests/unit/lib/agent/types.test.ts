@@ -74,6 +74,15 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
   // A call the server turned back, carrying the verifier's own name for what was missing.
   // `shortfall` is optional because the purpose-written notices answer conditions the
   // verifier has no vocabulary for — a run holding two plans and citing neither, say.
+  // A ledger-only tool that declined, carrying the code it declined under and nothing of the
+  // model's. Its sibling above records what the DRIVE turned back; this records what a TOOL
+  // did, which used to be written nowhere at all.
+  "call-declined": {
+    kind: "call-declined",
+    atMs: 2,
+    tool: "present_answer",
+    reasonCode: "ANSWER_ARTIFACT_UNKNOWN",
+  },
   "call-held": {
     kind: "call-held",
     atMs: 2,
