@@ -48,7 +48,22 @@ function DesktopDatabases() {
         return (
           <li key={db.type} className="flex items-center gap-1.5 text-xs text-fg-tertiary">
             <Icon className={`h-3.5 w-3.5 ${db.color}`} aria-hidden="true" />
-            {db.label}
+            {/*
+              Label and marker share ONE span rather than sitting as two flex children. As
+              flex children the gap between them was visual only - the item's text read
+              "LibreDB(embedded)" with no separator at all, which is what a screen reader and
+              a copy-paste get. Inside one span the space is a real text node.
+
+              No colour class on the marker: it inherits the item's own `fg-tertiary`.
+              Stepping it down the ramp is what the eye wants and what the ramp cannot give
+              on this ground - the measurements in this file's header put `fg-muted` at 3.9:1
+              and `fg-subtle` at 2.6:1, both under the 4.5:1 AA floor for type this small.
+              The parentheses carry the demotion instead.
+            */}
+            <span>
+              <span data-engine-label>{db.label}</span>
+              {db.embedded && <span> (embedded)</span>}
+            </span>
           </li>
         );
       })}
@@ -65,7 +80,8 @@ function MobileDatabases() {
     >
       {listShowcaseDatabases().map((db) => (
         <li key={db.type} className="text-[10px] px-2.5 py-1 rounded-full bg-muted text-muted-foreground font-medium">
-          {db.label}
+          <span data-engine-label>{db.label}</span>
+          {db.embedded && <span> (embedded)</span>}
         </li>
       ))}
     </ul>

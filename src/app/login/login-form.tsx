@@ -13,6 +13,7 @@ import { CommunitySection } from "@/components/community-section";
 import { ConnectionSignature } from "@/components/login/connection-signature";
 import { DatabaseShowcase } from "@/components/login/database-showcase";
 import { HeroProof, HERO_CLAIMS } from "@/components/login/hero-proof";
+import { WireCompatibleLine } from "@/components/login/wire-compatible-line";
 
 /**
  * The agent half of the mobile summary. Pulled from `HERO_CLAIMS` rather than retyped, so
@@ -149,7 +150,19 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
 
             <ConnectionSignature />
 
-            <DatabaseShowcase variant="desktop" />
+            {/*
+              The pills and the relatives line are ONE block with a 12px gap, not two
+              siblings in the 32px rhythm above. Two reasons, and the second is a measurement:
+              the line is the second half of the engine list rather than a fourth claim, so it
+              belongs to the pills; and this column had no room to give. At 1280x800 the hero
+              measured exactly 800px before this change - zero slack - so every pixel added
+              here scrolls the page. Folding the two into one block buys back 20px of the 32
+              the standalone gap would have cost.
+            */}
+            <div className="space-y-3">
+              <DatabaseShowcase variant="desktop" />
+              <WireCompatibleLine variant="desktop" />
+            </div>
 
             <HeroProof />
           </div>
@@ -304,6 +317,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
           */}
           <div className="lg:hidden space-y-4">
             <DatabaseShowcase variant="mobile" />
+            <WireCompatibleLine variant="mobile" />
             {/*
               The same three claims the desktop hero makes, joined into one line rather than
               re-worded for mobile: `HERO_CLAIMS` is the single source, so a change to the

@@ -1,4 +1,5 @@
 import { DB_UI_CONFIG, type DBIcon } from "@/lib/db-ui-config";
+import { isExternalDatabaseType } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -61,6 +62,14 @@ export interface ShowcaseDatabase {
   label: string;
   icon: DBIcon;
   color: string;
+  /**
+   * True for the embedded store, false for a database the user already runs.
+   *
+   * The showcase shows all fifteen providers while the hero claims fourteen engines,
+   * and this flag is how the page carries that difference without any surface typing
+   * the word "libredb": the pill it marks is the one the count leaves out.
+   */
+  embedded: boolean;
 }
 
 /**
@@ -74,5 +83,6 @@ export function listShowcaseDatabases(): ShowcaseDatabase[] {
     label: DB_UI_CONFIG[type].label,
     icon: DB_UI_CONFIG[type].icon,
     color: DB_UI_CONFIG[type].color,
+    embedded: !isExternalDatabaseType(type),
   }));
 }

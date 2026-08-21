@@ -1,6 +1,6 @@
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { getDBConfig } from "@/lib/db-ui-config";
-import { listShowcaseDatabases } from "@/lib/db-showcase";
+import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { LIVE_CHANNELS, LIVE_PLATFORMS } from "@/lib/distribution/channels.generated";
 import { DEPLOY_GROUP_LABELS, DEPLOY_GROUP_ORDER } from "@/lib/distribution/deploy-groups";
 
@@ -46,7 +46,13 @@ const AGENT_MODES: readonly { key: string; label: string; detail: string }[] = [
 export const HERO_CLAIMS: readonly { key: string; value: number; unit: string; detail: string }[] = [
   {
     key: "engines",
-    value: listShowcaseDatabases().length,
+    // EXTERNAL_DATABASE_TYPES, not the showcase length. The two differ by one and the one is
+    // the embedded store: it is a provider this app carries, not a database anyone points us
+    // at, so counting it here claimed one external engine more than the product has and put
+    // this page one out of step with the number README.md publishes. The pill for it stays -
+    // it is a provider the connection picker offers - marked as embedded so the reader can
+    // see why fifteen pills sit under a claim of fourteen.
+    value: EXTERNAL_DATABASE_TYPES.length,
     unit: "database engines",
     detail: "one client, one workspace, every one of them",
   },

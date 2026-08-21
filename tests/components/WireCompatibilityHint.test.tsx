@@ -33,7 +33,9 @@ mock.module("@/lib/db/compatibility", () => ({
   SHIPPED_DATABASE_TYPES: ["postgres", "mysql"],
   WIRE_COMPATIBLE_ENGINES: MOCK,
   compatibleEnginesFor: (type: string) => MOCK.filter((e) => e.via === type),
-  verifiedEngineCount: () => 13,
+  EXTERNAL_DATABASE_TYPES: ["postgres", "mysql"],
+  isExternalDatabaseType: () => true,
+  connectableProductCount: () => 13,
 }));
 
 const { WireCompatibilityHint } = await import("@/components/WireCompatibilityHint");

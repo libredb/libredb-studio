@@ -44,8 +44,8 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // Two ids served by ONE provider module (`providers/sql/search/`), which is the
   // first time "shipped" here does not mean one provider file per id. They are still
   // two entries because the tri-sync invariant is per type-id - each has its own doc
-  // page and its own integration test - and because `verifiedEngineCount()` counts
-  // what a user can pick, not how the code is laid out.
+  // page and its own integration test - and because the published count counts what
+  // a user can pick, not how the code is laid out.
   elasticsearch: true,
   opensearch: true,
   mongodb: true,
@@ -57,12 +57,57 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
 /**
  * Derived from an exhaustive Record on purpose. As a hand-written array this was
  * the one mandatory registration surface in the codebase with no guard at all: a
- * new type-id omitted here made `verifiedEngineCount()` undercount, nothing failed,
+ * new type-id omitted here made the published count undercount, nothing failed,
  * and the unit test that checked the count read the same constant on both sides.
  * With the Record the compiler refuses the omission, which is the same technique
  * `src/lib/sql/fence-tags.ts` already uses over this union.
  */
 export const SHIPPED_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(Object.keys(SHIPPED) as DatabaseType[]);
+
+/**
+ * Which shipped ids are databases a user already runs, and which one is not.
+ *
+ * `libredb` is the embedded store this app carries with it; the other fourteen are
+ * external engines you point the product at. Everything published as a database
+ * count means the external fourteen - README.md's "fourteen drivers reach
+ * thirty-two named engines", the login hero's engine claim - so the split needs a
+ * definition somewhere, and it belongs beside `SHIPPED` rather than in the UI that
+ * prints it. That is the same reason `SHIPPED` itself lives here.
+ *
+ * An exhaustive Record again, so a new type-id cannot join without someone
+ * answering the question. The alternative - filtering `libredb` out by name at each
+ * call site - is how the two halves of a published count drift apart.
+ */
+const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: true,
+  mysql: true,
+  sqlite: true,
+  oracle: true,
+  mssql: true,
+  clickhouse: true,
+  druid: true,
+  trino: true,
+  cassandra: true,
+  elasticsearch: true,
+  opensearch: true,
+  mongodb: true,
+  couchbase: true,
+  redis: true,
+  // The one false entry. SQLite is a file rather than a server and is still
+  // external: it is the user's file, opened from a path they give us. libredb is
+  // ours, created by this app, so it is the only id that answers no here.
+  libredb: false,
+});
+
+/** The shipped ids that are databases a user already runs, in registry order. */
+export const EXTERNAL_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(
+  SHIPPED_DATABASE_TYPES.filter((type) => EXTERNAL[type]),
+);
+
+/** True for every shipped id except the embedded store. */
+export function isExternalDatabaseType(type: DatabaseType): boolean {
+  return EXTERNAL[type] === true;
+}
 
 /**
  * How much of the product works against a wire-compatible engine.
@@ -339,14 +384,24 @@ export function compatibleEnginesFor(type: DatabaseType): readonly WireCompatibl
 }
 
 /**
- * The counting rule for #424's claim discipline: a published count is the shipped
- * drivers plus the relatives an actual probe verified, and nothing else.
+ * The counting rule for #424's claim discipline: a published count is the external
+ * engines plus the relatives an actual probe verified, and nothing else.
  *
- * No runtime consumer today - the README and the docs table are markdown and quote
- * the number as prose. This exists so the arithmetic has one definition instead of
- * being redone by hand in each place, and the unit test pins it. If a UI surface
- * ever prints the count, it reads it here rather than hardcoding it.
+ * Renamed from `verifiedEngineCount`, and the rename is the fix rather than a
+ * tidy-up. That function counted `SHIPPED_DATABASE_TYPES`, which includes the
+ * embedded store, so it answered 33 while README.md published 32 for the same
+ * claim. Both numbers were defensible and neither said which set it was counting,
+ * which is precisely the failure a single definition exists to prevent: a count is
+ * wrong when its denominator is unstated, not when its digit is stale.
+ *
+ * The name now says the set. A product is countable here when a user can point the
+ * app at it, so the embedded store is out of both halves of the sum.
+ *
+ * Still no runtime consumer: README.md and the docs table are markdown and quote the
+ * number as prose, and the login hero prints the two halves separately - fourteen in
+ * the proof row, eighteen in the relatives line - rather than their sum. This exists
+ * so the arithmetic has one definition, and the unit test pins it.
  */
-export function verifiedEngineCount(): number {
-  return SHIPPED_DATABASE_TYPES.length + WIRE_COMPATIBLE_ENGINES.length;
+export function connectableProductCount(): number {
+  return EXTERNAL_DATABASE_TYPES.length + WIRE_COMPATIBLE_ENGINES.length;
 }

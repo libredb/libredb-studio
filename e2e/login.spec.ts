@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { listShowcaseDatabases } from "../src/lib/db-showcase";
 import { LIVE_CHANNELS, LIVE_PLATFORMS } from "../src/lib/distribution/channels.generated";
 import { DEPLOY_GROUP_LABELS, DEPLOY_GROUP_ORDER } from "../src/lib/distribution/deploy-groups";
+import { WIRE_COMPATIBLE_ENGINES } from "../src/lib/db/compatibility";
 
 test.describe("Login Flow", () => {
   test.beforeEach(async ({ page }) => {
@@ -115,9 +116,31 @@ test.describe("Login showcase", () => {
     await expect(page.getByRole("list", { name: "Supported Databases" })).toHaveCount(1);
     await expect(engines).toBeVisible();
 
+    // Matched per item as a pattern rather than a string, because the embedded provider's
+    // item carries an "(embedded)" marker after its label: the hero claims the external
+    // engines only, and this is the marker that tells a reader which pill the claim leaves
+    // out. The `embedded` flag comes from the same module the page renders from, so the
+    // expectation still names no engine.
     const expected = listShowcaseDatabases();
     await expect(engines.getByRole("listitem")).toHaveCount(expected.length);
-    await expect(engines.getByRole("listitem")).toHaveText(expected.map((db) => db.label));
+    await expect(engines.getByRole("listitem")).toHaveText(
+      expected.map((db) => new RegExp(`^${db.label}\\s*${db.embedded ? "\\(embedded\\)" : ""}$`)),
+    );
+  });
+
+  test("hero names every wire-compatible relative, with the registry's own count", async ({ page }) => {
+    // The gap this closes: the hero named the shipped drivers and stopped, while the product
+    // connects to thirty-two named products. The eighteen relatives were published in
+    // README.md and the docs compatibility table but on no surface a visitor sees first.
+    const line = page.getByTestId("wire-compatible-desktop");
+    await expect(line).toBeVisible();
+    await expect(line).toContainText(`${WIRE_COMPATIBLE_ENGINES.length}`);
+    for (const engine of WIRE_COMPATIBLE_ENGINES) {
+      await expect(line).toContainText(engine.name);
+    }
+    // No tier word: the per-engine tier belongs to the connection dialog's hint, which has
+    // room to qualify it. A hero line that implied parity would be the overclaim #424 bans.
+    await expect(line).not.toContainText(/partial|query-only/i);
   });
 
   test("hero states the live channel count and names every group", async ({ page }) => {
@@ -160,6 +183,12 @@ test.describe("Login showcase", () => {
     const mobileEngines = page.getByTestId("database-showcase-mobile");
     await expect(mobileEngines).toBeVisible();
     await expect(mobileEngines.getByRole("listitem")).toHaveCount(listShowcaseDatabases().length);
+
+    // The relatives line is the second half of that engine set, so it must survive the
+    // collapse too - a mobile visitor is the one most likely to be evaluating on a phone.
+    const mobileRelatives = page.getByTestId("wire-compatible-mobile");
+    await expect(mobileRelatives).toBeVisible();
+    await expect(mobileRelatives).toContainText(`${WIRE_COMPATIBLE_ENGINES.length}`);
 
     // The condensed line restates the same claims on one row. Both surfaces mark their
     // agent claim with the same test id, so it is selected by the text only the mobile one

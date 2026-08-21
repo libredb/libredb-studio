@@ -12,7 +12,8 @@ import { describe, test, expect } from "bun:test";
 import {
   WIRE_COMPATIBLE_ENGINES,
   compatibleEnginesFor,
-  verifiedEngineCount,
+  connectableProductCount,
+  EXTERNAL_DATABASE_TYPES,
   SHIPPED_DATABASE_TYPES,
 } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
@@ -116,8 +117,24 @@ describe("wire-compatibility registry", () => {
     expect(compatibleEnginesFor("not-a-database" as DatabaseType)).toEqual([]);
   });
 
-  test("verifiedEngineCount is the shipped drivers plus the verified relatives", () => {
-    expect(verifiedEngineCount()).toBe(SHIPPED_DATABASE_TYPES.length + WIRE_COMPATIBLE_ENGINES.length);
+  test("EXTERNAL_DATABASE_TYPES omits the embedded provider and nothing else", () => {
+    // The login hero publishes this length as "database engines", so the one thing this
+    // list may not contain is the embedded provider: libredb is a store this app carries,
+    // not a database a user already runs and points us at. Every other shipped id belongs.
+    expect(EXTERNAL_DATABASE_TYPES).not.toContain("libredb");
+    expect(EXTERNAL_DATABASE_TYPES.length).toBe(SHIPPED_DATABASE_TYPES.length - 1);
+    for (const type of EXTERNAL_DATABASE_TYPES) {
+      expect(SHIPPED_DATABASE_TYPES).toContain(type);
+    }
+  });
+
+  test("connectableProductCount is the external engines plus the verified relatives", () => {
+    // Not the shipped drivers plus the relatives, which is what this function counted
+    // before and what made it disagree with the number README.md publishes: the embedded
+    // provider is a driver we ship and not a product anyone connects to, so counting it
+    // here overstated the claim by one.
+    expect(connectableProductCount()).toBe(EXTERNAL_DATABASE_TYPES.length + WIRE_COMPATIBLE_ENGINES.length);
+    expect(connectableProductCount()).toBe(SHIPPED_DATABASE_TYPES.length + WIRE_COMPATIBLE_ENGINES.length - 1);
   });
 
   test("a query-only engine always carries a caveat saying so", () => {

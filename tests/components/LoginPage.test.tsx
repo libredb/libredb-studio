@@ -12,6 +12,7 @@ import { LIVE_CHANNELS, LIVE_PLATFORMS } from "@/lib/distribution/channels.gener
 import { DEPLOY_GROUP_LABELS, DEPLOY_GROUP_ORDER } from "@/lib/distribution/deploy-groups";
 import { ENGINE_URI_SCHEMES, parseConnectionString } from "@/lib/connection-string-parser";
 import { SIGNATURE_URIS } from "@/components/login/connection-signature";
+import { EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES, WIRE_COMPATIBLE_ENGINES } from "@/lib/db/compatibility";
 
 // sonner and next/navigation are mocked via preload
 // lucide-react resolves fine natively — no mock needed
@@ -257,11 +258,71 @@ describe("LoginPage showcase (issue #425)", () => {
   });
 
   test("names no engine outside DB_UI_CONFIG", () => {
+    // Reads the label node rather than the whole item: the embedded provider's pill also
+    // carries an "embedded" marker, so comparing the item's full text would either fail
+    // here or force the marker out of the pill it belongs in.
     const { getByTestId } = renderShowcase();
     const known = new Set(listShowcaseDatabases().map((db) => db.label));
     for (const item of getByTestId("database-showcase-desktop").querySelectorAll("li")) {
-      expect(known.has(item.textContent?.trim() ?? "")).toBe(true);
+      const label = item.querySelector("[data-engine-label]")?.textContent?.trim() ?? "";
+      expect(known.has(label)).toBe(true);
     }
+  });
+
+  test("marks the embedded provider in the pill list instead of dropping it", () => {
+    // The hero claims 14 external engines while showing 15 pills, and this marker is what
+    // reconciles the two for a reader. Hiding the pill was the alternative and it is worse:
+    // libredb is a provider the connection picker offers, so a login page that never names
+    // it contradicts the app - the reasoning db-showcase.ts already records for issue #425.
+    const { getByTestId } = renderShowcase();
+    const embedded = listShowcaseDatabases().filter((db) => db.embedded);
+    expect(embedded.length).toBe(1);
+    for (const testId of ["database-showcase-desktop", "database-showcase-mobile"]) {
+      const marked = [...getByTestId(testId).querySelectorAll("li")].filter((item) =>
+        /embedded/i.test(item.textContent ?? ""),
+      );
+      expect(marked.length).toBe(embedded.length);
+      expect(marked[0]?.textContent).toContain(embedded[0].label);
+    }
+  });
+
+  test("names every verified relative on both surfaces, with the registry's own count", () => {
+    // The gap this closes: the page claimed its engine count while the product connects to
+    // thirty-two named products, and the other eighteen were published in README.md and the
+    // docs compatibility table but nowhere a visitor to the login page could see them.
+    const { getByTestId } = renderShowcase();
+    expect(WIRE_COMPATIBLE_ENGINES.length).toBeGreaterThan(0);
+    for (const testId of ["wire-compatible-desktop", "wire-compatible-mobile"]) {
+      const text = getByTestId(testId).textContent ?? "";
+      expect(text).toContain(`${WIRE_COMPATIBLE_ENGINES.length}`);
+      for (const engine of WIRE_COMPATIBLE_ENGINES) {
+        expect(text).toContain(engine.name);
+      }
+    }
+  });
+
+  test("names no relative the registry does not carry", () => {
+    // The same guard the engine pills have. A name typed into the JSX would be a claim no
+    // gate-4 probe stands behind, which is the overclaim issue #424 exists to forbid.
+    const { getByTestId } = renderShowcase();
+    const known = new Set(WIRE_COMPATIBLE_ENGINES.map((engine) => engine.name));
+    for (const testId of ["wire-compatible-desktop", "wire-compatible-mobile"]) {
+      const named = getByTestId(testId).querySelectorAll("[data-relative-name]");
+      expect(named.length).toBe(WIRE_COMPATIBLE_ENGINES.length);
+      for (const node of named) {
+        expect(known.has(node.textContent?.trim() ?? "")).toBe(true);
+      }
+    }
+  });
+
+  test("claims no parity for a relative: no tier word reaches the login page", () => {
+    // WireCompatibilityHint carries the per-engine tier because the connection dialog has
+    // room to qualify it. This line does not, so it may not imply the relatives behave like
+    // their driver's own engine: it says what was measured and nothing more.
+    const { getByTestId } = renderShowcase();
+    const text = getByTestId("wire-compatible-desktop").textContent ?? "";
+    expect(/partial|query-only|fully supported/i.test(text)).toBe(false);
+    expect(/measured/i.test(text)).toBe(true);
   });
 
   test("states the live channel count and every group name, without printing channel names", () => {
@@ -317,8 +378,28 @@ describe("LoginPage showcase (issue #425)", () => {
 
   test("derives the engine and channel counts instead of typing them", () => {
     const { container } = renderShowcase();
-    expect(container.textContent).toContain(`${listShowcaseDatabases().length}`);
+    expect(container.textContent).toContain(`${EXTERNAL_DATABASE_TYPES.length} database engines`);
     expect(container.textContent).toContain(`${LIVE_CHANNELS.length} install channels`);
+  });
+
+  test("counts external engines in the claim, never the embedded provider", () => {
+    // The number this page publishes is the one README.md publishes - fourteen drivers
+    // reaching thirty-two named engines - and the embedded store is in neither half of that
+    // arithmetic. Both counts are interpolated from the registry, so reverting the claim to
+    // the showcase length (which includes libredb) fails the second assertion.
+    // Matched with a tolerant regex rather than a substring: the desktop figure puts the
+    // number and the unit in adjacent spans with no whitespace between them, so a
+    // "14 database engines" substring check would pass only on the mobile line and silently
+    // stop covering the surface it was written for.
+    const { container, getByTestId } = renderShowcase();
+    const external = new RegExp(`${EXTERNAL_DATABASE_TYPES.length}\\s*database engines`);
+    const shipped = new RegExp(`${SHIPPED_DATABASE_TYPES.length}\\s*database engines`);
+    // The desktop figure specifically, then the page as a whole, so neither surface can
+    // carry the claim alone.
+    expect(external.test(getByTestId("hero-proof").textContent ?? "")).toBe(true);
+    expect(external.test(container.textContent ?? "")).toBe(true);
+    expect(shipped.test(container.textContent ?? "")).toBe(false);
+    expect(SHIPPED_DATABASE_TYPES.length).toBe(EXTERNAL_DATABASE_TYPES.length + 1);
   });
 
   test("no longer claims a stale engine count or a Docker-only install", () => {
@@ -369,7 +450,13 @@ describe("LoginPage showcase (issue #425)", () => {
     // content adds no outbound navigation there. The community section's own anchors are
     // the only links this half of the page is allowed to grow.
     const { getByTestId } = renderShowcase();
-    for (const testId of ["database-showcase-desktop", "database-showcase-mobile", "hero-proof"]) {
+    for (const testId of [
+      "database-showcase-desktop",
+      "database-showcase-mobile",
+      "wire-compatible-desktop",
+      "wire-compatible-mobile",
+      "hero-proof",
+    ]) {
       expect(getByTestId(testId).querySelectorAll("a").length).toBe(0);
     }
   });
