@@ -24,5 +24,15 @@ export const DEEPSEEK_R1_7B: AgentModelProfile = {
     "0/6 modes locked, 4/30 runs passed at these settings. Investigate 1/5 · Optimize 0/5 · Assess 0/5 · Operate 0/5 · Analyze 0/5 · Plan 3/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  /*
+    Twelve `INVALID_TOOL_INPUT recommend_change` in a single run — the densest refusal any one
+    run on this board has produced, and the whole of this model's decline record.
+
+    Not the evidence refusal the other two deepseeks hit: nothing here is wrong about WHAT it
+    wants to recommend, only about the shape of the call carrying it. That is precisely what
+    `exampleRecommendCall` answers, and it is the one refusal aid that stays off until a
+    ledger asks for it. This one asked twelve times in a row.
+  */
+  refusalExamples: true,
   notices: { ...BASELINE_NOTICES },
 };
