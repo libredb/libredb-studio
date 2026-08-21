@@ -96,8 +96,9 @@
     "oracledb",
     "ssh2"
   ],
-  "//overrides": "Transitive dependencies held above what their parent's range would otherwise resolve to. lodash: recharts asks for ^4.17.21 and CVE-2026-4800 (arbitrary code execution via untrusted input in template imports) is fixed in 4.18.0. The fix is inside the parent's range, so this only forces resolution forward - remove the entry once recharts raises its own floor. Nothing in this repository imports lodash directly.",
+  "//overrides": "Transitive dependencies held above what their parent's range would otherwise resolve to. lodash: recharts asks for ^4.17.21 and CVE-2026-4800 (arbitrary code execution via untrusted input in template imports) is fixed in 4.18.0. The fix is inside the parent's range, so this only forces resolution forward - remove the entry once recharts raises its own floor. Nothing in this repository imports lodash directly. adm-zip: cassandra-driver asks for ~0.5.10 and CVE-2026-39244 (denial of service through a crafted ZIP that forces excessive memory allocation) is fixed in 0.6.0, which is OUTSIDE that range - so unlike lodash above this holds the dependency past what its parent would ever resolve to, and it must be re-checked whenever cassandra-driver moves. The vulnerable path is not reachable from this product: adm-zip has exactly one consumer in the driver, lib/datastax/cloud/index.js, whose init() returns immediately unless a `cloud` option is set, and that option is only for Astra DB secure-connect bundles, which no connection here sets. The pin is taken anyway rather than argued away, and 0.6.0 was verified against the live server: the cloud module loads, an adm-zip write and read round-trips, and a connect plus query answers on Apache Cassandra 5.0.9.",
   "overrides": {
+    "adm-zip": "^0.6.0",
     "lodash": "^4.18.1",
     "tedious": "^20.0.5"
   },
