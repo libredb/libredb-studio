@@ -24,5 +24,16 @@ export const NEMOTRON3_33B: AgentModelProfile = {
     "2/6 modes locked, 17/23 runs passed at these settings. Investigate 5/5 · Optimize 2/5 · Assess 0/1 · Operate 1/2 · Analyze 5/5 · Plan 4/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  /*
+    Seventeen `UNVERIFIABLE_EVIDENCE` refusals in ONE optimization run: it keeps citing ids this
+    run never produced. The refusal already lists the ids that ARE citable — that was added
+    today — and seventeen repetitions say listing them is not the same as showing a call built
+    from one.
+
+    Fifth model on this switch. `lfm2:24b` collapsed twenty-eight shape refusals to one with it,
+    `granite4.1:3b` locked a cell once `recommend_change` carried one, `qwen3:0.6b` went from
+    seven to one.
+  */
+  refusalExamples: true,
   notices: { ...BASELINE_NOTICES },
 };

@@ -2681,7 +2681,16 @@ export function recommendChangeTool(
     );
   }
   if (!matchesCard(parsed.value.change, parsed.value.statement)) {
-    return unavailable("RECOMMENDATION_SHAPE_MISMATCH");
+    /*
+      With a worked call where the model has earned one. `lfm2:24b` hit this refusal five times
+      in a single optimization run — the card said `index` and the statement was not a CREATE
+      INDEX, or the reverse — and the sentence above names the rule without showing either
+      shape. It is the one evidence-bearing refusal that carried no example.
+    */
+    return unavailable(
+      "RECOMMENDATION_SHAPE_MISMATCH",
+      offersRefusalExamples(context.modelId) ? exampleRecommendCall(run.events) : undefined,
+    );
   }
   if (!parsed.value.evidence.every((reference) => verifiedAgainst(run.events, reference))) {
     // Both evidence-bearing tools name what is citable, because a model that guessed an id
