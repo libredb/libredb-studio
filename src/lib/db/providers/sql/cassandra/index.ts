@@ -70,6 +70,7 @@ import {
   type TableSchema,
   type TableStats,
 } from "@/lib/db/types";
+import { analyzeQuery } from "@/lib/db/utils/query-limiter";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readSqlSpan } from "@/lib/sql/spans";
 import { CASSANDRA_DEFAULT_PORT, CassandraDriverTransport } from "./driver-transport";
@@ -273,11 +274,13 @@ export class CassandraProvider extends SQLBaseProvider {
    * things CQL alone cares about.
    *
    * 1. `OFFSET` does not exist, so a second page cannot be requested at all and the
-   *    request is REFUSED. The alternatives are worse in a way that matters: sending
-   *    the clause fails with an engine message about a keyword the user never typed,
-   *    and dropping it silently returns page ONE while the editor appends it to what
-   *    it already shows - duplicate rows presented as new ones, which is a wrong
-   *    ANSWER. `search/index.ts` refuses Elasticsearch's identical gap the same way.
+   *    request is REFUSED - for every SELECT, including one that arrives with its own
+   *    `LIMIT n` and is therefore never rewritten here. The alternatives are worse in
+   *    a way that matters: sending the clause fails with an engine message about a
+   *    keyword the user never typed, and dropping it silently returns page ONE while
+   *    the editor appends it to what it already shows - duplicate rows presented as
+   *    new ones, which is a wrong ANSWER. `search/index.ts` refuses Elasticsearch's
+   *    identical gap the same way.
    * 2. `ALLOW FILTERING` must stay the last clause, so the appended bound is moved in
    *    front of it. Measured both ways: `… LIMIT 3 ALLOW FILTERING` returns rows,
    *    `… ALLOW FILTERING LIMIT 3` is "line 1:60 mismatched input 'LIMIT' expecting
@@ -298,15 +301,21 @@ export class CassandraProvider extends SQLBaseProvider {
    */
   public override prepareQuery(query: string, options: QueryPrepareOptions = {}): PreparedQuery {
     const prepared = super.prepareQuery(query, options);
-    if (!prepared.wasLimited) return prepared;
 
-    if (prepared.offset > 0) {
+    // The refusal is read from the statement KIND, not from whether the shared limiter
+    // was the one that added the bound. A SELECT that carries its own `LIMIT n` comes
+    // back unrewritten, and so does one that ends in a line comment - answering either
+    // with page one would let the editor append rows it is already showing, which the
+    // user cannot tell from new ones.
+    if (analyzeQuery(query, this.type).type === "SELECT" && prepared.offset > 0) {
       throw new QueryError(
         "CQL has no OFFSET clause, so results after the first page cannot be requested here. Narrow the statement with a WHERE clause on the partition key, or raise the row limit, instead of paging.",
         this.type,
         query,
       );
     }
+
+    if (!prepared.wasLimited) return prepared;
 
     const grammar = resolveSqlGrammar(this.type);
     if (endsInsideLineComment(prepared.query, grammar)) return { ...prepared, query, wasLimited: false };
@@ -363,6 +372,11 @@ export class CassandraProvider extends SQLBaseProvider {
       await transport.connect();
       await transport.execute(CASSANDRA_IDENTITY_CQL);
     } catch (error) {
+      // `connect()` opens a pool with sockets and reconnection timers behind it, and
+      // the identity read runs AFTER that - so a probe that fails leaks the pool
+      // unless it is closed here, once per attempt, and the connection dialog retries.
+      // Druid and Couchbase close before mapping for the same reason.
+      await transport.close();
       const failure = this.describeConnectFailure(error);
       this.setError(failure);
       throw failure;

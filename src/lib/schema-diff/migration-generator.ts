@@ -6,12 +6,14 @@
  * site: `generateMigrationSQL(diff, dialect)` takes a dialect either way.
  *
  * - Dialect-aware: the modified-column path, which branches per engine and names
- *   the limitation in a comment where an engine has no such statement (#269).
+ *   the limitation in a comment where an engine has no such statement (#269); the
+ *   `ADD` / `DROP` keyword, which CQL spells without `COLUMN`; and `CREATE TABLE`,
+ *   which is refused outright for Cassandra (see CASSANDRA_NO_CREATE_TABLE).
  * - Not yet: the transaction wrapper (`BEGIN;` / `COMMIT;`, which is only valid
  *   for PostgreSQL and MySQL — MSSQL spells it `BEGIN TRANSACTION`, Oracle opens a
  *   PL/SQL block and auto-commits DDL anyway, and six type ids have no
- *   transactional DDL at all), `ADD COLUMN` and `DROP COLUMN`, and the index/FK
- *   fallbacks that emit `DROP INDEX IF EXISTS`.
+ *   transactional DDL at all), the rest of `ADD COLUMN` and `DROP COLUMN`, and the
+ *   index/FK fallbacks that emit `DROP INDEX IF EXISTS`.
  *
  * So the output is correct for PostgreSQL, largely correct for MySQL and SQLite,
  * and can be unrunnable elsewhere. Tracked rather than fixed here because the
@@ -136,9 +138,41 @@ function generateColumnDef(col: ColumnDiff, dialect: DatabaseType): string {
   return `${escapeIdentifier(col.columnName, dialect)} ${type}${nullable}${defaultVal}`;
 }
 
+/**
+ * Why a Cassandra CREATE is refused here rather than emitted.
+ *
+ * A CQL primary key is two things at once: the partition key, which decides which node holds a row,
+ * and the clustering columns, which order rows inside that partition. The brackets carry that
+ * distinction and nothing else does. Measured on 5.0.9 with two probe tables that differ only in one
+ * pair of them — `probe.composite_pk` is `PRIMARY KEY ((tenant, day), ts)`, `probe.pk_flat` is
+ * `PRIMARY KEY (tenant, day, ts)`: `SELECT * FROM probe.pk_flat WHERE tenant = 'a'` is served, while
+ * the same restriction on `probe.composite_pk` answers code 2200, "Cannot execute this query as it
+ * might involve data filtering and thus may have unpredictable performance". So the two spellings are
+ * different tables, not two ways of writing one.
+ *
+ * `system_schema.columns` distinguishes them by `kind` (`partition_key` vs `clustering`), but
+ * `ColumnDiff` keeps only `targetIsPrimary` — both tables above reduce to the same three key columns —
+ * so the bracketing is not recoverable from a diff and the shared `PRIMARY KEY (a, b, c)` serializer
+ * below would silently pick the flat layout. Guessing the physical layout of a table is not a
+ * cosmetic error, so this path declines the way the rest of the module declines: a comment naming the
+ * limitation, which a human can read, instead of DDL that would run and be wrong.
+ *
+ * The provider already publishes `supportsCreateTable: false` (`sql/cassandra/index.ts`) for the
+ * neighbouring reason — what `CreateTableModal` emits is not valid CQL — but `SchemaDiff.tsx` calls
+ * this generator with the connection's type and never consults capabilities, so the refusal has to be
+ * repeated here or the two contradict each other.
+ */
+const CASSANDRA_NO_CREATE_TABLE =
+  "A CQL primary key splits into a partition key and clustering columns, and a schema diff records neither role, so the partitioning cannot be derived; write the CREATE TABLE by hand.";
+
 function generateCreateTable(table: TableDiff, dialect: DatabaseType): string {
   const lines: string[] = [];
   const id = escapeIdentifier(table.tableName, dialect);
+
+  // Declined whole, indexes and foreign keys included: there would be no table for them to attach to.
+  if (dialect === "cassandra") {
+    return `-- Apache Cassandra: Cannot generate CREATE TABLE for ${id}. ${CASSANDRA_NO_CREATE_TABLE}`;
+  }
 
   const colDefs = table.columns.filter((c) => c.action === "added").map((c) => `  ${generateColumnDef(c, dialect)}`);
 

@@ -43,6 +43,7 @@ import { types } from "cassandra-driver";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { CassandraDriverTransport, type CassandraSession } from "@/lib/db/providers/sql/cassandra/driver-transport";
 import { CassandraProvider } from "@/lib/db/providers/sql/cassandra/index";
+import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
 import {
   CASSANDRA_CACHE_CQL,
   CASSANDRA_CLIENT_COUNT_CQL,
@@ -578,10 +579,13 @@ describe("connect", () => {
         },
       });
     };
-    const provider = new CassandraProvider(config, {}, new CassandraDriverTransport(config, 60_000, session));
+    // A fresh provider per assertion: a failed connect closes the pool it opened, and
+    // the adapter forgets its session when it closes - so a second attempt on the same
+    // provider would build a real driver client and go to the network.
+    const attempt = () => new CassandraProvider(config, {}, new CassandraDriverTransport(config, 60_000, session));
 
-    await expect(provider.connect()).rejects.toThrow(DatabaseConfigError);
-    await expect(provider.connect()).rejects.toThrow(/\[datacenter1\]/);
+    await expect(attempt().connect()).rejects.toThrow(DatabaseConfigError);
+    await expect(attempt().connect()).rejects.toThrow(/\[datacenter1\]/);
   });
 
   test("a failure that is not a transport failure is not dressed as a database error", async () => {
@@ -993,7 +997,13 @@ describe("getOverview", () => {
     const overview = await provider.getOverview();
 
     expect(overview.databaseSize).toBe(CASSANDRA_SIZE_UNAVAILABLE);
-    expect(overview.databaseSizeBytes).toBe(0);
+    // The FIELD IS ABSENT rather than zero. A zero is a measurement: the Storage tab
+    // read `databaseSizeBytes ?? 0` and rendered "0 B" for the tables, "0 B" for the
+    // indexes and a 0.0% breakdown bar - a fabricated size for a provider whose whole
+    // reason for existing is refusing to fabricate one (verified in the browser
+    // against the live 5.0.9 node).
+    expect(overview.databaseSizeBytes).toBeUndefined();
+    expect("databaseSizeBytes" in overview).toBe(false);
   });
 
   test("no connection ceiling is invented", async () => {
@@ -1203,4 +1213,96 @@ describe("runMaintenance", () => {
       await expect(provider.runMaintenance(operation)).rejects.toThrow(/nodetool/);
     },
   );
+});
+
+// ============================================================================
+// prepareQuery: paging is refused by STATEMENT KIND, not by who added the bound
+// ============================================================================
+
+describe("prepareQuery offsets on an already-bounded SELECT", () => {
+  const provider = new CassandraProvider(makeConnection());
+
+  test("a SELECT carrying its own LIMIT is refused a second page too", () => {
+    // The refusal has to be about the statement KIND, not about whether the shared
+    // limiter happened to be the one that added the bound. Measured again on the live
+    // node: `SELECT id, name FROM probe.customers LIMIT 5 OFFSET 5` is "line 1:45
+    // mismatched input 'OFFSET' expecting EOF", so no page after the first exists for
+    // this statement either. Returning page one instead makes the editor append rows
+    // it already shows, and the user cannot tell them from new ones.
+    expect(() =>
+      provider.prepareQuery("SELECT id, name FROM probe.customers LIMIT 5", { limit: 5, offset: 5 }),
+    ).toThrow(QueryError);
+  });
+
+  test("a SELECT ending in a line comment is refused a second page as well", () => {
+    // This shape runs UNBOUNDED on purpose (the trim would break the comment), and it
+    // is still a SELECT that cannot be paged - pinned so the refusal keeps being read
+    // from the statement kind rather than from what the rewrite decided.
+    expect(() => provider.prepareQuery("SELECT * FROM probe.customers -- note\n", { limit: 5, offset: 5 })).toThrow(
+      QueryError,
+    );
+  });
+
+  test("a non-SELECT statement is still never refused for its offset", () => {
+    // Nothing is paged here: the offset the route carries is meaningless for a write,
+    // and refusing it would break a statement CQL accepts.
+    const prepared = provider.prepareQuery("INSERT INTO probe.customers (id) VALUES (1)", { limit: 50, offset: 50 });
+
+    expect(prepared.wasLimited).toBe(false);
+    expect(prepared.query).toBe("INSERT INTO probe.customers (id) VALUES (1)");
+  });
+});
+
+// ============================================================================
+// connect: the transport a failed probe opened
+// ============================================================================
+
+describe("connect closes what it opened", () => {
+  /** A transport whose pool opens, then fails the identity probe. */
+  function probeFailingTransport(closed: { count: number }) {
+    return {
+      kind: "native" as const,
+      connect: async () => {},
+      execute: async () => {
+        throw new CassandraTransportError("Keyspace 'probe' does not exist", "invalid", 8704);
+      },
+      close: async () => {
+        closed.count += 1;
+      },
+    };
+  }
+
+  test("a failed identity probe closes the pool the connect already opened", async () => {
+    // `connect()` opens driver sockets and timers before the probe runs, so a probe
+    // that fails leaks them unless this path closes the transport - and the connection
+    // dialog retries, so the leak is per attempt. Druid and Couchbase close first,
+    // then map and rethrow.
+    const closed = { count: 0 };
+    const provider = new CassandraProvider(makeConnection(), {}, probeFailingTransport(closed));
+
+    await expect(provider.connect()).rejects.toThrow(QueryError);
+    expect(closed.count).toBe(1);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("a connect that succeeds keeps its transport open", async () => {
+    const closed = { count: 0 };
+    const provider = new CassandraProvider(
+      makeConnection(),
+      {},
+      {
+        kind: "native" as const,
+        connect: async () => {},
+        execute: async () => ({ rows: [], fieldNames: null, columnTypes: null, pageState: null }),
+        close: async () => {
+          closed.count += 1;
+        },
+      },
+    );
+
+    await provider.connect();
+
+    expect(provider.isConnected()).toBe(true);
+    expect(closed.count).toBe(0);
+  });
 });

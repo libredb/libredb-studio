@@ -498,7 +498,17 @@ export interface DatabaseOverview {
   activeConnections: number;
   maxConnections: number;
   databaseSize: string;
-  databaseSizeBytes: number;
+  /**
+   * Total on-disk size in bytes, or absent when the engine publishes no byte figure
+   * at all.
+   *
+   * Optional because absence and zero are different facts: a 0 is a measurement, and
+   * the Storage tab formats whatever it is given. Apache Cassandra is the case - its
+   * `system_views.disk_usage` reports whole mebibytes (measured: "1 MiB" for a
+   * 19,476-byte table), so it omits this field rather than send a zero that renders
+   * as "0 B" and a 0.0% breakdown (#424).
+   */
+  databaseSizeBytes?: number;
   tableCount: number;
   indexCount: number;
 }

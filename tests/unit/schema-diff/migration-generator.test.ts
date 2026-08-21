@@ -770,17 +770,52 @@ describe("generateMigrationSQL: Cassandra spells ADD and DROP without the COLUMN
     expect(sql).not.toContain("DROP COLUMN");
   });
 
-  test("a created table carries no NOT NULL and no DEFAULT, because CQL has neither", () => {
+  test("an added column carries no NOT NULL and no DEFAULT, because CQL has neither", () => {
     // Measured: `CREATE TABLE probe.t (id UUID PRIMARY KEY, name TEXT NOT NULL)` is
     // "no viable alternative at input 'NOT'", and the same shape with `DEFAULT 'x'`
     // or `UNIQUE` fails the same way. A CQL column definition is a name and a type.
-    const sql = generateMigrationSQL(makeAddedTableDiff(), "cassandra");
+    // The modified-table path is where this is observable, because the created-table
+    // path is declined outright (see the next describe).
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "cassandra");
 
-    expect(sql).toContain('"id" integer');
+    expect(sql).toContain('ALTER TABLE "users" ADD "phone" varchar(20);');
     expect(sql).not.toContain("NOT NULL");
     expect(sql).not.toContain("DEFAULT");
-    // The primary key still has to be declared: a CQL table without one is refused.
-    expect(sql).toContain('PRIMARY KEY ("id")');
+  });
+});
+
+describe("generateMigrationSQL: Cassandra declines CREATE TABLE rather than guess the partitioning", () => {
+  // `src/components/SchemaDiff.tsx` calls this generator with the connection's `type`
+  // and never consults `supportsCreateTable`, so the refusal the provider already
+  // publishes (`cassandra/index.ts`) has to be repeated on this path or the two
+  // contradict each other.
+  //
+  // Measured on 5.0.9 against two probe tables that differ only in one pair of
+  // brackets - `probe.composite_pk` is `PRIMARY KEY ((tenant, day), ts)` and
+  // `probe.pk_flat` is `PRIMARY KEY (tenant, day, ts)`. `SELECT * FROM probe.pk_flat
+  // WHERE tenant = 'a'` is served; the same restriction on `probe.composite_pk`
+  // answers code 2200, "Cannot execute this query as it might involve data filtering
+  // and thus may have unpredictable performance". `system_schema.columns` reports the
+  // same three columns as key columns for both, and `ColumnDiff` keeps only
+  // `targetIsPrimary` - so the diff cannot say which of the two physical layouts was
+  // meant, and the shared `PRIMARY KEY (a, b, c)` serializer would silently pick the
+  // flat one.
+  test("an added table emits a refusal naming the reason, not CREATE TABLE", () => {
+    const sql = generateMigrationSQL(makeAddedTableDiff(), "cassandra");
+
+    expect(sql).toContain('-- Apache Cassandra: Cannot generate CREATE TABLE for "users".');
+    expect(sql).toContain("partition key and clustering columns");
+    // Not the statement, and not the statement commented out either.
+    expect(sql).not.toMatch(/^\s*(--\s*)?CREATE TABLE/m);
+    expect(sql).not.toContain("PRIMARY KEY (");
+    expect(sql).not.toContain('"id" integer');
+  });
+
+  test("the declined table takes its indexes with it, since there is no table to index", () => {
+    const sql = generateMigrationSQL(makeAddedTableDiff(), "cassandra");
+
+    expect(sql).not.toContain("idx_users_email");
+    expect(sql).not.toMatch(/CREATE (UNIQUE )?INDEX/);
   });
 });
 

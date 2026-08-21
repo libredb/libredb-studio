@@ -157,9 +157,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         setInstanceName(editConnection.instanceName);
         setShowAdvanced(true);
       }
-      if (editConnection.localDataCenter) {
-        setLocalDataCenter(editConnection.localDataCenter);
-      }
+      // Overwritten, not conditionally set like the two Advanced fields above: a
+      // connection that carries no data centre must show an empty field, or the
+      // previously edited ring's name gets saved onto this one.
+      setLocalDataCenter(editConnection.localDataCenter || "");
       // SSL
       if (editConnection.ssl) {
         setSSLMode(editConnection.ssl.mode);
@@ -199,6 +200,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         setType("postgres");
         setHost("localhost");
         setPort("5432");
+        // Cassandra topology, so a leftover is not cosmetic: the next new connection
+        // would dial its host with the previous ring's data centre, which the driver
+        // either refuses or - when the name exists on both rings - accepts as a
+        // silently wrong topology.
+        setLocalDataCenter("");
       }
     }
   }, [isOpen, editConnection]);

@@ -27,6 +27,7 @@ describe("fenceTagEngine", () => {
       "clickhouse",
       "druid",
       "trino",
+      "cassandra",
     ] satisfies DatabaseType[];
 
     for (const engine of engines) expect(fenceTagEngine(engine)).toBe(engine);
@@ -63,5 +64,18 @@ describe("fenceTagEngine", () => {
     // And the inverse ordering: a tag that names an engine always holds a query.
     expect(isQueryFenceTag("mysql")).toBe(true);
     expect(fenceTagEngine("mysql")).toBe("mysql");
+  });
+
+  test("cql names a language, so it holds a query without naming an engine", () => {
+    // The `sql` case again, one language down: CQL is a language rather than a product,
+    // and ScyllaDB speaks it too, so reading `cql` as "written for Cassandra" would put
+    // a claim in the model's mouth. Registering it in `QUERY_FENCE_ALIASES` only —
+    // never in `ALIAS_ENGINES` — is what keeps the offer of the editor separate from
+    // the claim about which connection the block was drafted for.
+    expect(isQueryFenceTag("cql")).toBe(true);
+    expect(fenceTagEngine("cql")).toBeNull();
+    // The product name is the tag that DOES name the engine, and the canonical-engine
+    // walk above asserts it.
+    expect(isQueryFenceTag("cassandra")).toBe(true);
   });
 });

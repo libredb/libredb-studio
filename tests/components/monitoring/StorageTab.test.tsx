@@ -117,6 +117,49 @@ describe("StorageTab", () => {
     expect(queryByText("No table information available.")).not.toBeNull();
   });
 
+  test("an engine that reports no database size gets absence, not a zero it never measured", () => {
+    // Apache Cassandra is the case (#424): `system_views.disk_usage` publishes whole
+    // mebibytes - measured "1 MiB" for a 19,476-byte table - so the provider omits
+    // `databaseSizeBytes` entirely and answers `[]` for the table, index and storage
+    // panels. Read as `?? 0`, that absence rendered "0 B / 0.0%" on the Tables and
+    // Indexes cards and a "0 B / 0 B / 0 B" breakdown, which is a measurement the
+    // engine never made.
+    const overview = { ...makeMonitoringData().overview };
+    delete (overview as { databaseSizeBytes?: number }).databaseSizeBytes;
+    const noSize = {
+      ...makeMonitoringData(),
+      overview: { ...overview, databaseSize: "N/A" },
+      storage: [],
+      tables: [],
+      indexes: [],
+    } as MonitoringData;
+
+    const { queryByText, queryAllByText } = render(<StorageTab data={noSize} loading={false} />);
+
+    expect(queryAllByText("0 B").length).toBe(0);
+    expect(queryAllByText("0.0%").length).toBe(0);
+    expect(queryByText("No storage size information available.")).not.toBeNull();
+  });
+
+  test("a measured zero still renders as a zero, because absence is the only new input", () => {
+    // Trino (introspect.ts:615) and Druid send a real 0 for `databaseSizeBytes`. That is
+    // a measurement, so it must keep formatting as "0 B" with a 0.0% share and a drawn
+    // breakdown - only the ABSENT field switches to the unavailable copy.
+    const measuredZero = {
+      ...makeMonitoringData(),
+      overview: { ...makeMonitoringData().overview, databaseSize: "0 bytes", databaseSizeBytes: 0 },
+      storage: [],
+      tables: [],
+      indexes: [],
+    } as MonitoringData;
+
+    const { queryByText, queryAllByText } = render(<StorageTab data={measuredZero} loading={false} />);
+
+    expect(queryAllByText("0 B").length).toBe(5);
+    expect(queryAllByText("0.0%").length).toBe(2);
+    expect(queryByText("No storage size information available.")).toBeNull();
+  });
+
   test("renders storage cards, breakdown, badges and largest tables", () => {
     const { queryByText, queryAllByText } = render(<StorageTab data={makeMonitoringData()} loading={false} />);
 

@@ -991,6 +991,62 @@ describe("useConnectionForm", () => {
     expect(result.current.localDataCenter).toBe("eu-west-1");
   });
 
+  test("clearing the modal clears the data centre before the next new connection", () => {
+    // A leftover ring identity is not cosmetic: the next host would be dialled with
+    // the previous ring's `localDataCenter`, which the driver either refuses or - if
+    // the name happens to exist on the new ring - accepts as a silently wrong
+    // topology. It resets with the other new-connection fields.
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true },
+    });
+
+    act(() => {
+      result.current.setType("cassandra");
+      result.current.setLocalDataCenter("datacenter1");
+    });
+
+    expect(result.current.localDataCenter).toBe("datacenter1");
+
+    rerender({ ...defaultProps, isOpen: false });
+
+    expect(result.current.localDataCenter).toBe("");
+  });
+
+  test("editing a connection without a data centre does not inherit the last one", () => {
+    // The edit effect must OVERWRITE, not skip: a connection carrying no data centre
+    // has to show an empty field, otherwise the previously edited ring's name is
+    // saved onto it.
+    const withDC: DatabaseConnection = {
+      id: "c1",
+      name: "Ring",
+      type: "cassandra",
+      host: "cassandra.internal",
+      port: 9042,
+      database: "probe",
+      localDataCenter: "eu-west-1",
+      createdAt: new Date(),
+    };
+    const withoutDC: DatabaseConnection = {
+      id: "c2",
+      name: "Other ring",
+      type: "cassandra",
+      host: "cassandra-2.internal",
+      port: 9042,
+      database: "probe",
+      createdAt: new Date(),
+    };
+
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, editConnection: withDC },
+    });
+
+    expect(result.current.localDataCenter).toBe("eu-west-1");
+
+    rerender({ ...defaultProps, editConnection: withoutDC });
+
+    expect(result.current.localDataCenter).toBe("");
+  });
+
   // ── buildConnection with MSSQL instanceName ────────────────────────────
 
   test("buildConnection includes MSSQL instanceName", async () => {

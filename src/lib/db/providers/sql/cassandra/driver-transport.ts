@@ -376,6 +376,13 @@ export function cassandraClientOptions(config: DatabaseConnection, readTimeoutMs
             // of the driver's own option and no claim about a verified path.
             rejectUnauthorized: tlsMode !== "require",
             ...(config.ssl?.caCert ? { ca: [config.ssl.caCert] } : {}),
+            // The driver passes `sslOptions` through to `tls.connect`, so the shared
+            // form's client certificate and key are carried under Node's own names -
+            // the same mapping the PostgreSQL, MySQL and Couchbase adapters use. Each
+            // half travels on its own and in every non-disabled mode: a cluster can
+            // demand mutual TLS while presenting a self-signed certificate itself.
+            ...(config.ssl?.clientCert ? { cert: config.ssl.clientCert } : {}),
+            ...(config.ssl?.clientKey ? { key: config.ssl.clientKey } : {}),
           },
         }),
   };

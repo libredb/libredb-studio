@@ -491,7 +491,7 @@ services:
     # `system_views` table set, the type codes for `duration` and `vector`, and the
     # size_estimates behaviour recorded in docs/providers/cassandra.md are claims about
     # 5.0.9 (`system.local.release_version`), not about Cassandra in general.
-    image: cassandra:5.0
+    image: cassandra:5.0.9
     container_name: libredb-cassandra
     restart: unless-stopped
     environment:

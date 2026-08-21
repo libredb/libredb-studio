@@ -27,7 +27,7 @@
 | **Maintenance** | **None** — every operation is a `nodetool`/JMX action on a node ([§8](#8-maintenance)) |
 | **Query cancellation** | **None** — the protocol has no cancel frame and `cancelQuery` is deliberately not implemented ([§3.7](#37-there-is-no-cancellation-so-none-is-offered)) |
 | **Row counts / sizes** | **Not reported anywhere.** Neither figure can be honest ([§3.2](#32-there-is-no-honest-row-count-and-no-honest-size)) |
-| **Verified against** | **Apache Cassandra 5.0.9** (`system.local.release_version`), the official `cassandra:5.0` image, plus a second instance with `PasswordAuthenticator` + `CassandraAuthorizer` and materialized views enabled. Measured 2026-08-20, **before** any provider code existed |
+| **Verified against** | **Apache Cassandra 5.0.9** (`system.local.release_version`), the official `cassandra:5.0.9` image (the probe ran on the floating `cassandra:5.0` tag, and both tags resolve to the same amd64 manifest digest `sha256:4e806b4457fb`, so pinning the patch changed nothing that was measured), plus a second instance with `PasswordAuthenticator` + `CassandraAuthorizer` and materialized views enabled. Measured 2026-08-20, **before** any provider code existed |
 | **Source** | [`src/lib/db/providers/sql/cassandra/`](../../src/lib/db/providers/sql/cassandra/) |
 | **Tests** | [`tests/integration/db/cassandra-provider.test.ts`](../../tests/integration/db/cassandra-provider.test.ts) + [`tests/unit/db/cassandra/`](../../tests/unit/db/cassandra/) |
 | **Tracking issue** | [#424 — Wire-compatibility and new engines](https://github.com/libredb/libredb-studio/issues/424), Phase 4 |
@@ -118,7 +118,7 @@ can correct it.
 | `src/lib/db/compatibility.ts` | `SHIPPED.cassandra` |
 | `src/lib/seed/types.ts` | The seed enum and `localDataCenter` |
 | `next.config.ts`, `tsup.config.ts` | `cassandra-driver` external ([§3.1](#31-a-driver-that-costs-no-distribution-channel-anything)) |
-| `database-compose.yml` | `cassandra:5.0`, port 9042, `nodetool status` healthcheck |
+| `database-compose.yml` | `cassandra:5.0.9`, port 9042, `nodetool status` healthcheck |
 
 ---
 
@@ -158,7 +158,12 @@ A row count derived from the first is wrong by a factor that depends on how the 
 are looking at. A byte figure derived from the second is wrong by up to 50×.
 
 So: no `rowCount` and no `size` on any `TableSchema`, `databaseSize` reported as `N/A` with
-`databaseSizeBytes: 0`, and the **table, index and storage panels are empty**. Two other engines are
+`databaseSizeBytes` **omitted entirely** — the field is optional on `DatabaseOverview`, because
+absence and zero are different facts: a zero is a measurement, and the Storage tab read `?? 0`, so it
+formatted a `0 B` total and divided a 0.0% breakdown out of it. With the field absent the tab's two
+size cards read `N/A`, carry no percentage, and the breakdown is replaced by *"No storage size
+information available."* A provider that publishes a real `0` (Trino, Druid) has measured one and is
+unaffected. The **table, index and storage panels report nothing**. Two other engines are
 recorded in `compatibility.ts` as failures for doing the opposite (Citus and TimescaleDB report row
 counts and sizes that are wrong rather than missing), and this provider is not going to join them.
 
@@ -319,7 +324,7 @@ is reported as the server spelled it rather than guessed into a CQL word.
 | `localDataCenter` | **Yes** | [§3.4](#34-localdatacenter-is-a-required-connection-field-and-nothing-else-here-has-one) |
 | `database` | No | The **keyspace**. Without it there is no schema tree |
 | `user` / `password` | No | Sent only when a user is set. A stock install runs `AllowAllAuthenticator` and ignores credentials entirely (measured: supplying them to an open server connects fine) |
-| `ssl` | No | Any mode but `disable` sends `sslOptions`. **Not exercised against a TLS cluster** — the probe instances speak plaintext — so it is the driver's documented option shape and no claim about a verified path |
+| `ssl` | No | Any mode but `disable` sends `sslOptions`: `rejectUnauthorized` from the mode, plus the form's CA (`ca`) and client keypair (`cert` / `key`) under Node's own TLS names, which is the same mapping the PostgreSQL, MySQL and Couchbase adapters use — the driver hands `sslOptions` to `tls.connect`. **Not exercised against a TLS cluster** — the probe instances speak plaintext — so it is the driver's documented option shape and no claim about a verified path, mutual TLS included |
 
 ### 4.2 There is no connection string, and why that is not fixable by inventing one
 
@@ -334,7 +339,9 @@ than no paste at all. `connection-string-parser.ts` has no branch for the scheme
 `connect()` opens the driver session, then runs the identity read
 ([§7.1](#71-overview)). The session's own `connect()` already fails on a refused socket, a wrong data
 centre, a refused credential and a keyspace that does not exist — all measured — and one statement
-afterwards proves the session can carry one.
+afterwards proves the session can carry one. A probe that fails closes the session `connect()` had
+already opened, before the failure is mapped, so a retried connection attempt leaves no pool, no
+sockets and no reconnection timers behind — the same lifecycle as the Druid and Couchbase providers.
 
 ---
 
@@ -370,7 +377,9 @@ SELECT id, name FROM probe.customers OFFSET 5
   -> line 1:37 mismatched input 'OFFSET' expecting EOF
 ```
 
-So no page after the first can be requested, and `prepareQuery` **refuses** the request. The
+So no page after the first can be requested, and `prepareQuery` **refuses** the request — for
+every SELECT, including one that arrives with its own `LIMIT n` and is therefore never rewritten
+here, because returning page one again is exactly the duplicate-row answer described next. The
 alternatives are worse in a way that matters: sending the clause fails with an engine message about a
 keyword the user never typed, and dropping it silently returns page **one** while the editor appends
 it to what it already shows — duplicate rows presented as new ones, which is a wrong *answer*.
@@ -472,6 +481,30 @@ PRIMARY KEY` (`Unknown type probe.serial`), its type list offers `VARCHAR(255)` 
 NULL, UNIQUE and DEFAULT options are each `no viable alternative at input`. DDL typed into the editor
 works normally.
 
+The **schema-diff migration generator refuses a Cassandra `CREATE TABLE` too**, for a second and
+independent reason. A CQL primary key is two things — the partition key, which places a row, and the
+clustering columns, which order it inside the partition — and only the brackets say which is which.
+Measured: `probe.composite_pk` (`PRIMARY KEY ((tenant, day), ts)`) and `probe.pk_flat` (`PRIMARY KEY
+(tenant, day, ts)`) differ by one pair of brackets and nothing else; `SELECT * FROM probe.pk_flat
+WHERE tenant = 'a'` is served, while the same restriction on `probe.composite_pk` answers code 2200,
+`Cannot execute this query as it might involve data filtering and thus may have unpredictable
+performance`. `system_schema.columns` separates the two roles by `kind` (`partition_key` vs
+`clustering`, measured on `composite_pk`), but `ColumnDiff` keeps only the boolean
+`targetIsPrimary`, so both tables reduce to the same three key columns and the shared `PRIMARY KEY
+(a, b, c)` serializer would silently pick the flat layout. `src/components/SchemaDiff.tsx` calls
+`generateMigrationSQL` with the connection's type and never consults capabilities, so
+`migration-generator.ts` declines there itself and emits `-- Apache Cassandra: Cannot generate
+CREATE TABLE for "<table>". …` in place of DDL that would run and quietly repartition the data.
+The `ALTER` paths **do** emit runnable CQL, and each spelling was probed: an added column becomes
+`ALTER TABLE <t> ADD <col> <type>` because `ADD COLUMN extra TEXT` is `mismatched input 'TEXT'
+expecting EOF` while `ADD extra text` parses, a removed one becomes `ALTER TABLE <t> DROP <col>` for
+the same reason in reverse (`DROP COLUMN extra` is `mismatched input 'extra' expecting EOF`), and a
+CQL column definition carries a name and a type only — `NOT NULL`, `UNIQUE` and `DEFAULT` are each
+`no viable alternative at input`, so none of the three is appended. A **modified** column emits no
+statement at all, only the reason: `ALTER TABLE t ALTER name TYPE blob` answers 8704, `Altering
+column types is no longer supported` — the operation was removed from the engine rather than left
+unimplemented, so there is nothing to generate.
+
 ### 5.6 There is no EXPLAIN, and tracing is not a plan
 
 `EXPLAIN` is not in the grammar. `supportsExplain` is `false`, no `explainFormat` is declared, and
@@ -565,7 +598,7 @@ SELECT COUNT(*) AS count FROM system_schema.indexes WHERE keyspace_name = 'probe
 | `startTime` / `uptime` | `gossip_generation`, against the **server's** clock via `toTimestamp(now())` |
 | `activeConnections` | `system_views.clients` — degrades to 0 on a refused grant |
 | `maxConnections` | `0` — "no ceiling published". Cassandra's connection limit defaults to unlimited and is a config reading, not a live capacity |
-| `databaseSize` | `N/A`, `0` bytes — [§3.2](#32-there-is-no-honest-row-count-and-no-honest-size) |
+| `databaseSize` | `N/A`; `databaseSizeBytes` **omitted**, not zeroed — [§3.2](#32-there-is-no-honest-row-count-and-no-honest-size) |
 | `tableCount` / `indexCount` | `system_schema` |
 
 **`gossip_generation` is the node's start time in epoch seconds**, and that is measured rather than
@@ -620,7 +653,7 @@ connection list rather than a session list.
 | Slow queries | There is no aggregate of finished statements anywhere CQL can read. `system_views.system_logs` is a tail of the node's log file (0 rows on this image), and the slow-query threshold that exists writes to that log. **No statement is sent** to discover this |
 | Table statistics | `TableStats` needs a row count and a byte size; see [§3.2](#32-there-is-no-honest-row-count-and-no-honest-size). **No statement is sent** |
 | Index statistics | `system_schema.indexes` gives a name, a table and a target column — all of which the tree already shows — and `IndexStats` also wants a size and a scan count. Nothing reachable from CQL reports either, and a zeroed scan count reads as "never used" |
-| Storage statistics | The only storage figures a statement can read are whole mebibytes per table |
+| Storage statistics | The only storage figures a statement can read are whole mebibytes per table, so `databaseSizeBytes` is omitted rather than zeroed and the tab says so in words ([§3.2](#32-there-is-no-honest-row-count-and-no-honest-size)) |
 
 ---
 
@@ -650,7 +683,7 @@ promise a user that this panel updates planner statistics and reclaims space.
   queryLanguage: "sql",
   supportsExplain: false,            // EXPLAIN is not in the grammar (§5.6)
   supportsExternalQueryLimiting: true,
-  supportsCreateTable: false,        // the modal cannot emit valid CQL (§5.5)
+  supportsCreateTable: false,        // the modal cannot emit valid CQL, and a diff cannot derive the partition key (§5.5)
   supportsInlineRowEdit: false,      // one guessed key column is not a CQL primary key (§5.5)
   declaresForeignKeys: false,        // the clause does not exist (§6.2)
   supportsMaintenance: false,        // every operation is a nodetool action (§8)

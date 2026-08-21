@@ -399,9 +399,10 @@ export async function getOverview(transport: CassandraTransport, keyspace: strin
     // The one figure #424 exists to refuse. `system_views.disk_usage` is whole
     // mebibytes - measured, "1 MiB" for a 19,476-byte table, and "0 MiB" for a table
     // holding 500 unflushed rows - and `size_estimates` describes partitions rather
-    // than bytes.
+    // than bytes. `databaseSizeBytes` is therefore OMITTED, not zeroed: a zero is a
+    // measurement, and the Storage tab read `?? 0` and rendered "0 B" with a 0.0%
+    // breakdown from it.
     databaseSize: CASSANDRA_SIZE_UNAVAILABLE,
-    databaseSizeBytes: 0,
     tableCount: readCount(tables),
     indexCount: readCount(indexes),
   };

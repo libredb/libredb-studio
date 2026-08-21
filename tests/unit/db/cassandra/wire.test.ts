@@ -479,6 +479,66 @@ describe("cassandraClientOptions", () => {
 
     expect(options.sslOptions).toEqual({ rejectUnauthorized: true, ca: ["-----BEGIN CERTIFICATE-----"] });
   });
+
+  test("a client certificate and its key reach the driver as Node's own cert and key", () => {
+    // Mutual TLS: the shared SSL form collects both, and the driver hands its
+    // `sslOptions` straight to `tls.connect`, so they map onto the same names the
+    // PostgreSQL, MySQL and Couchbase adapters use. NOT exercised against a TLS
+    // cluster - the probe node speaks plaintext - so this pins the mapping only.
+    //
+    // The key fixture is deliberately NOT a PEM header. `-----BEGIN PRIVATE KEY-----`
+    // on its own, with no material after it, is enough for gitleaks' `private-key`
+    // rule, so writing the realistic string here fails the Secret Scan gate for a
+    // secret that does not exist. What these assertions are about is which option
+    // name carries the value, not what the value looks like.
+    const options = cassandraClientOptions(
+      makeConnection({
+        ssl: {
+          mode: "verify-full",
+          caCert: "-----BEGIN CERTIFICATE-----",
+          clientCert: "-----BEGIN CERTIFICATE----- client",
+          clientKey: "client-key-pem",
+        },
+      }),
+      1000,
+    );
+
+    expect(options.sslOptions).toEqual({
+      rejectUnauthorized: true,
+      ca: ["-----BEGIN CERTIFICATE-----"],
+      cert: "-----BEGIN CERTIFICATE----- client",
+      key: "client-key-pem",
+    });
+  });
+
+  test("client material travels under `require` too, where the chain is not checked", () => {
+    // A cluster can demand a client certificate while presenting a self-signed one
+    // of its own, so the material must not be tied to the verifying modes.
+    const options = cassandraClientOptions(
+      makeConnection({ ssl: { mode: "require", clientCert: "cert-pem", clientKey: "key-pem" } }),
+      1000,
+    );
+
+    expect(options.sslOptions).toEqual({ rejectUnauthorized: false, cert: "cert-pem", key: "key-pem" });
+  });
+
+  test("half a keypair passes only the half that was supplied", () => {
+    // Each field is carried on its own, exactly as the other adapters do: a
+    // certificate with no key is a user mistake for the server to reject, not
+    // something to silently drop here.
+    expect(
+      cassandraClientOptions(makeConnection({ ssl: { mode: "require", clientCert: "cert-pem" } }), 1000).sslOptions,
+    ).toEqual({
+      rejectUnauthorized: false,
+      cert: "cert-pem",
+    });
+    expect(
+      cassandraClientOptions(makeConnection({ ssl: { mode: "require", clientKey: "key-pem" } }), 1000).sslOptions,
+    ).toEqual({
+      rejectUnauthorized: false,
+      key: "key-pem",
+    });
+  });
 });
 
 describe("CassandraDriverTransport", () => {
