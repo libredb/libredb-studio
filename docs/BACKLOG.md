@@ -293,6 +293,12 @@ populated wrong one is not", and it is the reason Citus and TimescaleDB are reco
 despite answering every surface. The same argument applies to our own fallback, and it is worse here
 because the engine is not the author of the number - we are.
 
+**This is the provider half of a problem whose panel half is now closed.** PR #452 taught the five
+monitoring tabs to render an omitted metric as unavailable rather than as zero, which retired the
+former U14 entry. It cannot reach this one: a fabricated `99` is not an absence, so there is nothing
+for a panel to detect - the number arrives indistinguishable from a measurement and is rendered as
+one. The OceanBase reading above is exactly as true after #452 as before it.
+
 Done when a provider that cannot measure the cache hit ratio reports it as unavailable rather than as
 a figure, on all three sites, and this entry is deleted.
 
@@ -2807,17 +2813,6 @@ Done when a provider declares whether it has transactions, `Studio.tsx` omits th
 toggle where it does not, and every provider's doc states its answer. Deliberately not
 folded into #424: the capability has to be added to every provider at once, which is a wider change
 than the PR that found it.
-
-### U14. Monitoring reports relational zeros as measurements on engines that have no such counter
-
-The monitoring Overview renders *Buffer Pool 0%*, *Deadlocks 0* and *Checkpoint N/A* for a search
-cluster (measured 2026-08-19 on OpenSearch). `N/A` is the honest one: a cluster has no checkpoint. A
-`0` for a counter the engine does not keep reads as a measurement — the same class of claim the #414
-work removed from the schema tree, where an empty foreign-key list had to say "impossible here" rather
-than "none found".
-
-Done when a metric an engine cannot report renders as unavailable rather than as zero, on every
-provider whose health payload omits it.
 
 ### U15. The IPv6-only container default is unverified on a kernel without AF_INET6
 
