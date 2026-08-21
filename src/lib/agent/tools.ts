@@ -1448,6 +1448,33 @@ class AgentCuratedReadError extends Error {
   }
 }
 
+/**
+ * What to do about a failed statement, when this layer can say it without guessing.
+ *
+ * Read off the grouped ledger rather than imagined: of 368 `database-error` refusals, 63 are the
+ * row budget and 31 are a catalog belonging to another engine. Both are answerable from what is
+ * already here — the budget number appears in this server's own sentence, and the engine is on
+ * the context — so both get an answer.
+ *
+ * The largest remaining family, "no such column", is not answered here on purpose. Naming the
+ * columns that DO exist needs the run's captured inventory, which lives in its events and not on
+ * this context, and a sentence that guessed at them would be this server inventing a schema for
+ * a model to cite.
+ *
+ * The engine's own message still goes back untouched and fenced. This is added after it, in the
+ * server's voice, and only for a model whose ledger earned it.
+ */
+function statementAdvice(message: string, engine: string): string | undefined {
+  const overBudget = /row budget: \d+ rows > (\d+) allowed/.exec(message);
+  if (overBudget !== null) {
+    return `Ask for fewer rows: add LIMIT ${overBudget[1]} (or an aggregate that returns one row) and run it again.`;
+  }
+  if (/information_schema|pg_catalog/i.test(message) || /no such table: \w+\./i.test(message)) {
+    return `That catalog belongs to another engine — this connection is ${engine}. Call inspect_schema for this database's tables and columns rather than querying a catalog directly.`;
+  }
+  return undefined;
+}
+
 async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgentCall): Promise<AgentToolOutcome> {
   // Outside agent mode only a grounding read passes, and the flag is set by nothing
   // the model can reach: `selectAgentTools` still hands a planning run an empty tool
@@ -1545,11 +1572,21 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
       refusal: { class: "database-error", statementFingerprint: fingerprint, message: error.message },
       // The engine's own words: untrusted, so fenced. The fingerprint stands in for
       // a correlation id, which a failed execution never produced.
-      modelText: fenceUntrustedContent(error.message, {
-        label: "database error",
-        operationId: call.operationId,
-        reference: fingerprint,
-      }),
+      //
+      // The advice follows OUTSIDE the fence, because it is this server's sentence and not the
+      // engine's: putting it inside would attribute our instruction to the database.
+      modelText: [
+        fenceUntrustedContent(error.message, {
+          label: "database error",
+          operationId: call.operationId,
+          reference: fingerprint,
+        }),
+        ...(offersRefusalExamples(context.modelId)
+          ? [statementAdvice(error.message, context.connection.type) ?? ""]
+          : []),
+      ]
+        .filter((part) => part.length > 0)
+        .join("\n"),
     };
   }
 
