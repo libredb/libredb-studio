@@ -615,10 +615,11 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
     `UNVERIFIABLE_EVIDENCE` named the two SOURCES without ever showing the object.
   */
   describe("a refusal restates the contract, because that is who reads it", () => {
+    // Which SOURCES the refusal shows, deduplicated. The refusal now also carries a worked
+    // example, which is a second `artifact` object in the same text — and this assertion is
+    // about both arms being offered, not about how many objects appear.
     const bothArms = (text: string): string[] =>
-      offeredObjects(text)
-        .map((object) => (object as { source: string }).source)
-        .sort();
+      [...new Set(offeredObjects(text).map((object) => (object as { source: string }).source))].sort();
 
     const artifactEvent: AgentRunEvent = {
       kind: "tool-completed",
@@ -647,6 +648,49 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
       expect(outcome.reasonCode).toBe("INVALID_TOOL_INPUT");
       expect(bothArms(outcome.modelText)).toEqual(["artifact", "context-snapshot"]);
+    });
+
+    test("and it hands over a call this run could make, built from its own ledger", () => {
+      /*
+        Naming the failing field was the previous step, and it was measured as not enough:
+        `lfm2:24b` was refused here twenty-eight times in a row on one data-analysis run, with
+        the paths named every time, and never changed the shape it sent. `qwen3:8b` did the
+        same thirty-seven times before that.
+
+        A model that has misread the description twice does not need it a third time. It has
+        never been given an INSTANCE — and the instance is built from this run's ledger, so a
+        model that copies it and edits the prose gets a call that passes the citation check
+        rather than one that fails it a turn later.
+      */
+      const h = harness();
+
+      const outcome = composeReportTool(
+        h.context,
+        { runId: h.context.runId, events: [artifactEvent] },
+        { claims: [{ claim: "Engineering is largest.", evidence: ["corr-real"] }] },
+      );
+
+      if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+      expect(outcome.modelText).toContain("A call this run could make right now");
+      // The id is this run's, not an invented one, and the claim is marked as a placeholder
+      // so a copied example cannot be filed as a finding.
+      expect(outcome.modelText).toContain("corr-real");
+      expect(outcome.modelText).toContain("<what you found, in one sentence>");
+    });
+
+    test("a run holding no result yet is given no example, rather than one it cannot use", () => {
+      // An example citing an id this run never produced would fail the citation check on the
+      // very next turn, which teaches the wrong lesson twice.
+      const h = harness();
+
+      const outcome = composeReportTool(
+        h.context,
+        { runId: h.context.runId, events: [] },
+        { claims: [{ claim: "Nothing read.", evidence: ["corr-real"] }] },
+      );
+
+      if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+      expect(outcome.modelText).not.toContain("A call this run could make right now");
     });
 
     test("recommend_change tells a wrong-shaped citation what the shape is", () => {

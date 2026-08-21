@@ -1065,7 +1065,7 @@ function unavailable(
  * `UNVERIFIABLE_EVIDENCE` carries the contract in `UNAVAILABLE_TEXT` itself, because
  * only these same two tools can produce it.
  */
-function invalidEvidenceInput(problems: string): AgentToolOutcome & { kind: "unavailable" } {
+function invalidEvidenceInput(problems: string, example?: string): AgentToolOutcome & { kind: "unavailable" } {
   return {
     kind: "unavailable",
     reasonCode: "INVALID_TOOL_INPUT",
@@ -1073,8 +1073,44 @@ function invalidEvidenceInput(problems: string): AgentToolOutcome & { kind: "una
     // `qwen3:8b` run received thirty-seven times in a row without changing its call, and
     // the contract was already in it every one of those times: restating a rule the model
     // has read and misapplied is not what it is missing. The field that failed is.
-    modelText: `${UNAVAILABLE_TEXT.INVALID_TOOL_INPUT} (${problems}) ${AGENT_EVIDENCE_CONTRACT}`,
+    /*
+      And a literal call the model can copy, when the run holds an id to build one from.
+
+      Naming the failing field was the previous step and it was not enough: `lfm2:24b` was
+      refused here TWENTY-EIGHT times in a row on one data-analysis run, each time with the
+      paths named, and never changed the shape it sent. `qwen3:8b` did the same thirty-seven
+      times before that. A model that has misread a schema description twice does not need it
+      restated a third time; what it has never been given is an instance.
+
+      Built from this run's own ledger, so the example is not only well-shaped but valid: the
+      id in it is a result this run actually produced, which means a model that copies it
+      verbatim and edits the prose gets a call that passes.
+    */
+    modelText: [
+      `${UNAVAILABLE_TEXT.INVALID_TOOL_INPUT} (${problems})`,
+      AGENT_EVIDENCE_CONTRACT,
+      ...(example === undefined ? [] : [`A call this run could make right now: ${example}`]),
+    ].join(" "),
   };
+}
+
+/**
+ * A minimal, VALID `compose_report` call for this run, or nothing when it has read nothing.
+ *
+ * The claim text is deliberately a placeholder and says so: the shape is what the refusal
+ * could not teach, and a sentence that looked like a finding would invite a model to file it
+ * as one. The id is real, because an example citing a made-up id would fail the citation check
+ * a turn later and teach the wrong lesson twice.
+ */
+function exampleReportCall(events: readonly AgentRunEvent[]): string | undefined {
+  let latest: string | undefined;
+  for (const event of events) {
+    if (event.kind === "tool-completed") latest = event.artifact.correlationId;
+  }
+  if (latest === undefined) return undefined;
+  return JSON.stringify({
+    claims: [{ claim: "<what you found, in one sentence>", evidence: [{ source: "artifact", correlationId: latest }] }],
+  });
 }
 
 /**
@@ -3061,7 +3097,7 @@ export function composeReportTool(
   }
 
   const parsed = parseToolInput(reportSchema, input);
-  if (!parsed.ok) return invalidEvidenceInput(parsed.problems);
+  if (!parsed.ok) return invalidEvidenceInput(parsed.problems, exampleReportCall(run.events));
 
   const claims: AgentReportClaim[] = [];
   for (const claim of parsed.value.claims) {
