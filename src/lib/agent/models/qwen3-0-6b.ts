@@ -36,5 +36,20 @@ export const QWEN3_0_6B: AgentModelProfile = {
     two cells when this was switched on, and `deepseek-r1:14b` produces the same paragraph.
   */
   remindWithoutTools: true,
+  /*
+    Seven identical shape refusals in one run, which is the fourth model to show this and the
+    clearest small-model case of it.
+
+    Its investigation run: three `inspect_schema` calls, `compose_report` held, the reminder
+    issued, and then `compose_report` refused INVALID_TOOL_INPUT seven times in a row until the
+    turn clock ran out. It knows what to report — an earlier run answered the objective in prose
+    on its first turn, naming every table and both column-less views — and cannot build the
+    call.
+
+    `lfm2:24b` collapsed a loop of twenty-eight of these to one with a worked example, and
+    `granite4.1:3b` locked a cell once `recommend_change` carried one too. At 0.6B this is the
+    hardest case for it and therefore the most informative.
+  */
+  refusalExamples: true,
   notices: { ...BASELINE_NOTICES },
 };
