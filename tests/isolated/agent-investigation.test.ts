@@ -35,6 +35,7 @@ import {
   answersProse,
   callsTool,
   correlationIdIn,
+  correlationIdsIn,
   modelOver,
   promptText,
   reportOn,
@@ -4349,6 +4350,58 @@ describe("a run that will not record what it read is narrowed to what would fini
     });
 
     expect(namedIn(script, 12).sort()).toEqual(["compose_report", "present_answer"]);
+  });
+
+  test("an instrument a narrowed run has already used three times is dropped too", async () => {
+    /*
+      The loop the narrowing did not close, and it only became visible once the tool worked.
+
+      `deepseek-r1:7b` on query-optimization was refused `recommend_change` thirty-six times
+      in a run, on a field the refusal did not name. Once it did, the same cell recorded
+      THIRTY-THREE recommendations and still scored `no-report`: the ceiling fired, the run
+      narrowed, and the narrowed set keeps this surface's instruments so its bar stays
+      reachable — so the model had `recommend_change` and used it until the deadline.
+
+      Three, because a bar can want a particular shape: this one needs a recommendation
+      citing a plan, and a run that has misjudged that deserves another go rather than one
+      chance. Past three it is repeating, not aiming, and only `compose_report` is left. No
+      locked cell records more than two of these, so nothing measured passes through here.
+    */
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent", "query-optimization");
+    // Cites a result the run really produced, read out of the transcript the way the
+    // optimization eval's helper does: a refused recommendation records nothing, and what
+    // this test is about is what a RECORDED one costs.
+    const recommends =
+      () =>
+      (turn: Turn): Response =>
+        chatToolCallStream(
+          "recommend_change",
+          JSON.stringify({
+            change: "index",
+            statement: "CREATE INDEX ix ON salary (dept_no)",
+            rationale: "the scan is sequential",
+            evidence: [{ source: "artifact", correlationId: correlationIdsIn(turn.transcript).at(-1) }],
+          }),
+          "call_recommend",
+        );
+    const script = scriptedModel(
+      ...Array.from({ length: 13 }, reads),
+      ...Array.from({ length: 5 }, recommends),
+      answersProse("done"),
+      answersProse("done"),
+    );
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    // Narrowed at the ceiling with the instrument kept, then dropped once it had been used
+    // three times: the fourth call is refused the way an unheld tool is.
+    expect(namedIn(script, 12).sort()).toEqual(["compare_plans", "compose_report", "recommend_change"]);
+    expect(namedIn(script, 16).sort()).toEqual(["compare_plans", "compose_report"]);
   });
 
   test("a narrowed run's other tools are REFUSED, not merely undeclared", async () => {

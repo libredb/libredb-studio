@@ -2091,9 +2091,44 @@ function narrowedToolNames(record: AgentRunRecord): ReadonlySet<AgentToolName> {
   const held = new Set(selectAgentTools(record).map((definition) => definition.name));
   const kept = new Set<AgentToolName>();
   for (const name of ["compose_report" as const, ...AGENT_NARROWED_EXTRA_TOOLS[record.workflowType]]) {
-    if (held.has(name)) kept.add(name);
+    if (held.has(name) && !usedUp(record, name)) kept.add(name);
   }
   return kept;
+}
+
+/** What an instrument writes when it worked, so a narrowed run can be asked how often it has. */
+const AGENT_INSTRUMENT_RESULT: Readonly<Partial<Record<AgentToolName, AgentRunEvent["kind"]>>> = Object.freeze({
+  recommend_change: "recommendation",
+  compare_plans: "plan-comparison",
+  profile_table: "table-profiled",
+  present_answer: "answer-composed",
+});
+
+/**
+ * Whether a narrowed run has used one of its kept instruments enough times to stop keeping it.
+ *
+ * The loop the narrowing left open, and it only became visible once the tool started working.
+ * `deepseek-r1:7b` on query-optimization was refused `recommend_change` thirty-six times in a
+ * run, on a field the refusal did not name. Once it named it, the same cell recorded
+ * THIRTY-THREE recommendations and still scored `no-report`: the ceiling fired, the run
+ * narrowed, and narrowing keeps this surface's instruments so its own bar stays reachable — so
+ * the model held `recommend_change` and used it until the deadline.
+ *
+ * Counted rather than judged, deliberately. Asking "is the bar met" would mean a second copy of
+ * `goal-verifier.ts`'s rules here, and the copy that drifted would be the one silently taking a
+ * run's last instrument away. A count needs to know nothing about what the verdict wants.
+ *
+ * Three, because a bar can want a particular SHAPE — an optimization's needs a recommendation
+ * citing a plan — and a run that has misjudged that deserves another attempt rather than one.
+ * Past three it is repeating rather than aiming, and `compose_report` is the only thing left,
+ * which is what the narrowing was for. No locked cell records more than two.
+ */
+const AGENT_NARROWED_INSTRUMENT_USES = 3;
+
+function usedUp(record: AgentRunRecord, name: AgentToolName): boolean {
+  const result = AGENT_INSTRUMENT_RESULT[name];
+  if (result === undefined) return false;
+  return record.events.filter((event) => event.kind === result).length >= AGENT_NARROWED_INSTRUMENT_USES;
 }
 
 /** The tool set the SDK is given: the server's selection, declared but never executed by it. */
@@ -2386,6 +2421,15 @@ export async function runInvestigation(
    * code by audit before it was fixed here.
    */
   let narrowingDeclared = false;
+  /**
+   * The run as the LEDGER has it now, for the one question that depends on that.
+   *
+   * `record` was read before this drive did anything, so `record.events` is the run as it
+   * stood at the start and never grows — fine for the workflow, the objective and the
+   * connection, and wrong for asking how many times an instrument has been used. Refreshed
+   * only while narrowed, which is the only state where that question is asked.
+   */
+  let ledger = record;
   const priorProgress = describePriorProgress(record);
   if (priorProgress !== null) messages.push({ role: "user", content: priorProgress });
 
@@ -2911,9 +2955,10 @@ export async function runInvestigation(
     // The prompted path's equivalent of handing the SDK a shorter list. Once, and only
     // where a contract exists to replace: a run whose narrowed set is empty has nothing to
     // declare, and `promptedToolContract` answers `null` for that.
+    if (narrowed) ledger = (await service.resume(runId)).record;
     if (prompted && narrowed && !narrowingDeclared) {
       const smaller = promptedToolContract(
-        selectAgentTools(record).filter((definition) => narrowedToolNames(record).has(definition.name)),
+        selectAgentTools(ledger).filter((definition) => narrowedToolNames(ledger).has(definition.name)),
       );
       if (smaller !== null) {
         narrowingDeclared = true;
@@ -2934,7 +2979,7 @@ export async function runInvestigation(
       systemPrompt(record, grounding, engine),
       messages,
       // Narrowed once the run has been told to finish; see `AGENT_NARROWED_EXTRA_TOOLS`.
-      narrowed && !prompted ? narrowedTools(record) : tools,
+      narrowed && !prompted ? narrowedTools(ledger) : tools,
       turnBudgetMs,
       // Constraint measured and REVERTED; see the commit that removes it. Left unset here
       // rather than deleted from `takeTurn`, because the seam is correct and the cost was in
@@ -3280,7 +3325,7 @@ export async function runInvestigation(
           continue;
         }
       }
-      const outcome = await handleCall({ service, context, record, call, known, notAttempted, narrowed });
+      const outcome = await handleCall({ service, context, record: ledger, call, known, notAttempted, narrowed });
       if (outcome.kind === "cancelled") {
         // `runStep` already ended the run at its checkpoint; finishing again would
         // refuse, and rightly.
