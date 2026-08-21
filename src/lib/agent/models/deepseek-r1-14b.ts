@@ -24,5 +24,19 @@ export const DEEPSEEK_R1_14B: AgentModelProfile = {
     "0/6 modes locked, 9/30 runs passed at these settings. Investigate 0/5 · Optimize 1/5 · Assess 2/5 · Operate 4/5 · Analyze 0/5 · Plan 2/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  /*
+    Answered in prose on its FIRST turn, correctly, and was told nothing.
+
+    Its investigation run, read whole: no tool call, and a closing paragraph naming the tables
+    and their keys — "To determine the tables in the database and their relationships, I
+    analyzed the provided schema inventory and foreign key relations. Tables in the Database: 1.
+    department: Contains dept_no (Primary Key) and dept..." That is the objective, answered.
+
+    The drive withholds the report reminder from a run that called no tool, on the reasoning
+    that such a run has stopped rather than hesitated. `nemotron-3.5-lightning:30b` was the
+    first model measured breaking that reasoning, and this switch won it two cells. Same shape
+    here, and nothing outside this file changes.
+  */
+  remindWithoutTools: true,
   notices: { ...BASELINE_NOTICES },
 };

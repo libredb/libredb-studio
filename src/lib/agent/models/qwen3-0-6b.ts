@@ -24,5 +24,17 @@ export const QWEN3_0_6B: AgentModelProfile = {
     "1/6 modes locked, 5/29 runs passed at these settings. Investigate 0/4 · Optimize 0/5 · Assess 0/5 · Operate 0/5 · Analyze 0/5 · Plan 5/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  /*
+    The smallest model on the board, and it answered the investigation in prose on its first
+    turn: "The tables in the database are: `current_dept_emp` (no columns derivable from stored
+    definition), `department` (columns: dept_no, dept_name), `dept_emp` (emp_no, dept_no,
+    from_date, to_date), `dept_manager`..." — the inventory read correctly, including the two
+    column-less views.
+
+    No tool call, so no reminder: the drive treats a run that called nothing as one that
+    stopped. That reading has now been measured wrong twice — `nemotron-3.5-lightning:30b` won
+    two cells when this was switched on, and `deepseek-r1:14b` produces the same paragraph.
+  */
+  remindWithoutTools: true,
   notices: { ...BASELINE_NOTICES },
 };
