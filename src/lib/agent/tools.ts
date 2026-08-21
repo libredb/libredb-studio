@@ -1466,7 +1466,11 @@ class AgentCuratedReadError extends Error {
  * inventing a mapping is worse than saying nothing.
  */
 function columnsThatExist(message: string, connection: DatabaseConnection): string | undefined {
-  const qualified = /no such column:\s*(\w+)\.(\w+)/i.exec(message);
+  // The LAST two segments, because the engine names the column as the statement wrote it and a
+  // statement usually writes an alias in front: `e.dept_emp.dept_no` is alias, table, column, and
+  // taking the first two would look up "e" and find nothing. Measured — the only database error
+  // this fix could have answered in a whole sweep had that shape, and the first version missed it.
+  const qualified = /no such column:\s*(?:\w+\.)*?(\w+)\.(\w+)\s*$/i.exec(message.trim());
   if (qualified === null) return undefined;
   const [, qualifier, missing] = qualified;
   const snapshot = heldSnapshotForConnection(connectionIdentity(connection));

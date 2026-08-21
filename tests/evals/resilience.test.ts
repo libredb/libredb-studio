@@ -137,6 +137,34 @@ describe("a failed statement is told what the table actually holds", () => {
     expect(told).toContain("name");
   });
 
+  test("an alias in front of the table does not hide it", async () => {
+    /*
+      Measured, and it is why this case exists. Across a whole sweep of the three models that
+      carry the advice, exactly ONE database error could have been answered by it — and it read
+      `no such column: e.dept_emp.dept_no`: alias, table, column. The first version of the reader
+      took the first two segments, looked up "e", found nothing, and said nothing.
+
+      The last two are the table and the column. The alias in front is the statement's, not the
+      schema's.
+    */
+    const run = await open({
+      answer: async () => {
+        throw new QueryError("no such column: e.engineering.dept_no");
+      },
+    });
+    const scripted = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT e.dept_no FROM engineering e", rationale: "count" }),
+      answersProse("I could not read that."),
+      answersProse("done"),
+    );
+
+    await run.driveModel(await modelOver(scripted.fetch, "https://api.openai.com/v1", "lfm2:24b"));
+
+    const told = scripted.turns.at(-1)?.transcript ?? "";
+    expect(told).toContain("has no dept_no");
+    expect(told).toContain("name");
+  });
+
   test("a model that has not earned it gets the engine's words and nothing more", async () => {
     // The rule every behaviour added today obeys: off by default, on where a ledger earned it.
     const run = await open({
