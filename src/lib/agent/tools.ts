@@ -1486,7 +1486,21 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
   if (table === undefined || table.columns.length === 0) return undefined;
   // Bounded: a wide table's whole column list would bury the sentence that carries it.
   const named = table.columns.slice(0, 12).map((column) => column.name);
-  return `"${table.name}" has no ${missing}. Its columns are ${named.join(", ")}.`;
+  /*
+    And WHERE the column it wanted actually lives, when the inventory has it elsewhere.
+    Measured: `lfm2:24b` asked for `department.emp_no` twice in one run, having been told after
+    the first that department has dept_no and dept_name. Naming what a table holds does not
+    answer a model looking for a join key — `emp_no` exists, in dept_emp, employee, salary and
+    title — and the whole inventory is already in hand.
+  */
+  const elsewhere = snapshot.tables
+    .filter(
+      (entry) => entry !== table && entry.columns.some((column) => column.name.toLowerCase() === missing.toLowerCase()),
+    )
+    .slice(0, 6)
+    .map((entry) => entry.name);
+  const found = elsewhere.length === 0 ? "" : ` ${missing} is in ${elsewhere.join(", ")} — join through one of those.`;
+  return `"${table.name}" has no ${missing}. Its columns are ${named.join(", ")}.${found}`;
 }
 
 function statementAdvice(message: string, engine: string, connection: DatabaseConnection): string | undefined {
