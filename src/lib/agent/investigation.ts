@@ -2689,12 +2689,6 @@ export async function runInvestigation(
   let narrowed = false;
   /** Tool calls made so far, which is what this model's own ceiling is read against. */
   let toolCallsMade = 0;
-  /**
-   * Whether `present_answer` has been CALLED, which is not the same as answered: a
-   * refused call writes no event, so the ledger cannot tell the two apart and this is
-   * the only place that can.
-   */
-  let answerAttempted = false;
 
   /**
    * Tells the run, once, that it has come within the reserve of a ceiling.
@@ -2998,7 +2992,6 @@ export async function runInvestigation(
       // — so a run reminded on either would be told to call `compose_report`, which is
       // a tool it has not got (#350).
       if (holdsTool(call.toolName)) anyToolCalled = true;
-      if (call.toolName === "present_answer") answerAttempted = true;
       /*
         Whether a report may be held at all right now.
 
@@ -3021,7 +3014,6 @@ export async function runInvestigation(
         call.toolName === "compose_report" &&
         !noTimeToHold &&
         presentReminders < presentReminderLimitFor(model.modelId) &&
-        !answerAttempted &&
         AGENT_WORKFLOW_PRESENTS_ANSWER[record.workflowType]
       ) {
         const { record: sofar } = await service.resume(context.runId);
@@ -3040,6 +3032,22 @@ export async function runInvestigation(
             event.artifact.operationId === "sql.query.read" &&
             drafted.has(event.stepId),
         );
+        /*
+          Whether an answer is RECORDED, which is the whole question and used to be asked
+          twice. A flag also tracked whether `present_answer` had been CALLED, and a refused
+          call set it — which switched this hold off for the rest of the run.
+
+          That cost two models a cell. `granite4.1:3b` presented a table profile, was told
+          correctly to present the result of a `run_read_query` instead, drafted exactly that
+          and ran it, and was then never asked to present it: one run answered by calling
+          `compose_report` five times against a stale citation, the next stopped outright.
+          `mistral-small3.2:24b` lost the same cell the same way.
+
+          The ledger answers it alone. A successful presentation writes `answer-composed`, a
+          refused one writes `call-declined`, and only the first of those means answered. The
+          bound on how often a run may be held is `presentReminderLimit`, so a run refused
+          repeatedly is still held only as many times as its model allows.
+        */
         const presented = sofar.events.some((event) => event.kind === "answer-composed");
         if (hasReading && !presented) {
           presentReminders += 1;

@@ -115,6 +115,53 @@ const asChart = presents({
   spec: { type: "bar", x: "region", y: ["net_total"], caption: "Revenue by region." },
 });
 
+describe("a run whose present_answer was REFUSED is still asked to present", () => {
+  /*
+    The defect two models died on, and the same one both times.
+
+    `present_answer` sets a flag the moment it is CALLED, refused or not, and that flag
+    disabled the hold which asks a reporting run to present its answer first. So the arc that
+    should recover could not:
+
+        granite4.1:3b   profiled a table · presented the PROFILE · refused, correctly, with
+                        "present the result of a run_read_query you drafted" · drafted exactly
+                        that and ran it · and was never asked to present it. One run then
+                        called compose_report five times against a stale citation, the next
+                        stopped outright. Both scored nothing.
+
+    The model obeyed the refusal. The mechanism that would have closed the loop had already
+    been switched off by the refusal itself.
+
+    Keying the hold on what the LEDGER says — no `answer-composed` entry — rather than on
+    whether a call was attempted is what makes the recovery reachable. The bound stays
+    `presentReminderLimit`, so a run cannot be held more than its model allows, and a run that
+    presented successfully never reaches this branch at all.
+  */
+  test("the refusal is followed, the read is taken, and the report is held until it is presented", async () => {
+    const run = await open({ autoExecute: true });
+
+    const drive = await run.drive([
+      READS,
+      // A refused presentation. The id is not one this run produced, which is one of the five
+      // ways `present_answer` says no — and every one of them used to switch off the hold.
+      (): Response =>
+        chatToolCallStream(
+          "present_answer",
+          JSON.stringify({ artifact: "corr-not-of-this-run", presentation: { kind: "table" } }),
+          "call_answer_refused",
+        ),
+      // The run goes for the report with nothing presented. This is the turn that must be held.
+      reportOn("The north region brought in the most revenue."),
+      asTable,
+      reportOn("The north region brought in the most revenue."),
+    ]);
+
+    expect(drive.kinds).toContain("call-held");
+    expect(drive.kinds).toContain("answer-composed");
+    expect(drive.verdict.outcome).toBe("answered");
+  });
+});
+
 describe("§4.4 case 1: a chart of a column the result does not have", () => {
   test("is refused, and the refusal names the columns that ARE there", async () => {
     const run = await open();
@@ -129,6 +176,12 @@ describe("§4.4 case 1: a chart of a column the result does not have", () => {
         // from the result.
         spec: { type: "bar", x: "territory", y: ["net_total"], caption: "Revenue by territory." },
       }),
+      reportOn("The north region brought in the most revenue."),
+      // One turn more than this arc used to need, and it is the fix above: a run whose
+      // presentation was refused is now HELD when it reports with nothing presented, where the
+      // refusal used to switch that hold off. This script declines the offer — it reports again
+      // rather than presenting — which is what keeps the assertion below about the REFUSAL
+      // rather than about a later, valid presentation.
       reportOn("The north region brought in the most revenue."),
     ]);
 
