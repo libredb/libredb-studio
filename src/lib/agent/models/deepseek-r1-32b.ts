@@ -16,6 +16,7 @@
  * measurement says otherwise.
  */
 
+import { BASELINE_NOTICES } from "./notices";
 import { DEFAULT_SAMPLING, DEFAULT_UNREPORTED_CALL_CEILING, type AgentModelProfile } from "./profile";
 
 export const DEEPSEEK_R1_32B: AgentModelProfile = {
@@ -23,4 +24,5 @@ export const DEEPSEEK_R1_32B: AgentModelProfile = {
     "1/6 modes locked, 14/30 runs passed at these settings. Investigate 2/5 · Optimize 0/5 · Assess 4/5 · Operate 2/5 · Analyze 1/5 · Plan 5/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  notices: { ...BASELINE_NOTICES },
 };

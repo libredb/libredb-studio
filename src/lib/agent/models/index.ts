@@ -21,6 +21,7 @@
  */
 
 import type { AgentRunWorkflowType } from "../types";
+import { BASELINE_NOTICES } from "./notices";
 import { DEEPSEEK_R1_14B } from "./deepseek-r1-14b";
 import { DEEPSEEK_R1_32B } from "./deepseek-r1-32b";
 import { DEEPSEEK_R1_7B } from "./deepseek-r1-7b";
@@ -48,6 +49,7 @@ import { QWEN3_8_LATEST } from "./qwen3-8-latest";
 import { QWEN3_8B } from "./qwen3-8b";
 import {
   type AgentModelProfile,
+  type AgentNotices,
   type AgentSampling,
   DEFAULT_PLAN_STATEMENT_RETRIES,
   DEFAULT_REPORT_REMINDER_LIMIT,
@@ -162,6 +164,18 @@ export function remindsWithoutTools(modelId: string): boolean {
  */
 export function presentReminderLimitFor(modelId: string): number {
   return MODEL_PROFILES[modelId.toLowerCase()]?.presentReminderLimit ?? DEFAULT_PRESENT_REMINDER_LIMIT;
+}
+
+/**
+ * Every sentence this model is told, resolved from its own file.
+ *
+ * The baseline fills only what a profile leaves unsaid, and for a measured model that is
+ * nothing: each carries all four, so editing one model's wording reaches no other model and no
+ * regression sweep is owed. The fallback exists for a model with no file at all, which is a
+ * model nobody has measured.
+ */
+export function noticesFor(modelId: string): AgentNotices {
+  return { ...BASELINE_NOTICES, ...MODEL_PROFILES[modelId.toLowerCase()]?.notices };
 }
 
 /**

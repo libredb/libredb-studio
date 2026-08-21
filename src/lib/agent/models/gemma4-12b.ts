@@ -16,6 +16,7 @@
  * measurement says otherwise.
  */
 
+import { BASELINE_NOTICES } from "./notices";
 import { DEFAULT_SAMPLING, DEFAULT_UNREPORTED_CALL_CEILING, type AgentModelProfile } from "./profile";
 
 export const GEMMA4_12B: AgentModelProfile = {
@@ -23,4 +24,5 @@ export const GEMMA4_12B: AgentModelProfile = {
     "3/6 modes locked, 19/30 runs passed at these settings. Investigate 4/5 · Optimize 0/5 · Assess 0/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  notices: { ...BASELINE_NOTICES },
 };

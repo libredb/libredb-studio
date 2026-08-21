@@ -30,6 +30,7 @@
  * misconfigured.
  */
 
+import { BASELINE_NOTICES } from "./notices";
 import { DEFAULT_SAMPLING, DEFAULT_UNREPORTED_CALL_CEILING, type AgentModelProfile } from "./profile";
 
 export const NEMOTRON_3_5_LIGHTNING_30B: AgentModelProfile = {
@@ -45,4 +46,5 @@ export const NEMOTRON_3_5_LIGHTNING_30B: AgentModelProfile = {
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
   remindWithoutTools: true,
+  notices: { ...BASELINE_NOTICES },
 };

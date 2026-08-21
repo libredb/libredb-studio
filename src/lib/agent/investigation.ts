@@ -59,6 +59,7 @@ import { agentModelTurnTimeoutMs } from "./config";
 import {
   ceilingFor,
   holdsReportWithoutTime,
+  noticesFor,
   presentReminderLimitFor,
   remindsWithoutTools,
   planStatementRetriesFor,
@@ -345,17 +346,6 @@ function planningEngine(context: AgentToolContext): PlanningEngine {
  * Offered only where a profile asks for it (`planStatementRetriesFor`, 0 for every model but
  * one), so introducing it changed no other model's run.
  */
-const AGENT_PLAN_STATEMENT_NOTICE = [
-  "Your plan describes the database but names no statement, and a plan is scored on what the user can run: it must end either with a fenced code block holding one statement for this engine, or with an explicit refusal.",
-  `Write the statement in a fenced block now, or begin a line with ${PLAN_NO_STATEMENT_MARKER} and say what the database does not support.`,
-].join(" ");
-
-const AGENT_REPORT_REMINDER_NOTICE = [
-  "You have called this run's tools and then written your findings as prose, which records nothing: a run reports by CALLING compose_report, and text outside that call is not a report.",
-  "Call compose_report now with what you established.",
-  AGENT_CITATION_RULE,
-].join(" ");
-
 /**
  * What an answer-presenting run is told once when it would report without presenting.
  *
@@ -388,7 +378,7 @@ const AGENT_REPORT_REMINDER_NOTICE = [
 /**
  * What an answer-presenting run is told when it reports having read NOTHING.
  *
- * The empty arm of the check below. `AGENT_PRESENT_BEFORE_REPORT_NOTICE` speaks to a run that
+ * The empty arm of the check below. `notices.presentBeforeReport` speaks to a run that
  * read and did not present; a run that never read at all was told nothing, and on this surface
  * it is already lost — the verdict wants an answer, an answer is a reading presented, and
  * there is no reading to present.
@@ -404,16 +394,6 @@ const AGENT_REPORT_REMINDER_NOTICE = [
  * — and says what to do rather than what went wrong, because a run that has burned three
  * statements on errors needs the next call named, not the last one described.
  */
-const AGENT_READ_BEFORE_REPORT_NOTICE = [
-  "This run answers by reading data and presenting the result, and it has read none: a report resting on the schema alone is scored as having answered nothing, and a statement the database refused is not a reading.",
-  "Your compose_report call was not run. Call run_read_query with a statement that answers the objective, then present_answer with the id of its result, then compose_report.",
-].join(" ");
-
-const AGENT_PRESENT_BEFORE_REPORT_NOTICE = [
-  "This run answers by PRESENTING a result, and nothing has been presented yet: a report on its own is scored as having answered nothing.",
-  "Your compose_report call was not run. Call present_answer first, with the artifact id of the result that answers the objective, and then call compose_report.",
-].join(" ");
-
 /**
  * What an optimization run is told once when it would report holding two plans and no
  * comparison between them.
@@ -425,7 +405,7 @@ const AGENT_PRESENT_BEFORE_REPORT_NOTICE = [
  * and report anyway. So this does not describe where to find the ids: it names them.
  *
  * Said at the only moment it can still be acted on, exactly as
- * `AGENT_PRESENT_BEFORE_REPORT_NOTICE` is: `compose_report` ENDS the run, so a message
+ * `notices.presentBeforeReport` is: `compose_report` ENDS the run, so a message
  * after it arrives too late. This one is delivered INSTEAD of that call, the call is not
  * executed, and the run keeps the turn it needs.
  *
@@ -2036,7 +2016,7 @@ interface ModelTurn {
   that: `gemma4:26b` lost an assessment having profiled eleven tables and stopped at 11, so this
   guard never fired, and its own file now asks for 9.
 
-  This is the half `AGENT_REPORT_REMINDER_NOTICE` cannot reach: that notice fires when a model
+  This is the half `notices.reportReminder` cannot reach: that notice fires when a model
   STOPS talking, and a model reading itself out of budget never stops.
 */
 
@@ -2688,13 +2668,13 @@ export async function runInvestigation(
   /** Whether a tool this run HOLDS has been called; see `remindToReport`. */
   let anyToolCalled = false;
   /**
-   * How many times this drive has told the run to report; see `AGENT_REPORT_REMINDER_NOTICE`.
+   * How many times this drive has told the run to report; see `notices.reportReminder`.
    *
    * A count rather than a flag because the limit is the model's, not the drive's:
    * `reportReminderLimitFor` reads it, and it is 1 for every model but one.
    */
   let reportReminders = 0;
-  /** The present-before-report notice, once per drive; see `AGENT_PRESENT_BEFORE_REPORT_NOTICE`. */
+  /** The present-before-report notice, once per drive; see `notices.presentBeforeReport`. */
   let presentReminders = 0;
   /** The compare-before-report notice, once per drive; see `compareBeforeReportNotice`. */
   let compareReminded = false;
@@ -2734,7 +2714,7 @@ export async function runInvestigation(
    * Tells the run, once, that it narrated where it should have reported, and says
    * whether it did — which is the caller's "take the turn again".
    *
-   * The three bounds `AGENT_REPORT_REMINDER_NOTICE` documents are applied here and
+   * The three bounds `notices.reportReminder` documents are applied here and
    * nowhere else. `anyToolCalled` carries the first two together: it is set only for a
    * tool THIS RUN HOLDS, so a name the model invented reached nothing and a planning
    * run — handed no tool set at all — can never set it. The ceilings are read rather
@@ -2780,7 +2760,7 @@ export async function runInvestigation(
     // reading; see `AGENT_NARROWED_EXTRA_TOOLS`.
     narrowed = true;
     messages.push(...assistant);
-    messages.push({ role: "user", content: notice(AGENT_REPORT_REMINDER_NOTICE) });
+    messages.push({ role: "user", content: notice(noticesFor(model.modelId).reportReminder) });
     return true;
   };
 
@@ -2804,7 +2784,7 @@ export async function runInvestigation(
     if (text.length === 0 || readPlanStatement(text, context.connection.type).kind !== "absent") return false;
     planStatementAsks += 1;
     messages.push(...assistant);
-    messages.push({ role: "user", content: notice(AGENT_PLAN_STATEMENT_NOTICE) });
+    messages.push({ role: "user", content: notice(noticesFor(model.modelId).planStatement) });
     return true;
   };
 
@@ -3005,7 +2985,7 @@ export async function runInvestigation(
       narrowed = true;
       if (reportReminders === 0) {
         reportReminders += 1;
-        messages.push({ role: "user", content: notice(AGENT_REPORT_REMINDER_NOTICE) });
+        messages.push({ role: "user", content: notice(noticesFor(model.modelId).reportReminder) });
       }
     }
 
@@ -3077,7 +3057,11 @@ export async function runInvestigation(
           // Which of the two things is missing decides which sentence is said. Both are held
           // against the same counter, because they are the same hold at different distances
           // from an answer and a run should not be able to collect one of each.
-          const text = hasReading ? AGENT_PRESENT_BEFORE_REPORT_NOTICE : AGENT_READ_BEFORE_REPORT_NOTICE;
+          // This model's own wording, from its own file. Two sentences, and which one is said is
+          // decided here rather than in the file: what is missing is a fact about the run, and
+          // only how to say it is a fact about the model.
+          const said = noticesFor(model.modelId);
+          const text = hasReading ? said.presentBeforeReport : said.readBeforeReport;
           presentReminders += 1;
           await holdCall(call.toolName, text);
           messages.push(prompted ? promptedResultMessage(call, notice(text)) : toolResultMessage(call, text));

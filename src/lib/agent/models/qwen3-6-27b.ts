@@ -16,10 +16,12 @@
  * measurement says otherwise.
  */
 
+import { BASELINE_NOTICES } from "./notices";
 import { DEFAULT_SAMPLING, DEFAULT_UNREPORTED_CALL_CEILING, type AgentModelProfile } from "./profile";
 
 export const QWEN3_6_27B: AgentModelProfile = {
   measured: "0/6 modes locked, 1/2 runs passed at these settings. Investigate 1/1 · Optimize 0/1.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  notices: { ...BASELINE_NOTICES },
 };

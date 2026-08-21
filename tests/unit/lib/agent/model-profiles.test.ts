@@ -3,6 +3,7 @@ import {
   MODEL_PROFILES,
   ceilingFor,
   holdsReportWithoutTime,
+  noticesFor,
   presentReminderLimitFor,
   remindsWithoutTools,
   planStatementRetriesFor,
@@ -10,6 +11,7 @@ import {
   reportReserveMsFor,
   samplingFor,
 } from "@/lib/agent/models";
+import { BASELINE_NOTICES } from "@/lib/agent/models/notices";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 
 /**
@@ -183,6 +185,36 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(presentReminderLimitFor("mistral-small3.2:24b")).toBe(1);
     expect(presentReminderLimitFor("qwen3:8b")).toBe(1);
     expect(presentReminderLimitFor("some-model-released-tomorrow:70b")).toBe(1);
+  });
+
+  test("every model carries its own copy of every sentence, and they start identical", () => {
+    /*
+      The isolation this directory is FOR, applied to wording as well as to numbers.
+
+      A sentence is read by a model and acted on by that model, so a wording that recovers one
+      run can be the wording another gives up on — a measured value, not a constant. Twice a
+      shared value was changed here, won several cells and lost others, and the only move left
+      was to revert and hand back the wins. With the sentence in the model's own file, the
+      models it helped keep it and the models it hurt keep what they had.
+
+      The equality is asserted, not asserted-about: the copies were spread from the baseline at
+      the moment sharing stopped, so on day one every model is sent exactly the bytes it was
+      sent before, and 97 locked cells stay locked without being re-measured. This test is what
+      makes that a fact rather than a claim — and it is expected to go red the first time a
+      measurement moves one model's wording, which is the point.
+    */
+    for (const [name, profile] of Object.entries(MODEL_PROFILES)) {
+      expect(profile.notices, `${name} shares its wording instead of owning it`).toBeDefined();
+      expect(noticesFor(name), `${name} is sent something other than what it was measured with`).toEqual(
+        BASELINE_NOTICES,
+      );
+    }
+  });
+
+  test("a model nobody has measured is given the baseline wording", () => {
+    // The one place the baseline is still read at run time, and the honest treatment of a
+    // model with no file: it is sent what everything else was measured with.
+    expect(noticesFor("some-model-released-tomorrow:70b")).toEqual(BASELINE_NOTICES);
   });
 
   test("every profile states what measured it", () => {

@@ -40,6 +40,7 @@
  * `no-plan-comparison` and `empty-evidence`, which is not one cause with one setting behind it.
  */
 
+import { BASELINE_NOTICES } from "./notices";
 import { DEFAULT_UNREPORTED_CALL_CEILING, type AgentModelProfile } from "./profile";
 
 export const MISTRAL_SMALL3_2_24B: AgentModelProfile = {
@@ -55,4 +56,5 @@ export const MISTRAL_SMALL3_2_24B: AgentModelProfile = {
     "empty-evidence, which is not one cause.",
   perWorkflow: { "data-analysis": { temperature: 0.7, topP: 0.9 } },
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  notices: { ...BASELINE_NOTICES },
 };

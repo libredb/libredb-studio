@@ -22,6 +22,7 @@
  * the failure the verifier accepts refusals to avoid.
  */
 
+import { BASELINE_NOTICES } from "./notices";
 import { DEFAULT_SAMPLING, DEFAULT_UNREPORTED_CALL_CEILING, type AgentModelProfile } from "./profile";
 
 export const QWEN3_14B: AgentModelProfile = {
@@ -35,4 +36,5 @@ export const QWEN3_14B: AgentModelProfile = {
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
   planStatementRetries: 1,
+  notices: { ...BASELINE_NOTICES },
 };

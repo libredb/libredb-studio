@@ -16,6 +16,7 @@
  * measurement says otherwise.
  */
 
+import { BASELINE_NOTICES } from "./notices";
 import { DEFAULT_SAMPLING, DEFAULT_UNREPORTED_CALL_CEILING, type AgentModelProfile } from "./profile";
 
 export const NEMOTRON3_33B: AgentModelProfile = {
@@ -23,4 +24,5 @@ export const NEMOTRON3_33B: AgentModelProfile = {
     "2/6 modes locked, 17/23 runs passed at these settings. Investigate 5/5 · Optimize 2/5 · Assess 0/1 · Operate 1/2 · Analyze 5/5 · Plan 4/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  notices: { ...BASELINE_NOTICES },
 };

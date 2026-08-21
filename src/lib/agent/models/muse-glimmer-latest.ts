@@ -16,6 +16,7 @@
  * measurement says otherwise.
  */
 
+import { BASELINE_NOTICES } from "./notices";
 import { DEFAULT_SAMPLING, DEFAULT_UNREPORTED_CALL_CEILING, type AgentModelProfile } from "./profile";
 
 export const MUSE_GLIMMER_LATEST: AgentModelProfile = {
@@ -23,4 +24,5 @@ export const MUSE_GLIMMER_LATEST: AgentModelProfile = {
     "3/6 modes locked, 21/26 runs passed at these settings. Investigate 5/5 · Optimize 1/5 · Assess 5/5 · Operate 5/5 · Analyze 4/4 · Plan 1/2.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  notices: { ...BASELINE_NOTICES },
 };

@@ -38,6 +38,7 @@
  * `no-report` does.
  */
 
+import { BASELINE_NOTICES } from "./notices";
 import { DEFAULT_SAMPLING, DEFAULT_UNREPORTED_CALL_CEILING, type AgentModelProfile } from "./profile";
 
 export const DEEPSEEK_R1_8B: AgentModelProfile = {
@@ -56,4 +57,5 @@ export const DEEPSEEK_R1_8B: AgentModelProfile = {
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
   reportReserveMs: 160_000,
   holdReportWithoutTime: false,
+  notices: { ...BASELINE_NOTICES },
 };

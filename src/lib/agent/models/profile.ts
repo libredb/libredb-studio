@@ -98,6 +98,36 @@ export interface AgentModelProfile {
    * the report lands with an empty answer pane and a `no-answer` verdict.
    */
   readonly presentReminderLimit?: number;
+  /**
+   * Every sentence this model is told, when it is told anything.
+   *
+   * Here for the reason the numbers above are here, and the reason is not symmetry. A message
+   * is read by a model and acted on by that model, so a wording that recovers one run can be
+   * the wording another model gives up on — which makes it a measured value, not a constant.
+   *
+   * The alternative was measured too, twice, and it is why this field exists: a shared wording
+   * changed for everyone wins some cells and loses others, and the only move left is to revert
+   * the whole change and give back the wins. With the sentence per model, the models it helped
+   * keep it and the models it hurt keep what they had.
+   */
+  readonly notices?: Partial<AgentNotices>;
+}
+
+/**
+ * The four sentences the drive says to a run, each at the one moment it can still be acted on.
+ *
+ * Named by what the run is missing rather than by which tool was refused, because that is what
+ * a reader of a model file needs to decide whether the wording fits their model.
+ */
+export interface AgentNotices {
+  /** A run that used its tools and then narrated instead of calling `compose_report`. */
+  readonly reportReminder: string;
+  /** A PLAN run whose prose carried neither a runnable statement nor an explicit refusal. */
+  readonly planStatement: string;
+  /** An answer-presenting run about to report a result it read but never presented. */
+  readonly presentBeforeReport: string;
+  /** An answer-presenting run about to report having read no data at all. */
+  readonly readBeforeReport: string;
 }
 
 /**

@@ -32,6 +32,7 @@
  * be reading this file.
  */
 
+import { BASELINE_NOTICES } from "./notices";
 import type { AgentModelProfile } from "./profile";
 
 export const QWEN3_8B: AgentModelProfile = {
@@ -42,4 +43,5 @@ export const QWEN3_8B: AgentModelProfile = {
     "out of 10. Its other five surfaces lock 5/5 deterministically, so the override is scoped " +
     "to this one cell and not to the model.",
   perWorkflow: { "query-optimization": { temperature: 0.8, topP: 0.9 } },
+  notices: { ...BASELINE_NOTICES },
 };
