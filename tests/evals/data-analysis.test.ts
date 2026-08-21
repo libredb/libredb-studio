@@ -162,6 +162,52 @@ describe("a run whose present_answer was REFUSED is still asked to present", () 
   });
 });
 
+describe("a run that reports having read nothing is told so", () => {
+  /*
+    The empty arm of the present-before-report check, found by sweeping this cell across ten
+    models. Three of them lost `no-answer` without ever reading the data, and each arrived
+    there differently: `lfm2:24b` drafted three statements and had all three refused by the
+    database, `mistral-small3.2:24b` read only the schema, `deepseek-r1:14b` called nothing.
+
+    A run in that state is already lost — the verdict wants an answer, an answer is a reading
+    presented, and there is no reading — and it was told nothing at all, because the hold only
+    spoke to runs that HAD read. Held against the same counter as its sibling, so a run cannot
+    collect one of each.
+  */
+  test("the report is held, and the notice separates the catalog from the data", async () => {
+    const run = await open({ autoExecute: true });
+
+    const drive = await run.drive([
+      // The schema is the catalog, not the data: this is the shape two of the three models hit.
+      callsTool("inspect_schema", {}, "call_schema"),
+      reportOn("The north region brought in the most revenue."),
+      READS,
+      // The LAST id, not the first. This run holds the schema read's artifact as well, and
+      // that one is a catalog read the answer tool refuses — the very distinction the notice
+      // above draws. Presenting it would exercise the refusal instead of the recovery.
+      (turn: Turn): Response =>
+        chatToolCallStream(
+          "present_answer",
+          JSON.stringify({ artifact: correlationIdsIn(turn.transcript).at(-1), presentation: { kind: "table" } }),
+          "call_answer_after_read",
+        ),
+      reportOn("The north region brought in the most revenue."),
+    ]);
+
+    const told = drive.transcripts[2] ?? "";
+    expect(told).toContain("it has read none");
+    expect(told).toContain("run_read_query");
+    // And the recovery the notice exists to make possible actually happens: the run reads,
+    // and the answer it could not give before the hold is recorded after it.
+    //
+    // The verdict is deliberately not asserted. Whether this run scores also depends on what
+    // its report cites, which is a different rule with its own tests — and a test that pinned
+    // the verdict here would fail the day the citation rule changed, for a reason that has
+    // nothing to do with the hold under test.
+    expect(drive.kinds).toContain("answer-composed");
+  });
+});
+
 describe("§4.4 case 1: a chart of a column the result does not have", () => {
   test("is refused, and the refusal names the columns that ARE there", async () => {
     const run = await open();

@@ -385,6 +385,30 @@ const AGENT_REPORT_REMINDER_NOTICE = [
  * and would then neither present nor report: measured, the run lost the report it was
  * about to compose.
  */
+/**
+ * What an answer-presenting run is told when it reports having read NOTHING.
+ *
+ * The empty arm of the check below. `AGENT_PRESENT_BEFORE_REPORT_NOTICE` speaks to a run that
+ * read and did not present; a run that never read at all was told nothing, and on this surface
+ * it is already lost — the verdict wants an answer, an answer is a reading presented, and
+ * there is no reading to present.
+ *
+ * Measured on three models in one sweep, arriving here three different ways:
+ *
+ *     lfm2:24b               drafted three statements, all three refused by the database,
+ *                            then reported anyway
+ *     mistral-small3.2:24b   read the schema only, which is the catalog and not the data
+ *     deepseek-r1:14b        called nothing at all
+ *
+ * So the sentence names the distinction the first two got wrong — the catalog is not the data
+ * — and says what to do rather than what went wrong, because a run that has burned three
+ * statements on errors needs the next call named, not the last one described.
+ */
+const AGENT_READ_BEFORE_REPORT_NOTICE = [
+  "This run answers by reading data and presenting the result, and it has read none: a report resting on the schema alone is scored as having answered nothing, and a statement the database refused is not a reading.",
+  "Your compose_report call was not run. Call run_read_query with a statement that answers the objective, then present_answer with the id of its result, then compose_report.",
+].join(" ");
+
 const AGENT_PRESENT_BEFORE_REPORT_NOTICE = [
   "This run answers by PRESENTING a result, and nothing has been presented yet: a report on its own is scored as having answered nothing.",
   "Your compose_report call was not run. Call present_answer first, with the artifact id of the result that answers the objective, and then call compose_report.",
@@ -3049,14 +3073,14 @@ export async function runInvestigation(
           repeatedly is still held only as many times as its model allows.
         */
         const presented = sofar.events.some((event) => event.kind === "answer-composed");
-        if (hasReading && !presented) {
+        if (!presented) {
+          // Which of the two things is missing decides which sentence is said. Both are held
+          // against the same counter, because they are the same hold at different distances
+          // from an answer and a run should not be able to collect one of each.
+          const text = hasReading ? AGENT_PRESENT_BEFORE_REPORT_NOTICE : AGENT_READ_BEFORE_REPORT_NOTICE;
           presentReminders += 1;
-          await holdCall(call.toolName, AGENT_PRESENT_BEFORE_REPORT_NOTICE);
-          messages.push(
-            prompted
-              ? promptedResultMessage(call, notice(AGENT_PRESENT_BEFORE_REPORT_NOTICE))
-              : toolResultMessage(call, AGENT_PRESENT_BEFORE_REPORT_NOTICE),
-          );
+          await holdCall(call.toolName, text);
+          messages.push(prompted ? promptedResultMessage(call, notice(text)) : toolResultMessage(call, text));
           continue;
         }
       }
