@@ -78,6 +78,28 @@ export interface ProseOptions {
    * affordance in the agent rail follows.
    */
   readonly onApplySql?: (sql: string) => void;
+  /**
+   * A statement the surface AROUND this prose is already displaying verbatim, whose
+   * fenced block is therefore not printed here a second time.
+   *
+   * Measured in Chrome on 2026-08-21. A plan run's closing prose is the text its
+   * statement was read OUT of, so the statement is inside it — and every surface that
+   * rendered that prose reprinted the statement at full weight: the answer card showed
+   * the statement, then the same statement again inside its own "Why this statement"
+   * fold, and the transcript entry a few hundred pixels below printed it a third time.
+   * One draft, three copies, each with its own clipboard.
+   *
+   * Keyed on the TEXT and not on a flag, deliberately: the recorded deliverable is read
+   * out of this prose by `readPlanStatement`, which joins and trims a fence's lines
+   * exactly as `closeFence` below does, so the block that matches is the block the
+   * ledger took — and every OTHER block still renders, because a second block is not a
+   * second copy of anything.
+   *
+   * It suppresses one BLOCK and never a word of prose. The text around it is rendered
+   * unchanged, and a caller's "Copy all" takes the string the model wrote rather than
+   * this rendering of it, so nothing here narrows what a user can carry away.
+   */
+  readonly cardedStatement?: string;
 }
 
 /**
@@ -185,13 +207,17 @@ export function renderProse(text: string, options: ProseOptions = {}): ReactNode
     bullets = [];
   };
 
+  const carded = options.cardedStatement?.trim();
+
   const closeFence = (): void => {
     if (fence === null) return;
     const code = fence.lines.join("\n");
+    const statement = code.trim();
     // A fence with nothing in it is not a code block, for the same reason a heading
     // with nothing after it is not a heading: it would render an empty box offering a
-    // copy of nothing.
-    if (code.trim().length > 0) {
+    // copy of nothing. And the one block the caller is already showing verbatim is not
+    // printed either — see `cardedStatement`.
+    if (statement.length > 0 && statement !== carded) {
       blocks.push(<CodeBlock key={key} code={code} tag={fence.tag} onApplySql={options.onApplySql} />);
       key += 1;
     }

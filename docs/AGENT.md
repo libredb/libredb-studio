@@ -1784,7 +1784,7 @@ model passed the capability probe**; for anybody else the answer is that there i
 | --- | --- | --- |
 | **Any AI at all, for an EMBEDDED user** — one working panel and one exported component, which is less than "both tabs worked". The embedded shell rendered both TABS regardless of `features.ai`, and only Autopilot was behind them: `AIAutopilotPanel` had no feature gate, so a libredb-platform user had a fully working Autopilot panel posting to `/api/db/monitoring` and `/api/ai/autopilot` on the HOST's origin. The NL2SQL tab rendered an EMPTY PANE under the default `features.ai: false` — the shell passed `isOpen={features.ai ? isNL2SQLOpen : false}` and the panel returns `null` when it is not open — so what an embedded host lost there is `NL2SQLPanel` itself, exported from `@libredb/studio/components` for a host to mount on its own, plus the tab for a host that had switched `features.ai` on. | Nothing. The rail lives in the standalone shell only; the package carries no agent surface, `WorkspaceFeatures` deliberately gained no agent field, and no package entry point transitively imports `src/lib/agent`. For an embedded user every "what a run does instead" cell below is false, because there is no run. | The removal itself (`5bbea51`, which deletes the export, both render arms and the flag), read against the code it deleted: `git show 5bbea51^:src/workspace/StudioWorkspace.tsx` (the two `features.ai ?` props), `git show 5bbea51^:src/components/NL2SQLPanel.tsx` (`if (!isOpen) return null`), `git show 5bbea51^:src/workspace/types.ts` (`DEFAULT_WORKSPACE_FEATURES.ai: false`); `tests/unit/agent-package-boundary.test.ts`; [The surface in the app](#the-surface-in-the-app). |
 | **A TOOLLESS model drove both panels.** Each posted a prompt and rendered what came back, so any configured model produced an answer — including one that cannot call a tool, which is what a small local `ollama` model usually is. | An agent run is refused before it opens: the start path probes the model, and an established incapability is a `422` naming what could not be established. What such a model can still drive is planning mode, which is toolless by contract: the model there is handed no tool, runs no statement of the user's, writes nothing, and drafts a statement for the user to run themselves. | `src/lib/agent/capability-gate.ts`; `tests/isolated/agent-capability-gate.test.ts`; [What a refused model looks like in the app](#what-a-refused-model-looks-like-in-the-app). |
-| **One click that RAN the model's SQL.** NL2SQL's Run and Autopilot's Execute pushed model-authored SQL — including DDL — straight into the studio's execution path. | The rail hands a statement to the **editor** and never runs it: an explicit "Apply to editor" on a drafted statement, a recommendation, or a plan run's drafted statement. Nothing in the runtime executes a proposed statement. A plan run's statement is offered through its own card rather than the shared control, because that card is also what marks a statement the guard did not classify as read-only and names the tables the inventory does not hold — the marking and the offer have to arrive together. | `src/components/agent/timeline.ts` — the `statement-drafted` and `recommendation` entries carry `applySql`, and `plan-statement-drafted` deliberately does not; `src/components/agent/AgentRail.tsx` — the plan statement card; `tests/evals/query-optimization.test.ts` — the recommendation is recorded and no `CREATE INDEX` reaches the database. |
+| **One click that RAN the model's SQL.** NL2SQL's Run and Autopilot's Execute pushed model-authored SQL — including DDL — straight into the studio's execution path. | The rail hands a statement to the **editor** and never runs it: an explicit "Apply to editor" on a drafted statement, a recommendation, or a plan run's drafted statement. Nothing in the runtime executes a proposed statement. A plan run's statement is offered through the answer card rather than the shared control, because that card is also what marks a statement the guard did not classify as read-only and names what the inventory does not hold, in the engine's own noun — the marking and the offer have to arrive together, and since the 2026-08-21 redesign that offer exists in exactly one place. | `src/components/agent/timeline.ts` — the `statement-drafted` and `recommendation` entries carry `applySql`, and `plan-statement-drafted` deliberately does not; `src/components/agent/AnswerCard.tsx` — the marked hand-off, and `AgentRail.tsx` withholding every other one; `tests/evals/query-optimization.test.ts` — the recommendation is recorded and no `CREATE INDEX` reaches the database. |
 | **Proposed a statement the run never sent.** NL2SQL's product was a statement, whatever the model wrote. | Only `recommend_change` proposes an unexecuted statement; it accepts `index` or `rewrite`, the statement must match the card it is filed under, and it belongs to the `query-optimization` workflow. An investigation — what a plain-English question opens — cannot propose anything. | `src/lib/agent/tools.ts` (`recommendationSchema`, `matchesCard`, `QUERY_OPTIMIZATION_TOOLS`); `tests/evals/legacy-surface-coverage.test.ts`. |
 | **Read live monitoring.** Autopilot's whole input came from `/api/db/monitoring`: slow queries, index usage, table statistics, cache and connection metrics. | **Restored, and bounded.** `inspect_operations` reads the same provider methods under the `db.operations.read` descriptor, and it reaches ONE workflow: a run opened to Operate. An investigation or an assessment is still offered nothing that reads monitoring, so "the agent can read monitoring" is only true of that workflow. The two deferrals that tracked this — the monitoring half of the M2 tooling entry, and the assessment's missing monitor snapshot — are closed and removed from the backlog. | `src/lib/agent/tools.ts`; `tests/evals/legacy-surface-coverage.test.ts` — the members and the operations they may name are asserted as a set, so a monitoring member under ANY name has to land there; `tests/evals/operations.test.ts` — the arc, on an engine that answers no statement. |
 | **A free-form markdown report**, opening with a performance score out of 100 and closing with configuration advice. | A report is claims, each citing an artifact this run read or the snapshot it captured, verified against the run's own ledger before it is recorded. A number cited to nothing cannot be reported — the citation is what is checked, never the claim's text, so a fabricated score citing a real artifact would be accepted. | `src/lib/agent/tools.ts` (`composeReportTool`); `tests/evals/legacy-surface-coverage.test.ts` — an invented correlation id is refused and the run ends `unanswered (no-report)`. |
@@ -1855,14 +1855,161 @@ mobile layout. Visibility is discovered at runtime from `GET /api/agent/config`:
 unavailable nothing renders and no further agent request is made. The hook reads `body.enabled ===
 true` and nothing else — a refusal, an unreachable server, a body of another shape and the richer
 `{enabled: false, reason, detail}` body all resolve to absent. The rail is imported statically, like
-every other component in this repository, so the six client modules under `src/components/agent/` and
+every other component in this repository, so every client module under `src/components/agent/` and
 `src/hooks/use-agent-capability.ts` — plus `execution-policy.ts`, whose ceilings the meter reads as
 values — are in the standalone bundle either way; what availability governs is what renders and what
 runs, not what was bundled.
 
-The rail shows the run's semantic timeline, a stop control, evidence citations, and a budget meter.
-What each of those says to a user, in the words it actually renders, is
-[`docs/AGENT_GUIDE.md`](./AGENT_GUIDE.md). Two rules govern it:
+The rail shows, from the top down: a **safety strip** stating what the open run executes — or, before
+one, what the selected mode would — the
+objective, the start controls, a folded **Run details** holding the budget meter, and a scroll area
+whose first block is the run's **answer** — the drafted statement or the report with its evidence
+citations — and whose remainder is the semantic timeline. There is no second report section under the
+transcript: the card is the answer. What each of those says to a user, in the words it actually
+renders, is [`docs/AGENT_GUIDE.md`](./AGENT_GUIDE.md).
+
+**The safety strip is one module's reading, in four levels** (`src/lib/agent/posture.ts`, rendered by
+`src/components/agent/SafetyStrip.tsx`). Each level is a pill and a qualifier on one line, and both
+halves are the posture's: the strip owns the palette and the popover and writes no sentence of its
+own.
+
+| Level | The pill says | The qualifier beside it | When |
+| --- | --- | --- | --- |
+| `safe` | *Executes nothing it drafts* | *one schema read grounds it, nothing else reaches the database* | Plan mode, on every engine, with or without the hand-over |
+| `reads` | *Reads only* | the policy row's own per-statement row cap and timeout, *enforced by the engine* | Agent mode on an engine in `AGENT_EXECUTION_ENGINES`, hand-over not ticked |
+| `widened` | *Reads only, and one statement in your editor* | `AGENT_HANDOVER_BUDGET`'s row cap, *no time limit, same read-only session* | The same, with the hand-over consented for the run being opened |
+| `blocked` | *Cannot execute on `<engine>`* | *plan mode drafts here, and the operations workflow still runs* | Agent mode on any other engine |
+| `blocked` | *Cannot execute yet* | *no connection is resolved, so no engine has been established* | Agent mode with no connection resolved |
+
+Four levels and five readings: `blocked` covers both arms that execute nothing and have no bound to
+state, and they stay separate arms because "has no read-only statement path" is a claim about an
+engine, which a panel that has resolved no connection has not seen. Not one engine name and not one
+figure is typed in the module — the names come from `AGENT_EXECUTION_ENGINES` through
+`getDBConfig().label` and the figures from the policy rows, which is the rule `hero-proof.tsx`
+follows and #425 is the record of what typing them costs. `blocked` also takes no hue of its own
+(`fg-muted`): nothing executes and there is nothing to widen, so it is a dead end rather than a
+hazard, and the amber pre-start card below — which renders for an unsupported engine and not for an
+unresolved connection (`engineUnsupported`, `AgentRail.tsx`) — is where that reading is alerted.
+
+**The qualifier is visible, and that is a claim rather than a layout choice.** A bare "executes
+nothing" overclaims: on the dialects `CATALOG_PLANS` serves (`src/lib/agent/context-snapshot.ts`)
+plan mode's grounding capture IS a catalog read, and `engine-support.ts` says in its own header that
+copy compressing these facts overclaims. So both halves sit on the same line, the row wraps rather
+than truncating — a qualifier cut off mid-clause is the same overclaim with an ellipsis on it — and
+the ⓘ carries the whole claim rather than the missing half. That claim node is rendered whether or
+not the popover is open (`sr-only` while shut, and the strip's `aria-describedby` target either way),
+so the ⓘ is never the only route to it.
+
+Both `blocked` readings are presentation of a refusal the provider factory already decides, and they
+gate nothing — **Start** stays live, because the `operations` workflow sends no statement and runs on
+every engine. What the strip does not do is make the offered-then-withdrawn run impossible: an agent
+run started there still spends a model turn before it ends `engine-unsupported`, which is what is
+left of B38.
+
+**One module, two questions, because with a run open they stop having the same answer.** The strip
+says what the OPEN run does, and both of its axes come off that run (`describedMode` and
+`handoverConsented`, `AgentRail.tsx`): the mode from `AgentRunTimeline.mode`, which
+`foldLedgerEntries` reads off the run's header or off `run-started`, and the hand-over from what the
+open request carried (`openedWithHandover`). Neither may come from the control beside it, and each
+fails differently if it does. The mode toggle is frozen only while a start is HELD — deliberately,
+because it decides the next run — so it is live again the moment this one opens, and reading it there
+let one click on **Plan** restate a running agent run as *Executes nothing it drafts*.
+`openedWithHandover` is a record and is never cleared, so it is gated on the run still being open, or
+the strip goes on promising *one statement in your editor* after the widened run has ended while the
+next consent step defaults the tick to OFF. The same reading writes the workflow-and-mode line under
+the objective, so the panel's two descriptions of one run cannot disagree.
+
+The amber engine notice asks the other question — what pressing Start would do — and takes the
+SELECTION (`selectionPosture`): the toggle's mode, and the hand-over tick only where a consent step is
+actually standing. The notice renders *on* the selected mode and offers the way out of that selection,
+so the run's reading there would put plan mode's body inside a card whose whole subject is the engine
+agent mode cannot execute on. The two readings coincide whenever no run is open, which is most of the
+panel's life; they differ in the one state where a box and a run both exist, an objective being edited
+beside a run that is still going.
+
+A muted line under **Start** used to ask that question in words, and it is gone: it printed the
+strip's own headline and qualifier joined, about 200 pixels below the strip (L7, measured 2026-08-21),
+so one 384-pixel panel carried the same sentence twice. The strip is permanent and states it for the
+selected mode already. The login hero's claim — *plan mode drafts one statement, runs nothing* /
+*agent mode runs read-only on \<engines\>* — was the considered alternative and was not taken: it
+describes both modes at once, for a visitor who has selected neither.
+
+The strip exists because the rail answered this question in six places at once — a mode description, a
+consent paragraph, a budget note, a guard line, a refusal and a claim under the answer — and a user
+comparing two of them could not tell which one bounded the run.
+
+Three rules govern the layout, beyond the two below. The **answer card is a second rendering of
+entries the ledger already holds** — no field on it is one a run did not record. It has one state per
+ending the ledger can reach and no state that is not one of them: a plan run's drafted statement with
+what the guard made of it (`agent-answer-plan`), an agent run's quoted claim with its citations
+(`agent-answer-report`), the step a live run is on with its spend (`agent-answer-running`), a plan run
+that drafted nothing (`agent-answer-refused`) and a run that failed having produced nothing
+(`agent-answer-failed`). Which of them it is, is decided by the run's **product and not by its
+status**, in the one exported reading `answerCardState` — a run can end `failed` holding a drafted
+statement or a composed report, because `conclude()` records both before `service.finish()` and is
+called with `failed` for a model timeout, an exhausted deadline and the turn ceiling. The ending is
+then stated beside the product, so `agent-answer-failed` is the whole card only on a run that
+produced nothing. The transcript withholds its copies from that same reading rather than from the
+ledger: the rail asks the card what it is rendering, so a suppression cannot outlive what it
+de-duplicates. The
+**`Apply to editor` control for a run's own statement exists exactly once**, in that card, carrying the
+accessible name `applyStatementName` builds; the transcript entry it duplicates keeps its headline,
+its timestamp and a one-line guard summary and reprints neither the statement nor the guard's
+paragraph, because an unmarked control against the statement is the silent hand-off the marking exists to
+prevent.
+
+**What that suppression covers was settled by driving the built rail, not by reading it** (the four
+runs of 2026-08-21, against live PostgreSQL, live MongoDB and live Gemini). Four things it did not
+cover, each measured:
+
+- the whole report was rendered **twice** — the card and a surviving `agent-report` section at the
+  foot of the scroll area — so the model's claim printed twice and the report path offered *three*
+  `Apply to editor` controls for one statement, none of them named. That section is gone: its claims
+  are the card's, and its citations are the card's `Evidence` fold, label, the ledger's own detail and
+  the statement each rests on. Its `Show result` was itself a second offer of the artifact the
+  `Result stored` entry offers under the same live-run rule;
+- an agent run records **every statement it executes** (`statement-drafted`) and the answer's `sql` is
+  the statement of the step whose artifact it presents — so the same text reached the ledger twice.
+  The transcript therefore withholds a hand-off for the statement the card is handing over **by text**
+  and not by entry id, which is what keeps it a de-duplication: a read the run took along the way
+  whose statement is not the answer's keeps its own control;
+- the closing prose **holds** the fenced statement, so every surface rendering that prose reprinted
+  it — in the card's own `Why this statement` and again in the transcript entry. `renderProse`'s
+  `cardedStatement` suppresses that one block where the statement is displayed beside it, the same
+  shape as the per-block control's own suppression. Nothing is edited: every other fence renders, and
+  `Copy all` takes the string the model wrote rather than this rendering of it;
+- and the guard's reading was stated **three times** inside ~400px, twice at length. The entry whose
+  statement the card holds now drops its `detail` paragraph and keeps the one-line summary; the full
+  text is where it already was, in the card's ⓘ under its own test ids.
+
+**Two more the same drive measured, neither of them a duplication.** The card's grounding chips —
+`${n} ${noun.plural} read` and the schema fingerprint — are read off the run's **capture** and not off
+the guard's reading, so they are stated on every engine. They had been a second prop beside the
+timeline, and a claim a caller can forget to pass is a claim that disappears: on MongoDB the answer
+carried the amber `not checked` chip **alone**, while the chrome fold two lines below it said *Schema
+captured — 5 collections* (L4). That is backwards where it costs most — where nothing examined the
+draft, the inventory it was drafted against is the only grounding claim left. And a citation chip
+names its evidence at **chip length**: a correlation id is a UUID, so `Artifact
+722b2a10-e3f2-4b9c-8177-367359a21500` filled a 384-pixel chip and left no room for what the ledger
+knows about that read (L8). `AgentEvidenceCitation` therefore carries `shortLabel` beside `label` —
+the identifier cut to the eight characters the schema-snapshot label was already written at, both
+spelled by one author in `citationOf` — and the chip prints that plus the ledger's own `detail`, while
+the whole identifier stays in the `Evidence` fold. `detail` is what states, in text and not in amber
+alone (WCAG 1.4.1), whether the rail resolved the citation at all; the two readings keep separate test
+ids, because a shared one would pass on either sentence.
+
+**The answer is followed, not the newest entry.** The scroller follows the newest entry while the run
+is live and brings the answer into view — once — when the run reaches a terminal status, because the
+newest entry at that moment is `run-finished` while the thing the user waited for is at the top: both
+paths were measured landing at their own scroll maximum with the card entirely above the fold. A
+reader who scrolled away is left where they are in both regimes. The card stays inside the scroller
+deliberately — lifted out, a long report would take a fixed share of a 384-pixel panel away from the
+transcript. And the **budget meter is folded**: the gauges (`agent-budget`) and all three of its claims —
+`agent-budget-limits`, `agent-budget-reserve`, `agent-budget-caveats` — live inside
+`agent-run-details`, open by default only while the run is live, with each claim behind an ⓘ on the
+figure it qualifies and still in the accessibility tree whether or not that popover is open.
+
+Two further rules govern it:
 
 - **A control the service cannot honour is not rendered at all.** There is no disabled-looking button
   standing in for a capability, which is why the rail stops a run but does not offer pause/resume
@@ -2073,8 +2220,10 @@ src/lib/agent/
 └── untrusted-content.ts  # the prompt-side fence for database content
 
 src/app/api/agent/        # the six route paths above
-src/components/agent/     # AgentRail.tsx, timeline.ts (event fold), hydration.ts,
-                          #   use-agent-run.ts, use-agent-artifact.ts
+src/components/agent/     # AgentRail.tsx, SafetyStrip.tsx, AnswerCard.tsx,
+                          #   ConsentCard.tsx, rail-parts.tsx (what the rail and the
+                          #   answer card both render), timeline.ts (event fold),
+                          #   hydration.ts, use-agent-run.ts, use-agent-artifact.ts
 src/hooks/                # use-agent-capability.ts (the flag probe; the rail's own hooks
                           #   sit beside it above)
 ```

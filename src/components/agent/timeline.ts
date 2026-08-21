@@ -211,6 +211,23 @@ export interface AgentTimelineItem {
    * Only the editor control goes. The block still renders and still copies.
    */
   readonly planStatementRecorded?: true;
+  /**
+   * Set on the entries that are the run's own scaffolding rather than anything it
+   * found: the header it opened with, the drive starting, and the schema capture that
+   * grounded it.
+   *
+   * The FOLD names them, for the reason it names `isAnswer` rather than leaving the
+   * browser to infer it: a surface that collapsed them by matching their headlines
+   * would be reading the app's own copy as a protocol, and the first reworded
+   * headline would silently promote a chrome entry to a substantive one. What is
+   * chrome is a property of the EVENT KIND, which is a fact this function holds and a
+   * rendered string is not.
+   *
+   * It is a presentation hint and not a claim: every one of these entries is still
+   * folded in full, still carries its detail and its quoted objective, and a surface
+   * is free to render them exactly as it renders the rest.
+   */
+  readonly chrome?: true;
 }
 
 /**
@@ -234,6 +251,18 @@ export interface AgentEvidenceCitation {
   readonly id: string;
   /** The app's own words: which artifact or which capture. */
   readonly label: string;
+  /**
+   * The same words, at the length a chip can carry them.
+   *
+   * A correlation id is a UUID in a real run — `Artifact
+   * 722b2a10-e3f2-4b9c-8177-367359a21500` was measured filling a chip in a 384px
+   * panel on 2026-08-21, leaving no room for `detail`, which is the half that says
+   * what the read actually returned. So the identifier is cut to the eight characters
+   * this rail prints an identifier at everywhere else, `label` keeps the whole one for
+   * the surface that has the width for it, and both are written by one author so they
+   * cannot come to name different things.
+   */
+  readonly shortLabel: string;
   /** The app's own words about what the ledger holds for it. */
   readonly detail: string;
   /** False when this timeline holds no entry the reference names. */
@@ -262,6 +291,24 @@ export interface AgentRunReport {
   readonly claims: readonly AgentReportClaimView[];
 }
 
+/**
+ * What the run's LAST schema capture covered, for the surfaces that state the
+ * provenance of an answer rather than the chronology of the run.
+ *
+ * The last one and not the first: a run can capture more than once, and what grounded
+ * the answer is the reading that was in hand when it was composed. The fields are the
+ * capture event's own — `tableCount` included, which is the name of a SHAPE rather than
+ * a claim about the world, so the WORD a reader sees comes from `noun` (#414).
+ *
+ * Null for a run that captured nothing, which is a different state from a run that
+ * captured an empty schema and must not be rendered as one.
+ */
+export interface AgentCaptureView {
+  readonly fingerprint: string;
+  readonly tableCount: number;
+  readonly noun: AgentInventoryNoun;
+}
+
 export interface AgentRunTimeline {
   readonly items: readonly AgentTimelineItem[];
   /** Folded from the ledger, never from what a request once returned. */
@@ -272,6 +319,19 @@ export interface AgentRunTimeline {
    * T10a left it out precisely because nothing read it then.
    */
   readonly stopRequested: boolean;
+  /**
+   * The mode the run was OPENED in, folded from whichever of the two entries carries it
+   * — the header, or the `run-started` event for a stream joined after the header has
+   * gone past. `agent` for a ledger holding neither, which is the wording such a fold
+   * has always been described with.
+   *
+   * It is on the run record because the rail's own `mode` state is a SELECTION: the
+   * header toggle is frozen only while a start is held, so it is live again the moment
+   * the run opens and decides the NEXT run. A surface describing THIS run — the safety
+   * strip's posture, and the workflow-and-mode line under the objective — reads it here,
+   * or one click on Plan relabels a run that is executing reads.
+   */
+  readonly mode: AgentRunMode;
   /**
    * Why the run failed, when the server classified a cause; null otherwise.
    *
@@ -310,6 +370,8 @@ export interface AgentRunTimeline {
   readonly workflowReading: AgentRunWorkflowReading;
   /** The run's composed report, or null while it has composed none. */
   readonly report: AgentRunReport | null;
+  /** What the run's schema capture covered, or null for a run that captured nothing. */
+  readonly capture: AgentCaptureView | null;
 }
 
 const LEDGER_KINDS: ReadonlySet<string> = new Set<AgentLedgerEntry["kind"]>([
@@ -763,10 +825,11 @@ function describeEvent(
 ): Omit<AgentTimelineItem, "id" | "atMs"> {
   switch (event.kind) {
     case "run-started":
-      return { tone: "neutral", headline: `Run started in ${event.mode} mode` };
+      return { tone: "neutral", chrome: true, headline: `Run started in ${event.mode} mode` };
     case "context-captured":
       return {
         tone: "progress",
+        chrome: true,
         headline: "Schema captured",
         // Counted in the engine's own word (#414). The rail said "17 tables" over a
         // Redis keyspace while the sidebar beside it said Key Patterns and the model
@@ -975,6 +1038,7 @@ function describeEntry(
       return {
         atMs: entry.atMs,
         tone: "neutral",
+        chrome: true,
         // The workflow is named only when the header carries one. A ledger written
         // before the field says exactly what it always said, rather than being
         // narrated as an investigation it never declared itself to be.
@@ -1033,17 +1097,36 @@ interface LedgerIndex {
   readonly captures: ReadonlyMap<string, CitedCapture>;
 }
 
+/**
+ * How much of an identifier a surface too narrow for the whole one shows.
+ *
+ * Not a new convention: the schema-snapshot label below has been written at this
+ * length since it was added, and the answer card prints a capture's fingerprint at it.
+ * Named once so the artifact label cut to the same length is visibly the same rule
+ * rather than a second guess at what fits.
+ */
+const SHORT_IDENTIFIER_CHARS = 8;
+
 function citationOf(reference: AgentEvidenceReference, id: string, index: LedgerIndex): AgentEvidenceCitation {
   const locator = reference.locator === undefined ? {} : { locator: reference.locator };
 
   if (reference.source === "artifact") {
     const artifact = index.artifacts.get(reference.correlationId);
-    const label = `Artifact ${reference.correlationId}`;
-    if (artifact === undefined) return { id, label, detail: UNRESOLVED_DETAIL, resolved: false, ...locator };
+    /*
+      One author for the word, so the whole identifier and the chip-length one cannot
+      drift into naming different things — the reason `shortLabel` is derived here at
+      all rather than by whoever renders the chip.
+    */
+    const name = (identifier: string): string => `Artifact ${identifier}`;
+    const label = name(reference.correlationId);
+    const shortLabel = name(reference.correlationId.slice(0, SHORT_IDENTIFIER_CHARS));
+    if (artifact === undefined)
+      return { id, label, shortLabel, detail: UNRESOLVED_DETAIL, resolved: false, ...locator };
     const sql = index.statements.get(artifact.stepId);
     return {
       id,
       label,
+      shortLabel,
       detail: `${artifact.rowCount} ${artifact.rowCount === 1 ? "row" : "rows"} via ${artifact.operationId}`,
       resolved: true,
       artifactId: reference.correlationId,
@@ -1053,11 +1136,15 @@ function citationOf(reference: AgentEvidenceReference, id: string, index: Ledger
   }
 
   const capture = index.captures.get(reference.fingerprint);
-  const label = `Schema snapshot ${reference.fingerprint.slice(0, 8)}`;
-  if (capture === undefined) return { id, label, detail: UNRESOLVED_DETAIL, resolved: false, ...locator };
+  // Already written at chip length, so the two labels are the same string: a
+  // fingerprint is this product's own value and nothing reads more of it than this.
+  const label = `Schema snapshot ${reference.fingerprint.slice(0, SHORT_IDENTIFIER_CHARS)}`;
+  if (capture === undefined)
+    return { id, label, shortLabel: label, detail: UNRESOLVED_DETAIL, resolved: false, ...locator };
   return {
     id,
     label,
+    shortLabel: label,
     detail: `${capture.tableCount} ${capture.tableCount === 1 ? capture.noun.singular : capture.noun.plural}`,
     resolved: true,
     ...locator,
@@ -1135,6 +1222,8 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
   const artifacts = new Map<string, CitedArtifact>();
   const statementsByStep = new Map<string, string>();
   const captures = new Map<string, CitedCapture>();
+  /** The run's grounding, for the surfaces that state where an answer came from. */
+  let capture: AgentCaptureView | null = null;
 
   /*
     What this run's engine calls the rows of its inventory (#414), carried through the
@@ -1180,6 +1269,10 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
     never saw either has always shown the agent wording, and this must not change
     what such a ledger reads as. The default is only reachable for a ledger whose
     beginning the rail does not hold.
+
+    It is also what the rail describes an OPEN run with, on the strip and on the line
+    under the objective — see `AgentRunTimeline.mode` for why a selection cannot answer
+    that question.
   */
   let mode: AgentRunMode = "agent";
 
@@ -1237,6 +1330,9 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
         // itself recorded rather than in the one the entry before it was written with.
         noun = event.noun ?? TABLE_INVENTORY_NOUN;
         captures.set(event.fingerprint, { tableCount: event.tableCount, noun });
+        // Overwritten rather than kept, so a run that captured twice reports the
+        // reading that was in hand when it finished. See `AgentCaptureView`.
+        capture = { fingerprint: event.fingerprint, tableCount: event.tableCount, noun };
       } else if (event.kind === "statement-drafted") statementsByStep.set(event.stepId, event.sql);
       else if (event.kind === "report-composed") claims = event.claims;
       else if (event.kind === "tool-completed") {
@@ -1309,6 +1405,7 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
     items,
     status,
     stopRequested,
+    mode,
     failureReason,
     workflowType,
     workflowSource,
@@ -1319,5 +1416,6 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
       { id: "repairs", label: "Repair attempts", used: repairs, limit: AGENT_MAX_REPAIR_ATTEMPTS, unit: "count" },
     ],
     report: claims === null ? null : reportOf(claims, { artifacts, statements: statementsByStep, captures }),
+    capture,
   };
 }

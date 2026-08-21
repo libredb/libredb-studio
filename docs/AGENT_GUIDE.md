@@ -401,14 +401,86 @@ report as unanswered.
 
 ## What you see while a run goes
 
+**Under the header, one line always says what reaches your database.** While a run is open that is
+the *run's* reading, taken from its own record; before one, and once one has ended, it is what
+pressing **Start** would do. It is five readings and not a mood, and the qualifier beside the pill is
+part of the claim rather than a footnote:
+
+| The pill says | Beside it | When |
+| --- | --- | --- |
+| *Executes nothing it drafts* | *one schema read grounds it, nothing else reaches the database* | **Plan** mode, on every engine — production included. The one reach is the schema capture that grounds the draft: metadata only, no data rows |
+| *Reads only* | *200 rows and 10 s per statement, enforced by the engine* | **Agent** mode on an engine whose provider implements a database-native read-only statement path |
+| *Reads only, and one statement in your editor* | *500 rows, no time limit, same read-only session* | The same, with **auto-execute** ticked for the run being opened — and it stays that reading while that run is going |
+| *Cannot execute on `<engine>`* | *plan mode drafts here, and the operations workflow still runs* | **Agent** mode on any other engine. The run would end `engine-unsupported` before its first statement |
+| *Cannot execute yet* | *no connection is resolved, so no engine has been established* | **Agent** mode with no connection resolved. Nothing has been read, so the panel does not claim to know which engine you are on |
+
+Those two figures are the ones the server is enforcing, and they are the same on every workflow — the
+strip is shown before a run has one, so it states the pair every workflow row shares rather than
+guessing at a row. The **500** is the editor's own limit, which is what auto-execute widens to.
+
+**While a run is open, both halves describe that run.** A run's mode is fixed when it opens and its
+own header says which one, so switching the toggle beside a run that is going decides what the *next*
+run will be and leaves this line where it is — it does not restate a running agent run as *Executes
+nothing it drafts*. Auto-execute is frozen the same way, to the run that was opened with it. Once the
+run has ended there is no run to describe, so the line answers what pressing **Start** would do again
+— and it stops saying *one statement in your editor*, because the next run's tick starts unticked.
+
+The ⓘ at the end of the row opens the whole claim behind whichever of those is showing, and that text
+is readable to a screen reader whether or not the popover is open. On *Cannot execute on `<engine>`*
+an amber card appears above **Start** with the same facts and a **Switch to Plan** button — **and
+Start is not disabled**, because the refusal belongs to the provider factory and the **Operate**
+workflow sends no statement at all, so it runs on those engines exactly as it does anywhere else. Any
+other workflow started there anyway still ends `engine-unsupported` — after a model turn, and before
+its first statement. The strip tells you first; it does not stand in the way.
+
+**While a run is open the objective is a line rather than a box.** The question is settled — it is on
+the run's own header, and every entry below was framed with it — so it reads as one line with the
+run's own workflow and mode under it and an **Edit** control beside it. A screen reader announces that
+line as *the objective this run was opened with*, which is the label the box carried. Edit puts that
+same question back in the
+box, which is where refining it starts; pressing **Start** then opens a *new* run with whatever you
+made of it. When the run ends, the box comes back on its own.
+
+**The run's outcome is the first thing in the scroll area, above the transcript.** It is a second
+rendering of entries the timeline already holds, so there is nothing on it a run did not record: in
+Plan mode the drafted statement with what the guard made of it, in Agent mode the model's own quoted
+claim with the citations it rests on, while the run goes the step it is on and what it has spent, and
+on the two endings that are not answers — a refusal, a failure — the run's own words for it. What the
+run PRODUCED is what the block shows, not how the run ended: a run can reach its time or step limit
+just after drafting a statement, and the statement, the guard's reading and the one **Apply to
+editor** are all still there, with `Run failed` and the reason stated under them. It
+scrolls away with everything else rather than being pinned, because a fixed block would take a third
+of the panel from the transcript underneath it.
+
+**What the answer rests on is stated on every engine.** Under a drafted statement, two of the chips
+are the run's grounding rather than a verdict on the draft: how many rows the inventory held, in the
+engine's own noun — *5 collections read* — and the first 8 characters of that snapshot's fingerprint,
+the same pair the `Schema captured` entry carries. They come from the capture and so they are there
+whatever the guard could make of the statement. That matters most where the guard could make nothing
+of it: on an engine whose statements are not SQL the only other chip is the amber *not checked*, and
+the inventory the statement was drafted against is then the only grounding claim left on the card.
+
+**What a run cost is folded away; its answer is not.** `Run details` is the one fold between the Start
+row and everything that scrolls, and it is shut unless a run is live — its summary still carries the
+figures that move, so how far in a run is takes nothing to read. See
+[The budget meter's numbers](#the-budget-meters-numbers) for what is inside it. The answer is the part
+that is open, because it is what you asked for; the spend is what it took to get there.
+
 The rail's timeline is a fold over the run's ledger, one line per recorded event
 (`foldLedgerEntries`, `timeline.ts:1018-1189`). Before anything has happened it says *"No activity
 yet. A run's steps appear here as they are recorded."*
 
+**The three entries that only say a run began are folded** — `Run opened`, `Run started` and
+`Schema captured` collapse into one dim *Run setup* line that expands to all three, rendered in full,
+your quoted objective included. On a Plan run that is three of five lines, and the two that matter
+were starting below the fold. That summary line counts entries, and a counter is not progress, so it
+is excluded from what a screen reader is told as the run goes: the entries below it are announced as
+they arrive, exactly as before.
+
 | Headline | When |
 | --- | --- |
-| `Run opened in <mode> mode for <workflow>` | The run's own header. Your objective is shown quoted underneath. |
-| `Schema captured` | The run read the catalog once: table count and the first 8 characters of the snapshot fingerprint |
+| `Run opened in <mode> mode for <workflow>` | The run's own header. Your objective is shown quoted underneath. Folded under *Run setup* |
+| `Schema captured` | The run read the catalog once: how many rows the inventory held, in the engine's own noun — tables, collections, key patterns, datasources — and the first 8 characters of the snapshot fingerprint. Folded under *Run setup* |
 | `Statement drafted` | The model wrote SQL. The statement is shown quoted, with the model's stated reason |
 | `Tool invoked` / `Result stored` | The call, then its outcome: rows, columns, elapsed ms, and the artifact id |
 | `Refused by policy` | The operation layer denied it. Shown by deny code — there is no engine text, because a denial produced none |
@@ -419,8 +491,8 @@ yet. A run's steps appear here as they are recorded."*
 | `Result stored` … *"A moment, not a history"* | Operate only: an operational reading, with the caveat that it describes an instant already past |
 | `Answer composed` | The run named one stored result as its answer and said how to show it — as a table, or as a chart of a named type. A chart's caption is the model's own prose and is shown quoted; the columns never appear in the application's own sentence, because they are engine text |
 | `Report composed` | How many claims, each citing evidence |
-| `Closing statement` | The model's closing prose. It cites nothing and claims nothing — a Plan run's whole output, an Agent run's aside |
-| `Statement drafted` / `Statement drafted — not classified as a read` / `Statement drafted — not examined by the statement guard` | Plan mode: the one statement the run wrote, on its own card — the statement verbatim, any table it names that your schema does not have, and **Apply to editor**. The second headline is a statement the guard did not classify as read-only, and its reason is shown beside it: that can mean the statement writes, and it can equally mean the guard could not settle the text. The third is a draft on an engine whose statements are not SQL, where the guard is not a reader of that language and examined nothing — no reason is shown, because there was no objection to show. Nothing runs under any of the three |
+| `Closing statement` | The model's closing prose. It cites nothing and claims nothing — a Plan run's whole output, an Agent run's aside. On a Plan run that drafted a statement, this prose is the text that statement was read out of, so the block holding it is not printed here a second time: the statement is in the answer above, once. Every other word of the prose is there, and **Copy all** carries the whole thing, fence included |
+| `Statement drafted` / `Statement drafted — not classified as a read` / `Statement drafted — not examined by the statement guard` | Plan mode: the one statement the run wrote. **The statement itself, any name it uses that your schema does not have, and Apply to editor are in the answer at the top of the rail** — this entry keeps the headline, the timestamp and one line summarising what the guard made of it, and reprints neither the statement nor the guard's paragraph, so there is exactly one place the statement is offered to your editor and it is the one carrying the guard's marks. The second headline is a statement the guard did not classify as read-only, and its reason travels with it: that can mean the statement writes, and it can equally mean the guard could not settle the text. The third is a draft on an engine whose statements are not SQL, where the guard is not a reader of that language and examined nothing — no reason is shown, because there was no objection to show. Nothing runs under any of the three |
 | `No statement drafted` | A Plan run that could not answer from your schema, with what was missing. A legitimate ending, not a failure |
 | `Stop requested` | You pressed Stop; *"the run takes no further database step; work already in hand, such as a report, still finishes"* |
 
@@ -435,9 +507,15 @@ application stops speaking. Only those five forms are interpreted; links, tables
 stay the characters the model typed. Nothing on that path touches an HTML parser: it is built as
 React nodes, so a model that writes `<img src=x onerror=…>` has written text and nothing else.
 
-**The timeline stays at its newest entry** while you are at the bottom of it, so a run's report does
-not arrive below the fold. Scroll up to read an earlier step and it stops following — the next entry
-leaves you where you are — until you scroll back down.
+**The timeline stays at its newest entry while the run is going**, so a step does not arrive below the
+fold. Scroll up to read an earlier one and it stops following — the next entry leaves you where you
+are — until you scroll back down.
+
+**When the run ends, the answer is what you are left looking at.** The newest entry at that point is
+the run finishing, and the thing you waited for is at the top of the scroll area — so the rail brings
+it into view instead of holding the bottom of the transcript. It happens once, when the run reaches
+its ending, and not to a reader who had scrolled away: from there you are left where you are, in this
+regime as in the other.
 
 Two controls appear under an entry only when there is something to act on **and** the shell can act:
 
@@ -462,11 +540,17 @@ before, and while the run is live the entry's own **Show result** still brings t
 dismiss the panel. This is not the rail acting on your behalf in the sense the rule above forbids:
 nothing is executed, and the rows are ones the run already read on its own bounded read-only path.
 
-At the bottom, once a report exists, a **Report** section lists each claim as the model's own quoted
-prose with its citations under it — `Artifact <id>` with the row count and the statement that
-produced it, or `Schema snapshot <fingerprint>` with the table count. A citation the rail cannot
-resolve in what it has read says so in amber rather than looking checked
-(`UNRESOLVED_DETAIL`, `timeline.ts:967`).
+**A report is read in the answer at the top, and nowhere else.** Each claim is the model's own quoted
+prose; the chips under it name what it cites — the read's identifier at the length a chip can hold it,
+the model's own pointer into that evidence, and what the run's own record says that read returned, so
+a chip states its evidence rather than only naming it; and `Evidence` folds out each citation in full
+— `Artifact <id>`, with the whole identifier this time, the row count and the statement that produced
+it, or `Schema snapshot <fingerprint>` with the count in the engine's own noun. There is no second **Report**
+section at the foot of the rail: it rendered the same claims and the same citations again, which is
+how one statement came to be offered to your editor three times over. A citation the rail cannot
+resolve in what it has read says so rather than looking checked — in words and not only in amber, on
+the chip in the answer as well as in the evidence beneath it, because a gap in what a run established
+is not a thing to say in a colour (`UNRESOLVED_DETAIL`, `timeline.ts:967`).
 
 ---
 
@@ -620,9 +704,11 @@ failure whose reason is in the server log.
 
 ## The budget meter's numbers
 
-The meter above the timeline shows **three gauges, and it shows only what the server actually
-enforces and the ledger actually records** (`AgentRail.tsx:1967-2023`, gauges built in
-`timeline.ts:1182-1186`):
+**The meter is folded away under `Run details`**, above the timeline, and it opens itself while a run
+is live. Shut, its summary still carries the figures that move — how many steps the run has recorded,
+and its statement and database-time spend — so nothing has to be opened to see how far in a run is.
+Open, it shows **three gauges, and it shows only what the server actually enforces and the ledger
+actually records** (gauges built in `timeline.ts`):
 
 | Gauge | Reads | The limit, and where it comes from |
 | --- | --- | --- |
@@ -630,9 +716,11 @@ enforces and the ledger actually records** (`AgentRail.tsx:1967-2023`, gauges bu
 | **Database time** | `used / 90.0 s` on an investigation | `maxTotalRunMs`. **Database time only** — the elapsed time completed reads reported, not the wall clock |
 | **Repair attempts** | `used / 3` | `AGENT_MAX_REPAIR_ATTEMPTS`. Only statements that failed **at the database** consume one; a policy denial does not |
 
-Under them, one line states the three ceilings that nothing durable counts against, so they are
-given as ceilings rather than as gauges: *"Each statement gets 10.0 s, each drive 7.5 min and at
-most 36 model turns."*
+Under them, three ⓘ controls carry the claims that qualify those figures — **What is counted**,
+**Ceilings** and **Report reserve** — each on the figure it is about, each opening the same sentence
+it has always been, and each readable to a screen reader whether or not it is open. *Ceilings* is the
+three the server enforces and nothing durable counts against, so they are given as ceilings rather
+than as gauges: *"Each statement gets 10.0 s, each drive 7.5 min and at most 36 model turns."*
 
 **Every number on the meter is the one the server is enforcing on THIS run**, because the ceilings
 differ per workflow and both halves of the meter read the workflow off the run's own header. So the
@@ -665,7 +753,7 @@ for nginx, ingress-nginx and the common PaaS routers.
 
 Before any run is open there is no header to read, and what the meter says then depends on whether
 the workflow is decided yet. Name one under **Advanced** and it states that workflow's own ceilings.
-Leave it on **Automatic** and it states none of them — *"Every ceiling below is per workflow, and
+Leave it on **Automatic** and it states none of them — *"Every ceiling here is per workflow, and
 Automatic decides the workflow from your objective when the run opens — so the figures are stated
 once the run has one, and by the run's own record."* An Analyze run is bounded twice as long as an
 Investigate one, so a figure shown before the workflow is known would be a number nothing is
@@ -682,7 +770,8 @@ partial answer rather than a missing one. The bar does not move when it happens:
 cite something the run read, so a forced report is a cited report or it is no report at all. Nothing
 is asked of a **Plan** run, which has no report tool to call. The meter says this under the ceilings.
 
-Then the caveat, which is the part worth reading twice (`AgentRail.tsx:2018-2023`):
+Then the caveat, which is the part worth reading twice — behind the **What is counted** ⓘ, beside the
+gauges it is about:
 
 - **Every ceiling is per drive.** A run resumed after a restart starts each of them again, so these
   totals can read past a single drive's ceiling.

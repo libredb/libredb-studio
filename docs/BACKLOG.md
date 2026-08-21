@@ -2429,9 +2429,22 @@ rather than disabled, and `canHandOver` withholds the auto-execute checkbox from
 runner. Agent mode on an unsupported engine is the one place a capability is offered and then
 withdrawn after it was taken up.
 
-Done when the rail states the engine's unsuitability before a run is started — the same way it
-already states an unresolvable connection — with a test that pins the message and one that pins
-Start being unavailable for it.
+The telling half landed with the rail redesign (2026-08-21) and the defect did not. The safety strip
+now reads *Cannot execute on `<engine>`* before anything is started, an amber pre-start card
+(`agent-engine-unsupported-notice`) carries the same facts with a **Switch to Plan** button, and both
+are pinned by tests. What did NOT land is the second clause of the original "done when", and it was
+refused rather than deferred: **Start must stay live**, because the `operations` workflow sends no
+statement at all and runs on every engine (#411), so a disabled Start would withhold a workflow over
+a claim that is not true of it. So a user who starts an analytical run there is now warned first, and
+still spends a model turn and a run id to reach `engine-unsupported`.
+
+Done when an agent run whose workflow needs a read-only statement path is refused on such an engine
+at the point the run is opened — from the connection's own type, with the sentence the rail already
+shows, and without a run id or a drive turn being spent — while a workflow that sends no statement
+still opens there. The workflow has to be known first, so under **Automatic** the refusal lands after
+the classify call and before the open; that call is ceilinged separately and is not the turn this
+entry is about. Tests: the refusal itself, an operations run still opening on the same connection,
+and no drive reaching the model.
 
 ### B39. An analysis run cannot say "this database cannot answer that" without fabricating a read
 

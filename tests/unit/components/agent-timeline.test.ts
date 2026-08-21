@@ -755,6 +755,89 @@ describe("foldLedgerEntries", () => {
     expect(view.items[0].headline).toBe("Run started in planning mode");
   });
 
+  /**
+   * What is SCAFFOLDING and what a run found, named by the fold (the rail redesign of
+   * 2026-08-21).
+   *
+   * The rail collapses the run's chrome behind one summary line, and the flag is why it
+   * can: matching headlines would make the app's own copy a protocol, and the first
+   * reworded headline would silently promote a chrome entry to a substantive one. What is
+   * chrome is a property of the event KIND, which is a fact this function holds.
+   */
+  describe("which entries are the run's own scaffolding", () => {
+    test("the header, the drive starting and the schema capture are all chrome", () => {
+      const view = foldLedgerEntries([
+        OPENED,
+        event({ kind: "event", event: { kind: "run-started", atMs: 2, mode: "agent" } }),
+        event({
+          kind: "event",
+          event: { kind: "context-captured", atMs: 3, fingerprint: "abcdef1234567890", tableCount: 12 },
+        }),
+      ]);
+
+      expect(view.items.map((item) => item.chrome)).toEqual([true, true, true]);
+      // And they are still folded in FULL: the flag is a presentation hint, not a filter,
+      // so the objective quoted under the header is still there to read.
+      expect(view.items[0].quoted).toBe("why is checkout slow");
+      expect(view.items[2].detail).toBe("12 tables, fingerprint abcdef12");
+    });
+
+    test("anything the run FOUND is not chrome", () => {
+      const view = foldLedgerEntries([
+        event({
+          kind: "event",
+          event: {
+            kind: "statement-drafted",
+            atMs: 4,
+            stepId: "s1",
+            sql: "SELECT 1",
+            rationale: "count the orders",
+          },
+        }),
+        event({ kind: "event", event: { kind: "run-finished", atMs: 9, status: "succeeded" } }),
+      ]);
+
+      expect(view.items.every((item) => item.chrome === undefined)).toBe(true);
+    });
+  });
+
+  /**
+   * The run's grounding, folded once for the surfaces that state where an answer came
+   * from rather than the order it arrived in.
+   */
+  describe("the capture a run was grounded on", () => {
+    const captured = (fingerprint: string, tableCount: number, noun?: unknown): AgentLedgerEntry =>
+      event({
+        kind: "event",
+        event: { kind: "context-captured", atMs: 3, fingerprint, tableCount, ...(noun === undefined ? {} : { noun }) },
+      } as AgentLedgerEntry & { kind: "event" });
+
+    test("it carries what the capture covered, in the word the capture recorded", () => {
+      const view = foldLedgerEntries([captured("ctx_druid00", 3, { singular: "datasource", plural: "datasources" })]);
+
+      expect(view.capture).toEqual({
+        fingerprint: "ctx_druid00",
+        tableCount: 3,
+        noun: { singular: "datasource", plural: "datasources" },
+      });
+    });
+
+    test("a run that captured nothing has no capture, which is not an empty one", () => {
+      expect(foldLedgerEntries([OPENED]).capture).toBeNull();
+    });
+
+    test("a run that captured twice reports the reading it finished with", () => {
+      // A citation is resolved by fingerprint and keeps every capture; this field is the
+      // provenance of the ANSWER, and the answer was composed on the last reading.
+      const view = foldLedgerEntries([captured("ctx_first0", 2), captured("ctx_second", 9)]);
+
+      expect(view.capture?.fingerprint).toBe("ctx_second");
+      expect(view.capture?.tableCount).toBe(9);
+      // The default word, for a ledger written before the field: unchanged.
+      expect(view.capture?.noun).toEqual({ singular: "table", plural: "tables" });
+    });
+  });
+
   test("a captured schema reports what it covers, not the inventory", () => {
     const view = foldLedgerEntries([
       event({
@@ -1262,6 +1345,27 @@ describe("foldLedgerEntries — the budget meter", () => {
     }
   });
 
+  /**
+   * The run's OWN mode, which the fold already read for its wording and now states.
+   *
+   * The rail describes an open run from this rather than from the header toggle, which is
+   * live again the moment the run opens: a click on Plan beside a run that is executing
+   * reads used to relabel that run as plan mode on the safety strip and on the objective
+   * line beside it.
+   */
+  test("the run's own mode is folded from whichever entry carries it", () => {
+    expect(foldLedgerEntries([OPENED]).mode).toBe("agent");
+    expect(foldLedgerEntries([{ ...OPENED, mode: "planning" }]).mode).toBe("planning");
+    // A stream joined after the header has gone past reads it off `run-started`, which is
+    // the same pair of entries the wording is folded from.
+    const started = event({ kind: "event", event: { kind: "run-started", atMs: 2, mode: "planning" } });
+    expect(foldLedgerEntries([started]).mode).toBe("planning");
+    // And a ledger with neither reads as agent, because that is what such a fold has
+    // always been described with. The default is only reachable for a ledger whose
+    // beginning the rail does not hold.
+    expect(foldLedgerEntries([]).mode).toBe("agent");
+  });
+
   test("a run that has done nothing has consumed nothing", () => {
     const view = foldLedgerEntries([OPENED]);
 
@@ -1430,6 +1534,69 @@ describe("foldLedgerEntries — the report and its citations", () => {
     expect(citation.label).toBe("Artifact corr_9");
     expect(citation.detail).toBe("3 rows via sql.query.read");
     expect(citation.quoted).toBe("SELECT 1");
+  });
+
+  /*
+    A correlation id is a UUID in a real run, and a chip in a 384px panel cannot hold one:
+    `Artifact 722b2a10-e3f2-4b9c-8177-367359a21500` was measured filling one on 2026-08-21
+    with no room left for `detail`, which is the half that says what the read returned. So
+    the fold carries both readings of the same words — whole for the surface with the width
+    for it, and cut to the length the schema-snapshot label has always been written at for
+    the one without.
+  */
+  test("a citation names its evidence at two lengths, and the short one keeps the label's words", () => {
+    const view = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-completed",
+          atMs: 5,
+          stepId: "step_1",
+          artifact: {
+            correlationId: "722b2a10-e3f2-4b9c-8177-367359a21500",
+            runId: "arun_1",
+            operationId: "sql.query.read",
+            summary: { rowCount: 3, columnNames: ["a"], elapsedMs: 4 },
+          },
+        },
+      }),
+      reportOf([
+        {
+          claim: "checkout is slow",
+          evidence: [{ source: "artifact", correlationId: "722b2a10-e3f2-4b9c-8177-367359a21500" }],
+        },
+      ]),
+    ]);
+
+    const [citation] = view.report?.claims[0].citations ?? [];
+    expect(citation.label).toBe("Artifact 722b2a10-e3f2-4b9c-8177-367359a21500");
+    expect(citation.shortLabel).toBe("Artifact 722b2a10");
+  });
+
+  test("an unresolved artifact citation is named at both lengths too, because it is still a reference", () => {
+    const view = foldLedgerEntries([
+      reportOf([
+        {
+          claim: "checkout is slow",
+          evidence: [{ source: "artifact", correlationId: "722b2a10-e3f2-4b9c-8177-367359a21500" }],
+        },
+      ]),
+    ]);
+
+    const [citation] = view.report?.claims[0].citations ?? [];
+    expect(citation.resolved).toBe(false);
+    expect(citation.shortLabel).toBe("Artifact 722b2a10");
+  });
+
+  test("a schema citation's two labels are one string: a fingerprint is already read at that length", () => {
+    const view = foldLedgerEntries([
+      CAPTURED,
+      reportOf([{ claim: "orders is wide", evidence: [{ source: "context-snapshot", fingerprint: "fingerprint_9" }] }]),
+    ]);
+
+    const [citation] = view.report?.claims[0].citations ?? [];
+    expect(citation.shortLabel).toBe("Schema snapshot fingerpr");
+    expect(citation.shortLabel).toBe(citation.label);
   });
 
   test("an artifact read without a drafted statement cites the read alone", () => {

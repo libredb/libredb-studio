@@ -189,3 +189,73 @@ describe("renderProse code hand-off to the editor", () => {
     expect(queryByTestId("prose-code-apply")).toBeNull();
   });
 });
+
+/**
+ * A block a surface beside this prose is already showing verbatim (L2, L5).
+ *
+ * Measured in Chrome on 2026-08-21: a plan run's closing prose HOLDS the fenced
+ * statement, so every surface that rendered that prose reprinted the statement — the
+ * answer card showed the statement, then the same statement again inside its own
+ * `Why this statement` fold, and the transcript entry below printed it a third time,
+ * each copy with its own clipboard.
+ *
+ * So the caller may name the ONE block it is already showing, and that block is not
+ * printed a second time. It is the same shape the per-block editor control's
+ * suppression already has — the caller says what the surface beside it is offering —
+ * and it is deliberately keyed on the TEXT rather than on a flag: the recorded
+ * deliverable is read out of the prose by `readPlanStatement`, which joins and trims
+ * the fence's lines exactly as this does, so the block that matches is the block the
+ * ledger took.
+ *
+ * What is NOT suppressed is the prose. Every other fence still renders, and `Copy all`
+ * — which takes the string the model wrote, not this rendering of it — still carries
+ * the whole text including the block that was not printed.
+ */
+describe("renderProse and a statement already shown beside it", () => {
+  test("does not print the one block a caller says is displayed beside it", () => {
+    const { container, queryByTestId } = render(
+      <div>
+        {renderProse(`Here is the read:\n${FENCE}sql\nSELECT 1;\n${FENCE}\nIt counts the rows.`, {
+          cardedStatement: "SELECT 1;",
+        })}
+      </div>,
+    );
+
+    expect(container.querySelector("pre")).toBeNull();
+    expect(queryByTestId("prose-code-copy")).toBeNull();
+    // The words around it are untouched: one block is not printed, nothing is edited.
+    expect(container.textContent).toContain("Here is the read:");
+    expect(container.textContent).toContain("It counts the rows.");
+  });
+
+  test("prints every other block, because only the displayed one is a second copy", () => {
+    const { container, getAllByTestId } = render(
+      <div>
+        {renderProse(`${FENCE}sql\nSELECT 1;\n${FENCE}\n${FENCE}sql\nSELECT 2;\n${FENCE}`, {
+          cardedStatement: "SELECT 1;",
+        })}
+      </div>,
+    );
+
+    expect(getAllByTestId("prose-code-copy")).toHaveLength(1);
+    const printed = [...container.querySelectorAll("pre")].map((block) => block.textContent);
+    expect(printed).toEqual(["SELECT 2;"]);
+  });
+
+  test("matches the block the ledger took, which is trimmed as this one is", () => {
+    // `readPlanStatement` records `lines.join("\n").trim()`, so a fence whose content is
+    // padded is the SAME statement as the one recorded from it. Comparing the raw text
+    // would leave the padded copy printed beside the card showing it.
+    const { container } = render(
+      <div>{renderProse(`${FENCE}sql\n  SELECT 1;  \n${FENCE}`, { cardedStatement: "SELECT 1;" })}</div>,
+    );
+
+    expect(container.querySelector("pre")).toBeNull();
+  });
+
+  test("a caller that names nothing gets every block, which is what every other caller is", () => {
+    const { getAllByTestId } = render(<div>{renderProse(`${FENCE}sql\nSELECT 1;\n${FENCE}`, {})}</div>);
+
+    expect(getAllByTestId("prose-code-copy")).toHaveLength(1);
+  });
+});
