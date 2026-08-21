@@ -56,5 +56,17 @@ export const MISTRAL_SMALL3_2_24B: AgentModelProfile = {
     "empty-evidence, which is not one cause.",
   perWorkflow: { "data-analysis": { temperature: 0.7, topP: 0.9 } },
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  /*
+    Third model to be given it, and on the weakest evidence of the three — said plainly so the
+    next reader can delete it if the measurement does not come.
+    `lfm2:24b` earned it on a loop of twenty-eight identical shape refusals collapsing to one.
+    `granite4.1:3b` earned it twice over: with the example its report landed where two refusals
+    had stopped it, and with the example on `recommend_change` as well the cell locked 5/5.
+    This model has the same shape of loss on two cells — `present_answer` refused
+    INVALID_TOOL_INPUT on data-analysis, and query-optimization losing across `no-report`,
+    `no-plan-comparison` and `empty-evidence` — but no ledger yet showing it take an example and
+    recover. It is switched on to find out, and the answer belongs in this comment either way.
+  */
+  refusalExamples: true,
   notices: { ...BASELINE_NOTICES },
 };
