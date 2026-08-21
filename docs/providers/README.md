@@ -73,16 +73,20 @@ the support column records how much of the product actually worked:
 | SingleStore | `mysql` | Partial | SingleStoreDB 9.1.1 (advertises MySQL 5.7.32) | Ten of the fifteen surfaces answer. **Five failures share one cause and it is ours, not SingleStore's** - Test Connection, health, the overview and the monitoring dashboard all fail with the same engine message, `This command is not supported in the prepared statement protocol yet`, and the Explain panel fails with a syntax error on `EXPLAIN FORMAT=JSON`; the provider sends every statement through the binary prepared protocol, and all six statements measured succeed on the text protocol (D8 in [`../BACKLOG.md`](../BACKLOG.md)). **Row counts and sizes are missing rather than wrong**: a 2000-row table reads `rowCount 0` and `0 B` in the object browser, the table statistics and the storage panel, against a ground truth of 2000 rows and 77046 bytes measured four independent ways (`SELECT count(*)`, `SHOW TABLE STATUS`, `information_schema.OPTIMIZER_STATISTICS.ROW_COUNT`, and the EXPLAIN plan's `est_table_rows`). SingleStore leaves `information_schema.TABLES` zeroed and keeps the real numbers elsewhere, and running `ANALYZE` does not change what the panels read, so a populated table looks empty. The index panel lists 4 rows for 2 tables against the baseline's 2, because SingleStore auto-creates a shard key on every table and reports it as an index named `__SHARDKEY` with index type `SHARD`, beside `PRIMARY`. **Foreign keys do not exist**: `ALTER TABLE ... ADD FOREIGN KEY` fails with `ERROR 2752`, and with `SET GLOBAL ignore_foreign_keys = ON` a `CREATE TABLE` carrying an inline foreign key is accepted and the constraint silently stripped - the one shape where you could believe you have a key you do not. The header badge reads **Slow** rather than Online, which is not latency but the same failing health request. Of the maintenance actions Analyze works; Optimize and Check fail with the same prepared-statement error. Permission errors are identical to MySQL, with the server's own text intact, and under a `SELECT`-only role the table list correctly showed only the granted table. No version is displayed anywhere, because the panel carrying it is one of the unavailable ones; were it fixed it would read MySQL 5.7.32, the wire version, not SingleStoreDB 9.1.1. **No licence key is needed** - the dev image self-licenses with `ROOT_PASSWORD` as the only variable set, which is what issue #424 recorded as the reason this engine had gone unprobed. Plan mode grounds a run here, through the provider-inventory path. Probed on the `0.2.82` dev image only. |
 | CockroachDB | `postgres` | Partial | CockroachDB CCL v26.2.5 | Editor, error handling, performance metrics, slow queries and sessions all work. The **object browser and every size/health panel are blank**: `pg_total_relation_size()`, `pg_size_pretty()`, `pg_postmaster_start_time()` and `pg_tablespace_location()` do not exist there. |
 | Apache Cloudberry (incubating) | `postgres` | Partial | PostgreSQL 14.4 (Apache Cloudberry 2.1.0-incubating) | Twelve of the fifteen surfaces answer. The monitoring dashboard, table statistics and index statistics all fail with one engine error, `query plan with multiple segworker groups is not supported`, which is Cloudberry's MPP planner restriction rather than a version gap. **Row counts and sizes after `ANALYZE` are correct** (2000 rows for 2000; 576 KB for 589824 bytes), so this is not the kind of engine whose statistics mislead; what they read before `ANALYZE` was not probed. Two `pg_ext_aux` tables appear in the browser, so it lists 4 objects for 2 user tables, and the overview's database size reads 62 MB against roughly 900 KB of user tables. **A foreign key is read back as if enforced and is not**: Cloudberry accepts the constraint with a warning that it will not enforce it, and an orphan insert then succeeds. **The agent cannot ground a run here**: the usual `gpadmin` login is refused because the execution profile reads a superuser as too broad, and a least-privilege role is refused at 289 rows against a 200-row budget, 282 of them in Cloudberry's own `gp_toolkit`. What the run reports for the first of those is that the engine offers no read-only execution profile, which describes the role rather than the engine (B47). The three failing panels report the planner error as a connection error, which the connection is not. Apache publishes build images only, so the probe ran on a third-party image. |
+| ScyllaDB | `cassandra` | Partial | ScyllaDB 2026.2.4-0.20260810.e54224b8cebb (advertises Cassandra 3.0.8) | Eight of the thirteen surfaces this provider offers answer - thirteen rather than the fifteen this column counts elsewhere, because the Cassandra provider offers neither cancellation nor `EXPLAIN` on either engine. **Five failures share one cause, and so does Test Connection**: the overview, health, performance metrics, active sessions and the monitoring dashboard all read Cassandra's `system_views` virtual tables, ScyllaDB has no `system_views` keyspace at all, and all five come back with the same verbatim `Keyspace system_views does not exist`; Test Connection fails with them because it calls the same health surface - and **the dialog will not save the connection either**, because Establish Connection is gated on that same call, so a ScyllaDB connection has to arrive seeded or admin-managed today (measured in a browser; StarRocks and SingleStore sit on the same gate and neither row records it). The monitoring dashboard renders one **Connection Error** page reading the keyspace message, which the connection is not, and the header badge reads **Slow** rather than Online for the same failing health request. Apache Cassandra 5.0.9, probed in the same pass, answered all thirteen. **The SQL editor and the object browser work in full**: statements run, and every one of 18 CQL types read back byte-identically to that Cassandra baseline, `bigint` 9007199254740993, `decimal` 1.25, `duration` `3h20m`, `varint`, `blob`, `inet`, `date`, `time` and the collections included. No version is displayed anywhere, because the panel carrying it is one of the failing ones; were it fixed it would read Apache Cassandra 3.0.8 - the compatibility number `system.local` publishes - and not ScyllaDB 2026.2.4, which lives in `system.versions` where the provider does not look. **The object browser lists one extra table per secondary index**: ScyllaDB backs an index with a view that `system_schema.tables` reports, so a keyspace with 3 user tables and 1 index lists 4 objects (`customers_country_idx_index`) where Cassandra listed 3 for the same schema. **Error classes are identical to Cassandra even though the server's wording is not** - a missing table is `unconfigured table no_such_table` rather than `table no_such_table does not exist`, a missing column `Unrecognized name nope` rather than `Undefined column name nope in table probe.customers` - because the provider classifies on the driver's error code and not on the message text. Row counts and sizes are blank for the same reason as on Cassandra, and the panels read `N/A` rather than a fabricated zero. **Creating a keyspace needs `NetworkTopologyStrategy` on the 2026.2 line**: `SimpleStrategy` is refused outright with `SimpleStrategy doesn't support tablet replication`, so the setup recipe in [cassandra.md §10](./cassandra.md#reproducing-the-live-pass) does not run unchanged; 2025.1 still accepts it, with a warning. ScyllaDB 2025.1.14-0.20260612.103b84070f3b was probed in the same pass and behaved identically on every surface, so this row describes both the 2025.1 and the 2026.2 line - but only those two builds, and only a single-node container. |
 | Materialize | `postgres` | Query editor only | Materialize 26.37.0 | No pg statistics catalog and no size functions, and `MATERIALIZED` is reserved, which our schema query uses. Editor only. |
 | RisingWave | `postgres` | Query editor only | RisingWave 3.0.3 | No pg statistics catalog, differently typed size functions, and a parameterised `LIMIT` is rejected. Editor only. |
 
-**ScyllaDB is deliberately absent**, and it is the clearest illustration of the rule above: it speaks
-the CQL wire protocol and `cassandra-driver` connects to it, which is exactly the kind of "connects,
-therefore supported" claim this table exists to refuse. The parts of the Cassandra provider most
-likely to differ are the parts that are *not* the wire — `system_views` is Cassandra's own set of
-virtual tables, `gossip_generation` is a Cassandra field, and Scylla's version string is not
-`release_version`-shaped. Until a probe runs, the honest state is *untested*, not *unsupported*
-([cassandra.md §11](./cassandra.md#11-scylladb-is-not-this-provider--yet)).
+**ScyllaDB was the standing illustration of the rule above, and its probe has now run**, which is why
+it has a row rather than a paragraph. It speaks the CQL wire protocol and `cassandra-driver` connects
+to it, which is exactly the kind of "connects, therefore supported" claim this table exists to refuse
+— and what the probe measured is that the parts which differ are the parts that are *not* the wire.
+Of the three doubts [cassandra.md §11](./cassandra.md#11-scylladb-is-a-partial-relative-one-absent-keyspace-costs-five-surfaces) raised,
+two held and one was refuted: `system_views` is absent, which is the whole of what makes the row
+above Partial, and the version string is not `release_version`-shaped, while `gossip_generation` does
+exist on ScyllaDB and answers. Nothing about how a name gets in has changed: a probe against a real
+instance through the real provider is still the only way, and until one runs the honest state is
+*untested*, not *unsupported*.
 
 Reproduce any row with the `compat` profile of the container fixture, then connect as the driver in
 the second column:
@@ -90,6 +94,11 @@ the second column:
 ```bash
 docker compose -f database-compose.yml --profile compat up -d
 ```
+
+**ScyllaDB needs one connection field the other rows here do not**, the same one Apache Cassandra
+needs: `Local Data Center` must be `datacenter1`, and the driver refuses to open a session while it is
+empty. The fixture's service is `scylla`, reachable on `localhost` port **9142** with no user and no
+password, and the probe keyspace is `probe`.
 
 **Absent from the table for two different reasons**, which are worth keeping apart: an engine we
 could not reach is not the same as an engine we reached and refused.
@@ -165,7 +174,7 @@ provider's integration pass.
 | Elasticsearch | `elasticsearch` | localhost | 9200 | *none* | *none* | *none* | — |
 | OpenSearch | `opensearch` | localhost | **9201** | *none* | *none* | *none* | — |
 | Apache Trino | `trino` | localhost | 8080 | *none* | *none* | `tpch` (catalog) | — |
-| Apache Cassandra | `cassandra` | localhost | **19042** | *none* | *none* | `probe` (keyspace) | — |
+| Apache Cassandra | `cassandra` | localhost | 9042 | *none* | *none* | `probe` (keyspace) | — |
 | SQLite | *no service* | — | — | — | — | a file path on the Studio host | — |
 | LibreDB | *no service* | — | — | — | — | a directory on the Studio host | — |
 
@@ -181,9 +190,9 @@ with authentication off, so a password breaks a connection that works without on
 Data Center` must be `datacenter1` - a stock single node names its own data centre that, and the
 driver refuses to open a session when the field is empty rather than defaulting to the only data
 centre it can see ([cassandra.md §3.4](./cassandra.md#34-localdatacenter-is-a-required-connection-field-and-nothing-else-here-has-one)).
-Its port is the second thing to watch: the compose service publishes the native protocol on **19042**
-rather than 9042, while the connection dialog prefills the default, so leaving the port untouched
-answers `ECONNREFUSED`. `docker port libredb-cassandra` prints the mapping.
+The port needs nothing: the compose service publishes the native protocol as `9042:9042`, which is
+also what the connection dialog prefills, so the field can be left untouched. `docker port
+libredb-cassandra` prints the mapping.
 
 **The two embedded providers have no container, and that is the whole point of them.** SQLite takes a
 path resolved *in the Studio process* and LibreDB a directory; neither reaches a network. Both also

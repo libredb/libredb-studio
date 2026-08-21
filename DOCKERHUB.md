@@ -131,7 +131,7 @@ Fourteen external engines share one interface, and three of them are read-only b
 
 ### Engines with no provider of their own
 
-Eighteen further engines speak the wire protocol of one of the fourteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has fifteen rows rather than eighteen because engines that behave identically share a row; all eighteen are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+Nineteen further engines speak the wire protocol of one of the fourteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has sixteen rows rather than nineteen because engines that behave identically share a row; all nineteen are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |
@@ -149,6 +149,7 @@ Eighteen further engines speak the wire protocol of one of the fourteen drivers 
 | Apache Cloudberry (incubating) | `postgres` | Partial. Row counts and sizes are correct after `ANALYZE`, but the monitoring dashboard and the table and index statistics all fail on one MPP planner restriction, and a foreign key is read back as though enforced when the engine does not enforce it |
 | OceanBase | `mysql` | Partial - fourteen of the fifteen surfaces return without throwing but only twelve do their job; health fails outright because the tenant has no `performance_schema` database at all, every size reads 0 B, and row counts are correct only once `ANALYZE TABLE` has run |
 | SingleStore | `mysql` | Partial - ten of the fifteen surfaces answer, and five of the failures are ours rather than SingleStore's: the provider's prepared-statement protocol takes down Test Connection, health, the overview, the monitoring dashboard and Explain. Row counts and sizes are missing rather than wrong, a 2000-row table reading 0 rows and 0 B, and foreign keys do not exist at all |
+| ScyllaDB | `cassandra` | Partial - the editor and the object browser work in full, and all 18 CQL types read back byte-identically to the Apache Cassandra 5.0.9 probed in the same pass; Test Connection and the overview, health, performance-metrics, active-session and monitoring panels all fail because ScyllaDB has no `system_views` keyspace at all - and the dialog will not save the connection either, so it has to be seeded or admin-managed today. The object browser lists one extra table per secondary index, no version is displayed anywhere, and creating a keyspace on the 2026.2 line needs `NetworkTopologyStrategy` because `SimpleStrategy` is refused |
 | Materialize · RisingWave | `postgres` | Query editor only |
 
 Details, probed versions and each caveat: [`docs/providers/README.md`](https://github.com/libredb/libredb-studio/blob/main/docs/providers/README.md).

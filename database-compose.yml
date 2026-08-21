@@ -878,6 +878,48 @@ services:
     ports:
       - "27018:27017"
 
+  # -- CQL wire ------------------------------------------------------------
+
+  # Pinned to the exact build the Phase 4 probe ran against, the same rule the
+  # cassandra service above follows: `system.local.release_version` here is `3.0.8`,
+  # a Cassandra compatibility number, and the real build is only in
+  # `system.versions` (`2026.2.4-0.20260810.e54224b8cebb`).
+  #
+  # The compatibility row this reproduces covers TWO lines, and only one of them is
+  # here: `scylladb/scylla:2025.1` (`2025.1.14-0.20260612.103b84070f3b`) was probed in
+  # the same pass and behaved identically on every surface. To re-measure that half,
+  # run the same image tag by hand on a free host port - `9242` was the probe's - with
+  # these same flags; a second service would publish a name the docs table does not.
+  #
+  # The command flags are the sizing that was measured to work, not a
+  # conservative guess. `--memory 2G` inside a 3 GiB container is REFUSED outright
+  # with `insufficient physical memory: needed 2095054848 available 1488977920`;
+  # `--smp 1 --memory 1G --overprovisioned 1 --developer-mode 1` came up in well
+  # under a minute, against ~206 seconds for the cassandra image. `mem_limit: 4g`
+  # is the container the working combination was measured in, pinned for the same
+  # reason the cassandra service pins its own.
+  #
+  # The other thing a probe here must know: the 2026.2 line REFUSES SimpleStrategy
+  # (`SimpleStrategy doesn't support tablet replication`), so a keyspace has to be
+  # created with `{'class':'NetworkTopologyStrategy','datacenter1':1}` and the
+  # recipe in docs/providers/cassandra.md does not run unchanged.
+  #
+  # 9142 on the host because the cassandra service already publishes 9042; the
+  # native port is 9042 in the container on both, so this is a collision on THIS
+  # machine, not a fact about the product. No auth, data centre `datacenter1`.
+  #
+  # No healthcheck: none was measured on this image, and a wrong one would be worse
+  # than none - see the cassandra service above, where the readiness condition that
+  # actually matters was found by timing a cold start.
+  scylla:
+    image: scylladb/scylla:2026.2.4
+    container_name: libredb-scylla
+    profiles: ["compat"]
+    command: --smp 1 --memory 1G --overprovisioned 1 --developer-mode 1
+    ports:
+      - "9142:9042"
+    mem_limit: 4g
+
 volumes:
   # Named volumes only for Druid: it is the one service here whose processes must share
   # state (deep storage) and whose task history is worth surviving a restart. Everything

@@ -346,6 +346,58 @@ re-run. So six surfaces and two maintenance actions are candidates for recovery,
 SingleStore and StarRocks rows in `docs/providers/README.md` are re-probed against that build.
 
 ---
+### D9. The Cassandra monitoring surfaces throw when `system_views` is absent, and a registered engine loses six of them
+
+Four reads in `src/lib/db/providers/sql/cassandra/introspect.ts` query Cassandra's `system_views`
+virtual tables with no path for that keyspace not existing: `getOverview` (371),
+`getPerformanceMetrics` (426), `getActiveSessions` (455) and `getHealth` (533). `getMonitoringData` is
+the fifth failure, because `base-provider.ts:99` aggregates those. Test Connection is the sixth:
+`POST /api/db/test-connection` calls `provider.getHealth()`
+(`src/app/api/db/test-connection/route.ts:33`).
+
+Measured 2026-08-21/22 against live `scylladb/scylla:2026.2.4` and `scylladb/scylla:2025.1` through
+`createDatabaseProvider({type:"cassandra"})`, surface by surface, with `cassandra:5.0.9` in the same
+pass. All thirteen surfaces this provider offers pass on 5.0.9 — thirteen because it offers neither
+cancellation nor `EXPLAIN`. On both ScyllaDB builds the same five fail with the same verbatim error,
+`Keyspace system_views does not exist`, and the other eight pass: `connect`, `query`, `getSchema`,
+`getSlowQueries`, `getTableStats`, `getIndexStats`, `getStorageStats`, `disconnect`. ScyllaDB has no
+`system_views` keyspace at all; `system.local`, `system_schema.*` and `system.size_estimates` all
+exist and answer.
+
+**The seventh failure is what makes this a blocker rather than a blemish, and only a browser pass
+found it.** `handleConnect` (`src/hooks/use-connection-form.ts:346`) gates the SAVE on that same
+request — `if (result.success) onConnect(conn)` — so Establish Connection refuses too and nothing is
+stored. A ScyllaDB connection cannot be created through the connection dialog at all; the browser
+pass reached the editor only through a seeded, admin-managed connection. **Not ScyllaDB-only:**
+StarRocks and SingleStore are registered relatives whose health surface also fails (D8), so the same
+gate applies to them by inspection — measured for ScyllaDB, inferred for those two, recorded in
+neither row.
+
+Two more surfaces were measured while there. The monitoring dashboard renders one *Connection Error*
+page reading `Keyspace system_views does not exist`, which the connection is not — the same
+mislabelling the Cloudberry row records. The header badge reads *Slow* with the title *Connection:
+degraded*, which is the failing health request rather than latency.
+
+**The provider does degrade a monitoring read to empty — but only on the wrong condition.** §3.6 of
+`docs/providers/cassandra.md` records the rule as measured: a monitoring read degrades on a
+`permission` denial (Cassandra error 8448) **and on nothing else**, deliberately, so that a typo in
+this provider's own CQL is not hidden by an empty panel. An absent keyspace is not a denial, so it
+propagates.
+
+**The recovery is plausible and unmeasured, and the difference matters.** Widening the degradation
+contract to cover an absent `system_views` would plausibly lift the ScyllaDB row in
+`src/lib/db/compatibility.ts` from `partial` to `full` and make the dialog work. Nothing was changed
+and no panel was re-run, so that is a candidate, not a result. It is also not free: it widens the
+condition §3.6 argues for narrowing, so a `system_views` typo in our own CQL must still surface as a
+failure rather than an empty panel.
+
+**Done when:** an absent `system_views` keyspace degrades those five reads the way a denial does, a
+`system_views` typo still fails loudly, the dialog can create a ScyllaDB connection — or the save
+stops being gated on health, which is the wider question and should be answered for StarRocks and
+SingleStore in the same pass — and the ScyllaDB row in `docs/providers/README.md` is re-probed
+against that build.
+
+---
 ### U17. Four things the Cassandra provider declined to do
 
 The provider shipped in #424 Phase 4 with four bounded absences. None is a defect — each is the
@@ -382,17 +434,23 @@ port silently, which is worse.
 It is a profile, not a plan, and `supportsExplain` is false. If it is ever surfaced it must not be
 called EXPLAIN and must not be wired to `explainFormat`.
 
-**Also open: ScyllaDB has no gate-4 probe.** It speaks the CQL wire and `cassandra-driver` connects
-to it, which is exactly the "connects, therefore supported" claim `src/lib/db/compatibility.ts`
-refuses to record. The parts most likely to differ are the ones that are not the wire: `system_views`
-is Cassandra's own virtual-table set, `gossip_generation` is a Cassandra field, and Scylla's version
-string is not `release_version`-shaped.
+**ScyllaDB now has its gate-4 probe, and two of the three doubts held.** Probed 2026-08-21/22
+against `scylladb/scylla:2026.2.4` and `scylladb/scylla:2025.1`, both through
+`createDatabaseProvider({type:"cassandra"})` surface by surface, with `cassandra:5.0.9` in the same
+pass. What held: there is no `system_views` keyspace at all, and the version string is not
+`release_version`-shaped — `system.local.release_version` reads `3.0.8` and the real build lives in
+`system.versions`, which this provider does not read. What was refuted: `gossip_generation` exists on
+ScyllaDB and answers. It is registered as a `partial` relative in `src/lib/db/compatibility.ts`; the
+six surfaces it loses are D9, which that change deliberately did not fix.
 
 **And there is no `e2e/cassandra-provider.spec.ts`,** unlike Trino: the container takes about 206
-seconds to reach `nodetool status` UN from cold, longer than any existing e2e fixture waits.
+seconds to reach `nodetool status` UN from cold, longer than any existing e2e fixture waits. The
+ScyllaDB container is ready in well under a minute, so a ScyllaDB-only spec would not be blocked on
+boot time — but the Cassandra spec this item asks for still is, and a spec that never starts the
+Cassandra fixture does not close it.
 
-**Done when:** each of the four has been taken further or judged settled, and ScyllaDB has been
-probed or ruled out.
+**Done when:** each of the four has been taken further or judged settled, and
+`e2e/cassandra-provider.spec.ts` exists or a written reason it cannot exist is recorded here.
 ---
 
 
@@ -763,6 +821,12 @@ the change** — the content block was 489px and the chrome took the rest — so
 slack** and the `mt-auto` above it had nothing to absorb. Any block added anywhere in that column
 scrolls the page at that height. One more row of engine pills would do it too.
 
+**Re-measured with the nineteenth relative, and the figures did not move.** ScyllaDB joining
+`WIRE_COMPATIBLE_ENGINES` adds a name to this same line, and at 1280x800 on the built app the page is
+still 856px against an 800px viewport, still 56px of overflow, the line itself still 50px — the new
+name fell inside the two-line box the eighteen already occupied rather than starting a third line. The
+table above still holds; the next name is the one to re-measure.
+
 Already spent to reduce it: folding the relatives line into the pills' own block instead of the hero's
 32px rhythm (20px), `leading-snug` instead of `leading-relaxed` (12px), and a shorter lead sentence
 (16px). 104px of overflow brought down to 56px.
@@ -1053,6 +1117,29 @@ above.
 
 **Done when:** each listing has been resubmitted through its own channel with copy that matches the
 shipped product.
+
+---
+### DOC4. Three packaging manifests publish "thirteen engines" against fourteen drivers
+
+Found while sweeping the relatives count for the ScyllaDB row, and left out of that change on purpose:
+it is a different denominator with its own history, and these are package-manager manifests rather
+than the marketplace listings DOC3 covers.
+
+| File | Line | Says |
+| --- | --- | --- |
+| `packaging/chocolatey/libredb-studio.nuspec.tmpl` | 31 | "thirteen engines" |
+| `packaging/homebrew/libredb-studio.rb.tmpl` | 12 | "thirteen engines" |
+| `packaging/winget/LibreDB.Studio.locale.en-US.yaml.tmpl` | 16, 19 | "thirteen engines" |
+
+The count they mean is the external drivers, which is **fourteen** since Cassandra landed
+(`EXTERNAL_DATABASE_TYPES.length` in `src/lib/db/compatibility.ts`). All three are published listing
+copy on live channels, so the wrong number is public rather than internal.
+
+Two things to settle rather than bumping the digit, which is the mistake #445 recorded: whether a
+template nothing regenerates from the registry should carry a count at all, and which denominator the
+listing wants — fourteen drivers, or the named products README.md publishes.
+
+**Done when:** each of the four lines states a number that matches the registry or states no number.
 
 ---
 

@@ -29,9 +29,10 @@ import { parse as parseYaml } from "yaml";
  * `redis` was a published engine with no compose service at all, fixed in #426
  * only because someone went looking.
  *
- * The mapping is written out rather than slugged from the name, because two of the
- * services are not the name lowercased: DragonflyDB runs as `dragonfly` and
- * FerretDB as `ferretdb`. A slug function would need those exceptions encoded
+ * The mapping is written out rather than slugged from the name, because not every
+ * service is the name lowercased: DragonflyDB runs as `dragonfly` and ScyllaDB as
+ * `scylla`, both dropping a suffix the name carries. A slug function would need
+ * those exceptions encoded
  * inside it anyway, and it would quietly invent a service name for the next entry
  * instead of failing until a human declares one.
  */
@@ -54,6 +55,7 @@ const COMPOSE_SERVICE_BY_ENGINE: Readonly<Record<string, string>> = {
   DragonflyDB: "dragonfly",
   KeyDB: "keydb",
   FerretDB: "ferretdb",
+  ScyllaDB: "scylla",
 };
 
 describe("wire-compatibility registry", () => {
@@ -71,16 +73,29 @@ describe("wire-compatibility registry", () => {
     expect(SHIPPED_DATABASE_TYPES.length).toBe(new Set(SHIPPED_DATABASE_TYPES).size);
   });
 
-  test("ScyllaDB is not recorded as a Cassandra relative, because no probe ran", () => {
-    // It speaks the CQL wire and `cassandra-driver` connects to it, which is exactly
-    // the "connects, therefore supported" claim this registry exists to refuse. The
-    // parts of the Cassandra provider most likely to differ are the ones that are not
-    // the wire: `system_views` is Cassandra's own virtual-table set, and
-    // `gossip_generation` is a Cassandra field. Until a gate-4 probe runs, the honest
-    // state is untested (#424 Phase 4).
+  test("ScyllaDB is recorded as a partial Cassandra relative, on what the probe measured", () => {
+    // The entry exists because the gate-4 probe ran (2026-08-21/22, #424 Phase 4) and
+    // not because `cassandra-driver` connects - that would be the "connects, therefore
+    // supported" claim this registry refuses. What it measured: ten of the fifteen
+    // surfaces answer, and the five that do not - overview, health, performance
+    // metrics, active sessions, monitoring - all fail with the one verbatim error
+    // `Keyspace system_views does not exist`, which also takes Test Connection down
+    // because it calls getHealth(). That is `partial` and not `query-only`, because the
+    // object browser, column metadata and index metadata all work. The version pinned
+    // here is two strings on purpose: `system.local.release_version` publishes the
+    // Cassandra compatibility number 3.0.8, and the real build lives in
+    // `system.versions`, which the provider does not read. Of the three doubts the
+    // provider doc raised, `system_views` and the version shape held; `gossip_generation`
+    // does exist on ScyllaDB and answers.
     expect(SHIPPED_DATABASE_TYPES).toContain("cassandra");
-    expect(compatibleEnginesFor("cassandra")).toEqual([]);
-    expect(WIRE_COMPATIBLE_ENGINES.map((engine) => engine.name.toLowerCase())).not.toContain("scylladb");
+    const relatives = compatibleEnginesFor("cassandra");
+    expect(relatives.map((engine) => engine.name)).toEqual(["ScyllaDB"]);
+    const scylla = relatives[0];
+    expect(scylla?.via).toBe("cassandra");
+    expect(scylla?.tier).toBe("partial");
+    expect(scylla?.probedVersion).toBe("ScyllaDB 2026.2.4-0.20260810.e54224b8cebb (advertises Cassandra 3.0.8)");
+    expect(scylla?.caveats.some((caveat) => caveat.includes("system_views"))).toBe(true);
+    expect(WIRE_COMPATIBLE_ENGINES.map((engine) => engine.name.toLowerCase())).toContain("scylladb");
   });
 
   test("every entry names a driver we actually ship", () => {

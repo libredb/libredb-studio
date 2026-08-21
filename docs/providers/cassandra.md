@@ -773,13 +773,96 @@ docker compose -f database-compose.yml exec cassandra cqlsh -e "
 
 Then connect with host `localhost`, port `9042`, keyspace `probe`, local data centre `datacenter1`.
 
+For the ScyllaDB pass ([§11](#11-scylladb-is-a-partial-relative-one-absent-keyspace-costs-five-surfaces))
+the service is `scylla` on host port `9142`, and the keyspace has to be created with
+`replication = {'class':'NetworkTopologyStrategy','datacenter1':1}` — the 2026.2 line refuses
+`SimpleStrategy` outright with `ConfigurationException: SimpleStrategy doesn't support tablet
+replication`, so the recipe above does not run unchanged. Readiness is well under a minute rather
+than the ~206 s the Cassandra image needs.
+
 ---
 
-## 11. ScyllaDB is not this provider — yet
+## 11. ScyllaDB is a `partial` relative: one absent keyspace costs five surfaces
 
-ScyllaDB speaks the CQL wire protocol and this driver connects to it. That is *not* enough to record
-it in `src/lib/db/compatibility.ts`: every entry there names a version a live gate-4 probe reported,
-and the parts of this provider most likely to differ are exactly the parts that are not the wire —
-`system_views` is Cassandra's own set of virtual tables, `gossip_generation` is a Cassandra field, and
-Scylla's own version string is not `release_version`-shaped. It needs its own probe, and until then
-the honest state is "untested" rather than "unsupported".
+ScyllaDB speaks the CQL wire protocol and this driver connects to it, and a live gate-4 probe now
+says what that buys. Every one of the thirteen surfaces this provider offers was called separately
+through `createDatabaseProvider({ type: "cassandra" })` against `scylladb/scylla:2026.2.4` (build
+`2026.2.4-0.20260810.e54224b8cebb`) and, in the same pass, against `cassandra:5.0.9` as the baseline.
+`scylladb/scylla:2025.1` (build `2025.1.14-0.20260612.103b84070f3b`) was probed too and behaved
+**identically on every surface**, so the entry in `src/lib/db/compatibility.ts` describes both lines —
+and only these two builds, on a single-node container.
+
+**The whole delta is one cause: ScyllaDB has no `system_views` keyspace at all.** `system.local`,
+`system_schema.*` and `system.size_estimates` all exist and answer; `system_views.clients`,
+`.queries`, `.caches`, `.system_logs` and `.disk_usage` do not exist to be denied. Five surfaces fail
+on it, each with the same verbatim error `Keyspace system_views does not exist`: `getOverview`,
+`getPerformanceMetrics`, `getActiveSessions`, `getHealth` and `getMonitoringData`. On the 5.0.9
+baseline all thirteen pass.
+
+Thirteen rather than the fifteen the [compatibility table](./README.md#wire-compatible-engines)
+counts, because two of the fifteen do not exist on this provider at all for either engine:
+cancellation is not implemented ([§3.7](#37-there-is-no-cancellation-so-none-is-offered)) and
+`supportsExplain` is false ([§5.6](#56-there-is-no-explain-and-tracing-is-not-a-plan)). Eight answer,
+five fail, and that closes.
+
+**Test Connection is the sixth casualty, and it is the one a user meets first.** `POST
+/api/db/test-connection` calls `provider.getHealth()`
+([`src/app/api/db/test-connection/route.ts:33`](../../src/app/api/db/test-connection/route.ts)), so
+the dialog reports a failure for a connection whose statements run cleanly.
+
+**And it is worse than a failing test button, which only a browser pass showed.** `handleConnect` in
+[`src/hooks/use-connection-form.ts:346`](../../src/hooks/use-connection-form.ts) gates the SAVE on the
+same request — `if (result.success) onConnect(conn)` — so **Establish Connection refuses too and
+nothing is stored**. A ScyllaDB connection cannot be created through the dialog at all today; the
+browser pass behind this section reached the editor through a seeded, admin-managed connection
+instead. Two other published relatives sit on the same gate, StarRocks and SingleStore, whose health
+surface also fails; that neither row records it is the U14 lesson again — a gate-4 pass on the
+provider's own boundary does not read the product surfaces the provider feeds.
+
+What the failure looks like on the two surfaces that show it: the monitoring dashboard renders a
+single **Connection Error** page reading `Keyspace system_views does not exist`, which the connection
+is not (the same mislabelling the Cloudberry row records), and the header badge reads **Slow** with
+the title *Connection: degraded* rather than Online — the badge follows the health request, not
+latency.
+
+What does work:
+
+- `connect`, `query`, `getSchema`, `disconnect` — the editor and the object browser in full, columns
+  and index metadata included.
+- `getSlowQueries`, `getTableStats`, `getIndexStats` and `getStorageStats` pass by sending nothing,
+  exactly as they do on Cassandra ([§3.2](#32-there-is-no-honest-row-count-and-no-honest-size),
+  [§7.4](#74-the-panels-that-report-nothing)). They are passes, not working panels: row counts, sizes
+  and the slow-query figures read `N/A` here for the same reason they do on Cassandra, rather than a
+  fabricated zero.
+- All **18 CQL types round-tripped byte-identically** to the 5.0.9 baseline, compared field by field:
+  `bigint` 9007199254740993 as a string, `decimal` 1.25, `duration` `3h20m`, `varint`
+  123456789012345678901234567890, `blob` `0x00ff`, `inet`, `date`, `time` `12:00:00.123456789`,
+  list/set/map, uuid, timestamp.
+- Error **classes** are identical although the server's wording is not: a missing table is
+  `unconfigured table no_such_table` here against Cassandra's `table no_such_table does not exist`,
+  a missing column `Unrecognized name nope` against `Undefined column name nope in table
+  probe.customers`. All three refusals still arrive as the recognised `QueryError` because
+  `classifyCassandraError` reads the driver's error code and not the message text
+  ([§3.5](#35-the-error-class-is-almost-always-the-same-one-so-the-classifier-reads-innererrors)).
+
+Two differences a reader will see on screen. The object browser lists **one extra table per secondary
+index**: ScyllaDB backs an index with a view that `system_schema.tables` reports, so the probe
+keyspace of 3 user tables and 1 index lists 4 objects, the extra being
+`customers_country_idx_index`; Cassandra listed 3 for the same schema. And no version is displayed
+anywhere, because the panel carrying it is one of the five that fail — were that fixed it would read
+Apache Cassandra **3.0.8**, the compatibility number `system.local.release_version` publishes, not
+ScyllaDB 2026.2.4, which lives in `system.versions` where this provider does not look.
+
+Of the three doubts this section used to raise, two held and one was wrong. `system_views` is indeed
+absent, and the version string is indeed not `release_version`-shaped. But **`gossip_generation`
+exists on ScyllaDB and answers** — that doubt was unfounded.
+
+The tier is therefore `partial`. Not `full`, because five surfaces plus Test Connection throw. Not
+`query-only`, because the object browser, the column metadata and the index metadata all work —
+which is what separates this from Materialize and RisingWave, which have none of it.
+
+**What is not done here.** The five surfaces could degrade to empty instead of throwing when
+`system_views` is absent, which would plausibly lift ScyllaDB to `full`. That is a change to the
+degradation contract in [§3.6](#36-a-denied-monitoring-surface-is-the-ordinary-case-and-only-a-denial-degrades),
+which degrades on a *denial* and deliberately on nothing else — an absent keyspace is not a denial.
+It is filed as **D9** in [`docs/BACKLOG.md`](../BACKLOG.md), not decided in this PR.
