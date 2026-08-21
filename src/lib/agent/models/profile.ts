@@ -90,6 +90,14 @@ export interface AgentModelProfile {
    * for using the wrong channel rather than for having nothing to say.
    */
   readonly remindWithoutTools?: boolean;
+  /**
+   * How many times a report may be held to ask for the answer that belongs beside it.
+   *
+   * One is enough for a model that forgot. `mistral-small3.2:24b` does not forget: held once
+   * on data-analysis and told to present its answer first, it composes the report anyway, and
+   * the report lands with an empty answer pane and a `no-answer` verdict.
+   */
+  readonly presentReminderLimit?: number;
 }
 
 /**
@@ -145,6 +153,14 @@ export const DEFAULT_HOLD_REPORT_WITHOUT_TIME = true;
  * was given, which looks identical from here and is not the same thing at all.
  */
 export const DEFAULT_REMIND_WITHOUT_TOOLS = false;
+
+/**
+ * One, which is what every locked answer-presenting cell was measured against.
+ *
+ * A model told once what its report is missing usually supplies it. A second telling is a
+ * turn spent arguing with a model that has already declined, so it stays per-model.
+ */
+export const DEFAULT_PRESENT_REMINDER_LIMIT = 1;
 
 /**
  * Deterministic, and the setting five locked cells were won on.

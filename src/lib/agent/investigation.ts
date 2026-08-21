@@ -59,6 +59,7 @@ import { agentModelTurnTimeoutMs } from "./config";
 import {
   ceilingFor,
   holdsReportWithoutTime,
+  presentReminderLimitFor,
   remindsWithoutTools,
   planStatementRetriesFor,
   reportReminderLimitFor,
@@ -2670,7 +2671,7 @@ export async function runInvestigation(
    */
   let reportReminders = 0;
   /** The present-before-report notice, once per drive; see `AGENT_PRESENT_BEFORE_REPORT_NOTICE`. */
-  let presentReminded = false;
+  let presentReminders = 0;
   /** The compare-before-report notice, once per drive; see `compareBeforeReportNotice`. */
   let compareReminded = false;
   /** The cite-what-you-read notice, once per drive; see `citeWhatYouReadNotice`. */
@@ -3019,7 +3020,7 @@ export async function runInvestigation(
       if (
         call.toolName === "compose_report" &&
         !noTimeToHold &&
-        !presentReminded &&
+        presentReminders < presentReminderLimitFor(model.modelId) &&
         !answerAttempted &&
         AGENT_WORKFLOW_PRESENTS_ANSWER[record.workflowType]
       ) {
@@ -3041,7 +3042,7 @@ export async function runInvestigation(
         );
         const presented = sofar.events.some((event) => event.kind === "answer-composed");
         if (hasReading && !presented) {
-          presentReminded = true;
+          presentReminders += 1;
           await holdCall(call.toolName, AGENT_PRESENT_BEFORE_REPORT_NOTICE);
           messages.push(
             prompted

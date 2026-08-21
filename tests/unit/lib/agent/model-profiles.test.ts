@@ -3,6 +3,7 @@ import {
   MODEL_PROFILES,
   ceilingFor,
   holdsReportWithoutTime,
+  presentReminderLimitFor,
   remindsWithoutTools,
   planStatementRetriesFor,
   reportReminderLimitFor,
@@ -166,6 +167,21 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(remindsWithoutTools("nemotron-3.5-lightning:30b")).toBe(true);
     expect(remindsWithoutTools("qwen3:8b")).toBe(false);
     expect(remindsWithoutTools("some-model-released-tomorrow:70b")).toBe(false);
+  });
+
+  test("the answer is asked for twice only where once was measured going unheard", () => {
+    /*
+      `mistral-small3.2:24b`, data-analysis. Held and told to present its answer before
+      reporting, it composes the report on the next turn anyway, and the run lands with an
+      empty answer pane and a `no-answer` verdict. The telling was heard and declined, so it
+      is given a second.
+
+      One everywhere else: a second hold is a turn spent arguing with a model that has already
+      supplied what it was asked for.
+    */
+    expect(presentReminderLimitFor("mistral-small3.2:24b")).toBe(2);
+    expect(presentReminderLimitFor("qwen3:8b")).toBe(1);
+    expect(presentReminderLimitFor("some-model-released-tomorrow:70b")).toBe(1);
   });
 
   test("every profile states what measured it", () => {

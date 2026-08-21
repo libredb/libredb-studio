@@ -52,6 +52,7 @@ import {
   DEFAULT_PLAN_STATEMENT_RETRIES,
   DEFAULT_REPORT_REMINDER_LIMIT,
   DEFAULT_HOLD_REPORT_WITHOUT_TIME,
+  DEFAULT_PRESENT_REMINDER_LIMIT,
   DEFAULT_REMIND_WITHOUT_TOOLS,
   DEFAULT_REPORT_RESERVE_MS,
   DEFAULT_SAMPLING,
@@ -152,6 +153,15 @@ export function holdsReportWithoutTime(modelId: string): boolean {
  */
 export function remindsWithoutTools(modelId: string): boolean {
   return MODEL_PROFILES[modelId.toLowerCase()]?.remindWithoutTools ?? DEFAULT_REMIND_WITHOUT_TOOLS;
+}
+
+/**
+ * How many times this model's report may be held to ask for the answer beside it.
+ *
+ * One everywhere but the model measured reporting straight through the first telling.
+ */
+export function presentReminderLimitFor(modelId: string): number {
+  return MODEL_PROFILES[modelId.toLowerCase()]?.presentReminderLimit ?? DEFAULT_PRESENT_REMINDER_LIMIT;
 }
 
 /**
