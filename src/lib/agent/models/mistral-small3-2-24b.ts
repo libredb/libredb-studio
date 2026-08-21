@@ -57,15 +57,33 @@ export const MISTRAL_SMALL3_2_24B: AgentModelProfile = {
   perWorkflow: { "data-analysis": { temperature: 0.7, topP: 0.9 } },
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
   /*
-    Third model to be given it, and on the weakest evidence of the three — said plainly so the
-    next reader can delete it if the measurement does not come.
-    `lfm2:24b` earned it on a loop of twenty-eight identical shape refusals collapsing to one.
-    `granite4.1:3b` earned it twice over: with the example its report landed where two refusals
-    had stopped it, and with the example on `recommend_change` as well the cell locked 5/5.
-    This model has the same shape of loss on two cells — `present_answer` refused
-    INVALID_TOOL_INPUT on data-analysis, and query-optimization losing across `no-report`,
-    `no-plan-comparison` and `empty-evidence` — but no ledger yet showing it take an example and
-    recover. It is switched on to find out, and the answer belongs in this comment either way.
+    Two tellings, because this model's stopping turn is a PROMISE and not a refusal.
+
+    Held on data-analysis and told its report cited none of its readings, it answered: "I
+    apologize for the oversight. Let me correct that by citing the relevant artifacts and
+    composing the report again. The salary table has 9488 rows, as shown in the profile result.
+    Now, let's proceed with the query to find out which department costs the most in salary."
+    And stopped. 272 characters, a complete sentence, 34 seconds into a 630-second budget: it
+    understood, agreed, announced the next call and never made it.
+
+    That is the chat register rather than a tool loop — it is talking to a person and waiting to
+    be told to go ahead. The reminder written for exactly that had already been spent earlier in
+    the run, so there was nothing left to answer the promise with.
+
+    `gemma4:26b` measured 2/5 with two reminders and keeps one; its ledger showed a model that
+    took the extra turn and went back to reading. Different failure, different file, and that is
+    the whole reason these settings live per model.
+  */
+  reportReminderLimit: 2,
+  /*
+    On the weakest evidence of the three models that carry it, and said plainly so it can be
+    deleted if the measurement never comes. `lfm2:24b` earned it on a loop of twenty-eight
+    identical shape refusals collapsing to one; `granite4.1:3b` earned it twice, its report
+    landing where two refusals had stopped it and then the cell locking once
+    `recommend_change` carried one too. This model shows the same shape of loss — a refused
+    `present_answer` on data-analysis, and query-optimization spread across three shortfalls —
+    but the run measured after switching it on never reached a shape refusal, so the example is
+    still unproven here.
   */
   refusalExamples: true,
   notices: { ...BASELINE_NOTICES },
