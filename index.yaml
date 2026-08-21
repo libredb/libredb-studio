@@ -28,6 +28,75 @@ entries:
       artifacthub.io/prerelease: "false"
     apiVersion: v2
     appVersion: 0.12.0
+    created: "2026-08-21T13:22:13.836249808Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting fourteen engines
+      - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase,
+      ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache
+      Cassandra
+    digest: 52d8b473c860dd50841dbb9843bb1dbefb68764385d2737a7b9868ba9f10c6f4
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - couchbase
+    - clickhouse
+    - druid
+    - elasticsearch
+    - opensearch
+    - trino
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.43/libredb-studio-0.1.43.tgz
+    version: 0.1.43
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
+        - "The container picks its own bind address: the ConfigMap now writes an empty HOSTNAME, and the image's entrypoint resolves one at startup, preferring a dual-stack :: (#432)"
+        - "It proves dual-stack instead of assuming it - a throwaway :: listener that an IPv4 client must actually connect to - and falls back to 0.0.0.0 when the namespace has no IPv6, or when :: is IPv6-only while a non-loopback IPv4 address exists"
+        - "New config.bindAddress value overrules that: :: forces dual-stack, 0.0.0.0 pins IPv4 and restores what every chart before 0.1.42 did unconditionally. extraEnv HOSTNAME still wins over both"
+        - "A dual-stack Service therefore needs no second setting any more. The install-notes warning is inverted: it now fires on an IPv6 Service paired with a bind address pinned to an IPv4 literal"
+        - "Behaviour change on upgrade: a release with a dual-stack or IPv6 Service starts answering on its IPv6 address, and a host that firewalls IPv4 only will see the port over IPv6"
+        - "No application change: the appVersion stays 0.12.0. Chart 0.1.42 against an older pinned image.tag is safe - an empty HOSTNAME is what those images already treat as unset, so they bind 0.0.0.0 exactly as before"
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:0.12.0
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 0.12.0
     created: "2026-08-20T14:30:28.439796414Z"
     dependencies:
     - condition: postgresql.enabled
@@ -2321,4 +2390,4 @@ entries:
     urls:
     - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
     version: 0.1.0
-generated: "2026-08-20T14:30:28.432205204Z"
+generated: "2026-08-21T13:22:13.829038231Z"
