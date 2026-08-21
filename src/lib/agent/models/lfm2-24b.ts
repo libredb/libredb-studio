@@ -24,11 +24,23 @@ export const LFM2_24B: AgentModelProfile = {
     "1/6 modes locked, 12/30 runs passed at these settings. Investigate 5/5 · Optimize 1/5 · Assess 3/5 · Operate 0/5 · Analyze 0/5 · Plan 3/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
-  // Earned on one ledger. This model was refused `INVALID_TOOL_INPUT` twenty-eight times in a
-  // row on a data-analysis run and never changed the shape it sent; with a worked example in
-  // the refusal it took one refusal and got the shape right on the next turn. It has not won
-  // the cell — it also writes SQL this database rejects — but the loop is measurably gone, and
-  // no other model pays for the extra sentence.
+  /*
+    Two tellings, on three runs that read the same way.
+
+    Every one of its losing optimization runs holds exactly one plan, is held once with the
+    notice naming both ways through — a second plan to compare, or an index recommendation
+    citing the plan it already has — and then reports without doing either. The hold is a
+    one-shot by default, so the second report lands and the run scores `no-plan-comparison`.
+
+    Measured alongside: the worked example this model earned deleted its
+    `RECOMMENDATION_SHAPE_MISMATCH` refusals outright, five to zero, so what remains is not the
+    shape of the call but the decision to make it at all.
+  */
+  compareReminderLimit: 2,
+  // Earned on one ledger: refused `INVALID_TOOL_INPUT` twenty-eight times in a row on a
+  // data-analysis run without ever changing the shape it sent, and with a worked example in the
+  // refusal it took one and got the shape right on the next turn. Measured again on
+  // query-optimization: its `RECOMMENDATION_SHAPE_MISMATCH` refusals went five to zero.
   refusalExamples: true,
   notices: { ...BASELINE_NOTICES },
 };

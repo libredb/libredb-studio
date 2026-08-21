@@ -58,6 +58,7 @@ import {
 import { agentModelTurnTimeoutMs } from "./config";
 import {
   ceilingFor,
+  compareReminderLimitFor,
   holdsReportWithoutTime,
   noticesFor,
   presentReminderLimitFor,
@@ -2678,7 +2679,7 @@ export async function runInvestigation(
   /** The present-before-report notice, once per drive; see `notices.presentBeforeReport`. */
   let presentReminders = 0;
   /** The compare-before-report notice, once per drive; see `compareBeforeReportNotice`. */
-  let compareReminded = false;
+  let compareReminders = 0;
   /** The cite-what-you-read notice, once per drive; see `citeWhatYouReadNotice`. */
   let citeReminded = false;
   /** How many times a report has been held for the verdict it would earn; see `shortfallsIfReported`. */
@@ -3208,7 +3209,12 @@ export async function runInvestigation(
       // A run whose verdict wants a comparison, holding the two plans that would make
       // one, is one call short of it. Checked here for the same reason the present
       // notice is: `compose_report` ends the run.
-      if (call.toolName === "compose_report" && !noTimeToHold && !compareReminded && holdsTool("compare_plans")) {
+      if (
+        call.toolName === "compose_report" &&
+        !noTimeToHold &&
+        compareReminders < compareReminderLimitFor(model.modelId) &&
+        holdsTool("compare_plans")
+      ) {
         const { record: sofar } = await service.resume(context.runId);
         const plans = sofar.events.flatMap((event) =>
           event.kind === "tool-completed" && event.artifact.operationId === "sql.explain.estimate"
@@ -3245,7 +3251,7 @@ export async function runInvestigation(
               ? secondPlanBeforeReportNotice(after)
               : compareBeforeReportNotice(before, after);
         if (text !== null) {
-          compareReminded = true;
+          compareReminders += 1;
           await holdCall(call.toolName, text);
           messages.push(prompted ? promptedResultMessage(call, notice(text)) : toolResultMessage(call, text));
           continue;

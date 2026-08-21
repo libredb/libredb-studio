@@ -55,6 +55,7 @@ import {
   DEFAULT_REPORT_REMINDER_LIMIT,
   DEFAULT_HOLD_REPORT_WITHOUT_TIME,
   DEFAULT_REFUSAL_EXAMPLES,
+  DEFAULT_COMPARE_REMINDER_LIMIT,
   DEFAULT_PRESENT_REMINDER_LIMIT,
   DEFAULT_REMIND_WITHOUT_TOOLS,
   DEFAULT_REPORT_RESERVE_MS,
@@ -165,6 +166,16 @@ export function remindsWithoutTools(modelId: string): boolean {
  */
 export function presentReminderLimitFor(modelId: string): number {
   return MODEL_PROFILES[modelId.toLowerCase()]?.presentReminderLimit ?? DEFAULT_PRESENT_REMINDER_LIMIT;
+}
+
+/**
+ * How many times this model's report may be held to ask for a plan comparison.
+ *
+ * One everywhere but the model measured inspecting a single plan and reporting anyway, three
+ * runs in a row.
+ */
+export function compareReminderLimitFor(modelId: string): number {
+  return MODEL_PROFILES[modelId.toLowerCase()]?.compareReminderLimit ?? DEFAULT_COMPARE_REMINDER_LIMIT;
 }
 
 /**

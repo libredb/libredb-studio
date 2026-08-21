@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   MODEL_PROFILES,
   ceilingFor,
+  compareReminderLimitFor,
   holdsReportWithoutTime,
   noticesFor,
   presentReminderLimitFor,
@@ -219,6 +220,25 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     // The one place the baseline is still read at run time, and the honest treatment of a
     // model with no file: it is sent what everything else was measured with.
     expect(noticesFor("some-model-released-tomorrow:70b")).toEqual(BASELINE_NOTICES);
+  });
+
+  test("the plan comparison is asked for twice only where once was measured going unheard", () => {
+    /*
+      The plan bar is the largest class of loss left on the board, and its runs share one shape:
+      the model inspects ONE plan and reports. The hold that answers exactly that is a one-shot,
+      so a model that hears it and reports again lands the second report.
+
+      `lfm2:24b` did that on three separate optimization runs — one plan, one hold, no
+      comparison, every time. Measured alongside: the worked example it had already earned took
+      its `RECOMMENDATION_SHAPE_MISMATCH` refusals from five to zero, so what remains is not the
+      shape of the call but the decision to make it.
+
+      One everywhere else: the hold names two ways through, and a model that heard it and took
+      neither is declining rather than missing it.
+    */
+    expect(compareReminderLimitFor("lfm2:24b")).toBe(2);
+    expect(compareReminderLimitFor("qwen3:8b")).toBe(1);
+    expect(compareReminderLimitFor("some-model-released-tomorrow:70b")).toBe(1);
   });
 
   test("every profile states what measured it", () => {

@@ -99,6 +99,14 @@ export interface AgentModelProfile {
    */
   readonly presentReminderLimit?: number;
   /**
+   * How many times a report may be held to ask for the plan comparison the verdict wants.
+   *
+   * One is enough for a model that forgot to compare. It is not enough for one that inspects a
+   * single plan and reports regardless: `lfm2:24b` did that on three separate optimization
+   * runs, each with one plan, one hold and no comparison.
+   */
+  readonly compareReminderLimit?: number;
+  /**
    * Every sentence this model is told, when it is told anything.
    *
    * Here for the reason the numbers above are here, and the reason is not symmetry. A message
@@ -202,6 +210,15 @@ export const DEFAULT_REMIND_WITHOUT_TOOLS = false;
  * turn spent arguing with a model that has already declined, so it stays per-model.
  */
 export const DEFAULT_PRESENT_REMINDER_LIMIT = 1;
+
+/**
+ * One, which is what every locked optimization cell was measured against.
+ *
+ * The hold spends a turn out of a fixed budget and names two ways through — a second plan to
+ * compare, or an index recommendation citing the plan already held — so a model that heard it
+ * and did neither is usually declining rather than missing it.
+ */
+export const DEFAULT_COMPARE_REMINDER_LIMIT = 1;
 
 /**
  * Deterministic, and the setting five locked cells were won on.
