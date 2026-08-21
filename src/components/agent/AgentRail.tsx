@@ -1597,7 +1597,21 @@ export function AgentRail({
     The two coincide whenever no run is open, which is most of the panel's life.
   */
   const engineLabel = connectionType === null ? "this connection" : getDBConfig(connectionType).label;
-  const handoverConsented = pendingStart !== null ? autoExecute : runOpen && openedWithHandover;
+  /*
+    Both axes of the open run's posture ask `runOpen` FIRST, and read the run before they
+    read any control. That order is the rule, and it is why these two lines look alike.
+
+    The asymmetry they replaced is what made a defect: the hand-over used to ask
+    `pendingStart` first, so a consent step standing for the NEXT run outranked the run
+    that was open — and the two coexist by design ("change" raises the step over a live
+    run, and stops nothing until it is accepted; a stream that ended without a terminal
+    entry clears `isBusy` with the status still `running`, which puts Start back within
+    reach). The strip then relabelled an executing run from a checkbox belonging to a run
+    nobody had opened: un-widened while the widened one was still handing statements over,
+    and widened while the open one may hand nothing over. Keep the order aligned, in both
+    lines, or that class of defect comes back on the next edit.
+  */
+  const handoverConsented = runOpen ? openedWithHandover : pendingStart !== null && autoExecute;
   const describedMode = runOpen ? run.timeline.mode : mode;
   const selectionPosture = agentPosture({
     mode,

@@ -4932,6 +4932,75 @@ describe("AgentRail", () => {
       });
 
       /*
+        A consent step standing for the NEXT run may not relabel the run that is open.
+
+        Both of these are reachable through "change": the control renders only while the
+        run is open, choosing `data-analysis` in agent mode raises the consent step, and
+        the replacement is not opened — nor the open run stopped — until that step is
+        accepted. So a pending start and a live run coexist by design, and while they do
+        the strip has two candidate answers about the hand-over: the open run's record and
+        the standing step's tick. It owes the open run's, in both directions — the same
+        rule the mode axis already follows — because the claim is about the run that is
+        executing, and the run that is executing was bounded when it was opened.
+      */
+      test("a consent step raised beside a widened run does not un-widen the strip", async () => {
+        mockClassifiedFetch({ workflowType: "data-analysis", outcome: "classified" }, [AGENT_STARTED_LINE]);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+        fireEvent.click(view.getByTestId("agent-auto-execute"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
+        await view.findByTestId("agent-run-status");
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("widened");
+
+        // A second run is being decided beside the widened one, and its tick starts OFF.
+        fireEvent.click(view.getByTestId("agent-opened-as-change"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-change-workflow-data-analysis"));
+        });
+        expect(view.getByTestId("agent-consent")).toBeTruthy();
+
+        // The run that is open is still the widened one, and still says so.
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("widened");
+        expect(view.getByTestId("agent-safety-headline").textContent).toBe(
+          "Reads only, and one statement in your editor",
+        );
+      });
+
+      test("ticking a consent step raised beside an open run does not widen the strip either", async () => {
+        mockClassifiedFetch({ workflowType: "data-analysis", outcome: "classified" }, [AGENT_STARTED_LINE]);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+        // Opened WITHOUT the hand-over: the tick is left off, so this run may not hand
+        // anything over and the strip may not say it will.
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
+        await view.findByTestId("agent-run-status");
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("reads");
+
+        fireEvent.click(view.getByTestId("agent-opened-as-change"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-change-workflow-data-analysis"));
+        });
+        fireEvent.click(view.getByTestId("agent-auto-execute"));
+
+        // The tick belongs to the run that has not opened yet. The one that IS open was
+        // opened on reads, and it is what the strip is describing.
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("reads");
+        expect(view.getByTestId("agent-safety-headline").textContent).toBe("Reads only");
+      });
+
+      /*
         The strip describes the OPEN run, and the mode axis is read off that run's own
         record rather than off the toggle.
 
