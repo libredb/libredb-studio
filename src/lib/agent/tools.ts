@@ -1448,22 +1448,6 @@ class AgentCuratedReadError extends Error {
   }
 }
 
-/**
- * What to do about a failed statement, when this layer can say it without guessing.
- *
- * Read off the grouped ledger rather than imagined: of 368 `database-error` refusals, 63 are the
- * row budget and 31 are a catalog belonging to another engine. Both are answerable from what is
- * already here — the budget number appears in this server's own sentence, and the engine is on
- * the context — so both get an answer.
- *
- * The largest remaining family, "no such column", is not answered here on purpose. Naming the
- * columns that DO exist needs the run's captured inventory, which lives in its events and not on
- * this context, and a sentence that guessed at them would be this server inventing a schema for
- * a model to cite.
- *
- * The engine's own message still goes back untouched and fenced. This is added after it, in the
- * server's voice, and only for a model whose ledger earned it.
- */
 function statementAdvice(message: string, engine: string): string | undefined {
   const overBudget = /row budget: \d+ rows > (\d+) allowed/.exec(message);
   if (overBudget !== null) {
