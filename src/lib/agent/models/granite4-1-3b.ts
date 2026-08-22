@@ -44,16 +44,5 @@ export const GRANITE4_1_3B: AgentModelProfile = {
     twenty-eight identical refusals into one.
   */
   refusalExamples: true,
-  /*
-    Five losing data-analysis runs, all the same shape as the one that cost `gemma4:26b` its
-    Assess cell fifteen times: the run establishes something, then a turn comes back with no
-    call and NO TEXT — neither stopping prose nor a closing statement, both of which are
-    written whenever a turn holds any — and the loop reads that as a model that chose to stop.
-
-    Counted per cell before switching it on, which is what makes this the right place: those
-    five are all on data-analysis, and that cell is 4/5. Every other empty-turn loss on the
-    board is one or two runs scattered across surfaces.
-  */
-  retryEmptyTurn: true,
   notices: { ...BASELINE_NOTICES },
 };
