@@ -187,40 +187,30 @@ describe("securityHeaders", () => {
 
 /**
  * B40: the shipped policy must stay byte-identical, but a contributor's first `bun dev` has to
- * work — React's development build evals, so without this relaxation the login page never hydrates.
+ * work - React's development build evals, so without this relaxation the login page never hydrates.
+ *
+ * Asserted through the OPTION, not through process.env: headers.ts is published as
+ * `@libredb/studio/security` and reads no environment, so the environment half of this decision
+ * belongs to config.ts and is asserted in its own suite.
  */
-describe("studioCspDirectives under NODE_ENV=development", () => {
-  const original = process.env.NODE_ENV;
-
-  // `process.env as Record<string, string>` is this repo's pattern for NODE_ENV, which the
-  // Next.js types declare read-only (see tests/setup.ts and auth-jwt-config.test.ts).
-  function withNodeEnv<T>(value: string, fn: () => T): T {
-    (process.env as Record<string, string>).NODE_ENV = value;
-    try {
-      return fn();
-    } finally {
-      (process.env as Record<string, string>).NODE_ENV = original ?? "test";
-    }
-  }
-
+describe("studioCspDirectives allowEval", () => {
   test("admits eval so React's development build can hydrate", () => {
-    const scriptSrc = withNodeEnv("development", () => studioCspDirectives()["script-src"]);
-
-    expect(scriptSrc).toContain("'unsafe-eval'");
+    expect(studioCspDirectives({ allowEval: true })["script-src"]).toContain("'unsafe-eval'");
   });
 
-  test("still omits eval in production and test", () => {
-    for (const env of ["production", "test"]) {
-      const scriptSrc = withNodeEnv(env, () => studioCspDirectives()["script-src"]);
-
-      expect({ env, scriptSrc }).toEqual({ env, scriptSrc: ["'self'", "'unsafe-inline'"] });
+  test("omits eval when the option is absent or false", () => {
+    for (const options of [{}, { allowEval: false }]) {
+      expect({ options, scriptSrc: studioCspDirectives(options)["script-src"] }).toEqual({
+        options,
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+      });
     }
   });
 
-  test("relaxes nothing but script-src, and the serialized production policy is unchanged", () => {
-    const production = withNodeEnv("production", () => securityHeaders()["Content-Security-Policy"]);
-    const development = withNodeEnv("development", () => securityHeaders()["Content-Security-Policy"]);
+  test("relaxes nothing but script-src, and the serialized default policy is unchanged", () => {
+    const shipped = securityHeaders()["Content-Security-Policy"];
+    const relaxed = securityHeaders({ allowEval: true })["Content-Security-Policy"];
 
-    expect(development).toBe(production.replace("'unsafe-inline'", "'unsafe-inline' 'unsafe-eval'"));
+    expect(relaxed).toBe(shipped.replace("'unsafe-inline'", "'unsafe-inline' 'unsafe-eval'"));
   });
 });

@@ -87,6 +87,11 @@ export function readSecurityHeaderOptions(): SecurityHeaderOptions {
   return {
     reportOnly: readCspReportOnly(),
     monacoVsPath: process.env.NEXT_PUBLIC_MONACO_VS_PATH,
+    // React's development build evals, and without 'unsafe-eval' a contributor's first `bun dev`
+    // cannot log in - the login page never hydrates. Read HERE rather than in headers.ts, which is
+    // published as `@libredb/studio/security` and must not depend on the consuming process's mode:
+    // an embedder's own development build would otherwise inherit a relaxed policy it never chose.
+    allowEval: process.env.NODE_ENV === "development",
     // HSTS is sent unconditionally. RFC 6797 requires user agents to ignore it over plain HTTP,
     // so the plain-HTTP channels are unaffected and no decision has to be made about trusting
     // the attacker-supplied x-forwarded-proto.

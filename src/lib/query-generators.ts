@@ -342,7 +342,12 @@ function terminator(capabilities: ProviderCapabilities): string {
  */
 function libredbNewlineNote(base: string): string | null {
   if (!/[\r\n]/.test(base)) return null;
-  return "# This key's name contains a newline. LibreDB commands are line-oriented, so no generated line can address it — write the command by hand.";
+  // No "write it by hand" advice: `firstCommandLine` splits the buffer on LF before tokenizing
+  // (providers/embedded/libredb.ts), so a key whose name contains a LINE FEED cannot be reached
+  // from this editor at all, quoted or not. A carriage return survives inside quotes and could be
+  // typed by hand - but one note covers both characters, and promising an action that fails for
+  // half of them is worse than promising none.
+  return "# This key's name contains a line break. LibreDB commands are line-oriented, so no generated line can address it.";
 }
 
 export function generateTableQuery(

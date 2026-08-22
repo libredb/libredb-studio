@@ -396,7 +396,11 @@ and no lossless JSON command form to fall back to the way Redis's does. Since ev
 is line-oriented, a name containing CR or LF cannot be addressed by a generated line at all: a key
 named `x\ndelete billing:2024` would render `delete billing:2024` as a line of its own that
 **Run Selected** would execute. For such a name the cheatsheet emits the header plus a single `#`
-note saying the key must be addressed with a hand-written command, and **no command line** (#427).
+note saying no generated line can address the key, and **no command line** (#427). The note stops
+there rather than pointing at a hand-written command: `firstCommandLine()` splits the buffer on LF
+before tokenizing, so an LF-bearing name cannot be reached from this editor at all. A CR survives
+inside quotes and could be typed by hand, but one note covers both characters and advice that fails
+for half of them is worse than none.
 
 `Scan Keys` gives the same answer — the note on its own, no command — through the same code path, so
 the two cannot drift. It matters more there than in the cheatsheet: `Scan Keys` auto-executes on a

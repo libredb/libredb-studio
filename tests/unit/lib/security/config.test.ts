@@ -176,4 +176,24 @@ describe("readSecurityHeaderOptions", () => {
       includeSubDomains: false,
     });
   });
+
+  // B40: `bun dev` could not log in, because React's development build evals and the policy
+  // omitted 'unsafe-eval' everywhere. This is the environment half of that decision - headers.ts
+  // takes it as an option, so the read has to be here or it is nowhere.
+  test("asks for eval in development only", () => {
+    const original = process.env.NODE_ENV;
+    try {
+      for (const [env, expected] of [
+        ["development", true],
+        ["production", false],
+        ["test", false],
+      ] as const) {
+        (process.env as Record<string, string>).NODE_ENV = env;
+
+        expect({ env, allowEval: readSecurityHeaderOptions().allowEval }).toEqual({ env, allowEval: expected });
+      }
+    } finally {
+      (process.env as Record<string, string>).NODE_ENV = original ?? "test";
+    }
+  });
 });

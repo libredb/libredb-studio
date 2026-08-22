@@ -1,6 +1,7 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import type { AuditEvent } from "@/lib/audit";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
 
 // ─── Mock audit buffer ──────────────────────────────────────────────────────
 const mockEvents: AuditEvent[] = [
@@ -130,6 +131,24 @@ describe("/api/admin/audit", () => {
       expect(event.reason).toBe("insufficient_role");
       expect(event.user).toBe("bob");
       expect(event.target).toBe("GET /api/admin/audit");
+    });
+
+    // Threat the metering answers: this endpoint needs no admin role to REACH, so any ordinary
+    // authenticated user can poll it. Unmetered, that writes one line per request into a fixed
+    // 1000-entry ring and onto stdout, evicting the events an operator actually needs.
+    test("the audit line is bounded per identity while the 403 stays unconditional", async () => {
+      const statuses: number[] = [];
+      for (let i = 0; i < 8; i++) {
+        mockGetSession.mockResolvedValueOnce({ role: "user", username: "flooder" });
+        statuses.push((await GET(createMockRequest("/api/admin/audit"))).status);
+      }
+
+      // The denial is never what gets rationed.
+      expect(statuses).toEqual([403, 403, 403, 403, 403, 403, 403, 403]);
+      // anon defaults to 5 per 300s and the trip is itself recorded, so eight probes leave six
+      // lines. Pinned rather than bounded: an unmetered emit writes eight.
+      expect(mockEmitAuditEvent).toHaveBeenCalledTimes(6);
+      clearRateLimitState();
     });
 
     // This route has no guardRoute in front of it, so its 403 covers both "no session" and "wrong

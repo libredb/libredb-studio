@@ -81,10 +81,15 @@ export function OperationsTab() {
   // flight.
   const rowsAreAddressable = metadata?.capabilities.tablesAreDerivedGroupings !== true;
 
-  const monitoringOptions = useMemo(
-    () => ({ includeTables: rowsAreAddressable, includeIndexes: false, includeStorage: false }),
-    [rowsAreAddressable],
-  );
+  // `includeTables` is NOT gated on the flag above, and that is measured rather than an oversight.
+  // useMonitoringData fetches once per CONNECTION (its effect depends on [connection, fetchData],
+  // and fetchData reads its options through a ref), autoRefresh is off here, so the one request
+  // this tab makes is issued while `metadata` is still null and no later option change can reach
+  // it. Gating it would need either a shared-hook rewrite or making every engine's health and
+  // session panels wait on provider-meta first. The PANEL below is gated instead: that is where
+  // the empty "Tables (0)" a key-value provider used to render actually came from, and rendering
+  // is reactive so it settles as soon as the capability arrives.
+  const monitoringOptions = useMemo(() => ({ includeTables: true, includeIndexes: false, includeStorage: false }), []);
 
   const { data, loading, error, refresh, killSession, runMaintenance } = useMonitoringData(
     selectedConnection,

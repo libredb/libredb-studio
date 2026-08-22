@@ -100,7 +100,7 @@ describe("generateTableQuery", () => {
       .map((l) => l.trim())
       .filter((l) => l !== "" && !l.startsWith("#"));
     expect(runnable).toEqual([]);
-    expect(out).toContain("# This key's name contains a newline.");
+    expect(out).toContain("# This key's name contains a line break.");
   });
 
   test("LibreDB dialect: a bare CR in a key name refuses the same way (U11)", () => {
@@ -176,7 +176,7 @@ describe("generateSelectQuery — LibreDB dialect", () => {
       '# LibreDB commands for "x\\ndelete billing:2024" — select a line and Run Selected.',
     );
     expect(commandLines(out)).toEqual([]);
-    expect(out).toContain("# This key's name contains a newline.");
+    expect(out).toContain("# This key's name contains a line break.");
     expect(out).not.toContain("delete billing:2024\n");
   });
 

@@ -1288,10 +1288,16 @@ describe("OperationsTab", () => {
   //
   // Redis and the embedded engine declare `tablesAreDerivedGroupings`: their rows
   // are prefix/namespace groupings, not addressable tables, so the panel could
-  // only ever say "Tables (0)". Both the request and the panel hang off that one
-  // capability — the same one TableItem already reads.
+  // only ever say "Tables (0)". The PANEL hangs off that one capability - the same
+  // one TableItem already reads.
+  //
+  // The REQUEST deliberately does not: useMonitoringData fetches once per connection
+  // through an options ref, so its single request is issued while `metadata` is still
+  // null and no later option change reaches it. Asserting `includeTables: false` here
+  // would pass on this file's synchronous metadata mock and be false in the browser -
+  // the vacuous-assertion class this repo has been bitten by before.
 
-  test("renders no Tables panel and requests no tables for a derived-groupings provider", async () => {
+  test("renders no Tables panel for a derived-groupings provider", async () => {
     mockMetadata = {
       capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze"], tablesAreDerivedGroupings: true },
     };
@@ -1303,7 +1309,6 @@ describe("OperationsTab", () => {
 
     expect(queryByText("Tables (0)")).toBeNull();
     expect(queryByText("Tables (1)")).toBeNull();
-    expect(lastMonitoringOptions?.includeTables).toBe(false);
     // The sessions half of the split is untouched.
     expect(queryByText("Sessions (1)")).not.toBeNull();
   });
@@ -1320,6 +1325,7 @@ describe("OperationsTab", () => {
     const { queryByText } = renderResult!;
 
     expect(queryByText("Tables (1)")).not.toBeNull();
+    // The request is unconditional, so the tab's one fetch always asks for tables.
     expect(lastMonitoringOptions?.includeTables).toBe(true);
   });
 

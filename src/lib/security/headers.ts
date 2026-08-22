@@ -38,6 +38,17 @@ export interface CspOptions {
    * That is a deliberate decision for the caller to make, not a default to fall into by accident.
    */
   extra?: Partial<CspDirectives>;
+  /**
+   * Add 'unsafe-eval' to script-src. React's DEVELOPMENT build evals, and without it a
+   * contributor's first `bun dev` cannot log in: the login page never hydrates, the Sign In button
+   * has no handler, and the only clue is "eval() is not supported in this environment".
+   *
+   * An OPTION rather than a `process.env.NODE_ENV` read in this module, because this module is
+   * published as `@libredb/studio/security` and must stay environment-independent - otherwise an
+   * embedder's own development build would silently inherit a relaxed policy it never asked for.
+   * `readSecurityHeaderOptions()` in config.ts is what decides it for this app.
+   */
+  allowEval?: boolean;
 }
 
 export interface SecurityHeaderOptions extends CspOptions {
@@ -131,16 +142,12 @@ function serializeCsp(directives: CspDirectives): string {
 export function studioCspDirectives(options: CspOptions = {}): CspDirectives {
   const monacoOrigin = absoluteOrigin(options.monacoVsPath);
 
-  // 'unsafe-inline': see the module comment. 'unsafe-eval' is deliberately absent from the shipped
-  // policy (the development exception below is the sole relaxation) — Monaco's AMD
-  // loader picks the tag-injection loader on the document thread (public/monaco/vs/loader.js:365),
-  // and no worker bundle, elkjs, or sql-formatter path calls eval or new Function.
+  // 'unsafe-inline': see the module comment. 'unsafe-eval' is absent unless the CALLER asks for it
+  // (`allowEval`, which config.ts sets in development only) — Monaco's AMD loader picks the
+  // tag-injection loader on the document thread (public/monaco/vs/loader.js:365), and no worker
+  // bundle, elkjs, or sql-formatter path calls eval or new Function.
   const scriptSrc = ["'self'", "'unsafe-inline'"];
-  // React's DEVELOPMENT build evals, so without this a contributor's first `bun dev` is a dead end:
-  // the login page never hydrates, the Sign In button has no handler, and the only clue is
-  // "eval() is not supported in this environment". Development only — the shipped policy is
-  // unchanged, and this is the module's one process.env read for exactly that reason.
-  if (process.env.NODE_ENV === "development") scriptSrc.push("'unsafe-eval'");
+  if (options.allowEval === true) scriptSrc.push("'unsafe-eval'");
   // Monaco injects <style> elements at runtime for the db-dark theme, and the app uses the React
   // style={{...}} prop with computed values at 41 sites. Neither is nonce-able or hash-able.
   const styleSrc = ["'self'", "'unsafe-inline'"];

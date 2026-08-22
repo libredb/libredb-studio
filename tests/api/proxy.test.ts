@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 import { SignJWT } from "jose";
 import { config, proxy } from "@/proxy";
 import { AGENT_DRIVE_HEADER, AGENT_DRIVE_PATH, mintAgentDriveToken } from "@/lib/agent/drive-token";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
 
 // ─── JWT helpers ────────────────────────────────────────────────────────────
 
@@ -185,6 +186,29 @@ describe("proxy", () => {
         expect(lines[0].route).toBe("GET /admin");
       } finally {
         spy.mockRestore();
+      }
+    });
+
+    // Threat the metering answers: holding a signed non-admin token bounds how many IDENTITIES
+    // reach the branch, not how many requests each makes. Unmetered, one session polling /admin
+    // fills a log volume and evicts real events from the 1000-entry ring the admin UI reads.
+    test("the audit line is bounded per identity while the redirect stays unconditional", async () => {
+      // A distinct non-admin role, so this burst gets its own bucket key rather than sharing "user".
+      const token = await createToken("flooder");
+      const spy = spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const responses = [];
+        for (let i = 0; i < 8; i++) responses.push(await proxy(createNextRequest("/admin", token)));
+
+        // Every request is still refused - the denial is never the thing being rationed.
+        expect(responses.every((res) => isRedirect(res))).toBe(true);
+        // The anon bucket's default is 5 per 300s and the trip itself is recorded, so a burst of
+        // eight leaves exactly six lines. Pinned rather than bounded: an unmetered emit writes
+        // eight, and this number is what fails if the metering is ever removed.
+        expect(spy.mock.calls.length).toBe(6);
+      } finally {
+        spy.mockRestore();
+        clearRateLimitState();
       }
     });
 

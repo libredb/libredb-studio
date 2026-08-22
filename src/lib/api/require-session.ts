@@ -88,3 +88,36 @@ export async function guardRoute(opts: {
 
   return { session };
 }
+
+/**
+ * The audit line for a ROLE denial: an authenticated caller that holds a session but not the role
+ * an endpoint requires. `guardRoute` above cannot record it, because the routes that need it check
+ * the role inside their own handler after their own `getSession()`.
+ *
+ * METERED, on the same `anon` bucket and for the same reason the `no_session` line above is: the
+ * denial is unconditional, only its record is bounded. Holding a signed non-admin token bounds how
+ * many IDENTITIES can reach this branch, not how many requests each one makes - a single session,
+ * stolen or not, can poll an admin route in a loop, and every line would both fill a container log
+ * volume and evict real events from the 1000-entry ring the admin UI reads. Keyed on the username
+ * rather than the address so one account cannot buy more lines by rotating `X-Forwarded-For`.
+ *
+ * Isolated in its own try/catch for the same reason guardRoute isolates its emits: the 403 is
+ * already decided, and a broken audit sink must never turn a denial into an unrelated 500.
+ */
+export function auditRoleDenial(opts: { route: string; user: string; request: Request }): void {
+  const notice = consumeRateLimit("anon", opts.user);
+  if (!notice.allowed && !notice.tripped) return;
+  try {
+    emitAuditEvent({
+      type: "permission_denied",
+      action: "denied",
+      target: opts.route,
+      user: opts.user,
+      result: "failure",
+      reason: "insufficient_role",
+      ip: clientAddress(opts.request),
+    });
+  } catch (auditError) {
+    logger.error("Failed to record permission_denied audit event", auditError, { route: opts.route });
+  }
+}
