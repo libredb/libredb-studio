@@ -134,7 +134,7 @@ const SQLITE_INDEXES = [
 
 function answerPostgres(sql: string): QueryResult {
   if (sql.includes("information_schema.columns")) return result(PG_COLUMNS);
-  if (sql.includes("table_constraints")) return result(PG_RELATIONS);
+  if (sql.includes("pg_constraint")) return result(PG_RELATIONS);
   return result(PG_INDEXES);
 }
 
@@ -201,7 +201,7 @@ describe("captureContextSnapshot — PostgreSQL", () => {
     // catalog SQL and this module sends none of its own.
     expect(h.statements()).toHaveLength(3);
     expect(h.statements()[0]).toContain("information_schema.columns");
-    expect(h.statements()[1]).toContain("information_schema.table_constraints");
+    expect(h.statements()[1]).toContain("pg_constraint");
     expect(h.statements()[2]).toContain("pg_index");
   });
 
@@ -359,7 +359,7 @@ describe("captureContextSnapshot — the fingerprint", () => {
     );
     // The same foreign key, pointing somewhere else.
     const withMovedReference = harness("postgres", async (sql: string) =>
-      sql.includes("table_constraints")
+      sql.includes("pg_constraint")
         ? result([{ ...(PG_RELATIONS[0] as Record<string, unknown>), referenced_column: "legacy_id" }])
         : answerPostgres(sql),
     );

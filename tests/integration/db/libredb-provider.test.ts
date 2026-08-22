@@ -134,6 +134,16 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     expect(provider.getLabels().rowNamePlural).toBe("keys");
   });
+
+  // The monitoring Queries panel is ALWAYS empty here - `getSlowQueries()` answers
+  // `[]` unconditionally - and until #U12 it told the reader to enable a PostgreSQL
+  // extension on the embedded engine.
+  test("getLabels() says the embedded engine keeps no statement statistics", () => {
+    const { slowQueriesEmptyState } = new LibreDBProvider(makeConn(tmpFile)).getLabels();
+
+    expect(slowQueriesEmptyState).toContain("LibreDB keeps no statistics");
+    expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+  });
 });
 
 describe("LibreDBProvider — getSchema", () => {

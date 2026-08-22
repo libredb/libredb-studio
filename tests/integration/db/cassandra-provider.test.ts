@@ -497,6 +497,15 @@ describe("labels", () => {
     expect(labels.vacuumGlobalDesc).toContain("nodetool");
   });
 
+  test("the empty slow-query panel says Cassandra keeps no such aggregate", () => {
+    // `getSlowQueries()` is empty by design here, so this panel is ALWAYS empty - and
+    // until #U12 it told the reader to enable a PostgreSQL extension (#427's defect in
+    // another panel). The log file is the fact, so it is what the sentence names.
+    expect(labels.slowQueriesEmptyState).toContain("no aggregate of finished statements");
+    expect(labels.slowQueriesEmptyState).toContain("log file");
+    expect(labels.slowQueriesEmptyState).not.toContain("pg_stat_statements");
+  });
+
   test("the statement language is named, because CQL is not SQL", () => {
     // A model asked for "a statement" against a connection called Cassandra will
     // write SQL: a JOIN, a subquery, an OFFSET. Each is a syntax error here.

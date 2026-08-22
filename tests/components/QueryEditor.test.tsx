@@ -1,6 +1,7 @@
 import "../setup-dom";
-import "../helpers/mock-sonner";
 import "../helpers/mock-navigation";
+
+import { mockToastError } from "../helpers/mock-sonner";
 
 import { mock } from "bun:test";
 import React from "react";
@@ -524,6 +525,30 @@ describe("QueryEditor", () => {
     );
     fireEvent.click(queryByText("Copy")!);
     expect(mockClipboardWriteText).toHaveBeenCalledWith("SELECT copied_value");
+  });
+
+  // B43: this button reached `navigator.clipboard` unguarded, which is undefined over
+  // plain HTTP off loopback — several distribution channels ship that way — so the write
+  // threw inside the handler and the user got no sign the clipboard was still empty. The
+  // refusal below is the real one: no clipboard object at all, and an editing command
+  // that answers false.
+  test("COPY button says the copy failed when both write paths refuse", async () => {
+    mockToastError.mockClear();
+    Object.defineProperty(globalThis.navigator, "clipboard", { value: undefined, configurable: true });
+    const originalExecCommand = Object.getOwnPropertyDescriptor(globalThis.document, "execCommand");
+    Object.defineProperty(globalThis.document, "execCommand", { value: () => false, configurable: true });
+
+    try {
+      const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ value: "SELECT 1" })));
+      fireEvent.click(queryByText("Copy")!);
+
+      await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1));
+      expect(String((mockToastError.mock.calls as unknown[][])[0][0])).toContain("Could not copy");
+    } finally {
+      if (originalExecCommand === undefined)
+        Object.defineProperty(globalThis.document, "execCommand", { value: undefined, configurable: true });
+      else Object.defineProperty(globalThis.document, "execCommand", originalExecCommand);
+    }
   });
 
   // -----------------------------------------------------------------------

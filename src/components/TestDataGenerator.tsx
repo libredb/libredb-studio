@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { Wand2, X, Play, Copy, Check, RefreshCw } from "lucide-react";
+import { Wand2, X, Play, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CopyButton } from "@/components/copy-button";
 import { DatabaseType, TableSchema } from "@/lib/types";
 import { quoteLiteral } from "@/lib/sql/values";
 
@@ -167,7 +168,6 @@ export function TestDataGenerator({
   onExecuteQuery,
 }: TestDataGeneratorProps) {
   const [rowCount, setRowCount] = useState(10);
-  const [copied, setCopied] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const columnConfigs = useMemo(() => {
@@ -232,12 +232,6 @@ export function TestDataGenerator({
     return `INSERT INTO ${tableName} (${colNames})\nVALUES\n  ${rows.join(",\n  ")};`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tableSchema, columnConfigs, rowCount, queryLanguage, tableName, databaseType, refreshKey]);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(generatedQuery);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   if (!isOpen) return null;
 
@@ -319,17 +313,17 @@ export function TestDataGenerator({
             {columnConfigs.filter((c) => c.faker.generator !== "autoIncrement").length} columns • {rowCount} rows
           </p>
           <div className="flex items-center gap-2">
-            <button
-              onClick={handleCopy}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-fill text-fg-tertiary text-xs font-medium hover:bg-fill-strong transition-colors"
-            >
-              {copied ? (
-                <Check strokeWidth={1.5} className="w-3 h-3 text-emerald-400" />
-              ) : (
-                <Copy strokeWidth={1.5} className="w-3 h-3" />
-              )}
-              {copied ? "Copied!" : "Copy"}
-            </button>
+            {/*
+              `CopyButton` rather than a local `copied` flag (B43): the flag flipped in the
+              same statement that started the write, which reads "Copied!" over an empty
+              clipboard wherever `navigator.clipboard` is absent — plain HTTP off loopback,
+              which several distribution channels are.
+            */}
+            <CopyButton
+              text={generatedQuery}
+              testId="test-data-copy"
+              className="gap-1.5 px-3 py-1.5 rounded-lg bg-fill text-xs font-medium hover:bg-fill-strong"
+            />
             <button
               onClick={() => {
                 onExecuteQuery(generatedQuery);

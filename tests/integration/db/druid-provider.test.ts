@@ -560,6 +560,15 @@ describe("DruidProvider metadata", () => {
     expect(labels.selectAction).toBe("Select Top 50");
     expect(labels.generateAction).toBe("Generate Query");
   });
+
+  test("the empty slow-query panel says Druid keeps no query log", () => {
+    // `getSlowQueries()` is empty by design here, so this panel is ALWAYS empty - and
+    // until #U12 it told the reader to enable a PostgreSQL extension.
+    const { slowQueriesEmptyState } = new DruidProvider(makeConnection()).getLabels();
+
+    expect(slowQueriesEmptyState).toContain("no query log");
+    expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+  });
 });
 
 // ============================================================================

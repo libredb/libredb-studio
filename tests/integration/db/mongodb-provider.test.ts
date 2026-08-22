@@ -335,6 +335,17 @@ describe("MongoDBProvider", () => {
       expect(labels.selectAction).toBe("Find Documents");
     });
 
+    // Until #U12 the monitoring Queries panel told a MongoDB operator to install a
+    // PostgreSQL extension. `getSlowQueries()` reads `system.profile`, which does not
+    // exist until the profiler is on, so that is the switch the sentence must name.
+    test("names the profiler, not a Postgres extension, as where query stats come from", () => {
+      const { slowQueriesEmptyState } = provider.getLabels();
+
+      expect(slowQueriesEmptyState).toContain("profiler");
+      expect(slowQueriesEmptyState).toContain("system.profile");
+      expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+    });
+
     // `statementLanguage` is the sentence the agent's plan contract states verbatim
     // (`ProviderLabels.statementLanguage`), and this engine needs one for the reason
     // the search products did: asked for "one runnable statement in this MongoDB

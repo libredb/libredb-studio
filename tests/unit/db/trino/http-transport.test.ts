@@ -361,6 +361,79 @@ describe("TrinoHttpTransport request", () => {
     expect(firstCall().headers.accept).toBe("application/json");
   });
 
+  /**
+   * D5, measured on 476: `SELECT 1;` answers `SYNTAX_ERROR, line 1:9: mismatched
+   * input ';'` where `SELECT 1` succeeds, and Trino is the only engine this product
+   * ships that refuses the terminator. So the two statements below have to reach the
+   * wire as the SAME bytes - asserted against the literal rather than against each
+   * other, because two calls that both stripped the whole statement would agree.
+   */
+  test("drops the terminator Trino refuses, so a statement written with one still runs", async () => {
+    await makeTransport().query("SELECT 1;");
+
+    expect(firstCall().body).toBe("SELECT 1");
+  });
+
+  test("sends a statement written without a terminator unchanged", async () => {
+    await makeTransport().query("SELECT 1");
+
+    expect(firstCall().body).toBe("SELECT 1");
+  });
+
+  // A statement pasted out of a file carries the newline the file ended with, and
+  // the engine refuses that exactly as it refuses the bare semicolon.
+  test("counts whitespace and a newline after the terminator as trailing", async () => {
+    await makeTransport().query("SELECT 1 ;\n");
+
+    expect(firstCall().body).toBe("SELECT 1");
+  });
+
+  /**
+   * Deliberately NOT a splitter: this endpoint takes exactly one statement, so two
+   * of them must keep failing the way the engine already fails them. Stripping here
+   * would send `SELECT 1; SELECT 2` and turn the engine's own SYNTAX_ERROR into a
+   * silently truncated answer.
+   */
+  test("leaves two statements alone, because the endpoint takes exactly one", async () => {
+    await makeTransport().query("SELECT 1; SELECT 2");
+
+    expect(firstCall().body).toBe("SELECT 1; SELECT 2");
+  });
+
+  // The semicolon that is not a terminator: inside a comment it is prose, inside a
+  // literal it is data, and a doubled one is a second, empty statement the engine
+  // has to refuse. Every statement here ENDS with `;`, which is what a
+  // `replace(/;$/, "")` would have cut out of the middle of the text.
+  test.each([
+    ["a trailing line comment", "SELECT 1 -- done;"],
+    ["a doubled terminator, which is a second empty statement", "SELECT 1;;"],
+    // `spans.ts` cannot say where an unterminated literal ends, so nothing here may
+    // decide that this `;` is outside it.
+    ["an unterminated literal", "SELECT 'oops;"],
+  ])("leaves a semicolon inside %s untouched", async (_label, sql) => {
+    await makeTransport().query(sql);
+
+    expect(firstCall().body).toBe(sql);
+  });
+
+  // Both at once: the literal's own semicolon is data the statement needs and the
+  // last one is the terminator the engine refuses, three characters apart.
+  test("drops the terminator without touching a semicolon inside a literal", async () => {
+    await makeTransport().query("SELECT ';';");
+
+    expect(firstCall().body).toBe("SELECT ';'");
+  });
+
+  // The declared limit of the strip, asserted rather than left to be discovered: a
+  // terminator with a COMMENT after it is trailing trivia to a reader and not to
+  // `readStatementEnd`, which reports the whole run. The statement keeps failing on
+  // 476, the same way it does today - this is a strip, not a rewriter.
+  test("leaves a terminator that has a comment after it, which the engine still refuses", async () => {
+    await makeTransport().query("SELECT 1; -- done\n");
+
+    expect(firstCall().body).toBe("SELECT 1; -- done\n");
+  });
+
   // Every header the coordinator recognises is generated from the descriptor's
   // product name, exactly the way the server generates it. This is the assertion
   // that makes PrestoDB a descriptor rather than a rewrite.

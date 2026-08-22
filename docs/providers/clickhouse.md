@@ -803,6 +803,12 @@ not exist: `analyzeAction`/`analyzeGlobalLabel`/`analyzeGlobalTitle` → *"Table
 ... FINAL`) rather than reusing generic wording that would describe a command ClickHouse does not
 have.
 
+One more label, and it is about the monitoring tab rather than maintenance:
+`slowQueriesEmptyState` → *"Query stats come from system.query_log, which records nothing while
+log_queries is off."* The Queries panel's empty state was hardcoded to PostgreSQL's
+`pg_stat_statements` advice for every engine (`docs/BACKLOG.md` U12), and `system.query_log`
+([§7](#7-monitoring--health)) is what an operator here can actually act on.
+
 ---
 
 ## 10. Error handling

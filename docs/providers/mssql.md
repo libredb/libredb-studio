@@ -437,6 +437,12 @@ validates the target parses as an integer SPID.
 `analyzeAction` → *"Update Statistics"*, `vacuumAction` → *"Rebuild Indexes"*, plus the matching
 global labels. The UI display name for the database type is *"SQL Server"* (`db-ui-config.ts`).
 
+`slowQueriesEmptyState` → *"Query stats come from sys.dm_exec_query_stats, which needs the VIEW
+SERVER STATE permission."* The monitoring Queries panel's empty state was hardcoded to PostgreSQL's
+`pg_stat_statements` advice on every engine (`docs/BACKLOG.md` U12); `getSlowQueries()` here reads
+that DMV ([§8](#8-monitoring--health)) and returns `[]` when the read is refused, so the permission
+is the thing a DBA can act on.
+
 ---
 
 ## 11. Error handling

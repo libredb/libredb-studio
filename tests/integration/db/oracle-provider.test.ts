@@ -568,6 +568,16 @@ describe("OracleProvider", () => {
       const labels = provider.getLabels();
       expect(labels.analyzeAction).toBe("Gather Statistics");
     });
+
+    // Until #U12 the monitoring Queries panel told an Oracle DBA to install a
+    // PostgreSQL extension. `getSlowQueries()` reads V$SQL and swallows a failure into
+    // `[]`, so the grant on that view is what the sentence must name.
+    test("names V$SQL, not a Postgres extension, as where query stats come from", () => {
+      const { slowQueriesEmptyState } = provider.getLabels();
+
+      expect(slowQueriesEmptyState).toContain("V$SQL");
+      expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+    });
   });
 
   // =========================================================================

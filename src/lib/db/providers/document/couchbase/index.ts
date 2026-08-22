@@ -345,6 +345,11 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       vacuumGlobalLabel: "Compact",
       vacuumGlobalTitle: "Compact Storage",
       vacuumGlobalDesc: "Couchbase compacts its data files automatically; there is no manual equivalent to run here.",
+      // `getSlowQueries()` reads system:completed_requests, which keeps only requests
+      // over the query service's own threshold - a different fact from the PostgreSQL
+      // extension the panel used to advertise (#U12).
+      slowQueriesEmptyState:
+        "Query stats come from system:completed_requests, which keeps only requests over the query service's threshold.",
     };
   }
 

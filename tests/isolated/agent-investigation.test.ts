@@ -218,7 +218,7 @@ const kindsOf = (events: readonly AgentRunEvent[]): string[] => events.map((even
 const CONTEXT_READS = 3;
 
 /** The three statements one context capture sends, in order. */
-const CATALOG_READS = ["information_schema.columns", "information_schema.table_constraints", "pg_index"] as const;
+const CATALOG_READS = ["information_schema.columns", "pg_constraint", "pg_index"] as const;
 
 /**
  * The statements the MODEL's tool calls sent, after the drive's own catalog reads.
@@ -250,12 +250,7 @@ const modelStatements = (spy: ReturnType<typeof mock>, captured = CONTEXT_READS)
  * Every needle is a fragment only a server-composed catalog or statistics read
  * contains, on this suite's PostgreSQL connection.
  */
-const GROUNDING_READ_MARKERS = [
-  "information_schema.columns",
-  "information_schema.table_constraints",
-  "pg_index",
-  "pg_stats",
-] as const;
+const GROUNDING_READ_MARKERS = ["information_schema.columns", "pg_constraint", "pg_index", "pg_stats"] as const;
 
 const userStatements = (spy: ReturnType<typeof mock>): string[] =>
   spy.mock.calls
@@ -827,7 +822,7 @@ describe("planning mode runs no statement of the user's", () => {
           rowCount: 2,
         });
       }
-      if (sql.includes("table_constraints")) {
+      if (sql.includes("pg_constraint")) {
         return queryResult({
           rows: [
             {
@@ -883,8 +878,8 @@ describe("planning mode runs no statement of the user's", () => {
     const laterCatalogReads = b.queryReadOnly.mock.calls
       .slice(catalogReadsSoFar)
       // Matched on the catalog reads' own FROM clauses: the statistics statement names
-      // `information_schema` too, in a NOT IN list.
-      .filter(([sql]) => typeof sql === "string" && /information_schema\.(columns|table_constraints)/.test(sql));
+      // `information_schema` too, in a NOT IN list, and so does the relation read.
+      .filter(([sql]) => typeof sql === "string" && /information_schema\.columns|FROM pg_constraint/.test(sql));
     expect(laterCatalogReads).toEqual([]);
   });
 
@@ -1121,7 +1116,7 @@ describe("planning mode runs no statement of the user's", () => {
           rowCount: 3,
         });
       }
-      if (sql.includes("table_constraints")) {
+      if (sql.includes("pg_constraint")) {
         return queryResult({
           rows: [
             {
@@ -1781,7 +1776,7 @@ describe("planning mode runs no statement of the user's", () => {
           rowCount: 300,
         });
       }
-      if (sql.includes("information_schema.table_constraints")) {
+      if (sql.includes("pg_constraint")) {
         return queryResult({
           rows: Array.from({ length: 299 }, (_, index) => ({
             table_schema: "public",
@@ -3502,7 +3497,7 @@ describe("the run reads its schema context through the catalog tool", () => {
     // Server-composed, every one of them: nothing here takes a statement from a
     // model, and each went through the same acquisition seam as any tool call.
     expect(catalogStatements(b)[0]).toContain("information_schema.columns");
-    expect(catalogStatements(b)[1]).toContain("information_schema.table_constraints");
+    expect(catalogStatements(b)[1]).toContain("pg_constraint");
     expect(catalogStatements(b)[2]).toContain("pg_index");
     expect(b.acquireProvider).toHaveBeenCalledTimes(CONTEXT_READS);
     expect(kindsOf(await eventsOf(b.store, run.runId))[1]).toBe("context-captured");

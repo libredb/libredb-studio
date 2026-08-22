@@ -298,6 +298,12 @@ to write "one runnable statement in this MongoDB database's own query language",
 here, because `query()` parses the JSON command object and nothing else. Naming only what the
 language *is* did not survive contact with the model's prior; naming what it is not did.
 
+`slowQueriesEmptyState` (*"Query stats come from the database profiler - run db.setProfilingLevel()
+to start recording into system.profile."*) is the monitoring Queries panel's empty state. That
+sentence was hardcoded to PostgreSQL's `pg_stat_statements` advice on every engine
+(`docs/BACKLOG.md` U12); here `getSlowQueries()` reads `system.profile`
+([§7](#7-monitoring--health)), which does not exist until the profiler is switched on.
+
 ---
 
 ## 10. Error handling

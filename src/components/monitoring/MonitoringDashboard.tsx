@@ -292,7 +292,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                 <PerformanceTab data={data} loading={loading} history={history} />
               </TabsContent>
               <TabsContent value="queries" className="h-full m-0 p-0">
-                <QueriesTab data={data} loading={loading} />
+                <QueriesTab data={data} loading={loading} labels={metadata?.labels} />
               </TabsContent>
               <TabsContent value="sessions" className="h-full m-0 p-0">
                 <SessionsTab data={data} loading={loading} onKillSession={killSession} />

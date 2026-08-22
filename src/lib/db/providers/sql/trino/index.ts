@@ -318,6 +318,11 @@ export class TrinoProvider extends SQLBaseProvider {
       vacuumGlobalTitle: "Trino Owns No Storage",
       vacuumGlobalDesc:
         "Trino is a query engine: the bytes live in the systems its connectors reach, and reclaiming them is done there. Nothing runs from here.",
+      // `getSlowQueries()` reads system.runtime.queries, which is the coordinator's own
+      // bounded history rather than a persisted store - a different fact from the
+      // PostgreSQL extension the panel used to advertise (#U12).
+      slowQueriesEmptyState:
+        "Query stats come from system.runtime.queries, which holds only what this coordinator still remembers.",
     };
   }
 

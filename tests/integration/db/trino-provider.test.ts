@@ -571,6 +571,16 @@ describe("TrinoProvider metadata", () => {
     expect(labels.analyzeGlobalDesc).toContain("connector");
     expect(labels.vacuumGlobalDesc).toContain("query engine");
   });
+
+  // Until #U12 the monitoring Queries panel told a Trino operator to install a
+  // PostgreSQL extension. `getSlowQueries()` reads system.runtime.queries, which is the
+  // coordinator's own bounded history rather than a persisted store.
+  test("names system.runtime.queries, not a Postgres extension, as where query stats come from", () => {
+    const { slowQueriesEmptyState } = new TrinoProvider(makeConnection()).getLabels();
+
+    expect(slowQueriesEmptyState).toContain("system.runtime.queries");
+    expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+  });
 });
 
 // ============================================================================
@@ -727,6 +737,24 @@ describe("TrinoProvider query", () => {
       { id: 42, note: "safe" },
     ]);
     expect(result.columnTypes).toEqual({ id: "bigint", note: "varchar" });
+  });
+
+  /**
+   * D5, proved through the PROVIDER because that is the surface it is reachable
+   * from: nothing typed in the editor carries a terminator to a provider
+   * (`splitStatements()` eats it), so the caller who hits this is a library consumer
+   * calling `query()` with the statement they wrote. Measured on 476, `SELECT 1;` is
+   * `SYNTAX_ERROR, line 1:9: mismatched input ';'` - the one engine here that
+   * refuses what every other one accepts.
+   */
+  test("runs a statement a library caller terminated with a semicolon", async () => {
+    const provider = await connectProvider();
+    const result = await provider.query("SELECT nationkey, name FROM tpch.tiny.nation;\n");
+
+    expect(sqlWith("nationkey")).toBe("SELECT nationkey, name FROM tpch.tiny.nation");
+    expect(result.rowCount).toBe(2);
+    // Not just this statement: no request in the exchange carried a terminator.
+    expect(sentAnything(";")).toBe(false);
   });
 
   test("counts the rows a statement changed when it returned none", async () => {

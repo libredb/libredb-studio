@@ -746,6 +746,12 @@ probe.customers WHERE id = 1;` returns the row, so the `;` the generators alread
 OFFSET"* — because a model asked for "a statement" against a connection called Cassandra will write
 SQL, and each of those three is a syntax error here.
 
+`slowQueriesEmptyState` is declared — *"Cassandra keeps no aggregate of finished statements: the
+slow-query threshold writes to the node's log file rather than to a table."* — because
+`getSlowQueries()` is empty by design ([§7](#7-monitoring--health)), so the monitoring Queries panel
+is **always** empty here, and its hardcoded sentence used to tell the reader to enable
+`pg_stat_statements` (`docs/BACKLOG.md` U12).
+
 ---
 
 ## 10. Testing

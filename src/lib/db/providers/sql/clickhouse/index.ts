@@ -551,6 +551,10 @@ export class ClickHouseProvider extends SQLBaseProvider {
       vacuumGlobalTitle: "Merge Parts",
       vacuumGlobalDesc:
         "Runs OPTIMIZE TABLE ... FINAL, which merges a table's parts and applies pending mutations. ClickHouse reclaims space by merging, so there is no VACUUM equivalent.",
+      // `getSlowQueries()` reads system.query_log, which records nothing while
+      // `log_queries` is off - a different fact from the PostgreSQL extension the panel
+      // used to advertise (#U12).
+      slowQueriesEmptyState: "Query stats come from system.query_log, which records nothing while log_queries is off.",
     };
   }
 

@@ -135,6 +135,9 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       vacuumGlobalLabel: "Compact",
       vacuumGlobalTitle: "Compact",
       vacuumGlobalDesc: "Not supported for LibreDB in this version.",
+      // `getSlowQueries()` answers `[]` unconditionally, so the monitoring Queries
+      // panel is ALWAYS empty here - and it used to name a PostgreSQL extension (#U12).
+      slowQueriesEmptyState: "LibreDB keeps no statistics about finished statements in this version.",
     };
   }
 

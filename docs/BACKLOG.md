@@ -23,24 +23,26 @@ None of it is a GitHub issue.
 
 ---
 
+---
+
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S1–S8 · 8
-- [Drivers and connections](#drivers-and-connections) — D1–D10, U17 · 11
+- [Drivers and connections](#drivers-and-connections) — D1–D10, U17 · 10
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X1–X7, U2–U18 · 15
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X1–X7, U2–U18 · 13
 - [Authentication and security headers](#authentication-and-security-headers) — AU2
-- [Tests](#tests) — T1–T3 · 3
+- [Tests](#tests) — T1–T3 · 2
 - [Dependencies](#dependencies) — P1–P6 · 6
 - [Documentation](#documentation) — DOC1–DOC4 · 4
 - [Release pipeline](#release-pipeline) — REL1
 - [Chart configuration surface](#chart-configuration-surface) — N1–N3 · 3
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H13 · 10
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C2–C10 · 9
-- [Security Phase 3 deferrals](#security-phase-3-deferrals) — K1–K4 · 3
+- [Security Phase 3 deferrals](#security-phase-3-deferrals) — K2–K4 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A6 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B56 · 42
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B56 · 39
 
 ---
 
@@ -234,30 +236,6 @@ Raised while driving agent grounding (#414) and left out of it: this is a connec
 
 **Done when:** the form carries an optional auth-database field that reaches the URI, with the
 provider triad (code, `docs/providers/mongodb.md`, `tests/integration/db/mongodb-provider.test.ts`).
-
-### D5. A trailing semicolon reaches Trino unchanged, and Trino is the one engine that refuses it
-
-Measured against Trino 476: `SELECT 1;` answers `SYNTAX_ERROR`, `line 1:9: mismatched input ';'`.
-`SELECT 1` succeeds. `TrinoHttpTransport` sends the statement text verbatim, so
-`provider.query("SELECT 1;")` fails on Trino and succeeds on every other SQL engine we ship.
-
-**Not reachable through the product.** `splitStatements()` consumes the semicolon as the delimiter,
-so nothing typed in the editor carries one to a provider. The exposure is the published library
-surface: a consumer calling `query()` directly gets an engine-specific failure with no hint that the
-semicolon caused it.
-
-Two things make it worth recording. The transport's own comment says "no trailing semicolon", which
-states a requirement nothing enforces — corrected when this entry was filed, so it no longer implies
-a strip that does not happen. And the provider already absorbs one Trino quirk for the caller:
-`prepareQuery()` transposes `LIMIT n OFFSET m` into `OFFSET m LIMIT n`, because only the second order
-parses. Absorbing one and not the other is the inconsistency.
-
-**Done when:** the transport drops a single trailing semicolon before the statement leaves it, with a
-test proving `SELECT 1;` and `SELECT 1` reach the wire identically, and `docs/providers/trino.md`
-saying so. Deliberately NOT a general splitter: `SELECT 1; SELECT 2` must keep failing, because the
-endpoint takes exactly one statement.
-
-Found reviewing #438 against the live cluster. Not raised by that PR's external review.
 
 ### D6. The MySQL index-size query assumes InnoDB names its table after the database you connected to
 
@@ -745,38 +723,6 @@ keyspace.
 for *and* what kind of target it takes, both surfaces gate and title from that declaration, and a
 live Oracle run proves the per-table control succeeds rather than returning ORA-01418.
 
-### U10. The Monarch rules for the Redis and LibreDB command languages carry no cross-line string state
-
-`redis-language.ts` and `libredb-language.ts` give Monaco a `root` state whose comment rule is
-`^\s*#`, with no separate string state carried between lines. The providers treat a newline inside an
-open quoted argument as data: `SET note "line1` / `#tag"` stores a two-line value
-(`docs/providers/redis.md` §3.4a). So the editor paints the continuation line as a comment while the
-provider stores it as part of the value. The highlighting and the execution disagree about one buffer.
-
-Low severity: it misleads, it does not corrupt.
-
-**Done when:** an open quoted argument keeps its string state across the line break in both
-tokenizers, with a test asserting a `#`-leading continuation line is not tokenized as a comment.
-
-### U12. The monitoring Queries tab tells every engine to enable `pg_stat_statements`
-
-`src/components/monitoring/tabs/QueriesTab.tsx:121,131` hardcodes PostgreSQL's advice as the empty
-state for "Slowest Queries": a badge reading *"pg_stat_statements required"* and the line *"Enable
-pg_stat_statements extension to see query stats."* Nothing gates it on the engine.
-
-Measured in the browser on 2026-08-19 on an **OpenSearch** connection. By inspection it is the same
-on MySQL, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, Trino and
-Cassandra.
-
-This is the #427 defect in another panel. There, six global `ProviderLabels` fields existed, were set
-by seven providers and read by no component, so every engine rendered Postgres's copy. That one was
-fixed by reading the labels. This one has no label to read.
-
-**Done when:** the empty state names something true for the connected engine — a slow-query label on
-`ProviderLabels`, defaulted to today's wording for `postgres` alone — and each provider whose slow log
-lives outside the query surface says so in its own words (the search providers' is "the SQL surface
-does not reach the slow log", already in `docs/providers/elasticsearch.md` §7).
-
 ### U13. BEGIN and SANDBOX render on engines that have no transactions
 
 `Studio.tsx` supplies `onBeginTransaction`/`onCommit`/`onRollback` unconditionally, so `QueryToolbar`
@@ -873,12 +819,6 @@ zero tests. Line coverage cannot see a missing disjunct in a one-line predicate.
 the two readings *disagree* can pin it.
 
 **Done when:** deleting any single disjunct of `isStatementText` fails a test.
-
-### T2. `tests/unit/db/factory.test.ts` shares a `pg` mock with the storage provider
-
-The test mocks `pg` with a shared inert pool while the storage provider caches `Pool` in a
-module-level variable. In a shared process the first initialize decides which mock every later one
-gets. Related to the `mock.module()` isolation rules in `docs/TOOLCHAIN.md`.
 
 ### T3. `tests/security/image-proxy.test.ts` asserts a configuration invariant, not the threat
 
@@ -1574,21 +1514,6 @@ by grepping the staged bundle for the version literal rather than trusting the l
 
 Each was decided during Phase 3, not overlooked.
 
-### K1. Nothing stops a new route from bypassing the authoritative audit channel
-
-`src/lib/audit.ts` exports `emitAuditEvent` (ring buffer **and** the `libredb.audit.v1` stdout line)
-and `getServerAuditBuffer`. `POST /api/admin/audit` legitimately uses the second on its own: its body
-is client-supplied and must never gain authority over the authoritative channel.
-
-Nothing prevents a future route from doing the same by accident. An event pushed straight to the buffer
-is visible in the admin UI, invisible to every log pipeline, and no test notices. The existing tests
-pin the CONTENT of the stdout line, not the set of call sites permitted to skip it.
-
-**Done when:** a check enumerates `getServerAuditBuffer(...).push(` call sites across `src/` and fails
-on any that is not on a short, commented allowlist — the same inversion
-`tests/security/route-auth.test.ts` applied to route discovery, where a hand-curated list had already
-lost eleven routes.
-
 ### K2. A legacy plaintext password shaped exactly like an envelope is treated as corruption
 
 `src/lib/storage/encryption.ts`'s `readSecret` treats a three-segment value whose first segment matches
@@ -1901,64 +1826,6 @@ deadline measured from `createdAtMs`, a statement count folded from `tool-comple
 **Done when:** the ceilings a drive enforces are derived from the run's ledger rather than from the
 drive's own construction, with a test that resumes a run twice and shows the second drive inheriting
 the first's spend.
-
-### B7. A PostgreSQL expression index is absent from the agent's schema inventory
-
-`composePostgresIndexes` (`src/lib/agent/composed-sql.ts`) joins `pg_index` to `pg_attribute` on
-`a.attnum = ANY(ix.indkey)` to name each indexed column. An expression index
-(`CREATE INDEX … ON t (lower(name))`) stores a zero in `indkey` and keeps the expression in
-`pg_index.indexprs`, so the join matches nothing and the index does not appear in the run's context
-snapshot at all.
-
-A partly-expression index (`(status, lower(name))`) is worse in one respect: it appears carrying only
-its plain columns, so a reader could take it for an index on `status` alone.
-
-Consequences are reporting-only. Nothing about enforcement depends on the inventory, and the model can
-still ask for a plan (`inspect_plan`), which is what actually says whether an index is used. The cost
-is a model reasoning about "there is no index on that column" when there is one.
-
-The SQLite side does not have this gap: `parseSqliteIndexDdl` keeps an expression's written form,
-because the DDL text carries it.
-
-Fixing it means projecting `pg_get_indexdef(ix.indexrelid)` (or `pg_get_expr(...)`) alongside the
-column join and parsing the emitted definition — a second per-dialect parser against text whose
-stability this repository has not verified.
-
-**Done when:** an expression index appears in the inventory with its expression, asserted against a live
-PostgreSQL rather than a fixture (see A5).
-
-### B8. The composed foreign-key read mispairs composite keys and collides on constraint names
-
-`composePostgresRelations` joins `information_schema.key_column_usage` (one row per REFERENCING column)
-to `information_schema.constraint_column_usage` (one row per REFERENCED column) on the constraint
-alone. Neither view exposes an ordinal that pairs the two sides, so a foreign key over two or more
-columns comes back as the cross-product: `FOREIGN KEY (x, y) REFERENCES parents (a, b)` yields four
-rows, and `buildPostgresTables` turns them into four edges, two of which are wrong (`x -> parents.b`,
-`y -> parents.a`). Single-column keys — the overwhelming majority — are exact.
-
-A second, independent defect lives in the same joins. A PostgreSQL constraint name is unique per TABLE,
-so two tables in one schema may both carry `fk_customer`. The referencing side is narrowed by
-`tc.table_name = kcu.table_name`, but `constraint_column_usage` exposes no referencing-table column at
-all, so the referenced side cannot be narrowed the same way: table `a` still gains an edge pointing at
-table `b`'s parent.
-
-Both have the same consequence — a relation in the prompt that does not exist, so a model could join on
-the wrong column and get a statement that is refused or returns nothing. Nothing about enforcement
-depends on it. The SQLite side does not have this gap: the DDL text pairs the two lists positionally
-and `sqlite-ddl.ts` reads them that way.
-
-**Severity was raised by B44.** This was filed as a *precision* defect on the edges the inventory
-draws. B44 shows it is also a *correctness* defect on whether the inventory has any edges at all: under
-a `SELECT`-only role those three views return nothing.
-
-The correct projection leaves `information_schema` for `pg_constraint`, unnesting `conkey` and `confkey`
-`WITH ORDINALITY` and joining on the ordinal. That closes all of it at once, because `pg_constraint`
-rows carry `conrelid`, are identified by oid rather than by name, and are readable by any role with
-`USAGE` on the schema.
-
-**Done when:** a composite foreign key appears in the inventory with each column paired to the one it
-references, and two same-named constraints in one schema produce only their own edges, both asserted
-against a live PostgreSQL.
 
 ### B9. Nothing enqueues an agent drive, so an interrupted run is resumable but never resumed
 
@@ -2530,25 +2397,6 @@ database has answered it, and should be able to say so without inventing a query
 
 **Done when:** a data-analysis run can conclude "not answerable here" and be scored `answered` for it,
 with the rule stated in `WORKFLOW_TOOL_RULES` and an eval asserting no fabricated statement is sent.
-
-### B43. Nine copy call sites outside the agent rail fail silently on plain HTTP
-
-`navigator.clipboard` is a secure-context API: over plain HTTP on any host but loopback it is
-`undefined`, and this product ships that way on several distribution channels. Same trap already
-recorded for `crypto.randomUUID` in `use-query-execution.ts`.
-
-`src/components/copy-button.tsx` (#389) handles it by falling back to `document.execCommand("copy")` and
-reporting a failure of both, but it is used only by the agent rail. Every other copy reaches the API
-unguarded — nine call sites across seven components: `TableItem.tsx`, `RowDetailSheet.tsx` (three: one
-per field, two on the whole-row path), `CodeGenerator.tsx`, `TestDataGenerator.tsx`,
-`DataImportModal.tsx`, `StudioMobileHeader.tsx` and `QueryEditor.tsx`.
-
-Four of the seven claim a success nobody observed, in the same statement that starts the write:
-`CodeGenerator`, `TestDataGenerator` and `RowDetailSheet` flip a label, and `TableItem` raises a
-`toast.success`. On those channels the user is told the copy worked and finds out when they paste.
-
-**Done when:** every copy goes through `CopyButton` (or its `writeToClipboard`), with a test per site
-that the label does not claim success when the write was refused.
 
 ### B44. The documented least-privilege role sees no foreign key, and the run asserts none exists
 

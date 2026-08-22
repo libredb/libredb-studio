@@ -497,6 +497,27 @@ describe("MySQLProvider", () => {
   });
 
   // --------------------------------------------------------------------------
+  // Labels
+  // --------------------------------------------------------------------------
+
+  describe("getLabels()", () => {
+    // The only label this provider declares. Until #U12 the monitoring Queries panel
+    // told a MySQL operator to install a PostgreSQL extension; `getSlowQueries()` reads
+    // `performance_schema.events_statements_summary_by_digest` and swallows a failure
+    // into `[]`, so the Performance Schema is the switch the sentence must name.
+    test("names the Performance Schema, not a Postgres extension, as the source of query stats", () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      const { slowQueriesEmptyState, entityName } = provider.getLabels();
+
+      expect(slowQueriesEmptyState).toContain("performance_schema.events_statements_summary_by_digest");
+      expect(slowQueriesEmptyState).toContain("Performance Schema");
+      expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+      // Everything else is still the inherited SQL wording, which is right for MySQL.
+      expect(entityName).toBe("Table");
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // Schema
   // --------------------------------------------------------------------------
 

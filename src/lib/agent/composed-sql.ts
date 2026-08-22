@@ -167,82 +167,104 @@ function composePostgresCatalog(selector: AgentCatalogSelector): string {
 /**
  * The foreign-key inventory.
  *
- * The joins follow `providers/sql/postgres.ts` (`CTE_FK_INFO`), which runs against
- * live servers, rather than being re-derived: the pairing of `table_schema` for the
- * key-column side and `constraint_schema` for the referenced side is subtle enough
- * that a second, plausible-looking version of it would be a statement nobody has
- * verified. The projection is flat — one row per referencing column — because the
- * row cap refuses rather than truncates, and a flat overflow is diagnosable where a
- * nested aggregate's is not.
+ * `pg_constraint` and not the `information_schema` constraint views, and the reason
+ * is a privilege rule rather than taste: PostgreSQL restricts `table_constraints`,
+ * `key_column_usage` and `constraint_column_usage` to constraints on tables the
+ * calling role OWNS or holds a privilege on other than `SELECT`. The least-privilege
+ * role `docs/AGENT_DEMO.md` tells operators to create holds `SELECT` and nothing
+ * else, so those views answered NOTHING for it — measured on the seeded dvdrental as
+ * `libredb_agent`: 0 rows where `pg_constraint WHERE contype = 'f'` holds 18, and a
+ * run then reported that the database declares no foreign keys (`docs/BACKLOG.md`
+ * B44). `pg_constraint` needs only `USAGE` on the schema, and answers all 18.
  *
- * ONE deliberate departure from that source, found by review: `tc.table_name =
- * kcu.table_name` is added to the first join. A PostgreSQL constraint name is unique
- * per TABLE, not per schema, so two tables in one schema may both carry
- * `fk_customer` — and without the extra predicate each one's referencing column is
- * attributed to the other as well. Narrowing a join cannot lose a row that belonged
- * there, and the alternative (a wrong edge in the inventory) is a false fact in a
- * prompt.
+ * The same rewrite is what pairs a composite key. Neither view exposes an ordinal,
+ * so `FOREIGN KEY (x, y) REFERENCES parents (a, b)` came back as the cross-product
+ * of the two column lists; `unnest(conkey, confkey) WITH ORDINALITY` unnests the two
+ * arrays TOGETHER, so position 1 of one side meets position 1 of the other and
+ * nothing else. And it closes the collision underneath: a constraint NAME is unique
+ * per table, so two tables in one schema may both carry `fk_shared` and the
+ * referenced side could not be narrowed by table at all — `constraint_column_usage`
+ * exposes no referencing table. A `pg_constraint` row carries `conrelid` and
+ * `confrelid` on itself and is never matched by name.
  *
- * Be precise about what that predicate does and does not close: it fixes the
- * REFERENCING side only. `constraint_column_usage` exposes no referencing-table
- * column, so two same-named constraints in one schema still cross-match on the
- * referenced side, and one table can gain an edge pointing at the other's parent.
- * Both that collision and the composite-key pairing this projection cannot express
- * are `docs/BACKLOG.md` B8, and both need the same `pg_constraint` rewrite.
+ * Both defects compounded rather than sitting side by side, which is why they were
+ * fixed together: on a fixture holding a composite key and a second constraint of
+ * the same name, the old joins returned NINE rows — three right — and gave one table
+ * edges to a table its own constraint never mentions. This read returns the three.
+ *
+ * The output column names are the ones `buildPostgresTables` already reads, so the
+ * fold consuming these rows is unchanged. The projection stays flat — one row per
+ * referencing COLUMN — because the row cap refuses rather than truncates, and a flat
+ * overflow is diagnosable where a nested aggregate's is not.
  */
 function composePostgresRelations(selector: AgentCatalogSelector): string {
   return (
-    "SELECT tc.table_schema, tc.table_name, kcu.column_name, " +
-    "ccu.table_schema AS referenced_schema, ccu.table_name AS referenced_table, ccu.column_name AS referenced_column " +
-    "FROM information_schema.table_constraints tc " +
-    "JOIN information_schema.key_column_usage kcu " +
-    "ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema " +
-    "AND tc.table_name = kcu.table_name " +
-    "JOIN information_schema.constraint_column_usage ccu " +
-    "ON ccu.constraint_name = tc.constraint_name AND ccu.constraint_schema = tc.constraint_schema " +
-    "WHERE tc.constraint_type = 'FOREIGN KEY' " +
-    "AND tc.table_schema NOT IN ('pg_catalog', 'information_schema')" +
-    equalsClause("tc.table_schema", selector.schema, "schema", "postgres") +
-    equalsClause("tc.table_name", selector.table, "table", "postgres") +
-    " ORDER BY tc.table_schema, tc.table_name, kcu.column_name"
+    "SELECT rn.nspname AS table_schema, rel.relname AS table_name, att.attname AS column_name, " +
+    "fn.nspname AS referenced_schema, frel.relname AS referenced_table, fatt.attname AS referenced_column " +
+    "FROM pg_constraint c " +
+    "JOIN pg_class rel ON rel.oid = c.conrelid " +
+    "JOIN pg_namespace rn ON rn.oid = rel.relnamespace " +
+    "JOIN pg_class frel ON frel.oid = c.confrelid " +
+    "JOIN pg_namespace fn ON fn.oid = frel.relnamespace " +
+    "JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(attnum, fattnum, ord) ON true " +
+    "JOIN pg_attribute att ON att.attrelid = c.conrelid AND att.attnum = k.attnum " +
+    "JOIN pg_attribute fatt ON fatt.attrelid = c.confrelid AND fatt.attnum = k.fattnum " +
+    "WHERE c.contype = 'f' AND rn.nspname NOT IN ('pg_catalog', 'information_schema')" +
+    equalsClause("rn.nspname", selector.schema, "schema", "postgres") +
+    equalsClause("rel.relname", selector.table, "table", "postgres") +
+    " ORDER BY rn.nspname, rel.relname, k.ord"
   );
 }
 
 /**
- * The index inventory, one row per indexed column.
+ * The index inventory, one row per indexed KEY POSITION.
  *
  * `indisprimary` rides along because it is the only place on this path that says
  * which columns are the primary key: `information_schema.columns` does not carry
  * it, and asking for it separately would be a fourth read out of a twenty-statement
- * budget. The column order is the INDEX's own (`array_position` over `indkey`), not
- * the table's, which is what makes a composite index readable — the same expression
- * the provider's live-verified `CTE_INDEX_INFO` orders by.
+ * budget. The order is the INDEX's own and not the table's, which is what makes a
+ * composite index readable.
  *
- * TWO KNOWN LIMITATIONS, both recorded in `docs/BACKLOG.md` B7 and both about what
- * the inventory SAYS rather than about what may run:
+ * Unnested WITH ORDINALITY rather than joined on `attnum = ANY(indkey)`, because an
+ * EXPRESSION has no attribute to match: `indkey` stores 0 for it, so the old inner
+ * join dropped `CREATE INDEX … ON t (lower(name))` from the inventory entirely and
+ * returned `(status, lower(name))` carrying only `status` — which a reader could take
+ * for an index on `status` alone (`docs/BACKLOG.md` B7). Every key position is now a
+ * row, and `pg_get_indexdef(indexrelid, n, true)` names what sits in position n. That
+ * is the shape the SQLite side already produces: `parseSqliteIndexDdl` keeps an
+ * expression's written form in the same column list as the plain names, so both
+ * dialects hand the fold the same thing and it needs no change for either. The
+ * ordinal also replaces `array_position(indkey, attnum)`, which could not order two
+ * positions holding the same expression marker.
  *
- *  - an expression index (`CREATE INDEX … ON t (lower(name))`) has no `pg_attribute`
- *    row for its expression, so the join drops it and the index is absent from the
- *    inventory rather than present without its columns;
- *  - `indkey` carries a covering index's `INCLUDE` columns after its key columns
- *    (PostgreSQL 11+, where `indnkeyatts` is what separates them), so those appear
- *    here as if they were key columns. Left as it is rather than sliced by
- *    `indnkeyatts`: that column does not exist on older servers, and this milestone
- *    verifies no PostgreSQL composition against a live engine.
+ * `att.attname` still wins where there IS an attribute, and that is not decoration.
+ * `pg_get_indexdef` emits an identifier as PostgreSQL would have to WRITE it, so a
+ * mixed-case column comes back as `"userId"`, quotes included — measured — and that
+ * string matches no name in the column inventory, which is what the index's column
+ * list and `markPrimary` are compared against. So the expression form reaches the
+ * snapshot and the plain names stay exactly what they were.
+ *
+ * ONE KNOWN LIMITATION REMAINS, about what the inventory SAYS rather than about what
+ * may run: `indkey` carries a covering index's `INCLUDE` columns after its key
+ * columns (PostgreSQL 11+, where `indnkeyatts` is what separates them), so those
+ * appear here as if they were key columns. Left as it is rather than sliced by
+ * `indnkeyatts`: that column does not exist on older servers.
  */
 function composePostgresIndexes(selector: AgentCatalogSelector): string {
   return (
     "SELECT n.nspname AS table_schema, t.relname AS table_name, i.relname AS index_name, " +
-    "ix.indisunique AS is_unique, ix.indisprimary AS is_primary, a.attname AS column_name " +
+    "ix.indisunique AS is_unique, ix.indisprimary AS is_primary, " +
+    "COALESCE(att.attname, pg_get_indexdef(ix.indexrelid, k.ord::int, true)) AS column_name " +
     "FROM pg_index ix " +
     "JOIN pg_class t ON t.oid = ix.indrelid " +
     "JOIN pg_class i ON i.oid = ix.indexrelid " +
     "JOIN pg_namespace n ON n.oid = t.relnamespace " +
-    "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey) " +
+    "JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true " +
+    "LEFT JOIN pg_attribute att ON att.attrelid = t.oid AND att.attnum = k.attnum " +
     "WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')" +
     equalsClause("n.nspname", selector.schema, "schema", "postgres") +
     equalsClause("t.relname", selector.table, "table", "postgres") +
-    " ORDER BY n.nspname, t.relname, i.relname, array_position(ix.indkey, a.attnum)"
+    " ORDER BY n.nspname, t.relname, i.relname, k.ord"
   );
 }
 

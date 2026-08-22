@@ -22,6 +22,7 @@ import {
   type ProviderExecutionContext,
   type ReadOnlyStatementBudget,
   type ProviderCapabilities,
+  type ProviderLabels,
   type DatabaseOverview,
   type PerformanceMetrics,
   type SlowQueryStats,
@@ -188,6 +189,20 @@ export class SQLiteProvider extends SQLBaseProvider {
       supportsConnectionString: false,
       supportsInlineRowEdit: true,
       maintenanceOperations: ["vacuum", "analyze", "reindex", "check"],
+    };
+  }
+
+  /**
+   * Only the slow-query empty state; every other label is the SQL default and right.
+   *
+   * `getSlowQueries()` answers `[]` unconditionally, so the monitoring Queries panel
+   * is ALWAYS empty here - and it used to tell the reader to install a PostgreSQL
+   * extension (#U12).
+   */
+  public override getLabels(): ProviderLabels {
+    return {
+      ...super.getLabels(),
+      slowQueriesEmptyState: "SQLite keeps no statistics about finished statements, so there is nothing to enable.",
     };
   }
 

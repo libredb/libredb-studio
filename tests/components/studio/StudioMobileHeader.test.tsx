@@ -1,10 +1,20 @@
 import "../../setup-dom";
-import "../../helpers/mock-sonner";
 import "../../helpers/mock-navigation";
 
 import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render, fireEvent } from "@testing-library/react";
+import { cleanup, render, fireEvent, waitFor } from "@testing-library/react";
+import { mockToastError } from "../../helpers/mock-sonner";
+
+// The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
+// `navigator.clipboard` is what plain HTTP off loopback actually hands the page, and an
+// editing command that answers false is what a browser that refuses the copy does.
+const originalClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator, "clipboard");
+const originalExecCommand = Object.getOwnPropertyDescriptor(globalThis.document, "execCommand");
+
+function setExecCommand(execCommand: ((command: string) => boolean) | undefined): void {
+  Object.defineProperty(globalThis.document, "execCommand", { value: execCommand, configurable: true });
+}
 
 mock.module("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => React.createElement("div", {}, children),
@@ -67,6 +77,11 @@ const conn: DatabaseConnection = {
 describe("StudioMobileHeader", () => {
   afterEach(() => {
     cleanup();
+    if (originalClipboard === undefined)
+      Object.defineProperty(globalThis.navigator, "clipboard", { value: undefined, configurable: true });
+    else Object.defineProperty(globalThis.navigator, "clipboard", originalClipboard);
+    if (originalExecCommand === undefined) setExecCommand(undefined);
+    else Object.defineProperty(globalThis.document, "execCommand", originalExecCommand);
   });
 
   const mockOnAskAgent = mock(() => {});
@@ -306,6 +321,21 @@ describe("StudioMobileHeader", () => {
 
     expect(writeText).toHaveBeenCalledTimes(1);
     expect((writeText.mock.calls as unknown[][])[0][0]).toBe("SELECT 2");
+  });
+
+  // B43: this item reached `navigator.clipboard` unguarded, which is undefined over plain
+  // HTTP off loopback — several distribution channels ship that way — so the write threw
+  // inside the handler and the menu closed over an empty clipboard with nothing said.
+  test("Copy Query says the copy failed when both write paths refuse", async () => {
+    mockToastError.mockClear();
+    Object.defineProperty(globalThis.navigator, "clipboard", { value: undefined, configurable: true });
+    setExecCommand(() => false);
+
+    const { queryByText } = render(<StudioMobileHeader {...defaults} />);
+    fireEvent.click(queryByText("Copy Query")!.closest('[role="menuitem"]')!);
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1));
+    expect(String((mockToastError.mock.calls as unknown[][])[0][0])).toContain("Could not copy");
   });
 
   test("renders a repository link in the header actions", () => {

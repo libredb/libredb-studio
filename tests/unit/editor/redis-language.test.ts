@@ -42,6 +42,44 @@ function createMockMonaco() {
   return mockMonaco as unknown as typeof Monaco & { _state: MockMonacoState };
 }
 
+type Rule = [RegExp, unknown];
+
+/**
+ * A deliberately tiny model of the one Monarch behaviour U10 turns on: inside a
+ * state the rules are tried in order and the first match wins, and the state
+ * stack SURVIVES the line break. Nothing else about Monaco is simulated — the
+ * assertions below are still about the rule data, in the style of the rest of
+ * this file, but a multi-line claim needs the line break modelled to be stated
+ * at all.
+ */
+function tokenizeLines(tokenizer: Record<string, Rule[]>, lines: string[]) {
+  const stack = ["root"];
+  return lines.map((line) => {
+    const tokens: Array<{ token: string; text: string }> = [];
+    let pos = 0;
+    while (pos < line.length) {
+      const rest = line.slice(pos);
+      const rules = tokenizer[stack[stack.length - 1]!]!;
+      let matched: { token: string; text: string } | undefined;
+      for (const [regex, action] of rules) {
+        const hit = new RegExp(`^(?:${regex.source})`, regex.flags).exec(rest);
+        if (!hit || hit[0].length === 0) continue;
+        const object = typeof action === "object" ? (action as { token?: string; next?: string }) : undefined;
+        matched = { token: typeof action === "string" ? action : (object?.token ?? "@cases"), text: hit[0] };
+        if (object?.next === "@pop") stack.pop();
+        else if (object?.next) stack.push(object.next.slice(1));
+        break;
+      }
+      // Monarch's own fallback when no rule matches: consume one character with
+      // the default token and stay in the state.
+      matched ??= { token: "", text: rest[0]! };
+      tokens.push(matched);
+      pos += matched.text.length;
+    }
+    return tokens;
+  });
+}
+
 describe("registerRedisLanguage", () => {
   test("registers the redis language with tokens provider and configuration", () => {
     const monaco = createMockMonaco();
@@ -104,11 +142,15 @@ describe("registerRedisLanguage", () => {
   // browser. These assert the regexes directly — no Monaco runtime involved.
 
   describe("tokenizer rules", () => {
-    function rootRules() {
+    function tokenizer() {
       const monaco = createMockMonaco();
       registerRedisLanguage(monaco);
       const provider = monaco._state.tokensProviders[0]!.provider;
-      return provider.tokenizer.root as unknown as [RegExp, unknown][];
+      return provider.tokenizer as unknown as Record<string, Rule[]>;
+    }
+
+    function rootRules() {
+      return tokenizer().root;
     }
 
     // Index by the token class each rule assigns so a reordering does not silently
@@ -165,29 +207,79 @@ describe("registerRedisLanguage", () => {
       expect(anchored.exec(":*")?.[0]).toBe(":*");
     });
 
-    test("a quoted value is one string token, including a `#` inside it", () => {
+    test("a quoted value paints entirely as string, including a `#` inside it", () => {
       const rules = rootRules();
-      const [double] = rules[DOUBLE_QUOTED]!;
-      const [single] = rules[SINGLE_QUOTED]!;
+      const [double, doubleAction] = rules[DOUBLE_QUOTED]!;
+      const [single, singleAction] = rules[SINGLE_QUOTED]!;
 
-      expect(double.exec('"line1 #tag"')?.[0]).toBe('"line1 #tag"');
-      expect(double.exec('"esc \\" still inside"')?.[0]).toBe('"esc \\" still inside"');
-      expect(single.exec("'a #b'")?.[0]).toBe("'a #b'");
-      // A double-quoted rule must not swallow a single quote and vice versa.
-      expect(double.test("'a'")).toBe(false);
-      expect(single.test('"a"')).toBe(false);
+      // The opening quote is its own rule now (U10): it pushes the string state
+      // instead of matching the whole literal, which is what lets the state
+      // outlive the line.
+      expect(double.source).toBe('"');
+      expect(doubleAction).toEqual({ token: "string", next: "@doubleQuoted" });
+      expect(single.source).toBe("'");
+      expect(singleAction).toEqual({ token: "string", next: "@singleQuoted" });
+
+      // Same span, same class as before: every token of the literal is `string`.
+      for (const literal of ['"line1 #tag"', '"esc \\" still inside"', "'a #b'"]) {
+        const [tokens] = tokenizeLines(tokenizer(), [literal]);
+        expect(tokens!.map((t) => t.token)).toEqual(tokens!.map(() => "string"));
+        expect(tokens!.map((t) => t.text).join("")).toBe(literal);
+      }
+
+      // A single quote inside a double-quoted value is data, and vice versa.
+      const [mixed] = tokenizeLines(tokenizer(), ['"it\'s"']);
+      expect(mixed!.map((t) => t.token)).toEqual(mixed!.map(() => "string"));
+      expect(mixed!.map((t) => t.text).join("")).toBe('"it\'s"');
+    });
+
+    // ── U10: the string state survives the line break ─────────────────────────
+    //
+    // `commandBody()` treats a newline inside an open quoted argument as data —
+    // `SET note "line1` / `#tag"` stores a two-line value and drops no comment
+    // (docs/providers/redis.md §3.4a). The editor has to agree.
+
+    test("the comment rule lives ONLY in the root state, so no string state can paint one", () => {
+      const states = tokenizer();
+
+      expect(Object.keys(states).sort()).toEqual(["doubleQuoted", "root", "singleQuoted"]);
+      for (const [name, rules] of Object.entries(states)) {
+        const comments = rules.filter(([, action]) => action === "comment");
+        expect(comments).toHaveLength(name === "root" ? 1 : 0);
+      }
+    });
+
+    test("a `#`-leading continuation line inside an open quote is a string, not a comment", () => {
+      const [, continuation, after] = tokenizeLines(tokenizer(), ['SET note "line1', '#tag"', "# real comment"]);
+
+      // The whole continuation line is the value, `#` included.
+      expect(continuation!.map((t) => t.token)).toEqual(continuation!.map(() => "string"));
+      expect(continuation!.map((t) => t.text).join("")).toBe('#tag"');
+      // And the state popped with the closing quote: the next line is a comment
+      // again, so the fix does not swallow the rest of the buffer.
+      expect(after).toEqual([{ token: "comment", text: "# real comment" }]);
+    });
+
+    test("a closed quote leaves the state, so the next `#` line is still a comment", () => {
+      const [first, second] = tokenizeLines(tokenizer(), ['SET note "line1 #tag"', "# header"]);
+
+      expect(first!.some((t) => t.token === "comment")).toBe(false);
+      expect(second).toEqual([{ token: "comment", text: "# header" }]);
     });
 
     // The ordering property the tokenizer relies on: no two rules can match at the
     // same position, so the list is order-independent today. A rule added with an
     // overlapping opening character would make order load-bearing silently.
-    test("no two root rules can open on the same character", () => {
-      const rules = rootRules();
-      const openers = "#\"'0-9aZ_*:{}[]() \t.".split("");
+    test("no two rules of a state can open on the same character", () => {
+      const openers = "#\"'0-9aZ_*:{}[]() \t.\\".split("");
 
-      for (const ch of openers) {
-        const matching = rules.filter(([regex]) => new RegExp(`^(?:${regex.source})`, regex.flags).test(ch));
-        expect(matching.length).toBeLessThanOrEqual(1);
+      // Holds for the string states too: their three rules open on
+      // not-quote-not-backslash / backslash / the closing quote.
+      for (const rules of Object.values(tokenizer())) {
+        for (const ch of openers) {
+          const matching = rules.filter(([regex]) => new RegExp(`^(?:${regex.source})`, regex.flags).test(ch));
+          expect(matching.length).toBeLessThanOrEqual(1);
+        }
       }
     });
   });

@@ -249,6 +249,17 @@ describe("RedisProvider", () => {
       expect(labels.selectAction).toBe("Scan Keys");
     });
 
+    // Until #U12 the monitoring Queries panel told a Redis server to enable a
+    // PostgreSQL extension. `getSlowQueries()` maps SLOWLOG GET, so the empty panel
+    // means the log is empty - and that is what the sentence must say.
+    test("names SLOWLOG, not a Postgres extension, as where query stats come from", () => {
+      const { slowQueriesEmptyState } = provider.getLabels();
+
+      expect(slowQueriesEmptyState).toContain("SLOWLOG");
+      expect(slowQueriesEmptyState).toContain("slowlog-log-slower-than");
+      expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+    });
+
     // `statementLanguage` is stated verbatim in the agent's plan contract, and this
     // engine needs one for a reason the MongoDB case does not cover: told to write
     // "one runnable statement in this Redis database's own query language", a live

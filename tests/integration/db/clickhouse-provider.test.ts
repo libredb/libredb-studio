@@ -453,6 +453,17 @@ describe("ClickHouseProvider metadata", () => {
     expect(labels.vacuumGlobalDesc).toContain("OPTIMIZE");
     expect(labels.analyzeGlobalDesc).toContain("no ANALYZE");
   });
+
+  // Until #U12 the monitoring Queries panel told a ClickHouse operator to install a
+  // PostgreSQL extension. `getSlowQueries()` reads system.query_log, which records
+  // nothing while `log_queries` is off, so that is the setting the sentence must name.
+  test("names system.query_log, not a Postgres extension, as where query stats come from", () => {
+    const { slowQueriesEmptyState } = new ClickHouseProvider(makeConnection()).getLabels();
+
+    expect(slowQueriesEmptyState).toContain("system.query_log");
+    expect(slowQueriesEmptyState).toContain("log_queries");
+    expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+  });
 });
 
 // ============================================================================

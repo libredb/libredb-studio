@@ -32,6 +32,7 @@ import {
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
 import { toast } from "sonner";
+import { writeToClipboard } from "@/components/copy-button";
 import { ColumnList } from "./ColumnList";
 
 interface TableItemProps {
@@ -168,8 +169,14 @@ export const TableItem = React.memo(function TableItem({
   onOpenMaintenance,
 }: TableItemProps) {
   const copyToClipboard = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
-    toast.success(`${label} copied to clipboard`);
+    // The toast waits for the write to report an outcome (B43). It used to fire in the
+    // same statement that started it, which announced a copy that never happened over
+    // plain HTTP off loopback — `navigator.clipboard` is undefined there, and several
+    // distribution channels ship exactly that way.
+    void writeToClipboard(text).then((copied) => {
+      if (copied) toast.success(`${label} copied to clipboard`);
+      else toast.error(`Could not copy ${label} — select the text and copy it yourself`);
+    });
   };
 
   const callbacks = {

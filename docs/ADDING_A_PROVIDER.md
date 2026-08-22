@@ -590,7 +590,7 @@ Every field and what it controls:
 
 Every field and where it appears. There is **no `MaintenanceModal` component** — earlier revisions of
 this table named one for ten of these rows; `git grep MaintenanceModal src/` finds only a ClickHouse
-comment. Two surfaces read labels today, plus the agent's prompt layer:
+comment. Three surfaces read labels today, plus the agent's prompt layer:
 
 | Field | Where it appears |
 |-------|-----------------|
@@ -608,6 +608,8 @@ comment. Two surfaces read labels today, plus the agent's prompt layer:
 | `vacuumGlobalLabel` | Admin Operations tab, vacuum card's button text ("Run Vacuum") |
 | `vacuumGlobalTitle` | Admin Operations tab, vacuum card title ("Reclaim Space") |
 | `vacuumGlobalDesc` | Admin Operations tab, vacuum card description paragraph |
+| `statementLanguage` (optional) | The agent's plan contract (`src/lib/agent/investigation.ts`), stated verbatim to the model. No UI surface reads it. Declared only where the engine's own name misleads a model about what a "statement" is here |
+| `slowQueriesEmptyState` (optional) | Monitoring **Queries** tab, the "Slowest Queries" empty state. Absent = PostgreSQL's *"Enable pg_stat_statements extension to see query stats."*, which is what the component hardcoded for every engine until `docs/BACKLOG.md` U12. Declare it wherever that sentence is false, and the panel drops the `pg_stat_statements required` badge as well |
 
 The `*Global*` triads reach only the card, never the per-table button, and only where the card
 renders: the analyze card is gated on `analyze`, the vacuum card on the **literal** `vacuum`. There

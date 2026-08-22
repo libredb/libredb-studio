@@ -251,6 +251,9 @@ export class DruidProvider extends SQLBaseProvider {
       ...super.getLabels(),
       entityName: "Datasource",
       entityNamePlural: "Datasources",
+      // `getSlowQueries()` is empty by design here (introspect.ts), so this panel is
+      // ALWAYS empty on Druid - and it used to name a PostgreSQL extension (#U12).
+      slowQueriesEmptyState: "Druid keeps no query log: no system table and no endpoint holds finished queries.",
     };
   }
 

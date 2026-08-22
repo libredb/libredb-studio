@@ -180,19 +180,18 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO libredb_agent;
 GRANT pg_read_all_stats TO libredb_agent;   -- for the Operate workflow
 ```
 
-**That role cannot see foreign keys, and case 1 will tell your room there are none.** Measured on
-the seeded dvdrental as `libredb_agent` (`usesuper = f`): `information_schema.table_constraints`
-returns **0** FOREIGN KEY rows, while `pg_constraint WHERE contype = 'f'` holds **18**. PostgreSQL
-shows a constraint through the `information_schema` views only to a role that owns the table or
-holds a privilege on it *other than* `SELECT`, and the agent's relations read goes through those
-views (`composePostgresRelations`, `src/lib/agent/composed-sql.ts`). So under exactly the role
-prescribed above the relations graph is empty — and the run does the worst available thing with an
-empty read, answering *"There are no declared foreign key constraints between tables in the
-database"*, confidently, citing a snapshot that genuinely contained nothing. It is false, and it is
-the first thing you would show. Until backlog **B44** closes, do one of two things: demo cases 1 and
-2 against the SQLite employees sample, which reads the DDL text and is unaffected, or grant the
-agent role something more than `SELECT` on the tables so the views open up. Do not present an FK
-claim made from a `SELECT`-only PostgreSQL role.
+**That role now sees foreign keys, and it did not before.** Measured on the seeded dvdrental as
+`libredb_agent` (`usesuper = f`): `information_schema.table_constraints` returns **0** FOREIGN KEY
+rows, while `pg_constraint WHERE contype = 'f'` holds **18** — PostgreSQL shows a constraint through
+the `information_schema` views only to a role that owns the table or holds a privilege on it *other
+than* `SELECT`. The relations read went through those views, so under exactly the role prescribed
+above the graph was empty and case 1 answered *"There are no declared foreign key constraints between
+tables in the database"*, citing a snapshot that genuinely contained nothing. `composePostgresRelations`
+(`src/lib/agent/composed-sql.ts`) now reads `pg_constraint`, which asks only for `USAGE` on the schema,
+and answers all 18 rows as this role. What is still true and still worth not overclaiming: an EMPTY
+relations read cannot tell "this database declares none" from "this role cannot see the ones it
+declares", and nothing yet makes a run say which it means (backlog **B44**, second half). So a run on a
+database that really has no foreign keys will still say so as if it had checked.
 
 **Run it from a production build** (`bun run build` then `bun run start`). In development React needs
 `eval`, which the CSP does not allow, so the login page does not hydrate (`docs/BACKLOG.md` B40).

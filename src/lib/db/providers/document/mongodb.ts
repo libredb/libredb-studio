@@ -170,6 +170,11 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       // the model's prior on Elasticsearch, and does not here either.
       statementLanguage:
         'the JSON command object this editor executes - {"collection": "<name>", "operation": "find" | "findOne" | "aggregate" | "count" | "distinct", "filter": {...}, "pipeline": [...], "options": {"limit": 50}} - and NOT mongosh shell syntax: a statement that starts with `db.` cannot be run here',
+      // `getSlowQueries()` reads `system.profile`, which does not exist until the
+      // profiler is switched on - so the empty panel is the ordinary case here, and it
+      // used to name a PostgreSQL extension (#U12).
+      slowQueriesEmptyState:
+        "Query stats come from the database profiler - run db.setProfilingLevel() to start recording into system.profile.",
     };
   }
 

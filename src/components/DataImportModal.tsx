@@ -4,6 +4,7 @@ import React, { useState, useCallback, useRef, useMemo } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CopyButton } from "@/components/copy-button";
 import { cn } from "@/lib/utils";
 import {
   Upload,
@@ -618,16 +619,18 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                   {"Back"}
                 </Button>
                 <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 text-xs border-hairline-strong"
-                    onClick={() => {
-                      navigator.clipboard.writeText(generatedSQL);
-                    }}
-                  >
-                    {"Copy SQL"}
-                  </Button>
+                  {/*
+                    `CopyButton` rather than a bare `navigator.clipboard.writeText` (B43):
+                    that API is absent over plain HTTP off loopback — which several
+                    distribution channels are — so the write threw inside this handler and
+                    the user got no sign the clipboard was still empty.
+                  */}
+                  <CopyButton
+                    text={generatedSQL}
+                    testId="import-copy-sql"
+                    label="Copy SQL"
+                    className="h-8 px-3 gap-1.5 border border-hairline-strong text-xs rounded-md"
+                  />
                   <Button
                     size="sm"
                     className="bg-emerald-600 hover:bg-emerald-500 h-8 text-xs gap-1"
