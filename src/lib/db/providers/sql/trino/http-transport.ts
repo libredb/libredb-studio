@@ -43,6 +43,11 @@
  */
 
 import type { DatabaseConnection } from "@/lib/db/types";
+// A `bigint` column arrives as an UNQUOTED JSON number and this protocol has no
+// setting that would quote it, so the raw body is rewritten before it is parsed.
+// Shared with the Druid transport, which is in the same position; ClickHouse escapes
+// it server-side instead (`output_format_json_quote_64bit_integers`, #264).
+import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import {
   type TrinoDialect,
   type TrinoErrorCategory,
@@ -327,9 +332,20 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/**
+ * The page document, with every integer too wide for a double quoted first.
+ *
+ * The rewrite runs over the WHOLE envelope rather than over `data` alone, because
+ * the rows are not separable from it at this point: the body is one JSON text and
+ * splitting it to protect the six `stats` numbers would mean parsing it twice. The
+ * cost of that is bounded and stated: a `stats` counter above 2^53 would arrive as a
+ * string and `numberField` would read it as absent, which needs `processedBytes`
+ * past 9 PB in a single statement. An absent statistic is recoverable; a rounded
+ * `bigint` in a result row is not, because nothing downstream can tell it happened.
+ */
 function parseJson(text: string): unknown {
   try {
-    return JSON.parse(text) as unknown;
+    return JSON.parse(quoteUnsafeIntegers(text)) as unknown;
   } catch {
     return null;
   }

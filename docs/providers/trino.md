@@ -367,15 +367,33 @@ Measured on 476, one statement:
 | Trino type | On the wire | Note |
 |---|---|---|
 | `decimal` | a **string** — `"1.23"` | Never a JS number: `JSON.parse` would round it |
+| `bigint` | an **unquoted number** | The one value this seam rewrites, because the server does not quote it and `JSON.parse` rounds it (below) |
 | `varbinary` | **base64** — `"AQI="` | |
 | `array(T)` | a JSON array | |
 | `map(K,V)` | a JSON object | |
 | `row(…)` | a JSON **array**, positionally | The field names live in the rendered type, not in the value |
 | `timestamp` | `"2020-01-01 10:00:00.000"` | Rendered in **UTC**, pinned by `X-Trino-Time-Zone` |
 
-Nothing is re-interpreted. The timezone pin is deliberate: the protocol's default is "the timezone of
-the Trino cluster, and not the timezone of the client", so leaving it unset makes the same statement
-produce different text depending on where the coordinator happens to run.
+Nothing is re-interpreted, with one declared exception: an integer too wide for a double. The
+timezone pin is deliberate: the protocol's default is "the timezone of the Trino cluster, and not the
+timezone of the client", so leaving it unset makes the same statement produce different text
+depending on where the coordinator happens to run.
+
+**A wide `bigint` is rewritten before the page is parsed.** Measured on 2026-08-22,
+`SELECT CAST(9223372036854775807 AS BIGINT)` puts the exact digits on the wire unquoted, and
+`JSON.parse` answers `9223372036854776000` with no error to catch. Written into `memory` and read
+back through this provider, a value the database held correctly reached the grid wrong. Trino has no
+counterpart to ClickHouse's `output_format_json_quote_64bit_integers` (#264), so the raw text is the
+only place left: `parseJson` runs `quoteUnsafeIntegers` (#265, shared with the Druid transport, which
+is in the same position) over the page first, and both endpoints of the range arrive as strings,
+`"9223372036854775807"` and `"-9223372036854775808"`. Anything a double holds exactly, `42`, is left
+a number, and a `decimal` was never at risk because the server already quotes it.
+
+The pass covers the whole envelope rather than `data` alone, because at that point the body is one
+JSON text and splitting it would mean parsing it twice. The cost is bounded and stated: a `stats`
+counter above 2^53 would arrive as a string and `numberField` would read it as absent, which needs
+`processedBytes` past 9 PB in a single statement. An absent statistic is recoverable, a rounded
+`bigint` in a result row is not, because nothing downstream can tell that it happened.
 
 Column labels are taken from the page's declaration and **de-duplicated** — a second column called
 `x` becomes `x (2)` — because the seam promises `fieldNames` is exactly the key set of every row.

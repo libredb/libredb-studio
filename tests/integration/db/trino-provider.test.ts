@@ -696,6 +696,39 @@ describe("TrinoProvider query", () => {
     expect(result.rows).toEqual([{ c: 1, "c (2)": 2 }]);
   });
 
+  /**
+   * The one value the transport rewrites, proved through the PROVIDER rather than
+   * through the seam alone, because this is the layer a caller actually reads.
+   *
+   * The page is verbatim TEXT and not a `page()` call, and that is the whole point:
+   * `JSON.stringify` would round both endpoints while building the fixture, so a
+   * test written the ordinary way here would pass while proving nothing at all.
+   *
+   * Captured 2026-08-22 from `memory.fix.t`, written through this provider and read
+   * back. Before the rewrite the max returned 9223372036854776000, so a row the
+   * database held correctly reached the caller wrong, with nothing to catch.
+   */
+  test("hands a 64-bit id back exactly as the database holds it", async () => {
+    const provider = await connectProvider();
+    overrideSurface("memory.fix.t", (id) => ({
+      body:
+        `{"id":"${id}","infoUri":"${ORIGIN}/ui/query.html?${id}",` +
+        '"columns":[{"name":"id","type":"bigint"},{"name":"note","type":"varchar"}],' +
+        '"data":[[9223372036854775807,"max"],[-9223372036854775808,"min"],[42,"safe"]],' +
+        `"stats":${JSON.stringify(STATS)},"warnings":[]}`,
+    }));
+    const result = await provider.query("SELECT id, note FROM memory.fix.t ORDER BY note");
+
+    expect(result.rows).toEqual([
+      { id: "9223372036854775807", note: "max" },
+      { id: "-9223372036854775808", note: "min" },
+      // A double holds 42 exactly, so nothing touches it: the rewrite is keyed on
+      // the digits, not on the column's declared type.
+      { id: 42, note: "safe" },
+    ]);
+    expect(result.columnTypes).toEqual({ id: "bigint", note: "varchar" });
+  });
+
   test("counts the rows a statement changed when it returned none", async () => {
     const provider = await connectProvider();
     overrideSurface("INSERT", (id) => ({

@@ -215,6 +215,21 @@ const TYPED_PAGE =
   '"data":[[1,"1.5","x","2020-01-01","2020-01-01 10:00:00.000",null,[1,2],{"k":"v"},[1,"a"],"1.23",true,"AQI="]],' +
   `"stats":${FINISHED_STATS},"warnings":[]}`;
 
+/**
+ * `SELECT CAST(9223372036854775807 AS BIGINT) hi, CAST(-9223372036854775807 AS BIGINT) - 1 lo,
+ * 42 safe, CAST(1.5 AS DOUBLE) d`, captured 2026-08-22.
+ *
+ * The two wide values are the BIGINT range's own endpoints, which is where the
+ * rounding shows; `safe` and `d` are here to prove the pass leaves everything it
+ * does not have to touch alone. The declaration is verbatim too, because it is the
+ * proof that the server called these `bigint` and still sent them UNQUOTED.
+ */
+const WIDE_INTEGER_PAGE =
+  `{"id":"${QUERY_ID}","columns":[{"name":"hi","type":"bigint"},{"name":"lo","type":"bigint"},` +
+  '{"name":"safe","type":"integer"},{"name":"d","type":"double"}],' +
+  '"data":[[9223372036854775807,-9223372036854775808,42,1.5]],' +
+  `"stats":${FINISHED_STATS},"warnings":[]}`;
+
 /** `SELEKT 1`. HTTP 200, `state: FAILED`, the fault inside the document. */
 const SYNTAX_FAILURE_PAGE =
   `{"id":"${QUERY_ID}","infoUri":"${INFO_URI}","stats":${FAILED_STATS},"error":{"message":` +
@@ -620,6 +635,34 @@ describe("TrinoHttpTransport result", () => {
     });
     expect(result.columnTypes?.dec).toBe("decimal(3, 2)");
     expect(result.columnTypes?.r).toBe("row(x integer, y varchar)");
+  });
+
+  /**
+   * A DECIMAL is safe because the server quotes it. A BIGINT is not: it arrives as
+   * an UNQUOTED JSON number, and `JSON.parse` has no exact form for an integer
+   * wider than 2^53 - it rounds one silently, with no error to catch. Measured on
+   * 2026-08-22: `9223372036854775807` written into `memory` and read back through
+   * this transport returned 9223372036854776000, so a value the database held
+   * correctly reached the grid wrong.
+   *
+   * ClickHouse escapes this with a server-side setting
+   * (`output_format_json_quote_64bit_integers`, #264) and Trino has no counterpart,
+   * which leaves the raw text as the only place to fix it - the same position Druid
+   * is in, and the reason `quoteUnsafeIntegers` (#265) lives in `db/utils` rather
+   * than inside one provider. Both endpoints come back as STRINGS for that reason;
+   * anything a double can hold exactly is left as a number.
+   */
+  test("keeps a 64-bit integer exact instead of letting JSON.parse round it", async () => {
+    sequence(WIDE_INTEGER_PAGE);
+
+    const result = await makeTransport().query("SELECT ...");
+
+    expect(result.rows[0]).toEqual({
+      hi: "9223372036854775807",
+      lo: "-9223372036854775808",
+      safe: 42,
+      d: 1.5,
+    });
   });
 
   test("reports the coordinator's own execution numbers", async () => {
