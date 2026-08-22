@@ -4,6 +4,76 @@ entries:
   - annotations:
       artifacthub.io/category: database
       artifacthub.io/changes: |
+        - "MongoDB is usable again on a managed connection: the seeded copy reaches the browser without its connection string, which made the app read every MongoDB capability as absent and answer with SQL - Find Documents on a collection wrote SELECT * FROM <collection> LIMIT 50 against a document engine"
+        - "Profile Table works on MongoDB. It had asked the provider for an operation the provider has never supported, so every collection answered HTTP 400"
+        - "The MongoDB schema tree names the fields inside a subdocument - shipping.city, not just shipping - to a depth of three and up to 200 fields per collection, which is also what the query agent is grounded on"
+        - "The query agent drafts statements a user can actually run on MongoDB and Redis: the JSON command object rather than mongosh shell syntax, and one Redis command rather than a numbered list of two"
+        - "Chart 0.1.45 changes no template: its content is the appVersion move to 0.13.1. The IPv6 bind behaviour is 0.1.42's, unchanged"
+        - "Track app release 0.13.1 (appVersion bump; default image tag follows)"
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:0.13.1
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 0.13.1
+    created: "2026-08-22T00:26:53.641169416Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting fourteen engines
+      - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase,
+      ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache
+      Cassandra
+    digest: cf35c7439b773fcae03cf8101697c629c5a5beec71c5e1a0d1d6fd5f2bfe2318
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - couchbase
+    - clickhouse
+    - druid
+    - elasticsearch
+    - opensearch
+    - trino
+    - cassandra
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.45/libredb-studio-0.1.45.tgz
+    version: 0.1.45
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
         - "Four more database engines, fourteen in all: Apache Cassandra over CQL, Apache Trino over its own client protocol with no runtime dependency added, and Elasticsearch and OpenSearch as two engines over one shared SQL transport"
         - "Eighteen further engines are published as wire-compatible, each measured against a live instance rather than assumed from a protocol - MariaDB, TiDB, Vitess, StarRocks, OceanBase, SingleStore, Citus, TimescaleDB, YugabyteDB, AlloyDB Omni, Apache Cloudberry, CockroachDB, Materialize, RisingWave, Valkey, DragonflyDB, KeyDB and FerretDB - so fourteen drivers now reach thirty-two named products"
         - "How much of the product each of those eighteen gives you differs per engine and is published per engine: full, partial, or SQL editor only. The connection dialog names the relatives a driver serves, and the docs table records the exact version probed and what was found broken"
@@ -2463,4 +2533,4 @@ entries:
     urls:
     - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
     version: 0.1.0
-generated: "2026-08-21T15:44:48.124252099Z"
+generated: "2026-08-22T00:26:53.633895344Z"
