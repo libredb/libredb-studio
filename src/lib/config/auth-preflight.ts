@@ -16,11 +16,50 @@
  * with a too-short secret the server can sign no session at all, so no working
  * deployment can regress — there is simply nothing to lose by stopping loudly.
  *
+ * The same reasoning covers `STORAGE_ENCRYPTION_KEY` (backlog K3): too short, it
+ * throws only at the first storage write - after login, after the migration
+ * attempt - and reaches the operator as a `syncError` badge in someone's browser
+ * rather than as a startup failure. It is checked only when a server storage
+ * provider is configured, because with STORAGE_PROVIDER=local (the default) the
+ * variable is inert and refusing to boot over it would be plainly wrong.
+ *
  * Runs only on standalone boot (called from instrumentation.ts `register()`),
  * so embedding @libredb/studio in libredb-platform is unaffected.
  */
 
 import { JWT_SECRET_MIN_LENGTH } from "@/lib/config/auth-env";
+import { isServerStorageEnabled } from "@/lib/storage/factory";
+
+/**
+ * Validate `STORAGE_ENCRYPTION_KEY` when server-side storage is configured.
+ *
+ * Absent is fine and stays silent: src/lib/storage/encryption.ts then derives the
+ * key from JWT_SECRET, which verifyAuthEnvAtBoot already covers. Only an
+ * explicitly set, too-short key is fatal - exactly the value that would throw on
+ * the first write.
+ */
+function verifyStorageEncryptionKeyAtBoot(): boolean {
+  const key = process.env.STORAGE_ENCRYPTION_KEY;
+  if (!key || key.length >= JWT_SECRET_MIN_LENGTH || !isServerStorageEnabled()) return true;
+
+  // The key value never reaches the logs - only its length.
+  console.error(
+    [
+      "",
+      "============================================================",
+      " LibreDB Studio cannot start: STORAGE_ENCRYPTION_KEY is too short",
+      ` Got ${key.length} characters; the minimum is ${JWT_SECRET_MIN_LENGTH}.`,
+      " Every credential write would fail, so boot stops here.",
+      " Fix it either way:",
+      "   1. Set a strong key: STORAGE_ENCRYPTION_KEY=$(openssl rand -base64 32)",
+      "   2. Unset STORAGE_ENCRYPTION_KEY and let it derive from JWT_SECRET",
+      "============================================================",
+      "",
+    ].join("\n"),
+  );
+  process.exit(1);
+  return false;
+}
 
 /**
  * Validate the auth environment before the server starts serving.
@@ -36,7 +75,7 @@ export function verifyAuthEnvAtBoot(): boolean {
   // Unset or empty is not this check's business: zero-config bootstrap generates
   // a secret, and with AUTH_BOOTSTRAP=off getJwtSecret owns the missing-secret
   // path (dev fallback outside production, clear 503 in it).
-  if (!secret || secret.length >= JWT_SECRET_MIN_LENGTH) return true;
+  if (!secret || secret.length >= JWT_SECRET_MIN_LENGTH) return verifyStorageEncryptionKeyAtBoot();
 
   // The secret value never reaches the logs — only its length.
   console.error(

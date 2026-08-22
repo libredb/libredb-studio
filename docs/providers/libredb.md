@@ -358,7 +358,8 @@ node, so you do not have to type the grammar from memory. The generation is driv
 `queryDialect: 'redis'`; MongoDB is now the only provider that reaches the JSON branch:
 
 - **Scan Keys** runs `prefix <group>:` for a `:`-prefix group (e.g. `users:*` → `prefix users:`), or
-  `get <name>` for a bare single-key node.
+  `get <name>` for a bare single-key node — except for a name carrying CR or LF, where it emits the
+  same `#` note and no command as the cheatsheet does (see below).
 - **Generate Command** inserts an explanatory cheatsheet — a use-case comment above each command —
   where every command line is a **concrete, directly-runnable example** (no `<placeholder>` tokens),
   so "Run Selected" on any line works as-is. The example `put` value is shaped by the group's
@@ -397,9 +398,12 @@ named `x\ndelete billing:2024` would render `delete billing:2024` as a line of i
 **Run Selected** would execute. For such a name the cheatsheet emits the header plus a single `#`
 note saying the key must be addressed with a hand-written command, and **no command line** (#427).
 
-That answer covers the cheatsheet only. `Scan Keys` still emits `get <name>` for such a key, so its
-second line lands in the editor as a runnable command; nothing destructive auto-executes, because
-`firstCommandLine()` runs only `get x`. Recorded as U11 in [`docs/BACKLOG.md`](../BACKLOG.md).
+`Scan Keys` gives the same answer — the note on its own, no command — through the same code path, so
+the two cannot drift. It matters more there than in the cheatsheet: `Scan Keys` auto-executes on a
+node click, and it used to emit `get x\ndelete billing:2024`, whose second line sat in the editor as
+a plausible, runnable `delete billing:2024` one **Run Selected** away (only `get x` ever ran, because
+`firstCommandLine()` takes the first line). Auto-executing the note alone runs nothing and reports
+*No command to run (only comments or blank lines)* (U11).
 
 Two menu actions are **not offered** on this provider. `Profile Table` and `Generate Test Data`
 address an object and insert rows into it; a `users:*` row is a prefix grouping this server derived

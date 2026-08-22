@@ -146,6 +146,44 @@ describe("foldLedgerEntries", () => {
   });
 
   /*
+    The two causes of one profile refusal, each pinned to the sentence a user reads
+    (docs/BACKLOG.md B47). Both used to render the engine sentence, so a PostgreSQL
+    run whose agent credential no longer decrypted was told its engine offers no
+    read-only execution profile.
+  */
+  test("an engine with no read-only profile is described as the engine's limit", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: { kind: "run-finished", atMs: 9, status: "failed", reason: "engine-unsupported" },
+      }),
+    ]);
+
+    expect(view.items.at(-1)?.detail).toBe(
+      "The agent cannot run on this database engine: it offers no read-only execution profile.",
+    );
+  });
+
+  test("a misconfigured agent credential is described as the credential, and says nothing about the engine", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: { kind: "run-finished", atMs: 9, status: "failed", reason: "agent-credential-unusable" },
+      }),
+    ]);
+
+    const detail = view.items.at(-1)?.detail ?? "";
+    expect(detail).toBe(
+      "This connection's agent credential cannot be used: check that both the agent user and password are set, that the password still decrypts under the current secret key, and that no connection string is set beside it.",
+    );
+    // The whole point of the second reason: the sentence must not send the reader
+    // after their engine, which is not what refused the run.
+    expect(detail).not.toContain("engine");
+  });
+
+  /*
     The prose a run ends on used to be returned to the caller and dropped. These pin
     the two halves of showing it: the entry that carries the words, and the ending
     that says the run stopped without a cited report — which is the difference

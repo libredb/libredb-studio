@@ -220,3 +220,62 @@ describe("POST /api/admin/fleet-health", () => {
     expect(data.results.length).toBe(0);
   });
 });
+
+// ─── Fan-out width ──────────────────────────────────────────────────────────
+// Threat: guardRoute bounds how OFTEN this route may be called, never how WIDE one call fans out.
+// Before the cap, a single admin-authenticated POST naming an arbitrarily long connections array
+// opened that many provider connections concurrently and the rate limiter saw one request.
+describe("POST /api/admin/fleet-health fan-out cap", () => {
+  function fleet(count: number) {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `conn-${i}`,
+      name: `DB ${i}`,
+      type: "postgres",
+      host: "localhost",
+      port: 5432,
+      database: "db",
+      createdAt: new Date(),
+    }));
+  }
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetOrCreateProvider.mockClear();
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+  });
+
+  test("returns 400 above the cap, names the bound, and opens nothing", async () => {
+    const req = createMockRequest("/api/admin/fleet-health", {
+      method: "POST",
+      body: { connections: fleet(101) },
+    });
+
+    const res = await POST(req);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toContain("100");
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
+  test("accepts exactly the cap", async () => {
+    const req = createMockRequest("/api/admin/fleet-health", {
+      method: "POST",
+      body: { connections: fleet(100) },
+    });
+
+    const res = await POST(req);
+    const data = await parseResponseJSON<{ results: unknown[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.results.length).toBe(100);
+  });
+});
+
+// The role denial's audit line is asserted in tests/security/route-auth.test.ts, not here: this
+// file's process neighbours mock @/lib/audit process-wide (tests/api/db/maintenance.test.ts among
+// them), so an assertion on the authoritative stdout line would read whichever mock happened to
+// win the module registry. Nothing under tests/security mocks that module.

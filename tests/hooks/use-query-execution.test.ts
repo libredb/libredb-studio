@@ -2510,4 +2510,83 @@ describe("useQueryExecution", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
+  // ── A 429 names the wait (docs/BACKLOG.md H2) ──────────────────────────────
+
+  describe("rate-limited runs", () => {
+    test("a 429 with Retry-After tells the user how long to wait", async () => {
+      mockGlobalFetch({
+        "/api/db/query": {
+          status: 429,
+          headers: { "Retry-After": "42" },
+          json: { error: "Too many requests.", code: "RATE_LIMITED", statusCode: 429, retryable: true },
+        },
+      });
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT 1");
+      });
+
+      expect(mockToastError).toHaveBeenCalledWith("Query Error", {
+        description: "Too many requests. Try again in 42s.",
+      });
+    });
+
+    test("a 429 with no Retry-After keeps the server's own message", async () => {
+      // Guessing a number would be worse than saying nothing about the wait.
+      mockGlobalFetch({
+        "/api/db/query": {
+          status: 429,
+          json: { error: "Too many requests. Try again later.", code: "RATE_LIMITED", statusCode: 429 },
+        },
+      });
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT 1");
+      });
+
+      expect(mockToastError).toHaveBeenCalledWith("Query Error", {
+        description: "Too many requests. Try again later.",
+      });
+    });
+
+    test("an HTTP-date Retry-After is left alone rather than parsed into a number", async () => {
+      // RFC 9110 permits the date form; this hook only understands delta-seconds,
+      // and an unparseable header must not turn into an invented wait.
+      mockGlobalFetch({
+        "/api/db/query": {
+          status: 429,
+          headers: { "Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT" },
+          json: { error: "Too many requests. Try again later.", code: "RATE_LIMITED", statusCode: 429 },
+        },
+      });
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT 1");
+      });
+
+      expect(mockToastError).toHaveBeenCalledWith("Query Error", {
+        description: "Too many requests. Try again later.",
+      });
+    });
+
+    test("a non-429 response with a Retry-After header is not rephrased", async () => {
+      mockGlobalFetch({
+        "/api/db/query": {
+          status: 503,
+          headers: { "Retry-After": "5" },
+          json: { error: "Database is starting up" },
+        },
+      });
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT 1");
+      });
+
+      expect(mockToastError).toHaveBeenCalledWith("Query Error", { description: "Database is starting up" });
+    });
+  });
 });

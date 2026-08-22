@@ -48,7 +48,7 @@ The config file is YAML (`.yaml`, `.yml`) or JSON (`.json`). Format is auto-dete
 ```yaml
 version: "1"
 
-defaults:                    # Optional — merged into every connection
+defaults:                    # Optional — merges managed/environment/ssl only
   managed: true
   environment: production
   ssl:
@@ -137,7 +137,7 @@ connections:
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `version` | Yes | — | Must be `"1"` |
-| `defaults` | No | — | Merged into all connections (connection values override) |
+| `defaults` | No | — | Supplies `managed`, `environment` and `ssl` where a connection omits them. No other field is merged |
 | `defaults.managed` | No | `true` | Default managed state |
 | `defaults.environment` | No | — | Default environment label |
 | `defaults.ssl` | No | — | Default SSL config |

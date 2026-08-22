@@ -252,19 +252,24 @@ export type AgentRunFailureReason =
    * profile whose acquisition would be refused is never the profile that capture asks for
    * on an engine that would refuse it.
    *
-   * What can still reach it, and what this reason's text then misdescribes, is an
-   * acquisition refused for a reason that is not the engine at all:
-   * `resolveAgentCredential` throws `ExecutionProfileError` — which `runtime.ts`
-   * classifies here — for an agent credential that is half-configured, sealed under a
-   * key that no longer decrypts, or set alongside a connection string, and it throws on
-   * ANY engine before a provider exists. A PostgreSQL run then tells the user their
-   * engine offers no read-only execution profile when their real problem is a
-   * credential. That is true of every workflow and was true before #411, which only
-   * moved the moment it can happen earlier; it is a defect of this reason's granularity
-   * rather than of the workflow, and it is recorded in `docs/BACKLOG.md` (B47) rather
-   * than fixed inside a comment.
+   * ONLY the engine's own refusal, since B47: the other cause of the same error type
+   * is `agent-credential-unusable` below.
    */
   | "engine-unsupported"
+  /**
+   * The connection's agent credential could not be applied, so the profile was
+   * refused before any provider existed — on ANY engine, including the two the agent
+   * executes on.
+   *
+   * Split out of `engine-unsupported` (B47) because `resolveAgentCredential` raises the
+   * same `ExecutionProfileError` for a credential that is half-configured, sealed under
+   * a key that no longer decrypts, or set alongside a connection string. Told the engine
+   * sentence, an operator who had rotated the secret key read something false about
+   * their PostgreSQL and nothing about the one field they could fix. The error's reason
+   * codes (`AGENT_CREDENTIAL_UNRESOLVABLE`, `AGENT_CREDENTIAL_WITH_CONNECTION_STRING`)
+   * already carried the distinction; this is where it becomes visible.
+   */
+  | "agent-credential-unusable"
   /** The run's persisted connection no longer resolves on the server. */
   | "connection-unresolvable"
   /** Anything else. Deliberately unspecific; the log carries the detail. */

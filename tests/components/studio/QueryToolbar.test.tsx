@@ -206,6 +206,18 @@ describe("QueryToolbar", () => {
     expect(queryByText("BEGIN")).not.toBeNull();
   });
 
+  test("Save renders only when onSaveQuery is supplied", () => {
+    // The embedded shell passed `noop` here and every unwired host got a dead
+    // Save button (U7); a withheld callback hides its control and its separator.
+    const { queryByText } = render(<QueryToolbar {...createDefaultProps({ onSaveQuery: undefined })} />);
+    expect(queryByText("Save")).toBeNull();
+    expect(queryByText("RUN")).not.toBeNull();
+
+    cleanup();
+    const { queryByText: withHandler } = render(<QueryToolbar {...createDefaultProps()} />);
+    expect(withHandler("Save")).not.toBeNull();
+  });
+
   test("No group at all when the caller can serve none of it, even on SQL", () => {
     // The embedded shell's exact shape: real SQL metadata, no servable control.
     const { queryByText } = render(

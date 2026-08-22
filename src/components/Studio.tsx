@@ -296,9 +296,13 @@ export default function Studio() {
   const effectiveMasking = shouldMask(user?.role, maskingConfig);
   const userCanToggle = canToggleMasking(user?.role, maskingConfig);
 
-  const openMaintenance = () => {
+  // The Explorer's per-row items call this with the row's name; without carrying it
+  // the tab opened with nothing selected (#U5). The name rides the query string —
+  // the admin section is routed, so a param is what a section page can read. The
+  // non-admin /monitoring route has no such reader, so it keeps the bare path.
+  const openMaintenance = (_tab?: "global" | "tables" | "sessions", table?: string) => {
     if (isAdmin) {
-      router.push("/admin/operations");
+      router.push(table ? `/admin/operations?table=${encodeURIComponent(table)}` : "/admin/operations");
     } else {
       router.push("/monitoring");
     }

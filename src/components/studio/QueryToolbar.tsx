@@ -14,7 +14,8 @@ interface QueryToolbarProps {
   playgroundMode: boolean;
   transactionActive: boolean;
   editingEnabled: boolean;
-  onSaveQuery: () => void;
+  /** Omitted where the caller offers nowhere to save a query to. */
+  onSaveQuery?: () => void;
   onExecuteQuery: () => void;
   onCancelQuery: () => void;
   /**
@@ -78,15 +79,21 @@ export function QueryToolbar({
             <Terminal strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
             <span className="text-xs font-medium text-blue-400">Query</span>
           </div>
-          <div className="h-4 w-px bg-fill" />
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-2"
-            onClick={onSaveQuery}
-          >
-            <Save strokeWidth={1.5} className="w-3 h-3" /> Save
-          </Button>
+          {/* The separator is chrome for Save; with Save withheld it would be a rule
+              standing alone, the same reason the control group drops its border (#427). */}
+          {onSaveQuery && (
+            <>
+              <div className="h-4 w-px bg-fill" />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-2"
+                onClick={onSaveQuery}
+              >
+                <Save strokeWidth={1.5} className="w-3 h-3" /> Save
+              </Button>
+            </>
+          )}
         </div>
         {isExecuting ? (
           <Button

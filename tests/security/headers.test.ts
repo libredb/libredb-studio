@@ -184,3 +184,43 @@ describe("securityHeaders", () => {
     expect(securityHeaders({ hsts: false })["Strict-Transport-Security"]).toBeUndefined();
   });
 });
+
+/**
+ * B40: the shipped policy must stay byte-identical, but a contributor's first `bun dev` has to
+ * work — React's development build evals, so without this relaxation the login page never hydrates.
+ */
+describe("studioCspDirectives under NODE_ENV=development", () => {
+  const original = process.env.NODE_ENV;
+
+  // `process.env as Record<string, string>` is this repo's pattern for NODE_ENV, which the
+  // Next.js types declare read-only (see tests/setup.ts and auth-jwt-config.test.ts).
+  function withNodeEnv<T>(value: string, fn: () => T): T {
+    (process.env as Record<string, string>).NODE_ENV = value;
+    try {
+      return fn();
+    } finally {
+      (process.env as Record<string, string>).NODE_ENV = original ?? "test";
+    }
+  }
+
+  test("admits eval so React's development build can hydrate", () => {
+    const scriptSrc = withNodeEnv("development", () => studioCspDirectives()["script-src"]);
+
+    expect(scriptSrc).toContain("'unsafe-eval'");
+  });
+
+  test("still omits eval in production and test", () => {
+    for (const env of ["production", "test"]) {
+      const scriptSrc = withNodeEnv(env, () => studioCspDirectives()["script-src"]);
+
+      expect({ env, scriptSrc }).toEqual({ env, scriptSrc: ["'self'", "'unsafe-inline'"] });
+    }
+  });
+
+  test("relaxes nothing but script-src, and the serialized production policy is unchanged", () => {
+    const production = withNodeEnv("production", () => securityHeaders()["Content-Security-Policy"]);
+    const development = withNodeEnv("development", () => securityHeaders()["Content-Security-Policy"]);
+
+    expect(development).toBe(production.replace("'unsafe-inline'", "'unsafe-inline' 'unsafe-eval'"));
+  });
+});

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getOrCreateProvider, type MaintenanceType } from "@/lib/db";
 import { emitAuditEvent } from "@/lib/audit";
+import { clientAddress } from "@/lib/api/client-address";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
@@ -17,6 +18,23 @@ export async function POST(request: Request) {
   if ("response" in guard) return guard.response;
 
   if (guard.session.role !== "admin") {
+    // Isolated in its own try/catch, exactly as guardRoute's no_session branch is: the 403 below
+    // is already decided, and a broken audit sink must never turn a denial into an unrelated 500.
+    try {
+      emitAuditEvent({
+        type: "permission_denied",
+        action: "denied",
+        target: "POST /api/db/maintenance",
+        user: guard.session.username,
+        result: "failure",
+        reason: "insufficient_role",
+        ip: clientAddress(request),
+      });
+    } catch (auditError) {
+      logger.error("Failed to record permission_denied audit event", auditError, {
+        route: "POST /api/db/maintenance",
+      });
+    }
     return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });
   }
 

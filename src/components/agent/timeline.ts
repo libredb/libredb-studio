@@ -427,6 +427,10 @@ const FAILURE_SENTENCES = {
   "model-rate-limited": "The model provider is limiting this key's requests. Waiting a minute usually clears it.",
   "model-unauthorized": "The model provider rejected the configured credentials.",
   "engine-unsupported": "The agent cannot run on this database engine: it offers no read-only execution profile.",
+  // Names the credential, because that is the only thing to fix and the engine is
+  // not at fault: this refusal reaches PostgreSQL and SQLite too (B47).
+  "agent-credential-unusable":
+    "This connection's agent credential cannot be used: check that both the agent user and password are set, that the password still decrypts under the current secret key, and that no connection string is set beside it.",
   "connection-unresolvable": "This run's database connection no longer resolves on the server.",
   internal: "The server could not carry this run. The reason is in the server log.",
 } as const satisfies Record<AgentRunFailureReason, string>;

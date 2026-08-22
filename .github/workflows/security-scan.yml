@@ -8,10 +8,11 @@ name: Security Scan
 #
 # WHICH SCANS CAN FAIL, AND WHICH ONLY REPORT
 #
-# "Fails" below means the job goes red, not that it blocks a merge: none of
-# these three is a required status check in branch protection today (see the
-# note after the list), so a failed job here is visible on the pull request
-# but does not by itself stop a maintainer from clicking merge.
+# "Fails" below means the job goes red. For secret-scan that now blocks a merge:
+# it was promoted to a required status check on 2026-08-22, for the determinism
+# reason given below. The other two are not required, so a failed job there is
+# visible on the pull request but does not by itself stop a maintainer from
+# clicking merge.
 #
 #   secret-scan       fails. Its verdict is a pure function of the scanned commit
 #                     range and the pinned gitleaks digest - no feed can turn it
@@ -33,8 +34,9 @@ name: Security Scan
 #                     over that is a permanent red with nothing to do about it -
 #                     which is how a gate becomes a continue-on-error line.
 #
-# None of these is a required check today. If one is ever promoted, secret-scan
-# is the only candidate, for the determinism reason above.
+# secret-scan IS a required check (promoted 2026-08-22). The other two are not,
+# and should not be: their verdict is a function of a feed rather than of the
+# code under review.
 #
 # Scanners run as containers pinned by DIGEST rather than as third-party actions:
 # a supply-chain workflow should not add a third-party action to its own trust

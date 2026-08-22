@@ -58,6 +58,19 @@ function explainRefusal(metadata: ProviderMetadata | null, hasStrategy: boolean)
   return { title: "Not Supported", description: "EXPLAIN is not available for this database type." };
 }
 
+/**
+ * The wait a rate-limited response names in its `Retry-After` header, in whole seconds.
+ *
+ * `createErrorResponse` sends a delta-seconds integer (`src/lib/api/rate-limit.ts` counts in
+ * seconds), so that is the only form read here. RFC 9110 also permits an HTTP-date, and an
+ * ingress in front of a multi-replica deployment may send one; anything this cannot parse
+ * returns null so the caller keeps the server's own message rather than inventing a number.
+ */
+function retryAfterSeconds(response: Response): number | null {
+  const seconds = Number(response.headers.get("Retry-After"));
+  return Number.isInteger(seconds) && seconds > 0 ? seconds : null;
+}
+
 export function useQueryExecution({
   activeConnection,
   metadata,
@@ -373,8 +386,14 @@ export function useQueryExecution({
 
         if (!response.ok) {
           const error = await response.json();
-          const errorMessage = error.error || "Query failed";
           const errorCode = error.code as string | undefined;
+          // A 429's own body may say nothing about the wait, but its header always
+          // carries one — name it, so the user retries when the budget is back instead
+          // of hammering a closed door (docs/BACKLOG.md H2). Only the 429 is rephrased:
+          // a Retry-After on any other status says nothing about this query's failure.
+          const retryAfter = response.status === 429 ? retryAfterSeconds(response) : null;
+          const errorMessage =
+            retryAfter !== null ? `Too many requests. Try again in ${retryAfter}s.` : error.error || "Query failed";
 
           storage.addToHistory({
             id: newLocalId(),

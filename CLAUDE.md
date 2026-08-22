@@ -10,7 +10,7 @@ Web-based SQL IDE for cloud-native teams: PostgreSQL, MySQL, SQLite, Oracle, SQL
 
 ## Branching & PRs
 
-> **Trunk-based: feature/work branches target `main` directly; releases are git tags.** Branch off `main` for new work and open every PR with base `main` (`gh pr create --base main`). `main` is the single protected integration trunk — PRs are required and the `Lint, Typecheck and Build` and `Unit & Integration Tests` checks must pass before merge (SonarCloud still runs on push and same-repo PRs but is not a required check: fork PRs cannot produce it, which used to hard-block them). Cut a release by tagging `main` — tags carry **no `v` prefix** (`0.9.65`, not `v0.9.65`) — and always follow the `/cut-release` skill ([`.claude/skills/cut-release/SKILL.md`](.claude/skills/cut-release/SKILL.md)), which holds the full runbook: bump, pre-tag verification, draft-first publish, the ref-pinned dispatch chain and the recovery table. It is user-invoked only, so ask for it rather than improvising a release. There is no `dev` branch and no long-lived `release/*` branches. A PR that bumps the
+> **Trunk-based: feature/work branches target `main` directly; releases are git tags.** Branch off `main` for new work and open every PR with base `main` (`gh pr create --base main`). `main` is the single protected integration trunk — PRs are required and the `Lint, Typecheck and Build`, `Unit & Integration Tests` and `Secret Scan` checks must pass before merge (SonarCloud still runs on push and same-repo PRs but is not a required check: fork PRs cannot produce it, which used to hard-block them). Cut a release by tagging `main` — tags carry **no `v` prefix** (`0.9.65`, not `v0.9.65`) — and always follow the `/cut-release` skill ([`.claude/skills/cut-release/SKILL.md`](.claude/skills/cut-release/SKILL.md)), which holds the full runbook: bump, pre-tag verification, draft-first publish, the ref-pinned dispatch chain and the recovery table. It is user-invoked only, so ask for it rather than improvising a release. There is no `dev` branch and no long-lived `release/*` branches. A PR that bumps the
 > `package.json` version must also run `bun run chart:bump` **and `make -C operator bundle`** and
 > commit both results — the required CI check enforces `Chart.yaml appVersion` == `package.json`
 > version (#138), and a second gate fails when `operator/bundle` / `operator/config` still carry the
@@ -92,3 +92,13 @@ Redis maps onto the SQL-oriented provider interface by convention: `getSchema()`
 
 - **Docker:** multi-stage Bun build, standalone Next.js output. Build args `JWT_SECRET_BUILD`, `ADMIN_PASSWORD_BUILD`, `USER_PASSWORD_BUILD`. Health check `GET /api/db/health`.
 - **Helm:** lint with `helm lint charts/libredb-studio --strict`. Full values reference: `charts/libredb-studio/README.md`; chart architecture/rationale: [`docs/HELM_CHART.md`](docs/HELM_CHART.md).
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

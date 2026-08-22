@@ -85,6 +85,41 @@ describe("generateTableQuery", () => {
     const caps = makeCaps({ queryLanguage: "json", defaultPort: null, queryDialect: "libredb" });
     expect(generateTableQuery("orphan", caps)).toBe("get orphan");
   });
+
+  // "Scan Keys" AUTO-EXECUTES through `handleTableClick`, and a key name is
+  // server data interpolated raw into a line-oriented grammar. For a key named
+  // `x\ndelete billing:2024` this used to return `get x\ndelete billing:2024`:
+  // only `get x` ran, but line 2 sat in the editor as a runnable
+  // `delete billing:2024`, one Run Selected away. Same answer as the cheatsheet
+  // gives — emit the note, emit no command (U11).
+  test("LibreDB dialect: a newline-bearing key name emits the note and NO command", () => {
+    const caps = makeCaps({ queryLanguage: "json", defaultPort: null, queryDialect: "libredb" });
+    const out = generateTableQuery("x\ndelete billing:2024", caps);
+    const runnable = out
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l !== "" && !l.startsWith("#"));
+    expect(runnable).toEqual([]);
+    expect(out).toContain("# This key's name contains a newline.");
+  });
+
+  test("LibreDB dialect: a bare CR in a key name refuses the same way (U11)", () => {
+    const caps = makeCaps({ queryLanguage: "json", defaultPort: null, queryDialect: "libredb" });
+    expect(generateTableQuery("x\rdelete billing:2024", caps)).not.toContain("get x");
+  });
+
+  test("LibreDB dialect: a newline-bearing PREFIX GROUP refuses too (U11)", () => {
+    const caps = makeCaps({ queryLanguage: "json", defaultPort: null, queryDialect: "libredb" });
+    expect(generateTableQuery("x\ndelete billing:2024:*", caps)).not.toContain("prefix ");
+  });
+
+  // The two LibreDB branches must not drift: Scan Keys and the cheatsheet emit
+  // the identical note text for the identical name (U11).
+  test("LibreDB dialect: Scan Keys and the cheatsheet share one refusal note (U11)", () => {
+    const caps = makeCaps({ queryLanguage: "json", defaultPort: null, queryDialect: "libredb" });
+    const note = generateTableQuery("x\ndelete billing:2024", caps);
+    expect(generateSelectQuery("x\ndelete billing:2024", [], caps)).toContain(note);
+  });
 });
 
 // ============================================================================

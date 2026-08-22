@@ -538,9 +538,11 @@ describe("StudioWorkspace", () => {
     expect(queryByTestId("savequerymodal")).toBeNull();
   });
 
-  test("without onSaveQuery prop the modal never renders and toolbar save is a noop", () => {
+  test("without onSaveQuery prop the toolbar gets no save handler at all", () => {
+    // Withheld, not `noop`: QueryToolbar renders no Save control without it, so
+    // an unwired host gets no dead button (U7).
     const { queryByTestId } = renderWorkspace({ onSaveQuery: undefined });
-    act(() => (capturedQueryToolbarProps.onSaveQuery as () => void)());
+    expect(capturedQueryToolbarProps.onSaveQuery).toBeUndefined();
     expect(queryByTestId("savequerymodal")).toBeNull();
   });
 
@@ -733,11 +735,11 @@ describe("StudioWorkspace", () => {
     expect(capturedSidebarProps.onProfileTable).toBeUndefined();
     expect(capturedSidebarProps.onGenerateCode).toBeUndefined();
     expect(capturedSidebarProps.onGenerateTestData).toBeUndefined();
-    // Import is withheld entirely, so the toolbar renders no IMPORT button (#427);
-    // save stays wired and becomes a noop when the host passes no onSaveQuery.
+    // Import and save are withheld entirely, so the toolbar renders neither the
+    // IMPORT (#427) nor the Save (U7) button.
     expect(capturedQueryToolbarProps.onImport).toBeUndefined();
+    expect(capturedQueryToolbarProps.onSaveQuery).toBeUndefined();
     expect(queryByTestId("dataimportmodal")).toBeNull();
-    act(() => (capturedQueryToolbarProps.onSaveQuery as () => void)());
     expect(queryByTestId("savequerymodal")).toBeNull();
   });
 

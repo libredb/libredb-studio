@@ -365,7 +365,10 @@ export function StudioWorkspace({
                           playgroundMode={false}
                           transactionActive={false}
                           editingEnabled={false}
-                          onSaveQuery={onSaveQueryProp ? () => setIsSaveQueryModalOpen(true) : noop}
+                          // Withheld, not `noop`: a host that wired no save has
+                          // nowhere to save to, and `noop` put a dead Save button
+                          // on every embedded surface (U7).
+                          onSaveQuery={onSaveQueryProp ? () => setIsSaveQueryModalOpen(true) : undefined}
                           onExecuteQuery={() => queryExec.executeQuery()}
                           onCancelQuery={queryExec.cancelQuery}
                           // Withheld, not `noop`: this shell runs no transaction,

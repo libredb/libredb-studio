@@ -330,6 +330,21 @@ function terminator(capabilities: ProviderCapabilities): string {
   return capabilities.statementTerminator === "none" ? "" : ";";
 }
 
+/**
+ * The one refusal both LibreDB generators give for a name they cannot address:
+ * a `#` note and no command line. A schema-tree node name is a real key name,
+ * LibreDB keys are arbitrary byte strings, and every LibreDB command is
+ * line-oriented — `get`/`put`/`delete`/`prefix` interpolate the name raw, so a
+ * key named `x\ndelete billing:2024` renders its own second half as a runnable
+ * `delete billing:2024` line. LibreDB has no lossless JSON command form to fall
+ * back to the way Redis does, so emit no command line at all and say why. Both
+ * callers go through here so the two branches cannot drift (#427, U11).
+ */
+function libredbNewlineNote(base: string): string | null {
+  if (!/[\r\n]/.test(base)) return null;
+  return "# This key's name contains a newline. LibreDB commands are line-oriented, so no generated line can address it — write the command by hand.";
+}
+
 export function generateTableQuery(
   tableName: string,
   capabilities: ProviderCapabilities,
@@ -339,6 +354,10 @@ export function generateTableQuery(
   // and not MongoDB JSON. "Scan" lists everything under the group's prefix.
   if (capabilities.queryDialect === "libredb") {
     const { isPrefixGroup, base } = prefixGroup(tableName);
+    // "Scan Keys" AUTO-EXECUTES, and a newline in the name used to leave a second,
+    // plausible command sitting in the editor one "Run Selected" away (U11).
+    const note = libredbNewlineNote(base);
+    if (note !== null) return note;
     return isPrefixGroup ? `prefix ${base}` : `get ${base}`;
   }
   // Redis speaks its own command grammar. It must be checked BEFORE the JSON
@@ -385,19 +404,11 @@ function libredbCheatsheet(tableName: string, columns: ColumnSchema[]): string {
   const { isPrefixGroup, base } = prefixGroup(tableName);
   const value = libredbExampleValue(columns);
   const header = `# LibreDB commands for ${commentName(tableName)} — select a line and Run Selected.`;
-  // A schema-tree node name is a real key name, and LibreDB keys are arbitrary
-  // byte strings. The header is JSON-quoted so a newline in one cannot end it,
-  // but `get`/`put`/`delete` interpolate the name raw, and every LibreDB command
-  // is line-oriented: a key named `x\ndelete billing:2024` would render its own
-  // second half as a runnable `delete billing:2024` line. LibreDB has no lossless
-  // JSON command form to fall back to the way Redis does, so emit no command
-  // line at all and say why (#427).
-  if (/[\r\n]/.test(base)) {
-    return [
-      header,
-      "",
-      "# This key's name contains a newline. LibreDB commands are line-oriented, so no generated line can address it — write the command by hand.",
-    ].join("\n");
+  // The header is JSON-quoted so a newline in a name cannot end it; the command
+  // lines have no such protection, so a name carrying one gets the shared refusal.
+  const note = libredbNewlineNote(base);
+  if (note !== null) {
+    return [header, "", note].join("\n");
   }
   if (isPrefixGroup) {
     const key = `${base}1`; // a concrete example key (e.g. users:1)

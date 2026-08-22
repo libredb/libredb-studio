@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 import { SignJWT } from "jose";
@@ -166,6 +166,43 @@ describe("proxy", () => {
       expect(location).toContain("http://localhost:3000");
       expect(location).not.toContain("/admin");
       expect(location).not.toContain("/login");
+    });
+
+    // Threat: the redirect above used to be silent. A non-admin token probing /admin left no trace
+    // in the one channel this project treats as authoritative, so the only role denial the proxy
+    // makes was invisible next to the origin_mismatch line it already records.
+    test("the redirect emits permission_denied with reason insufficient_role", async () => {
+      const token = await createToken("user");
+      const spy = spyOn(console, "log").mockImplementation(() => {});
+      try {
+        await proxy(createNextRequest("/admin", token));
+
+        const lines = spy.mock.calls.map((call) => JSON.parse(call[0] as string) as Record<string, unknown>);
+        expect(lines).toHaveLength(1);
+        expect(lines[0].event).toBe("permission_denied");
+        expect(lines[0].reason).toBe("insufficient_role");
+        expect(lines[0].actor).toBe("user");
+        expect(lines[0].route).toBe("GET /admin");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    test("a broken audit sink still redirects rather than failing the request", async () => {
+      const token = await createToken("user");
+      const logSpy = spyOn(console, "log").mockImplementation(() => {
+        throw new Error("audit sink unavailable");
+      });
+      const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const res = await proxy(createNextRequest("/admin", token));
+
+        expect(isRedirect(res)).toBe(true);
+        expect(getRedirectLocation(res)).not.toContain("/admin");
+      } finally {
+        logSpy.mockRestore();
+        errorSpy.mockRestore();
+      }
     });
   });
 

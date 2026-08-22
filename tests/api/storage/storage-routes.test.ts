@@ -1,5 +1,6 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 import { NextRequest } from "next/server";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
 
 // ── Mock auth ────────────────────────────────────────────────────────────────
 
@@ -46,10 +47,16 @@ import { GET } from "@/app/api/storage/route";
 import { PUT } from "@/app/api/storage/[collection]/route";
 import { POST } from "@/app/api/storage/migrate/route";
 
+/** GET /api/storage takes a request now: the shared guard reads the client address off it. */
+function getRequest() {
+  return new NextRequest("http://localhost/api/storage");
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("GET /api/storage", () => {
   beforeEach(() => {
+    clearRateLimitState();
     mockSession = { username: "admin@test.com", role: "admin" };
     providerEnabled = true;
     mockProvider.getAllData.mockClear();
@@ -57,18 +64,19 @@ describe("GET /api/storage", () => {
 
   test("returns 404 when storage not enabled", async () => {
     providerEnabled = false;
-    const res = await GET();
+    const res = await GET(getRequest());
     expect(res.status).toBe(404);
   });
 
-  test("returns 401 when not authenticated", async () => {
+  test("returns 401 with the shared guard body when not authenticated", async () => {
     mockSession = null;
-    const res = await GET();
+    const res = await GET(getRequest());
     expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Authentication required" });
   });
 
   test("returns user data on success", async () => {
-    const res = await GET();
+    const res = await GET(getRequest());
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.connections).toEqual([{ id: "c1" }]);
@@ -78,6 +86,7 @@ describe("GET /api/storage", () => {
 
 describe("PUT /api/storage/[collection]", () => {
   beforeEach(() => {
+    clearRateLimitState();
     mockSession = { username: "admin@test.com", role: "admin" };
     providerEnabled = true;
     mockProvider.setCollection.mockClear();
@@ -100,10 +109,11 @@ describe("PUT /api/storage/[collection]", () => {
     expect(res.status).toBe(404);
   });
 
-  test("returns 401 when not authenticated", async () => {
+  test("returns 401 with the shared guard body when not authenticated", async () => {
     mockSession = null;
     const res = await makeRequest("connections", []);
     expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Authentication required" });
   });
 
   test("returns 400 for invalid collection", async () => {
@@ -141,6 +151,7 @@ describe("PUT /api/storage/[collection]", () => {
 
 describe("POST /api/storage/migrate", () => {
   beforeEach(() => {
+    clearRateLimitState();
     mockSession = { username: "admin@test.com", role: "admin" };
     providerEnabled = true;
     mockProvider.mergeData.mockClear();
@@ -162,10 +173,11 @@ describe("POST /api/storage/migrate", () => {
     expect(res.status).toBe(404);
   });
 
-  test("returns 401 when not authenticated", async () => {
+  test("returns 401 with the shared guard body when not authenticated", async () => {
     mockSession = null;
     const res = await makeMigrateRequest({});
     expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Authentication required" });
   });
 
   test("merges data on success", async () => {
@@ -200,6 +212,7 @@ describe("POST /api/storage/migrate", () => {
 
 describe("PUT /api/storage/[collection]: malformed JSON", () => {
   beforeEach(() => {
+    clearRateLimitState();
     mockSession = { username: "admin@test.com", role: "admin" };
     providerEnabled = true;
   });
@@ -219,6 +232,7 @@ describe("PUT /api/storage/[collection]: malformed JSON", () => {
 
 describe("POST /api/storage/migrate: malformed JSON", () => {
   beforeEach(() => {
+    clearRateLimitState();
     mockSession = { username: "admin@test.com", role: "admin" };
     providerEnabled = true;
   });
@@ -240,6 +254,7 @@ describe("POST /api/storage/migrate: malformed JSON", () => {
 
 describe("API routes: provider error propagation", () => {
   beforeEach(() => {
+    clearRateLimitState();
     mockSession = { username: "admin@test.com", role: "admin" };
     providerEnabled = true;
     mockProvider.getAllData.mockClear();
@@ -249,7 +264,7 @@ describe("API routes: provider error propagation", () => {
 
   test("GET /api/storage returns 500 on provider error", async () => {
     mockProvider.getAllData.mockRejectedValueOnce(new Error("DB connection lost"));
-    const res = await GET();
+    const res = await GET(getRequest());
     expect(res.status).toBe(500);
     const json = await res.json();
     expect(json.error).toBe("DB connection lost");
@@ -285,7 +300,7 @@ describe("API routes: provider error propagation", () => {
 
   test("GET uses session username for user scoping", async () => {
     mockSession = { username: "user@test.com", role: "user" };
-    await GET();
+    await GET(getRequest());
     expect(mockProvider.getAllData).toHaveBeenCalledWith("user@test.com");
   });
 

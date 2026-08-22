@@ -19,25 +19,28 @@ None of it is a GitHub issue.
 
 ---
 
+---
+
+---
+
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S1–S8 · 8
 - [Drivers and connections](#drivers-and-connections) — D1–D10, U17 · 11
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X1–X7, U2–U18 · 20
-- [Authentication and security headers](#authentication-and-security-headers) — AU1–AU2 · 2
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X1–X7, U2–U18 · 15
+- [Authentication and security headers](#authentication-and-security-headers) — AU2
 - [Tests](#tests) — T1–T3 · 3
 - [Dependencies](#dependencies) — P1–P6 · 6
-- [Documentation](#documentation) — DOC1–DOC3 · 3
+- [Documentation](#documentation) — DOC1–DOC4 · 4
 - [Release pipeline](#release-pipeline) — REL1
 - [Chart configuration surface](#chart-configuration-surface) — N1–N3 · 3
-- [Container runtime](#container-runtime) — U15
-- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H13 · 13
-- [Security Phase 2 deferrals](#security-phase-2-deferrals) — C1–C10 · 10
-- [Security Phase 3 deferrals](#security-phase-3-deferrals) — K1–K4 · 4
+- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H13 · 10
+- [Security Phase 2 deferrals](#security-phase-2-deferrals) — C2–C10 · 9
+- [Security Phase 3 deferrals](#security-phase-3-deferrals) — K1–K4 · 3
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A6 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B56 · 46
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B56 · 42
 
 ---
 
@@ -476,6 +479,7 @@ Cassandra fixture does not close it.
 
 **Done when:** each of the four has been taken further or judged settled, and
 `e2e/cassandra-provider.spec.ts` exists or a written reason it cannot exist is recorded here.
+
 ---
 
 
@@ -630,31 +634,6 @@ file's ratio is not the tree's.
 **Done when:** the scope is widened with the benign sites made explicit, or the decision not to is
 recorded here with the number that justified it.
 
-### U3. Provider metadata posts the client's connection object, so a connection-string seed is refused
-
-`useProviderMetadata` posts `JSON.stringify(connection)` — the connection as the CLIENT holds it. For
-a managed seed that object is the sanitized one `GET /api/connections/managed` returns, which keeps
-only the non-secret fields.
-
-A seed defined by `host` / `port` / `database` / `user` survives that trip with enough left to
-construct a provider. All eleven managed seeds were replayed as the client sends them, and every one
-answered. A seed defined by `connectionString` does not: the string IS the credential, so nothing
-addressable is left and `createDatabaseProvider` throws. Measured on 0.11.0 against a managed MongoDB
-seed — `POST /api/db/provider-meta` returns **400**, with `Provider metadata request failed` in the
-console and no capabilities for that connection.
-
-The route already accepts the fix. It resolves `body.connectionId` through `resolveConnection`, the
-same seam `/api/db/query` and `/api/db/schema` use — which is why a query and a schema read on that
-same connection succeed while the metadata call beside them fails. Only this one caller sends the
-object instead of the id.
-
-The damage is bounded, because absent metadata reads as unsupported everywhere, and for MongoDB that
-is close to the truth: no explain, no create-table, no inline edit. What is lost is the labels — the
-explorer says what a Postgres connection would say rather than naming collections — and the loss is
-silent. Not a regression: the hook has posted the object since `a4b5cfa` (2026-02-12).
-
-**Done when:** the hook posts `connectionId` and the route resolves it, like its two neighbours.
-
 ### U4. The profile modal's error state cannot be dismissed
 
 `DataProfiler` renders the message `/api/db/profile` returned and offers no way out. Escape does not
@@ -667,18 +646,6 @@ the modal.
 
 **Done when:** a failed profile is dismissable by Escape and by the modal's own close control, for
 every provider that can fail it.
-
-### U5. The Operations tab shows `Tables (0)` for a key-value provider and preselects nothing
-
-Two gaps on one screen:
-
-- `OperationsTab` calls `useMonitoringData` with `includeTables: true` for every connection, so a
-  provider with no addressable tables renders an empty panel rather than none.
-- The Explorer's deep link `onOpenMaintenance("tables", table.name)` carries the row's name, but
-  `openMaintenance` in `Studio.tsx` drops the second argument, so the tab opens with nothing selected.
-
-**Done when:** a provider whose rows are derived groupings renders no Tables panel, and a deep link
-from a row arrives with that row selected.
 
 ### U6. The Reindex card has no per-provider wording, so it still speaks Postgres
 
@@ -699,37 +666,6 @@ should be done with it.
 **Done when:** `reindexGlobalLabel` / `reindexGlobalTitle` / `reindexGlobalDesc` exist, the three
 declaring providers set them, the card renders them with the current strings as fallback, and the
 per-table buttons carry `analyzeAction` / `vacuumAction`.
-
-### U7. The embedded surface renders a Save Query button the host may not have wired
-
-`QueryToolbar` renders its Save Query control whenever it is given an `onSaveQuery`. `StudioWorkspace`
-now takes a real `onSaveQuery` prop and opens a save modal when the host supplies one — but when the
-host supplies nothing it passes `noop`, and the button still renders. Dead control, embedded surface
-only. The standalone `Studio` always passes a real handler.
-
-Half of the original entry landed: the host CAN wire a save. The other half did not: an unwired host
-still gets a button that does nothing.
-
-**Done when:** the control is not rendered when no handler was supplied.
-
-### U8. The LibreDB Monaco language module's tokenizer is never exercised
-
-`registerLibreDBLanguage` (`src/lib/editor/libredb-language.ts`) hands Monaco a Monarch `tokenizer`
-whose rules are the whole point of the module.
-`tests/unit/editor/libredb-language.test.ts` asserts registration, the keyword list, the
-configuration and idempotency — and for the rules themselves only `tokenizer.root.length > 0`.
-
-So a regex covering the wrong span, a shadowing rule order, or a word in both the keyword and
-modifier lists would pass every gate and show up only in a browser. 100% line coverage does not help:
-the rules are data, and loading the module covers them.
-
-The Redis half is **done**. `tests/unit/editor/redis-language.test.ts` asserts the rule regexes
-directly (#427): what `^\s*#` matches and does not, that a SCAN cursor tokenizes as a number, that
-`user:*` is ONE identifier token, that a quoted value keeps a `#` inside it, and that no two root
-rules can open on the same character. It needs no Monaco runtime, so the same shape applies here.
-
-**Done when:** the LibreDB module is checked the same way, or both are driven through Monaco's own
-Monarch runtime end to end.
 
 ### U9. Four providers point `vacuumAction` at something that is not `vacuum`, and MySQL offers one it lacks
 
@@ -771,25 +707,6 @@ Low severity: it misleads, it does not corrupt.
 
 **Done when:** an open quoted argument keeps its string state across the line break in both
 tokenizers, with a test asserting a `#`-leading continuation line is not tokenized as a comment.
-
-### U11. The LibreDB "Scan Keys" generator interpolates a newline-bearing key name raw
-
-`generateSelectQuery`'s LibreDB branch refuses to emit a command line for a node whose name contains
-a newline (#427), because a line-oriented grammar cannot address it. `generateTableQuery` — the "Scan
-Keys" action, which `handleTableClick` AUTO-EXECUTES — was left as it was. For a key literally named
-`x\ndelete billing:2024` it returns `get x\ndelete billing:2024`.
-
-Only `get x` runs, because `firstCommandLine()` takes the first line. Nothing destructive executes.
-But line 2 sits in the editor as a plausible, runnable `delete billing:2024`, one Run Selected away.
-
-Redis's equivalent path is closed: an argument the plain tokenizer cannot round-trip switches that
-line to the lossless JSON command form, which has no line-oriented escape. LibreDB has no such form,
-so closing this needs either a quoting rule in its grammar or the same "emit a note, emit no command"
-answer `generateSelectQuery` already gives.
-
-**Done when:** no generated LibreDB line can carry a second command, and `docs/providers/libredb.md`
-§5.3 says so for Scan Keys as well as for the cheatsheet — today it claims the stronger property for
-both.
 
 ### U12. The monitoring Queries tab tells every engine to enable `pg_stat_statements`
 
@@ -872,20 +789,6 @@ is accepted deliberately.
 ---
 
 ## Authentication and security headers
-
-### AU1. The storage routes answer 401 with their own error shape
-
-`src/lib/api/require-session.ts` builds `{ error: "Authentication required" }` with status 401, and
-that guard is now the one place database- and LLM-reaching routes get it from. `schema-route.ts` and
-`db/health/route.ts` both call `guardRoute`, so the two inline copies this entry used to list are gone.
-
-What remains is the storage family. `src/app/api/storage/route.ts`,
-`src/app/api/storage/[collection]/route.ts` and `src/app/api/storage/migrate/route.ts` each build
-`{ error: "Unauthorized" }` inline. So a client still cannot rely on one error shape for "not logged
-in" across the whole API.
-
-**Done when:** the storage routes call the shared guard, and there is exactly one 401 response for
-this condition.
 
 ### AU2. Static assets receive no security headers — decided, not implemented
 
@@ -1279,31 +1182,6 @@ chart refuses a non-root ingress path outright.
 
 ---
 
-## Container runtime
-
-### U15. The IPv6-only container default is unverified on a kernel without AF_INET6
-
-The container no longer hardcodes `0.0.0.0`. Its entrypoint resolves a bind address at startup, proves
-`::` is dual-stack by connecting an IPv4 client to a throwaway `::` listener, and falls back to
-`0.0.0.0` only when that probe fails and a non-loopback IPv4 address exists. The chart writes an empty
-`HOSTNAME` so the resolver runs, with `config.bindAddress` to overrule it. That closed #432.
-
-One branch is reasoned rather than measured. Every namespace reachable on the development host —
-`--sysctl net.ipv6.bindv6only=1`, `--sysctl net.ipv6.conf.all.disable_ipv6=1`, `--network host`, an
-IPv6-only Docker network — still binds `::` successfully, and the `bindv6only` case still serves IPv4
-because libuv clears `IPV6_V6ONLY`. The one configuration that would make `socket(AF_INET6)` fail
-outright is a kernel built without IPv6 (`CONFIG_IPV6=n`) or with the module unloaded, and that could
-not be constructed here.
-
-The `ipv6-unavailable` branch is covered by unit tests with an injected failure, and the failure mode
-if it is wrong is loud (the server exits) rather than silent.
-
-**Done when:** the image has been started once on a host with no `AF_INET6` and observed to log
-`ipv6-unavailable` and bind `0.0.0.0` — or that configuration is judged rare enough that the unit test
-is the whole answer. This is a decision, not work.
-
----
-
 ## Security Phase 1 deferrals
 
 Each was decided during Phase 1, not overlooked.
@@ -1326,14 +1204,6 @@ the channels that serve Studio from a small box.
 
 **Done when:** the measurement says the trade is worth it and the nonce ships, or the measurement is
 recorded here as the reason it does not.
-
-### H2. A 429 should produce a Retry-After-aware toast
-
-`src/hooks/use-query-execution.ts` already reads `.error` from any non-ok body, so a rate-limited
-request shows its message. It does not read the `Retry-After` header and tell the user how long to
-wait.
-
-**Done when:** the toast names the wait.
 
 ### H3. Audit events do not record a user agent
 
@@ -1439,20 +1309,6 @@ considered each introduced a worse flaw.
 **Done when:** a cheaper, audit-visible eviction policy is found that does not reopen the oldest-first
 bypass.
 
-### H9. `admin/fleet-health`'s per-request fan-out width is unbounded by the route guard
-
-`src/app/api/admin/fleet-health/route.ts` shares the `query` rate-limit bucket via `guardRoute`, like
-every other database-reaching route. The guard limits *request rate*, not *fan-out width*: the handler
-runs `Promise.all(connections.map(...))` over whatever `connections` array the caller's JSON body
-names, with no upper bound on its length.
-
-One admin-authenticated (or stolen admin) POST can open and health-check an arbitrarily large number of
-connections concurrently. The per-request rate limit does not touch it, because it is a single request
-however large its body is.
-
-**Done when:** the handler caps the array length (a `400` above some bound) or chunks the fan-out,
-whichever the real usage pattern supports.
-
 ### H10. The route-guard allowlist verifies existence, not truth
 
 `ROUTES_WITHOUT_A_PROVIDER` in `tests/security/route-auth.test.ts` maps a route key to a one-line
@@ -1491,26 +1347,6 @@ to shrink the blast radius without loosening the guess ceiling.
 **Done when:** a design keeps this bucket immune to header spoofing without also being a stranger's
 denial-of-login switch. Unknown at the time of writing.
 
-### H12. A role-based denial is never audited, and `insufficient_role` has no emitter
-
-`AuditReason` includes `insufficient_role` in its closed union, and no call site ever constructs an
-event with it. Every denial the audit trail records is a SESSION or ORIGIN check failing — `no_session`
-from `guardRoute`, `origin_mismatch` from the proxy's Origin check — not a ROLE check failing for an
-already-authenticated caller.
-
-Five call sites, no audit line between them:
-
-- `GET` and `POST /api/admin/audit`
-- `POST /api/admin/fleet-health`
-- `POST /api/db/maintenance`
-- the proxy's own `/admin` RBAC redirect, which silently sends a non-admin token to `/`
-
-An admin session, or a stolen one, probing for a role it does not hold leaves no trace in the one
-channel this project treats as authoritative.
-
-**Done when:** each of the five emits a `permission_denied` event with `reason: "insufficient_role"`,
-the same pattern `guardRoute` already uses for `no_session`.
-
 ### H13. No rate-limit bucket is a global, unkeyed ceiling — on purpose
 
 Every bucket in `src/lib/api/rate-limit.ts` is keyed on something the caller supplies:
@@ -1534,19 +1370,6 @@ ceiling's sizing can be grounded in that data rather than guessed.
 
 Each was decided during Phase 2, not overlooked. Lettered `C` (supply **C**hain) because the SQL
 section already owns `S1`–`S8`.
-
-### C1. No scan check is a required check
-
-Branch protection requires `Lint, Typecheck and Build` and `Unit & Integration Tests`. Phase 2 adds
-three scan jobs and promotes none: promoting a check is a branch-protection change the owner makes,
-and two of the three consult a vulnerability database rebuilt every six hours, which would import that
-schedule into the merge gate.
-
-**`Secret Scan` is the one candidate.** Its verdict is a pure function of the scanned commit range and
-the pinned gitleaks digest, it needs no secrets so it works identically for fork pull requests, and it
-scans a PR's commits in about 75 milliseconds.
-
-**Done when:** the owner promotes it, or this entry records why not.
 
 ### C2. A failing scheduled scan notifies nobody but the owner
 
@@ -1729,17 +1552,6 @@ the user retypes the password once. The alternative — passing an unrecognised 
 
 **Done when:** the envelope format is versioned forward for an unrelated reason, at which point a
 longer, non-colliding prefix costs nothing.
-
-### K3. `STORAGE_ENCRYPTION_KEY` is validated at first write, not at boot
-
-`src/lib/config/auth-preflight.ts` validates `JWT_SECRET` at startup, so a short one stops the server
-rather than producing a green health check and a 503 on every login. `STORAGE_ENCRYPTION_KEY` has no
-equivalent: a value shorter than 32 characters throws only at the first storage write, which is after
-login, after the migration attempt, and only in server storage modes. It surfaces as a `syncError` in
-the UI rather than a boot failure.
-
-**Done when:** the preflight also reads `STORAGE_ENCRYPTION_KEY` — staying silent when
-`STORAGE_PROVIDER` is `local`, where the variable is inert and an error would be wrong.
 
 ### K4. Rotating the key back does not recover credentials once the app has written
 
@@ -2669,36 +2481,6 @@ database has answered it, and should be able to say so without inventing a query
 **Done when:** a data-analysis run can conclude "not answerable here" and be scored `answered` for it,
 with the rule stated in `WORKFLOW_TOOL_RULES` and an eval asserting no fabricated statement is sent.
 
-### B40. `bun dev` cannot log in, because the CSP omits `unsafe-eval` in every environment
-
-`securityHeaders` (`src/lib/security/headers.ts`) deliberately omits `unsafe-eval`, which is right for
-production and correct for Monaco. React's DEVELOPMENT build needs it, and without it the login page
-never hydrates: the Sign In button has no handler, no request reaches `/api/auth/login`, and the console
-carries only "eval() is not supported in this environment".
-
-A contributor's first `bun dev` is a dead end unless they already hold a session cookie from a
-production run, which is why this has gone unnoticed.
-
-Production is unaffected and nothing here argues for weakening the shipped policy. The fix is to relax
-the directive only where `NODE_ENV === "development"`, in one place, with the reason written next to it.
-
-**Done when:** `bun dev` can log in from a cold browser profile, with a test asserting the shipped
-policy still omits `unsafe-eval`.
-
-### B41. `defaults` in a seed config does not merge `roles`
-
-`docs/SEED_CONNECTIONS.md` says the `defaults` block is "merged into every connection". A config whose
-`roles` appears only under `defaults` is rejected with
-`Invalid seed config: connections.0.roles: expected array, received undefined`.
-
-`mergeDefaults` (`src/lib/seed/connection-filter.ts`) merges `managed`, `environment` and `ssl`, and
-nothing else. The values table in that doc lists only those three, so the schema and the table agree —
-it is the prose ("merged into every connection") that overstates. A config file is not the place to
-find that out by experiment.
-
-**Done when:** the documented behaviour and the schema agree, whichever way is chosen, with a test
-covering a config that sets `roles` only in `defaults`.
-
 ### B43. Nine copy call sites outside the agent rail fail silently on plain HTTP
 
 `navigator.clipboard` is a secure-context API: over plain HTTP on any host but loopback it is
@@ -2778,33 +2560,6 @@ most: the product contradicts its own good answer, in its own voice, at the end 
 arm into this template — with an eval that fails if the run above reads `unanswered`, and with the reason
 recorded next to the operations exemption so the two read as one decision.
 
-### B47. `engine-unsupported` is shown for a misconfigured agent credential, on an engine that is supported
-
-`AgentRunFailureReason`'s `engine-unsupported` is rendered as *"The agent cannot run on this database
-engine: it offers no read-only execution profile."* It is the classification `runtime.ts` gives to any
-`ExecutionProfileError`, and that error has two causes rather than one.
-
-The engine-shaped cause fits the sentence: `acquireExecutionProfileProvider` refuses `agent-read-only`
-for a provider with no `queryReadOnly`.
-
-The other cause is `resolveAgentCredential`, which throws the same error type — with reason codes
-`AGENT_CREDENTIAL_UNRESOLVABLE` and `AGENT_CREDENTIAL_WITH_CONNECTION_STRING` — for a credential that is
-half-configured, sealed under a key that no longer decrypts, or configured alongside a connection
-string. That check runs before a provider is created, on every engine.
-
-So an operator who set `agentUser` and `agentPassword` on a PostgreSQL connection and then rotated the
-secret key is told their engine is unsupported. The one message they get points away from the one thing
-they could fix, and says something about their database that is false.
-
-Not made by #411 and not fixed by it. Every workflow could already reach it through
-`acquireExecutionProfileProvider` on the reading path. What #411 changed is that an `operations` run can
-now reach it before its first turn, during the grounding capture — the earliest and least explicable
-moment for it to arrive.
-
-**Done when:** a credential refusal is classified apart from an engine refusal. The reason codes already
-distinguish them, so this is a branch in `classifyDriveFailure` and a second rail sentence, with a test
-per cause pinning the sentence a user is shown.
-
 ### B48. The composed grounding path still loses a plan run to an environment failure
 
 `captureFromProvider` (`src/lib/agent/context-snapshot.ts`) converts a `DatabaseError` or an
@@ -2848,50 +2603,6 @@ this is recorded rather than fixed.
 connection's existing provider instead of opening a second handle — the same answer D3 needs, and the
 reason the two should be closed together — with a test that grounds a plan run on a `libredb` connection
 whose writable provider is already open.
-
-### B50. A grounded Redis plan still drafts `KEYS`, the one command this product refuses to use itself
-
-Two plan runs on the seeded local Redis, driven after #414's vocabulary work landed, both grounded on
-the same 17 real key prefixes the provider read:
-
-- *"Which key prefix holds the most keys, and how would I list them?"* → **NO STATEMENT**, and the
-  refusal is a good one: the inventory shows key patterns but no counts, so the question cannot be
-  answered from it. Before the vocabulary fix the same objective produced `KEYS user:*` as an answer.
-- *"How many users are stored, and how do I look one up?"* → drafted `KEYS user:*`, with a rationale
-  that also named `HGETALL user:<id>` for the lookup.
-
-Grounding is working, and the second half of that rationale is the new rule working as designed: it
-names a WHOLE KEY rather than handing a derived grouping to a command. This is a draft-QUALITY matter,
-not a grounding one, and should not be read as evidence against #414.
-
-What is wrong is the first half. `KEYS` is the blocking O(N) command this product's own provider
-deliberately refuses to use: the schema read is a non-blocking `SCAN` and never `KEYS *`
-(`docs/providers/redis.md`, and `CLAUDE.md` states it as a rule). So the product reads the keyspace
-safely, then offers the user the unsafe way to do the same thing — with an Apply-to-editor button on it.
-Nothing runs: plan mode executes nothing and has no tools, so reaching the hazard takes the user
-applying the draft and running it themselves.
-
-**The open question.** The owner deliberately deferred per-engine knowledge files, and the
-derived-groupings rule was written to stay on the near side of that line: it says what the inventory's
-rows ARE and names no command, pinned by a test ("it names no command and forbids none").
-
-- For a cost sentence: one sentence about operational COST is a different kind of statement from a ban
-  on a named command, and it may belong in the rules.
-- Against: a rule that bans one command by name is engine trivia that goes stale, says nothing about the
-  next command, and this repository has been bitten by exactly that before. A model that knows what the
-  rows are can choose for itself, which is the premise the whole grounding design rests on.
-- Third position: this is the user's call. The draft is theirs to run, on their own connection, and a
-  product that reads for them does not have to think for them.
-
-**Update 2026-08-22.** The SHAPE half of this is fixed and is not what B50 is about: `redis.ts` now
-declares a `statementLanguage`, because a plan run drafted `1) KEYS session:*` / `2) GET session:1` and
-`executeRedisCommand` reads the whole body as one command, so the server answered `ERR unknown command
-'1)'`. That sentence deliberately names no command and forbids none — it names the packaging (one
-command, no numbering, no `redis-cli` prefix) and repeats what the rows ARE. The cost question below is
-untouched by it and still the owner's.
-
-**Done when:** the owner rules, and the reason is recorded next to the derived-groupings rule so the two
-read as one decision.
 
 ### B51. The run loop nudges a model three times and records none of it
 

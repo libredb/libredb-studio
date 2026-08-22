@@ -131,6 +131,23 @@ export async function proxy(request: NextRequest) {
 
     // RBAC: /admin only for admin
     if (pathname.startsWith("/admin") && role !== "admin") {
+      // Not metered through the anon bucket, unlike the origin_mismatch line above: reaching this
+      // branch requires a token this server signed, so the volume is bounded by who holds one
+      // rather than by anyone who can reach the port. Isolated in its own try/catch for the same
+      // reason as every other emit here - the redirect is already decided.
+      try {
+        emitAuditEvent({
+          type: "permission_denied",
+          action: "denied",
+          target: `${request.method} ${pathname}`,
+          user: (payload.username as string) || "unknown",
+          result: "failure",
+          reason: "insufficient_role",
+          ip: clientAddress(request),
+        });
+      } catch (auditError) {
+        logger.error("Failed to record insufficient_role audit event", auditError, { route: "proxy" });
+      }
       return withSecurityHeaders(NextResponse.redirect(new URL("/", request.url)));
     }
 

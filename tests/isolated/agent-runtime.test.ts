@@ -322,6 +322,48 @@ describe("a drive that fails before the loop", () => {
     });
   });
 
+  test("records a misconfigured agent credential as itself, not as an unsupported engine", async () => {
+    // `resolveAgentCredential` throws the SAME error type as an engine with no
+    // read-only profile, on ANY engine (docs/BACKLOG.md B47). Classified by type
+    // alone, an operator who rotated the secret key under a sealed `agentPassword`
+    // was told PostgreSQL offers no read-only execution profile — pointing away from
+    // the one thing they could fix. The reason code is what tells the two apart.
+    await openRun("arun_badcredential");
+    mockResolveConnection.mockImplementationOnce(async () => {
+      throw new ExecutionProfileError(
+        'Connection "seed:sales" configures an agent credential that cannot be resolved',
+        "AGENT_CREDENTIAL_UNRESOLVABLE",
+      );
+    });
+
+    await expect(driveAgentRun("arun_badcredential")).rejects.toThrow(ExecutionProfileError);
+
+    expect(await finishedEvent("arun_badcredential")).toMatchObject({
+      status: "failed",
+      reason: "agent-credential-unusable",
+    });
+  });
+
+  test("records an agent credential set alongside a connection string as a credential fault", async () => {
+    // The second credential code, and the one whose fix is a connection field rather
+    // than a key: buildPoolConfig would drop the credential silently, so acquisition
+    // is refused. Nothing about the engine is wrong here either.
+    await openRun("arun_credentialstring");
+    mockResolveConnection.mockImplementationOnce(async () => {
+      throw new ExecutionProfileError(
+        'Connection "seed:sales" configures an agent credential alongside a connection string',
+        "AGENT_CREDENTIAL_WITH_CONNECTION_STRING",
+      );
+    });
+
+    await expect(driveAgentRun("arun_credentialstring")).rejects.toThrow(ExecutionProfileError);
+
+    expect(await finishedEvent("arun_credentialstring")).toMatchObject({
+      status: "failed",
+      reason: "agent-credential-unusable",
+    });
+  });
+
   test("records a connection that no longer resolves", async () => {
     await openRun("arun_connectiongone");
     mockResolveConnection.mockImplementationOnce(async () => {

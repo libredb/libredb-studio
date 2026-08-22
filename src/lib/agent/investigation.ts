@@ -759,6 +759,14 @@ const PLANNING_PROSE_LIMIT_WITH_STATISTICS = `${PLANNING_STATISTICS_NATURE} Use 
  * it goes stale, it teaches nothing about the next command, and this repository has
  * been bitten by exactly that shape before. A model that knows what the rows are can
  * choose for itself, and choosing is not this file's job.
+ *
+ * RULED 2026-08-22, and the reason is recorded here so the question is not reopened.
+ * Two grounded Redis plan runs were driven after this rule landed: one refused to answer
+ * a question the inventory could not support, and one drafted `KEYS user:*` for a count.
+ * The second is the case for adding a cost sentence, and it was declined. Plan mode runs
+ * nothing and holds no tools, so reaching the hazard takes the user applying the draft
+ * and running it on their own connection - their call, on their database. A rule naming
+ * one command would buy that at the price this docblock already argues against.
  */
 const planningDerivedGroupingsRule = (noun: AgentInventoryNoun): string =>
   `Those ${noun.plural} are not objects this database holds, and no statement can be given one as a name: this server derived every row of that inventory itself, by scanning a bounded part of the keyspace and grouping the real key names it found under their common prefix. So name a whole key, or ask for keys by pattern in whatever way this engine offers — a row from that list is neither. And because the scan was bounded, the list is what one reading reached rather than everything this database holds.`;

@@ -2306,10 +2306,6 @@ classifier's real-world agreement rate was measured — and they are the same ki
 - **B39** — a data-analysis run has no honest way to conclude that the question is not about this
   database. Its only route to `answered` is a reading of the data, so a run that establishes the
   question is unanswerable fabricates one — the #356 shape again, in a new place.
-- **B40** — `bun dev` cannot log in: the CSP omits `unsafe-eval` in every environment and React's
-  development build needs it, so the login page never hydrates. Production is unaffected.
-- **B41** — `defaults` in a seed config does not merge `roles`, though the documentation says the
-  block is merged into every connection.
 - **B43** — every copy control outside the agent rail reaches `navigator.clipboard` unguarded, and it
   is a secure-context API: nine call sites across seven components, four of which claim success — by
   a label or a toast — in the same statement that starts a write nobody observed.
@@ -2331,19 +2327,12 @@ classifier's real-world agreement rate was measured — and they are the same ki
   an operational reading to the emptiness rule is "precisely backwards" — and that argument applies
   to a plan artifact verbatim. The #356 shape a third time: a rule stated in terms of an artifact
   only one valid answer can produce.
-- **B47** — `engine-unsupported` — *"The agent cannot run on this database engine: it offers no
-  read-only execution profile"* — is also what a user is shown when their AGENT CREDENTIAL cannot be
-  resolved, on an engine that is fully supported. `resolveAgentCredential` throws the same
-  `ExecutionProfileError` that a missing `queryReadOnly` throws, before any provider exists and on
-  every engine, and `classifyDriveFailure` cannot tell the two apart though the reason codes already
-  do. Pre-existing for every workflow; #411 only lets an `operations` run reach it during its
-  grounding capture, before the first turn, which is the least explicable moment for it to arrive.
 - **B48** — the two grounding paths fail differently. Since #414 a plan run on one of the nine
   provider-path engines survives an unreachable host, a wrong password or a half-configured
   `agentUser`: `captureFromProvider` converts a `DatabaseError` or an `ExecutionProfileError` raised
   before the reading leaves into an unavailable capture, and the run answers ungrounded with that
   diagnosis. The composed path — PostgreSQL and SQLite — still lets the same failure out, ending the
-  run `internal` or, on the profile error, `engine-unsupported` (B47). Deliberate at #414, which had
+  run `internal` or, on the profile error, `agent-credential-unusable`. Deliberate at #414, which had
   no business changing how the two engines it did not touch fail, and an asymmetry a reader will
   trip over until it is resolved.
 - **B49** — a **LibreDB** connection can never be grounded, and the reason is not the agent's.
@@ -2354,15 +2343,6 @@ classifier's real-world agreement rate was measured — and they are the same ki
   is already open by another process"*, converted by `captureFromProvider` into an honest ungrounded
   run with no `context-captured` event. The same lock is what makes the connection-test modal report a
   failed connection (`docs/BACKLOG.md` D3), so the two close together.
-- **B50** — a grounded Redis plan run drafts `KEYS user:*`, the blocking O(N) command this product's
-  own provider refuses to use: the schema read is a non-blocking `SCAN` and never `KEYS *`. Measured
-  on two runs after #414's vocabulary work, both grounded on the same 17 real key prefixes — one
-  refused correctly with `NO STATEMENT:` and the other drafted `KEYS`, naming a whole key for the
-  lookup half exactly as the new rule intends. Grounding is working; this is draft QUALITY. Nothing
-  runs — plan mode executes nothing — so the hazard needs the user to apply the draft and run it. The
-  open question is whether one sentence about operational cost belongs in the rules, against the
-  owner's deferral of per-engine knowledge files and the argument that banning a command by name is
-  engine trivia that goes stale. Recorded, not decided.
 - **B51** — the loop delivers three notices to a model (the reserve warning, the report reminder of
   #416, the present-before-report notice of #417) and records none of them. `recordEvent` is called
   for what the RUN did and never for what the server said to it, so a rescued run and a run that never

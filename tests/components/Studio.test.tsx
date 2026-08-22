@@ -709,6 +709,15 @@ describe("Studio", () => {
     expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations");
   });
 
+  // The Explorer's row items call this with the row's name; it rides the admin
+  // route's query string so the Operations tab lands on that row (#U5).
+  test("openMaintenance carries the named row to the operations tab", () => {
+    render(<Studio />);
+    const fn = capturedSidebarProps.onOpenMaintenance as (tab?: string, table?: string) => void;
+    act(() => fn("tables", "order items"));
+    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?table=order%20items");
+  });
+
   test("openMaintenance navigates to monitoring when not admin", () => {
     authOverride = { isAdmin: false };
     render(<Studio />);

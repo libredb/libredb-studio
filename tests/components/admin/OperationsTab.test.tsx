@@ -1,6 +1,6 @@
 import "../../setup-dom";
 import "../../helpers/mock-sonner";
-import "../../helpers/mock-navigation";
+import { resetMockSearchParams, setMockSearchParams } from "../../helpers/mock-navigation";
 
 import { mock } from "bun:test";
 import { setupRechartssMock, setupFramerMotionMock } from "../../helpers/mock-monaco";
@@ -58,19 +58,26 @@ const defaultTables = [
   },
 ];
 
+// The options the tab asked for, so a test can assert that a provider whose rows
+// are derived groupings never requests tables at all (#U5).
+let lastMonitoringOptions: Record<string, unknown> | undefined;
+
 mock.module("@/hooks/use-monitoring-data", () => ({
-  useMonitoringData: mock(() => ({
-    data: {
-      activeSessions: defaultSessions,
-      tables: defaultTables,
-    },
-    loading: false,
-    error: null,
-    refresh: mockRefresh,
-    killSession: mockKillSession,
-    runMaintenance: mockRunMaintenance,
-    ...monitoringOverride,
-  })),
+  useMonitoringData: mock((_conn: unknown, options?: Record<string, unknown>) => {
+    lastMonitoringOptions = options;
+    return {
+      data: {
+        activeSessions: defaultSessions,
+        tables: defaultTables,
+      },
+      loading: false,
+      error: null,
+      refresh: mockRefresh,
+      killSession: mockKillSession,
+      runMaintenance: mockRunMaintenance,
+      ...monitoringOverride,
+    };
+  }),
 }));
 
 mock.module("@/hooks/use-provider-metadata", () => ({
@@ -188,10 +195,13 @@ describe("OperationsTab", () => {
     mockKillSession.mockImplementation(() => true);
     mockRunMaintenance.mockClear();
     mockRunMaintenance.mockImplementation(() => true);
+    lastMonitoringOptions = undefined;
+    resetMockSearchParams();
   });
 
   afterEach(() => {
     cleanup();
+    resetMockSearchParams();
   });
 
   // =========================================================================
@@ -1273,5 +1283,72 @@ describe("OperationsTab", () => {
     expect(queryByText("Tables (1)")).not.toBeNull();
     expect(container.textContent).toContain("users");
     expect(container.textContent).toContain("1234");
+  });
+  // ── Derived groupings have no Tables panel (#U5) ───────────────────────────
+  //
+  // Redis and the embedded engine declare `tablesAreDerivedGroupings`: their rows
+  // are prefix/namespace groupings, not addressable tables, so the panel could
+  // only ever say "Tables (0)". Both the request and the panel hang off that one
+  // capability — the same one TableItem already reads.
+
+  test("renders no Tables panel and requests no tables for a derived-groupings provider", async () => {
+    mockMetadata = {
+      capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze"], tablesAreDerivedGroupings: true },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+
+    expect(queryByText("Tables (0)")).toBeNull();
+    expect(queryByText("Tables (1)")).toBeNull();
+    expect(lastMonitoringOptions?.includeTables).toBe(false);
+    // The sessions half of the split is untouched.
+    expect(queryByText("Sessions (1)")).not.toBeNull();
+  });
+
+  test("keeps the Tables panel while the capabilities are unknown", async () => {
+    // `metadata` is null before /api/db/provider-meta answers and when it fails.
+    // Every provider but two has addressable rows, so the panel stays — the same
+    // way TableItem treats an unknown capability as addressable.
+    mockMetadata = null;
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+
+    expect(queryByText("Tables (1)")).not.toBeNull();
+    expect(lastMonitoringOptions?.includeTables).toBe(true);
+  });
+
+  // ── A deep link from an Explorer row arrives selected (#U5) ────────────────
+
+  test("deep-linked table name arrives filtered and selected", async () => {
+    monitoringOverride = { data: { activeSessions: defaultSessions, tables: multiTables } };
+    setMockSearchParams(new URLSearchParams("table=orders"));
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText, container } = renderResult!;
+
+    expect(queryByText("orders")).not.toBeNull();
+    expect(queryByText("users")).toBeNull();
+    const selected = container.querySelectorAll('[data-selected="true"]');
+    expect(selected.length).toBe(1);
+    expect(selected[0]?.textContent).toContain("orders");
+  });
+
+  test("marks no row selected without a deep link", async () => {
+    monitoringOverride = { data: { activeSessions: defaultSessions, tables: multiTables } };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+
+    expect(container.querySelectorAll('[data-selected="true"]').length).toBe(0);
   });
 });

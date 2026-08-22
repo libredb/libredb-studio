@@ -1,12 +1,41 @@
 import { getSession } from "@/lib/auth";
 import { NextResponse } from "next/server";
-import { getServerAuditBuffer, sanitizeAuditInput, type AuditEventType } from "@/lib/audit";
+import { emitAuditEvent, getServerAuditBuffer, sanitizeAuditInput, type AuditEventType } from "@/lib/audit";
+import { clientAddress } from "@/lib/api/client-address";
 import { createErrorResponse } from "@/lib/api/errors";
+import { logger } from "@/lib/logger";
+
+/**
+ * The role denial's audit line, in the same shape guardRoute uses for `no_session`. This route has
+ * no guardRoute in front of it, so its 403 covers both "no session" and "wrong role" - only the
+ * latter is recorded, because naming an anonymous caller's rejection `insufficient_role` would
+ * both misname the reason and let an unauthenticated caller write the trail for free.
+ *
+ * Isolated in its own try/catch for the same reason guardRoute isolates its emit: the 403 is
+ * already decided, and a broken audit sink must never turn a denial into an unrelated 500 - which
+ * on GET, whose check sits inside the handler's try, is exactly what would otherwise happen.
+ */
+function auditRoleDenial(route: string, user: string, request: Request): void {
+  try {
+    emitAuditEvent({
+      type: "permission_denied",
+      action: "denied",
+      target: route,
+      user,
+      result: "failure",
+      reason: "insufficient_role",
+      ip: clientAddress(request),
+    });
+  } catch (auditError) {
+    logger.error("Failed to record permission_denied audit event", auditError, { route });
+  }
+}
 
 export async function GET(request: Request) {
   try {
     const session = await getSession();
     if (!session || session.role !== "admin") {
+      if (session) auditRoleDenial("GET /api/admin/audit", session.username, request);
       return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });
     }
 
@@ -26,6 +55,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session || session.role !== "admin") {
+    if (session) auditRoleDenial("POST /api/admin/audit", session.username, request);
     return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });
   }
 
