@@ -14,6 +14,14 @@
  * ceiling of 12 unreported calls. Writing them here means a later change to the defaults
  * cannot silently invalidate them — this model keeps what it was measured with until a new
  * measurement says otherwise.
+ *
+ * Its Plan cell is the last one standing between this model and every surface, and nothing in
+ * this file can win it. The losing run ends `model-timeout` at 150 seconds having produced no
+ * text: the turn is cut before any exists, which is why its closing statement is empty. That
+ * empty close was read as an empty COMPLETION once, and the retry that took `gemma4:26b` from
+ * fifteen assessment losses to 5/5 was switched on here — it never fired, and it was removed
+ * rather than kept as an override no measurement exercised. Measured at a 150-second turn
+ * limit against a shipped default of 90.
  */
 
 import { BASELINE_NOTICES } from "./notices";
@@ -24,12 +32,5 @@ export const MUSE_GLIMMER_LATEST: AgentModelProfile = {
     "3/6 modes locked, 21/26 runs passed at these settings. Investigate 5/5 · Optimize 1/5 · Assess 5/5 · Operate 5/5 · Analyze 4/4 · Plan 1/2.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
-  /*
-    Its last open cell, and the closing statement is EMPTY — not a plan the verdict rejected,
-    no plan at all. That is the signature that cost `gemma4:26b` fifteen assessment runs before
-    it was read correctly this morning: the model returns nothing, and a turn with nothing in
-    it ends the run as though it had chosen to stop.
-  */
-  retryEmptyTurn: true,
   notices: { ...BASELINE_NOTICES },
 };

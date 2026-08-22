@@ -14,6 +14,14 @@
  * ceiling of 12 unreported calls. Writing them here means a later change to the defaults
  * cannot silently invalidate them — this model keeps what it was measured with until a new
  * measurement says otherwise.
+ *
+ * Its Plan cell is not a settings problem. The losing run ends `model-timeout` at 150 seconds
+ * having produced no text at all, so there is nothing for the plan bar to score — not a missing
+ * statement and not an empty completion, a turn that does not finish. The empty close was read
+ * as an empty COMPLETION once and the retry that won `gemma4:26b` its Assess cell was switched
+ * on here; it never fired, and it was removed rather than left as an override no measurement
+ * exercised. Measured at a 150-second turn limit against a shipped default of 90, so the cell
+ * is worse in the product than on this board.
  */
 
 import { BASELINE_NOTICES } from "./notices";
@@ -30,11 +38,5 @@ export const QWEN3_5_4B: AgentModelProfile = {
     which is what makes it worth measuring here rather than anywhere else.
   */
   refusalExamples: true,
-  /*
-    The same empty close as `muse-glimmer:latest`, on the same surface and the same last open
-    cell: no statement, no refusal, no text of any kind. Asking once more is what turned that
-    shape from a loss into 5/5 on `gemma4:26b`.
-  */
-  retryEmptyTurn: true,
   notices: { ...BASELINE_NOTICES },
 };
