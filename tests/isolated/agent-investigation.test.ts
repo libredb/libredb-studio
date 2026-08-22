@@ -4404,6 +4404,55 @@ describe("a run that will not record what it read is narrowed to what would fini
     expect(namedIn(script, 16).sort()).toEqual(["compare_plans", "compose_report"]);
   });
 
+  test("uses BEFORE the run was told to finish do not count against it", async () => {
+    /*
+      The first version of the rule above counted every use in the run, and a locked cell paid
+      for it within the hour. `gemma4:26b` on database-assessment, measured immediately after:
+      four `profile_table` calls, then five reads, then a refused read — ten calls, so its
+      ceiling fired — and at that moment the count was already four. `profile_table` was taken
+      away for work the run had done BEFORE anyone told it to stop, leaving one tool, and it
+      stopped without reporting. That cell was 5/5.
+
+      Those four profiles were not repetition. They were the assessment. What the narrowing is
+      for is a run that keeps reaching for the same instrument AFTER being told to finish, so
+      that is what is counted now: uses from the reminder onward, and every earlier one is the
+      work.
+    */
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent", "query-optimization");
+    const recommends =
+      () =>
+      (turn: Turn): Response =>
+        chatToolCallStream(
+          "recommend_change",
+          JSON.stringify({
+            change: "index",
+            statement: "CREATE INDEX ix ON salary (dept_no)",
+            rationale: "the scan is sequential",
+            evidence: [{ source: "artifact", correlationId: correlationIdsIn(turn.transcript).at(-1) }],
+          }),
+          "call_recommend",
+        );
+    const script = scriptedModel(
+      // Reads first, because a recommendation has to cite one of them.
+      ...Array.from({ length: 4 }, reads),
+      ...Array.from({ length: 4 }, recommends),
+      ...Array.from({ length: 4 }, reads),
+      answersProse("done"),
+      answersProse("done"),
+    );
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    // Twelve calls, so the ceiling has fired — with four recommendations already behind it,
+    // and the instrument its verdict is scored on still in its hands.
+    expect(namedIn(script, 12).sort()).toEqual(["compare_plans", "compose_report", "recommend_change"]);
+  });
+
   test("a narrowed run's other tools are REFUSED, not merely undeclared", async () => {
     /*
       Found by review on the first version of this: narrowing only what the model is

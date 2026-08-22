@@ -2087,11 +2087,11 @@ const AGENT_NARROWED_EXTRA_TOOLS: Readonly<Record<AgentRunWorkflowType, readonly
  * fired at 12. Intersected with the run's own selection rather than trusted, so a
  * workflow whose tool set changes cannot leave a name here that the run does not hold.
  */
-function narrowedToolNames(record: AgentRunRecord): ReadonlySet<AgentToolName> {
+function narrowedToolNames(record: AgentRunRecord, since = Number.POSITIVE_INFINITY): ReadonlySet<AgentToolName> {
   const held = new Set(selectAgentTools(record).map((definition) => definition.name));
   const kept = new Set<AgentToolName>();
   for (const name of ["compose_report" as const, ...AGENT_NARROWED_EXTRA_TOOLS[record.workflowType]]) {
-    if (held.has(name) && !usedUp(record, name)) kept.add(name);
+    if (held.has(name) && !usedUp(record, name, since)) kept.add(name);
   }
   return kept;
 }
@@ -2121,14 +2121,24 @@ const AGENT_INSTRUMENT_RESULT: Readonly<Partial<Record<AgentToolName, AgentRunEv
  * Three, because a bar can want a particular SHAPE — an optimization's needs a recommendation
  * citing a plan — and a run that has misjudged that deserves another attempt rather than one.
  * Past three it is repeating rather than aiming, and `compose_report` is the only thing left,
- * which is what the narrowing was for. No locked cell records more than two.
+ * which is what the narrowing was for.
+ *
+ * Counted from the NARROWING, and that qualifier cost a locked cell to learn. The first version
+ * counted every use in the run, and `gemma4:26b` on database-assessment paid for it inside the
+ * hour: four `profile_table` calls, then five reads, then a refused one — ten calls, so its
+ * ceiling fired — and the count stood at four before anybody had told it to stop. It lost the
+ * instrument its verdict is scored on for having done the assessment, was left holding one
+ * tool, and stopped. That cell was 5/5.
+ *
+ * Those four profiles were the work. This bounds what a run does AFTER being told to finish,
+ * which is the only thing the narrowing was ever about.
  */
 const AGENT_NARROWED_INSTRUMENT_USES = 3;
 
-function usedUp(record: AgentRunRecord, name: AgentToolName): boolean {
+function usedUp(record: AgentRunRecord, name: AgentToolName, since: number): boolean {
   const result = AGENT_INSTRUMENT_RESULT[name];
   if (result === undefined) return false;
-  return record.events.filter((event) => event.kind === result).length >= AGENT_NARROWED_INSTRUMENT_USES;
+  return record.events.slice(since).filter((event) => event.kind === result).length >= AGENT_NARROWED_INSTRUMENT_USES;
 }
 
 /** The tool set the SDK is given: the server's selection, declared but never executed by it. */
@@ -2137,8 +2147,8 @@ function declaredTools(record: AgentRunRecord): ToolSet | undefined {
 }
 
 /** The same declaration, restricted to a narrowed run's remaining names. */
-function narrowedTools(record: AgentRunRecord): ToolSet | undefined {
-  const kept = narrowedToolNames(record);
+function narrowedTools(record: AgentRunRecord, since?: number): ToolSet | undefined {
+  const kept = narrowedToolNames(record, since);
   return toolSetOf(selectAgentTools(record).filter((definition) => kept.has(definition.name)));
 }
 
@@ -2430,6 +2440,14 @@ export async function runInvestigation(
    * only while narrowed, which is the only state where that question is asked.
    */
   let ledger = record;
+  /**
+   * Where the ledger stood when this run was told to finish.
+   *
+   * The instrument bound above counts from HERE, not from the run's beginning: what it is for
+   * is a run that keeps reaching for the same tool after the notice, and everything before the
+   * notice is the work it was asked to do.
+   */
+  let narrowedAtEvent = Number.POSITIVE_INFINITY;
   const priorProgress = describePriorProgress(record);
   if (priorProgress !== null) messages.push({ role: "user", content: priorProgress });
 
@@ -2958,7 +2976,9 @@ export async function runInvestigation(
     if (narrowed) ledger = (await service.resume(runId)).record;
     if (prompted && narrowed && !narrowingDeclared) {
       const smaller = promptedToolContract(
-        selectAgentTools(ledger).filter((definition) => narrowedToolNames(ledger).has(definition.name)),
+        selectAgentTools(ledger).filter((definition) =>
+          narrowedToolNames(ledger, narrowedAtEvent).has(definition.name),
+        ),
       );
       if (smaller !== null) {
         narrowingDeclared = true;
@@ -2979,7 +2999,7 @@ export async function runInvestigation(
       systemPrompt(record, grounding, engine),
       messages,
       // Narrowed once the run has been told to finish; see `AGENT_NARROWED_EXTRA_TOOLS`.
-      narrowed && !prompted ? narrowedTools(ledger) : tools,
+      narrowed && !prompted ? narrowedTools(ledger, narrowedAtEvent) : tools,
       turnBudgetMs,
       // Constraint measured and REVERTED; see the commit that removes it. Left unset here
       // rather than deleted from `takeTurn`, because the seam is correct and the cost was in
@@ -3083,6 +3103,7 @@ export async function runInvestigation(
     // because a set that shrinks without a word looks to the model like a broken server.
     if (!narrowed && toolCallsMade >= ceilingFor(model.modelId)) {
       narrowed = true;
+      narrowedAtEvent = (await service.resume(runId)).record.events.length;
       if (reportReminders === 0) {
         reportReminders += 1;
         messages.push({ role: "user", content: notice(noticesFor(model.modelId).reportReminder) });
@@ -3325,7 +3346,16 @@ export async function runInvestigation(
           continue;
         }
       }
-      const outcome = await handleCall({ service, context, record: ledger, call, known, notAttempted, narrowed });
+      const outcome = await handleCall({
+        service,
+        context,
+        record: ledger,
+        call,
+        known,
+        notAttempted,
+        narrowed,
+        narrowedAtEvent,
+      });
       if (outcome.kind === "cancelled") {
         // `runStep` already ended the run at its checkpoint; finishing again would
         // refuse, and rightly.
@@ -3374,10 +3404,12 @@ async function handleCall(input: {
    * the ceiling fired at 12.
    */
   readonly narrowed: boolean;
+  /** Where the ledger stood at the narrowing; see `AGENT_NARROWED_INSTRUMENT_USES`. */
+  readonly narrowedAtEvent: number;
 }): Promise<CallResult> {
-  const { service, context, record, call, known, notAttempted, narrowed } = input;
+  const { service, context, record, call, known, notAttempted, narrowed, narrowedAtEvent } = input;
   const offered = narrowed
-    ? narrowedToolNames(record)
+    ? narrowedToolNames(record, narrowedAtEvent)
     : new Set(selectAgentTools(record).map((definition) => definition.name));
   if (!offered.has(call.toolName as AgentToolName)) {
     return { kind: "answered", text: unknownToolText(call.toolName) };
