@@ -124,8 +124,15 @@ export function registerRedisLanguage(monaco: typeof Monaco): void {
         // matching the provider's line skipper — `#` inside a key or value
         // stays data (#427).
         [/^\s*#.*$/, "comment"],
-        [/"([^"\\]|\\.)*"/, "string"],
-        [/'([^'\\]|\\.)*'/, "string"],
+        // A quote OPENS a string state rather than matching the whole literal on
+        // one line. Monarch carries the state stack across the line break, so an
+        // unterminated quote keeps the next line inside the string — which is what
+        // the provider does: a newline inside an open quoted argument is data, and
+        // `SET note "line1` / `#tag"` stores a two-line value with no comment
+        // dropped (docs/providers/redis.md §3.4a). Only `root` has the comment
+        // rule, so a `#`-leading continuation line cannot paint as one (U10).
+        [/"/, { token: "string", next: "@doubleQuoted" }],
+        [/'/, { token: "string", next: "@singleQuoted" }],
         // SCAN's cursor `0`, COUNT's `50` and the `0 -1` range of LRANGE/ZRANGE
         // read as numbers rather than falling through to the editor's default
         // token. Not "before the identifier rule": the identifier rule below
@@ -139,6 +146,19 @@ export function registerRedisLanguage(monaco: typeof Monaco): void {
         ],
         // A pattern that starts with punctuation (`*`, `:*`) still reads as data.
         [/[*:][\w:.*/-]*/, "identifier"],
+      ],
+      // The escape rule keeps `\"` from closing the string, matching the single-
+      // line span the previous one-shot regex took. Openers stay disjoint here
+      // too: not-quote-not-backslash / backslash / the closing quote.
+      doubleQuoted: [
+        [/[^"\\]+/, "string"],
+        [/\\./, "string"],
+        [/"/, { token: "string", next: "@pop" }],
+      ],
+      singleQuoted: [
+        [/[^'\\]+/, "string"],
+        [/\\./, "string"],
+        [/'/, { token: "string", next: "@pop" }],
       ],
     },
   });

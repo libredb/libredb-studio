@@ -113,9 +113,10 @@ DatabaseProvider (interface) → BaseDatabaseProvider → SQLBaseProvider → SQ
 
 `SQLiteProvider` inherits the shared SQL helpers (see
 [PostgreSQL doc §2.2](./postgres.md#22-what-sqlbaseprovider-provides)). It does **not** override
-`prepareQuery()` or `getLabels()`: SQLite uses standard `LIMIT` (so the base's `LIMIT` injection
-works) and the default SQL labels (*Vacuum Table* / *Analyze Table* fit, since SQLite has real
-`VACUUM`/`ANALYZE`).
+`prepareQuery()`: SQLite uses standard `LIMIT`, so the base's `LIMIT` injection works. `getLabels()`
+is overridden for **one** field only — the slow-query empty state ([§9](#9-capabilities--labels)) —
+because the rest of the default SQL wording fits (*Vacuum Table* / *Analyze Table*, since SQLite has
+real `VACUUM`/`ANALYZE`).
 
 ### Dynamic driver load
 
@@ -374,8 +375,13 @@ and `reindex` targets are quoted via `escapeIdentifier()`:
 
 ### Labels
 
-Default SQL labels (not overridden) — *Table* / *Select Top 50* / *Vacuum Table* / *Analyze Table*,
-which match SQLite's real `VACUUM`/`ANALYZE`.
+Default SQL labels — *Table* / *Select Top 50* / *Vacuum Table* / *Analyze Table*, which match
+SQLite's real `VACUUM`/`ANALYZE`.
+
+One field is overridden: `slowQueriesEmptyState` → *"SQLite keeps no statistics about finished
+statements, so there is nothing to enable."* `getSlowQueries()` answers `[]` unconditionally
+([§7](#7-monitoring--health)), so the monitoring Queries panel is always empty here, and its sentence
+was hardcoded to PostgreSQL's `pg_stat_statements` advice (`docs/BACKLOG.md` U12).
 
 ---
 

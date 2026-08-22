@@ -636,6 +636,12 @@ analyze -> *Update Statistics* (the card text names the Enterprise-only restrict
 *Compact* (the card says Couchbase compacts automatically and there is nothing to run), search
 placeholder -> *Search collections or fields...*.
 
+One label is about the monitoring tab instead: `slowQueriesEmptyState` -> *"Query stats come from
+system:completed_requests, which keeps only requests over the query service's threshold."* The
+Queries panel's empty state was hardcoded to PostgreSQL's `pg_stat_statements` advice on every engine
+(`docs/BACKLOG.md` U12), and the completed-requests catalog ([§7](#7-monitoring--health)) is what
+this cluster actually keeps.
+
 ---
 
 ## 10. Error handling

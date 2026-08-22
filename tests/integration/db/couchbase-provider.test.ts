@@ -315,6 +315,16 @@ describe("CouchbaseProvider metadata", () => {
     expect(labels.rowNamePlural).toBe("documents");
     expect(labels.analyzeGlobalDesc).toContain("Enterprise");
   });
+
+  // Until #U12 the monitoring Queries panel told a Couchbase operator to install a
+  // PostgreSQL extension. `getSlowQueries()` reads system:completed_requests, which
+  // keeps only requests over the query service's threshold.
+  test("names system:completed_requests, not a Postgres extension, as the source of query stats", () => {
+    const { slowQueriesEmptyState } = new CouchbaseProvider(makeConnection()).getLabels();
+
+    expect(slowQueriesEmptyState).toContain("system:completed_requests");
+    expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+  });
 });
 
 // ============================================================================

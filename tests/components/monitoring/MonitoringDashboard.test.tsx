@@ -123,10 +123,15 @@ mock.module("@/components/monitoring/tabs/PerformanceTab", () => ({
   },
 }));
 
+// Captures the props the dashboard hands the queries tab, for the same reason as the
+// tables tab below: the label wiring is the dashboard's job, the copy is the tab's.
+const queriesTabProps: Array<Record<string, unknown>> = [];
+
 mock.module("@/components/monitoring/tabs/QueriesTab", () => ({
-  QueriesTab: () => {
+  QueriesTab: (props: Record<string, unknown>) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
+    queriesTabProps.push(props);
     return React.createElement("div", { "data-testid": "monitoring-queriestab" }, "QueriesTab");
   },
 }));
@@ -164,6 +169,14 @@ const mockCapabilities = {
   schemaRefreshPattern: "^(CREATE|DROP)\\b",
 };
 
+const mockLabels = {
+  entityName: "Table",
+  entityNamePlural: "Tables",
+  rowName: "Row",
+  rowNamePlural: "Rows",
+  slowQueriesEmptyState: "This engine keeps no aggregate of finished statements.",
+};
+
 // Records which connection the dashboard asks metadata for, so the wiring test can
 // assert the lookup follows the selection rather than firing on null.
 const providerMetadataCalls: Array<{ id?: string } | null> = [];
@@ -174,12 +187,7 @@ mock.module("@/hooks/use-provider-metadata", () => ({
     return {
       metadata: {
         capabilities: mockCapabilities,
-        labels: {
-          entityName: "Table",
-          entityNamePlural: "Tables",
-          rowName: "Row",
-          rowNamePlural: "Rows",
-        },
+        labels: mockLabels,
       },
       isLoading: false,
     };
@@ -410,6 +418,30 @@ describe("MonitoringDashboard", () => {
     await waitFor(() => {
       expect(queryByTestId("monitoring-performancetab")).not.toBeNull();
     });
+  });
+
+  test("hands the selected connection's own labels to the queries tab", async () => {
+    // Without this the "Slowest Queries" empty state can only be Postgres's: the tab
+    // holds the copy, but only the dashboard has the provider metadata (#U12).
+    const user = userEvent.setup();
+    queriesTabProps.length = 0;
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<MonitoringDashboard />);
+    });
+    const { queryByTestId, container } = renderResult!;
+
+    const allTriggers = container.querySelectorAll('[role="tab"]');
+    const queriesTrigger = Array.from(allTriggers).find((t) => t.textContent?.includes("Queries")) as HTMLElement;
+    await user.click(queriesTrigger);
+
+    await waitFor(() => {
+      expect(queryByTestId("monitoring-queriestab")).not.toBeNull();
+    });
+
+    expect(queriesTabProps.length).toBeGreaterThan(0);
+    expect(queriesTabProps[queriesTabProps.length - 1].labels).toEqual(mockLabels);
   });
 
   test("hands the selected connection's declared capabilities to the tables tab", async () => {

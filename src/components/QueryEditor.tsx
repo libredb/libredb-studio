@@ -15,6 +15,8 @@ import { registerRedisLanguage } from "@/lib/editor/redis-language";
 import { configureMonacoLoader } from "@/lib/editor/monaco-loader";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
 import { logger } from "@/lib/logger";
+import { writeToClipboard } from "@/components/copy-button";
+import { toast } from "sonner";
 
 // Serve Monaco from our own origin rather than @monaco-editor/react's jsdelivr default.
 // Runs at module load so it is in place before the first <Editor> mounts.
@@ -368,8 +370,15 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     }));
 
     const handleCopy = () => {
+      // `writeToClipboard` rather than `navigator.clipboard` directly (B43): that API is
+      // absent over plain HTTP off loopback, which several distribution channels are.
+      // This button carries no label of its own to flip, so a failure has to be said out
+      // loud or it is not said at all. It cannot be a `CopyButton`: the text lives in the
+      // editor ref, so there is no `text` prop that would still be current at click time.
       const textToCopy = getSelectedText() || editorRef.current?.getValue() || "";
-      navigator.clipboard.writeText(textToCopy);
+      void writeToClipboard(textToCopy).then((copied) => {
+        if (!copied) toast.error("Could not copy the query — select the text and copy it yourself");
+      });
     };
 
     const handleClear = () => {

@@ -214,13 +214,13 @@ export const EVAL_ENGINES: Readonly<Record<EvalEngine, EvalEnginePreset>> = Obje
   postgres: {
     connection: { id: "conn_eval", name: "Company (PostgreSQL)", type: "postgres", createdAt: new Date(0) },
     capabilities: POSTGRES_CAPABILITIES,
-    catalogReads: ["information_schema.columns", "information_schema.table_constraints", "pg_index"],
-    groundingReads: ["information_schema.columns", "information_schema.table_constraints", "pg_index", "pg_stats"],
+    catalogReads: ["information_schema.columns", "pg_constraint", "pg_index"],
+    groundingReads: ["information_schema.columns", "pg_constraint", "pg_index", "pg_stats"],
     catalogAnswer: (sql) => {
       if (sql.includes("information_schema.columns")) {
         return result(PG_COLUMN_ROWS, ["table_schema", "table_name", "column_name", "data_type", "is_nullable"]);
       }
-      if (sql.includes("information_schema.table_constraints")) return result([], ["table_name"]);
+      if (sql.includes("pg_constraint")) return result([], ["table_name"]);
       // Before `pg_index`: the statistics read joins `pg_class` to `pg_stats` and
       // mentions neither, but a future composition that did would otherwise be
       // answered with the index inventory and silently produce no statistics.

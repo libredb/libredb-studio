@@ -266,6 +266,24 @@ export interface ProviderLabels {
    * the wrong language.
    */
   statementLanguage?: string;
+  /**
+   * Why the monitoring Queries tab's "Slowest Queries" panel is empty on this
+   * engine, in that engine's own terms.
+   *
+   * Read by `QueriesTab`, which defaults to PostgreSQL's "Enable
+   * pg_stat_statements extension to see query stats." — the sentence it hardcoded
+   * for every engine until #U12, measured 2026-08-19 in Chrome telling an
+   * OpenSearch cluster to install a PostgreSQL extension. `postgres` therefore
+   * declares nothing, and so does any engine whose statement store really is an
+   * extension away.
+   *
+   * A provider sets this when the Postgres sentence is actively false for it:
+   * either the engine keeps no aggregate of finished statements at all, or the
+   * one it keeps is switched on somewhere else entirely. One field, not one per
+   * sentence — the panel's badge names an extension rather than a category, so it
+   * is dropped where this label is set instead of being re-worded from it.
+   */
+  slowQueriesEmptyState?: string;
 }
 
 /**

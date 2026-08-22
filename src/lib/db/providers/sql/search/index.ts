@@ -528,6 +528,12 @@ abstract class SearchProvider extends SQLBaseProvider {
       vacuumGlobalTitle: "Reclaim Deleted Documents",
       vacuumGlobalDesc:
         "A deleted document stays in its segment until the segments are merged. Merging is an index API on the cluster rather than a statement this SQL surface can send, so nothing runs from here.",
+      // The monitoring Queries tab used to tell a search cluster to install a
+      // PostgreSQL extension (#U12). Both products keep a slow log; `getSlowQueries()`
+      // above says why neither is readable from here, and this is the same fact in the
+      // panel's words.
+      slowQueriesEmptyState:
+        "The slow log is written to the node's own log file, which no API returns, so this SQL surface does not reach it.",
     };
   }
 

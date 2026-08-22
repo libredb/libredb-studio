@@ -4,9 +4,23 @@ import "../helpers/mock-navigation";
 
 import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render, within, fireEvent, act } from "@testing-library/react";
+import { cleanup, render, within, fireEvent, act, waitFor } from "@testing-library/react";
 import { DataImportModal } from "@/components/DataImportModal";
 import type { TableSchema } from "@/lib/types";
+
+// The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
+// `navigator.clipboard` is what plain HTTP off loopback actually hands the page, and an
+// editing command that answers false is what a browser that refuses the copy does.
+const originalClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator, "clipboard");
+const originalExecCommand = Object.getOwnPropertyDescriptor(globalThis.document, "execCommand");
+
+function setClipboard(clipboard: { writeText: (text: string) => Promise<void> } | undefined): void {
+  Object.defineProperty(globalThis.navigator, "clipboard", { value: clipboard, configurable: true });
+}
+
+function setExecCommand(execCommand: ((command: string) => boolean) | undefined): void {
+  Object.defineProperty(globalThis.document, "execCommand", { value: execCommand, configurable: true });
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -57,6 +71,10 @@ function simulateFileUpload(container: HTMLElement, content: string, filename: s
 describe("DataImportModal", () => {
   afterEach(() => {
     cleanup();
+    if (originalClipboard === undefined) setClipboard(undefined);
+    else Object.defineProperty(globalThis.navigator, "clipboard", originalClipboard);
+    if (originalExecCommand === undefined) setExecCommand(undefined);
+    else Object.defineProperty(globalThis.document, "execCommand", originalExecCommand);
   });
 
   // ── Render basics ──────────────────────────────────────────────────────────
@@ -705,11 +723,7 @@ describe("DataImportModal", () => {
 
   test("Copy SQL button calls navigator.clipboard", () => {
     const mockWriteText = mock(async () => {});
-    Object.defineProperty(navigator, "clipboard", {
-      value: { writeText: mockWriteText },
-      writable: true,
-      configurable: true,
-    });
+    setClipboard({ writeText: mockWriteText });
 
     const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={sampleTables} />);
 
@@ -734,6 +748,41 @@ describe("DataImportModal", () => {
     });
 
     expect(mockWriteText).toHaveBeenCalledTimes(1);
+  });
+
+  // B43: this button said nothing at all on the plain-HTTP channels this product ships
+  // on — `navigator.clipboard` is undefined there, so the write threw inside the handler
+  // and the user was left with an empty clipboard and no sign of it.
+  test("Copy SQL reports the failure when both write paths refuse", async () => {
+    setClipboard(undefined);
+    setExecCommand(() => false);
+
+    const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={noop} tables={sampleTables} />);
+
+    act(() => {
+      simulateFileUpload(baseElement, "name\nAlice", "data.csv");
+    });
+
+    act(() => {
+      fireEvent.click(within(baseElement).getByText("Configure Import"));
+    });
+
+    act(() => {
+      fireEvent.click(within(baseElement).getByText("New Table"));
+    });
+
+    act(() => {
+      fireEvent.click(within(baseElement).getByText("Review SQL"));
+    });
+
+    act(() => {
+      fireEvent.click(within(baseElement).getByTestId("import-copy-sql"));
+    });
+
+    await waitFor(() =>
+      expect(within(baseElement).getByTestId("import-copy-sql").textContent).toContain("Copy failed"),
+    );
+    expect(within(baseElement).getByTestId("import-copy-sql").textContent).not.toContain("Copied");
   });
 
   // ── Switching between Existing / New ──────────────────────────────────────

@@ -598,6 +598,17 @@ describe("MSSQLProvider", () => {
       const labels = provider.getLabels();
       expect(labels.analyzeAction).toBe("Update Statistics");
     });
+
+    // Until #U12 the monitoring Queries panel told a SQL Server DBA to install a
+    // PostgreSQL extension. `getSlowQueries()` reads sys.dm_exec_query_stats and
+    // swallows a failure into `[]`, so the permission on that DMV is what it must name.
+    test("names sys.dm_exec_query_stats, not a Postgres extension, as the source of query stats", () => {
+      const { slowQueriesEmptyState } = provider.getLabels();
+
+      expect(slowQueriesEmptyState).toContain("sys.dm_exec_query_stats");
+      expect(slowQueriesEmptyState).toContain("VIEW SERVER STATE");
+      expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+    });
   });
 
   // =========================================================================

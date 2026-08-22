@@ -661,18 +661,28 @@ Four things about the PostgreSQL side of that layer are worth knowing here:
   backslash is refused outright rather than quoted — the dialect-less span reader treats it as an
   escape, so `'a\'` would read as an unterminated literal.
 - **A run reads three catalog inventories at its start (#329 T8), not one.** `inspect_schema` takes
-  a `kind` — `columns` (the default), `relations` (foreign keys, from
-  `information_schema.table_constraints` joined to `key_column_usage` and `constraint_column_usage`)
-  and `indexes` (from `pg_index` joined to `pg_class`, `pg_namespace` and `pg_attribute`, carrying
+  a `kind` — `columns` (the default), `relations` (foreign keys, from `pg_constraint` with
+  `unnest(conkey, confkey) WITH ORDINALITY` pairing the two sides) and `indexes` (from `pg_index`
+  joined to `pg_class` and `pg_namespace`, with `indkey` unnested WITH ORDINALITY, carrying
   `indisunique` and `indisprimary`). The index read is also the only place on this path that says
-  which columns are the primary key, since `information_schema.columns` does not carry it. Two
-  consequences of the projections, both deliberate: an **expression index** has no `pg_attribute` row
-  for its expression, so it is absent from the inventory rather than listed without columns; and the
-  `information_schema` views are privilege-filtered, so a least-privilege `libredb_agent` role sees
-  exactly the tables it was granted — a smaller inventory on the agent path than the editor's is
-  correct, not a defect. All three are subject to the same row cap and are **refused, not truncated**,
-  when a schema is wider than `maxResultRows`; the run then continues with no snapshot and is told to
-  narrow `inspect_schema` itself.
+  which columns are the primary key, since `information_schema.columns` does not carry it.
+  **The relations read deliberately does not use the `information_schema` constraint views**
+  (`table_constraints` / `key_column_usage` / `constraint_column_usage`): PostgreSQL restricts them
+  to constraints on tables the role owns or holds a privilege on other than `SELECT`, so the
+  least-privilege `libredb_agent` role read an empty graph — 0 rows on the seeded dvdrental where
+  `pg_constraint WHERE contype = 'f'` holds 18. Those views also expose no ordinal, so a composite
+  key came back as the cross-product of the two column lists, and a constraint name is unique per
+  table rather than per schema, so two same-named constraints cross-matched; `pg_constraint` rows
+  carry `conrelid` / `confrelid` and are identified by oid, which closes all three. Two properties
+  of these projections worth knowing: an **expression index** appears with its expression in the
+  written form `pg_get_indexdef(indexrelid, n, true)` emits, in the position `indkey` holds a 0 for,
+  which is the same shape the SQLite side produces from the index DDL; and the *column* inventory is
+  still the privilege-filtered one, since `information_schema.columns` shows a role only the tables it
+  holds some privilege on — a smaller inventory on the agent path than the editor's is correct, not a
+  defect, and it is the inventory a table has to appear in for the relation and index rows to attach
+  to anything. All three are subject to the same row cap and are
+  **refused, not truncated**, when a schema is wider than `maxResultRows`; the run then continues with
+  no snapshot and is told to narrow `inspect_schema` itself.
 - **Plan inspection uses `EXPLAIN (FORMAT JSON)`, never `EXPLAIN (ANALYZE, …)`.** The editor's
   Explain button emits the ANALYZE form deliberately (a user asked for real timings) and that form
   EXECUTES the statement, which on this engine performs a data-modifying CTE. The agent path is

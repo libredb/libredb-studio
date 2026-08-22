@@ -1,20 +1,27 @@
 import "../../setup-dom";
-import "../../helpers/mock-sonner";
 import "../../helpers/mock-navigation";
 
 import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
+
+// The SHARED sonner mock rather than a local `mock.module("sonner", ...)`: mock.module is
+// process-wide and the last call wins, so a second declaration here would hand
+// StudioMobileHeader.test.tsx — same group in tests/run-components.sh — a `toast` whose
+// error mock it holds no reference to.
+import { mockToastError, mockToastSuccess } from "../../helpers/mock-sonner";
+
+// The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
+// `navigator.clipboard` is what plain HTTP off loopback actually hands the page, and an
+// editing command that answers false is what a browser that refuses the copy does.
+const originalClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator, "clipboard");
+const originalExecCommand = Object.getOwnPropertyDescriptor(globalThis.document, "execCommand");
+
+function setExecCommand(execCommand: ((command: string) => boolean) | undefined): void {
+  Object.defineProperty(globalThis.document, "execCommand", { value: execCommand, configurable: true });
+}
 
 // ── Mocks ───────────────────────────────────────────────────────────────────
-
-const mockToastSuccess = mock((msg: string) => {
-  void msg;
-});
-
-mock.module("sonner", () => ({
-  toast: { success: mockToastSuccess, error: mock(() => {}), info: mock(() => {}) },
-}));
 
 mock.module("framer-motion", () => ({
   motion: new Proxy(
@@ -140,10 +147,16 @@ describe("TableItem", () => {
       configurable: true,
     });
     mockToastSuccess.mockClear();
+    mockToastError.mockClear();
   });
 
   afterEach(() => {
     cleanup();
+    if (originalClipboard === undefined)
+      Object.defineProperty(globalThis.navigator, "clipboard", { value: undefined, configurable: true });
+    else Object.defineProperty(globalThis.navigator, "clipboard", originalClipboard);
+    if (originalExecCommand === undefined) setExecCommand(undefined);
+    else Object.defineProperty(globalThis.document, "execCommand", originalExecCommand);
   });
 
   // ── Rendering ─────────────────────────────────────────────────────────────
@@ -253,7 +266,7 @@ describe("TableItem", () => {
     expect(onGenerateSelect.mock.calls[0][0]).toBe("users");
   });
 
-  test('copyToClipboard copies table name and shows toast on "Copy Name" click', () => {
+  test('copyToClipboard copies table name and shows toast on "Copy Name" click', async () => {
     const { getByTestId } = render(
       <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} />,
     );
@@ -261,8 +274,27 @@ describe("TableItem", () => {
     fireEvent.click(dropdown.getByText("Copy Name"));
     expect(mockWriteText).toHaveBeenCalledTimes(1);
     expect(mockWriteText.mock.calls[0][0]).toBe("users");
-    expect(mockToastSuccess).toHaveBeenCalledTimes(1);
-    expect(mockToastSuccess.mock.calls[0][0]).toContain("copied to clipboard");
+    await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1));
+    expect(String((mockToastSuccess.mock.calls as unknown[][])[0][0])).toContain("copied to clipboard");
+  });
+
+  // B43: the success toast used to fire in the same statement that started the write, so
+  // on the plain-HTTP channels this product ships on it announced a copy that never
+  // happened. The refusal here is the real one: no clipboard object at all, and an
+  // editing command that answers false.
+  test('"Copy Name" says the copy failed when both write paths refuse', async () => {
+    Object.defineProperty(globalThis.navigator, "clipboard", { value: undefined, configurable: true });
+    setExecCommand(() => false);
+
+    const { getByTestId } = render(
+      <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} />,
+    );
+    const dropdown = within(getByTestId("dropdown"));
+    fireEvent.click(dropdown.getByText("Copy Name"));
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1));
+    expect(String((mockToastError.mock.calls as unknown[][])[0][0])).toContain("Could not copy");
+    expect(mockToastSuccess).not.toHaveBeenCalled();
   });
 
   test('onProfileTable fires with table name on "Profile Table" click', () => {
@@ -426,7 +458,7 @@ describe("TableItem", () => {
     expect(dropdown.queryByText("Generate Query")).toBeNull();
   });
 
-  test("copyToClipboard uses custom entityName in toast", () => {
+  test("copyToClipboard uses custom entityName in toast", async () => {
     const labels = {
       entityName: "Collection",
       entityNamePlural: "Collections",
@@ -449,7 +481,7 @@ describe("TableItem", () => {
     );
     const dropdown = within(getByTestId("dropdown"));
     fireEvent.click(dropdown.getByText("Copy Name"));
-    expect(mockToastSuccess.mock.calls[0][0]).toContain("Collection");
+    await waitFor(() => expect(String((mockToastSuccess.mock.calls as unknown[][])[0][0])).toContain("Collection"));
   });
 
   // ── Callbacks not provided (optional chaining safety) ─────────────────────

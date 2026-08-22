@@ -36,6 +36,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { GitHubRepoLink } from "@/components/github-repo-link";
+import { writeToClipboard } from "@/components/copy-button";
+import { toast } from "sonner";
 
 interface StudioMobileHeaderProps {
   connections: DatabaseConnection[];
@@ -256,8 +258,14 @@ export function StudioMobileHeader({
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => {
+                    // `writeToClipboard` rather than `navigator.clipboard` directly (B43):
+                    // that API is absent over plain HTTP off loopback, which several
+                    // distribution channels are, and this menu closes on click — a toast is
+                    // the only place left to say the clipboard is still empty.
                     const query = queryEditorRef.current?.getValue() || currentQuery;
-                    navigator.clipboard.writeText(query);
+                    void writeToClipboard(query).then((copied) => {
+                      if (!copied) toast.error("Could not copy the query — select the text and copy it yourself");
+                    });
                   }}
                   className="cursor-pointer text-xs"
                 >

@@ -427,6 +427,12 @@ Oracle **overrides** the default SQL labels so the UI uses Oracle vocabulary:
 `analyzeAction` → *"Gather Statistics"*, `vacuumAction` → *"Rebuild Indexes"*, and the matching
 global labels (*"Gather Stats"*, *"Rebuild All Indexes"*).
 
+`slowQueriesEmptyState` → *"Query stats come from V$SQL, which this user needs SELECT on to read."*
+The monitoring Queries panel's empty state was hardcoded to PostgreSQL's `pg_stat_statements` advice
+on every engine (`docs/BACKLOG.md` U12); `getSlowQueries()` here reads `V$SQL`
+([§8](#8-monitoring--health)) and returns `[]` when that read is refused, so the grant is the thing a
+DBA can act on.
+
 ---
 
 ## 11. Error handling

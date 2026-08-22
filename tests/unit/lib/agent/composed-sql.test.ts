@@ -148,15 +148,70 @@ describe("composeCatalogRead — SQLite", () => {
 });
 
 describe("composeCatalogRead — the relation and index inventories (#329 T8)", () => {
-  test("PostgreSQL reads foreign keys from the constraint views, both sides of each edge", () => {
+  /**
+   * The foreign-key read leaves `information_schema` for `pg_constraint`, and every
+   * assertion below is a property measured on a live PostgreSQL 18 rather than a
+   * shape that reads well (`docs/BACKLOG.md` B8, B44):
+   *
+   *  - the three `information_schema` constraint views are restricted to constraints
+   *    on tables the role owns or holds a privilege on OTHER than `SELECT`, so the
+   *    `SELECT`-only role `docs/AGENT_DEMO.md` prescribes read an EMPTY graph:
+   *    measured on the seeded dvdrental as `libredb_agent`, 0 rows where
+   *    `pg_constraint WHERE contype = 'f'` holds 18, and 18 rows from this read.
+   *    `pg_constraint` asks only for `USAGE` on the schema.
+   *  - neither view exposes an ordinal, so a composite key came back as the
+   *    cross-product. `unnest(conkey, confkey) WITH ORDINALITY` pairs the two sides
+   *    by position, which is the only thing here that can.
+   *  - a constraint NAME is unique per table, not per schema, and the referenced
+   *    side could not be narrowed by table at all. A `pg_constraint` row carries
+   *    `conrelid` and `confrelid` and is never matched by name.
+   *
+   * Both defects compound, which is what the fixture pins: `kids(x, y) REFERENCES
+   * parents(a, b)` plus a SECOND constraint also named `fk_shared` on another table
+   * returned NINE rows from the old joins — three of them right, and `second` holding
+   * edges to a table its constraint never mentions — where this read returns exactly
+   * the three.
+   */
+  test("PostgreSQL reads foreign keys from pg_constraint, which a SELECT-only role can see", () => {
     const sql = composeCatalogRead("postgres", { kind: "relations" });
 
     expect(guardAccepts(sql)).toBe(true);
-    expect(sql).toContain("information_schema.table_constraints");
-    expect(sql).toContain("'FOREIGN KEY'");
-    for (const projected of ["column_name", "referenced_table", "referenced_column"]) {
+    expect(sql).toContain("pg_constraint");
+    expect(sql).toContain("c.contype = 'f'");
+    // None of the three privilege-filtered views, on either side of the edge.
+    for (const view of ["table_constraints", "key_column_usage", "constraint_column_usage"]) {
+      expect(sql).not.toContain(view);
+    }
+    // The projection `buildPostgresTables` reads is unchanged, which is why the fold
+    // needed no edit: the same six names carry the new rows.
+    for (const projected of [
+      "table_schema",
+      "table_name",
+      "column_name",
+      "referenced_schema",
+      "referenced_table",
+      "referenced_column",
+    ]) {
       expect(sql).toContain(projected);
     }
+  });
+
+  test("a composite key is paired by ordinal, so two columns are two edges and not four", () => {
+    const sql = composeCatalogRead("postgres", { kind: "relations" });
+
+    // ONE unnest over BOTH arrays: two separate unnests would multiply again.
+    expect(sql).toContain("unnest(c.conkey, c.confkey) WITH ORDINALITY");
+    expect(sql).toContain("att.attrelid = c.conrelid AND att.attnum = k.attnum");
+    expect(sql).toContain("fatt.attrelid = c.confrelid AND fatt.attnum = k.fattnum");
+    expect(sql).toContain("ORDER BY rn.nspname, rel.relname, k.ord");
+  });
+
+  test("a constraint is identified by oid, so two same-named constraints cannot cross-match", () => {
+    const sql = composeCatalogRead("postgres", { kind: "relations" });
+
+    expect(sql).not.toContain("constraint_name");
+    expect(sql).toContain("rel.oid = c.conrelid");
+    expect(sql).toContain("frel.oid = c.confrelid");
   });
 
   test("PostgreSQL reads indexes from pg_index, carrying uniqueness and primary-key membership", () => {
@@ -167,6 +222,34 @@ describe("composeCatalogRead — the relation and index inventories (#329 T8)", 
     for (const projected of ["index_name", "is_unique", "is_primary", "column_name"]) {
       expect(sql).toContain(projected);
     }
+  });
+
+  /**
+   * The expression case, measured on the same live server (`docs/BACKLOG.md` B7).
+   *
+   * `indkey` stores 0 for an expression, which no `pg_attribute` row matches, so the
+   * inner join dropped `CREATE INDEX ix_expr ON t (lower(name))` from the inventory
+   * entirely and returned `(status, lower(name))` carrying only `status`. Unnesting
+   * `indkey` WITH ORDINALITY gives every key POSITION a row, and
+   * `pg_get_indexdef(indexrelid, n, true)` names what sits in that position — which
+   * is the shape the SQLite side already produces, where `parseSqliteIndexDdl` keeps
+   * an expression's written form in the same column list as the plain names.
+   *
+   * `att.attname` still wins where there is one, and that is not decoration:
+   * `pg_get_indexdef` emits an identifier as PostgreSQL would have to write it, so a
+   * mixed-case column comes back as `"userId"` with the quotes in it — measured — and
+   * that string matches no name in the column inventory, which is what
+   * `markPrimary` and the index's column list are compared against.
+   */
+  test("an expression index reaches the inventory with its expression, not as a missing index", () => {
+    const sql = composeCatalogRead("postgres", { kind: "indexes" });
+
+    expect(guardAccepts(sql)).toBe(true);
+    expect(sql).toContain("unnest(ix.indkey) WITH ORDINALITY");
+    // LEFT, so an expression's position survives having no attribute row.
+    expect(sql).toContain("LEFT JOIN pg_attribute att");
+    expect(sql).toContain("COALESCE(att.attname, pg_get_indexdef(ix.indexrelid, k.ord::int, true))");
+    expect(sql).toContain("ORDER BY n.nspname, t.relname, i.relname, k.ord");
   });
 
   test("both PostgreSQL inventories narrow on the same selectors as the column one", () => {

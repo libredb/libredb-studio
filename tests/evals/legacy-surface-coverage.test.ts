@@ -238,7 +238,7 @@ const INVENTORY: Readonly<Record<"postgres" | "sqlite", (sql: string) => ReturnT
     if (sql.includes("information_schema.columns")) {
       return rows(PG_COLUMNS, ["table_schema", "table_name", "column_name", "data_type", "is_nullable"]);
     }
-    if (sql.includes("information_schema.table_constraints")) {
+    if (sql.includes("pg_constraint")) {
       return rows(PG_RELATIONS, [
         "table_schema",
         "table_name",

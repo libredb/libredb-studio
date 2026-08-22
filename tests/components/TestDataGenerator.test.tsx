@@ -4,9 +4,23 @@ import "../helpers/mock-navigation";
 
 import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { TestDataGenerator } from "@/components/TestDataGenerator";
 import type { TableSchema } from "@/lib/types";
+
+// The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
+// `navigator.clipboard` is what plain HTTP off loopback actually hands the page, and an
+// editing command that answers false is what a browser that refuses the copy does.
+const originalClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator, "clipboard");
+const originalExecCommand = Object.getOwnPropertyDescriptor(globalThis.document, "execCommand");
+
+function setClipboard(clipboard: { writeText: (text: string) => Promise<void> } | undefined): void {
+  Object.defineProperty(globalThis.navigator, "clipboard", { value: clipboard, configurable: true });
+}
+
+function setExecCommand(execCommand: ((command: string) => boolean) | undefined): void {
+  Object.defineProperty(globalThis.document, "execCommand", { value: execCommand, configurable: true });
+}
 
 const schema: TableSchema = {
   name: "employees",
@@ -22,6 +36,10 @@ const schema: TableSchema = {
 describe("TestDataGenerator", () => {
   afterEach(() => {
     cleanup();
+    if (originalClipboard === undefined) setClipboard(undefined);
+    else Object.defineProperty(globalThis.navigator, "clipboard", originalClipboard);
+    if (originalExecCommand === undefined) setExecCommand(undefined);
+    else Object.defineProperty(globalThis.document, "execCommand", originalExecCommand);
   });
 
   test("does not render when isOpen is false", () => {
@@ -208,13 +226,9 @@ describe("TestDataGenerator", () => {
 
   test("copy button writes generated query to clipboard", () => {
     const mockWriteText = mock(() => Promise.resolve());
-    Object.defineProperty(navigator, "clipboard", {
-      value: { writeText: mockWriteText },
-      writable: true,
-      configurable: true,
-    });
+    setClipboard({ writeText: mockWriteText });
 
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
@@ -223,7 +237,7 @@ describe("TestDataGenerator", () => {
         onExecuteQuery={mock(() => {})}
       />,
     );
-    fireEvent.click(queryByText("Copy")!);
+    fireEvent.click(getByTestId("test-data-copy"));
     expect(mockWriteText).toHaveBeenCalledTimes(1);
     const arg = (mockWriteText.mock.calls as unknown[][])[0][0] as string;
     expect(arg).toContain("INSERT INTO employees");
@@ -231,14 +245,10 @@ describe("TestDataGenerator", () => {
 
   // ── "Copied!" feedback text ─────────────────────────────────────────────────
 
-  test("shows Copied! feedback after clicking copy button", () => {
-    Object.defineProperty(navigator, "clipboard", {
-      value: { writeText: mock(() => Promise.resolve()) },
-      writable: true,
-      configurable: true,
-    });
+  test("reports the copy once the write has reported one", async () => {
+    setClipboard({ writeText: mock(() => Promise.resolve()) });
 
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <TestDataGenerator
         isOpen
         onClose={mock(() => {})}
@@ -247,10 +257,31 @@ describe("TestDataGenerator", () => {
         onExecuteQuery={mock(() => {})}
       />,
     );
-    expect(queryByText("Copy")).not.toBeNull();
-    expect(queryByText("Copied!")).toBeNull();
-    fireEvent.click(queryByText("Copy")!);
-    expect(queryByText("Copied!")).not.toBeNull();
+    expect(getByTestId("test-data-copy").textContent).toContain("Copy");
+    expect(getByTestId("test-data-copy").textContent).not.toContain("Copied");
+    fireEvent.click(getByTestId("test-data-copy"));
+    await waitFor(() => expect(getByTestId("test-data-copy").textContent).toContain("Copied"));
+  });
+
+  // B43: the flag used to flip in the same statement that started the write, so on the
+  // plain-HTTP channels this product ships on it read "Copied!" over an empty clipboard.
+  test("does not claim a copy when both write paths refuse", async () => {
+    setClipboard(undefined);
+    setExecCommand(() => false);
+
+    const { getByTestId } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tableName="employees"
+        tableSchema={schema}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    fireEvent.click(getByTestId("test-data-copy"));
+
+    await waitFor(() => expect(getByTestId("test-data-copy").textContent).toContain("Copy failed"));
+    expect(getByTestId("test-data-copy").textContent).not.toContain("Copied");
   });
 
   // ── Regenerate button ───────────────────────────────────────────────────────

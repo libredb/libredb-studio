@@ -539,6 +539,11 @@ The label map relabels the generic schema-explorer UI for key-value semantics: e
 "Key Prefix", row -> "key", select -> "Scan Keys", generate -> "Generate Command",
 analyze -> "Key Info", search placeholder -> "Search keys...", etc.
 
+One label is about the monitoring tab instead: `slowQueriesEmptyState` -> *"LibreDB keeps no
+statistics about finished statements in this version."* `getSlowQueries()` answers `[]`
+unconditionally ([§7](#7-monitoring--health)), so the Queries panel is always empty here, and its
+sentence was hardcoded to PostgreSQL's `pg_stat_statements` advice (`docs/BACKLOG.md` U12).
+
 ---
 
 ## 10. Error handling

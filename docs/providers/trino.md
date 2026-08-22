@@ -117,7 +117,8 @@ Double-quoted identifiers are correct Trino SQL and `information_schema` is spel
 are all inherited unchanged. This is the case `docs/ADDING_A_PROVIDER.md` names ClickHouse for.
 
 Exactly one shared helper is wrong here, and it is overridden: `prepareQuery()`
-([§3.5](#35-offset-comes-before-limit)).
+([§3.5](#35-offset-comes-before-limit)). The transport absorbs the other grammar quirk a caller can
+trip over on its own, the trailing semicolon ([§3.13](#313-a-trailing-semicolon-is-a-syntax-error)).
 
 ### 2.4 Registration & lifecycle
 
@@ -420,11 +421,30 @@ Measured: `SELECT 1;` answers `line 1:9: mismatched input ';'`. That is what
 `statementTerminator: "none"` declares, and it is mandatory rather than cosmetic — without it the
 shared query generators emit statements this engine refuses.
 
-The transport does **not** strip one for you: the statement reaches the coordinator verbatim. Every
-caller inside the product has already had it removed, because `splitStatements()` consumes the
-semicolon as its delimiter, so this is only reachable by a consumer of the published package calling
-`query()` directly. Recorded as `docs/BACKLOG.md` D5 rather than silently absorbed, because the
-endpoint takes exactly one statement and a strip is a smaller change than it first looks.
+**The transport drops a single trailing semicolon before the statement leaves it**, so
+`query("SELECT 1;")` and `query("SELECT 1")` reach the coordinator as the same bytes. Trailing
+whitespace and a newline after the semicolon count as trailing, which is what a statement pasted out
+of a file carries. This is the second Trino grammar quirk the provider absorbs for the caller — the
+first is the `OFFSET`/`LIMIT` transposition ([§3.5](#35-offset-comes-before-limit)) — and absorbing
+one and not the other was the inconsistency (`docs/BACKLOG.md` D5). Nothing inside the product was
+affected either way: `splitStatements()` consumes the semicolon as its delimiter, so the caller who
+hit this was a consumer of the published package calling `query()` directly.
+
+It is a **strip, not a splitter**, and the difference is the point:
+
+| Statement | Reaches the wire as | Why |
+| --- | --- | --- |
+| `SELECT 1;` | `SELECT 1` | The terminator, dropped |
+| `SELECT 1 ;\n` | `SELECT 1` | Whitespace and a newline after it are trailing too |
+| `SELECT 1; SELECT 2` | unchanged | The endpoint takes exactly one statement, so this keeps failing |
+| `SELECT 1;;` | unchanged | A doubled terminator is a second, empty statement |
+| `SELECT ';';` | `SELECT ';'` | A semicolon inside a literal is data |
+| `SELECT 1 -- done;` | unchanged | A semicolon inside a comment is prose |
+| `SELECT 1; -- done` | unchanged | Declared limit: a terminator with a comment after it is left alone |
+
+Where the statement ends comes from `lib/sql/statement-end` — the same reader the query limiter uses
+(#280), which scans spans rather than matching `/;\s*$/` and refuses to cut a text whose literal or
+comment never closes.
 
 `identifierQuoting: "double"` is declared explicitly for the neighbouring reason (#424 Phase 1's
 lesson): the generators otherwise derive the quote character from `defaultPort`, and `8080` is a
@@ -498,7 +518,8 @@ See [§3.11](#311-values-are-passed-through-exactly-as-the-wire-encodes-them).
 
 ### 5.4 Dialect traps a user will hit
 
-- **No trailing semicolon** ([§3.13](#313-a-trailing-semicolon-is-a-syntax-error)).
+- **No trailing semicolon** in the grammar — one written anyway is dropped by the transport
+  ([§3.13](#313-a-trailing-semicolon-is-a-syntax-error)).
 - **`OFFSET` before `LIMIT`** ([§3.5](#35-offset-comes-before-limit)).
 - **Identifiers are double-quoted**; a backtick is not a quote character.
 - **`SET SESSION` and `USE` do not persist** ([§3.12](#312-statelessness-is-a-warning-not-a-silent-surprise)).
@@ -673,6 +694,11 @@ nor the storage.
 | `analyzeGlobalDesc` | *Trino reads the statistics its connectors publish and computes none of its own. Whether a catalog supports ANALYZE is that connector's answer, so nothing runs from here.* |
 | `vacuumGlobalTitle` | *Trino Owns No Storage* |
 | `vacuumGlobalDesc` | *Trino is a query engine: the bytes live in the systems its connectors reach, and reclaiming them is done there. Nothing runs from here.* |
+| `slowQueriesEmptyState` | *Query stats come from system.runtime.queries, which holds only what this coordinator still remembers.* |
+
+The last one is about the monitoring tab rather than maintenance: the Queries panel's empty state was
+hardcoded to PostgreSQL's `pg_stat_statements` advice on every engine (`docs/BACKLOG.md` U12), and
+what Trino has instead is the coordinator's own bounded history ([§7](#7-monitoring--health)).
 
 ---
 
@@ -740,8 +766,8 @@ The integration file's `describe` blocks, in order: metadata · validation · li
 cancellation · error mapping · query preparation · schema · monitoring · maintenance. Between them
 they pin the five measured behaviours the docstring lists — the 200-with-a-failure (asserted against
 the real 3.3 KB / 19-frame `failureInfo`, so "no Java stack is surfaced" is proved against the thing
-it must not surface), `FINISHED` arriving with a `nextUri` still attached, the rejected trailing
-semicolon, the `OFFSET`-before-`LIMIT` transposition, and the 204 that a cancellation of a
+it must not surface), `FINISHED` arriving with a `nextUri` still attached, the trailing semicolon the
+transport drops before the engine can reject it, the `OFFSET`-before-`LIMIT` transposition, and the 204 that a cancellation of a
 never-existent id still returns.
 
 ### 11.3 Run it

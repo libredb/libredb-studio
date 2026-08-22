@@ -364,9 +364,17 @@ validates that the target parses as an integer connection id.
 
 ### Labels
 
-MySQL uses the default SQL `getLabels()` from `BaseDatabaseProvider` (entity → *Table*, *Select Top
-50*, etc.); it is not overridden. (The default `analyzeAction`/`vacuumAction` wording is generic SQL
-phrasing; MySQL's actual maintenance verbs are optimize/check/analyze.)
+MySQL keeps the default SQL `getLabels()` from `BaseDatabaseProvider` (entity → *Table*, *Select Top
+50*, etc.) for everything a person clicks. (The default `analyzeAction`/`vacuumAction` wording is
+generic SQL phrasing; MySQL's actual maintenance verbs are optimize/check/analyze.)
+
+**One field is overridden** ([mysql.ts:346](../../src/lib/db/providers/sql/mysql.ts)):
+`slowQueriesEmptyState` → *"Query stats come from
+performance_schema.events_statements_summary_by_digest - enable the Performance Schema to see them."*
+The monitoring Queries panel's empty state was hardcoded to PostgreSQL's `pg_stat_statements` advice
+on every engine (`docs/BACKLOG.md` U12) — an extension MySQL does not have under any name, while the
+digest table this provider actually reads ([§8](#8-monitoring--health)) is a server switch a DBA can
+act on.
 
 ---
 

@@ -529,6 +529,12 @@ list numbering and the second command — alongside the two accepted forms (plai
 `{"command": …, "args": […]}`), and repeats in words what `tablesAreDerivedGroupings` says in a flag:
 a `prefix:*` row is this server's grouping, not a key, so a prefix is reached with `SCAN … MATCH`.
 
+`slowQueriesEmptyState` (*"Redis lists what SLOWLOG holds, and nothing has yet run slower than
+slowlog-log-slower-than."*) is the monitoring Queries panel's empty state. It exists for the same
+reason the `analyzeGlobal*` triad had to be read rather than merely declared (#427): that panel's
+sentence was hardcoded to PostgreSQL's `pg_stat_statements` advice on every engine
+(`docs/BACKLOG.md` U12), while what is empty here is the `SLOWLOG` (§7).
+
 `analyzeGlobalLabel` / `analyzeGlobalTitle` / `analyzeGlobalDesc` (*"Run Info"*, *"Server Info"*,
 *"Get Redis server information and statistics."*) are rendered by the admin Operations tab. The
 `vacuumAction` / `vacuumGlobal*` fields (*"Memory Doctor"*, *"Memory Analysis"*) are still declared

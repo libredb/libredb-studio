@@ -2,11 +2,12 @@
 
 import React, { useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import { Copy, FileJson, Check, Eye, Lock } from "lucide-react";
+import { Copy, FileJson, Check, Eye, Lock, TriangleAlert } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { type MaskingPattern, maskValueByPattern } from "@/lib/data-masking";
+import { writeToClipboard } from "@/components/copy-button";
 import { classifyValue } from "./renderers/classify";
 import { getRenderer } from "./renderers/registry";
 
@@ -31,7 +32,13 @@ export function RowDetailSheet({
   sensitiveColumns,
   allowReveal,
 }: RowDetailSheetProps) {
-  const [copiedField, setCopiedField] = useState<string | null>(null);
+  /**
+   * Which copy just ran, and whether it actually happened (B43). A bare field name
+   * could only say "copied", and the write it stood for might never have run: over
+   * plain HTTP off loopback `navigator.clipboard` is undefined, and this product ships
+   * that way on several distribution channels.
+   */
+  const [copyOutcome, setCopyOutcome] = useState<{ key: string; copied: boolean } | null>(null);
   const [revealedFields, setRevealedFields] = useState<Set<string>>(new Set());
 
   // Auto-hide revealed fields after 10s
@@ -68,11 +75,17 @@ export function RowDetailSheet({
     [maskingActive, sensitiveColumns, revealedFields],
   );
 
+  /** The outcome is reported only once the write has one, never alongside starting it. */
+  const copyAndReport = (key: string, text: string) => {
+    void writeToClipboard(text).then((copied) => {
+      setCopyOutcome({ key, copied });
+      setTimeout(() => setCopyOutcome(null), 1500);
+    });
+  };
+
   const copyValue = (field: string, value: unknown) => {
     const { text } = getDisplayValue(field, value);
-    navigator.clipboard.writeText(text);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(null), 1500);
+    copyAndReport(field, text);
   };
 
   const copyAllAsJson = () => {
@@ -83,12 +96,10 @@ export function RowDetailSheet({
         const { text } = getDisplayValue(field, row[field]);
         maskedRow[field] = text;
       }
-      navigator.clipboard.writeText(JSON.stringify(maskedRow, null, 2));
+      copyAndReport("__all__", JSON.stringify(maskedRow, null, 2));
     } else {
-      navigator.clipboard.writeText(JSON.stringify(row, null, 2));
+      copyAndReport("__all__", JSON.stringify(row, null, 2));
     }
-    setCopiedField("__all__");
-    setTimeout(() => setCopiedField(null), 1500);
   };
 
   return (
@@ -108,12 +119,17 @@ export function RowDetailSheet({
               className="h-8 text-xs border-hairline-strong hover:bg-fill"
               onClick={copyAllAsJson}
             >
-              {copiedField === "__all__" && (
+              {copyOutcome?.key === "__all__" && copyOutcome.copied && (
                 <>
                   <Check strokeWidth={1.5} className="w-3 h-3 mr-1 text-emerald-400" /> Copied
                 </>
               )}
-              {copiedField !== "__all__" && (
+              {copyOutcome?.key === "__all__" && !copyOutcome.copied && (
+                <>
+                  <TriangleAlert strokeWidth={1.5} className="w-3 h-3 mr-1 text-amber-400" /> Copy failed
+                </>
+              )}
+              {copyOutcome?.key !== "__all__" && (
                 <>
                   <Copy strokeWidth={1.5} className="w-3 h-3 mr-1" /> Copy JSON
                 </>
@@ -165,8 +181,13 @@ export function RowDetailSheet({
                         className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
                         onClick={() => copyValue(field, row[field])}
                       >
-                        {copiedField === field && <Check strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-400" />}
-                        {copiedField !== field && <Copy strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-muted" />}
+                        {copyOutcome?.key === field && copyOutcome.copied && (
+                          <Check strokeWidth={1.5} className="w-3.5 h-3.5 text-emerald-400" />
+                        )}
+                        {copyOutcome?.key === field && !copyOutcome.copied && (
+                          <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 text-amber-400" />
+                        )}
+                        {copyOutcome?.key !== field && <Copy strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-muted" />}
                       </Button>
                     </div>
                   </div>
