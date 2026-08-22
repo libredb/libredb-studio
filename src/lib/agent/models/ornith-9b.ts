@@ -24,5 +24,14 @@ export const ORNITH_9B: AgentModelProfile = {
     "2/6 modes locked, 25/30 runs passed at these settings. Investigate 4/5 · Optimize 3/5 · Assess 4/5 · Operate 5/5 · Analyze 5/5 · Plan 4/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  /*
+    Its last open cell, and the loss is `no-statement` twice over.
+
+    The closing prose is not a bad plan — it names all eight tables, their columns and their
+    keys, correctly. What it never writes is a runnable statement or the explicit `NO
+    STATEMENT:` refusal, and plan mode's bar is one of those two. `qwen3:14b` lost the same
+    cell the same way and the extra turn won it.
+  */
+  planStatementRetries: 1,
   notices: { ...BASELINE_NOTICES },
 };

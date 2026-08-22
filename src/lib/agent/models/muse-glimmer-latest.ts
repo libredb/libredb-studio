@@ -24,5 +24,12 @@ export const MUSE_GLIMMER_LATEST: AgentModelProfile = {
     "3/6 modes locked, 21/26 runs passed at these settings. Investigate 5/5 · Optimize 1/5 · Assess 5/5 · Operate 5/5 · Analyze 4/4 · Plan 1/2.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  /*
+    Its last open cell, and the closing statement is EMPTY — not a plan the verdict rejected,
+    no plan at all. That is the signature that cost `gemma4:26b` fifteen assessment runs before
+    it was read correctly this morning: the model returns nothing, and a turn with nothing in
+    it ends the run as though it had chosen to stop.
+  */
+  retryEmptyTurn: true,
   notices: { ...BASELINE_NOTICES },
 };

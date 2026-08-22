@@ -30,5 +30,11 @@ export const QWEN3_5_4B: AgentModelProfile = {
     which is what makes it worth measuring here rather than anywhere else.
   */
   refusalExamples: true,
+  /*
+    The same empty close as `muse-glimmer:latest`, on the same surface and the same last open
+    cell: no statement, no refusal, no text of any kind. Asking once more is what turned that
+    shape from a loss into 5/5 on `gemma4:26b`.
+  */
+  retryEmptyTurn: true,
   notices: { ...BASELINE_NOTICES },
 };

@@ -46,5 +46,12 @@ export const NEMOTRON_3_5_LIGHTNING_30B: AgentModelProfile = {
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
   remindWithoutTools: true,
+  /*
+    The same `no-statement` shape as `ornith:9b`, and from a model that clearly did the work:
+    its closing prose is a full report, citing the snapshot fingerprint, listing all eight
+    tables with their columns, keys and foreign keys. It ends without the statement the bar
+    asks for. One more turn is what won that cell on `qwen3:14b`.
+  */
+  planStatementRetries: 1,
   notices: { ...BASELINE_NOTICES },
 };
