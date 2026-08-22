@@ -127,7 +127,7 @@ describe("a failed statement is told what the table actually holds", () => {
     );
 
     // A model whose ledger earned the advice; every other model gets the engine's words alone.
-    await run.driveModel(await modelOver(scripted.fetch, "https://api.openai.com/v1", "lfm2:24b"));
+    await run.driveModel(await modelOver(scripted.fetch, "https://api.openai.com/v1", "granite4.1:8b"));
 
     // The fixture's tables carry `id` and `name`, and neither came from the error text: the
     // qualifier was pulled out of it and used only to find the table in our own snapshot.
@@ -158,7 +158,7 @@ describe("a failed statement is told what the table actually holds", () => {
       answersProse("done"),
     );
 
-    await run.driveModel(await modelOver(scripted.fetch, "https://api.openai.com/v1", "lfm2:24b"));
+    await run.driveModel(await modelOver(scripted.fetch, "https://api.openai.com/v1", "granite4.1:8b"));
 
     const told = scripted.turns.at(-1)?.transcript ?? "";
     expect(told).toContain("has no name_x");
@@ -181,7 +181,7 @@ describe("a failed statement is told what the table actually holds", () => {
       answersProse("done"),
     );
 
-    await run.driveModel(await modelOver(scripted.fetch, "https://api.openai.com/v1", "lfm2:24b"));
+    await run.driveModel(await modelOver(scripted.fetch, "https://api.openai.com/v1", "granite4.1:8b"));
 
     const told = scripted.turns.at(-1)?.transcript ?? "";
     expect(told).toContain("join through");
@@ -209,7 +209,7 @@ describe("a failed statement is told what the table actually holds", () => {
       answersProse("done"),
     );
 
-    await run.driveModel(await modelOver(scripted.fetch, "https://api.openai.com/v1", "lfm2:24b"));
+    await run.driveModel(await modelOver(scripted.fetch, "https://api.openai.com/v1", "granite4.1:8b"));
 
     const told = scripted.turns.at(-1)?.transcript ?? "";
     expect(told).toContain("has no dept_no");

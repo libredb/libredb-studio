@@ -22,29 +22,14 @@
 
 import type { AgentRunWorkflowType } from "../types";
 import { BASELINE_NOTICES } from "./notices";
-import { DEEPSEEK_R1_14B } from "./deepseek-r1-14b";
-import { DEEPSEEK_R1_32B } from "./deepseek-r1-32b";
-import { DEEPSEEK_R1_7B } from "./deepseek-r1-7b";
-import { DEEPSEEK_R1_8B } from "./deepseek-r1-8b";
-import { GEMMA4_12B } from "./gemma4-12b";
+import { GEMINI_3_5_FLASH_LITE } from "./gemini-3-5-flash-lite";
 import { GEMMA4_26B } from "./gemma4-26b";
 import { GRANITE4_1_30B } from "./granite4-1-30b";
-import { GRANITE4_1_3B } from "./granite4-1-3b";
 import { GRANITE4_1_8B } from "./granite4-1-8b";
-import { LFM2_24B } from "./lfm2-24b";
-import { MISTRAL_SMALL3_2_24B } from "./mistral-small3-2-24b";
-import { MUSE_GLIMMER_LATEST } from "./muse-glimmer-latest";
-import { NEMOTRON_3_5_LIGHTNING_30B } from "./nemotron-3-5-lightning-30b";
-import { NEMOTRON3_33B } from "./nemotron3-33b";
 import { ORNITH_9B } from "./ornith-9b";
-import { QWEN3_0_6B } from "./qwen3-0-6b";
-import { QWEN3_1_7B } from "./qwen3-1-7b";
 import { QWEN3_14B } from "./qwen3-14b";
 import { QWEN3_4B } from "./qwen3-4b";
-import { QWEN3_5_2B } from "./qwen3-5-2b";
-import { QWEN3_5_4B } from "./qwen3-5-4b";
 import { QWEN3_5_9B } from "./qwen3-5-9b";
-import { QWEN3_6_27B } from "./qwen3-6-27b";
 import { QWEN3_8_LATEST } from "./qwen3-8-latest";
 import { QWEN3_8B } from "./qwen3-8b";
 import {
@@ -53,14 +38,9 @@ import {
   type AgentSampling,
   DEFAULT_PLAN_STATEMENT_RETRIES,
   DEFAULT_REPORT_REMINDER_LIMIT,
-  DEFAULT_HOLD_REPORT_WITHOUT_TIME,
   DEFAULT_REFUSAL_EXAMPLES,
-  DEFAULT_COMPARE_REMINDER_LIMIT,
   DEFAULT_PRESENT_REMINDER_LIMIT,
-  DEFAULT_REMIND_WITHOUT_TOOLS,
-  DEFAULT_REQUIRE_EVIDENCE_BEFORE_REMINDER,
   DEFAULT_RETRY_EMPTY_TURN,
-  DEFAULT_REPORT_RESERVE_MS,
   DEFAULT_SAMPLING,
   DEFAULT_UNREPORTED_CALL_CEILING,
 } from "./profile";
@@ -74,28 +54,13 @@ export type { AgentModelProfile } from "./profile";
  * exactly would silently stop applying the day a tag changed.
  */
 export const MODEL_PROFILES: Readonly<Record<string, AgentModelProfile>> = Object.freeze({
-  "deepseek-r1:14b": DEEPSEEK_R1_14B,
-  "deepseek-r1:32b": DEEPSEEK_R1_32B,
-  "deepseek-r1:7b": DEEPSEEK_R1_7B,
-  "deepseek-r1:8b": DEEPSEEK_R1_8B,
-  "gemma4:12b": GEMMA4_12B,
+  "gemini-3.5-flash-lite": GEMINI_3_5_FLASH_LITE,
   "gemma4:26b": GEMMA4_26B,
   "granite4.1:30b": GRANITE4_1_30B,
-  "granite4.1:3b": GRANITE4_1_3B,
   "granite4.1:8b": GRANITE4_1_8B,
-  "lfm2:24b": LFM2_24B,
-  "mistral-small3.2:24b": MISTRAL_SMALL3_2_24B,
-  "muse-glimmer:latest": MUSE_GLIMMER_LATEST,
-  "nemotron-3.5-lightning:30b": NEMOTRON_3_5_LIGHTNING_30B,
-  "nemotron3:33b": NEMOTRON3_33B,
   "ornith:9b": ORNITH_9B,
-  "qwen3.5:2b": QWEN3_5_2B,
-  "qwen3.5:4b": QWEN3_5_4B,
   "qwen3.5:9b": QWEN3_5_9B,
-  "qwen3.6:27b": QWEN3_6_27B,
   "qwen3.8:latest": QWEN3_8_LATEST,
-  "qwen3:0.6b": QWEN3_0_6B,
-  "qwen3:1.7b": QWEN3_1_7B,
   "qwen3:14b": QWEN3_14B,
   "qwen3:4b": QWEN3_4B,
   "qwen3:8b": QWEN3_8B,
@@ -132,48 +97,6 @@ export function planStatementRetriesFor(modelId: string): number {
 }
 
 /**
- * How much of this model's run clock is held back for the report.
- *
- * Its own resolver rather than a field read at the call site, so a profile that raises it says
- * so in one place and the drive keeps asking one question at a time.
- */
-export function reportReserveMsFor(modelId: string): number {
-  return MODEL_PROFILES[modelId.toLowerCase()]?.reportReserveMs ?? DEFAULT_REPORT_RESERVE_MS;
-}
-
-/**
- * Whether this model's reports may be held when no turn remains to act on the holding.
- *
- * Named for what it decides rather than for the model that needed it, so the next measurement
- * that lands here reads as a second case and not as an exception to a special case.
- */
-export function holdsReportWithoutTime(modelId: string): boolean {
-  return MODEL_PROFILES[modelId.toLowerCase()]?.holdReportWithoutTime ?? DEFAULT_HOLD_REPORT_WITHOUT_TIME;
-}
-
-/**
- * Whether this model hears the report reminder even when it called no tool.
- *
- * False everywhere but the one model measured answering from the inventory without reaching
- * for anything, so switching it on changed no other model's run.
- */
-export function remindsWithoutTools(modelId: string): boolean {
-  return MODEL_PROFILES[modelId.toLowerCase()]?.remindWithoutTools ?? DEFAULT_REMIND_WITHOUT_TOOLS;
-}
-
-/**
- * Whether this model is told to report only once the run holds something citable.
- *
- * False everywhere but the one model measured obeying the reminder before it had read
- * anything, so the wait cannot reach a run that was already reminded correctly.
- */
-export function requiresEvidenceBeforeReminder(modelId: string): boolean {
-  return (
-    MODEL_PROFILES[modelId.toLowerCase()]?.requireEvidenceBeforeReminder ?? DEFAULT_REQUIRE_EVIDENCE_BEFORE_REMINDER
-  );
-}
-
-/**
  * Whether an empty turn is asked again before this model's run is ended.
  *
  * False everywhere but the model measured returning nothing with its readings already taken,
@@ -190,16 +113,6 @@ export function retriesEmptyTurn(modelId: string): boolean {
  */
 export function presentReminderLimitFor(modelId: string): number {
   return MODEL_PROFILES[modelId.toLowerCase()]?.presentReminderLimit ?? DEFAULT_PRESENT_REMINDER_LIMIT;
-}
-
-/**
- * How many times this model's report may be held to ask for a plan comparison.
- *
- * One everywhere but the model measured inspecting a single plan and reporting anyway, three
- * runs in a row.
- */
-export function compareReminderLimitFor(modelId: string): number {
-  return MODEL_PROFILES[modelId.toLowerCase()]?.compareReminderLimit ?? DEFAULT_COMPARE_REMINDER_LIMIT;
 }
 
 /**

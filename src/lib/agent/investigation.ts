@@ -58,16 +58,11 @@ import {
 import { agentModelTurnTimeoutMs } from "./config";
 import {
   ceilingFor,
-  compareReminderLimitFor,
-  holdsReportWithoutTime,
   noticesFor,
   presentReminderLimitFor,
-  remindsWithoutTools,
-  requiresEvidenceBeforeReminder,
   retriesEmptyTurn,
   planStatementRetriesFor,
   reportReminderLimitFor,
-  reportReserveMsFor,
   samplingFor,
 } from "./models";
 import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
@@ -83,7 +78,12 @@ import {
 import { PLAN_NO_STATEMENT_MARKER, readPlanStatement } from "./plan-draft";
 import { validatePlanStatement } from "./plan-statement";
 import { packSchemaStatistics, readSchemaStatistics } from "./schema-stats";
-import { AGENT_MODEL_TURN_TIMEOUT_MS, AGENT_REPORT_RESERVE_TURNS, AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
+import {
+  AGENT_MODEL_TURN_TIMEOUT_MS,
+  AGENT_REPORT_RESERVE_MS,
+  AGENT_REPORT_RESERVE_TURNS,
+  AGENT_WORKFLOW_BUDGETS,
+} from "./execution-policy";
 import { type AgentModel, mapAgentModelError } from "./model-adapter";
 import {
   type AgentRunInvocation,
@@ -2808,7 +2808,7 @@ export async function runInvestigation(
      */
     const announceReserve = async (remainingMs: number): Promise<void> => {
       if (reserveAnnounced || record.mode !== "agent") return;
-      if (maxTurns - turns > AGENT_REPORT_RESERVE_TURNS && remainingMs > reportReserveMsFor(model.modelId)) return;
+      if (maxTurns - turns > AGENT_REPORT_RESERVE_TURNS && remainingMs > AGENT_REPORT_RESERVE_MS) return;
       reserveAnnounced = true;
       messages.push({ role: "user", content: notice(AGENT_REPORT_RESERVE_NOTICE) });
       await service.recordEvent(runId, { kind: "guidance-issued", notice: "report-reserve" });
@@ -2847,32 +2847,9 @@ export async function runInvestigation(
     };
 
     const remindToReport = async (assistant: readonly ModelMessage[]): Promise<boolean> => {
-      /*
-        The no-tool gate, and the one model it reads wrong.
-
-        A run that called nothing is normally a run that stopped, and telling it to report
-        spends a turn to find that out. `nemotron-3.5-lightning:30b` answers the investigation
-        question straight out of the inventory it was handed — all eight tables, correctly, in
-        29 seconds — and calls nothing, so it arrives here looking exactly like a run that gave
-        up. Its profile says otherwise, and nothing else changes.
-      */
-      if (!anyToolCalled) {
-        if (!remindsWithoutTools(model.modelId)) return false;
-        /*
-          And the moment that bypass is wrong, which only a model that took it could show.
-
-          A run that has called nothing has no artifact, so the one thing it could cite is the
-          snapshot — and without that it has nothing. `deepseek-r1:14b` heard the reminder as
-          the first entry in its assessment ledger, obeyed it, and was declined
-          `UNVERIFIABLE_EVIDENCE` five times before its first read; the refusal could not even
-          name what to cite, because nothing had been produced to name.
-
-          Per-model, and off by default, because the bypass earns its keep on the run this
-          would also stop: `nemotron-3.5-lightning:30b` answers out of an inventory, and the
-          capture that gives it one is exactly what this waits for.
-        */
-        if (requiresEvidenceBeforeReminder(model.modelId) && !contextCaptured) return false;
-      }
+      // A run that called nothing has established nothing, so there is no report to ask it
+      // for: telling it would spend a turn to learn it had stopped.
+      if (!anyToolCalled) return false;
       if (reportReminders >= reportReminderLimitFor(model.modelId)) return false;
       if (turns >= maxTurns || resources.deadline.remainingMs() <= 0) return false;
       reportReminders += 1;
@@ -3175,18 +3152,14 @@ export async function runInvestigation(
           Whether a report may be held at all right now.
 
           Every hold below spends a turn: the call is not run, the model is told what to do
-          instead, and it acts on the next turn. That is worth a turn while there is one.
-          `deepseek-r1:8b` is the measured case, twice over — held at 383 seconds of a 450-second
-          run and told to inspect a plan, then held at 379 seconds and told to compare two, with
-          turns that take 100 seconds. Each time a written report became `no-report`.
+          instead, and it acts on the next turn. That is worth a turn while there is one, and
+          worth nothing inside the reserve — a run held with no turn left to act on the holding
+          files no report at all, which is a worse verdict than the one the hold was avoiding.
 
           Read once and applied to all three holds, because the reasoning does not distinguish
-          between them and a gate on one site would have been found by the next measurement. Off
-          by default, so no other model's run changes.
+          between them and a gate on one site would be a difference nothing justifies.
         */
-        const noTimeToHold =
-          !holdsReportWithoutTime(model.modelId) &&
-          resources.deadline.remainingMs() <= reportReserveMsFor(model.modelId);
+        const noTimeToHold = resources.deadline.remainingMs() <= AGENT_REPORT_RESERVE_MS;
         // A run whose workflow answers by presenting, which read something and is about
         // to report without presenting it, is one call short of an answer. Checked here
         // and not after the call, because `compose_report` ends the run.
@@ -3353,12 +3326,7 @@ export async function runInvestigation(
         // A run whose verdict wants a comparison, holding the two plans that would make
         // one, is one call short of it. Checked here for the same reason the present
         // notice is: `compose_report` ends the run.
-        if (
-          call.toolName === "compose_report" &&
-          !noTimeToHold &&
-          compareReminders < compareReminderLimitFor(model.modelId) &&
-          holdsTool("compare_plans")
-        ) {
+        if (call.toolName === "compose_report" && !noTimeToHold && compareReminders < 1 && holdsTool("compare_plans")) {
           const { record: sofar } = await service.resume(context.runId);
           const plans = sofar.events.flatMap((event) =>
             event.kind === "tool-completed" && event.artifact.operationId === "sql.explain.estimate"

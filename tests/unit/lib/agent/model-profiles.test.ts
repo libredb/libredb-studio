@@ -2,16 +2,11 @@ import { describe, expect, test } from "bun:test";
 import {
   MODEL_PROFILES,
   ceilingFor,
-  compareReminderLimitFor,
-  holdsReportWithoutTime,
   noticesFor,
   presentReminderLimitFor,
-  remindsWithoutTools,
-  requiresEvidenceBeforeReminder,
   retriesEmptyTurn,
   planStatementRetriesFor,
   reportReminderLimitFor,
-  reportReserveMsFor,
   samplingFor,
 } from "@/lib/agent/models";
 import { BASELINE_NOTICES } from "@/lib/agent/models/notices";
@@ -129,75 +124,6 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(planStatementRetriesFor("some-model-released-tomorrow:70b")).toBe(0);
   });
 
-  test("the report reserve is raised to fit a reasoning model's turn", () => {
-    /*
-      `deepseek-r1:8b`, query-optimization. Both losing runs end deadline-exceeded at 450
-      seconds having already drafted and run the statement and recorded two index
-      recommendations — the analysis done, nothing filed. The turn gaps in those ledgers are 81,
-      54, 100, 52 and 156 seconds.
-
-      The loop's answer to that shape is the reserve notice: within so much of a ceiling, the
-      run is told this is its last turn and to report with what it has. The general reserve is
-      20 seconds, which is shorter than every turn this model takes, so the sentence reached a
-      run that could not act on it. Raised to its slowest observed turn, and only here: on a
-      model whose turns take 15 seconds the same reserve is idle clock taken out of every run.
-    */
-    expect(reportReserveMsFor("deepseek-r1:8b")).toBe(160_000);
-    expect(reportReserveMsFor("qwen3:8b")).toBe(20_000);
-    expect(reportReserveMsFor("some-model-released-tomorrow:70b")).toBe(20_000);
-  });
-
-  test("a report is held for its verdict, unless the run has no turn to act on the holding", () => {
-    /*
-      The hold is what teaches a run what its report is missing, and several locked cells came
-      from it. `deepseek-r1:8b` is where it backfired: it called `compose_report` at 383 seconds
-      of a 450-second run, was held and told to inspect a plan first, and its turns take 100
-      seconds. The verdict went from one shortfall to `no-report`, and the user got nothing
-      where a partial report was already written.
-
-      Off for that model only. Everywhere else a held report is a report about to be improved.
-    */
-    expect(holdsReportWithoutTime("deepseek-r1:8b")).toBe(false);
-    expect(holdsReportWithoutTime("qwen3:8b")).toBe(true);
-    expect(holdsReportWithoutTime("some-model-released-tomorrow:70b")).toBe(true);
-  });
-
-  test("a run that called nothing is reminded only where answering that way was measured", () => {
-    /*
-      The drive withholds the report reminder from a run that called no tool, because such a
-      run has usually stopped and telling it spends a turn to find out. `nemotron-3.5-lightning:30b`
-      is where that reads wrong: asked what tables exist, it named all eight correctly in 29
-      seconds out of the inventory it was handed, called nothing, and was scored `no-report`
-      for the channel rather than for the content.
-
-      True for that model only. A turn spent on a run that really has stopped is a turn taken
-      from every other model's reading.
-    */
-    expect(remindsWithoutTools("nemotron-3.5-lightning:30b")).toBe(true);
-    expect(remindsWithoutTools("qwen3:8b")).toBe(false);
-    expect(remindsWithoutTools("some-model-released-tomorrow:70b")).toBe(false);
-  });
-
-  test("the models that must hold something before they are told to record it", () => {
-    /*
-      The reminder above, asked for at a moment nothing could satisfy it. `deepseek-r1:14b`,
-      database-assessment: `report-reminder` is the first entry in the ledger after the run
-      started, and what follows is five `compose_report` calls declined `UNVERIFIABLE_EVIDENCE`
-      in a row, then — after the refusals — the run's first `profile_table`.
-
-      It was doing as it was told. There was simply nothing to cite: no artifact, no snapshot,
-      so even the refusal that names citable ids had none to name and repeated the bare rule
-      five times. The run spent 503 seconds and never recovered.
-
-      True for that model only, and the isolation is the point: `nemotron-3.5-lightning:30b`
-      earned the reminder by answering out of an inventory it was holding, which is the case
-      this gate keeps intact. It does not carry the field, so this cannot reach it.
-    */
-    expect(requiresEvidenceBeforeReminder("deepseek-r1:14b")).toBe(true);
-    expect(requiresEvidenceBeforeReminder("nemotron-3.5-lightning:30b")).toBe(false);
-    expect(requiresEvidenceBeforeReminder("some-model-released-tomorrow:70b")).toBe(false);
-  });
-
   test("the model measured answering nothing at all, and nobody else", () => {
     /*
       `gemma4:26b` lost database-assessment fifteen measured times before this was read
@@ -258,25 +184,6 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     // The one place the baseline is still read at run time, and the honest treatment of a
     // model with no file: it is sent what everything else was measured with.
     expect(noticesFor("some-model-released-tomorrow:70b")).toEqual(BASELINE_NOTICES);
-  });
-
-  test("the plan comparison is asked for twice only where once was measured going unheard", () => {
-    /*
-      The plan bar is the largest class of loss left on the board, and its runs share one shape:
-      the model inspects ONE plan and reports. The hold that answers exactly that is a one-shot,
-      so a model that hears it and reports again lands the second report.
-
-      `lfm2:24b` did that on three separate optimization runs — one plan, one hold, no
-      comparison, every time. Measured alongside: the worked example it had already earned took
-      its `RECOMMENDATION_SHAPE_MISMATCH` refusals from five to zero, so what remains is not the
-      shape of the call but the decision to make it.
-
-      One everywhere else: the hold names two ways through, and a model that heard it and took
-      neither is declining rather than missing it.
-    */
-    expect(compareReminderLimitFor("lfm2:24b")).toBe(2);
-    expect(compareReminderLimitFor("qwen3:8b")).toBe(1);
-    expect(compareReminderLimitFor("some-model-released-tomorrow:70b")).toBe(1);
   });
 
   test("every profile states what measured it", () => {

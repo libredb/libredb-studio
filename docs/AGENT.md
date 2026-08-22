@@ -85,6 +85,7 @@ Two companion pages carry what this one deliberately does not:
 - [Durability and resume](#durability-and-resume)
 - [The tool set](#the-tool-set)
 - [What bounds a run](#what-bounds-a-run)
+- [Supported models](#supported-models)
 - [The model side](#the-model-side)
 - [Whether the run answered](#whether-the-run-answered)
 - [What the removed AI panels did that a run does not](#what-the-removed-ai-panels-did-that-a-run-does-not)
@@ -1517,6 +1518,32 @@ database* may be repaired. **A policy denial does not consume a repair attempt**
 boundary decision is not a defect in a statement, and a denial travels to the model as its own kind
 of outcome — the refusal union has no readable engine-text field for the policy variant at all, so a
 denial cannot be re-fed to the model as though the SQL were malformed.
+
+## Supported models
+
+Ten models run every agent surface. Each cleared all six — Investigate, Optimize, Assess, Operate,
+Analyze and Plan — five consecutive times, at the turn limit the product ships, which is 30 of 30
+runs. Each has a page of its own with its measured durations and whatever it needs that the others
+do not.
+
+| Model | Served through | Median run | Slowest run |
+| --- | --- | --- | --- |
+| [`gemini-3.5-flash-lite`](models/gemini-3-5-flash-lite.md) | Gemini API | 10 s | 24 s |
+| [`granite4.1:8b`](models/granite4-1-8b.md) | Ollama | 10 s | 21 s |
+| [`ornith:9b`](models/ornith-9b.md) | Ollama | 25 s | 82 s |
+| [`qwen3.5:9b`](models/qwen3-5-9b.md) | Ollama | 25 s | 98 s |
+| [`granite4.1:30b`](models/granite4-1-30b.md) | Ollama | 26 s | 46 s |
+| [`qwen3:8b`](models/qwen3-8b.md) | Ollama | 32 s | 132 s |
+| [`qwen3:14b`](models/qwen3-14b.md) | Ollama | 39 s | 151 s |
+| [`gemma4:26b`](models/gemma4-26b.md) | Ollama | 46 s | 180 s |
+| [`qwen3.8:latest`](models/qwen3-8-latest.md) | Ollama | 62 s | 347 s |
+| [`qwen3:4b`](models/qwen3-4b.md) | Ollama | 75 s | 139 s |
+
+The durations are from one machine and are comparable with each other rather than portable: every
+figure was taken the same way, on the same database, through the same six surfaces.
+
+Nothing prevents another model from being configured — the capability probe below decides what any
+given endpoint can do, and there is no allow-list in the code. What the ten have is a measurement.
 
 ## The model side
 

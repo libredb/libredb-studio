@@ -57,54 +57,7 @@ export interface AgentModelProfile {
    * statement or the explicit refusal that plan mode scores.
    */
   readonly planStatementRetries?: number;
-  /**
-   * How much of the run's clock is reserved for the report, in milliseconds.
-   *
-   * The general reserve is sized for a turn on this workload, and a reasoning model's turn is
-   * not that turn. `deepseek-r1:8b` is the measured case: its query-optimization runs spend
-   * 50 to 160 seconds inside a single model call, so a notice delivered with 20 seconds left
-   * arrives at a run that cannot complete a turn to act on it. Both of its losing runs had
-   * already drafted the statement and recorded two index recommendations, and died on the
-   * deadline with the analysis done and nothing filed.
-   */
-  readonly reportReserveMs?: number;
-  /**
-   * Whether a report may be held for the verdict it would earn when no turn is left to act on
-   * the holding.
-   *
-   * True everywhere, because the hold is what teaches a run what its report is missing. False
-   * where the teaching cannot land: `deepseek-r1:8b` called `compose_report` at 383 seconds of
-   * a 450-second run, was held and told to inspect a plan first, and had no 100-second turn
-   * left to do it in. The hold turned a report that would have scored one shortfall into no
-   * report at all.
-   */
-  readonly holdReportWithoutTime?: boolean;
-  /**
-   * Whether a run that answered without calling anything is still told to report.
-   *
-   * The drive withholds the report reminder from a run that called no tool, and the reasoning
-   * holds for most models: a run that established nothing is stopping, not hesitating, and a
-   * second telling spends a turn to learn that. `nemotron-3.5-lightning:30b` is the case it
-   * gets wrong. Asked what tables exist, it answered correctly in 29 seconds — all eight,
-   * named — from the inventory the run was handed, called nothing, and was scored `no-report`
-   * for using the wrong channel rather than for having nothing to say.
-   */
-  readonly remindWithoutTools?: boolean;
-  /**
-   * Whether the report reminder waits until the run holds something it could cite.
-   *
-   * The reminder above, arriving at a moment nothing could satisfy it. `deepseek-r1:14b` on
-   * database-assessment heard it as the first thing in the run, obeyed, and was declined
-   * `UNVERIFIABLE_EVIDENCE` five times in a row before it had read anything at all; its first
-   * `profile_table` came after the last refusal, and the run ended having spent 503 seconds
-   * proving it could follow an instruction that could not be followed.
-   *
-   * A run with no artifact and no snapshot cannot cite one, and the refusal it earns cannot
-   * even name what it might have cited. Off by default: the reminder's whole value for
-   * `nemotron-3.5-lightning:30b` is that it fires for a run holding an inventory rather than
-   * a reading, and that case must keep working exactly as measured.
-   */
-  readonly requireEvidenceBeforeReminder?: boolean;
+
   /**
    * Whether a turn that came back EMPTY is asked again before the run is ended.
    *
@@ -132,14 +85,7 @@ export interface AgentModelProfile {
    * the report lands with an empty answer pane and a `no-answer` verdict.
    */
   readonly presentReminderLimit?: number;
-  /**
-   * How many times a report may be held to ask for the plan comparison the verdict wants.
-   *
-   * One is enough for a model that forgot to compare. It is not enough for one that inspects a
-   * single plan and reports regardless: `lfm2:24b` did that on three separate optimization
-   * runs, each with one plan, one hold and no comparison.
-   */
-  readonly compareReminderLimit?: number;
+
   /**
    * Every sentence this model is told, when it is told anything.
    *
@@ -206,45 +152,8 @@ export const DEFAULT_REPORT_REMINDER_LIMIT = 1;
  */
 export const DEFAULT_PLAN_STATEMENT_RETRIES = 0;
 
-/**
- * Twenty seconds, which is what `AGENT_REPORT_RESERVE_MS` has always been and what every
- * locked cell was measured against.
- *
- * Held here as well so a profile overriding it is read next to the value it replaces. Raising
- * it for everyone would move the reserve on 24 models to rescue one, and the reserve is time
- * taken out of the reading half of every run.
- */
-export const DEFAULT_REPORT_RESERVE_MS = 20_000;
-
-/**
- * Held, which is what every locked cell was measured against.
- *
- * A run that is told what its report is missing usually fixes it, and that is where several
- * locked cells came from. The exception is a run with no turn left, and only a model whose
- * turns are long enough to hit that says so in its own file.
- */
-export const DEFAULT_HOLD_REPORT_WITHOUT_TIME = true;
-
 /** Off, for the same reason, and on where a ledger showed the loop it ends. */
 export const DEFAULT_REFUSAL_EXAMPLES = false;
-
-/**
- * Withheld, which is what every locked cell was measured against.
- *
- * A run that called nothing has usually stopped, and reminding it spends a turn to confirm
- * that. The exception is a model that answers the question straight out of the inventory it
- * was given, which looks identical from here and is not the same thing at all.
- */
-export const DEFAULT_REMIND_WITHOUT_TOOLS = false;
-
-/**
- * Unconditional, which is what every locked cell was measured against.
- *
- * The reminder fires on the run's state as the drive already reads it, and 107 cells locked
- * that way. Only a model whose ledger shows it obeying the reminder into a wall of refusals
- * earns the wait, and it earns it alone.
- */
-export const DEFAULT_REQUIRE_EVIDENCE_BEFORE_REMINDER = false;
 
 /**
  * Not asked again, which is what every locked cell was measured against.
@@ -262,15 +171,6 @@ export const DEFAULT_RETRY_EMPTY_TURN = false;
  * turn spent arguing with a model that has already declined, so it stays per-model.
  */
 export const DEFAULT_PRESENT_REMINDER_LIMIT = 1;
-
-/**
- * One, which is what every locked optimization cell was measured against.
- *
- * The hold spends a turn out of a fixed budget and names two ways through — a second plan to
- * compare, or an index recommendation citing the plan already held — so a model that heard it
- * and did neither is usually declining rather than missing it.
- */
-export const DEFAULT_COMPARE_REMINDER_LIMIT = 1;
 
 /**
  * Deterministic, and the setting five locked cells were won on.

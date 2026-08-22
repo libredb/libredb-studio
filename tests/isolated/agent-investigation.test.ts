@@ -4527,40 +4527,6 @@ describe("a run that will not record what it read is narrowed to what would fini
   run this second one would also stop.
 */
 describe("a run is told to report only when it holds something to report from", () => {
-  test("a model that waits for evidence is not told to report before it has any", async () => {
-    const b = boot(freshDataDir());
-    const run = await startRun(b);
-    const script = scriptedModel(answersProse("The tables are department, employee."));
-
-    await runInvestigation(run.runId, {
-      service: b.service,
-      model: await modelOver(script.fetch, undefined, "deepseek-r1:14b"),
-      // Ungrounded on purpose: this engine has no catalog composer, so the capture
-      // lands nothing and the run holds exactly what the live one held — nothing.
-      resources: { ...b.resources, connection: { ...CONNECTION, type: "mongodb" } },
-    });
-
-    // One turn: it answered in prose, and was not sent back to write a report it would
-    // have been refused for.
-    expect(script.turns).toHaveLength(1);
-  });
-
-  test("the same model IS told once the inventory is in its hands", async () => {
-    const b = boot(freshDataDir());
-    const run = await startRun(b);
-    const script = scriptedModel(answersProse("The tables are department, employee."), answersProse("still nothing"));
-
-    await runInvestigation(run.runId, {
-      service: b.service,
-      model: await modelOver(script.fetch, undefined, "deepseek-r1:14b"),
-      resources: b.resources,
-    });
-
-    // The snapshot IS citable, so the reminder is worth spending a turn on and is sent.
-    expect(script.turns).toHaveLength(2);
-    expect(script.turns[1]?.transcript ?? "").toContain("compose_report");
-  });
-
   test("a turn that came back with nothing at all is asked once more", async () => {
     /*
       What `gemma4:26b` has been losing database-assessment to for fifteen measured runs, read
@@ -4671,24 +4637,5 @@ describe("a run is told to report only when it holds something to report from", 
     const view = await b.store.read(run.runId);
     const declined = view?.record.events.find((event) => event.kind === "call-declined");
     expect(declined?.kind === "call-declined" && declined.detail).toContain("one of index, rewrite");
-  });
-
-  test("the model measured answering from an inventory keeps hearing it unconditionally", async () => {
-    /*
-      The regression this is here to make impossible. `nemotron-3.5-lightning:30b` won two
-      cells on the bypass; it does not carry the wait, and an ungrounded run of it must
-      still be reminded exactly as it was when those cells were measured.
-    */
-    const b = boot(freshDataDir());
-    const run = await startRun(b);
-    const script = scriptedModel(answersProse("All eight tables."), answersProse("still nothing"));
-
-    await runInvestigation(run.runId, {
-      service: b.service,
-      model: await modelOver(script.fetch, undefined, "nemotron-3.5-lightning:30b"),
-      resources: { ...b.resources, connection: { ...CONNECTION, type: "mongodb" } },
-    });
-
-    expect(script.turns).toHaveLength(2);
   });
 });

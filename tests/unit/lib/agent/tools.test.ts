@@ -670,7 +670,7 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       const h = harness();
 
       const outcome = composeReportTool(
-        { ...h.context, modelId: "lfm2:24b" },
+        { ...h.context, modelId: "granite4.1:8b" },
         { runId: h.context.runId, events: [artifactEvent] },
         { claims: [{ claim: "Engineering is largest.", evidence: ["corr-real"] }] },
       );
@@ -701,7 +701,7 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       ] as unknown as AgentRunEvent[];
 
       const outcome = presentAnswerTool(
-        { ...h.context, modelId: "lfm2:24b" },
+        { ...h.context, modelId: "granite4.1:8b" },
         { runId: h.context.runId, autoExecute: false, events },
         { artifact: "corr-real" },
       );
@@ -718,7 +718,7 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       const h = harness();
 
       const outcome = composeReportTool(
-        { ...h.context, modelId: "lfm2:24b" },
+        { ...h.context, modelId: "granite4.1:8b" },
         { runId: h.context.runId, events: [] },
         { claims: [{ claim: "Nothing read.", evidence: ["corr-real"] }] },
       );
@@ -774,7 +774,7 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
         }) as unknown as AgentRunEvent;
 
       const outcome = comparePlansTool(
-        { ...h.context, modelId: "lfm2:24b" },
+        { ...h.context, modelId: "granite4.1:8b" },
         { runId: h.context.runId, events: [plan("corr-before"), plan("corr-after")] },
         { before: "corr-before" },
       );
@@ -803,7 +803,7 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       } as unknown as AgentRunEvent;
 
       const outcome = comparePlansTool(
-        { ...h.context, modelId: "lfm2:24b" },
+        { ...h.context, modelId: "granite4.1:8b" },
         { runId: h.context.runId, events: [onePlan] },
         { before: "corr-only" },
       );
@@ -841,7 +841,7 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
       } as unknown as AgentRunEvent;
 
       const outcome = recommendChangeTool(
-        { ...h.context, modelId: "granite4.1:3b" },
+        { ...h.context, modelId: "granite4.1:8b" },
         { runId: h.context.runId, events: [planEvent] },
         { change: "index", statement: "CREATE INDEX i ON orders (id)", rationale: "scan", evidence: ["corr-plan"] },
       );
@@ -1392,7 +1392,7 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
       throw new QueryError("Read-only execution exceeded the row budget: 1000 rows > 200 allowed", "postgres");
     });
 
-    const outcome = await runReadQueryTool({ ...h.context, modelId: "lfm2:24b" }, { sql: "SELECT * FROM orders" });
+    const outcome = await runReadQueryTool({ ...h.context, modelId: "granite4.1:8b" }, { sql: "SELECT * FROM orders" });
 
     expect(outcome.modelText).toContain("LIMIT 200");
     // Outside the fence: the advice is this server's sentence, and putting it inside would
@@ -1407,7 +1407,7 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
     });
 
     const outcome = await runReadQueryTool(
-      { ...h.context, modelId: "lfm2:24b" },
+      { ...h.context, modelId: "granite4.1:8b" },
       { sql: "SELECT * FROM information_schema.columns" },
     );
 
