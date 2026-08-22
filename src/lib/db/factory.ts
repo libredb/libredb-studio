@@ -179,6 +179,58 @@ export async function createDatabaseProvider(
 }
 
 // ============================================================================
+// One-shot tunnel scope (#457)
+// ============================================================================
+
+/**
+ * Run `run` against a connection reachable through its SSH tunnel, then close the
+ * tunnel unconditionally.
+ *
+ * This is the transport for callers that build a provider with
+ * `createDatabaseProvider` directly - outside both provider caches - and connect it:
+ * `POST /api/db/test-connection` and `POST /api/db/schema-snapshot`. Before #457 they
+ * connected to the raw database host, so a tunnelled connection could never be tested
+ * and therefore never be saved at all (the dialog gates its only save button on a
+ * passing test), and the agent's grounding capture could not read a tunnelled schema.
+ *
+ * The tunnel is deliberately NOT pooled, unlike `getOrCreateProvider`'s. Those callers
+ * cache nothing, so nothing would ever evict a pooled tunnel: `removeProvider` and the
+ * idle sweep close the tunnel of a CACHED provider, and the connection dialog mints a
+ * fresh id for every unsaved build - so each test click would strand an SSH client and
+ * a listening local server for the life of the process. Ownership sits with this scope
+ * instead, which is why `run` is a callback rather than a returned endpoint: the close
+ * cannot be forgotten.
+ *
+ * The callback is NOT named `use`: `react-hooks/rules-of-hooks` reads a call to
+ * anything named `use()` as React 19's hook and rejects it outside a component, and
+ * inside a try block on top of that.
+ *
+ * A connection with no tunnel, or with no host and port to forward to (a
+ * connection-string connection, or SQLite), passes straight through untouched - the
+ * same rule the pooled paths apply.
+ */
+export async function withOneShotTunnel<T>(
+  connection: DatabaseConnection,
+  run: (effective: DatabaseConnection) => Promise<T>,
+): Promise<T> {
+  if (!connection.sshTunnel?.enabled || !connection.host || !connection.port) {
+    return await run(connection);
+  }
+
+  const tunnel = await createSSHTunnel(connection.id, connection.sshTunnel, connection.host, connection.port, {
+    shared: false,
+  });
+
+  try {
+    return await run({ ...connection, host: tunnel.localHost, port: tunnel.localPort });
+  } finally {
+    // Swallowed on purpose: a failing teardown must not replace the caller's error,
+    // which is the one that says why the database connection did not work.
+    await tunnel.close().catch(() => {});
+  }
+}
+
+// ============================================================================
 // Provider Cache (for connection reuse)
 // ============================================================================
 

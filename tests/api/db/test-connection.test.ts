@@ -6,7 +6,12 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
-const mockCreateDatabaseProvider = mock(async () => mockProvider);
+const mockCreateDatabaseProvider = mock(async (connection?: unknown) => {
+  // The parameter is declared so `mock.calls` carries the connection the route built the
+  // provider from - that argument is what proves the SSH tunnel endpoint was used (#457).
+  void connection;
+  return mockProvider;
+});
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
@@ -42,9 +47,26 @@ mock.module("@/lib/seed/resolve-connection", () => {
   };
 });
 
+// The real scope opens an unshared SSH tunnel and rewrites host/port to its local
+// endpoint. Standing in for it with a pass-through that performs that rewrite is what
+// lets these tests assert the route connects THROUGH the tunnel rather than around it
+// (#457). `disconnectsAtScopeExit` records how many disconnect() calls had happened by
+// the time the scope was about to close its tunnel - the ordering the route must honour.
+let disconnectsAtScopeExit = -1;
+const mockWithOneShotTunnel = mock(
+  async (connection: Record<string, unknown>, run: (c: Record<string, unknown>) => Promise<unknown>) => {
+    try {
+      return await run({ ...connection, host: "127.0.0.1", port: 54321 });
+    } finally {
+      disconnectsAtScopeExit = (mockProvider.disconnect as ReturnType<typeof mock>).mock.calls.length;
+    }
+  },
+);
+
 // ─── Mock dependencies BEFORE importing route ───────────────────────────────
 mock.module("@/lib/db/factory", () => ({
   createDatabaseProvider: mockCreateDatabaseProvider,
+  withOneShotTunnel: mockWithOneShotTunnel,
   getOrCreateProvider: mock(async () => mockProvider),
   removeProvider: mock(async () => {}),
   clearProviderCache: mock(async () => {}),
@@ -69,6 +91,8 @@ describe("POST /api/db/test-connection", () => {
   beforeEach(() => {
     clearRateLimitState();
     mockCreateDatabaseProvider.mockClear();
+    mockWithOneShotTunnel.mockClear();
+    disconnectsAtScopeExit = -1;
     (mockProvider.connect as ReturnType<typeof mock>).mockClear();
     (mockProvider.disconnect as ReturnType<typeof mock>).mockClear();
     (mockProvider.getHealth as ReturnType<typeof mock>).mockClear();
@@ -209,5 +233,57 @@ describe("POST /api/db/test-connection", () => {
 
     expect(mockProvider.connect).toHaveBeenCalledTimes(1);
     expect(mockProvider.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  // ─── SSH tunnel (#457) ────────────────────────────────────────────────────
+  // This route builds its provider with createDatabaseProvider, outside both provider
+  // caches, so it does not inherit the tunnel handling the cached paths have. Until
+  // #457 it connected to the raw database host: a tunnelled connection could never be
+  // tested, and because the dialog gates its only save button on a passing test, never
+  // be saved either.
+
+  test("connects through the connection's SSH tunnel rather than to the raw host", async () => {
+    const req = createMockRequest("/api/db/test-connection", {
+      method: "POST",
+      body: {
+        ...validConnection,
+        host: "db.internal",
+        sshTunnel: { enabled: true, host: "bastion", port: 22, username: "jump", authMethod: "password" },
+      },
+    });
+
+    await POST(req as never);
+
+    expect(mockWithOneShotTunnel).toHaveBeenCalledTimes(1);
+    expect(mockWithOneShotTunnel.mock.calls[0]?.[0]).toMatchObject({ host: "db.internal" });
+    expect(mockCreateDatabaseProvider.mock.calls[0]?.[0]).toMatchObject({ host: "127.0.0.1", port: 54321 });
+  });
+
+  test("disconnects the provider before the tunnel scope tears the tunnel down", async () => {
+    const req = createMockRequest("/api/db/test-connection", {
+      method: "POST",
+      body: validConnection,
+    });
+
+    await POST(req as never);
+
+    // Closing the tunnel under a still-connected provider would leave the driver
+    // shutting down a socket whose transport is already gone.
+    expect(disconnectsAtScopeExit).toBe(1);
+  });
+
+  test("disconnects the provider inside the tunnel scope when the health check fails", async () => {
+    (mockProvider.getHealth as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new Error("Health check failed");
+    });
+
+    const req = createMockRequest("/api/db/test-connection", {
+      method: "POST",
+      body: validConnection,
+    });
+
+    await POST(req as never);
+
+    expect(disconnectsAtScopeExit).toBe(1);
   });
 });

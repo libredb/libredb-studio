@@ -172,6 +172,10 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
     // actually runs on is acquired per call through the execution-profile seam.
     // One provider for both, so a run's declared behaviour and its declared
     // vocabulary can never come from two different readings.
+    //
+    // So no `withOneShotTunnel` wrapper here (#457): this provider is never connected.
+    // The one that runs statements comes from `acquireExecutionProfileProvider`, which
+    // opens the connection's pooled tunnel itself.
     const provider = await createDatabaseProvider(connection);
     const capabilities = provider.getCapabilities();
     const labels = provider.getLabels();

@@ -478,6 +478,31 @@ Cassandra fixture does not close it.
 `e2e/cassandra-provider.spec.ts` exists or a written reason it cannot exist is recorded here.
 ---
 
+### D11. The SSH tunnel accepts any host key it is offered
+
+`createSSHTunnel` (`src/lib/ssh/tunnel.ts`) builds `connectOptions` from host, port, username and
+one of password or private key, and passes no `hostVerifier`. ssh2 has no default: with the callback
+absent the library does not verify the server's key at all, so the tunnel completes against whatever
+answers on that address. Every byte the tunnel carries - the database password among them - is
+readable to anything that can occupy the bastion's address, and nothing in the product ever shows a
+fingerprint the user could have compared.
+
+This is the layer where the check belongs and the only one that can do it: the database driver sees
+`127.0.0.1` and a local port, so its own TLS settings say nothing about who terminated the SSH hop.
+Found while fixing #457 and deliberately kept out of that PR: the fix there is about whether the
+tunnel is opened at all, and a verification policy is a separate decision with a UI consequence.
+
+The open decision is what to do on first contact, since Studio has no known-hosts store: refuse
+unknown keys and require the expected fingerprint to be configured (safe, and unusable until someone
+pastes a fingerprint), or trust-on-first-use pinned per connection (usable, and only as good as the
+first connection was). `SSHTunnelConfig` in `src/lib/types.ts` would carry the pin either way, which
+puts it in the storage secret walk in `src/lib/storage/connection-secrets.ts`.
+
+**Done when:** a tunnel verifies the bastion's host key against something the connection carries, an
+unverifiable key fails the connection with an error naming the fingerprint it saw, and the chosen
+first-contact policy is written in `docs/providers/`-adjacent documentation the dialog can point to.
+---
+
 
 ## Value interpolation
 

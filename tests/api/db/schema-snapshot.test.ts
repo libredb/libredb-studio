@@ -5,7 +5,12 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
-const mockCreateDatabaseProvider = mock(async () => mockProvider);
+const mockCreateDatabaseProvider = mock(async (connection?: unknown) => {
+  // The parameter is declared so `mock.calls` carries the connection the route built the
+  // provider from - that argument is what proves the SSH tunnel endpoint was used (#457).
+  void connection;
+  return mockProvider;
+});
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
@@ -42,9 +47,17 @@ mock.module("@/lib/seed/resolve-connection", () => {
 });
 
 // ─── Mock @/lib/db/factory BEFORE importing the route ───────────────────────
+// Pass-through stand-in for the real scope, which opens an unshared SSH tunnel and
+// rewrites host/port to its local endpoint (#457).
+const mockWithOneShotTunnel = mock(
+  async (connection: Record<string, unknown>, run: (c: Record<string, unknown>) => Promise<unknown>) =>
+    await run({ ...connection, host: "127.0.0.1", port: 54321 }),
+);
+
 mock.module("@/lib/db/factory", () => ({
   getOrCreateProvider: mock(async () => mockProvider),
   createDatabaseProvider: mockCreateDatabaseProvider,
+  withOneShotTunnel: mockWithOneShotTunnel,
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
@@ -188,5 +201,32 @@ describe("POST /api/db/schema-snapshot", () => {
     expect(res.status).toBe(500);
     // disconnect should have been called in the catch block
     expect(mockProvider.disconnect).toHaveBeenCalled();
+  });
+
+  // ─── SSH tunnel (#457) ────────────────────────────────────────────────────
+  // The agent's grounding capture reads its schema here. Like test-connection this
+  // route builds its provider outside both caches, so it needs the tunnel scope
+  // explicitly - otherwise a tunnelled connection has no readable schema at all.
+
+  test("reads the schema through the connection's SSH tunnel rather than the raw host", async () => {
+    mockWithOneShotTunnel.mockClear();
+    mockCreateDatabaseProvider.mockClear();
+
+    const req = createMockRequest("/api/db/schema-snapshot", {
+      method: "POST",
+      body: {
+        connection: {
+          ...validConnection,
+          host: "db.internal",
+          sshTunnel: { enabled: true, host: "bastion", port: 22, username: "jump", authMethod: "password" },
+        },
+      },
+    });
+
+    await POST(req as never);
+
+    expect(mockWithOneShotTunnel).toHaveBeenCalledTimes(1);
+    expect(mockWithOneShotTunnel.mock.calls[0]?.[0]).toMatchObject({ host: "db.internal" });
+    expect(mockCreateDatabaseProvider.mock.calls[0]?.[0]).toMatchObject({ host: "127.0.0.1", port: 54321 });
   });
 });
