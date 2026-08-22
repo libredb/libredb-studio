@@ -155,4 +155,61 @@ describe("OverviewTab", () => {
     expect(card.className).not.toContain("red");
     expect(card.className).not.toContain("yellow");
   });
+  // Trino publishes no `bufferPoolUsage` because it holds no buffer pool ("it holds no
+  // pages", trino/introspect.ts), Cassandra and SQLite omit it too. Rendering that
+  // absence as "0%" with an empty bar claimed a measurement none of them made.
+  test("reports an unmeasured buffer pool as unavailable instead of 0%", () => {
+    const base = makeData();
+    const data = {
+      ...base,
+      performance: { ...base.performance, bufferPoolUsage: undefined },
+    } as MonitoringData;
+    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    const card = queryByText("Performance")!.closest('[data-slot="card"]')!;
+
+    expect(card.textContent).toContain("N/A");
+    expect(card.textContent).toContain("Not measured");
+    // No fabricated reading: no percentage and no bar for a pool that does not exist.
+    expect(card.textContent).not.toContain("0%");
+    expect(card.querySelectorAll('[data-slot="progress"]').length).toBe(0);
+  });
+
+  // The other half of the same distinction, pinned so the two inputs cannot be
+  // collapsed again: an engine that measured its pool at 0 keeps today's rendering.
+  test("keeps a measured zero buffer pool rendering as 0% with its bar", () => {
+    const base = makeData();
+    const data = { ...base, performance: { ...base.performance, bufferPoolUsage: 0 } } as MonitoringData;
+    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    const card = queryByText("Performance")!.closest('[data-slot="card"]')!;
+
+    expect(card.textContent).toContain("0%");
+    expect(card.textContent).not.toContain("Not measured");
+    expect(card.querySelectorAll('[data-slot="progress"]').length).toBe(1);
+  });
+
+  // An engine that takes no locks has no deadlocks to count - Trino says so in as
+  // many words. The badge 0 in the healthy `secondary` variant read as a clean bill
+  // of health for a counter nobody kept.
+  test("reports unmeasured deadlocks as unavailable instead of a healthy zero", () => {
+    const base = makeData();
+    const data = { ...base, performance: { ...base.performance, deadlocks: undefined } } as MonitoringData;
+    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    const row = queryByText("Deadlocks")!.parentElement!;
+
+    expect(row.textContent).toContain("N/A");
+    expect(row.textContent).not.toContain("0");
+    // Absence is not health: the badge must not wear the healthy fill.
+    expect(row.querySelector('[data-slot="badge"]')!.className).not.toContain("bg-secondary");
+  });
+
+  test("keeps a measured zero deadlock count rendering as a healthy 0", () => {
+    const base = makeData();
+    const data = { ...base, performance: { ...base.performance, deadlocks: 0 } } as MonitoringData;
+    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    const row = queryByText("Deadlocks")!.parentElement!;
+
+    const badge = row.querySelector('[data-slot="badge"]')!;
+    expect(badge.textContent).toBe("0");
+    expect(badge.className).toContain("bg-secondary");
+  });
 });

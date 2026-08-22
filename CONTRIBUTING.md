@@ -223,6 +223,13 @@ helm dependency build charts/libredb-studio
 helm lint charts/libredb-studio --strict
 ```
 
+CI's test and lint lanes run Helm 4.1.3, so that is the client to develop against.
+That is not the chart's floor: the chart README states Helm >= 3.12, and CI's only
+Helm 3 evidence is 3.16.0. The release workflow's `ct install` job stays on Helm 3.16
+deliberately, so a Helm 3 client keeps installing the chart source - see
+`tests/unit/helm-pin-matrix.test.ts`, and R1 in `docs/BACKLOG.md` for what that
+still does not cover.
+
 ## Coding Guidelines
 
 ### TypeScript

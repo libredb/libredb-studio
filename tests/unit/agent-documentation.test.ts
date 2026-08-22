@@ -146,6 +146,65 @@ describe("the two companion pages exist and are reachable", () => {
 });
 
 /**
+ * The rail runs on MongoDB, Redis, Couchbase, Elasticsearch, OpenSearch, Druid,
+ * ClickHouse and Trino as well as on the two dialects the agent composes SQL for, and
+ * #414 took the SQL-and-tables vocabulary out of the surfaces themselves: the answer
+ * card lists identifiers it could not find as bare chips under a sentence about the
+ * inventory, `applyStatementName` builds its accessible name from `draft.noun.singular`,
+ * and the schema-capture entry renders the count in `noun.singular`/`noun.plural` — "17
+ * key patterns" on Redis, "3 datasources" on Druid.
+ *
+ * These pages are what the next change reads to learn what the panel is allowed to say,
+ * so prose describing those surfaces in tables and SQL is how the noun comes back. Each
+ * claim below is pinned against the code that decides the word, so the assertion fails
+ * whichever side drifts.
+ */
+describe("the panel's documentation describes the rail in the words it renders", () => {
+  const AGENT_GUIDE = read("docs/AGENT_GUIDE.md");
+  const ANSWER_CARD = read("src/components/agent/AnswerCard.tsx");
+  const RAIL_PARTS = read("src/components/agent/rail-parts.tsx");
+  const TIMELINE = read("src/components/agent/timeline.ts");
+
+  test("the answer card's identifier marking is documented in the noun the card uses", () => {
+    // What the card actually says about names the inventory does not hold, and where
+    // the control beside them takes its own noun from.
+    expect(ANSWER_CARD).toContain("These names are not in the inventory this run read");
+    expect(RAIL_PARTS).toContain("draft.noun.singular");
+
+    const row = AGENT_DOC.split("\n").find((line) => line.includes("One click that RAN the model's SQL"));
+    expect(row).toBeDefined();
+    // The first cell is about NL2SQL, which wrote SQL, so it says SQL. The cell that
+    // describes today's card is the second one, and the card names no engine's rows.
+    const instead = row?.split("|")[2] ?? "";
+    expect(instead).toContain("the inventory does not hold");
+    expect(instead).not.toMatch(/\btables?\b/i);
+  });
+
+  test("the one-hand-off rule is stated over the statement, not over SQL", () => {
+    // A plan run on MongoDB drafts an aggregation, so the general statement of the rule
+    // cannot be made about a language only some engines speak.
+    expect(AGENT_DOC).toContain("an unmarked control against the statement is the silent hand-off");
+    expect(AGENT_DOC).not.toContain("against the SQL");
+  });
+
+  test("the guide's Schema captured row states the engine's own noun, not a table count", () => {
+    // The renderer takes the word from the provider's labels, never from the shape the
+    // capture happens to be recorded in.
+    // A regex rather than the line, so a reflow of that ternary is not a doc failure.
+    expect(TIMELINE).toMatch(/tableCount === 1\s*\?\s*noun\.singular\s*:\s*noun\.plural/);
+
+    // The row, not the paragraph above it that also names the entry: the fingerprint is
+    // what only the row states.
+    const row = AGENT_GUIDE.split("\n").find(
+      (line) => line.includes("`Schema captured`") && line.includes("fingerprint"),
+    );
+    expect(row).toBeDefined();
+    expect(row).not.toContain("table count");
+    expect(row).toContain("the engine's own noun");
+  });
+});
+
+/**
  * The egress table states ranges over the frozen decision table, and a range is the
  * kind of figure that goes stale silently (#373 review): `maxModelTurns` still said
  * "20-48" after `data-analysis` landed at 60, so the page that answers "how much can

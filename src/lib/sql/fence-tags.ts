@@ -42,6 +42,25 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   couchbase: true,
   clickhouse: true,
   druid: true,
+  // Both products' query language IS SQL over their HTTP endpoint (measured on
+  // Elasticsearch 9.1.4 and OpenSearch 3.8.0), so a block tagged with either
+  // type-id holds a statement the editor can run. No alias is registered for them
+  // below: `es` names Spanish as often as Elasticsearch in a fence, and an alias
+  // that names the WRONG engine is worse here than a missing one - `fenceTagEngine`
+  // is what decides whether a plan's deliverable was written for this connection.
+  elasticsearch: true,
+  opensearch: true,
+  // A ```trino block holds a statement this editor can run: the fenced text goes
+  // straight to `POST /v1/statement`. No alias is registered below - `presto` is the
+  // tempting one and it is exactly the wrong one, because PrestoDB is a separate
+  // engine this product does not speak, and `fenceTagEngine` is what decides whether
+  // a plan's deliverable was written for THIS connection.
+  trino: true,
+  // A ```cassandra block holds a CQL statement the editor can run. The `cql` alias
+  // below is registered as a QUERY tag but NOT as an engine, for the reason `sql`
+  // is not: CQL is a language, and ScyllaDB speaks it too, so reading `cql` as
+  // "this was written for Cassandra" would put a claim in the model's mouth.
+  cassandra: true,
 });
 
 /**
@@ -65,6 +84,7 @@ const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "sqlserver",
   "mongo",
   "n1ql",
+  "cql",
 ]);
 
 /**

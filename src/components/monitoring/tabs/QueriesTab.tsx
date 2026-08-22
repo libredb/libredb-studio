@@ -60,9 +60,17 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
     return n.toString();
   };
 
-  // Calculate stats
+  // Calculate stats. Absence and zero are different inputs: `MonitoringData.slowQueries`
+  // is required, so a provider that keeps no query log at all - Cassandra
+  // (cassandra/index.ts:573-575), Druid (index.ts:486-488), SQLite (sqlite.ts:734-737) -
+  // can only answer `[]`, and reducing that yielded "Queries 0 / Avg Time 0.00ms /
+  // Slow 0", measured 2026-08-21 in Chrome against Apache Cassandra 5.0.9. An average
+  // over an empty set is not 0.00ms and a call total of 0 is a claim about the database,
+  // so with no statistics the three cards read N/A and the sentence below them says why.
+  // Any non-empty list has been measured, zeros included, and keeps today's arithmetic.
+  const statsKnown = slowQueries.length > 0;
   const totalQueries = slowQueries.reduce((sum, q) => sum + q.calls, 0);
-  const avgTime = slowQueries.length > 0 ? slowQueries.reduce((sum, q) => sum + q.avgTime, 0) / slowQueries.length : 0;
+  const avgTime = statsKnown ? slowQueries.reduce((sum, q) => sum + q.avgTime, 0) / slowQueries.length : 0;
   const slowCount = slowQueries.filter((q) => q.avgTime > 1000).length;
 
   return (
@@ -75,7 +83,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
             <Search strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{formatNumber(totalQueries)}</div>
+            <div className="text-lg sm:text-2xl font-medium">{statsKnown ? formatNumber(totalQueries) : "N/A"}</div>
           </CardContent>
         </Card>
 
@@ -85,7 +93,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
             <Clock strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{formatTime(avgTime)}</div>
+            <div className="text-lg sm:text-2xl font-medium">{statsKnown ? formatTime(avgTime) : "N/A"}</div>
           </CardContent>
         </Card>
 
@@ -97,7 +105,7 @@ export function QueriesTab({ data, loading }: QueriesTabProps) {
             />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{slowCount}</div>
+            <div className="text-lg sm:text-2xl font-medium">{statsKnown ? slowCount : "N/A"}</div>
           </CardContent>
         </Card>
       </div>

@@ -131,6 +131,31 @@ export async function proxy(request: NextRequest) {
 
     // RBAC: /admin only for admin
     if (pathname.startsWith("/admin") && role !== "admin") {
+      // METERED through the anon bucket, exactly as the origin_mismatch line above is. Holding a
+      // token this server signed bounds how many IDENTITIES reach this branch, not how many
+      // requests each one makes: one session, stolen or not, can poll /admin in a loop, and every
+      // line would both fill a container log volume and evict real events from the 1000-entry ring
+      // the admin UI reads. Keyed on the username, not the address, so rotating `X-Forwarded-For`
+      // buys no extra lines. The REDIRECT stays unconditional; only its record is bounded.
+      const username = (payload.username as string) || "unknown";
+      const notice = consumeRateLimit("anon", username);
+      // Isolated in its own try/catch for the same reason as every other emit here - the redirect
+      // is already decided.
+      if (notice.allowed || notice.tripped) {
+        try {
+          emitAuditEvent({
+            type: "permission_denied",
+            action: "denied",
+            target: `${request.method} ${pathname}`,
+            user: username,
+            result: "failure",
+            reason: "insufficient_role",
+            ip: clientAddress(request),
+          });
+        } catch (auditError) {
+          logger.error("Failed to record insufficient_role audit event", auditError, { route: "proxy" });
+        }
+      }
       return withSecurityHeaders(NextResponse.redirect(new URL("/", request.url)));
     }
 

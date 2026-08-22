@@ -12,6 +12,7 @@ import {
 } from "@/lib/types";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { parseConnectionString } from "@/lib/connection-string-parser";
+import { newLocalId } from "@/lib/ids";
 
 /**
  * Whether this editor OWNS a connection field or merely carries it.
@@ -53,6 +54,7 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   sshTunnel: "edited",
   serviceName: "edited",
   instanceName: "edited",
+  localDataCenter: "edited",
   group: "preserved",
   managed: "preserved",
   seedId: "preserved",
@@ -113,6 +115,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [serviceName, setServiceName] = useState("");
   const [instanceName, setInstanceName] = useState("");
+  // Cassandra's required data centre. NOT behind the Advanced accordion that holds
+  // the two above: `cassandra-driver` refuses to connect without it, so a hidden
+  // field would be a connection nobody could open.
+  const [localDataCenter, setLocalDataCenter] = useState("");
 
   // SSH Tunnel
   const [showSSH, setShowSSH] = useState(false);
@@ -151,6 +157,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         setInstanceName(editConnection.instanceName);
         setShowAdvanced(true);
       }
+      // Overwritten, not conditionally set like the two Advanced fields above: a
+      // connection that carries no data centre must show an empty field, or the
+      // previously edited ring's name gets saved onto this one.
+      setLocalDataCenter(editConnection.localDataCenter || "");
       // SSL
       if (editConnection.ssl) {
         setSSLMode(editConnection.ssl.mode);
@@ -190,6 +200,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         setType("postgres");
         setHost("localhost");
         setPort("5432");
+        // Cassandra topology, so a leftover is not cosmetic: the next new connection
+        // would dial its host with the previous ring's data centre, which the driver
+        // either refuses or - when the name exists on both rings - accepts as a
+        // silently wrong topology.
+        setLocalDataCenter("");
       }
     }
   }, [isOpen, editConnection]);
@@ -232,7 +247,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     return {
       // First, so a form-owned field always wins; nothing below is preserved.
       ...preservedFields(editConnection),
-      id: editConnection?.id || Math.random().toString(36).substr(2, 9),
+      id: editConnection?.id || newLocalId(),
       name: name || `${type}-connection`,
       type,
       ...(addressedFields.has("host") ? { host } : {}),
@@ -256,6 +271,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         : {}),
       ...(type === "oracle" && serviceName ? { serviceName } : {}),
       ...(type === "mssql" && instanceName ? { instanceName } : {}),
+      ...(type === "cassandra" && localDataCenter ? { localDataCenter } : {}),
     };
   }, [
     sslMode,
@@ -283,6 +299,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     connectionString,
     serviceName,
     instanceName,
+    localDataCenter,
   ]);
 
   const handleTestConnection = useCallback(async () => {
@@ -375,6 +392,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     if (!parsed) {
       setTestResult({
         success: false,
+        // One scheme per branch in connection-string-parser.ts, and nothing else.
+        // Elasticsearch, OpenSearch and Trino are absent on purpose: all three are
+        // addressed by host and port like Druid, and `http(s)://` already resolves to
+        // ClickHouse there, so listing them would promise a paste this form cannot
+        // honour. Trino's own `jdbc:trino://…` is a JDBC URL the parser does not read.
         message:
           "Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, couchbase://, clickhouse://, http(s)://, redis://, oracle://, mssql://",
       });
@@ -427,6 +449,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "libredb",
     "clickhouse",
     "druid",
+    "elasticsearch",
+    "opensearch",
+    "trino",
+    "cassandra",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);
@@ -485,6 +511,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setServiceName,
     instanceName,
     setInstanceName,
+    localDataCenter,
+    setLocalDataCenter,
 
     // SSH Tunnel
     showSSH,

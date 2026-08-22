@@ -12,7 +12,10 @@ for the install or deploy steps.
 **Developers** — the Updates column says whether release CI publishes the channel
 or a human updates it by hand, and how quickly it is expected to follow a release.
 New channels are added in
-[`distribution/channels.yaml`](../distribution/channels.yaml).
+[`distribution/channels.yaml`](../distribution/channels.yaml), which also drives the
+product itself: the login page renders the live channels straight from that
+inventory (`bun run channels:showcase`, gated in CI), so flipping a channel to
+`live` publishes it in the UI with no code change.
 
 **Buyers, investors, supporters** — the snapshot below is the coverage claim.
 `pending` and `deprecated` rows are listed on purpose, not hidden.
@@ -31,15 +34,15 @@ channel count.
 
 ## Coverage snapshot
 
-**32 channels · 23 live · 8 pending · 1 deprecated**
+**32 channels · 24 live · 7 pending · 1 deprecated**
 
-Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 4 · Kubernetes 1 · Cloud 10**
+Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 4 · Kubernetes 2 · Cloud 10**
 
 | Category | Live | Pending | Deprecated |
 | --- | ---: | ---: | ---: |
 | Registries & releases | 2 | 0 | 0 |
 | Containers | 2 | 0 | 0 |
-| Kubernetes & operators | 1 | 2 | 0 |
+| Kubernetes & operators | 2 | 1 | 0 |
 | Package managers | 4 | 1 | 1 |
 | OS / desktop packages | 2 | 0 | 0 |
 | PaaS catalogs (listed) | 8 | 4 | 0 |
@@ -59,8 +62,8 @@ Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 4 · K
 | [Docker image (GHCR)](https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio) | Containers | Container | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Docker Hub mirror](https://hub.docker.com/r/libredb/libredb-studio) | Containers | Container | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Helm chart](https://artifacthub.io/packages/helm/libredb-studio/libredb-studio) | Kubernetes & operators | Kubernetes | live | Automated, every release | [HELM_CHART.md](HELM_CHART.md) |
+| [Rancher Partner Charts](https://www.suse.com/pcsc/viewVersionPage?versionID=26969) | Kubernetes & operators | Kubernetes | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [OperatorHub / OpenShift](https://github.com/redhat-openshift-ecosystem/community-operators-prod) | Kubernetes & operators | Kubernetes | pending | Manual, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| [Rancher Partner Charts](https://github.com/rancher/partner-charts) | Kubernetes & operators | Kubernetes | pending | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [FlatPark (Flatpak)](https://flatpark.org/) | Package managers | Linux | live | Manual, every release | [packaging/flatpark/README.md](../packaging/flatpark/README.md) |
 | [Homebrew tap](https://github.com/libredb/homebrew-tap) | Package managers | Linux, macOS | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Snap Store](https://snapcraft.io/libredb-studio) | Package managers | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |

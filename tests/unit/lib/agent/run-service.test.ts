@@ -5,7 +5,7 @@ import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
 import { AgentRunService, AgentRunServiceError } from "@/lib/agent/run-service";
 import type { AgentRunStepSettlement } from "@/lib/agent/run-service";
-import { AgentRunStore } from "@/lib/agent/run-store";
+import { AgentRunStore, AgentRunStoreError } from "@/lib/agent/run-store";
 import { logger } from "@/lib/logger";
 import type { AgentRunActor } from "@/lib/agent/types";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
@@ -547,6 +547,41 @@ describe("AgentRunService — cancellation", () => {
     const h = harness();
     expect((await captureServiceError(() => h.service.cancel("arun_ff", ACTOR))).reasonCode).toBe("RUN_NOT_FOUND");
   });
+
+  test("cancelling a run another writer finished mid-cancel answers with its terminal view", async () => {
+    // The race `cancel` tolerates, built the way it actually happens: its read sees a
+    // live run, another writer finalizes it — `run-finished` appended, then the stream
+    // closed — and only then does `requestCancellation` reach `run-store`'s guard. The
+    // refusal must not escape as a 500: the run IS ended, which is what the caller
+    // asked for. The stubbed read hands `cancel` the stale view it would have won.
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.markRunning(runId);
+
+    const read = h.store.read.bind(h.store);
+    spyOn(h.store, "read").mockImplementationOnce(async (id: string) => {
+      const stale = await read(id);
+      await h.service.finish(runId, "failed", { reason: "internal" });
+      return stale;
+    });
+
+    const cancelled = await h.service.cancel(runId, OTHER_ACTOR);
+    expect(cancelled.record.status).toBe("failed");
+  });
+
+  test("a closed stream over a run the ledger does not show as ended refuses rather than reporting success", async () => {
+    // The other side of the same guard. A closed stream is only ever produced by
+    // `finalize`, which appends `run-finished` first — so a closed stream over a run
+    // still queued means the cancellation was LOST. Answering with that view would be
+    // a 200 on a run nothing cancelled: the silent loss this whole change exists to
+    // make loud. It refuses instead.
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+
+    await h.store.close(runId);
+
+    await expect(h.service.cancel(runId, OTHER_ACTOR)).rejects.toThrow(AgentRunStoreError);
+  });
 });
 
 // ─── the write-ahead invariant ──────────────────────────────────────────────
@@ -841,5 +876,21 @@ describe("AgentRunService — timestamps", () => {
       1_700_000_050_000, 1_700_000_060_000, 1_700_000_060_000, 1_700_000_070_000,
     ]);
     expect(view?.record.createdAtMs).toBe(1_700_000_000_000);
+  });
+});
+
+// ─── one drive per run, in this process ────────────────────────────────────
+
+describe("AgentRunService — drive ownership", () => {
+  test("a second claim on a run already being driven refuses, and release makes it claimable again", async () => {
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+
+    h.service.claimDrive(runId);
+    expect((await captureServiceError(async () => h.service.claimDrive(runId))).reasonCode).toBe("RUN_ALREADY_DRIVEN");
+
+    h.service.releaseDrive(runId);
+    h.service.claimDrive(runId);
+    h.service.releaseDrive(runId);
   });
 });

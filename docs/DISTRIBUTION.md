@@ -71,8 +71,15 @@ with it already on. Unrecognized `AUTH_BOOTSTRAP` values log a warning and keep 
 ## Network exposure (bind address)
 
 Every native channel is **local-first**: the server binds to `127.0.0.1` by default, and
-exposing it on the network is an explicit opt-in. (The Docker image and the Helm chart are the
-exception - containers must bind `0.0.0.0` and are isolated by container networking instead.)
+exposing it on the network is an explicit opt-in. That is a deliberate choice about a process
+sharing a user's machine, and it has not changed. (The Docker image and the Helm chart are the
+exception - a container binds all of its own addresses and is isolated by container networking
+instead. Since chart 0.1.42 and the image that ships with it, that set is not hardcoded: the container's
+entrypoint resolves a bind address at startup and prefers `::`, all addresses of both families.)
+`HOSTNAME` is the bind address wherever the server is started directly - Docker, Helm, npx, the
+systemd units and Snap; the `.deb`/`.rpm` and Homebrew wrappers and the Windows launcher take
+`LIBREDB_BIND` instead and discard an inherited `HOSTNAME`. The note below the table covers the
+address family either one selects.
 
 | Channel | Default bind | How to expose |
 |---|---|---|
@@ -81,7 +88,7 @@ exception - containers must bind `0.0.0.0` and are isolated by container network
 | .deb / .rpm (direct run) | `127.0.0.1` | `LIBREDB_BIND=0.0.0.0 libredb-studio` |
 | Homebrew service | `127.0.0.1` | run the binary manually with `LIBREDB_BIND=0.0.0.0`, or front it with a reverse proxy |
 | Snap | `127.0.0.1` | `sudo systemctl edit snap.libredb-studio.libredb-studio.service` with `[Service]` `Environment=HOSTNAME=0.0.0.0` |
-| Docker / Helm | `0.0.0.0` (container-internal) | publish/route ports as usual (`-p`, Service/Ingress) |
+| Docker / Helm | resolved at startup: `::` (container-internal, both families) where the namespace allows it, `0.0.0.0` where it does not | publish/route ports as usual (`-p`, Service/Ingress); `HOSTNAME=0.0.0.0` (chart: `config.bindAddress`) to pin it back to IPv4 |
 
 For anything reachable from a network, prefer a reverse proxy with TLS in front and strict mode
 (`AUTH_BOOTSTRAP=off`) with explicit credentials.
@@ -90,7 +97,94 @@ A direct run of the `.deb`/`.rpm` wrapper or the Homebrew binary ignores any inh
 (empty, or - under Docker - the container ID Next.js would otherwise bind to) and defaults to
 loopback; `LIBREDB_BIND` is the explicit opt-in for that case. Under systemd, `HOSTNAME` in
 `/etc/libredb-studio/env` is still the override, since the unit resolves it before the wrapper
-runs (detected via the systemd-set `INVOCATION_ID`, so the wrapper leaves it untouched there).
+runs (detected via the systemd-set `INVOCATION_ID`, so the wrapper leaves it untouched there). The
+Windows launcher rebuilds `HOSTNAME` from `LIBREDB_BIND` on every run, with no systemd exception.
+
+**Address family (IPv4, IPv6, dual-stack).** The bind address accepts an IPv6 literal in every
+channel, because whichever variable that channel reads ends up as the host argument of a plain
+`server.listen(port, hostname)` in the standalone Next.js server
+(`next/dist/server/lib/start-server.js`) - so it is Node, not Next, that gives `::` its meaning.
+(Next touches `[::]` only to format the URL it prints at startup.) Use `HOSTNAME` where the server is started directly
+(Docker, Helm, npx, the systemd units, Snap) and `LIBREDB_BIND` in the wrapper channels (a direct
+`.deb`/`.rpm` run, Homebrew, the Windows launcher), per the paragraph above. The values that
+matter:
+
+| `HOSTNAME` | `LIBREDB_BIND` | Listens on |
+|---|---|---|
+| `0.0.0.0` | `0.0.0.0` | all IPv4 addresses (what the container resolver falls back to) |
+| `::` | `::` | all IPv6 addresses and, in a Node server, all IPv4 addresses through the same socket, so one listener serves both families (see the caveat below) |
+| `127.0.0.1` | `127.0.0.1` | IPv4 loopback (the native-channel default) |
+| `::1` | `::1` | IPv6 loopback - the IPv6 equivalent of that local-first default |
+
+The dual-stack behaviour of `::` has one documented caveat, `net.ipv6.bindv6only=1`, where a
+socket bound to `::` accepts IPv6 only. Two things about it are worth stating precisely, because
+both were measured rather than assumed:
+
+- The sysctl is **network-namespace scoped**, not a host-wide property, and a fresh namespace
+  initializes to `0`. A Docker container or a Kubernetes pod therefore gets `0` whatever the node
+  reads, unless the namespace is overridden explicitly (`docker run --sysctl
+  net.ipv6.bindv6only=1`, a pod `securityContext.sysctls` entry) or it shares the host's namespace
+  (`docker run --network host`, `hostNetwork: true`). Checking the node and finding `1` does not
+  mean `::` drops IPv4 in your container.
+- Even under `bindv6only=1`, a **Node listener stays dual-stack**: libuv clears `IPV6_V6ONLY` on
+  the socket unless `ipv6Only` is requested, and the standalone server calls a plain
+  `server.listen(port, hostname)`, so it never requests it. Measured under `docker run --sysctl
+  net.ipv6.bindv6only=1`: a `::` listener answered `127.0.0.1`, the container's own bridge address,
+  and a published port from the host. A plain socket in another language, in the same namespace,
+  was refused - so the sysctl was genuinely in force and Node was genuinely overriding it.
+
+That caveat is therefore something the image **detects** rather than a reason its default cannot
+change. The container's entrypoint resolves the bind address once at startup:
+
+1. An explicit `LIBREDB_BIND`, or an explicit `HOSTNAME` distinguishable from the container id or
+   pod name a runtime injects, is honoured verbatim and stops there.
+2. Otherwise it proves dual-stack instead of inferring it: bind a throwaway listener on `::` on an
+   ephemeral port, connect to it over `127.0.0.1`, and choose `::` if that connection is accepted.
+   A positive probe is the only reliable test - under both `bindv6only=1` and `disable_ipv6=1` the
+   bind itself *succeeds*, so a `try`/`catch` around it would never fire.
+3. If `::` cannot be bound at all - a kernel with no `AF_INET6` - it chooses `0.0.0.0`.
+4. If `::` bound but refused the IPv4 client, it chooses `0.0.0.0` **only when a non-loopback IPv4
+   address exists**. `127.0.0.1` does not count: an IPv6-only container still has one, and counting
+   it is exactly how an IPv6-only host ends up unreachable.
+5. Otherwise - an IPv6-only listener with no IPv4 to lose - it stays on `::`.
+
+It logs one line naming the address it picked and the evidence for it, so `docker logs` /
+`kubectl logs` answers "what is it listening on" without a shell. No configuration that reaches
+users over IPv4 today loses it, and an IPv6-only host works with no flags.
+
+To overrule the resolver, set the address yourself. Docker:
+
+```bash
+docker run -p 3000:3000 -e HOSTNAME=0.0.0.0 ghcr.io/libredb/libredb-studio:latest
+```
+
+For Helm, `config.bindAddress` writes the ConfigMap key (empty by default, which is the "resolve
+it" sentinel):
+
+```yaml
+config:
+  bindAddress: "0.0.0.0"
+```
+
+`extraEnv` still wins over that - it renders into the container's `env:` list, which overrides the
+same key delivered through `envFrom`.
+
+> **A dual-stack Service no longer needs a second setting.** The chart's `service.ipFamilyPolicy` /
+> `service.ipFamilies` values give the Service an IPv6 address, and the pod now listens on one by
+> default. What has not changed is that Kubernetes never checks what address the container actually
+> bound: the IPv6 EndpointSlice is populated from the pod's IPv6 address regardless, and traffic to
+> it hits a pod with no IPv6 listener, which answers `connection refused`. The kubelet probes the
+> pod's *primary* IP (IPv4 on a typical cluster), so the pod still reports Ready and nothing
+> self-heals. That is now reachable only by **pinning** the pod to an IPv4 literal
+> (`config.bindAddress`, or an `extraEnv` `HOSTNAME`) alongside a dual-stack Service, and the chart
+> warns at install time when you do. See the chart
+> [README](../charts/libredb-studio/README.md#ipv6-and-dual-stack).
+
+The native channels are unaffected by all of this. They stay on `127.0.0.1` by default - a
+deliberate local-first choice for a server sharing someone's machine, not an oversight the
+container change should propagate - and treat any exposure, IPv4 or IPv6, as an explicit opt-in:
+`LIBREDB_BIND=::` (or `LIBREDB_BIND=::1` for IPv6 loopback) for the wrapper channels, `HOSTNAME`
+for the rest. There is no probe and no auto-selection in those channels.
 
 ## Release artifact naming
 
@@ -150,7 +244,7 @@ Download URL pattern:
 
 ```bash
 # Zero-config: the first run prints the generated admin password to the log
-docker run -d --name libredb-studio -p 3000:3000 \
+docker run --name libredb-studio -p 3000:3000 \
   -v libredb-data:/app/data \
   ghcr.io/libredb/libredb-studio:latest
 
@@ -163,7 +257,7 @@ without it, a recreated container generates new credentials.
 Production (strict mode, explicit secrets):
 
 ```bash
-docker run -d --name libredb-studio -p 3000:3000 \
+docker run --name libredb-studio -p 3000:3000 \
   -e AUTH_BOOTSTRAP=off \
   -e JWT_SECRET=change-me-to-a-random-32-char-string \
   -e ADMIN_EMAIL=admin@libredb.org \
@@ -172,7 +266,10 @@ docker run -d --name libredb-studio -p 3000:3000 \
 ```
 
 All environment variables are documented in [`.env.example`](../.env.example); a ready-to-use
-compose file is [`docker-compose.example.yml`](../docker-compose.example.yml).
+compose file is [`docker-compose.example.yml`](../docker-compose.example.yml). The container
+picks its own bind address at startup and prefers `::`, so it is reachable over both families
+without a flag; add `-e HOSTNAME=0.0.0.0` to pin it to IPv4 - see
+[Network exposure](#network-exposure-bind-address).
 
 ### Image tag model
 
@@ -223,6 +320,13 @@ is the canonical description of that behaviour — credential retrieval, what st
 auth provider, persistence and the single-replica constraint. Full values reference:
 [`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md); chart architecture:
 [`docs/HELM_CHART.md`](HELM_CHART.md).
+
+On a dual-stack cluster, set `service.ipFamilyPolicy` (and optionally `service.ipFamilies`) - that
+is the whole recipe since chart 0.1.42, because the container resolves its own bind address and
+prefers `::`. The pairing to avoid is the opposite one: an IPv4 literal in `config.bindAddress` (or
+in an `extraEnv` `HOSTNAME` entry, which wins over it) in front of a dual-stack Service advertises
+an IPv6 address that refuses every connection, and the install notes warn about exactly that. See
+[Network exposure](#network-exposure-bind-address).
 
 ## OpenShift operator (OperatorHub)
 
@@ -1254,6 +1358,30 @@ historical PaaS drift. For the Helm chart the enforcement remains the required `
 gate (#138) — the matrix row is visibility, not a second gate. `--json` emits the rows for
 scripting.
 
+#### The inventory also drives the login page
+
+Since [#425](https://github.com/libredb/libredb-studio/issues/425) `channels.yaml` is read by the
+product itself, not only by the docs and the drift table. `bun run channels:showcase`
+([`scripts/generate-channel-showcase.mjs`](../scripts/generate-channel-showcase.mjs)) emits
+[`src/lib/distribution/channels.generated.ts`](../src/lib/distribution/channels.generated.ts) — the
+**live** channels, each mapped to one of the login hero's four rows (containers, Kubernetes, PaaS,
+packages) by its `category`, plus the platforms those channels cover — and the login page renders
+that module. `bun run channels:showcase:check` regenerates it in memory and fails on drift; it runs
+in the required `lint-and-build` job next to `chart:check`, so the committed module is always the
+inventory.
+
+The consequence worth stating: **flipping a channel's `status` to `live` publishes it on the login
+page, with no component edit** — the same one-line edit that already moves it in
+[`docs/CHANNELS.md`](CHANNELS.md) and in the drift table. Only `live` reaches the UI, so a `pending`
+submission or a `deprecated` listing renders nothing at all, and the count the page states is a
+`.length` over that array rather than a written number. The generator refuses to guess: a `category`
+with no row mapping throws instead of defaulting, so adding a business bucket to the inventory fails
+the gate loudly rather than quietly dropping a channel out of the product's front door.
+
+The channel's **label** on that page is its `short_name` when it has one and its `name` otherwise, so
+a channel whose full name is too long for the hero is shortened in `channels.yaml` — never in the
+component. The whole point of the generated module is that no channel name is typed into JSX.
+
 #### Turning a channel's automation off
 
 Some channels can be temporarily unable to publish for reasons outside this repository — a package
@@ -1334,14 +1462,14 @@ deliverable (`pin.strategy: local_file` for the version-pinned `fly.toml`; `none
   workflows that exist on the chosen ref) and the GHCR package is public, which
   community catalog CI requires. From 0.9.60 on the tag ref carries the
   operator and the normal tag-pinned dispatch chain applies. What is still open
-  is upstream: the operatorhub.io bundle PR
-  ([k8s-operatorhub/community-operators#8794](https://github.com/k8s-operatorhub/community-operators/pull/8794))
-  and the OpenShift catalog PR
+  upstream is the operatorhub.io bundle PR
+  ([k8s-operatorhub/community-operators#8794](https://github.com/k8s-operatorhub/community-operators/pull/8794)).
+  The OpenShift catalog PR
   ([community-operators-prod#10581](https://github.com/redhat-openshift-ecosystem/community-operators-prod/pull/10581),
-  the second half of the FBC release whose bundle merged as #10497) both wait
-  on maintainer review. Flip `operatorhub-community` in
-  `distribution/channels.yaml` from `pending` to `live` once the listings are
-  visible, and remember `release-config.yaml` for every later release (see
+  the second half of the FBC release whose bundle merged as #10497) has since
+  merged, so the OpenShift console listing is live. Flip `operatorhub-community` in
+  `distribution/channels.yaml` from `pending` to `live` once the operatorhub.io
+  listing is visible too, and remember `release-config.yaml` for every later release (see
   [An FBC release is two upstream PRs](#an-fbc-release-is-two-upstream-prs)).
 - **Snap Store listing screenshots**: the description and icon ship with the snap
   (`snap/snapcraft.yaml`, `public/logo.svg`), but screenshots are a manual upload in the

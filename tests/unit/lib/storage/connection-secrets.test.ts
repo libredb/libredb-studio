@@ -93,6 +93,9 @@ describe("the classification is exhaustive by construction", () => {
         "host",
         "id",
         "instanceName",
+        // Cassandra's required data centre (#424 Phase 4). A data-centre NAME, which
+        // the server publishes itself in `system.local.data_center`, so `public`.
+        "localDataCenter",
         "managed",
         "name",
         "password",

@@ -95,7 +95,8 @@ export type ExplainFormat =
   | "sqlite-queryplan"
   | "couchbase-json"
   | "clickhouse-json"
-  | "druid-native";
+  | "druid-native"
+  | "trino-json";
 
 export interface ProviderCapabilities {
   queryLanguage: "sql" | "json";
@@ -103,10 +104,13 @@ export interface ProviderCapabilities {
    * Optional client-side query dialect. `queryLanguage` only says SQL vs JSON;
    * for non-SQL providers the query generators otherwise assume MongoDB syntax.
    * A provider sets `queryDialect` to opt its tables into a custom client-side
-   * generator (see `query-generators.ts`). Left undefined by SQL/Mongo/Redis,
-   * so their generation is unchanged.
+   * generator (see `query-generators.ts`), and it is checked BEFORE
+   * `queryLanguage` everywhere. Left undefined by SQL and MongoDB, so their
+   * generation is unchanged; Redis declares `"redis"` because it too says
+   * `queryLanguage: "json"` while speaking neither MongoDB JSON nor SQL, and
+   * silently got MongoDB commands its own driver rejected (#427).
    */
-  queryDialect?: "libredb";
+  queryDialect?: "libredb" | "redis";
   supportsExplain: boolean;
   /**
    * Present iff supportsExplain is true (enforced by provider tests).
@@ -185,6 +189,46 @@ export interface ProviderCapabilities {
   maintenanceOperations: MaintenanceType[];
   supportsConnectionString: boolean;
   defaultPort: number | null;
+  /**
+   * How this engine quotes an identifier, when the port cannot say.
+   *
+   * `src/lib/query-generators.ts` has always derived the dialect from
+   * `defaultPort`, which worked only because every engine had a distinct one. That
+   * assumption broke with #424 Phase 1: Elasticsearch and OpenSearch BOTH ship on
+   * 9200 and they disagree about the quote character, so one port had to answer for
+   * two dialects. The consequence was measured, and it is the worst kind: on
+   * OpenSearch 3.8.0 a double-quoted identifier is a STRING LITERAL, so
+   * `SELECT customer FROM probe_orders WHERE "customer" = 'acme'` answers HTTP 200
+   * with `total: 0` - a generated query silently returning no rows instead of
+   * failing. Backticks return the row.
+   *
+   * Absent means "keep deriving it from the port", so no existing provider changes
+   * and nothing about the old behaviour moves. A provider sets this when the port
+   * is not a faithful proxy for its dialect - which is any engine that shares a
+   * default port with a differently-quoting one.
+   */
+  identifierQuoting?: "double" | "backtick";
+  /**
+   * Whether a statement this product runs may end with `;`.
+   *
+   * Absent means it may, which is every engine that shipped before #424 Phase 1 and
+   * is what `src/lib/query-generators.ts` has always emitted. `"none"` says the
+   * terminator is not in the grammar at all.
+   *
+   * Measured 2026-08-19 on Elasticsearch 9.1.4: the generator's own
+   * `SELECT * FROM orders LIMIT 50;` - the query behind "Select Top 50 Documents",
+   * the first thing a user clicks on an index - answered `parsing_exception`,
+   * "line 1:30: extraneous input ';' expecting <EOF>". The same shape without the
+   * `;` returns the rows. OpenSearch 3.8.0 accepts both spellings, so the two
+   * products need no separate answer: omitting it runs everywhere, and declaring it
+   * here keeps `query-generators.ts` from having to know which engine it is
+   * generating for.
+   *
+   * This bounds the GENERATORS only. A user who types a `;` still has it stripped
+   * by the editor's statement reader before the statement is sent, and the raw API
+   * passes text through untouched - neither of those is this field's business.
+   */
+  statementTerminator?: "none";
   schemaRefreshPattern: string;
 }
 
@@ -204,6 +248,24 @@ export interface ProviderLabels {
   vacuumGlobalLabel: string;
   vacuumGlobalTitle: string;
   vacuumGlobalDesc: string;
+  /**
+   * What a statement for this engine is WRITTEN IN, named for a model rather than
+   * for a person, and declared only where the engine's own name misleads one.
+   *
+   * Read by the agent's plan contract (`src/lib/agent/investigation.ts`). Every
+   * other engine leaves it absent: a connection stamped `postgres` needs nobody to
+   * add that its statements are PostgreSQL SQL, and a sentence saying so would spend
+   * prompt on a fact the dialect line already carries.
+   *
+   * It exists because `queryLanguage: "sql"` is not always believable from outside.
+   * Measured 2026-08-19: a plan run on an OpenSearch connection, asked for one
+   * runnable statement, produced a native aggregation body - correct for the
+   * product, unrunnable through a SQL endpoint - and the two search engines are the
+   * only shipped engines whose names carry a stronger prior than their capability.
+   * A provider sets this when a model asked for "a statement" would reasonably write
+   * the wrong language.
+   */
+  statementLanguage?: string;
 }
 
 /**
@@ -436,7 +498,17 @@ export interface DatabaseOverview {
   activeConnections: number;
   maxConnections: number;
   databaseSize: string;
-  databaseSizeBytes: number;
+  /**
+   * Total on-disk size in bytes, or absent when the engine publishes no byte figure
+   * at all.
+   *
+   * Optional because absence and zero are different facts: a 0 is a measurement, and
+   * the Storage tab formats whatever it is given. Apache Cassandra is the case - its
+   * `system_views.disk_usage` reports whole mebibytes (measured: "1 MiB" for a
+   * 19,476-byte table), so it omits this field rather than send a zero that renders
+   * as "0 B" and a 0.0% breakdown (#424).
+   */
+  databaseSizeBytes?: number;
   tableCount: number;
   indexCount: number;
 }

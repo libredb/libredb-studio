@@ -570,6 +570,13 @@ describe("useConnectionForm", () => {
     couchbase: true,
     clickhouse: true,
     druid: true,
+    // Both search ids are selectable: the same form EDITS an existing connection, so
+    // an omitted type leaves the picker with nothing selected for a connection the
+    // product can otherwise open (issue #424 Phase 1).
+    elasticsearch: true,
+    opensearch: true,
+    trino: true,
+    cassandra: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {
@@ -914,6 +921,130 @@ describe("useConnectionForm", () => {
     );
     const body = JSON.parse(testCall![1]!.body as string);
     expect(body.serviceName).toBe("MYSERVICE");
+  });
+
+  // ── buildConnection with Cassandra localDataCenter ─────────────────────
+
+  test("buildConnection includes the Cassandra localDataCenter", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 20 } },
+    });
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setType("cassandra");
+      result.current.setLocalDataCenter("datacenter1");
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const testCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/test-connection"),
+    );
+    const body = JSON.parse(testCall![1]!.body as string);
+    expect(body.localDataCenter).toBe("datacenter1");
+  });
+
+  test("a localDataCenter typed for another engine is not sent", async () => {
+    // The field is Cassandra's alone. Carrying it onto a PostgreSQL connection would
+    // store a topology answer that engine has no use for, exactly as `serviceName`
+    // stays on Oracle.
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 20 } },
+    });
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setType("postgres");
+      result.current.setLocalDataCenter("datacenter1");
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const testCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/test-connection"),
+    );
+    const body = JSON.parse(testCall![1]!.body as string);
+    expect(body.localDataCenter).toBeUndefined();
+  });
+
+  test("populates the Cassandra localDataCenter in edit mode", () => {
+    const conn: DatabaseConnection = {
+      id: "c1",
+      name: "Ring",
+      type: "cassandra",
+      host: "cassandra.internal",
+      port: 9042,
+      database: "probe",
+      localDataCenter: "eu-west-1",
+      createdAt: new Date(),
+    };
+
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, editConnection: conn }));
+
+    expect(result.current.localDataCenter).toBe("eu-west-1");
+  });
+
+  test("clearing the modal clears the data centre before the next new connection", () => {
+    // A leftover ring identity is not cosmetic: the next host would be dialled with
+    // the previous ring's `localDataCenter`, which the driver either refuses or - if
+    // the name happens to exist on the new ring - accepts as a silently wrong
+    // topology. It resets with the other new-connection fields.
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true },
+    });
+
+    act(() => {
+      result.current.setType("cassandra");
+      result.current.setLocalDataCenter("datacenter1");
+    });
+
+    expect(result.current.localDataCenter).toBe("datacenter1");
+
+    rerender({ ...defaultProps, isOpen: false });
+
+    expect(result.current.localDataCenter).toBe("");
+  });
+
+  test("editing a connection without a data centre does not inherit the last one", () => {
+    // The edit effect must OVERWRITE, not skip: a connection carrying no data centre
+    // has to show an empty field, otherwise the previously edited ring's name is
+    // saved onto it.
+    const withDC: DatabaseConnection = {
+      id: "c1",
+      name: "Ring",
+      type: "cassandra",
+      host: "cassandra.internal",
+      port: 9042,
+      database: "probe",
+      localDataCenter: "eu-west-1",
+      createdAt: new Date(),
+    };
+    const withoutDC: DatabaseConnection = {
+      id: "c2",
+      name: "Other ring",
+      type: "cassandra",
+      host: "cassandra-2.internal",
+      port: 9042,
+      database: "probe",
+      createdAt: new Date(),
+    };
+
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, editConnection: withDC },
+    });
+
+    expect(result.current.localDataCenter).toBe("eu-west-1");
+
+    rerender({ ...defaultProps, editConnection: withoutDC });
+
+    expect(result.current.localDataCenter).toBe("");
   });
 
   // ── buildConnection with MSSQL instanceName ────────────────────────────

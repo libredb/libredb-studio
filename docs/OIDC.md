@@ -341,9 +341,9 @@ The role mapping system:
 
 ### Logout doesn't clear provider session
 
-- Auth0: Ensure `http://localhost:3000/login` is in Allowed Logout URLs
-- Keycloak: Provider logout is handled via RP-Initiated Logout endpoint
-- Other providers: Check if your provider supports end_session_endpoint
+- The return URL must be registered with the provider, or it rejects the redirect: Auth0 "Allowed Logout URLs", Keycloak "Valid post logout redirect URIs", Azure AD "Front-channel logout URL"
+- Keycloak / Okta / Azure AD: the logout endpoint comes from the provider's own Discovery metadata, so no per-provider configuration is needed on Studio's side
+- If the provider advertises no `end_session_endpoint` (Google, for one), the provider session survives on purpose — Studio clears its own cookie and skips the redirect. Signing in again still prompts, because Studio always sends `prompt=login`
 
 ---
 
@@ -514,7 +514,7 @@ The OIDC subsystem follows three core principles:
     │                            │     └─ delete auth-token   │
     │                            │                           │
     │                            │  3. if OIDC mode:          │
-    │                            │     buildLogoutUrl(returnTo)│
+    │                            │     await buildLogoutUrl(…)│
     │                            │                           │
     │  4. { success, redirectUrl }│                           │
     │◄───────────────────────────│                           │
@@ -596,7 +596,7 @@ mapOIDCRole(claims, roleClaim, adminRoles)   ← pure function, no deps
 
 encryptState(data) / decryptState(token)     ← jose JWT sign/verify
 
-buildLogoutUrl(returnTo)                     ← reads getOIDCConfig()
+buildLogoutUrl(returnTo)                     ← reads config; generic branch calls discoverProvider()
 ```
 
 #### Discovery Cache
@@ -851,10 +851,11 @@ Result:   "user" (no claim configured, default)
 
 ## Provider Logout Strategy
 
-Different OIDC providers have different logout endpoint conventions. `buildLogoutUrl()` handles this:
+Different OIDC providers have different logout endpoint conventions. `buildLogoutUrl()` preserves the existing Auth0
+and Zitadel integrations, then uses the provider's discovered `end_session_endpoint` for generic OIDC:
 
 ```typescript
-function buildLogoutUrl(returnTo: string): string | null {
+async function buildLogoutUrl(returnTo: string): Promise<string | null> {
   const config = getOIDCConfig();
   const issuerUrl = new URL(config.issuer);
   const roleClaim = config.roleClaim;
@@ -875,11 +876,11 @@ function buildLogoutUrl(returnTo: string): string | null {
     return logoutUrl.toString();
   }
 
-  // Generic OIDC (Keycloak, Okta, Azure AD, etc.):
-  // /protocol/openid-connect/logout?client_id=xxx&post_logout_redirect_uri=xxx
-  const logoutUrl = new URL('/protocol/openid-connect/logout', config.issuer);
-  logoutUrl.searchParams.set('client_id', config.clientId);
-  logoutUrl.searchParams.set('post_logout_redirect_uri', returnTo);
+  // Generic OIDC RP-Initiated Logout
+  const discovered = await discoverProvider(config);
+  const logoutUrl = client.buildEndSessionUrl(discovered, {
+    post_logout_redirect_uri: returnTo,
+  });
   return logoutUrl.toString();
 }
 ```
@@ -888,28 +889,29 @@ function buildLogoutUrl(returnTo: string): string | null {
 
 ### Provider Logout Endpoints
 
-> **What `buildLogoutUrl()` actually implements:** only **Auth0** and **Zitadel** are special-cased. Every other issuer — including Keycloak, Okta, and Azure AD — falls back to `/protocol/openid-connect/logout`. The table lists each provider's *native* logout endpoint; the "Wired?" column shows whether the code routes there today. For Okta/Azure AD the native endpoint differs from the fallback, so RP-initiated logout against those providers may need an explicit `buildLogoutUrl()` branch (see Extension Point below).
+> **What `buildLogoutUrl()` actually implements:** **Auth0** and **Zitadel** retain their existing special cases. Every
+> other issuer uses the `end_session_endpoint` advertised by OIDC Discovery. Providers that do not advertise this
+> metadata complete the local logout without a provider redirect. **Google is a real example of that last
+> case** — its discovery document carries no `end_session_endpoint`, so signing out of Studio deliberately
+> leaves the Google session alone (the next sign-in still prompts, because Studio always sends `prompt=login`).
+>
+> The request carries `post_logout_redirect_uri` and the `client_id` that `openid-client` adds; it does **not**
+> carry `id_token_hint`, because Studio never persists the ID token. Providers that require `id_token_hint`
+> for RP-initiated logout will reject the redirect — that is the one case the ✅ column below does not cover.
 
 | Provider | Native Endpoint | Return Param | Wired? |
 |----------|-----------------|--------------|--------|
 | **Auth0** | `{issuer}/v2/logout` | `returnTo` | ✅ special-cased |
 | **Zitadel** | `{issuer}/oidc/v1/end_session` (auto-detected via role claim) | `post_logout_redirect_uri` | ✅ special-cased |
-| **Keycloak** | `{issuer}/protocol/openid-connect/logout` | `post_logout_redirect_uri` | ✅ matches generic fallback |
-| **Okta** | RP-Initiated Logout (via discovery) | `post_logout_redirect_uri` | ⚠️ generic fallback only |
-| **Azure AD** | `{issuer}/oauth2/v2.0/logout` | `post_logout_redirect_uri` | ⚠️ generic fallback only |
+| **Keycloak** | Discovery `end_session_endpoint` (typically `{issuer}/protocol/openid-connect/logout`) | `post_logout_redirect_uri` | ✅ discovery metadata |
+| **Azure AD** | Discovery `end_session_endpoint` (measured: `{login.microsoftonline.com}/common/oauth2/v2.0/logout`) | `post_logout_redirect_uri` | ✅ discovery metadata |
+| **Okta** | Discovery `end_session_endpoint` | `post_logout_redirect_uri` | ⚠️ endpoint is used, not probed against a live tenant — org authorization servers may require `id_token_hint` |
+| **Google** | none advertised | — | ⚠️ local logout only, by design |
 
 ### Extension Point
 
-To add a new provider's logout format, extend `buildLogoutUrl()` with a new hostname check:
-
-```typescript
-if (issuerUrl.hostname.includes('okta.com')) {
-  const logoutUrl = new URL('/oauth2/v1/logout', config.issuer);
-  logoutUrl.searchParams.set('id_token_hint', idToken);
-  logoutUrl.searchParams.set('post_logout_redirect_uri', returnTo);
-  return logoutUrl.toString();
-}
-```
+Standards-compliant providers need no logout-specific code. If a provider does not advertise `end_session_endpoint`
+and requires a non-standard endpoint, add a provider-specific case before the generic Discovery branch.
 
 ---
 
@@ -1052,6 +1054,6 @@ The OIDC claims contain `name`, `email`, `picture` etc. To display these:
 | **PKCE state in JWT cookie** | Stateless — no server-side session store needed | Redis/DB session store adds infrastructure dependency |
 | **5-minute state cookie TTL** | Long enough for slow providers, short enough to limit replay window | Shorter: may fail on slow networks. Longer: increases attack window |
 | **`prompt=login` always** | Prevents confusing auto-login behavior; user expects to choose account | `prompt=consent`: too aggressive. No prompt: users get stuck with one account |
-| **Provider-specific logout detection via hostname / role claim** | Simple, works for 90% of cases (Auth0 by hostname, Zitadel by role-claim URN, everything else via the generic fallback) | OIDC Discovery `end_session_endpoint`: not all providers support it; would require async call |
+| **Discovery-based generic logout with Auth0/Zitadel compatibility branches** | Uses the provider-advertised `end_session_endpoint` without changing the existing special integrations | Deriving a logout path from the issuer fails when the issuer contains a path or the provider uses a different endpoint |
 | **Module-level discovery cache** | Fast (avoids HTTP on every login), simple, process-scoped | Redis cache: overkill for single-instance deployments. No cache: 200-500ms per login |
 | **Binary role model (admin/user)** | Matches existing RBAC, simple to map from any claim format | Fine-grained roles: would require schema changes in JWT, proxy, and all components |

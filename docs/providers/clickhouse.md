@@ -1032,4 +1032,4 @@ database-wide statistics. Transaction and cancel routes do not apply — see
   <https://clickhouse.com/docs/en/operations/system-tables/columns>,
   <https://clickhouse.com/docs/en/operations/system-tables/data_skipping_indices>
 - EXPLAIN: <https://clickhouse.com/docs/en/sql-reference/statements/explain>
-- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Couchbase](./couchbase.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)
+- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Couchbase](./couchbase.md) · [Apache Trino](./trino.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)

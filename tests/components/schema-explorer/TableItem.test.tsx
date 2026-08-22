@@ -56,6 +56,47 @@ mock.module("@/components/schema-explorer/ColumnList", () => ({
 
 import { TableItem } from "@/components/schema-explorer/TableItem";
 import type { TableSchema } from "@/lib/types";
+import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+
+// Capability fixtures are partial on purpose: TableItem reads three fields, and
+// spelling out every ProviderCapabilities key in each case would bury them (#427).
+type Caps = ProviderMetadata["capabilities"];
+const caps = (partial: Partial<Caps>): Caps => partial as Caps;
+
+/** Postgres-shaped: ordinary tables, both maintenance operations declared. */
+const sqlCaps = caps({ supportsMaintenance: true, maintenanceOperations: ["vacuum", "analyze"] });
+/** Redis-shaped: rows are derived key-prefix groupings, only ANALYZE declared. */
+const redisCaps = caps({
+  tablesAreDerivedGroupings: true,
+  supportsMaintenance: true,
+  maintenanceOperations: ["analyze"],
+});
+/**
+ * LibreDB-shaped: the OTHER provider that declares `tablesAreDerivedGroupings`,
+ * and the one the Redis fixture does not stand in for — it declares NO
+ * maintenance at all, so its rows lose the same four items by two independent
+ * gates rather than one (#427).
+ */
+const libredbCaps = caps({
+  tablesAreDerivedGroupings: true,
+  supportsMaintenance: false,
+  maintenanceOperations: [],
+});
+/**
+ * Search-shaped (Elasticsearch / OpenSearch, #424 Phase 1): an index is a real,
+ * addressable object — so the `tablesAreDerivedGroupings` gate does NOT catch it —
+ * and the engine still declares no maintenance of any kind.
+ */
+const searchCaps = caps({ supportsMaintenance: false, maintenanceOperations: [] });
+
+/**
+ * Labels are partial for the same reason capabilities are: TableItem reads four
+ * of the fifteen. The two defaults spelled out here are `BaseDatabaseProvider`'s
+ * own, so a case that overrides one is visibly overriding it (#427).
+ */
+type Labels = ProviderMetadata["labels"];
+const labelsFor = (partial: Partial<Labels>): Labels =>
+  ({ analyzeAction: "Analyze Table", vacuumAction: "Vacuum Table", ...partial }) as Labels;
 
 // ── Test data ───────────────────────────────────────────────────────────────
 
@@ -285,7 +326,7 @@ describe("TableItem", () => {
 
   test("shows Analyze and Vacuum actions for admin", () => {
     const { getByTestId } = render(
-      <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin />,
+      <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin capabilities={sqlCaps} />,
     );
     const dropdown = within(getByTestId("dropdown"));
     expect(dropdown.queryByText("Analyze Table")).not.toBeNull();
@@ -312,6 +353,7 @@ describe("TableItem", () => {
         isExpanded={false}
         onToggle={mock(() => {})}
         isAdmin
+        capabilities={sqlCaps}
         onOpenMaintenance={onOpenMaintenance}
       />,
     );
@@ -333,6 +375,7 @@ describe("TableItem", () => {
         isExpanded={false}
         onToggle={mock(() => {})}
         isAdmin
+        capabilities={sqlCaps}
         onOpenMaintenance={onOpenMaintenance}
       />,
     );
@@ -364,7 +407,14 @@ describe("TableItem", () => {
       vacuumGlobalDesc: "Compact all",
     };
     const { getByTestId } = render(
-      <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin labels={labels} />,
+      <TableItem
+        table={largeTable}
+        isExpanded={false}
+        onToggle={mock(() => {})}
+        isAdmin
+        capabilities={sqlCaps}
+        labels={labels}
+      />,
     );
     const dropdown = within(getByTestId("dropdown"));
     expect(dropdown.queryByText("Run db.find()")).not.toBeNull();
@@ -406,7 +456,7 @@ describe("TableItem", () => {
 
   test("does not crash when optional callbacks are not provided", () => {
     const { getByTestId } = render(
-      <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin />,
+      <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin capabilities={sqlCaps} />,
     );
     const dropdown = within(getByTestId("dropdown"));
     // Click all menu items without providing callbacks - should not throw
@@ -445,7 +495,7 @@ describe("TableItem", () => {
 
   test("renders context menu with same actions as dropdown", () => {
     const { queryAllByText } = render(
-      <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin />,
+      <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin capabilities={sqlCaps} />,
     );
     // Each action should appear twice: once in dropdown, once in context menu
     expect(queryAllByText("Select Top 50").length).toBe(2);
@@ -495,6 +545,144 @@ describe("TableItem", () => {
       const toggle = getByRole("button", { name: "users" });
       expect(toggle.className).toContain("py-1.5");
       expect(toggle.parentElement?.className).not.toContain("py-1.5");
+    });
+  });
+  // ── Derived-grouping rows and declared maintenance (#427) ─────────────────
+
+  describe("capability gating (#427)", () => {
+    test("hides Profile Table and Generate Test Data when rows are derived groupings", () => {
+      const { getByTestId } = render(
+        <TableItem
+          table={largeTable}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin={false}
+          capabilities={redisCaps}
+        />,
+      );
+      const dropdown = within(getByTestId("dropdown"));
+      expect(dropdown.queryByText("Profile Table")).toBeNull();
+      expect(dropdown.queryByText("Generate Test Data")).toBeNull();
+    });
+
+    test("keeps Generate Code visible when rows are derived groupings", () => {
+      const { getByTestId } = render(
+        <TableItem
+          table={largeTable}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin={false}
+          capabilities={redisCaps}
+        />,
+      );
+      const dropdown = within(getByTestId("dropdown"));
+      expect(dropdown.queryByText("Generate Code")).not.toBeNull();
+    });
+
+    test("shows Profile Table and Generate Test Data when rows are addressable objects", () => {
+      const { getByTestId } = render(
+        <TableItem
+          table={largeTable}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin={false}
+          capabilities={sqlCaps}
+        />,
+      );
+      const dropdown = within(getByTestId("dropdown"));
+      expect(dropdown.queryByText("Profile Table")).not.toBeNull();
+      expect(dropdown.queryByText("Generate Test Data")).not.toBeNull();
+    });
+
+    test("offers no per-row maintenance at all when rows are derived groupings (#427)", () => {
+      // The issue's own symptom: Redis declares `analyze`, so "Key Info" survived
+      // a declared-operation gate and still called onOpenMaintenance("tables",
+      // "user:*") — a row the maintenance page cannot name.
+      const { getByTestId } = render(
+        <TableItem
+          table={largeTable}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin
+          capabilities={redisCaps}
+          labels={labelsFor({ analyzeAction: "Key Info", vacuumAction: "Memory Doctor" })}
+        />,
+      );
+      const dropdown = within(getByTestId("dropdown"));
+      expect(dropdown.queryByText("Key Info")).toBeNull();
+      expect(dropdown.queryByText("Memory Doctor")).toBeNull();
+    });
+
+    // The embedded LibreDB provider declares the same flag as Redis, so the gate
+    // reaches it too and its doc had to say so (docs/providers/libredb.md 5.3).
+    // A Redis-shaped fixture alone would not have caught a regression here: its
+    // labels and its maintenance list are both different (#427).
+    test("hides the same four items for the embedded LibreDB provider (#427)", () => {
+      const { getByTestId } = render(
+        <TableItem
+          table={largeTable}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin
+          capabilities={libredbCaps}
+          labels={labelsFor({ analyzeAction: "Key Info", vacuumAction: "Compact" })}
+        />,
+      );
+      const dropdown = within(getByTestId("dropdown"));
+      expect(dropdown.queryByText("Profile Table")).toBeNull();
+      expect(dropdown.queryByText("Generate Test Data")).toBeNull();
+      expect(dropdown.queryByText("Key Info")).toBeNull();
+      expect(dropdown.queryByText("Compact")).toBeNull();
+      // Naming the row is still fine; addressing it is not.
+      expect(dropdown.queryByText("Generate Code")).not.toBeNull();
+    });
+
+    /*
+      The #427 gate stopped one row short. Its rule was "a per-row maintenance action
+      needs an addressable row", which is true and is not the whole test: an index on a
+      search cluster IS addressable, so both items rendered — and the engine declares
+      `supportsMaintenance: false`, so the page they open offers nothing at all.
+
+      Measured in the browser on 2026-08-19 against Elasticsearch 9.1.4: clicking
+      "Merge Segments" on an index navigated to /admin/operations, where the Global
+      Operations card is itself gated on the same capability and so was absent. No
+      error, no explanation, nothing about merging — the labels written for exactly
+      this moment ("Merging is an index API rather than a statement this SQL surface
+      can send, so nothing runs from here") are on the card that does not render.
+    */
+    test("hides both items on an engine that declares no maintenance, addressable rows or not", () => {
+      const { getByTestId } = render(
+        <TableItem
+          table={largeTable}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin
+          capabilities={searchCaps}
+          labels={labelsFor({ analyzeAction: "Index Statistics", vacuumAction: "Merge Segments" })}
+        />,
+      );
+      const dropdown = within(getByTestId("dropdown"));
+      expect(dropdown.queryByText("Index Statistics")).toBeNull();
+      expect(dropdown.queryByText("Merge Segments")).toBeNull();
+      // The row IS addressable here, so everything the #427 gate removes for a
+      // derived grouping stays: this gate is about maintenance and nothing else.
+      expect(dropdown.queryByText("Profile Table")).not.toBeNull();
+      expect(dropdown.queryByText("Generate Test Data")).not.toBeNull();
+    });
+
+    test("hides maintenance from a non-admin even when declared", () => {
+      const { getByTestId } = render(
+        <TableItem
+          table={largeTable}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin={false}
+          capabilities={sqlCaps}
+        />,
+      );
+      const dropdown = within(getByTestId("dropdown"));
+      expect(dropdown.queryByText("Analyze Table")).toBeNull();
+      expect(dropdown.queryByText("Vacuum Table")).toBeNull();
     });
   });
 });

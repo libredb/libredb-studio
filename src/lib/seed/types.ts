@@ -19,6 +19,9 @@ const ConnectionEnvironmentSchema = z.enum(["production", "staging", "developmen
 // Allowed roles in current iteration (matches JWT role: 'admin' | 'user' + wildcard)
 const AllowedRoleSchema = z.enum(["*", "admin", "user"]);
 
+// Kept in step with DatabaseType in src/lib/types.ts BY HAND: a zod enum is a value,
+// so a type-id missing here is not a compile error - it is a seed file the server
+// rejects with "invalid enum value" for a connection type the product supports.
 const SeedDatabaseType = z.enum([
   "postgres",
   "mysql",
@@ -31,6 +34,10 @@ const SeedDatabaseType = z.enum([
   "couchbase",
   "clickhouse",
   "druid",
+  "elasticsearch",
+  "opensearch",
+  "trino",
+  "cassandra",
 ]);
 
 export const SeedDefaultsSchema = z.object({
@@ -64,6 +71,11 @@ export const SeedConnectionSchema = z.object({
   ssl: SSLConfigSchema,
   serviceName: z.string().optional(),
   instanceName: z.string().optional(),
+  // Cassandra only, and REQUIRED by that driver rather than optional to it: a seeded
+  // Cassandra connection without it cannot open at all. Optional here because the
+  // other thirteen type-ids have no use for the field; the provider is what refuses a
+  // connection that omits it.
+  localDataCenter: z.string().optional(),
 });
 
 export const SeedConfigSchema = z

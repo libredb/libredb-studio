@@ -12,6 +12,7 @@ import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { shouldRefreshSchema } from "@/lib/query-generators";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { logger } from "@/lib/logger";
+import { newLocalId } from "@/lib/ids";
 import { getExplainStrategy } from "@/lib/explain";
 import { maybeInviteToStar } from "@/lib/community/star-prompt-toast";
 import { buildConnectionPayload } from "./use-connection-payload";
@@ -43,23 +44,6 @@ interface UseQueryExecutionParams {
 }
 
 /**
- * The id one history entry is filed under.
- *
- * `crypto.getRandomValues` rather than `Math.random`, which a scanner reads as a
- * pseudorandom generator standing where a secure one belongs. Nothing here is a
- * secret — the id names a row in this browser's own query history — but the two cost
- * the same and only one of them has to be argued about in every review.
- *
- * Deliberately NOT `crypto.randomUUID`: it is restricted to secure contexts, and
- * Studio is served over plain HTTP on several of its distribution channels, where it
- * is simply undefined. `getRandomValues` carries no such restriction.
- */
-function newHistoryId(): string {
-  const bytes = crypto.getRandomValues(new Uint32Array(2));
-  return `${bytes[0].toString(36)}${bytes[1].toString(36)}`;
-}
-
-/**
  * Why an explain run cannot proceed, phrased for the user. Absent metadata means
  * "not loaded yet", not "unsupported" — blaming the database type there would be
  * misleading.
@@ -72,6 +56,19 @@ function explainRefusal(metadata: ProviderMetadata | null, hasStrategy: boolean)
     return { title: "Not Supported", description: "Only SELECT statements can be explained." };
   }
   return { title: "Not Supported", description: "EXPLAIN is not available for this database type." };
+}
+
+/**
+ * The wait a rate-limited response names in its `Retry-After` header, in whole seconds.
+ *
+ * `createErrorResponse` sends a delta-seconds integer (`src/lib/api/rate-limit.ts` counts in
+ * seconds), so that is the only form read here. RFC 9110 also permits an HTTP-date, and an
+ * ingress in front of a multi-replica deployment may send one; anything this cannot parse
+ * returns null so the caller keeps the server's own message rather than inventing a number.
+ */
+function retryAfterSeconds(response: Response): number | null {
+  const seconds = Number(response.headers.get("Retry-After"));
+  return Number.isInteger(seconds) && seconds > 0 ? seconds : null;
 }
 
 export function useQueryExecution({
@@ -98,6 +95,21 @@ export function useQueryExecution({
    */
   const runsRef = useRef(new Map<string, { controller: AbortController; queryId: string }>());
 
+  /**
+   * The id of the LAST run started on each tab — which run owns the tab's results.
+   *
+   * Separate from `runsRef` because it has to outlive the entry there. `runsRef` is
+   * about cancellation, so a run deletes its own entry the moment it settles; a
+   * background EXPLAIN outlives its query and asks about ownership afterwards, and
+   * an absent entry cannot answer. Reading absence as "not superseded" was right for
+   * the common case (the plan still describes the results on screen) and wrong for
+   * the one that mattered: run A finishes, run B runs and finishes, then A's slow
+   * EXPLAIN resolves, finds nothing, and writes A's plan over B's results
+   * (docs/BACKLOG.md U1). This map is never cleared per run, so it answers for that
+   * window too.
+   */
+  const lastRunRef = useRef(new Map<string, string>());
+
   // Latest-value refs. `executeQuery` reads these at call time only, so keeping
   // them out of its dependency list makes the callback identity stable across a
   // keystroke — which is what stops the `execute-query` listener below from being
@@ -115,9 +127,11 @@ export function useQueryExecution({
   // tab's run, not just the last one started.
   useEffect(() => {
     const runs = runsRef.current;
+    const lastRuns = lastRunRef.current;
     return () => {
       for (const run of runs.values()) run.controller.abort();
       runs.clear();
+      lastRuns.clear();
     };
   }, []);
 
@@ -230,19 +244,21 @@ export function useQueryExecution({
       // statement. Scoped to `targetTabId` so a run in another tab is left alone.
       runsRef.current.get(targetTabId)?.controller.abort();
       const abortController = new AbortController();
-      const queryId = `q-${Date.now()}-${newHistoryId()}`;
+      const queryId = `q-${Date.now()}-${newLocalId()}`;
       runsRef.current.set(targetTabId, { controller: abortController, queryId });
+      lastRunRef.current.set(targetTabId, queryId);
 
       /**
-       * A newer run has taken THIS TAB over. An absent entry is deliberately NOT
-       * superseded: the run finished and cleared itself, and the background
-       * EXPLAIN outlives its own query — its plan is still the right plan for the
-       * results on screen.
+       * A newer run has taken THIS TAB over.
+       *
+       * Asked of `lastRunRef`, not of the in-flight map: while this run is the
+       * latest one the answer is the same either way, and once it has settled and
+       * removed its own entry only this map still knows whether anything started
+       * after it. That is what lets a background EXPLAIN outlive its own query — its
+       * plan still describes the results on screen — without letting it outlive the
+       * NEXT one (U1).
        */
-      const isSuperseded = () => {
-        const active = runsRef.current.get(targetTabId);
-        return active !== undefined && active.queryId !== queryId;
-      };
+      const isSuperseded = () => lastRunRef.current.get(targetTabId) !== queryId;
 
       /** Write to the tab this run owns — and only while it still owns it. */
       const commitToTab = (update: (tab: QueryTab) => QueryTab) => {
@@ -274,12 +290,23 @@ export function useQueryExecution({
         // splits the payload and binds nothing, so the values would be dropped and
         // the statement would run with unbound placeholders. Parameters may only
         // travel to an endpoint that binds them (PR #304 review).
+        //
+        // The splitter is a SQL splitter: it cuts on `;` outside quotes. A dialect
+        // that is not SQL has no such separator, so every cut it makes there is an
+        // invented fragment. Measured on Redis (#427): the generated cheatsheet
+        // carried a `;` inside a `#` comment, so the buffer was split, and the
+        // first "statement" was comments only - the run failed with "No command to
+        // run" and the panel reported a successful empty result. Unknown metadata
+        // keeps the pre-existing behaviour, since only a declared JSON dialect is
+        // known not to be SQL.
+        const dialectIsSql = (metadata?.capabilities.queryLanguage ?? "sql") === "sql";
         const useMultiQuery =
           !isExplain &&
           !isLoadMore &&
           !transactionActive &&
           !isPlaygroundRun &&
           !params &&
+          dialectIsSql &&
           isMultiStatement(queryToExecute);
 
         // Use transaction endpoint if a transaction is active or in playground mode
@@ -359,11 +386,17 @@ export function useQueryExecution({
 
         if (!response.ok) {
           const error = await response.json();
-          const errorMessage = error.error || "Query failed";
           const errorCode = error.code as string | undefined;
+          // A 429's own body may say nothing about the wait, but its header always
+          // carries one — name it, so the user retries when the budget is back instead
+          // of hammering a closed door (docs/BACKLOG.md H2). Only the 429 is rephrased:
+          // a Retry-After on any other status says nothing about this query's failure.
+          const retryAfter = response.status === 429 ? retryAfterSeconds(response) : null;
+          const errorMessage =
+            retryAfter !== null ? `Too many requests. Try again in ${retryAfter}s.` : error.error || "Query failed";
 
           storage.addToHistory({
-            id: newHistoryId(),
+            id: newLocalId(),
             connectionId: activeConnection.id,
             connectionName: activeConnection.name,
             tabName: tabToExec.name,
@@ -389,7 +422,7 @@ export function useQueryExecution({
         // Only add to history for new queries (not load more)
         if (!isLoadMore) {
           storage.addToHistory({
-            id: newHistoryId(),
+            id: newLocalId(),
             connectionId: activeConnection.id,
             connectionName: activeConnection.name,
             tabName: tabToExec.name,
@@ -622,7 +655,7 @@ export function useQueryExecution({
 
         const result = payload.result;
         storage.addToHistory({
-          id: newHistoryId(),
+          id: newLocalId(),
           connectionId: activeConnection.id,
           connectionName: activeConnection.name,
           tabName: tabToExec.name,
@@ -644,7 +677,7 @@ export function useQueryExecution({
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         storage.addToHistory({
-          id: newHistoryId(),
+          id: newLocalId(),
           connectionId: activeConnection.id,
           connectionName: activeConnection.name,
           tabName: tabToExec.name,

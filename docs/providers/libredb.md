@@ -353,11 +353,13 @@ internal metadata.
 Right-clicking a node in the schema tree (or its `⋮` menu) offers commands generated for that
 node, so you do not have to type the grammar from memory. The generation is driven by the
 `queryDialect: 'libredb'` capability, which routes the shared client-side query generators
-(`src/lib/query-generators.ts`) to LibreDB output instead of the default MongoDB-JSON used by other
-`queryLanguage: 'json'` providers:
+(`src/lib/query-generators.ts`) to LibreDB output instead of the MongoDB-JSON that
+`queryLanguage: 'json'` otherwise implies. Redis took the same route in #427 with
+`queryDialect: 'redis'`; MongoDB is now the only provider that reaches the JSON branch:
 
 - **Scan Keys** runs `prefix <group>:` for a `:`-prefix group (e.g. `users:*` → `prefix users:`), or
-  `get <name>` for a bare single-key node.
+  `get <name>` for a bare single-key node — except for a name carrying CR or LF, where it emits the
+  same `#` note and no command as the cheatsheet does (see below).
 - **Generate Command** inserts an explanatory cheatsheet — a use-case comment above each command —
   where every command line is a **concrete, directly-runnable example** (no `<placeholder>` tokens),
   so "Run Selected" on any line works as-is. The example `put` value is shaped by the group's
@@ -382,6 +384,39 @@ node, so you do not have to type the grammar from memory. The generation is driv
 
 Because the provider skips `#` comment and blank lines (see 5.1), selecting a single line runs just
 that command, and running the whole buffer runs the first real command (the prefix scan).
+
+The node name in the header comment is **JSON-quoted**, not interpolated raw: a key name is
+arbitrary text, and a name containing a newline used to end that comment and turn its own remainder
+into the buffer's first runnable line. For an ordinary name the rendering is unchanged. The Redis
+cheatsheet shares the helper and the defect (see `docs/providers/redis.md` §5.3) — that is where it
+was found (#427).
+
+The command lines themselves interpolate the node name **raw** — LibreDB's grammar has no quoting
+and no lossless JSON command form to fall back to the way Redis's does. Since every LibreDB command
+is line-oriented, a name containing CR or LF cannot be addressed by a generated line at all: a key
+named `x\ndelete billing:2024` would render `delete billing:2024` as a line of its own that
+**Run Selected** would execute. For such a name the cheatsheet emits the header plus a single `#`
+note saying no generated line can address the key, and **no command line** (#427). The note stops
+there rather than pointing at a hand-written command: `firstCommandLine()` splits the buffer on LF
+before tokenizing, so an LF-bearing name cannot be reached from this editor at all. A CR survives
+inside quotes and could be typed by hand, but one note covers both characters and advice that fails
+for half of them is worse than none.
+
+`Scan Keys` gives the same answer — the note on its own, no command — through the same code path, so
+the two cannot drift. It matters more there than in the cheatsheet: `Scan Keys` auto-executes on a
+node click, and it used to emit `get x\ndelete billing:2024`, whose second line sat in the editor as
+a plausible, runnable `delete billing:2024` one **Run Selected** away (only `get x` ever ran, because
+`firstCommandLine()` takes the first line). Auto-executing the note alone runs nothing and reports
+*No command to run (only comments or blank lines)* (U11).
+
+Two menu actions are **not offered** on this provider. `Profile Table` and `Generate Test Data`
+address an object and insert rows into it; a `users:*` row is a prefix grouping this server derived
+from one bounded scan (`tablesAreDerivedGroupings`, see 9), not an object any command can be given,
+so both are hidden rather than left to answer HTTP 400 (#427). The per-row `Analyze` and `Vacuum`
+items are hidden for the same reason — they call `onOpenMaintenance("tables", <row>)` and there is no
+such row to name; the row menu reads no maintenance capability of its own. `Generate Code`
+stays: it names the row, it does not address it, and it sanitises the name into an identifier that
+is legal in every target language (`users:*` -> `User`), keeping Unicode letters intact.
 
 ---
 
@@ -443,6 +478,16 @@ There is no embedded stats API.
 `getOverview().tableCount` calls `getSchema()` internally — it is a full scan, so it honors the
 10 000-key cap and may undercount for very large files.
 
+The `[]` and the absent metrics above now reach the panels as absence rather than as zero. The
+**Tables** tab reads the empty `getTableStats()` against `tableCount` — prefix groups the store does
+know about, with statistics for none of them — so its *Tables* and *Size* cards read `N/A` and the
+list says *No table statistics available.* instead of summing `0` and `0 B`; the **Queries** tab's
+three cards read `N/A` for the same reason, an average over no statements not being `0.00ms`; and
+because `getPerformanceMetrics()` reports only `cacheHitRatio`, the *Buffer* and *Deadlocks* cards on
+the Overview and Performance tabs read `N/A` beside *Not measured* rather than `0%` and a `0` badged
+healthy. `cacheHitRatio: 100` is the one figure here that is stated rather than absent, and it keeps
+its gauge.
+
 ---
 
 ## 8. Maintenance
@@ -456,9 +501,12 @@ QueryError: Maintenance operation "<type>" is not supported for LibreDB
 This is reflected in `getCapabilities().supportsMaintenance = false` and
 `maintenanceOperations = []`. Both tabs that offer maintenance now hide it for this provider: the
 monitoring **Tables** tab renders no per-row control when a provider declares maintenance
-unsupported (issue #272), and the admin **Operations** tab hides its whole Global Operations group
-and its per-table buttons on the same reading (issue #282). Neither offers a control that could only
-answer HTTP 400.
+unsupported (issue #272) — and, on the same reading, its *Vacuum* summary card now reads `N/A` over
+*Not supported* rather than the `0` over green **OK** that a bloat count over no rows produced, which
+was a clean bill of health for an operation this provider does not offer — and the admin
+**Operations** tab hides its whole Global Operations group and its per-table buttons (issue #282). Neither offers a control that could only
+answer HTTP 400. The schema explorer's own per-row `Analyze`/`Vacuum` items are hidden here too, but
+for a different reason — the rows are derived groupings, see 5.3.
 
 ---
 

@@ -203,6 +203,27 @@ describe("driveAgentRun", () => {
     expect(investigationCalls[1].resources.tracker).toBe(investigationCalls[0].resources.tracker);
     expect(investigationCalls[1].resources.artifacts).toBe(investigationCalls[0].resources.artifacts);
   });
+
+  test("a refused second drive does not end the run the first drive is carrying", async () => {
+    // `runInvestigation` refuses a second concurrent drive of one run by throwing
+    // `RUN_ALREADY_DRIVEN`. That refusal is about the DRIVE, not the run: the run is
+    // healthy and the first drive is still carrying it, so the composition root must
+    // not record `failed` on it. Recording would end the very run the first drive is
+    // writing to, after which every later append would fail as `RUN_ALREADY_CLOSED`.
+    await openRun("arun_alreadydriven");
+    mockRunInvestigation.mockImplementationOnce(async () => {
+      throw new AgentRunServiceError(
+        "RUN_ALREADY_DRIVEN",
+        'agent run "arun_alreadydriven" is already being driven in this process',
+      );
+    });
+
+    await expect(driveAgentRun("arun_alreadydriven")).rejects.toThrow(AgentRunServiceError);
+
+    const report = await (await getAgentRunService()).status("arun_alreadydriven");
+    expect(report?.record.status).toBe("queued");
+    expect(report?.record.events.some((event) => event.kind === "run-finished")).toBe(false);
+  });
 });
 
 /**
@@ -298,6 +319,48 @@ describe("a drive that fails before the loop", () => {
     expect(await finishedEvent("arun_noprofile")).toMatchObject({
       status: "failed",
       reason: "engine-unsupported",
+    });
+  });
+
+  test("records a misconfigured agent credential as itself, not as an unsupported engine", async () => {
+    // `resolveAgentCredential` throws the SAME error type as an engine with no
+    // read-only profile, on ANY engine (docs/BACKLOG.md B47). Classified by type
+    // alone, an operator who rotated the secret key under a sealed `agentPassword`
+    // was told PostgreSQL offers no read-only execution profile — pointing away from
+    // the one thing they could fix. The reason code is what tells the two apart.
+    await openRun("arun_badcredential");
+    mockResolveConnection.mockImplementationOnce(async () => {
+      throw new ExecutionProfileError(
+        'Connection "seed:sales" configures an agent credential that cannot be resolved',
+        "AGENT_CREDENTIAL_UNRESOLVABLE",
+      );
+    });
+
+    await expect(driveAgentRun("arun_badcredential")).rejects.toThrow(ExecutionProfileError);
+
+    expect(await finishedEvent("arun_badcredential")).toMatchObject({
+      status: "failed",
+      reason: "agent-credential-unusable",
+    });
+  });
+
+  test("records an agent credential set alongside a connection string as a credential fault", async () => {
+    // The second credential code, and the one whose fix is a connection field rather
+    // than a key: buildPoolConfig would drop the credential silently, so acquisition
+    // is refused. Nothing about the engine is wrong here either.
+    await openRun("arun_credentialstring");
+    mockResolveConnection.mockImplementationOnce(async () => {
+      throw new ExecutionProfileError(
+        'Connection "seed:sales" configures an agent credential alongside a connection string',
+        "AGENT_CREDENTIAL_WITH_CONNECTION_STRING",
+      );
+    });
+
+    await expect(driveAgentRun("arun_credentialstring")).rejects.toThrow(ExecutionProfileError);
+
+    expect(await finishedEvent("arun_credentialstring")).toMatchObject({
+      status: "failed",
+      reason: "agent-credential-unusable",
     });
   });
 

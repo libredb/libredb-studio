@@ -7,7 +7,11 @@ metadata:
 data:
   NODE_ENV: "production"
   PORT: {{ .Values.service.targetPort | quote }}
-  HOSTNAME: "0.0.0.0"
+  # Empty is the sentinel meaning "nobody chose": the image's entrypoint then
+  # resolves the bind address itself and prefers a verified dual-stack "::".
+  # The key is written explicitly rather than omitted so that whatever HOSTNAME
+  # the runtime injects (a pod name, a container id) can never reach the server.
+  HOSTNAME: {{ .Values.config.bindAddress | quote }}
   NEXT_TELEMETRY_DISABLED: "1"
   NODE_OPTIONS: "--max-old-space-size=384"
   NEXT_PUBLIC_AUTH_PROVIDER: {{ .Values.authProvider | quote }}

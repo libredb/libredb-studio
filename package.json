@@ -1,6 +1,6 @@
 {
   "name": "@libredb/studio",
-  "version": "0.11.0",
+  "version": "0.13.1",
   "private": false,
   "publishConfig": {
     "access": "public"
@@ -96,9 +96,11 @@
     "oracledb",
     "ssh2"
   ],
-  "//overrides": "Transitive dependencies held above what their parent's range would otherwise resolve to. lodash: recharts asks for ^4.17.21 and CVE-2026-4800 (arbitrary code execution via untrusted input in template imports) is fixed in 4.18.0. The fix is inside the parent's range, so this only forces resolution forward - remove the entry once recharts raises its own floor. Nothing in this repository imports lodash directly.",
+  "//overrides": "Transitive dependencies held above what their parent's range would otherwise resolve to. lodash: recharts asks for ^4.17.21 and CVE-2026-4800 (arbitrary code execution via untrusted input in template imports) is fixed in 4.18.0. The fix is inside the parent's range, so this only forces resolution forward - remove the entry once recharts raises its own floor. Nothing in this repository imports lodash directly. adm-zip: cassandra-driver asks for ~0.5.10 and CVE-2026-39244 (denial of service through a crafted ZIP that forces excessive memory allocation) is fixed in 0.6.0, which is OUTSIDE that range - so unlike lodash above this holds the dependency past what its parent would ever resolve to, and it must be re-checked whenever cassandra-driver moves. The vulnerable path is not reachable from this product: adm-zip has exactly one consumer in the driver, lib/datastax/cloud/index.js, whose init() returns immediately unless a `cloud` option is set, and that option is only for Astra DB secure-connect bundles, which no connection here sets. The pin is taken anyway rather than argued away, and 0.6.0 was verified against the live server: the cloud module loads, an adm-zip write and read round-trips, and a connect plus query answers on Apache Cassandra 5.0.9.",
   "overrides": {
-    "lodash": "^4.18.1"
+    "adm-zip": "^0.6.0",
+    "lodash": "^4.18.1",
+    "tedious": "^20.0.5"
   },
   "scripts": {
     "dev": "node scripts/copy-monaco.mjs && next dev",
@@ -132,6 +134,8 @@
     "chart:bump": "node scripts/sync-chart-version.mjs --write",
     "distribution:check": "node scripts/distribution-check.mjs",
     "distribution:matrix": "node scripts/distribution-check.mjs --matrix",
+    "channels:showcase": "node scripts/generate-channel-showcase.mjs",
+    "channels:showcase:check": "node scripts/generate-channel-showcase.mjs --check",
     "readme:check": "node scripts/readme-check.mjs",
     "security:check": "node scripts/security-check.mjs"
   },
@@ -170,6 +174,7 @@
     "@xyflow/react": "^12.11.3",
     "@zumer/snapdom": "2.15.0",
     "better-sqlite3": "^13.0.3",
+    "cassandra-driver": "^4.9.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

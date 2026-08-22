@@ -679,4 +679,35 @@ describe("DataProfiler", () => {
     const nineNineNine = within(container).queryAllByText("999");
     expect(nineNineNine.length).toBeGreaterThan(0);
   });
+  // Same rule as every other connection-bearing request: a managed (seed)
+  // connection is sent as its seed id, because the copy the browser holds has had
+  // `password` and `connectionString` stripped. Sending the object made
+  // `/api/db/profile` answer 400 CONFIG_ERROR for a connection-string-only seed
+  // (the MongoDB one) whenever the server's provider cache was cold - it appeared
+  // to work only while an earlier request had left a provider cached.
+  test("sends connectionId for a managed seed connection", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/profile": { ok: true, json: mockProfileResponse },
+      "/api/ai/describe-schema": { ok: false, status: 500, json: { error: "AI not configured" } },
+    });
+    const seedConnection = {
+      ...mockPostgresConnection,
+      id: "seed:mongo-local",
+      managed: true,
+      seedId: "mongo-local",
+    };
+
+    render(<DataProfiler {...createDefaultProps({ connection: seedConnection })} />);
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/db/profile")).toBe(true);
+    });
+
+    const call = fetchMock.mock.calls.find(([url]) => String(url) === "/api/db/profile");
+    if (!call) throw new Error("no /api/db/profile call recorded");
+    const body = JSON.parse((call[1] as RequestInit).body as string);
+    expect(body.connectionId).toBe("seed:mongo-local");
+    expect(body.connection).toBeUndefined();
+    expect(body.tableName).toBe("users");
+  });
 });

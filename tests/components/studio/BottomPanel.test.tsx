@@ -148,8 +148,8 @@ mock.module("@/lib/storage", () => ({
 
 // ---- Now import bun:test, testing-library, and the component ----
 
-import { describe, test, expect, afterEach } from "bun:test";
-import { render, fireEvent, cleanup } from "@testing-library/react";
+import { describe, test, expect, afterEach, beforeAll } from "bun:test";
+import { render, fireEvent, cleanup, act } from "@testing-library/react";
 import React from "react";
 
 import { BottomPanel } from "@/components/studio/BottomPanel";
@@ -215,6 +215,23 @@ function createDefaultProps(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 describe("BottomPanel", () => {
+  /*
+    The panel's heavy views are code-split (`React.lazy` in BottomPanel.tsx), so the
+    FIRST render of each one suspends while its dynamic import resolves. `React.lazy`
+    caches that resolution on the lazy component itself, so mounting each one once here
+    — inside an awaited `act` — is what lets the assertions below stay synchronous and,
+    more importantly, stay independent of the order the tests happen to run in.
+  */
+  beforeAll(async () => {
+    for (const mode of ["charts", "pivot", "docs", "schemadiff", "explain"] as const) {
+      const props = createDefaultProps({ mode });
+      await act(async () => {
+        render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+      });
+    }
+    cleanup();
+  });
+
   afterEach(() => {
     cleanup();
   });
@@ -384,6 +401,54 @@ describe("BottomPanel", () => {
     });
     const { queryByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
     expect(queryByText("Export")).not.toBeNull();
+  });
+
+  // An export writes the rows the grid HOLDS, and the grid holds one page. The count
+  // is on the button because a file of 500 rows off a table of two million is
+  // indistinguishable from a complete answer once it has left the product.
+  test("Export button carries the number of rows the file will contain", () => {
+    const props = createDefaultProps({
+      mode: "results",
+      currentTab: {
+        id: "tab-1",
+        name: "Q",
+        query: "SELECT 1",
+        result: {
+          rows: Array.from({ length: 1234 }, (_, i) => ({ id: i })),
+          fields: ["id"],
+          rowCount: 1234,
+          executionTime: 42,
+        },
+        isExecuting: false,
+        type: "sql" as const,
+      },
+    });
+    const { getByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+    expect(getByTestId("export-row-count").textContent).toBe("1,234");
+  });
+
+  test("Export button counts the loaded rows, not the number the run reported", () => {
+    const props = createDefaultProps({
+      mode: "results",
+      currentTab: {
+        id: "tab-1",
+        name: "Q",
+        query: "SELECT 1",
+        result: {
+          rows: [{ id: 1 }, { id: 2 }],
+          fields: ["id"],
+          // An engine can report a different count than the rows it handed back;
+          // only the rows are written to the file.
+          rowCount: 900,
+          executionTime: 42,
+          pagination: { limit: 2, offset: 0, hasMore: true, totalReturned: 2, wasLimited: true },
+        },
+        isExecuting: false,
+        type: "sql" as const,
+      },
+    });
+    const { getByTestId } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+    expect(getByTestId("export-row-count").textContent).toBe("2");
   });
 
   test("Export dropdown is hidden when result is null", () => {

@@ -4,7 +4,7 @@ This document outlines the architectural patterns, tech stack, and system design
 
 ## System Overview
 
-LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **11 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Redis, LibreDB.
+LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **14 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Redis, LibreDB. The count is the `SHIPPED` record in [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts), which is exhaustive over `DatabaseType`; `elasticsearch` and `opensearch` are two ids served by one provider module.
 
 It runs in two modes: as a **standalone Next.js app** and as an **embedded npm package** (`@libredb/studio`) consumed by libredb-platform. See [§4.6](#46-workspace-abstraction-npm-package-embedding).
 
@@ -49,6 +49,8 @@ graph TD
         SQL --> MSSQL[(SQL Server)]
         SQL --> ClickHouse[(ClickHouse)]
         SQL --> Druid[(Apache Druid)]
+        SQL --> Search[(Elasticsearch / OpenSearch)]
+        SQL --> Trino[(Apache Trino)]
         Document --> MongoDB[(MongoDB)]
         Document --> Couchbase[(Couchbase)]
         KeyValue --> Redis[(Redis)]
@@ -103,6 +105,8 @@ classDiagram
     SQLBaseProvider <|-- MSSQLProvider
     SQLBaseProvider <|-- ClickHouseProvider
     SQLBaseProvider <|-- DruidProvider
+    SQLBaseProvider <|-- SearchProvider
+    SQLBaseProvider <|-- TrinoProvider
 ```
 
 Each provider implements:
@@ -112,7 +116,7 @@ Each provider implements:
 
 Adding a new database type requires: **1 provider class** + **1 entry in `db-ui-config.ts`**.
 
-`CouchbaseProvider` extends `BaseDatabaseProvider` even though SQL++ is a SQL dialect: SQL++ quotes identifiers with doubled backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting and declares its SQL-ness through `queryLanguage: 'sql'` instead. Being reached over HTTP is **not** the reason — `ClickHouseProvider` and `DruidProvider` add no driver either, and both extend `SQLBaseProvider`, because double-quoted identifiers and `LIMIT n OFFSET m` are correct in both dialects. Each of the three is a directory rather than a single file, with its wire format behind a transport seam that provider logic never bypasses. See [`docs/providers/couchbase.md`](providers/couchbase.md), [`clickhouse.md`](providers/clickhouse.md) and [`druid.md`](providers/druid.md).
+`CouchbaseProvider` extends `BaseDatabaseProvider` even though SQL++ is a SQL dialect: SQL++ quotes identifiers with doubled backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting and declares its SQL-ness through `queryLanguage: 'sql'` instead. Being reached over HTTP is **not** the reason — `ClickHouseProvider`, `DruidProvider` and `TrinoProvider` add no driver either, and all three extend `SQLBaseProvider`, because double-quoted identifiers are correct in each dialect. Each driver-free provider is a directory rather than a single file, with its wire format behind a transport seam that provider logic never bypasses. Trino inherits everything except the limiter: its grammar is `[ OFFSET count ] [ LIMIT count ]` and only that way round, so `prepareQuery()` transposes the clause the shared limiter emits. See [`docs/providers/couchbase.md`](providers/couchbase.md), [`clickhouse.md`](providers/clickhouse.md), [`druid.md`](providers/druid.md) and [`trino.md`](providers/trino.md).
 
 ## 4. Key Architectural Patterns
 
@@ -248,7 +252,7 @@ src/
 └── lib/
     ├── db/                  # Database provider module
     │   ├── providers/
-    │   │   ├── sql/         # postgres, mysql, sqlite (+ sqlite-driver runtime adapter), oracle, mssql, clickhouse/ (transport seam + SQL over HTTP), druid/ (transport seam + SQL over POST /druid/v2/sql)
+    │   │   ├── sql/         # postgres, mysql, sqlite (+ sqlite-driver runtime adapter), oracle, mssql, clickhouse/ (transport seam + SQL over HTTP), druid/ (transport seam + SQL over POST /druid/v2/sql), search/ (transport seam + SQL over HTTP; elasticsearch and opensearch, two ids one module), trino/ (transport seam + SQL over the Trino client protocol), cassandra/ (transport seam + CQL over the native protocol via cassandra-driver)
     │   │   ├── document/    # mongodb, couchbase/ (transport seam + SQL++ over REST)
     │   │   ├── keyvalue/    # redis
     │   │   └── embedded/    # libredb (built-in embedded provider for the sample connection)
@@ -256,8 +260,11 @@ src/
     │   └── types.ts         # Database types
     ├── agent/               # Agent runtime: run ledger, workflow, tools, policy (docs/AGENT.md)
     ├── llm/                 # LLM provider module
-    ├── editor/              # Monaco completions (SQL + MongoDB)
+    ├── editor/              # Monaco completions (SQL + MongoDB), the tab-type/language ladder,
+    │                       # and the LibreDB + Redis command languages
     ├── schema-diff/         # Diff engine + migration SQL generator
+    ├── export/              # The writers behind every "save this to disk": RFC 4180 CSV,
+    │                        #   the SQL INSERT/DDL forms, and the one blob-download path
     ├── sql/                 # Statement splitter, alias extractor
     ├── seed/                # Seed connections (config, filter, credential resolver) + libredb-sample seeding
     ├── config/              # auth-env.ts — single JWT_SECRET reader (auth.ts, proxy.ts, oidc.ts)
@@ -276,7 +283,7 @@ src/
 
 ## 6. Deployment
 
-- **Docker / Helm**: Multi-stage Bun build with standalone Next.js output; these channels bind `0.0.0.0`. Canonical image `ghcr.io/libredb/libredb-studio`.
+- **Docker / Helm**: Multi-stage Bun build with standalone Next.js output; these channels resolve their bind address in the container entrypoint, preferring a dual-stack `::` that they verify by connecting an IPv4 client to a throwaway listener, and falling back to `0.0.0.0` where the namespace has no usable IPv6. `HOSTNAME` (chart: `config.bindAddress`) overrules that and is honoured verbatim. Canonical image `ghcr.io/libredb/libredb-studio`.
 - **Native channels** (`bin/studio.js` npx launcher, Homebrew tap, `.deb`/`.rpm`, Snap, standalone tarballs; sources under `bin/` and `packaging/`): local-first, bind `127.0.0.1` by default unless `--host`/`HOSTNAME` opts in. The npx launcher ships as a pure library and downloads the SHA256-verified standalone server tarball from GitHub Releases. Full matrix and per-channel details in [`docs/DISTRIBUTION.md`](DISTRIBUTION.md).
 - **Health Check**: `GET /api/db/health`
 - **Stateless API**: API routes are stateless, suitable for horizontal scaling

@@ -952,6 +952,48 @@ describe("ResultsGrid", () => {
       expect(getAllByRole("button", { name: "id, BIGINT" })[0].textContent).toContain("BIGINT");
     });
 
+    test("renders a dotted column name as one key, not as a path into the row", () => {
+      // TanStack reads a dotted `accessorKey` as a DEEP PATH, so `shipping.city`
+      // was looked up as `row.shipping.city` while the row carries the flat key
+      // `"shipping.city"` - and the cell rendered NULL over a value that was
+      // right there. Measured in the browser on 2026-08-19 against Elasticsearch
+      // 9.1.4: `SELECT order_id, shipping.city FROM orders` answered
+      // `{"order_id":"o-001","shipping.city":"İzmir"}` from the API and the grid
+      // showed NULL, while the CSV export - which reads `row[column]` - wrote
+      // İzmir. The screen was the only surface that lied.
+      //
+      // Not an Elasticsearch curiosity: every object field in a mapping flattens
+      // to a dotted leaf, so on a search cluster this is most columns a user has.
+      const result: QueryResult = {
+        ...mockResult,
+        rows: [{ order_id: "o-001", "shipping.city": "İzmir" }],
+        fields: ["order_id", "shipping.city"],
+        columnTypes: { "shipping.city": "keyword" },
+      };
+      const { container } = render(React.createElement(ResultsGrid, { result }));
+
+      expect(container.textContent).toContain("İzmir");
+      expect(container.textContent).not.toContain("NULL");
+    });
+
+    test("prefers the flat key when a row carries BOTH it and a nested object", () => {
+      // OpenSearch answers `SELECT *` with a nested `shipping` object while
+      // Elasticsearch flattens the same mapping to `shipping.city` (both measured
+      // 2026-08-19), so a row can hold either shape - and a hand-written
+      // `SELECT shipping, shipping.city` holds both at once. The declared column
+      // list is what the grid renders, and `"shipping.city"` names the flat key.
+      const result: QueryResult = {
+        ...mockResult,
+        rows: [{ shipping: { city: "Ankara" }, "shipping.city": "İzmir" }],
+        fields: ["shipping.city"],
+        columnTypes: {},
+      };
+      const { container } = render(React.createElement(ResultsGrid, { result }));
+
+      expect(container.textContent).toContain("İzmir");
+      expect(container.textContent).not.toContain("Ankara");
+    });
+
     test("makes the compact header's declared type reachable without a pointer", () => {
       // The compact table carries the type as a tooltip only, because visible
       // text there desyncs header and body widths. `title` on a non-focusable

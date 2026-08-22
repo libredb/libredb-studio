@@ -22,6 +22,73 @@ const MAINTENANCE_ACTIONS: { type: MaintenanceType; label: string; Icon: LucideI
   { type: "reindex", label: "Reindex", Icon: Zap, className: "h-6 w-6 sm:h-8 sm:w-8 hidden sm:inline-flex" },
 ];
 
+/**
+ * Pure formatters, at module scope rather than re-created inside `TablesTab` on every
+ * render. They also keep the component's own cognitive complexity to the decisions it
+ * actually makes about absence, which is what this panel is about.
+ */
+function formatBytes(bytes: number): string {
+  if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(2)} GB`;
+  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(2)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(2)} KB`;
+  return `${bytes} B`;
+}
+
+function formatNumber(n: number): string {
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return n.toString();
+}
+
+/**
+ * `lastVacuum` is optional, and its absence means two different things. On PostgreSQL a
+ * NULL `last_vacuum` really does mean the table has never been vacuumed, so "Never" is a
+ * measurement; on an engine with no vacuum at all the same word claims a history for an
+ * operation that does not exist. Only an engine that declares vacuum gets the word - the
+ * rest get the dash this table already uses for a cell it cannot fill (`indexSize`).
+ */
+function formatVacuumDate(date: Date | undefined, vacuumSupported: boolean): string {
+  if (!date) return vacuumSupported ? "Never" : "-";
+  return new Date(date).toLocaleDateString();
+}
+
+/**
+ * Three states, not two, which is why this is a function and not the nested ternary it
+ * replaces: the vacuum figure can be a real reading, a denial from an engine with no
+ * vacuum, or simply unknown because the engine published no table statistics at all. The
+ * unknown case must not borrow the green of a healthy reading.
+ */
+function vacuumIconClass(stateKnown: boolean, needingVacuum: number): string {
+  if (!stateKnown) return "text-muted-foreground";
+  if (needingVacuum > 0) return "text-yellow-500";
+  return "text-green-500";
+}
+
+/** The same three states, as the note under the figure. `null` is the unknown case. */
+function VacuumNote({
+  stateKnown,
+  needingVacuum,
+  unsupported,
+}: Readonly<{
+  stateKnown: boolean;
+  needingVacuum: number;
+  unsupported: boolean;
+}>) {
+  if (stateKnown) {
+    return <p className="text-xs sm:text-xs text-muted-foreground mt-1">{needingVacuum > 0 ? "Need" : "OK"}</p>;
+  }
+  if (unsupported) {
+    return <p className="text-xs sm:text-xs text-muted-foreground mt-1">Not supported</p>;
+  }
+  return null;
+}
+
+function bloatBadgeVariant(ratio: number): "destructive" | "outline" | "secondary" {
+  if (ratio > 20) return "destructive";
+  if (ratio > 10) return "outline";
+  return "secondary";
+}
+
 interface TablesTabProps {
   data: MonitoringData | null;
   loading: boolean;
@@ -55,23 +122,30 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
   const totalSize = tables.reduce((sum, t) => sum + t.totalSizeBytes, 0);
   const tablesNeedingVacuum = tables.filter((t) => (t.bloatRatio ?? 0) > 10).length;
 
-  const formatBytes = (bytes: number) => {
-    if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(2)} GB`;
-    if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(2)} MB`;
-    if (bytes >= 1024) return `${(bytes / 1024).toFixed(2)} KB`;
-    return `${bytes} B`;
-  };
+  // ABSENCE and ZERO are different inputs — the rule #448 settled for StorageTab, which
+  // this panel was still breaking one component over. A provider that publishes no table
+  // statistics answers `[]` (Apache Cassandra's `getTableStats` returns an empty array as
+  // a documented refusal; Apache Druid and Apache Trino do the same), and `BaseProvider`
+  // assigns that array whenever `includeTables` is set, so `tables` alone cannot tell a
+  // refusal from an empty database. The required `overview.tableCount` can: Cassandra
+  // populates it from `system_schema`, and it read 6 in the very frame these cards read 0
+  // (measured 2026-08-21 in Chrome against Apache Cassandra 5.0.9). Tables the engine
+  // knows about but reports no statistics for means the figures are not knowable, so the
+  // cards say so rather than publishing a confident zero the engine never measured. A
+  // provider that reports a genuine 0 keeps today's arithmetic and today's rendering.
+  const statsAbsent = tables.length === 0 && (data?.overview.tableCount ?? 0) > 0;
 
-  const formatNumber = (n: number) => {
-    if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
-    if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
-    return n.toString();
-  };
-
-  const formatDate = (date?: Date) => {
-    if (!date) return "Never";
-    return new Date(date).toLocaleDateString();
-  };
+  // Whether the engine HAS vacuum is a capability question, not a data question, so it is
+  // read from what the provider declares instead of inferred from the rows. Cassandra
+  // declares `supportsMaintenance: false, maintenanceOperations: []` and every maintenance
+  // action on it is a `nodetool` call this studio never issues — a green "OK" there is a
+  // clean bill of health for an operation that does not exist. Undefined capabilities mean
+  // the provider metadata has not resolved yet, which is not a denial: that path keeps the
+  // existing rendering, exactly as the maintenance-control gate (#272) treats it.
+  const vacuumUnsupported = capabilities?.supportsMaintenance === false;
+  const vacuumSupported =
+    capabilities?.supportsMaintenance === true && capabilities.maintenanceOperations.includes("vacuum");
+  const vacuumStateKnown = !vacuumUnsupported && !statsAbsent;
 
   const handleMaintenance = async (type: MaintenanceType, tableName: string) => {
     setActionLoading(`${type}-${tableName}`);
@@ -95,8 +169,10 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
             <Table2 strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{tables.length}</div>
-            <p className="text-xs sm:text-xs text-muted-foreground mt-1">{formatNumber(totalRows)} rows</p>
+            <div className="text-lg sm:text-2xl font-medium">{statsAbsent ? "N/A" : tables.length}</div>
+            {!statsAbsent && (
+              <p className="text-xs sm:text-xs text-muted-foreground mt-1">{formatNumber(totalRows)} rows</p>
+            )}
           </CardContent>
         </Card>
 
@@ -106,8 +182,8 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
             <Search strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{formatBytes(totalSize)}</div>
-            <p className="text-xs sm:text-xs text-muted-foreground mt-1">Total</p>
+            <div className="text-lg sm:text-2xl font-medium">{statsAbsent ? "N/A" : formatBytes(totalSize)}</div>
+            {!statsAbsent && <p className="text-xs sm:text-xs text-muted-foreground mt-1">Total</p>}
           </CardContent>
         </Card>
 
@@ -115,12 +191,16 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Vacuum</CardTitle>
             <AlertTriangle
-              className={`h-3 w-3 sm:h-4 sm:w-4 ${tablesNeedingVacuum > 0 ? "text-yellow-500" : "text-green-500"}`}
+              className={`h-3 w-3 sm:h-4 sm:w-4 ${vacuumIconClass(vacuumStateKnown, tablesNeedingVacuum)}`}
             />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{tablesNeedingVacuum}</div>
-            <p className="text-xs sm:text-xs text-muted-foreground mt-1">{tablesNeedingVacuum > 0 ? "Need" : "OK"}</p>
+            <div className="text-lg sm:text-2xl font-medium">{vacuumStateKnown ? tablesNeedingVacuum : "N/A"}</div>
+            <VacuumNote
+              stateKnown={vacuumStateKnown}
+              needingVacuum={tablesNeedingVacuum}
+              unsupported={vacuumUnsupported}
+            />
           </CardContent>
         </Card>
       </div>
@@ -145,7 +225,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
           {filteredTables.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Table2 strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-xs">No tables found.</p>
+              <p className="text-xs">{statsAbsent ? "No table statistics available." : "No tables found."}</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -185,21 +265,18 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
                         {table.indexSize || "-"}
                       </TableCell>
                       <TableCell className="text-right hidden sm:table-cell py-2">
-                        <Badge
-                          variant={
-                            (table.bloatRatio ?? 0) > 20
-                              ? "destructive"
-                              : (table.bloatRatio ?? 0) > 10
-                                ? "outline"
-                                : "secondary"
-                          }
-                          className="text-xs sm:text-xs"
-                        >
-                          {(table.bloatRatio ?? 0).toFixed(1)}%
-                        </Badge>
+                        {table.bloatRatio === undefined ? (
+                          // No bloat figure published: a "0.0%" badge in the healthy
+                          // variant would report a measurement the engine never made.
+                          <span className="text-xs text-muted-foreground">-</span>
+                        ) : (
+                          <Badge variant={bloatBadgeVariant(table.bloatRatio)} className="text-xs sm:text-xs">
+                            {table.bloatRatio.toFixed(1)}%
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground hidden lg:table-cell py-2">
-                        {formatDate(table.lastVacuum)}
+                        {formatVacuumDate(table.lastVacuum, vacuumSupported)}
                       </TableCell>
                       <TableCell className="text-right py-2">
                         {isAdmin && availableActions.length > 0 ? (

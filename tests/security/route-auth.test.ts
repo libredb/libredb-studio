@@ -276,3 +276,61 @@ describe("routes that reach a provider require a session", () => {
     });
   }
 });
+
+// Threat: a role denial that leaves no trace. guardRoute audits SESSION failures; the admin-only
+// routes check the ROLE themselves, afterwards, and used to answer 403 silently - so an
+// authenticated (or stolen) session probing for a role it does not hold was invisible in the one
+// channel this project treats as authoritative.
+//
+// This lives here rather than beside each route's own tests because the assertion reads the real
+// stdout line: several files under tests/api mock @/lib/audit process-wide, and nothing under
+// tests/security does.
+describe("an admin-only route's role denial is audited", () => {
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockClear();
+    mockGetSession.mockImplementation(async () => ({ role: "user", username: "bob" }));
+  });
+
+  function probe(): Request {
+    return new Request("http://localhost/api/admin/fleet-health", {
+      method: "POST",
+      body: JSON.stringify({ connections: [] }),
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  test("POST /api/admin/fleet-health emits permission_denied with reason insufficient_role", async () => {
+    const { POST } = await import("@/app/api/admin/fleet-health/route");
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const res = await POST(probe());
+
+      expect(res.status).toBe(403);
+      const lines = logSpy.mock.calls.map(
+        (call: unknown[]) => JSON.parse(call[0] as string) as Record<string, unknown>,
+      );
+      expect(lines).toHaveLength(1);
+      expect(lines[0].event).toBe("permission_denied");
+      expect(lines[0].reason).toBe("insufficient_role");
+      expect(lines[0].actor).toBe("bob");
+      expect(lines[0].route).toBe("POST /api/admin/fleet-health");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  test("still returns 403 when that audit emit throws", async () => {
+    const { POST } = await import("@/app/api/admin/fleet-health/route");
+    const logSpy = spyOn(console, "log").mockImplementation(() => {
+      throw new Error("audit sink unavailable");
+    });
+    try {
+      const res = await POST(probe());
+
+      expect(res.status).toBe(403);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});

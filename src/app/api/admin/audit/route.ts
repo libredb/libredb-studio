@@ -1,12 +1,15 @@
 import { getSession } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { getServerAuditBuffer, sanitizeAuditInput, type AuditEventType } from "@/lib/audit";
+import { auditRoleDenial } from "@/lib/api/require-session";
 import { createErrorResponse } from "@/lib/api/errors";
+import { logger } from "@/lib/logger";
 
 export async function GET(request: Request) {
   try {
     const session = await getSession();
     if (!session || session.role !== "admin") {
+      if (session) auditRoleDenial({ route: "GET /api/admin/audit", user: session.username, request });
       return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });
     }
 
@@ -26,6 +29,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session || session.role !== "admin") {
+    if (session) auditRoleDenial({ route: "POST /api/admin/audit", user: session.username, request });
     return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });
   }
 

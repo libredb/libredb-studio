@@ -105,9 +105,13 @@ describe("TablesTab", () => {
   });
 
   test("shows empty state when no tables match", () => {
+    // `tableCount: 0` keeps this the genuine-empty-database case: with a non-zero
+    // tableCount the same `tables: []` means the engine refused statistics, which the
+    // absence tests below cover instead.
+    const base = makeData();
     const { queryByText } = render(
       <TablesTab
-        data={{ ...makeData(), tables: [] } as MonitoringData}
+        data={{ ...base, overview: { ...base.overview, tableCount: 0 }, tables: [] } as MonitoringData}
         loading={false}
         onRunMaintenance={mock(async () => true)}
       />,
@@ -263,5 +267,124 @@ describe("TablesTab", () => {
     expect(container.querySelector('button[title="Vacuum"]')).toBeNull();
     expect(container.querySelector('button[title="Reindex"]')).toBeNull();
     expect(queryAllByText("-").length).toBeGreaterThan(0);
+  });
+  // #448 settled the rule this panel broke one component over: absence and zero are
+  // different inputs. Measured 2026-08-21 in Chrome against Apache Cassandra 5.0.9 —
+  // Monitoring -> Tables read "Tables 0 / 0 rows", "Size 0 B" and a green "Vacuum 0 / OK"
+  // while the Overview tab of the same session read 6 tables from `system_schema`.
+  test("renders absence rather than zeros when the engine publishes no table statistics", () => {
+    const base = makeData();
+    const { queryByText, queryAllByText } = render(
+      <TablesTab
+        data={{ ...base, overview: { ...base.overview, tableCount: 6 }, tables: [] } as MonitoringData}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={makeCapabilities()}
+      />,
+    );
+
+    // All three card figures decline to answer instead of reporting a measured zero.
+    expect(queryAllByText("N/A").length).toBe(3);
+    expect(queryByText("0 rows")).toBeNull();
+    expect(queryByText("0 B")).toBeNull();
+    expect(queryByText("Total")).toBeNull();
+    expect(queryByText("OK")).toBeNull();
+    // The engine does have vacuum here, so the card says nothing about it either way.
+    expect(queryByText("Not supported")).toBeNull();
+    // "No tables found." is a false claim when the overview counts six of them.
+    expect(queryByText("No table statistics available.")).not.toBeNull();
+    expect(queryByText("No tables found.")).toBeNull();
+  });
+
+  test("keeps the measured zero rendering exactly as it is today", () => {
+    // A provider answering a real 0 has measured one. This test is the guard that stops
+    // the two inputs being collapsed back together by a later simplification.
+    const base = makeData();
+    const { queryByText, queryAllByText } = render(
+      <TablesTab
+        data={{ ...base, overview: { ...base.overview, tableCount: 0 }, tables: [] } as MonitoringData}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={makeCapabilities()}
+      />,
+    );
+
+    expect(queryAllByText("0").length).toBe(2); // the Tables and the Vacuum card figures
+    expect(queryByText("0 rows")).not.toBeNull();
+    expect(queryByText("0 B")).not.toBeNull();
+    expect(queryByText("Total")).not.toBeNull();
+    expect(queryByText("OK")).not.toBeNull();
+    expect(queryAllByText("N/A").length).toBe(0);
+    expect(queryByText("No tables found.")).not.toBeNull();
+  });
+
+  test("reports no vacuum state at all for an engine whose provider declares no maintenance", () => {
+    // Apache Cassandra publishes `supportsMaintenance: false, maintenanceOperations: []`
+    // and every maintenance action on it is a `nodetool` call the studio never makes, so
+    // a green "OK" is a clean bill of health for an operation that does not exist.
+    const { queryByText } = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={makeCapabilities({ supportsMaintenance: false, maintenanceOperations: [] })}
+      />,
+    );
+
+    expect(queryByText("Not supported")).not.toBeNull();
+    expect(queryByText("OK")).toBeNull();
+    expect(queryByText("Need")).toBeNull();
+    // The statistics the engine did publish are untouched.
+    expect(queryByText("users")).not.toBeNull();
+    expect(queryByText("501.2K rows")).not.toBeNull(); // 1,200 + 500,000 across the two rows
+  });
+
+  test("renders no bloat badge and no vacuum history for per-row figures the engine never published", () => {
+    const base = makeData();
+    const data = {
+      ...base,
+      tables: [
+        {
+          schemaName: "ks",
+          tableName: "sensors",
+          rowCount: 12,
+          tableSize: "1 MiB",
+          tableSizeBytes: 1048576,
+          indexSize: "",
+          indexSizeBytes: 0,
+          totalSize: "1 MiB",
+          totalSizeBytes: 1048576,
+        },
+      ],
+    } as unknown as MonitoringData;
+
+    const { queryByText, container } = render(
+      <TablesTab
+        data={data}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={makeCapabilities({ supportsMaintenance: false, maintenanceOperations: [] })}
+      />,
+    );
+
+    expect(container.querySelectorAll("tbody tr").length).toBe(1);
+    expect(queryByText("sensors")).not.toBeNull();
+    expect(queryByText("0.0%")).toBeNull();
+    expect(queryByText("Never")).toBeNull();
+  });
+
+  test("still calls a missing vacuum history Never on an engine that has vacuum", () => {
+    // PostgreSQL's NULL `last_vacuum` genuinely means never vacuumed, and the `events`
+    // row carries no `lastVacuum`, so this rendering must survive the fix above.
+    const { queryByText } = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={makeCapabilities()}
+      />,
+    );
+
+    expect(queryByText("Never")).not.toBeNull();
   });
 });

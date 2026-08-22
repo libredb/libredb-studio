@@ -38,6 +38,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
     }
 
+    // No `withOneShotTunnel` here, unlike test-connection and schema-snapshot (#457):
+    // this route never calls connect(). Capabilities and labels are type-driven and read
+    // off the constructed provider without a socket, so there is nothing to tunnel.
     const provider = await createDatabaseProvider(connection);
 
     return NextResponse.json({

@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     if (authProvider === "oidc") {
       const origin = getPublicOrigin(request);
       const returnTo = `${origin}/login`;
-      const oidcLogoutUrl = buildLogoutUrl(returnTo);
+      const oidcLogoutUrl = await buildLogoutUrl(returnTo);
 
       if (oidcLogoutUrl) {
         return NextResponse.json({ success: true, redirectUrl: oidcLogoutUrl });

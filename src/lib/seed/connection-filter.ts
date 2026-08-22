@@ -35,6 +35,9 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
       ssl: conn.ssl as SSLConfig | undefined,
       serviceName: conn.serviceName,
       instanceName: conn.instanceName,
+      // Cassandra's required data centre. Dropping it here would list a seeded ring
+      // the product cannot open, because the driver refuses to connect without one.
+      localDataCenter: conn.localDataCenter,
       createdAt: new Date(),
       managed: conn.managed ?? true,
       roles: conn.roles,

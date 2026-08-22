@@ -43,6 +43,20 @@ describe("mergeDefaults", () => {
   });
 });
 
+describe("filterByRoles: engine-specific fields", () => {
+  it("carries a Cassandra connection's data centre through to the managed connection", () => {
+    // The one field `cassandra-driver` refuses to start without. Dropped here, a
+    // seeded ring would be a connection the product lists and cannot open - which is
+    // exactly what a hand-written mapping loses silently.
+    const [managed] = filterByRoles(
+      [{ ...baseConn, type: "cassandra", port: 9042, database: "probe", localDataCenter: "datacenter1" }],
+      ["user"],
+    );
+
+    expect(managed.localDataCenter).toBe("datacenter1");
+  });
+});
+
 describe("filterByRoles", () => {
   it("includes connections with wildcard role", () => {
     const result = filterByRoles([{ ...baseConn, roles: ["*"] }], ["user"]);

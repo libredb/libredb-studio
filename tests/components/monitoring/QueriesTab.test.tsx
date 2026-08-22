@@ -100,4 +100,40 @@ describe("QueriesTab", () => {
     const { queryAllByText } = render(<QueriesTab data={data} loading={false} />);
     expect(queryAllByText("2.5M").length).toBeGreaterThan(0);
   });
+
+  test("an engine that keeps no query log gets absence, not statistics it never gathered", () => {
+    // Measured 2026-08-21 in Chrome against Apache Cassandra 5.0.9: this tab read
+    // "Queries 0 / Avg Time 0.00ms / Slow 0" while the list below correctly said no
+    // statistics were available. Cassandra keeps no query log at all
+    // (cassandra/index.ts:573-575), and neither do Druid (index.ts:486-488) or SQLite
+    // (sqlite.ts:734-737) - they answer `[]` by design. An average over an empty set is
+    // not 0.00ms, and "Queries 0" claims a call total against the database rather than
+    // counting visible rows, so all three figures render as absence instead.
+    const { queryAllByText, queryByText } = render(
+      <QueriesTab data={{ ...makeData(), slowQueries: [] } as MonitoringData} loading={false} />,
+    );
+
+    expect(queryAllByText("0.00ms").length).toBe(0);
+    expect(queryAllByText("0").length).toBe(0);
+    expect(queryAllByText("N/A").length).toBe(3);
+    expect(queryByText("No query statistics available.")).not.toBeNull();
+  });
+
+  test("a measured zero still renders as a zero, because absence is the only new input", () => {
+    // The guard is on the presence of statistics, never on their value. A provider that
+    // reports a query which has run zero times, or whose recorded average is 0, HAS
+    // measured those figures, so the cards keep formatting them exactly as before -
+    // otherwise a future reader could collapse the two inputs back together.
+    const measuredZero = {
+      ...makeData(),
+      slowQueries: [{ queryId: "z1", query: "SELECT 1", calls: 0, totalTime: 0, avgTime: 0, rows: 0 }],
+    } as MonitoringData;
+
+    const { queryAllByText, queryByText } = render(<QueriesTab data={measuredZero} loading={false} />);
+
+    expect(queryAllByText("N/A").length).toBe(0);
+    expect(queryAllByText("0.00ms").length).toBe(3);
+    expect(queryAllByText("0").length).toBe(4);
+    expect(queryByText("No query statistics available.")).toBeNull();
+  });
 });

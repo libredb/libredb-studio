@@ -648,6 +648,40 @@ describe("useQueryExecution", () => {
     expect(multiCall).toBeDefined();
   });
 
+  // ── a non-SQL dialect never takes the statement splitter ──────────────────
+
+  test("executeQuery keeps a JSON-dialect buffer on /api/db/query, semicolons and all (#427)", async () => {
+    // Redis commands are not `;`-separated, so splitting one buffer into
+    // "statements" can only invent fragments. Measured in the browser before this
+    // gate existed: the generated Redis cheatsheet carried a `;` inside a `#`
+    // comment, `isMultiStatement` said 2, and /api/db/multi-query executed a
+    // comments-only fragment -> "No command to run (only comments or blank lines)"
+    // reported to the user as a successful empty result.
+    const fetchMock = mockGlobalFetch({
+      "/api/db/multi-query": { ok: true, json: mockQueryResult },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const params = createDefaultParams({
+      metadata: { ...mockMetadata, capabilities: { ...mockMetadata.capabilities, queryLanguage: "json" } },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("# 0 is the cursor; re-run with it\nSCAN 0 MATCH user:* COUNT 50");
+    });
+
+    const multiCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/multi-query"),
+    );
+    expect(multiCall).toBeUndefined();
+    const singleCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    expect(singleCall).toBeDefined();
+  });
+
   // ── executeQuery uses /api/db/transaction when transactionActive ───────────
 
   test("executeQuery uses /api/db/transaction when transactionActive", async () => {
@@ -1607,6 +1641,64 @@ describe("useQueryExecution", () => {
     expect(tabWithPlan?.explainPlan).toEqual({ format: "postgres-json", raw: { plan: "Seq Scan" } });
   });
 
+  // ── a background EXPLAIN that outlives BOTH runs (docs/BACKLOG.md U1) ──────
+  //
+  // Ownership cannot be read from the in-flight map: the run deletes its own entry
+  // when it settles, so an EXPLAIN resolving after its query finished AND after a
+  // later query finished finds nothing there. Reading an absent entry as "not
+  // superseded" is what let the first run's plan land on the second run's results.
+
+  test("a background EXPLAIN resolving after a later run has finished does not overwrite its plan", async () => {
+    let releaseFirstExplain: () => void = () => {};
+    const firstExplainGate = new Promise<void>((resolve) => {
+      releaseFirstExplain = resolve;
+    });
+    let explainCount = 0;
+
+    mockGlobalFetch({
+      "/api/db/query": async (req) => {
+        const body = (await req.json()) as { sql: string };
+        if (!body.sql.toUpperCase().startsWith("EXPLAIN")) {
+          return { ok: true, json: mockQueryResult };
+        }
+        explainCount += 1;
+        if (explainCount === 1) {
+          // The first run's plan is still in flight while the second run starts,
+          // runs, and finishes.
+          await firstExplainGate;
+          return { ok: true, json: { rows: [{ "QUERY PLAN": { plan: "stale" } }], fields: ["QUERY PLAN"] } };
+        }
+        return { ok: true, json: { rows: [{ "QUERY PLAN": { plan: "current" } }], fields: ["QUERY PLAN"] } };
+      },
+    });
+
+    const snapshots: QueryTab[][] = [];
+    const setTabsMock = mock((fn: unknown) => {
+      if (typeof fn === "function") {
+        snapshots.push(fn([createTab()]));
+      }
+    });
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams({ setTabs: setTabsMock })));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM orders");
+    });
+
+    act(() => releaseFirstExplain());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    const plans = snapshots
+      .map((snapshot) => snapshot[0].explainPlan as { raw?: { plan?: string } } | null | undefined)
+      .filter((plan): plan is { raw?: { plan?: string } } => Boolean(plan));
+    expect(plans.some((plan) => plan.raw?.plan === "current")).toBe(true);
+    expect(plans.some((plan) => plan.raw?.plan === "stale")).toBe(false);
+  });
+
   // ── setTabs updaters preserve non-target tabs ──────────────────────────
 
   test("QUERY_CANCELLED updater preserves non-target tabs", async () => {
@@ -2416,6 +2508,85 @@ describe("useQueryExecution", () => {
       });
 
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+  // ── A 429 names the wait (docs/BACKLOG.md H2) ──────────────────────────────
+
+  describe("rate-limited runs", () => {
+    test("a 429 with Retry-After tells the user how long to wait", async () => {
+      mockGlobalFetch({
+        "/api/db/query": {
+          status: 429,
+          headers: { "Retry-After": "42" },
+          json: { error: "Too many requests.", code: "RATE_LIMITED", statusCode: 429, retryable: true },
+        },
+      });
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT 1");
+      });
+
+      expect(mockToastError).toHaveBeenCalledWith("Query Error", {
+        description: "Too many requests. Try again in 42s.",
+      });
+    });
+
+    test("a 429 with no Retry-After keeps the server's own message", async () => {
+      // Guessing a number would be worse than saying nothing about the wait.
+      mockGlobalFetch({
+        "/api/db/query": {
+          status: 429,
+          json: { error: "Too many requests. Try again later.", code: "RATE_LIMITED", statusCode: 429 },
+        },
+      });
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT 1");
+      });
+
+      expect(mockToastError).toHaveBeenCalledWith("Query Error", {
+        description: "Too many requests. Try again later.",
+      });
+    });
+
+    test("an HTTP-date Retry-After is left alone rather than parsed into a number", async () => {
+      // RFC 9110 permits the date form; this hook only understands delta-seconds,
+      // and an unparseable header must not turn into an invented wait.
+      mockGlobalFetch({
+        "/api/db/query": {
+          status: 429,
+          headers: { "Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT" },
+          json: { error: "Too many requests. Try again later.", code: "RATE_LIMITED", statusCode: 429 },
+        },
+      });
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT 1");
+      });
+
+      expect(mockToastError).toHaveBeenCalledWith("Query Error", {
+        description: "Too many requests. Try again later.",
+      });
+    });
+
+    test("a non-429 response with a Retry-After header is not rephrased", async () => {
+      mockGlobalFetch({
+        "/api/db/query": {
+          status: 503,
+          headers: { "Retry-After": "5" },
+          json: { error: "Database is starting up" },
+        },
+      });
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT 1");
+      });
+
+      expect(mockToastError).toHaveBeenCalledWith("Query Error", { description: "Database is starting up" });
     });
   });
 });

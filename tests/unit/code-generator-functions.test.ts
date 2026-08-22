@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import {
   toPascalCase,
+  toIdentifier,
   toCamelCase,
   toSnakeCase,
   mapSqlTypeToTS,
@@ -266,4 +267,104 @@ describe("generateCode", () => {
     expect(code).toContain("export interface Empty");
     expect(code).toContain("{\n\n}");
   });
+});
+
+// ============================================================================
+// toIdentifier (#427)
+// ============================================================================
+
+describe("toIdentifier", () => {
+  test("redis key-prefix grouping becomes a legal identifier", () => expect(toIdentifier("user:*")).toBe("User"));
+  test("a second grouping keeps its singular-stripping behaviour", () =>
+    expect(toIdentifier("session:*")).toBe("Session"));
+  test("a bare key is unchanged", () => expect(toIdentifier("counter")).toBe("Counter"));
+  test("punctuation runs become word boundaries", () => expect(toIdentifier("a-b:*")).toBe("AB"));
+  test("a name with no alphanumerics falls back to Record", () => expect(toIdentifier(":*")).toBe("Record"));
+  test("an empty name falls back to Record", () => expect(toIdentifier("")).toBe("Record"));
+  test("an ordinary SQL table name is unaffected (regression)", () => expect(toIdentifier("users")).toBe("User"));
+  test("a leading digit is prefixed rather than left illegal", () => expect(toIdentifier("2fa:*")).toBe("T2fa"));
+
+  // Non-ASCII names were ALREADY legal identifiers in all six target languages,
+  // and an ASCII-only strip destroyed them: "musteri" lost its diacritics and
+  // two entirely non-Latin names collapsed onto the same fallback, so two tables
+  // generated two files declaring one type (#427).
+  test("a Turkish name keeps its letters", () => expect(toIdentifier("m\u00fc\u015fteri")).toBe("M\u00fc\u015fteri"));
+  test("an already-capitalised Turkish name is unchanged", () =>
+    expect(toIdentifier("\u00dcr\u00fcnler")).toBe("\u00dcr\u00fcnler"));
+  test("a CJK name is unchanged rather than replaced by the fallback", () =>
+    expect(toIdentifier("\u65e5\u672c\u8a9e")).toBe("\u65e5\u672c\u8a9e"));
+  test("two distinct non-ASCII names do not collide", () =>
+    expect(toIdentifier("\u65e5\u672c\u8a9e")).not.toBe(toIdentifier("\u00dcr\u00fcnler")));
+  test("a non-ASCII prefix group is still stripped of its glob", () =>
+    expect(toIdentifier("m\u00fc\u015fteri:*")).toBe("M\u00fc\u015fteri"));
+});
+
+describe("generateCode — non-identifier table names (#427)", () => {
+  const redisSchema: TableSchema = {
+    name: "user:*",
+    indexes: [],
+    columns: [
+      { name: "key", type: "string", nullable: false, isPrimary: true },
+      { name: "value", type: "string", nullable: true, isPrimary: false },
+    ],
+  };
+
+  test("TypeScript emits a legal interface name", () => {
+    const code = generateCode("typescript", redisSchema);
+    expect(code).toContain("export interface User {");
+    expect(code).not.toContain("User:*");
+  });
+
+  test("Zod emits a legal schema name", () => {
+    const code = generateCode("zod", redisSchema);
+    expect(code).toContain("export const UserSchema = z.object");
+    expect(code).not.toContain("User:*");
+  });
+
+  test("Prisma emits a legal model name but maps the raw key pattern", () => {
+    const code = generateCode("prisma", redisSchema);
+    expect(code).toContain("model User {");
+    expect(code).toContain('@@map("user:*")');
+  });
+
+  test("Go emits a legal struct name", () => {
+    const code = generateCode("go", redisSchema);
+    expect(code).toContain("type User struct");
+    expect(code).not.toContain("User:*");
+  });
+
+  test("Python emits a legal class name", () => {
+    const code = generateCode("python", redisSchema);
+    expect(code).toContain("class User:");
+    expect(code).not.toContain("User:*");
+  });
+
+  test("Java emits a legal class name", () => {
+    const code = generateCode("java", redisSchema);
+    expect(code).toContain("public class User {");
+    expect(code).not.toContain("User:*");
+  });
+
+  // Every target language accepts Unicode letters in an identifier, so a
+  // non-ASCII table name must survive intact in all six outputs (#427).
+  const unicodeSchema: TableSchema = {
+    name: "m\u00fc\u015fteri",
+    indexes: [],
+    columns: [{ name: "id", type: "INT", nullable: false, isPrimary: true }],
+  };
+
+  const unicodeExpectations: [Parameters<typeof generateCode>[0], string][] = [
+    ["typescript", "export interface M\u00fc\u015fteri {"],
+    ["zod", "export const M\u00fc\u015fteriSchema = z.object"],
+    ["prisma", "model M\u00fc\u015fteri {"],
+    ["go", "type M\u00fc\u015fteri struct"],
+    ["python", "class M\u00fc\u015fteri:"],
+    ["java", "public class M\u00fc\u015fteri {"],
+  ];
+
+  for (const [lang, expected] of unicodeExpectations) {
+    test(`${lang} keeps a non-ASCII table name intact`, () => {
+      expect(generateCode(lang, unicodeSchema)).toContain(expected);
+    });
+  }
 });

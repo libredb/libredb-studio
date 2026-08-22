@@ -1,9 +1,9 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis
+description: Web-based SQL IDE for cloud-native teams supporting fourteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra
 type: application
-version: 0.1.36
-appVersion: "0.11.0"
+version: 0.1.45
+appVersion: "0.13.1"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -20,6 +20,17 @@ keywords:
   - sqlite
   - oracle
   - mssql
+  - couchbase
+  - clickhouse
+  - druid
+  - elasticsearch
+  - opensearch
+  - trino
+  # Missing since Apache Cassandra shipped in 0.12.0 (#448). ArtifactHub search
+  # matches on keywords, so an engine absent here is an engine nobody finds - and
+  # #167 makes a keyword-only fix cost a chart version of its own, which is why it
+  # rides this release, where `version:` moves anyway.
+  - cassandra
   - web-ide
 maintainers:
   - name: cevheri
@@ -28,10 +39,14 @@ annotations:
   artifacthub.io/category: database
   artifacthub.io/license: MIT
   artifacthub.io/prerelease: "false"
-  artifacthub.io/containsSecurityUpdates: "true"
+  # False, and for this release it is simply true: 0.13.1 changes no dependency and
+  # no security behaviour. Its content is provider correctness on MongoDB and Redis.
+  # The app-level security fixes remain recorded on 0.1.37, the chart version that
+  # first shipped them; the adm-zip pin note belongs to 0.1.44 and is unchanged.
+  artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:0.11.0
+      image: ghcr.io/libredb/libredb-studio:0.13.1
       platforms:
         - linux/amd64
         - linux/arm64
@@ -43,11 +58,12 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "BREAKING for anyone who enabled a route without attaching it: an enabled route.<name> that sets no parentRefs now REFUSES TO RENDER instead of emitting an HTTPRoute attached to no Gateway. That object was accepted by the API server and routed nothing, so the install succeeded with the app unreachable. parentRefs cannot be defaulted - the Gateway to attach to is specific to each cluster's Gateway API install - so the chart names the route at fault and what to set"
-    - "route.labels and route.annotations now reach every enabled route. values.schema.json has documented them as applying to all route resources since the route template landed, but nothing rendered them and they were silently dropped. A per-route labels/annotations entry still wins on a key collision, and chart labels win over both rather than being emitted as a duplicate YAML key"
-    - "labels and annotations are consequently reserved key names directly under route: they are shared settings, not route names, and the template no longer mistakes them for routes"
-    - "route.<name>.kind is constrained to HTTPRoute by the schema. It was overridable while only an HTTPRoute-shaped body was ever rendered, so kind: GRPCRoute produced a manifest the API server rejects - GRPCRoute matches on method, not path"
-    - "A route block set to null no longer aborts the render of the whole chart"
+    - "MongoDB is usable again on a managed connection: the seeded copy reaches the browser without its connection string, which made the app read every MongoDB capability as absent and answer with SQL - Find Documents on a collection wrote SELECT * FROM <collection> LIMIT 50 against a document engine"
+    - "Profile Table works on MongoDB. It had asked the provider for an operation the provider has never supported, so every collection answered HTTP 400"
+    - "The MongoDB schema tree names the fields inside a subdocument - shipping.city, not just shipping - to a depth of three and up to 200 fields per collection, which is also what the query agent is grounded on"
+    - "The query agent drafts statements a user can actually run on MongoDB and Redis: the JSON command object rather than mongosh shell syntax, and one Redis command rather than a numbered list of two"
+    - "Chart 0.1.45 changes no template: its content is the appVersion move to 0.13.1. The IPv6 bind behaviour is 0.1.42's, unchanged"
+    - "Track app release 0.13.1 (appVersion bump; default image tag follows)"
 dependencies:
   - name: postgresql
     version: "16.x.x"

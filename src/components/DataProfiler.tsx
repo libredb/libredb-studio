@@ -5,6 +5,7 @@ import { Loader2, BarChart3, X, Hash, AlertCircle, Sparkles, Lock } from "lucide
 import { cn } from "@/lib/utils";
 import { TableSchema, DatabaseConnection } from "@/lib/types";
 import { detectSensitiveColumns, maskValue } from "@/lib/data-masking";
+import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 
 interface ColumnProfile {
   name: string;
@@ -91,7 +92,10 @@ export function DataProfiler({
         const response = await fetch("/api/db/profile", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ connection, tableName, columns }),
+          // The seed id for a managed connection: the browser's copy has had its
+          // password and connection string stripped, so the object cannot be
+          // resolved to a database from a cold provider cache.
+          body: JSON.stringify({ ...buildConnectionPayload(connection), tableName, columns }),
         });
 
         if (!response.ok) {

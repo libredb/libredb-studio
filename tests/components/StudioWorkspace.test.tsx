@@ -19,6 +19,9 @@ let capturedSchemaDiagramProps: Record<string, unknown> = {};
 let capturedDataProfilerProps: Record<string, unknown> = {};
 let capturedCodeGeneratorProps: Record<string, unknown> = {};
 let capturedTestDataGeneratorProps: Record<string, unknown> = {};
+// The arguments StudioWorkspace hands the shared tab manager. `metadata` used to
+// be hardcoded `null` here, which made the whole of #427 inert in this surface.
+let capturedTabManagerArgs: Record<string, unknown> = {};
 
 // ---- Trackable mock functions (shared across mocks + assertions) ----
 
@@ -88,6 +91,7 @@ mock.module("@/workspace/hooks/use-connection-adapter", () => ({
     connectionPulse: null,
     fetchSchema: mockFetchSchema,
     schemaContext: JSON.stringify([usersTable]),
+    metadata: null,
     ...connAdapterOverride,
   })),
 }));
@@ -115,24 +119,27 @@ mock.module("@/workspace/hooks/use-query-adapter", () => ({
 // ---- Mock shared studio hooks ----
 
 mock.module("@/hooks/use-tab-manager", () => ({
-  useTabManager: mock(() => ({
-    tabs: [baseTab],
-    activeTabId: "tab-1",
-    currentTab: baseTab,
-    setTabs: mockSetTabs,
-    setActiveTabId: mock(() => {}),
-    editingTabId: null,
-    editingTabName: "",
-    setEditingTabId: mock(() => {}),
-    setEditingTabName: mock(() => {}),
-    addTab: mock(() => {}),
-    closeTab: mock(() => {}),
-    updateCurrentTab: mockUpdateCurrentTab,
-    updateTabById: mockUpdateTabById,
-    handleTableClick: mockHandleTableClick,
-    handleGenerateSelect: mockHandleGenerateSelect,
-    ...tabMgrOverride,
-  })),
+  useTabManager: mock((args: Record<string, unknown>) => {
+    capturedTabManagerArgs = args;
+    return {
+      tabs: [baseTab],
+      activeTabId: "tab-1",
+      currentTab: baseTab,
+      setTabs: mockSetTabs,
+      setActiveTabId: mock(() => {}),
+      editingTabId: null,
+      editingTabName: "",
+      setEditingTabId: mock(() => {}),
+      setEditingTabName: mock(() => {}),
+      addTab: mock(() => {}),
+      closeTab: mock(() => {}),
+      updateCurrentTab: mockUpdateCurrentTab,
+      updateTabById: mockUpdateTabById,
+      handleTableClick: mockHandleTableClick,
+      handleGenerateSelect: mockHandleGenerateSelect,
+      ...tabMgrOverride,
+    };
+  }),
 }));
 
 mock.module("@/hooks/use-toast", () => ({
@@ -278,6 +285,8 @@ import { describe, test, expect, afterEach, beforeEach } from "bun:test";
 import { render, cleanup, act } from "@testing-library/react";
 import React from "react";
 import type { SavedQueryInput, StudioWorkspaceProps } from "@/workspace/types";
+import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import { generateTableQuery } from "@/lib/query-generators";
 
 const { StudioWorkspace } = await import("@/workspace/StudioWorkspace");
 
@@ -344,6 +353,7 @@ describe("StudioWorkspace", () => {
     capturedDataProfilerProps = {};
     capturedCodeGeneratorProps = {};
     capturedTestDataGeneratorProps = {};
+    capturedTabManagerArgs = {};
 
     // Reset overrides
     connAdapterOverride = {};
@@ -528,9 +538,11 @@ describe("StudioWorkspace", () => {
     expect(queryByTestId("savequerymodal")).toBeNull();
   });
 
-  test("without onSaveQuery prop the modal never renders and toolbar save is a noop", () => {
+  test("without onSaveQuery prop the toolbar gets no save handler at all", () => {
+    // Withheld, not `noop`: QueryToolbar renders no Save control without it, so
+    // an unwired host gets no dead button (U7).
     const { queryByTestId } = renderWorkspace({ onSaveQuery: undefined });
-    act(() => (capturedQueryToolbarProps.onSaveQuery as () => void)());
+    expect(capturedQueryToolbarProps.onSaveQuery).toBeUndefined();
     expect(queryByTestId("savequerymodal")).toBeNull();
   });
 
@@ -550,12 +562,28 @@ describe("StudioWorkspace", () => {
     renderWorkspace();
     act(() => (capturedBottomPanelProps.onExportResults as (f: string) => void)("csv"));
     expect(mockCreateObjectURL).toHaveBeenCalledTimes(1);
-    expect(mockRevokeObjectURL).toHaveBeenCalledTimes(1);
     const blob = mockCreateObjectURL.mock.calls[0][0] as Blob;
-    expect(blob.type).toBe("text/csv");
+    expect(blob.type).toBe("text/csv;charset=utf-8");
     const text = await blob.text();
     expect(text).toContain("id,name,ratio,active,created,deleted");
-    expect(text).toContain('"Alice"');
+    // A value is quoted only where RFC 4180 requires it, and NULL is an empty
+    // field rather than the four letters of the word.
+    expect(text).toContain("1,Alice,0.5,true,");
+    expect(text.split("\n")[1].endsWith(",")).toBe(true);
+  });
+
+  // The blob URL outlives the task that started the download: revoking it in the
+  // same task can pull the data out from under a read that has not begun.
+  test("exportResults does not revoke the blob URL before the download is handed off", async () => {
+    withExportResult();
+    renderWorkspace();
+    act(() => (capturedBottomPanelProps.onExportResults as (f: string) => void)("csv"));
+
+    expect(mockRevokeObjectURL).not.toHaveBeenCalled();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(mockRevokeObjectURL).toHaveBeenCalled();
   });
 
   test("exportResults json creates an application/json blob", async () => {
@@ -603,12 +631,14 @@ describe("StudioWorkspace", () => {
     act(() => (capturedBottomPanelProps.onExportResults as (f: string) => void)("sql-insert"));
 
     const blob = mockCreateObjectURL.mock.calls[0][0] as Blob;
+    // The column names are quoted the way the connected dialect spells an
+    // identifier, so an aliased column cannot end the list it sits in either.
     expect(await blob.text()).toBe(
-      "INSERT INTO users (id, path) VALUES (1, 'C:\\\\Users\\\\''); DROP TABLE users; --');",
+      "INSERT INTO users (`id`, `path`) VALUES (1, 'C:\\\\Users\\\\''); DROP TABLE users; --');",
     );
   });
 
-  test("exportResults sql-ddl infers column types from the first row", async () => {
+  test("exportResults sql-ddl infers column types from the first row that carries a value", async () => {
     withExportResult();
     renderWorkspace();
     act(() => (capturedBottomPanelProps.onExportResults as (f: string) => void)("sql-ddl"));
@@ -616,11 +646,16 @@ describe("StudioWorkspace", () => {
     expect(blob.type).toBe("text/sql");
     const text = await blob.text();
     expect(text).toContain("CREATE TABLE users");
-    expect(text).toContain("id INTEGER");
-    expect(text).toContain("ratio NUMERIC");
-    expect(text).toContain("active BOOLEAN");
-    expect(text).toContain("created TIMESTAMP");
-    expect(text).toContain("name TEXT");
+    expect(text).toContain('"id" BIGINT');
+    // A JS non-integer is a double, and `NUMERIC` without a scale truncates it on
+    // MySQL and SQL Server — so the inferred type is spelled per dialect now.
+    expect(text).toContain('"ratio" DOUBLE PRECISION');
+    expect(text).toContain('"active" BOOLEAN');
+    expect(text).toContain('"created" TIMESTAMP');
+    expect(text).toContain('"name" TEXT');
+    // `deleted` is null in row 1 and a string in row 2: the type comes from the
+    // row that actually carries a value, not from row 0.
+    expect(text).toContain('"deleted" TEXT');
   });
 
   test("exportResults does nothing without a result", () => {
@@ -651,10 +686,12 @@ describe("StudioWorkspace", () => {
     act(() => (capturedSidebarProps.onOpenMaintenance as () => void)());
   });
 
-  test("onShowDiagram opens the schema diagram and onClose closes it", () => {
+  // Awaited because the diagram is code-split: opening it resolves a dynamic import
+  // before the component can mount.
+  test("onShowDiagram opens the schema diagram and onClose closes it", async () => {
     const { queryByTestId } = renderWorkspace();
     expect(queryByTestId("schemadiagram")).toBeNull();
-    act(() => (capturedSidebarProps.onShowDiagram as () => void)());
+    await act(async () => (capturedSidebarProps.onShowDiagram as () => void)());
     expect(queryByTestId("schemadiagram")).not.toBeNull();
     act(() => (capturedSchemaDiagramProps.onClose as () => void)());
     expect(queryByTestId("schemadiagram")).toBeNull();
@@ -698,10 +735,11 @@ describe("StudioWorkspace", () => {
     expect(capturedSidebarProps.onProfileTable).toBeUndefined();
     expect(capturedSidebarProps.onGenerateCode).toBeUndefined();
     expect(capturedSidebarProps.onGenerateTestData).toBeUndefined();
-    // Import and save become noops
-    act(() => (capturedQueryToolbarProps.onImport as () => void)());
+    // Import and save are withheld entirely, so the toolbar renders neither the
+    // IMPORT (#427) nor the Save (U7) button.
+    expect(capturedQueryToolbarProps.onImport).toBeUndefined();
+    expect(capturedQueryToolbarProps.onSaveQuery).toBeUndefined();
     expect(queryByTestId("dataimportmodal")).toBeNull();
-    act(() => (capturedQueryToolbarProps.onSaveQuery as () => void)());
     expect(queryByTestId("savequerymodal")).toBeNull();
   });
 
@@ -767,12 +805,13 @@ describe("StudioWorkspace", () => {
     act(() => (capturedQueryToolbarProps.onExecuteQuery as () => void)());
     expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
     expect(capturedQueryToolbarProps.onCancelQuery).toBe(mockCancelQuery);
-    // Transaction and playground callbacks are noops in embedded mode
-    act(() => (capturedQueryToolbarProps.onBeginTransaction as () => void)());
-    act(() => (capturedQueryToolbarProps.onCommitTransaction as () => void)());
-    act(() => (capturedQueryToolbarProps.onRollbackTransaction as () => void)());
-    act(() => (capturedQueryToolbarProps.onTogglePlayground as () => void)());
-    act(() => (capturedQueryToolbarProps.onToggleEditing as () => void)());
+    // Transaction, playground and editing are withheld, not noops, in embedded
+    // mode — see "withholds every control the embedded shell cannot serve" (#427).
+    expect(capturedQueryToolbarProps.onBeginTransaction).toBeUndefined();
+    expect(capturedQueryToolbarProps.onCommitTransaction).toBeUndefined();
+    expect(capturedQueryToolbarProps.onRollbackTransaction).toBeUndefined();
+    expect(capturedQueryToolbarProps.onTogglePlayground).toBeUndefined();
+    expect(capturedQueryToolbarProps.onToggleEditing).toBeUndefined();
   });
 
   test("toolbar onImport opens the import modal which delegates and closes", () => {
@@ -811,6 +850,90 @@ describe("StudioWorkspace", () => {
     tabMgrOverride = { currentTab: { ...baseTab, type: "mongodb" } };
     renderWorkspace();
     expect(capturedQueryEditorProps.language).toBe("json");
+  });
+
+  test("editor language is redis for redis tabs (#427)", () => {
+    tabMgrOverride = { currentTab: { ...baseTab, type: "redis" } };
+    renderWorkspace();
+    expect(capturedQueryEditorProps.language).toBe("redis");
+  });
+
+  // =========================================================================
+  // Provider metadata wiring (#427)
+  // =========================================================================
+  //
+  // This shell hardcoded `metadata: null` into the tab manager and `metadata={null}`
+  // into every child that reads it, so a Redis connection here still generated
+  // `SELECT * FROM user:* LIMIT 50;` and still offered per-row actions the provider
+  // answers 400 to — the whole of #427 was inert in the published surface.
+  describe("provider metadata wiring (#427)", () => {
+    const redisMetadata = {
+      capabilities: {
+        queryLanguage: "json",
+        queryDialect: "redis",
+        tablesAreDerivedGroupings: true,
+        supportsMaintenance: true,
+        maintenanceOperations: ["analyze"],
+      },
+      labels: { selectAction: "Scan Keys" },
+    } as unknown as ProviderMetadata;
+
+    test("hands the connection adapter's metadata to the tab manager and every child that reads it", () => {
+      connAdapterOverride = { activeConnection: { ...dbConn, type: "redis" as const }, metadata: redisMetadata };
+      renderWorkspace();
+
+      expect(capturedTabManagerArgs.metadata).toBe(redisMetadata);
+      expect(capturedSidebarProps.metadata).toBe(redisMetadata);
+      expect(capturedQueryToolbarProps.metadata).toBe(redisMetadata);
+      expect(capturedBottomPanelProps.metadata).toBe(redisMetadata);
+      expect(capturedQueryEditorProps.capabilities).toBe(redisMetadata.capabilities);
+    });
+
+    test("a redis connection here generates a redis command, not SQL", () => {
+      connAdapterOverride = { activeConnection: { ...dbConn, type: "redis" as const }, metadata: redisMetadata };
+      renderWorkspace();
+
+      // The generator the tab manager runs, fed the metadata this shell actually
+      // passed it: with `null` it fell through to `SELECT * FROM user:* LIMIT 50;`.
+      const capabilities = (capturedTabManagerArgs.metadata as ProviderMetadata).capabilities;
+      const query = generateTableQuery("user:*", capabilities, []);
+      expect(query.startsWith("SCAN ")).toBe(true);
+      expect(query).not.toContain("SELECT");
+    });
+
+    test("stays null when the host declares no capabilities", () => {
+      renderWorkspace();
+      expect(capturedTabManagerArgs.metadata).toBeNull();
+      expect(capturedSidebarProps.metadata).toBeNull();
+    });
+
+    // Passing real metadata un-hides QueryToolbar's `queryLanguage === "sql"`
+    // group, which this shell serves none of: `transactionActive` and
+    // `editingEnabled` are hardcoded false here and nothing can change them, so a
+    // `noop` callback is a button that silently does nothing. Withholding the
+    // callback is how the toolbar is told not to render the control (#269, #427).
+    test("withholds every control the embedded shell cannot serve", () => {
+      const sqlMetadata = {
+        capabilities: { queryLanguage: "sql", supportsMaintenance: false, maintenanceOperations: [] },
+      } as unknown as ProviderMetadata;
+      connAdapterOverride = { metadata: sqlMetadata };
+      renderWorkspace();
+
+      expect(capturedQueryToolbarProps.metadata).toBe(sqlMetadata);
+      expect(capturedQueryToolbarProps.onBeginTransaction).toBeUndefined();
+      expect(capturedQueryToolbarProps.onCommitTransaction).toBeUndefined();
+      expect(capturedQueryToolbarProps.onRollbackTransaction).toBeUndefined();
+      expect(capturedQueryToolbarProps.onTogglePlayground).toBeUndefined();
+      expect(capturedQueryToolbarProps.onToggleEditing).toBeUndefined();
+      // The controls it does serve stay wired.
+      expect(typeof capturedQueryToolbarProps.onExecuteQuery).toBe("function");
+      expect(typeof capturedQueryToolbarProps.onImport).toBe("function");
+    });
+
+    test("withholds onImport too when the host disables the data-import feature", () => {
+      renderWorkspace({ features: ALL_FEATURES_OFF });
+      expect(capturedQueryToolbarProps.onImport).toBeUndefined();
+    });
   });
 
   // =========================================================================

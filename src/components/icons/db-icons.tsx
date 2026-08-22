@@ -216,6 +216,105 @@ export const DruidIcon: React.FC<IconProps> = ({ className, ...props }) => (
   </svg>
 );
 
+/**
+ * Trino's rabbit, reduced to a head and two ears.
+ *
+ * The brand mark is a full rabbit in three-quarter view with a shaded body; at the
+ * 14px (`w-3.5`) size the sidebar renders a DB icon at, a body reads as a smudge under
+ * the ears, so only the head survives - the two long upright ears are what makes it
+ * identifiable, and nothing else in this set has a pair of vertical lobes.
+ *
+ * Drawn as three closed outlines (two ears, one head) rather than one silhouette, for
+ * the reason `DruidIcon` records: a single path joining the ears to the head loses the
+ * notch between them at icon size, and the notch is the whole read.
+ */
+export const TrinoIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M8.5 11.5C7.2 9.6 6.5 7.2 6.8 4.8c.1-.8.9-1.2 1.5-.7 1.8 1.5 3 3.6 3.4 5.9" />
+    <path d="M15.5 11.5c1.3-1.9 2-4.3 1.7-6.7-.1-.8-.9-1.2-1.5-.7-1.8 1.5-3 3.6-3.4 5.9" />
+    <path d="M12 10.5c3 0 5.5 2.4 5.5 5.3S15 21 12 21s-5.5-2.3-5.5-5.2S9 10.5 12 10.5Z" />
+    <circle cx="12" cy="16.8" r="1" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+/**
+ * Elastic's banded-disc mark, reduced to its seams.
+ *
+ * Read off the official logo's own geometry (`Elasticsearch_logo.svg`, the five
+ * coloured mark paths): a disc cut into three horizontal bands with a gap between
+ * them, whose MIDDLE band ends in a rounded lobe that protrudes past the disc on the
+ * right (the `#00a9e5` path, which reaches x=153 where the disc's own right edge is
+ * at 166 and whose left neighbour `#353535` is the flat band across the centre).
+ * Those three bands and the lobe are the mark; the colours that distinguish them in
+ * the brand version cannot survive a `currentColor` icon.
+ *
+ * Drawn as an outline plus two seam lines rather than three closed segments, for the
+ * reason `DruidIcon` records: at the 14px (`w-3.5`) size the sidebar renders a DB
+ * icon at, six stacked horizontal strokes collapse into a solid blob, while a disc
+ * with two seams and a lobe still reads (rasterized and inspected at 16px and 140px
+ * before it was committed).
+ */
+export const ElasticsearchIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <circle cx="11" cy="12" r="8.5" />
+    <path d="M3.1 9.2h16.4" />
+    <path d="M3.1 14.8h16.4" />
+    <path d="M19.5 9.2a2.8 2.8 0 0 1 0 5.6" />
+  </svg>
+);
+
+/**
+ * The OpenSearch mark: two interlocking hooks forming an S, inside an open arc.
+ *
+ * Read off the official mark (`opensearch.org/assets/brand/SVG/Mark/opensearch_mark_default.svg`),
+ * which is exactly three shapes in a 64-unit box: a quarter-circle arc of radius 36
+ * about (25.8, 28.8) sweeping from 3 o'clock to 6 o'clock (`#005EB8`), and two
+ * mirrored crescents (`#003B5C` upper, `#005EB8` lower) that interlock into an S.
+ * The brand guide describes the mark as built from the negative space of the "O" and
+ * the "S", so the S and the open arc are the two things that must survive: this is
+ * three strokes at the scaled positions of those three shapes (64 -> 22 units, arc
+ * radius 12.4, hook radius 5.5).
+ *
+ * Deliberately not a magnifying glass. Nothing in the mark is one, and the shape is
+ * also what tells this icon apart from `ElasticsearchIcon` at 14px, where the
+ * Elastic disc reads as a banded circle and this reads as an S in an arc (both were
+ * rasterized and inspected at that size).
+ */
+export const OpenSearchIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M7.2 6.2A5.5 5.5 0 1 1 15.8 11.7" />
+    <path d="M12.6 13.8A5.5 5.5 0 1 1 4 8.3" />
+    <path d="M22.3 9.9A12.4 12.4 0 0 1 9.9 22.3" />
+  </svg>
+);
+
 /** LibreDB database cylinder with L marker */
 export const LibreDBIcon: React.FC<IconProps> = ({ className, ...props }) => (
   <svg
@@ -232,5 +331,31 @@ export const LibreDBIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <path d="M5 5v14c0 1.66 3.13 3 7 3s7-1.34 7-3V5" />
     <path d="M5 12c0 1.66 3.13 3 7 3s7-1.34 7-3" />
     <path d="M10 18.5h4" />
+  </svg>
+);
+
+/**
+ * Cassandra's eye, reduced to its outline.
+ *
+ * The project's own mark is an almond-shaped eye with a ringed pupil, and that is
+ * what this draws: two arcs meeting at the corners, a circle for the iris and a
+ * filled centre. No text, and no attempt at the gradient - a single-stroke mark at
+ * weight 1.5 is what every other icon here is, and the eye reads at 14px.
+ */
+export const CassandraIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M2.5 12c2.6-3.7 5.8-5.5 9.5-5.5s6.9 1.8 9.5 5.5" />
+    <path d="M2.5 12c2.6 3.7 5.8 5.5 9.5 5.5s6.9-1.8 9.5-5.5" />
+    <circle cx="12" cy="12" r="3.4" />
+    <circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none" />
   </svg>
 );

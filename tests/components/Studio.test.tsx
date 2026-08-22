@@ -709,6 +709,15 @@ describe("Studio", () => {
     expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations");
   });
 
+  // The Explorer's row items call this with the row's name; it rides the admin
+  // route's query string so the Operations tab lands on that row (#U5).
+  test("openMaintenance carries the named row to the operations tab", () => {
+    render(<Studio />);
+    const fn = capturedSidebarProps.onOpenMaintenance as (tab?: string, table?: string) => void;
+    act(() => fn("tables", "order items"));
+    expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?table=order%20items");
+  });
+
   test("openMaintenance navigates to monitoring when not admin", () => {
     authOverride = { isAdmin: false };
     render(<Studio />);
@@ -816,9 +825,33 @@ describe("Studio", () => {
     const exportFn = capturedBottomPanelProps.onExportResults as (format: string) => void;
     act(() => exportFn("csv"));
     expect(mockCreateObjectURL).toHaveBeenCalledTimes(1);
-    expect(mockRevokeObjectURL).toHaveBeenCalledTimes(1);
     const blob = (mockCreateObjectURL.mock.calls[0] as unknown[])[0] as Blob;
-    expect(blob.type).toBe("text/csv");
+    // The charset is stated on the type as well as written as a BOM in the bytes.
+    expect(blob.type).toBe("text/csv;charset=utf-8");
+  });
+
+  // The blob URL outlives the task that started the download: revoking it in the
+  // same task can pull the data out from under a read that has not begun.
+  test("exportResults revokes the blob URL only after the download is handed off", async () => {
+    tabMgrOverride = {
+      currentTab: {
+        id: "tab-1",
+        name: "Users",
+        query: "SELECT 1",
+        result: testResult,
+        isExecuting: false,
+        type: "sql",
+      },
+    };
+    render(<Studio />);
+    const exportFn = capturedBottomPanelProps.onExportResults as (format: string) => void;
+    act(() => exportFn("csv"));
+
+    expect(mockRevokeObjectURL).not.toHaveBeenCalled();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(mockRevokeObjectURL).toHaveBeenCalled();
   });
 
   test("exportResults JSON creates application/json blob", () => {
@@ -885,9 +918,33 @@ describe("Studio", () => {
     act(() => exportFn("sql-insert"));
 
     const blob = (mockCreateObjectURL.mock.calls[0] as unknown[])[0] as Blob;
+    // The column names are quoted the way the connected dialect spells an
+    // identifier, so an aliased column cannot end the list it sits in either.
     expect(await blob.text()).toBe(
-      "INSERT INTO Users (id, path) VALUES (1, 'C:\\\\Users\\\\''); DROP TABLE users; --');",
+      "INSERT INTO Users (`id`, `path`) VALUES (1, 'C:\\\\Users\\\\''); DROP TABLE users; --');",
     );
+  });
+
+  // The table name is GUESSED from the tab title, so it is never quoted — quoting
+  // would pin a case the database may not use. What a guess must not do is carry
+  // statement text, so a title that is not an identifier is refused outright.
+  test("exportResults sql-insert refuses a tab name that is not an identifier", async () => {
+    tabMgrOverride = {
+      currentTab: {
+        id: "tab-1",
+        name: "users; DROP TABLE secrets",
+        query: "SELECT 1",
+        result: { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 1 },
+        isExecuting: false,
+        type: "sql",
+      },
+    };
+    render(<Studio />);
+    const exportFn = capturedBottomPanelProps.onExportResults as (format: string) => void;
+    act(() => exportFn("sql-insert"));
+
+    const blob = (mockCreateObjectURL.mock.calls[0] as unknown[])[0] as Blob;
+    expect(await blob.text()).toBe('INSERT INTO table_name ("id") VALUES (1);');
   });
 
   test("exportResults sql-ddl creates text/sql blob", () => {
@@ -940,11 +997,13 @@ describe("Studio", () => {
     expect(mockRouterPush).toHaveBeenCalledWith("/monitoring");
   });
 
-  test("CommandPalette onShowDiagram opens diagram", () => {
+  // Awaited because the diagram is code-split: opening it resolves a dynamic import
+  // before the component can mount.
+  test("CommandPalette onShowDiagram opens diagram", async () => {
     const { queryByTestId } = render(<Studio />);
     expect(queryByTestId("schemadiagram")).toBeNull();
     const fn = capturedCommandPaletteProps.onShowDiagram as () => void;
-    act(() => fn());
+    await act(async () => fn());
     expect(queryByTestId("schemadiagram")).not.toBeNull();
   });
 
@@ -1107,11 +1166,11 @@ describe("Studio", () => {
     expect(queryByTestId("createtablemodal")).not.toBeNull();
   });
 
-  test("Sidebar onShowDiagram opens schema diagram", () => {
+  test("Sidebar onShowDiagram opens schema diagram", async () => {
     const { queryByTestId } = render(<Studio />);
     expect(queryByTestId("schemadiagram")).toBeNull();
     const fn = capturedSidebarProps.onShowDiagram as () => void;
-    act(() => fn());
+    await act(async () => fn());
     expect(queryByTestId("schemadiagram")).not.toBeNull();
   });
 
@@ -1212,6 +1271,19 @@ describe("Studio", () => {
     expect(result[0].type).toBe("sql");
   });
 
+  test("connection-change effect retypes tabs to redis when the provider declares that dialect (#427)", () => {
+    // Redis declares queryLanguage "json"; before #427 the json rung matched
+    // first and the redis arm below it was unreachable dead code.
+    connMgrOverride = { activeConnection: pgConn };
+    capabilitiesOverride = { queryLanguage: "json", queryDialect: "redis" };
+    render(<Studio />);
+    const updater = (mockSetTabs.mock.calls[0] as unknown[])[0] as (prev: unknown[]) => Array<{ type: string }>;
+    const result = updater([
+      { id: "tab-1", name: "Query 1", query: "GET k", result: null, isExecuting: false, type: "sql" },
+    ]);
+    expect(result[0].type).toBe("redis");
+  });
+
   // --- exportResults sql-ddl type mapping ---
   test("exportResults sql-ddl maps boolean and date sample values", async () => {
     tabMgrOverride = {
@@ -1235,8 +1307,8 @@ describe("Studio", () => {
     expect(mockCreateObjectURL).toHaveBeenCalledTimes(1);
     const blob = (mockCreateObjectURL.mock.calls[0] as unknown[])[0] as Blob;
     const content = await blob.text();
-    expect(content).toContain("active BOOLEAN");
-    expect(content).toContain("created TIMESTAMP");
+    expect(content).toContain('"active" BOOLEAN');
+    expect(content).toContain('"created" TIMESTAMP');
   });
 
   // --- Mobile: database tab ---

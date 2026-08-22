@@ -1,35 +1,37 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import {
-  Bot,
-  ChevronDown,
-  ChevronRight,
-  Loader2,
-  PencilLine,
-  Play,
-  Square,
-  TableProperties,
-  TriangleAlert,
-} from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, Loader2, PencilLine, Play, Square, TriangleAlert } from "lucide-react";
 import { CopyButton } from "@/components/copy-button";
 import { renderProse } from "@/components/rich-text";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
 import { describeAgentCapability } from "@/lib/agent/capability-labels";
+/*
+  The list the SERVER gates a profiled acquisition on, read here for one presentation:
+  an engine outside it cannot execute an agent run's statement, and saying so before
+  Start is pressed is cheaper for the user than a run that ends `engine-unsupported`.
+  It gates nothing — the refusal is the factory's, and this is a notice about it.
+*/
+import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import {
-  AGENT_HANDOVER_BUDGET,
   AGENT_MAX_OBJECTIVE_LENGTH,
   AGENT_REPORT_RESERVE_MS,
   AGENT_REPORT_RESERVE_TURNS,
   AGENT_WORKFLOW_BUDGETS,
 } from "@/lib/agent/execution-policy";
+/*
+  The rail's single reading of what the selected mode executes. It is the safety strip's
+  whole content, and the engine notice below is the same four levels read once more — so
+  neither can state a bound the other contradicts. The consent sentence lives there too,
+  beside the posture that quotes it.
+*/
+import { agentPosture } from "@/lib/agent/posture";
 import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
   DEFAULT_AGENT_WORKFLOW_TYPE,
   type AgentChartSpec,
   type AgentRunMode,
-  type AgentRunStatus,
   type AgentRunWorkflowReading,
   type AgentRunWorkflowSource,
   type AgentRunWorkflowType,
@@ -40,11 +42,23 @@ import {
   bundle. The same rule `use-agent-run.ts` follows for the capability probe.
 */
 import type { AgentWorkflowClassification } from "@/lib/agent/workflow-classifier";
+import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { AnswerCard, answerCardState } from "./AnswerCard";
+import { ConsentCard } from "./ConsentCard";
+/*
+  The pieces the answer card renders too, in the module they moved to when it was split
+  out of this file: this file imports that card, so anything it shares with it cannot
+  live here. Same components, same comments, same accessible names — see
+  `rail-parts.tsx` for why a second copy was not the answer.
+*/
+import { guardReading, guardSummaryLine, HydrationControls, InfoNote, LIVE_STATUSES, QuotedBlock } from "./rail-parts";
+import { SafetyStrip } from "./SafetyStrip";
 import {
   type AgentBudgetGauge,
   type AgentPlanStatementView,
+  type AgentTimelineItem,
   type AgentTimelineTone,
   describeFailureReason,
 } from "./timeline";
@@ -267,26 +281,6 @@ const isWorkflowType = (value: unknown): value is AgentRunWorkflowType =>
   typeof value === "string" && Object.hasOwn(WORKFLOW_LABELS, value);
 
 /**
- * The terms of the auto-execute consent, as ONE sentence-run rather than as JSX prose:
- * the figures are interpolated and a formatter is free to reflow JSX text around them,
- * which is how "500-row limit" becomes "500 -row limit" without anyone touching the
- * copy. This is the sentence a user consents to, so it is written and rendered as
- * written.
- *
- * It takes the workflow rather than reading a selection, because there is no longer a
- * selection to read at the moment it is shown: the consent step is reached with a
- * workflow already decided — by the classifier or by the user under Advanced — and the
- * bounds it names are that workflow's own.
- */
-function autoExecuteTerms(workflowType: AgentRunWorkflowType): string {
-  const budget = AGENT_WORKFLOW_BUDGETS[workflowType];
-  return `The run always produces its answer on its own read-only path, bounded to ${budget.policy.budgets.maxResultRows} rows and ${budget.policy.budgets.statementTimeoutMs / 1000} seconds. Tick this and it will also put that statement in your editor and run it there — on the connection the run was opened on, at the editor's ${AGENT_HANDOVER_BUDGET.maxResultRows}-row limit and with no time limit. It is the same database-enforced read-only session either way, so writes and DDL are refused by the engine rather than by reading the statement. Statements whose plan reads as expensive, or which the run measured as slow, are put in the editor without being run.`;
-}
-
-/** A run that is over cannot be asked for anything, so nothing is offered for it. */
-const LIVE_STATUSES: ReadonlySet<AgentRunStatus> = new Set<AgentRunStatus>(["queued", "running"]);
-
-/**
  * How near the bottom still counts as the bottom, for the timeline that follows its
  * newest entry.
  *
@@ -345,108 +339,6 @@ function refusalActionText(planModeOffered: boolean, streamingDisproved: boolean
 }
 
 /**
- * Verbatim content, and the one thing every reader wants to do with it (#389).
- *
- * The block itself is unchanged and deliberately so: quoting is a security property
- * here, not a style — a drafted statement, an engine's own message and the user's
- * objective are shown exactly as they arrived, so a reader can see where the
- * application stopped speaking. What was missing was any way to get the text OUT.
- * Selecting it by hand is what a user was left with, inside a narrow panel that
- * scrolls in both directions, and a statement wrapped across lines does not survive
- * the drag.
- *
- * Used at every verbatim block in this rail rather than at a chosen few, because
- * "which of these did the product decide I would want" is not a question a user
- * should have to answer.
- */
-function QuotedBlock({
-  text,
-  testId,
-  className,
-  /** A report's claim is the thing the report is FOR, and reads a shade brighter. */
-  tone = "quiet",
-}: {
-  readonly text: string;
-  readonly testId: string;
-  readonly className?: string;
-  readonly tone?: "quiet" | "loud";
-}) {
-  return (
-    <div className={className}>
-      <pre
-        className={cn(
-          "overflow-x-auto rounded bg-sunken p-1.5 font-mono text-[0.625rem] whitespace-pre-wrap",
-          tone === "loud" ? "text-fg-secondary" : "text-fg-tertiary",
-        )}
-      >
-        {text}
-      </pre>
-      <div className="mt-0.5 flex items-center gap-1">
-        <CopyButton text={text} testId={testId} />
-      </div>
-    </div>
-  );
-}
-
-/**
- * What one entry lets a user do with what the run produced (#329 T11).
- *
- * Rendered only where the ledger recorded something to act on AND the host can act
- * on it — the same rule the stop control follows in T10b, so nothing here is a
- * disabled button standing in for a capability this build does not have. Both are
- * explicit user actions: the rail never applies a statement or opens a result on its
- * own, because a statement the model drafted is untrusted content and putting it into
- * the editor is the user's decision.
- */
-function HydrationControls({
-  sql,
-  artifactId,
-  chartSpec,
-  testIdPrefix,
-  onApply,
-  onShow,
-}: {
-  readonly sql: string | undefined;
-  readonly artifactId: string | undefined;
-  /** Set only on an answer the run composed as a chart; undefined everywhere else. */
-  readonly chartSpec: AgentChartSpec | undefined;
-  readonly testIdPrefix: string;
-  readonly onApply: ((sql: string) => void) | undefined;
-  readonly onShow: ((correlationId: string, chartSpec: AgentChartSpec | undefined) => void) | undefined;
-}) {
-  const canApply = sql !== undefined && onApply !== undefined;
-  const canShow = artifactId !== undefined && onShow !== undefined;
-  if (!canApply && !canShow) return null;
-
-  return (
-    <div className="mt-1 flex items-center gap-1">
-      {sql !== undefined && onApply !== undefined && (
-        <button
-          type="button"
-          data-testid={`${testIdPrefix}apply-statement`}
-          onClick={() => onApply(sql)}
-          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] text-fg-tertiary hover:bg-fill hover:text-fg transition-colors"
-        >
-          <PencilLine strokeWidth={1.5} className="w-3 h-3" />
-          Apply to editor
-        </button>
-      )}
-      {artifactId !== undefined && onShow !== undefined && (
-        <button
-          type="button"
-          data-testid={`${testIdPrefix}show-result`}
-          onClick={() => onShow(artifactId, chartSpec)}
-          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] text-fg-tertiary hover:bg-fill hover:text-fg transition-colors"
-        >
-          <TableProperties strokeWidth={1.5} className="w-3 h-3" />
-          Show result
-        </button>
-      )}
-    </div>
-  );
-}
-
-/**
  * Prose the model wrote, in the structure it wrote it in (#389, #373 review).
  *
  * A component rather than inline JSX because it is now rendered in two places: bare
@@ -458,31 +350,42 @@ function HydrationControls({
 function ProseBlock({
   text,
   onApplySql,
-  statementCarded,
+  cardedStatement,
   className,
 }: {
   readonly text: string;
   readonly onApplySql: ((sql: string) => void) | undefined;
   /**
-   * Whether this run's drafted statement is already offered, MARKED, from the card
-   * beside this prose — in which case the per-block control inside it is withheld.
+   * This run's drafted statement, when the card beside this prose is already offering
+   * it MARKED — in which case the per-block control inside this block is withheld and
+   * the block holding that statement is not printed at all.
    *
    * A plan run's closing prose is the text its statement was read out of, so the same
-   * SQL is in both places, and #389's per-block "Apply to editor" says nothing about
-   * what it is applying: `renderProse` is handed text and knows nothing of the guard's
-   * verdict. Leaving it there puts an unmarked control immediately above the marked
-   * one, against the SQL, which is the silent hand-off the marking exists to prevent.
+   * SQL is in both places. Two consequences, and they are the same fact seen twice:
+   *
+   *  - #389's per-block "Apply to editor" says nothing about what it is applying —
+   *    `renderProse` is handed text and knows nothing of the guard's verdict — so
+   *    leaving it puts an unmarked control immediately above the marked one, against
+   *    the SQL, which is the silent hand-off the marking exists to prevent;
+   *  - and the BLOCK itself is the statement, printed a second time at full weight a
+   *    few hundred pixels under the card that shows it (L2, measured 2026-08-21). The
+   *    statement is carried rather than a flag so `renderProse` can suppress exactly
+   *    that block and no other: any other fence in the plan is another statement, and
+   *    the words around them are untouched.
+   *
+   * `Copy all` below is unaffected either way. It takes the string the model wrote, not
+   * this rendering of it, so the whole prose — fence included — is still one click away.
    */
-  readonly statementCarded: boolean;
+  readonly cardedStatement: string | undefined;
   readonly className: string;
 }) {
-  const apply = statementCarded ? undefined : onApplySql;
+  const apply = cardedStatement === undefined ? onApplySql : undefined;
   return (
     <div
       data-testid="agent-prose"
       className={cn("space-y-1 border-l border-hairline-strong pl-2 text-fg-tertiary", className)}
     >
-      {renderProse(text, apply === undefined ? {} : { onApplySql: apply })}
+      {renderProse(text, { onApplySql: apply, cardedStatement })}
       {/*
         And the plan as a whole, in the markdown the model wrote rather than in the
         rendering above: what a user pastes into a ticket is the text, and the text is
@@ -494,117 +397,40 @@ function ProseBlock({
 }
 
 /**
- * The name a screen reader, a voice user and a tooltip all get for the one control
- * that puts a plan run's statement into the editor (item 7 of the plan-mode design).
+ * What a PLAN run produced, as it is recorded in the CHRONOLOGY — a headline, a
+ * timestamp and one line saying what the guard made of it.
  *
- * The visible label comes FIRST and unaltered, which is WCAG 2.5.3: a voice user says
- * what they can see, so "Apply to editor" has to be inside whatever this returns.
- * Everything after it is the part a colour cannot carry.
+ * It used to be the whole card: the statement verbatim, the guard's paragraph, the
+ * identifier findings, the caveat and the editor hand-off. All of that moved UP, into
+ * `AnswerCard`, when the redesign put the run's outcome at the top of the rail — and
+ * moved rather than being copied, which is the point of this file being shorter. The
+ * reasoning that card carries is the reasoning that used to be here, and it is worth
+ * restating why the hand-off may not be in both places:
  *
- * Both warnings are stated in the terms the server established and no stronger, and the
- * first of them was once stated a good deal stronger. It read "This statement is not a
- * read: applying it puts SQL in your editor that can change or delete data", which is a
- * claim about the statement's EFFECT that `readOnly` cannot support: it is
- * `inspectAgentStatement(sql) === null`, and four of that guard's six objections say
- * only that it could not read the text — an unclosed span, a run two dialects disagree
- * about, a second statement, no statement at all — while its own header records that it
- * over-refuses legitimate reads on purpose. A jsonb read using `#>>` would have been
- * announced to a screen-reader user as SQL that can delete their data. So the name says
- * what the guard did, and the reason travels with it.
- *
- * The identifier finding is about names the captured inventory does not hold, which is
- * a reason the statement may not run rather than proof that it will not.
- */
-function applyStatementName(draft: AgentPlanStatementView): string {
-  const marks: string[] = [];
-  // The guard's reach comes FIRST, and it replaces the objection rather than joining
-  // it (#414). On an engine whose statements are not SQL the guard read nothing, so
-  // `readOnly` is `false` for a reason that is not about this draft — and the sentence
-  // below it, spoken to a screen-reader user who cannot see the card, would otherwise
-  // assert that nothing establishes this correct MongoDB aggregation only reads, as
-  // though something had looked and been unconvinced.
-  if (!draft.guardApplicable)
-    marks.push(
-      "The statement guard reads SQL and this engine's statements are not SQL, so nothing examined this draft.",
-    );
-  else if (!draft.readOnly)
-    marks.push(
-      `The statement guard did not read this as a bounded read (${draft.guardViolation ?? "no reason recorded"}), so nothing here establishes that running it would only read.`,
-    );
-  if (draft.identifiers.kind === "not-applicable")
-    marks.push("The name check reads SQL too, so the names it uses were not looked for in anything.");
-  else if (draft.identifiers.kind === "no-inventory") marks.push("Nothing checked the names it uses.");
-  else if (draft.identifiers.unknownTables.length > 0) {
-    // Named in the engine's own word (#414). This sentence is spoken to a user who
-    // cannot see the card, so it is the last place a Druid run should be told about
-    // "table(s)" while every visible surface beside it says datasources.
-    marks.push(
-      `It names ${draft.identifiers.unknownTables.length} ${draft.noun.singular}(s) the inventory this run read does not hold, so it may not run as written.`,
-    );
-  }
-  return ["Apply to editor.", ...marks].join(" ");
-}
-
-/**
- * What a PLAN run produced, as the one thing on this surface a user is meant to take
- * away with them (item 7 of the plan-mode SQL-generator design of 2026-08-15).
- *
- * Until this card, plan mode's statement could only be read out of a markdown fence in
- * the browser (#389) — which offered nothing when the model did not fence it, and, more
- * to the point, offered an unremarkable "Apply to editor" whatever the statement was.
  * The owner's ruling is that plan mode MAY draft a write and must never hand one over
- * quietly, so the marking is the reason this card exists and not decoration on it:
+ * quietly. So the marking is a correctness property, not decoration: the mark is in the
+ * applying control's accessible NAME (`applyStatementName`, in `rail-parts.tsx`), because
+ * a colour and a border say nothing to a screen reader, and it states what the GUARD did
+ * rather than what the SQL does — `readOnly` is `inspectAgentStatement(sql) === null`, and
+ * four of that guard's six objections say only that it could not settle the text.
  *
- *  - the mark is on the card, on a line of its own, and in the applying control's
- *    accessible NAME, because a colour and a border say nothing to a screen reader.
- *    It states what the GUARD did — "did not read this as a bounded read", with the
- *    reason — and never what the SQL does, because `readOnly` is
- *    `inspectAgentStatement(sql) === null` and four of that guard's six objections say
- *    only that it could not settle the text. It is also the only editor hand-off a
- *    plan run's statement gets: the closing prose the statement was read out of has
- *    its per-block control withheld (`planStatementRecorded`), because that one cannot
- *    say what it is applying;
- *  - `data-read-only` carries the guard's own verdict as data rather than as a class
- *    name, so the distinction can be asserted in a test instead of inferred from
- *    styling — and it is named after the field it holds, because "write" is a claim
- *    that verdict does not make. Three values since #414: `"unexamined"` is a verdict
- *    the guard did not reach, and it is not `"false"`, because `"false"` reads as an
- *    objection and there was none;
- *  - what the identifier check found sits beside the statement rather than in a
- *    sentence further up. An unvalidated statement that looks like a sound one is the
- *    failure this half exists to prevent, and a count alone leaves a reader with
- *    nothing to look for in the SQL above.
+ * **And there is exactly ONE such control.** The closing prose the statement was read out
+ * of has its per-block "Apply to editor" withheld (`planStatementRecorded`) because
+ * `renderProse` is handed text and cannot say what it is applying; this entry now reprints
+ * no statement at all, so it offers nothing to apply either. An unmarked control against
+ * the statement, one line above the marked one, is the control a user reaches for first — it is
+ * the silent hand-off the marking exists to prevent, and the answer card being a SECOND
+ * rendering of this entry is precisely the arrangement that could have reintroduced it.
  *
- * The names themselves are model and engine text and stay out of the app's sentences,
- * the rule every other block in this rail follows: the sentence is ours, the names are
- * listed beside it as the quoted content they are.
- *
- * Nothing here blocks anything, and nothing claims the statement will run. The
- * inventory records what EXISTS, not what the user's role may select from — said in the
- * card, where the claim is made — and the run itself executed nothing: applying is the
- * user's own action, on their own connection, as it has been in every mode.
+ * `data-read-only` stays, carrying the guard's own verdict as data rather than as a class
+ * name, so the distinction can be asserted in a test instead of inferred from styling —
+ * three values since #414, because `"unexamined"` is a verdict the guard did not reach and
+ * reads as neither `"true"` nor an objection.
  */
-function PlanStatementCard({
-  draft,
-  onApply,
-}: {
-  readonly draft: AgentPlanStatementView;
-  readonly onApply: ((sql: string) => void) | undefined;
-}) {
-  const unknown = draft.identifiers.kind === "checked" ? draft.identifiers.unknownTables : [];
-
+function PlanStatementCard({ draft }: { readonly draft: AgentPlanStatementView }) {
   return (
     <section
       data-testid="agent-plan-statement"
-      /*
-        THREE values, not two (#414). Every human-readable surface on this card reads
-        `guardApplicable` first and says the guard did not look; this machine-readable
-        one said `"false"` in the same breath, which a consumer can only read as "the
-        guard objected". A third value rather than a second attribute, deliberately: a
-        reader who tests for `"false"` must not be able to reach the accusation at all,
-        and a separate `data-guard-applicable` would leave `"false"` sitting there for
-        them to find.
-      */
       data-read-only={!draft.guardApplicable ? "unexamined" : draft.readOnly ? "true" : "false"}
       className={cn(
         "mt-1 ml-3.5 rounded border p-1.5",
@@ -612,103 +438,231 @@ function PlanStatementCard({
       )}
     >
       {/*
-        Read first, and a different claim rather than a softer one (#414). The banner
-        below it says the guard looked and was not satisfied; on an engine whose
-        statements are not SQL the guard did not look, and saying the first thing about
-        a correct MongoDB aggregation is the accusation this branch exists to stop. It
-        keeps the amber, because "nobody established anything about this" is what the
-        colour means on this card and it is exactly the state; what changes is the
-        words, and there is no reason code to show because there was no objection.
+        The one-line reading, from the module both surfaces read it out of: the answer
+        card states the same thing and then the whole claim behind it, and two authors
+        for a sentence about what examined a statement is how the two come to disagree.
       */}
-      {!draft.guardApplicable ? (
-        <p
-          data-testid="agent-plan-statement-guard-unread"
-          className="mb-1 flex items-start gap-1 text-[0.625rem] text-amber-300"
-        >
-          <TriangleAlert strokeWidth={1.5} className="mt-px w-3 h-3 shrink-0" aria-hidden="true" />
-          <span>
-            The statement guard reads SQL, and this engine&apos;s statements are not SQL — so nothing examined this
-            draft. It is drafted, not run — nothing has happened to your data — but nothing here has established
-            anything about it, for or against.
-          </span>
-        </p>
-      ) : (
-        !draft.readOnly && (
-          <p
-            data-testid="agent-plan-statement-guard"
-            className="mb-1 flex items-start gap-1 text-[0.625rem] text-amber-300"
-          >
-            <TriangleAlert strokeWidth={1.5} className="mt-px w-3 h-3 shrink-0" aria-hidden="true" />
-            <span>
-              The statement guard did not read this as a bounded read (
-              <span className="font-mono">{draft.guardViolation ?? "no reason recorded"}</span>). It is drafted, not run
-              — nothing has happened to your data — but nothing here establishes that running it would only read.
-            </span>
-          </p>
-        )
-      )}
-      {/* Verbatim, with the clipboard control every other verbatim block in this rail
-          carries: the statement is what the user came for, and selecting it by hand
-          inside a narrow scrolling panel is what they were left with before #389. */}
-      <QuotedBlock text={draft.sql} testId="agent-plan-statement-copy" tone="loud" />
-      {unknown.length > 0 && (
-        <div data-testid="agent-plan-statement-unknown" className="mt-1 text-[0.625rem] text-amber-400/80">
-          <p>These names are not in the inventory this run read, so the statement may not run as written:</p>
-          {/* Model and engine text, listed rather than spliced into the sentence above. */}
-          <ul className="mt-0.5 flex flex-wrap gap-1">
-            {unknown.map((name) => (
-              <li key={name} className="rounded bg-sunken px-1 py-0.5 font-mono text-amber-200">
-                {name}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {draft.identifiers.kind === "no-inventory" && (
-        <p data-testid="agent-plan-statement-unchecked" className="mt-1 text-[0.625rem] text-amber-400/80">
-          No schema inventory was read for this run, so the names in this statement were not checked against anything.
-        </p>
-      )}
-      {/*
-        Its own line and its own words, not a reuse of the one above (#414). That one
-        reports a run with no inventory; this run usually HAS one, and what it lacks is
-        a reader that can find a collection name inside an aggregation pipeline. A user
-        told "no inventory was read" would go looking for a grounding failure that did
-        not happen.
-      */}
-      {draft.identifiers.kind === "not-applicable" && (
-        <p data-testid="agent-plan-statement-unread" className="mt-1 text-[0.625rem] text-amber-400/80">
-          The names in this statement were not checked: the check that would do it reads SQL, and this engine&apos;s
-          statements are not SQL.
-        </p>
-      )}
-      {onApply !== undefined && (
-        <div className="mt-1 flex items-center gap-1">
-          <button
-            type="button"
-            data-testid="agent-plan-apply-statement"
-            aria-label={applyStatementName(draft)}
-            onClick={() => onApply(draft.sql)}
-            className={cn(
-              "flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] transition-colors hover:bg-fill",
-              draft.readOnly ? "text-fg-tertiary hover:text-fg" : "text-amber-300",
-            )}
-          >
-            <PencilLine strokeWidth={1.5} className="w-3 h-3" />
-            Apply to editor
-          </button>
-        </div>
-      )}
-      {/*
-        Where the claim is made, so no reader takes a checked statement for a runnable
-        one (item 6 of the design). An inventory records what exists; whether this
-        session may read it is the engine's answer, given when the statement runs.
-      */}
-      <p data-testid="agent-plan-statement-caveat" className="mt-1 text-[0.625rem] text-fg-subtle">
-        The run executed nothing. What was checked is what this run read of the schema, which records what exists rather
-        than what your role is permitted to read.
+      <p
+        data-testid="agent-plan-statement-summary"
+        className={cn("text-[0.625rem]", guardReading(draft) === "checked" ? "text-fg-muted" : "text-amber-300")}
+      >
+        {guardSummaryLine(draft)} The statement, what the name check found and what applying it would and would not
+        establish are in the answer at the top of this rail.
       </p>
     </section>
+  );
+}
+
+/**
+ * One timeline entry's content, so the chronology and the folded scaffolding inside it
+ * render the same entry the same way (item 7 of the redesign).
+ *
+ * A component rather than a second copy of the JSX: the chrome entries are collapsed
+ * behind one summary line and are still rendered IN FULL when it is opened — the
+ * objective quoted under the run's header included — and two renderings of an entry
+ * would be two places for the boundary between the app's words and everyone else's to
+ * move.
+ */
+function TimelineEntryBody({
+  item,
+  onApplyStatement,
+  showArtifact,
+  declinedHandovers,
+  cardedAnswerId,
+  cardedStatement,
+  planCarded,
+}: {
+  readonly item: AgentTimelineItem;
+  readonly onApplyStatement: ((sql: string) => void) | undefined;
+  readonly showArtifact: ((correlationId: string, chartSpec: AgentChartSpec | undefined) => void) | undefined;
+  readonly declinedHandovers: readonly { readonly id: string; readonly openedOn: string | null }[];
+  /** The entry whose hand-off the answer card is already offering, or undefined. */
+  readonly cardedAnswerId: string | undefined;
+  /**
+   * The STATEMENT the answer card is handing over, in either of the two states that
+   * hand one over, or undefined.
+   *
+   * By text rather than by entry id, which is what makes this a de-duplication of one
+   * statement rather than the removal of an affordance (L6, measured 2026-08-21). An
+   * agent run drafts each statement it executes, and the answer's `sql` IS the
+   * statement of the step whose artifact it presents — so a one-read run had the same
+   * text offered by the card, by that `Statement drafted` entry and by the report
+   * section's citation, three times, none of them named. A read the run took along the
+   * way whose statement is NOT the answer's is another statement, and it keeps its own
+   * control.
+   */
+  readonly cardedStatement: string | undefined;
+  /**
+   * Whether the answer card is RENDERING the drafted statement — which is what makes
+   * withholding this entry's copy of the hand-off a de-duplication rather than a
+   * removal. Off the card's own state reading, never off the ledger: an entry can
+   * carry `planStatementRecorded` while the card is showing something else.
+   */
+  readonly planCarded: boolean;
+}) {
+  /*
+    The guard's reading, said once (L3). Measured on the MongoDB plan run: the card's
+    guard line, then THIS paragraph — four lines of it — then the amber summary box
+    below, all inside ~400px. One fact, three renderings, two of them long.
+
+    So the entry the card is rendering gives up the paragraph and keeps the one-line
+    summary (`PlanStatementCard`), and the full text is where it already was: in the
+    card's ⓘ, which carries both of these sentences verbatim under their own test ids.
+    Every other entry's detail is untouched — it is the only place its own fact is said.
+  */
+  const detail = planCarded && item.planStatement !== undefined ? undefined : item.detail;
+
+  return (
+    <>
+      <div className="flex items-center gap-2">
+        <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", TONE_CLASSES[item.tone])} />
+        <span className="text-xs text-fg-secondary">{item.headline}</span>
+      </div>
+      {detail !== undefined && <p className="mt-0.5 pl-3.5 text-xs text-fg-muted">{detail}</p>}
+      {/*
+        Prose the MODEL wrote, rendered with the structure it wrote it in
+        (#373 review). Measured in plan mode against a live model: the closing
+        statement arrived as markdown and reached the user as hash marks and
+        asterisks, and plan mode's whole output is this one block.
+
+        Inside its own bordered block, which is the half that has to survive
+        being readable: `renderProse` builds React nodes and reaches no HTML
+        parser, so nothing here can execute — but a heading a model wrote must
+        still not read as a heading the application wrote, and the rule that
+        the app's words and everyone else's never share a line is what the
+        border keeps true.
+      */}
+      {/*
+        The editor is offered to the statements INSIDE the prose (#389), EXCEPT on
+        the entry a plan run's statement was read out of.
+
+        That exception is the whole marking requirement, not a detail of it. The
+        closing prose of a plan run HOLDS the fenced statement, so without it the
+        same `DELETE` renders twice: once in the card below, amber, with the guard's
+        verdict and an accessible name that carries it — and once here, immediately
+        above it, as a plain grey "Apply to editor" with no mark and no name, which
+        is the control a user reaches for first because it sits against the SQL.
+        `renderProse` cannot label it: it is handed text and knows nothing of the
+        ledger. So the marked hand-off is the only hand-off, and the block keeps its
+        clipboard. Everywhere else — an agent run, a plan run that drafted nothing —
+        #389's control is untouched, because there is no card there to defer to.
+
+        A host with no editor passes nothing and is offered nothing, the rule every
+        other affordance in this rail follows.
+
+        A refusal is the same prose in a different frame. The run reached its other
+        legitimate ending — it says the schema does not answer the question — and
+        that is what the card states; the marker the ledger read it by was stripped
+        on the way here, because it is a protocol token the model was told to emit
+        and not a sentence it wrote for anyone to read.
+      */}
+      {item.prose !== undefined &&
+        (item.planRefusal === true ? (
+          <section
+            data-testid="agent-plan-refusal"
+            className="mt-1 ml-3.5 rounded border border-amber-400/40 bg-amber-500/5 p-1.5"
+          >
+            {/*
+              Says only that the run could not draft, never WHY — the two reasons
+              are different and this card cannot tell them apart. A grounded run
+              refuses because the inventory it was given does not reach the
+              question; an ungrounded one (a reading that was refused, that
+              overran its time, or a provider that cannot describe its own
+              schema — the engine alone stopped deciding it in #414) refuses
+              because there was no inventory at all. The earlier wording named "the schema it read",
+              which on the second path is a reading that never happened.
+            */}
+            <p className="text-[0.625rem] text-amber-300">
+              This run drafted no statement. What it says is missing, and what it needs from you, are in its own words
+              below.
+            </p>
+            <ProseBlock
+              text={item.prose}
+              onApplySql={onApplyStatement}
+              cardedStatement={planCarded && item.planStatementRecorded === true ? cardedStatement : undefined}
+              className="mt-1"
+            />
+          </section>
+        ) : (
+          <ProseBlock
+            text={item.prose}
+            onApplySql={onApplyStatement}
+            cardedStatement={planCarded && item.planStatementRecorded === true ? cardedStatement : undefined}
+            className="mt-1 ml-3.5"
+          />
+        ))}
+      {/*
+        The run's own deliverable, with what the server established about it. Its
+        own card rather than a line beside the entry, because a statement a user
+        may be about to run is the one thing on this surface that can do damage
+        if it is presented as something it is not.
+      */}
+      {item.planStatement !== undefined && <PlanStatementCard draft={item.planStatement} />}
+      {/*
+        The one place this surface contradicts the ledger, and it does so beside
+        the sentence it contradicts. The entry above is folded from what the RUN
+        recorded — that it handed the statement over to be run — and this rail
+        declined to perform it, so a reader who saw only the entry would believe
+        an execution that never happened. Said here rather than in a banner:
+        the fact is about this answer, and a notice elsewhere would be a
+        sentence the reader has to match to a line themselves.
+      */}
+      {declinedHandovers
+        .filter((declined) => declined.id === item.id)
+        .map((declined) => (
+          <p
+            key={declined.id}
+            data-testid="agent-handover-declined"
+            className="mt-0.5 pl-3.5 text-xs text-amber-400/80"
+          >
+            It was not run: this run was opened on {declined.openedOn ?? "another connection"} and your editor has moved
+            to a different one since. The answer would have arrived in a tab that is connected somewhere else, so
+            nothing was executed. The statement is below — take it yourself if you want it on the connection you are on
+            now.
+          </p>
+        ))}
+      {/*
+      Verbatim content from the model, the engine or the user, kept in its own
+      block rather than folded into a sentence: it is untrusted input, and the
+      user should be able to see where the app stops speaking.
+    */}
+      {item.quoted !== undefined && (
+        <QuotedBlock text={item.quoted} testId="agent-quoted-copy" className="mt-1 ml-3.5" />
+      )}
+      {/*
+        Withheld on the ONE entry the answer card is already offering these for (item 8
+        of the redesign), and rendered here for every other entry exactly as before.
+
+        The card renders this entry a second time — that is what it is — so leaving both
+        would put two "Apply to editor" controls in the rail for one statement, with
+        nothing on either saying they are the same act. A read the run took along the way
+        keeps its own controls, because it is another statement and the card renders none
+        of them — unless it IS the card's statement, which is what the `sql` below is
+        about: the run records every statement it executes, so the answer's own text is
+        on the ledger twice.
+      */}
+      {item.id !== cardedAnswerId && (
+        <div className="ml-3.5">
+          <HydrationControls
+            /*
+              And withheld for the STATEMENT the card is handing over, wherever it
+              appears (L6). The entry above is the answer's own; this covers the
+              `Statement drafted` entry that recorded the same text one step earlier,
+              which is how the report path came to offer the same statement twice under
+              two different names. Anything else the run drafted is another statement
+              and keeps its control — a result to SHOW is untouched either way, since the
+              card offers only the answer's.
+            */
+            sql={item.applySql === cardedStatement ? undefined : item.applySql}
+            artifactId={item.artifactId}
+            chartSpec={item.chartSpec}
+            testIdPrefix="agent-"
+            onApply={onApplyStatement}
+            onShow={showArtifact}
+          />
+        </div>
+      )}
+    </>
   );
 }
 
@@ -748,6 +702,23 @@ export function AgentRail({
   const [pendingStart, setPendingStart] = useState<AgentDecidedStart | null>(null);
   /** The consent step's own tick, reset every time that step is entered. */
   const [autoExecute, setAutoExecute] = useState(false);
+  /**
+   * What the OPEN run was opened with, which is a different question from what the tick
+   * says now: the tick belongs to a consent step that no longer exists, and the safety
+   * strip beside a running run has to read that run's own boundary. Set from the same
+   * resolution the open request carried, so the strip cannot say "one statement in your
+   * editor" about a run the server was never asked to widen.
+   */
+  const [openedWithHandover, setOpenedWithHandover] = useState(false);
+  /**
+   * The user asked to write in the objective box while a run is open.
+   *
+   * The box is a one-line summary during a run — the question is settled, and three rows
+   * of textarea for text nobody can change is the space the answer needed — so this is
+   * the way back to it. It is reset when a run opens, beside the clearing of the box
+   * itself: an edit begun against one run is not a state to carry into the next.
+   */
+  const [editingObjective, setEditingObjective] = useState(false);
   /**
    * A "change" whose cancellation the server did not accept, so no replacement was
    * opened and the run the user asked to end is still going.
@@ -999,8 +970,14 @@ export function AgentRail({
    * "change" has to re-ask the same question against another workflow. Reading the
    * textarea then would re-ask an empty one, or worse, whatever the user has begun
    * typing since.
+   *
+   * State rather than the ref it was until the redesign: the objective is RENDERED now —
+   * the box becomes a one-line summary of it while the run is open — and a ref read during
+   * render is a value React is free to have changed without a re-render, which is what the
+   * compiler's own rule says. The handlers that read it are called from the render that
+   * holds the current value, so nothing about "change" changes.
    */
-  const openedObjective = useRef("");
+  const [openedObjective, setOpenedObjective] = useState("");
 
   /*
     Opening the run, once every decision it carries has been made.
@@ -1048,7 +1025,7 @@ export function AgentRail({
     }
     setReplaceFailed(false);
     openedOn.current = { id: decided.connection.id, name: decided.connection.name };
-    openedObjective.current = decided.objective;
+    setOpenedObjective(decided.objective);
     /*
       What has already been delivered is about the run that is ending here, and the
       two effects below key that on the run id changing. They may not SEE it change:
@@ -1064,6 +1041,10 @@ export function AgentRail({
     handedOverRunId.current = null;
     handedOver.current.clear();
     setChangeOpen(false);
+    // The same resolution the request carries, kept for the strip beside the run: what
+    // this run may do is what was SENT, not what a control says afterwards.
+    const handover = canHandOver(decided.workflowType) && decided.autoExecute;
+    setOpenedWithHandover(handover);
     void run.start({
       mode,
       workflowType: decided.workflowType,
@@ -1072,7 +1053,7 @@ export function AgentRail({
       // sentence this rail owes is read back from, and a start that says nothing about
       // its reading is one a reloaded rail cannot describe.
       workflowReading: decided.reading,
-      autoExecute: canHandOver(decided.workflowType) && decided.autoExecute,
+      autoExecute: handover,
       objective: decided.objective,
       connectionId: decided.connection.id,
     });
@@ -1205,7 +1186,7 @@ export function AgentRail({
       workflowType: next,
       source: "chosen",
       reading: "unrecorded",
-      objective: openedObjective.current,
+      objective: openedObjective,
       // Snapshotted at this click for the reason `handleStart`'s is: this one can raise
       // the consent step too, and the shell can move while it stands.
       connection: { id: connectionId, name: connectionName, type: connectionType },
@@ -1235,7 +1216,11 @@ export function AgentRail({
     reused an id still moves the value.
   */
   useEffect(() => {
-    if (run.runId !== null) setObjective("");
+    if (run.runId === null) return;
+    setObjective("");
+    // An edit begun against the run that is ending here is not a state the next run
+    // inherits: the box is a summary again, of the question this new run was opened on.
+    setEditingObjective(false);
   }, [run.runId]);
 
   /**
@@ -1244,6 +1229,29 @@ export function AgentRail({
    * are asking about a run the server still has open.
    */
   const runOpen = run.runId !== null && LIVE_STATUSES.has(run.timeline.status);
+
+  /** Whether the objective is a box to type in or a line saying what was asked. */
+  const objectiveEditable = !runOpen || editingObjective;
+
+  /*
+    The focus the objective box was holding when it stopped existing.
+
+    `leaveConsent("objective")` lands focus in that box on purpose — Start disables the
+    instant the run is busy, so focus there is focus lost a beat later — and one commit
+    afterwards the run opens and the box becomes the summary. A browser drops focus to
+    the body when the focused node is removed, which is the same "left nowhere" the
+    consent step's own announcement exists to prevent, one step further along.
+
+    So the control that took the box's place takes the focus the box lost, and only when
+    it was actually lost: focus that is on a real control — Start, in a browser where the
+    click that opened the run left it there — is not moved out from under the user.
+  */
+  const objectiveEdit = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (objectiveEditable) return;
+    const active = document.activeElement;
+    if (active === null || active === document.body) objectiveEdit.current?.focus();
+  }, [objectiveEditable]);
 
   /*
     Carrying out what the RUN decided (§2.1, §2.3).
@@ -1488,6 +1496,17 @@ export function AgentRail({
   */
   const timelineScroller = useRef<HTMLDivElement | null>(null);
   const followingTimeline = useRef(true);
+  /**
+   * Whether the run is still WRITING entries, for the observer's own closure.
+   *
+   * A ref rather than the value in scope because the `ResizeObserver` below is created
+   * once and holds the first render's `pinToNewest`: a status read out of that closure
+   * would be `queued` for the life of the panel. It is written in the effect that
+   * follows, never during render.
+   */
+  const timelineLive = useRef(true);
+  /** The run whose answer has already been brought into view, so it happens once. */
+  const revealedAnswerFor = useRef<string | null>(null);
   const readFollowing = () => {
     const scroller = timelineScroller.current;
     if (scroller === null) return; // Unreachable while the container is mounted; the event comes from it.
@@ -1496,10 +1515,51 @@ export function AgentRail({
   };
   const pinToNewest = () => {
     const scroller = timelineScroller.current;
-    if (scroller === null || !followingTimeline.current) return;
+    if (scroller === null || !followingTimeline.current || !timelineLive.current) return;
     scroller.scrollTop = scroller.scrollHeight - scroller.clientHeight;
   };
-  useEffect(pinToNewest, [run.timeline.items]);
+
+  /*
+    Following the newest entry is right while there IS a newest entry to follow, and
+    wrong the moment there is not (L1, measured in Chrome on 2026-08-21).
+
+    Immediately after each run reached a terminal status, with nobody having scrolled,
+    the container sat at its own maximum — 224 of 224 on the plan run, 248 of 248 on the
+    agent run — and the answer card, which is the first child of this container, was that
+    far above the fold. The newest entry at that point is `run-finished`; the thing the
+    user has been waiting for is at the top. Every run therefore ended by landing the
+    reader at the bottom of the transcript, which defeats the one thing this redesign is
+    for.
+
+    So the run's own status bounds the following, and the end of the run brings the
+    answer into view instead — once per run, because it is an event and not a position to
+    hold: a reader who then scrolls down into the transcript must not be pulled back up
+    by the next resize. And it is still subject to the standing rule that a reader who
+    scrolled away is left where they are; the reveal is for the reader who was watching
+    the run, not for the one reading step four.
+
+    The card stays INSIDE the scroller. Lifting it out would give the answer a fixed
+    share of a 384-pixel panel — a long report would then starve the transcript, or need
+    a scroller of its own inside the one it sits above — and it would sit over the
+    reader's eyes while they read the chronology. Bounding the following costs nothing
+    the other arrangement would have bought.
+  */
+  useEffect(() => {
+    const live = run.runId === null || LIVE_STATUSES.has(run.timeline.status);
+    timelineLive.current = live;
+    if (live) {
+      pinToNewest();
+      return;
+    }
+    if (run.runId === null || revealedAnswerFor.current === run.runId) return;
+    revealedAnswerFor.current = run.runId;
+    // The reader who scrolled up to read an earlier step is not moved, exactly as they
+    // are not while the run is going.
+    if (!followingTimeline.current) return;
+    const scroller = timelineScroller.current;
+    if (scroller !== null) scroller.scrollTop = 0;
+  }, [run.timeline.items, run.timeline.status, run.runId]);
+
   useEffect(() => {
     const scroller = timelineScroller.current;
     // `ResizeObserver` is absent in some test environments and in no browser this app
@@ -1509,6 +1569,155 @@ export function AgentRail({
     observer.observe(scroller);
     return () => observer.disconnect();
   }, []);
+
+  /*
+    What reaches the database, from `posture.ts` and from nowhere else — the whole reason
+    that module exists is that the rail used to answer this question in six places and a
+    user comparing two of them could not tell which one bounded the run.
+
+    ONE module, asked TWO questions, because with a run open they stop having the same
+    answer:
+
+     - **what the open run does**, which the strip under the header says. Both of its axes
+       come off the run. The mode is the run's own ledger (`AgentRunTimeline.mode`), not
+       the toggle: the toggle is frozen only while a start is HELD, deliberately, since it
+       decides the NEXT run, so reading it here let one click on Plan relabel a run that
+       was executing reads as "Executes nothing it drafts". The hand-over is what the open
+       REQUEST carried, and `openedWithHandover` is never cleared — it is a record, not a
+       live reading — so it is gated on the run still being open, or the strip goes on
+       promising one statement in the editor after the widened run has ended, while the
+       next consent step defaults the tick to OFF.
+     - **what pressing Start would do**, which the amber engine notice is entirely about.
+       That one is the SELECTION's: the notice renders on the selected mode and offers the
+       way out of that selection, so reading the open run's posture there would put plan
+       mode's body inside a card whose whole subject is the engine agent mode cannot
+       execute on. A muted line under Start used to ask the same question in words, and it
+       said the strip's sentence over again 200px below it (L7), so it is gone.
+
+    The two coincide whenever no run is open, which is most of the panel's life.
+  */
+  const engineLabel = connectionType === null ? "this connection" : getDBConfig(connectionType).label;
+  /*
+    Both axes of the open run's posture ask `runOpen` FIRST, and read the run before they
+    read any control. That order is the rule, and it is why these two lines look alike.
+
+    The asymmetry they replaced is what made a defect: the hand-over used to ask
+    `pendingStart` first, so a consent step standing for the NEXT run outranked the run
+    that was open — and the two coexist by design ("change" raises the step over a live
+    run, and stops nothing until it is accepted; a stream that ended without a terminal
+    entry clears `isBusy` with the status still `running`, which puts Start back within
+    reach). The strip then relabelled an executing run from a checkbox belonging to a run
+    nobody had opened: un-widened while the widened one was still handing statements over,
+    and widened while the open one may hand nothing over. Keep the order aligned, in both
+    lines, or that class of defect comes back on the next edit.
+  */
+  const handoverConsented = runOpen ? openedWithHandover : pendingStart !== null && autoExecute;
+  const describedMode = runOpen ? run.timeline.mode : mode;
+  const selectionPosture = agentPosture({
+    mode,
+    engine: connectionType,
+    engineLabel,
+    // The standing step's tick, and OFF otherwise: nothing has been consented to for a
+    // run that is not being opened, and the next step's tick starts unticked.
+    handover: pendingStart !== null && autoExecute,
+  });
+
+  /*
+    An engine agent mode cannot execute a statement on, named before Start rather than
+    after a run that ends `engine-unsupported`.
+
+    It is PRESENTATION of the factory's own refusal and gates nothing: `canStart` does
+    not read it, the button stays live, and the run this rail opens is refused by the
+    server exactly as it was. A notice that also disabled Start would be this surface
+    deciding a question the server decides — and it would be wrong for the operations
+    workflow, which runs on every engine because it sends no statement at all.
+
+    `null` is not one of these engines: nothing has been resolved, so which engine this
+    is has not been established, and an amber card about an engine nobody named would be
+    a claim this panel cannot support. The strip says "Cannot execute yet" for that
+    state, which is what is true.
+  */
+  const engineUnsupported =
+    mode === "agent" && connectionType !== null && !AGENT_EXECUTION_ENGINES.includes(connectionType);
+
+  /*
+    The run's scaffolding, folded away (item 7 of the redesign).
+
+    Three entries of every run say only that it began: the header, the drive starting and
+    the schema capture that grounded it. On a plan run that is three of five lines, and
+    the two that matter — the statement and what the model said about it — start below
+    the fold. They are collapsed into one dim summary that expands, and they are still
+    rendered in full inside it: nothing is dropped, and the objective quoted under the
+    header is still there to read.
+
+    `item.chrome` comes off the FOLD and not off a headline: see `AgentTimelineItem`.
+  */
+  const chromeItems = run.timeline.items.filter((item) => item.chrome === true);
+  const substantiveItems = run.timeline.items.filter((item) => item.chrome !== true);
+
+  /*
+    What the answer card is already offering, so the transcript withholds exactly that
+    and nothing else (item 8).
+
+    Read from `answerCardState` — the card's OWN reading, asked rather than reproduced.
+    That is the correctness property here, not a tidiness one: this rail used to derive
+    the suppression from the ledger (`report !== null`, and `planStatementRecorded` on
+    the entry), which is a second, independent answer to "what is the card showing". The
+    two disagreed on a run that ended `failed` holding a product — the card rendered a
+    failure banner while this withheld the transcript's copies anyway, so the only
+    "Apply to editor" a drafted statement had disappeared from every surface, and the
+    entry went on saying the statement was "in the answer at the top of this rail".
+    One reading, asked in one place, cannot disagree with itself.
+
+     - `agent`: the card renders that answer's `applySql` through `HydrationControls` in
+       its report state, so the same control on the same entry below would be a second
+       "Apply to editor" for one statement — and a user who clicks the lower one has no
+       way to know they were the same act. A live run whose answer has arrived but whose
+       report has not is NOT that state, and the transcript's control is then the only
+       one there is.
+     - `plan`: the statement's own entry renders no statement and no control, and the
+       prose it was read out of gives up its per-block control — but only while the card
+       is showing the statement. Both halves of that conjunction are load-bearing: the
+       entry can carry `planStatementRecorded` for a card that is showing something else.
+  */
+  const answerState = answerCardState(run.timeline);
+  const answerItem = run.timeline.items.find((item) => item.isAnswer === true);
+  const cardedAnswerId = answerState === "report" ? answerItem?.id : undefined;
+  /*
+    The statement the card is handing over, whichever of its two states is offering one
+    — the plan draft it renders, or the answer entry's `applySql` in its report state.
+    Undefined everywhere else, including a report whose run composed no answer: the card
+    then offers no hand-off, so there is nothing below it to de-duplicate.
+
+    It is the TEXT and not an entry id because the same statement is recorded more than
+    once. An agent run drafts every statement it executes, and the answer's is the
+    statement of the step whose artifact it presents, so a one-read run wrote that SQL
+    to the ledger twice and the report cited it a third time (L6).
+  */
+  const cardedStatement =
+    answerState === "plan"
+      ? run.timeline.items.find((item) => item.planStatement !== undefined)?.planStatement?.sql
+      : answerState === "report"
+        ? answerItem?.applySql
+        : undefined;
+
+  /*
+    The live figures the folded run details carries on its summary, so a collapsed meter
+    still says what the run has spent. The gauges' own labels are lowercased into the
+    line rather than restated, and every figure is the gauge's own.
+  */
+  const detailsFigures = [
+    `${run.timeline.items.length} steps`,
+    ...run.timeline.budget
+      // The two the ledger MEASURES, in the order the meter shows them. Repair attempts
+      // are a count of a count and say nothing at a glance, so they stay in the gauges.
+      .filter((gauge) => gauge.id === "statements" || gauge.id === "database-time")
+      .map((gauge) =>
+        gauge.id === "statements"
+          ? `${gauge.used}/${gauge.limit} stmt`
+          : `${seconds(gauge.used)}/${seconds(gauge.limit)} s`,
+      ),
+  ].join(" · ");
 
   const content = (
     <div className="flex flex-col h-full min-h-0 bg-surface text-fg">
@@ -1546,21 +1755,100 @@ export function AgentRail({
         </div>
       </div>
 
+      {/*
+        The standing reading of what the open run executes — or of what pressing Start
+        would, when there is none — under the header and above everything else, because it
+        is true of the whole panel rather than of any one control in it. Its own component
+        and its own module: this file states no bound the strip does not, and the strip
+        states no bound `posture.ts` does not.
+      */}
+      <SafetyStrip
+        mode={describedMode}
+        engine={connectionType}
+        engineLabel={engineLabel}
+        handover={handoverConsented}
+      />
+
       <div className="p-3 border-b border-hairline shrink-0">
-        <label htmlFor="agent-objective" className="text-xs text-fg-muted">
-          What should the run investigate?
-        </label>
-        <textarea
-          id="agent-objective"
-          ref={objectiveBox}
-          data-testid="agent-objective"
-          value={objective}
-          onChange={(e) => setObjective(e.target.value)}
-          maxLength={AGENT_MAX_OBJECTIVE_LENGTH}
-          rows={3}
-          className="mt-1 w-full resize-none rounded bg-sunken border border-hairline-strong px-2 py-1.5 text-xs text-fg placeholder:text-fg-subtle focus:outline-none focus:border-blue-500/40"
-          placeholder="Why is checkout slow?"
-        />
+        {/*
+          The question, as a box while it is still a question and as a line once it is
+          settled (item 4 of the redesign).
+
+          A run's objective cannot be edited — it is on the run's own header, and every
+          entry below was framed with it — so three rows of textarea holding text nobody
+          can change is the space the run's answer needed. Edit is the way back: it puts
+          the run's own question in the box, which is what a user refining it starts
+          from, and Start then opens a NEW run with whatever they made of it.
+        */}
+        {objectiveEditable ? (
+          <>
+            <label htmlFor="agent-objective" className="text-xs text-fg-muted">
+              What should the run investigate?
+            </label>
+            <textarea
+              id="agent-objective"
+              ref={objectiveBox}
+              data-testid="agent-objective"
+              value={objective}
+              onChange={(e) => setObjective(e.target.value)}
+              maxLength={AGENT_MAX_OBJECTIVE_LENGTH}
+              rows={3}
+              className="mt-1 w-full resize-none rounded bg-sunken border border-hairline-strong px-2 py-1.5 text-xs text-fg placeholder:text-fg-subtle focus:outline-none focus:border-blue-500/40"
+              placeholder="Why is checkout slow?"
+            />
+          </>
+        ) : (
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              {/*
+                The user's own text, on a line of its own: the app's words are the
+                workflow and the mode below it, and this rail's rule is that the two
+                never share one VISIBLE line.
+
+                The name in front of it is the exception that rule needs. The `<label>`
+                that said what this text is belongs to the box, and the box is not on
+                this branch — so a reader arriving at an open run reached an unattributed
+                sentence of their own text, on the first content under the safety strip.
+                It is `sr-only` rather than muted chrome because a sighted user has the
+                box's absence, the Edit control and the frame line below to read it from;
+                and it is a prefix inside this node rather than a named wrapper because
+                `<p>` prohibits an accessible name of its own and the jsx-a11y gate
+                prefers a semantic element over `role="group"` (see the mode toggle).
+              */}
+              <p data-testid="agent-objective-summary" className="text-xs text-fg-secondary break-words">
+                <span data-testid="agent-objective-summary-label" className="sr-only">
+                  The objective this run was opened with:{" "}
+                </span>
+                {openedObjective}
+              </p>
+              {/*
+                Both halves off the RUN's own record. The mode used to come from the header
+                toggle, which is live again the moment the run opens, so one click on Plan
+                relabelled a run that was executing reads — and the two halves of one
+                sentence came from two sources.
+              */}
+              <p data-testid="agent-objective-frame" className="mt-0.5 text-[0.625rem] text-fg-subtle">
+                {WORKFLOW_LABELS[run.timeline.workflowType]} · {MODE_LABELS[describedMode]} mode
+              </p>
+            </div>
+            <button
+              type="button"
+              ref={objectiveEdit}
+              data-testid="agent-objective-edit"
+              aria-label="Edit the objective and ask again"
+              onClick={() => {
+                // The run's question, not the emptied box: refining what was asked is
+                // what this control is for, and retyping it is what it exists to avoid.
+                setObjective(openedObjective);
+                setEditingObjective(true);
+              }}
+              className="flex shrink-0 items-center gap-1 px-1.5 py-0.5 rounded text-[0.625rem] text-fg-tertiary hover:bg-fill hover:text-fg transition-colors"
+            >
+              <PencilLine strokeWidth={1.5} className="w-3 h-3" aria-hidden="true" />
+              Edit
+            </button>
+          </div>
+        )}
 
         {/*
           ONE line, and an OFFER rather than a change (#331 T1). The objective in the
@@ -1695,111 +1983,31 @@ export function AgentRail({
         )}
 
         {/*
-          The consent step (§2.6, and §"Why the consent step is placed there").
+          The consent step (§2.6, and §"Why the consent step is placed there"), in its own
+          component since the redesign — same decision, same default, same open-time
+          freezing, and the paragraph a user consents to now behind an ⓘ on the checkbox
+          it describes rather than above it. `ConsentCard` carries the reasoning; what
+          stays here is the half only this component knows.
 
-          It replaces the pre-start checkbox entirely. That checkbox rendered wherever
-          the workflow happened to be `data-analysis`, which is a state the user could
-          leave without the tick leaving with them — and, before #373, a state four
-          workflows could reach at all. Consent asked HERE cannot drift from the run it
-          is about: the workflow is already decided, and the very next thing that
-          happens is the request that opens the run with it.
-
-          It is still consent given at OPEN time, which is what `src/lib/agent/types.ts`
-          requires of every widening decision: no run exists yet.
-
-          The copy is the control. "Auto-mode" transfers no responsibility because it
-          names no bound, so this names all three — the bound the run keeps for its own
-          read, the bound the editor keeps, and the bound being given up — and says what
-          the run does INSTEAD when its gate declines, because a user who finds the
-          statement sitting unrun has to be able to read that as the feature working.
-          Every figure comes from the constants the enforcement reads.
+          The region's ref is one of those halves. The card focuses itself when it is
+          raised — that is the announcement — and the caller decides where focus goes when
+          it LEAVES, because the two exits need different answers (`leaveConsent`).
         */}
         {pendingStart !== null && (
-          <section
-            ref={consentRegion}
-            tabIndex={-1}
-            aria-labelledby="agent-consent-workflow"
-            aria-describedby="agent-consent-terms"
-            data-testid="agent-consent"
-            className="mt-2 rounded border border-blue-400/30 bg-blue-500/5 p-2 space-y-1 focus:outline-none focus:ring-1 focus:ring-blue-400/50"
-          >
-            {/*
-              The region's own name, and it names the CONNECTION as well as the workflow.
-              The terms below promise the statement will run "on the connection the run
-              was opened on", and that connection is the one this start was asked on
-              rather than whatever the shell is showing when Open is finally pressed — so
-              the sentence says which, and the run opens on exactly that one.
-            */}
-            <p id="agent-consent-workflow" data-testid="agent-consent-workflow" className="text-xs text-fg-secondary">
-              This run will open as {WORKFLOW_LABELS[pendingStart.workflowType]} on{" "}
-              {pendingStart.connection.name ?? "the connection you started it on"}, which answers with a result.
-            </p>
-            <label htmlFor="agent-auto-execute" className="flex items-start gap-2 cursor-pointer">
-              <input
-                id="agent-auto-execute"
-                data-testid="agent-auto-execute"
-                type="checkbox"
-                checked={autoExecute}
-                onChange={(e) => setAutoExecute(e.target.checked)}
-                className="mt-0.5 rounded border-edge bg-panel"
-              />
-              <span data-testid="agent-auto-execute-label" className="text-xs text-fg-secondary">
-                Also run the final answer in my editor
-              </span>
-            </label>
-            <p
-              id="agent-consent-terms"
-              data-testid="agent-auto-execute-terms"
-              className="text-[0.625rem] text-fg-muted"
-            >
-              {autoExecuteTerms(pendingStart.workflowType)}
-            </p>
-            {/*
-              One more sentence where the engine changes what a long read costs, in the
-              words the budget meter already uses for the same fact: SQLite does not
-              preempt a statement over its timeout, so the editor's missing time limit is
-              a different promise there than it is on PostgreSQL.
-
-              Read off the SNAPSHOT, like everything else in this panel: a user who
-              switches to PostgreSQL while the step stands still opens the run on SQLite,
-              and a warning that left with the switch would have been withdrawn from the
-              one run it is true of.
-            */}
-            {pendingStart.connection.type === "sqlite" && (
-              <p data-testid="agent-auto-execute-sqlite" className="text-[0.625rem] text-amber-400/70">
-                On SQLite a read is not interrupted when it runs long: it blocks other writers and this application
-                until it finishes.
-              </p>
-            )}
-            <p data-testid="agent-consent-frozen" className="text-[0.625rem] text-fg-subtle">
-              This is decided by the request that opens the run and stays what it was: a later request cannot widen a
-              run the server already holds.
-            </p>
-            <div className="flex items-center gap-1 pt-0.5">
-              <button
-                type="button"
-                data-testid="agent-consent-open"
-                onClick={() => {
-                  leaveConsent("objective");
-                  void beginRun({ ...pendingStart, autoExecute });
-                }}
-                className="px-2 py-1 rounded text-xs bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 transition-colors"
-              >
-                Open
-              </button>
-              {/* Cancel opens nothing: the objective stays in the box, and Start is live
-                  again — and takes focus back, since the control that is live again is
-                  the one that raised this. */}
-              <button
-                type="button"
-                data-testid="agent-consent-cancel"
-                onClick={() => leaveConsent("start")}
-                className="px-2 py-1 rounded text-xs text-fg-tertiary hover:bg-fill transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </section>
+          <ConsentCard
+            workflowType={pendingStart.workflowType}
+            workflowLabel={WORKFLOW_LABELS[pendingStart.workflowType]}
+            connectionName={pendingStart.connection.name}
+            engine={pendingStart.connection.type}
+            autoExecute={autoExecute}
+            onAutoExecuteChange={setAutoExecute}
+            onOpen={() => {
+              leaveConsent("objective");
+              void beginRun({ ...pendingStart, autoExecute });
+            }}
+            onCancel={() => leaveConsent("start")}
+            regionRef={consentRegion}
+          />
         )}
 
         {/*
@@ -1891,6 +2099,43 @@ export function AgentRail({
           </div>
         )}
 
+        {/*
+          Agent mode on an engine that has no read-only statement path (item 5).
+
+          The facts are the posture's, so this card invents nothing: the engines that DO
+          have one are named from `AGENT_EXECUTION_ENGINES` rather than typed, the two
+          ways forward are the two that are actually open — plan mode drafts here, and the
+          operations workflow sends no statement at all — and the run would end
+          `engine-unsupported` before its first statement.
+
+          It does not gate Start, and `canStart` above is where that is visible: the
+          refusal belongs to the provider factory, this is a notice about it, and one
+          workflow runs here regardless. A disabled Start would take the operations
+          workflow away over a claim that is not true of it.
+        */}
+        {engineUnsupported && (
+          <div
+            data-testid="agent-engine-unsupported-notice"
+            className="mt-2 rounded border border-amber-400/40 bg-amber-500/5 p-2 space-y-1"
+          >
+            <p className="flex items-start gap-1 text-xs text-amber-300">
+              <TriangleAlert strokeWidth={1.5} className="mt-px w-3 h-3 shrink-0" aria-hidden="true" />
+              {selectionPosture.title}
+            </p>
+            <p data-testid="agent-engine-unsupported-reason" className="text-[0.625rem] text-amber-300/90">
+              {selectionPosture.body}
+            </p>
+            <button
+              type="button"
+              data-testid="agent-engine-unsupported-plan"
+              onClick={() => setMode("planning")}
+              className="px-1.5 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-fill transition-colors"
+            >
+              Switch to Plan
+            </button>
+          </div>
+        )}
+
         <div className="mt-2 flex items-center justify-between gap-2">
           <span data-testid="agent-run-id" className="font-mono text-[0.625rem] text-fg-subtle truncate">
             {run.runId ?? ""}
@@ -1930,6 +2175,25 @@ export function AgentRail({
             </button>
           </div>
         </div>
+
+        {/*
+          There is no second posture line under Start (L7, measured 2026-08-21).
+
+          It printed `${headline} — ${qualifier}.`, which is the strip's own sentence,
+          about 200px below the strip: two identical sentences in one 384px panel, and the
+          lower one was the easier to mistake for a claim about something else. The strip
+          is permanent and always visible, so what the line said is not lost — and the
+          panel's other reading of the SELECTION, the amber engine notice below, is the
+          one that says something the strip does not, because it is about a mode the user
+          has selected and the engine cannot execute.
+
+          The alternative considered was to give this line the login hero's claim
+          (`hero-proof.tsx`), which IS different information. It was not taken: that claim
+          describes both modes at once, for a visitor who has selected neither, and here
+          one is selected — and reusing it would mean exporting the hero's private
+          `AGENT_MODES` out of a module that also pulls in the distribution and showcase
+          catalogs, for a sentence about the mode the user did not pick.
+        */}
 
         {/*
           The refused model (#331 T4). A start refused because the model was ESTABLISHED
@@ -2018,78 +2282,131 @@ export function AgentRail({
       </div>
 
       {/*
-        The meter reports what the server ENFORCES, and reads every consumption off
-        the run's own ledger. Three bounds can be measured that way; the rest are
-        stated as the ceilings they are, because nothing durable records their
-        consumption — the wall-clock deadline and the model-turn count live in the
-        process driving the run, and this build enforces no token budget at all, so
-        no token figure is shown rather than one that means nothing.
+        The meter, FOLDED (item 6 of the redesign).
 
-        Every measured figure is a FLOOR on the spend, not the spend: the ledger is
-        narrower than the tracker in three known ways (`docs/BACKLOG.md` B12, B13),
-        and the caveat below names all three rather than leaving a user to read the
-        gauges as exact.
+        It reports what the server ENFORCES and reads every consumption off the run's own
+        ledger. Three bounds can be measured that way; the rest are stated as the ceilings
+        they are, because nothing durable records their consumption — the wall-clock
+        deadline and the model-turn count live in the process driving the run, and this
+        build enforces no token budget at all, so no token figure is shown rather than one
+        that means nothing.
+
+        What changed is where the reading SITS, and nothing about what it says. Four
+        stacked paragraphs of caveat above the transcript pushed the run's own output below
+        the fold on every viewport this rail ships in, so the block is a `<details>`: the
+        summary keeps the live figures, and the three claims move behind an ⓘ each — each
+        one on the figure it qualifies, each one still rendered in full, and each one still
+        in the accessibility tree whether or not its popover is open (`InfoNote`). Their
+        test ids travel with them, because they are the claims and not the layout.
+
+        Open while the run is live, shut otherwise: a run in flight is the only time these
+        figures are moving, and `open` is a prop React writes only when its value CHANGES,
+        so a user who folds it away mid-run is not fought on the next ledger line.
       */}
-      <div data-testid="agent-budget" className="px-3 py-2 border-b border-hairline shrink-0 space-y-1.5">
+      <details data-testid="agent-run-details" open={runOpen} className="border-b border-hairline shrink-0">
+        <summary className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[0.625rem] text-fg-muted hover:text-fg-secondary">
+          Run details
+          {/*
+            The spend at a glance, so a folded meter still answers "how far in is it" —
+            and only once a run exists, which is the gauges' own rule inside. Before one,
+            these would read a run's worth of zeroes against the DEFAULT workflow's
+            ceilings, and under Automatic that is a workflow nobody has chosen and the
+            classifier may not pick: a bound stated before anything could enforce it.
+          */}
+          {run.runId !== null && (
+            <span data-testid="agent-run-details-figures" className="font-mono text-fg-subtle">
+              {detailsFigures}
+            </span>
+          )}
+        </summary>
         {/*
-          The gauges measure a run, so they wait for one. Before any run exists they
-          would read a full set of zeroes against the DEFAULT workflow's ceilings, which
-          under Automatic is a workflow nobody has chosen and the classifier may not
-          pick.
+          The meter's own wrapper keeps its id through the move behind the `<details>`:
+          it is the handle the gauges are read through as a BLOCK, and the disclosure
+          around it is a different node with a different id (`agent-run-details`).
         */}
-        {run.runId !== null &&
-          run.timeline.budget.map((gauge) => (
-            <div key={gauge.id} data-testid={`agent-budget-${gauge.id}`}>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-fg-muted">{gauge.label}</span>
-                <span className="font-mono text-[0.625rem] text-fg-tertiary">{readGauge(gauge)}</span>
+        <div data-testid="agent-budget" className="px-3 pb-2 space-y-1.5">
+          {/*
+            The gauges measure a run, so they wait for one. Before any run exists they
+            would read a full set of zeroes against the DEFAULT workflow's ceilings, which
+            under Automatic is a workflow nobody has chosen and the classifier may not
+            pick.
+          */}
+          {run.runId !== null &&
+            run.timeline.budget.map((gauge) => (
+              <div key={gauge.id} data-testid={`agent-budget-${gauge.id}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-fg-muted">{gauge.label}</span>
+                  <span className="font-mono text-[0.625rem] text-fg-tertiary">{readGauge(gauge)}</span>
+                </div>
+                <div className="mt-1 h-0.5 rounded-full bg-fill">
+                  <div
+                    data-testid={`agent-budget-${gauge.id}-bar`}
+                    className="h-full rounded-full bg-blue-400/60"
+                    style={{ width: `${gaugeFraction(gauge)}%` }}
+                  />
+                </div>
               </div>
-              <div className="mt-1 h-0.5 rounded-full bg-fill">
-                <div
-                  data-testid={`agent-budget-${gauge.id}-bar`}
-                  className="h-full rounded-full bg-blue-400/60"
-                  style={{ width: `${gaugeFraction(gauge)}%` }}
-                />
-              </div>
-            </div>
-          ))}
-        {/*
-          Withheld while the workflow is the classifier's to decide: these are per
-          workflow, and `data-analysis` and `investigation` are not close. A figure shown
-          before the workflow is known would be a claim this rail cannot keep, and the
-          user would read it as the bound their run will get.
-        */}
-        {showBudgetLimits ? (
-          <p data-testid="agent-budget-limits" className="pt-0.5 text-[0.625rem] text-fg-subtle">
-            Each statement gets {seconds(meterBudget.policy.budgets.statementTimeoutMs)} s, each drive{" "}
-            {(meterBudget.runDeadlineMs / 60_000).toFixed(1)} min and at most {meterBudget.maxModelTurns} model turns.
-          </p>
-        ) : (
-          <p data-testid="agent-budget-unknown" className="pt-0.5 text-[0.625rem] text-fg-subtle">
-            Every ceiling below is per workflow, and Automatic decides the workflow from your objective when the run
-            opens — so the figures are stated once the run has one, and by the run&apos;s own record.
-          </p>
-        )}
-        {/*
-          The reserve, stated where the ceilings are. Without it a run that ends short
-          of every figure above reads as one that gave up; it was asked to stop, and
-          the report it composed is the point of asking.
-        */}
-        <p data-testid="agent-budget-reserve" className="text-[0.625rem] text-fg-subtle">
-          The last {AGENT_REPORT_RESERVE_TURNS} model turns and the last {seconds(AGENT_REPORT_RESERVE_MS)} s are kept
-          back for the report: whichever it reaches first, the run is asked once to stop and report what it has
-          established. So a run that ends short of these figures was asked to stop rather than having given up, and its
-          claims still cite what it read. A plan run is never asked, having no report to compose.
-        </p>
-        <p data-testid="agent-budget-caveats" className="text-[0.625rem] text-fg-subtle">
-          Every ceiling is per drive, so a run resumed after a restart starts each of them again and these totals can
-          read past a single drive's ceiling. What is counted comes from the run's ledger, which records less than the
-          server charges: the schema capture's catalog reads are not itemized, a statement that failed at the database
-          records no duration, and a completed read reports the engine's own elapsed time rather than the span the
-          budget was charged. So a spend shown here is a floor, never a ceiling. On SQLite a statement over its timeout
-          is refused once it returns, not interrupted while it runs.
-        </p>
-      </div>
+            ))}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5 text-[0.625rem] text-fg-subtle">
+            {/*
+              What the measured figures above are: a floor, per drive. The claim qualifies
+              the gauges, so it sits with them.
+            */}
+            <span className="inline-flex items-center gap-0.5">
+              What is counted
+              <InfoNote title="What these figures count" testId="agent-budget-spend">
+                <span data-testid="agent-budget-caveats" className="block">
+                  Every ceiling is per drive, so a run resumed after a restart starts each of them again and these
+                  totals can read past a single drive&apos;s ceiling. What is counted comes from the run&apos;s ledger,
+                  which records less than the server charges: the schema capture&apos;s catalog reads are not itemized,
+                  a statement that failed at the database records no duration, and a completed read reports the
+                  engine&apos;s own elapsed time rather than the span the budget was charged. So a spend shown here is a
+                  floor, never a ceiling. On SQLite a statement over its timeout is refused once it returns, not
+                  interrupted while it runs.
+                </span>
+              </InfoNote>
+            </span>
+            {/*
+              The ceilings nothing counts from, withheld while the workflow is the
+              classifier's to decide: these are per workflow, and `data-analysis` and
+              `investigation` are not close. A figure shown before the workflow is known
+              would be a claim this rail cannot keep, and the user would read it as the
+              bound their run will get. Where they ARE known the ⓘ carries them, and the
+              reserve — which is the reason a run can end short of every one of them — sits
+              beside the figures it is about.
+            */}
+            {showBudgetLimits ? (
+              <span className="inline-flex items-center gap-0.5">
+                Ceilings
+                <InfoNote title="The ceilings nothing measures" testId="agent-budget-ceilings">
+                  <span data-testid="agent-budget-limits" className="block">
+                    Each statement gets {seconds(meterBudget.policy.budgets.statementTimeoutMs)} s, each drive{" "}
+                    {(meterBudget.runDeadlineMs / 60_000).toFixed(1)} min and at most {meterBudget.maxModelTurns} model
+                    turns.
+                  </span>
+                </InfoNote>
+              </span>
+            ) : (
+              <p data-testid="agent-budget-unknown">
+                Every ceiling here is per workflow, and Automatic decides the workflow from your objective when the run
+                opens — so the figures are stated once the run has one, and by the run&apos;s own record.
+              </p>
+            )}
+            <span className="inline-flex items-center gap-0.5">
+              Report reserve
+              <InfoNote title="What is kept back for the report" testId="agent-budget-report-reserve">
+                <span data-testid="agent-budget-reserve" className="block">
+                  The last {AGENT_REPORT_RESERVE_TURNS} model turns and the last {seconds(AGENT_REPORT_RESERVE_MS)} s
+                  are kept back for the report: whichever it reaches first, the run is asked once to stop and report
+                  what it has established. So a run that ends short of these figures was asked to stop rather than
+                  having given up, and its claims still cite what it read. A plan run is never asked, having no report
+                  to compose.
+                </span>
+              </InfoNote>
+            </span>
+          </div>
+        </div>
+      </details>
 
       <div
         ref={timelineScroller}
@@ -2097,141 +2414,96 @@ export function AgentRail({
         data-testid="agent-timeline-scroll"
         className="flex-1 min-h-0 overflow-auto"
       >
+        {/*
+          What came of the run, above the chronology of it (item 2 of the redesign).
+
+          It is a SECOND rendering of entries the timeline below already holds, and it is
+          first in this container rather than pinned outside it deliberately: the answer
+          scrolls away like everything else, so a user reading the transcript is not
+          reading it under a fixed block that has taken a third of the panel.
+
+          No `capabilities`: this rail is given a connection id and a type, not a provider
+          descriptor, and there is no fetch here to get one — every test in this suite
+          counts the requests this component makes. The card's fallback is the honest one
+          for that state: it tints from what the LEDGER says the guard could read, and
+          answers "unknown" rather than SQL where nothing said.
+
+          The run's grounding is not passed either, and deliberately: the card reads the
+          capture off this same timeline. It used to be a second prop beside it, and a
+          claim a caller can forget to pass is a claim that disappears — on MongoDB the
+          answer showed the amber `not checked` chip alone while the fold two lines below
+          said `Schema captured — 5 collections` (L4, measured 2026-08-21).
+
+          `onStop` is deliberately not passed. The run's stop is one control and it is the
+          one in the row above, three lines up: a second Stop inside the card would be two
+          buttons for one ask, and the header's is the one this rail has always offered —
+          including in the window between an accepted start and its first ledger line,
+          where there is no card yet at all.
+        */}
+        <AnswerCard timeline={run.timeline} onApplyStatement={onApplyStatement} onShowArtifact={showArtifact} />
         <ol data-testid="agent-timeline" aria-live="polite" className="p-2 space-y-1">
           {run.timeline.items.length === 0 && (
             <li data-testid="agent-timeline-empty" className="p-2 text-xs text-fg-subtle">
               No activity yet. A run's steps appear here as they are recorded.
             </li>
           )}
-          {run.timeline.items.map((item) => (
+          {/*
+            The run's scaffolding, folded (item 7). One dim line where three entries were,
+            expanding to those three entries rendered exactly as any other — so nothing is
+            hidden, and the two lines a plan run is actually about start at the top.
+
+            `agent-timeline-item` stays the id of a SUBSTANTIVE entry, which is what makes
+            it worth asserting: a test that counts entries is counting what the run found.
+          */}
+          {chromeItems.length > 0 && (
+            /*
+              Silenced, and only this subtree: the nearest live ancestor governs, so
+              `aria-live="off"` here leaves every substantive entry below announced.
+
+              The summary interpolates a running count and the content of a closed
+              `<details>` is not exposed at all, so inside the polite region a reader heard
+              "Run setup · 1 entry", "· 2 entries", "· 3 entries" in place of the three
+              lines those entries actually say. The collapse is deliberate; three
+              announcements of a counter were not.
+            */
+            <li aria-live="off">
+              <details data-testid="agent-timeline-chrome" className="rounded">
+                <summary className="cursor-pointer p-2 text-[0.625rem] text-fg-subtle hover:text-fg-muted">
+                  Run setup · {chromeItems.length} {chromeItems.length === 1 ? "entry" : "entries"}
+                </summary>
+                <ol className="space-y-1">
+                  {chromeItems.map((item) => (
+                    <li
+                      key={item.id}
+                      data-testid="agent-timeline-chrome-item"
+                      className="rounded p-2 opacity-80 hover:bg-fill"
+                    >
+                      <TimelineEntryBody
+                        item={item}
+                        onApplyStatement={onApplyStatement}
+                        showArtifact={showArtifact}
+                        declinedHandovers={declinedHandovers}
+                        cardedAnswerId={cardedAnswerId}
+                        cardedStatement={cardedStatement}
+                        planCarded={answerState === "plan"}
+                      />
+                    </li>
+                  ))}
+                </ol>
+              </details>
+            </li>
+          )}
+          {substantiveItems.map((item) => (
             <li key={item.id} data-testid="agent-timeline-item" className="rounded p-2 hover:bg-fill">
-              <div className="flex items-center gap-2">
-                <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", TONE_CLASSES[item.tone])} />
-                <span className="text-xs text-fg-secondary">{item.headline}</span>
-              </div>
-              {item.detail !== undefined && <p className="mt-0.5 pl-3.5 text-xs text-fg-muted">{item.detail}</p>}
-              {/*
-                Prose the MODEL wrote, rendered with the structure it wrote it in
-                (#373 review). Measured in plan mode against a live model: the closing
-                statement arrived as markdown and reached the user as hash marks and
-                asterisks, and plan mode's whole output is this one block.
-
-                Inside its own bordered block, which is the half that has to survive
-                being readable: `renderProse` builds React nodes and reaches no HTML
-                parser, so nothing here can execute — but a heading a model wrote must
-                still not read as a heading the application wrote, and the rule that
-                the app's words and everyone else's never share a line is what the
-                border keeps true.
-              */}
-              {/*
-                The editor is offered to the statements INSIDE the prose (#389), EXCEPT on
-                the entry a plan run's statement was read out of.
-
-                That exception is the whole marking requirement, not a detail of it. The
-                closing prose of a plan run HOLDS the fenced statement, so without it the
-                same `DELETE` renders twice: once in the card below, amber, with the guard's
-                verdict and an accessible name that carries it — and once here, immediately
-                above it, as a plain grey "Apply to editor" with no mark and no name, which
-                is the control a user reaches for first because it sits against the SQL.
-                `renderProse` cannot label it: it is handed text and knows nothing of the
-                ledger. So the marked hand-off is the only hand-off, and the block keeps its
-                clipboard. Everywhere else — an agent run, a plan run that drafted nothing —
-                #389's control is untouched, because there is no card there to defer to.
-
-                A host with no editor passes nothing and is offered nothing, the rule every
-                other affordance in this rail follows.
-
-                A refusal is the same prose in a different frame. The run reached its other
-                legitimate ending — it says the schema does not answer the question — and
-                that is what the card states; the marker the ledger read it by was stripped
-                on the way here, because it is a protocol token the model was told to emit
-                and not a sentence it wrote for anyone to read.
-              */}
-              {item.prose !== undefined &&
-                (item.planRefusal === true ? (
-                  <section
-                    data-testid="agent-plan-refusal"
-                    className="mt-1 ml-3.5 rounded border border-amber-400/40 bg-amber-500/5 p-1.5"
-                  >
-                    {/*
-                      Says only that the run could not draft, never WHY — the two reasons
-                      are different and this card cannot tell them apart. A grounded run
-                      refuses because the inventory it was given does not reach the
-                      question; an ungrounded one (a reading that was refused, that
-                      overran its time, or a provider that cannot describe its own
-                      schema — the engine alone stopped deciding it in #414) refuses
-                      because there was no inventory at all. The earlier wording named "the schema it read",
-                      which on the second path is a reading that never happened.
-                    */}
-                    <p className="text-[0.625rem] text-amber-300">
-                      This run drafted no statement. What it says is missing, and what it needs from you, are in its own
-                      words below.
-                    </p>
-                    <ProseBlock
-                      text={item.prose}
-                      onApplySql={onApplyStatement}
-                      statementCarded={item.planStatementRecorded === true}
-                      className="mt-1"
-                    />
-                  </section>
-                ) : (
-                  <ProseBlock
-                    text={item.prose}
-                    onApplySql={onApplyStatement}
-                    statementCarded={item.planStatementRecorded === true}
-                    className="mt-1 ml-3.5"
-                  />
-                ))}
-              {/*
-                The run's own deliverable, with what the server established about it. Its
-                own card rather than a line beside the entry, because a statement a user
-                may be about to run is the one thing on this surface that can do damage
-                if it is presented as something it is not.
-              */}
-              {item.planStatement !== undefined && (
-                <PlanStatementCard draft={item.planStatement} onApply={onApplyStatement} />
-              )}
-              {/*
-                The one place this surface contradicts the ledger, and it does so beside
-                the sentence it contradicts. The entry above is folded from what the RUN
-                recorded — that it handed the statement over to be run — and this rail
-                declined to perform it, so a reader who saw only the entry would believe
-                an execution that never happened. Said here rather than in a banner:
-                the fact is about this answer, and a notice elsewhere would be a
-                sentence the reader has to match to a line themselves.
-              */}
-              {declinedHandovers
-                .filter((declined) => declined.id === item.id)
-                .map((declined) => (
-                  <p
-                    key={declined.id}
-                    data-testid="agent-handover-declined"
-                    className="mt-0.5 pl-3.5 text-xs text-amber-400/80"
-                  >
-                    It was not run: this run was opened on {declined.openedOn ?? "another connection"} and your editor
-                    has moved to a different one since. The answer would have arrived in a tab that is connected
-                    somewhere else, so nothing was executed. The statement is below — take it yourself if you want it on
-                    the connection you are on now.
-                  </p>
-                ))}
-              {/*
-              Verbatim content from the model, the engine or the user, kept in its own
-              block rather than folded into a sentence: it is untrusted input, and the
-              user should be able to see where the app stops speaking.
-            */}
-              {item.quoted !== undefined && (
-                <QuotedBlock text={item.quoted} testId="agent-quoted-copy" className="mt-1 ml-3.5" />
-              )}
-              <div className="ml-3.5">
-                <HydrationControls
-                  sql={item.applySql}
-                  artifactId={item.artifactId}
-                  chartSpec={item.chartSpec}
-                  testIdPrefix="agent-"
-                  onApply={onApplyStatement}
-                  onShow={showArtifact}
-                />
-              </div>
+              <TimelineEntryBody
+                item={item}
+                onApplyStatement={onApplyStatement}
+                showArtifact={showArtifact}
+                declinedHandovers={declinedHandovers}
+                cardedAnswerId={cardedAnswerId}
+                cardedStatement={cardedStatement}
+                planCarded={answerState === "plan"}
+              />
             </li>
           ))}
         </ol>
@@ -2257,50 +2529,25 @@ export function AgentRail({
         )}
 
         {/*
-          The run's conclusion, and the one place a user can check it: every claim
-          is the model's own prose — quoted, never narrated as the app speaking —
-          and every citation names something this run's ledger holds. The server
-          already refused a claim it could not verify (`composeReportTool`), so a
-          citation that does not resolve here is a gap in what this rail has read,
-          and says so rather than looking checked.
+          The run's conclusion is the CARD, at the top of this container, and there is no
+          second Report section down here any more (L6, measured 2026-08-21).
+
+          It was not a duplicate by accident: the card renders the same claims, quoted the
+          same way, with the same citations — so the rail printed the model's claim twice
+          and offered "Apply to editor" three times for one statement, the card's, this
+          section's citation and the `Statement drafted` entry that recorded it. Not one of
+          the three carried an accessible name.
+
+          Nothing this section said is gone. The claims are `agent-answer-claim`, quoted
+          exactly as they were and still never narrated as the app speaking; each
+          citation's label, the ledger's own detail for it and the statement it rests on
+          are in the card's `agent-answer-evidence` fold, with the locator on the chip
+          beside the claim; and a citation this timeline holds no entry for still says so
+          in its own words rather than looking checked. Its `Show result` is the one thing
+          not reproduced there, and it was already a second offer of the artifact the
+          `Result stored` entry offers under the same live-run rule — while the note above
+          is what explains the absence once a run has ended.
         */}
-        {run.timeline.report !== null && (
-          <section data-testid="agent-report" className="border-t border-hairline p-2 space-y-2">
-            <h2 className="px-1 text-xs font-medium text-fg-secondary">Report</h2>
-            {run.timeline.report.claims.map((claim) => (
-              <div key={claim.id} data-testid="agent-report-claim" className="rounded p-2 hover:bg-fill">
-                <QuotedBlock text={claim.quoted} testId="agent-report-claim-copy" tone="loud" />
-                <ul className="mt-1 space-y-1">
-                  {claim.citations.map((citation) => (
-                    <li key={citation.id} data-testid="agent-report-citation" className="pl-1.5 text-xs">
-                      <span className={citation.resolved ? "text-fg-tertiary" : "text-amber-400/80"}>
-                        {citation.label}
-                      </span>
-                      <span className="ml-1 text-fg-subtle">{citation.detail}</span>
-                      {citation.locator !== undefined && (
-                        <span className="ml-1 font-mono text-[0.625rem] text-fg-muted">{citation.locator}</span>
-                      )}
-                      {citation.quoted !== undefined && (
-                        <QuotedBlock text={citation.quoted} testId="agent-citation-quoted-copy" className="mt-0.5" />
-                      )}
-                      <HydrationControls
-                        sql={citation.quoted}
-                        artifactId={citation.artifactId}
-                        /* A citation is evidence, not a presentation: the decision to
-                           draw a chart belongs to the answer entry, and repeating it
-                           here would offer the same artifact under two accounts. */
-                        chartSpec={undefined}
-                        testIdPrefix="agent-citation-"
-                        onApply={onApplyStatement}
-                        onShow={showArtifact}
-                      />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </section>
-        )}
       </div>
     </div>
   );

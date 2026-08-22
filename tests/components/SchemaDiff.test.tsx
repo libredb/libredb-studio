@@ -198,9 +198,10 @@ mock.module("@/hooks/use-all-connections", () => ({
 
 // ── Imports AFTER mocks ──────────────────────────────────────────────────────
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { render, fireEvent, cleanup, act } from "@testing-library/react";
 import { SchemaDiff } from "@/components/SchemaDiff";
+import { logger } from "@/lib/logger";
 import { mockSchema } from "../fixtures/schemas";
 import { mockPostgresConnection } from "../fixtures/connections";
 
@@ -752,6 +753,49 @@ describe("SchemaDiff", () => {
       expect(queryByText("Foreign Keys")).toBeNull();
     });
 
+    // A foreign key REPOINTED at another table is two entries under one column name:
+    // the diff engine keys an FK by `columnName→table.column` (`diff-engine.ts`), so
+    // it reports the old one removed and the new one added. Keying the rows by the
+    // column name alone gave React two children with the same key — one row, and the
+    // half of the change the user needed to see missing.
+    test("renders both halves of a foreign key that was repointed", () => {
+      mockDiffSchemas.mockImplementation(() =>
+        structuredClone({
+          tables: [
+            {
+              action: "modified",
+              tableName: "users",
+              columns: [],
+              indexes: [],
+              foreignKeys: [
+                { action: "removed", columnName: "org_id", changes: ["Removed FK: org_id -> orgs(id)"] },
+                { action: "added", columnName: "org_id", changes: ["Added FK: org_id -> tenants(id)"] },
+              ],
+            },
+          ],
+          summary: { added: 0, removed: 0, modified: 1 },
+          hasChanges: true,
+        }),
+      );
+      const complaints: string[] = [];
+      const originalError = console.error;
+      console.error = (...args: unknown[]) => {
+        complaints.push(args.map(String).join(" "));
+      };
+      try {
+        const { getByText, getAllByText } = renderDiff();
+        changeTarget("snap-1");
+        fireEvent.click(getByText("users"));
+
+        expect(getAllByText("org_id")).toHaveLength(2);
+        expect(getByText("Removed FK: org_id -> orgs(id)")).toBeTruthy();
+        expect(getByText("Added FK: org_id -> tenants(id)")).toBeTruthy();
+      } finally {
+        console.error = originalError;
+      }
+      expect(complaints.filter((line) => line.includes("same key"))).toEqual([]);
+    });
+
     test("renders no action icon for unknown column action", () => {
       mockDiffSchemas.mockImplementation(() =>
         structuredClone({
@@ -912,9 +956,10 @@ describe("SchemaDiff", () => {
 
     test("handles fetch error gracefully", async () => {
       const origFetch = globalThis.fetch;
-      const origError = console.error;
-      const mockConsoleError = mock(() => {});
-      console.error = mockConsoleError;
+      // The failure goes to the shared logger, not to `console` — every other
+      // component/hook in this tree reports through it, and a bare console call is
+      // invisible to whatever the operator has wired the logger up to.
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
 
       globalThis.fetch = mock(() =>
         Promise.resolve({
@@ -931,11 +976,11 @@ describe("SchemaDiff", () => {
           fn!("conn:remote-1");
         });
 
-        expect(mockConsoleError).toHaveBeenCalled();
+        expect(warn).toHaveBeenCalled();
         expect(mockSaveSchemaSnapshot).not.toHaveBeenCalled();
       } finally {
         globalThis.fetch = origFetch;
-        console.error = origError;
+        warn.mockRestore();
       }
     });
   });

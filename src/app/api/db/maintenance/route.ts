@@ -3,7 +3,7 @@ import { getOrCreateProvider, type MaintenanceType } from "@/lib/db";
 import { emitAuditEvent } from "@/lib/audit";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { guardRoute } from "@/lib/api/require-session";
+import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
 import { logger } from "@/lib/logger";
 
 export async function POST(request: Request) {
@@ -17,6 +17,7 @@ export async function POST(request: Request) {
   if ("response" in guard) return guard.response;
 
   if (guard.session.role !== "admin") {
+    auditRoleDenial({ route: "POST /api/db/maintenance", user: guard.session.username, request });
     return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });
   }
 

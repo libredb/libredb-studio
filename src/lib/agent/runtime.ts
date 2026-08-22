@@ -33,7 +33,7 @@ import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { LLMAuthError, LLMError, LLMRateLimitError } from "@/lib/llm/types";
-import { ExecutionProfileError } from "@/lib/db/errors";
+import { type ExecutionProfileDenyCode, ExecutionProfileError } from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import type { QueryResult } from "@/lib/types";
@@ -172,6 +172,10 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
     // actually runs on is acquired per call through the execution-profile seam.
     // One provider for both, so a run's declared behaviour and its declared
     // vocabulary can never come from two different readings.
+    //
+    // So no `withOneShotTunnel` wrapper here (#457): this provider is never connected.
+    // The one that runs statements comes from `acquireExecutionProfileProvider`, which
+    // opens the connection's pooled tunnel itself.
     const provider = await createDatabaseProvider(connection);
     const capabilities = provider.getCapabilities();
     const labels = provider.getLabels();
@@ -196,7 +200,13 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
       },
     });
   } catch (error) {
-    await recordDriveFailure(service, runId, error);
+    // A drive refused because another already owns the run is not a failure OF the
+    // run: it is healthy and in flight. Recording `failed` here would end the very
+    // run the first drive is still carrying, so the refusal is left to the caller
+    // (the drive route answers 409) and nothing is written to the ledger.
+    if (!(error instanceof AgentRunServiceError && error.reasonCode === "RUN_ALREADY_DRIVEN")) {
+      await recordDriveFailure(service, runId, error);
+    }
     throw error;
   }
 }
@@ -227,6 +237,16 @@ async function recordDriveFailure(service: AgentRunService, runId: string, error
 }
 
 /**
+ * The profile refusals that are about the connection's agent credential rather than
+ * about the engine. Kept beside the classifier that reads them: the set exists only to
+ * split one error type into the two things a user can do about it.
+ */
+const AGENT_CREDENTIAL_DENY_CODES: ReadonlySet<ExecutionProfileDenyCode> = new Set([
+  "AGENT_CREDENTIAL_UNRESOLVABLE",
+  "AGENT_CREDENTIAL_WITH_CONNECTION_STRING",
+]);
+
+/**
  * Chooses the label a user sees from the error's TYPE.
  *
  * Never from its message: that text comes from a model provider, a driver or a
@@ -244,7 +264,14 @@ function classifyDriveFailure(error: unknown): AgentRunFailureReason {
   // `internal` sent a user to a log that could only tell them what their own
   // connection already says. Checked before the generic classes below because it is
   // the specific thing that happened.
-  if (error instanceof ExecutionProfileError) return "engine-unsupported";
+  //
+  // The reason code, not just the type: `resolveAgentCredential` raises this same
+  // error on ANY engine for a credential that cannot be applied, and calling that
+  // "engine unsupported" told a PostgreSQL operator something false about their
+  // database while saying nothing about the credential they could fix (B47).
+  if (error instanceof ExecutionProfileError) {
+    return AGENT_CREDENTIAL_DENY_CODES.has(error.reasonCode) ? "agent-credential-unusable" : "engine-unsupported";
+  }
 
   /*
     These were one label until 2026-08-12, on the reasoning that the user's next move

@@ -48,7 +48,7 @@ The config file is YAML (`.yaml`, `.yml`) or JSON (`.json`). Format is auto-dete
 ```yaml
 version: "1"
 
-defaults:                    # Optional — merged into every connection
+defaults:                    # Optional — merges managed/environment/ssl only
   managed: true
   environment: production
   ssl:
@@ -58,7 +58,7 @@ defaults:                    # Optional — merged into every connection
 connections:
   - id: "analytics-pg"       # Required, unique, lowercase slug [a-z0-9-]
     name: "Analytics DB"      # Required, display name in UI
-    type: postgres            # Required: postgres|mysql|sqlite|mongodb|redis|oracle|mssql|libredb|couchbase|clickhouse|druid
+    type: postgres            # Required: postgres|mysql|sqlite|mongodb|redis|oracle|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra
     host: "${PG_HOST}"
     port: 5432
     database: analytics
@@ -74,6 +74,7 @@ connections:
       rejectUnauthorized: true
     # serviceName: "ORCL"     # Oracle only
     # instanceName: "MSSQL$"  # SQL Server only
+    # localDataCenter: "datacenter1"  # Cassandra only - REQUIRED there
 
   - id: "dev-mysql"
     name: "Dev MySQL"
@@ -98,6 +99,37 @@ connections:
     # nothing to select. No `connectionString` either - its HTTP SQL API has no URI
     # convention, so host and port are the whole address.
     # user/password are optional and only reach a cluster running druid-basic-security.
+
+  - id: "lake-trino"
+    name: "Trino Lakehouse"
+    type: trino
+    host: "${TRINO_HOST}"
+    port: 8080                # The client protocol and the web UI share this port
+    database: hive            # The CATALOG, not a database. Pins what the tree shows;
+                              # a fully qualified name still reaches any other catalog.
+    user: "${TRINO_USER}"
+    roles: ["*"]
+    environment: production
+    # A `password` here would need `ssl.mode` set as well: the coordinator answers
+    # 401 "Password not allowed for insecure authentication" over plain HTTP, even
+    # with authentication switched off, so a password without TLS breaks a
+    # connection that works without one.
+    # No `connectionString`: jdbc:trino:// is not a form this build parses.
+
+  - id: "events-ring"
+    name: "Cassandra Ring"
+    type: cassandra
+    host: "${CASSANDRA_HOST}"
+    port: 9042                     # The native protocol
+    database: events               # The KEYSPACE, pinned for the session. Without it an
+                                   # unqualified table name resolves to nothing.
+    localDataCenter: datacenter1   # REQUIRED: the driver refuses to connect without it,
+                                   # and a stock single-node install reports datacenter1.
+    user: "${CASSANDRA_USER}"
+    roles: ["*"]
+    environment: production
+    # No `connectionString`: no URI convention carries localDataCenter, so a pasted
+    # one would produce a connection that cannot open.
 ```
 
 ### Field Reference
@@ -105,20 +137,20 @@ connections:
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `version` | Yes | — | Must be `"1"` |
-| `defaults` | No | — | Merged into all connections (connection values override) |
+| `defaults` | No | — | Supplies `managed`, `environment` and `ssl` where a connection omits them. No other field is merged |
 | `defaults.managed` | No | `true` | Default managed state |
 | `defaults.environment` | No | — | Default environment label |
 | `defaults.ssl` | No | — | Default SSL config |
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | — | Database type: `postgres`, `mysql`, `sqlite`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid` |
+| `connections[].type` | Yes | — | Database type: `postgres`, `mysql`, `sqlite`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
-| `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it) |
+| `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**) |
 | `connections[].user` | No | — | Username |
 | `connections[].password` | No | — | Password (use `${ENV_VAR}` syntax) |
-| `connections[].connectionString` | No | — | Full connection string (use `${ENV_VAR}`). Druid has no URI form — a `druid` connection needs `host` and is addressed by host and port only |
+| `connections[].connectionString` | No | — | Full connection string (use `${ENV_VAR}`). Druid and Trino have no URI form this build parses — those connections need `host` and are addressed by host and port only |
 | `connections[].roles` | Yes | — | Access control: `["*"]`, `["admin"]`, `["user"]`, `["admin", "user"]` |
 | `connections[].managed` | No | from defaults | `true` = read-only, `false` = editable copy |
 | `connections[].environment` | No | from defaults | Environment badge |
@@ -127,6 +159,7 @@ connections:
 | `connections[].ssl` | No | from defaults | SSL configuration |
 | `connections[].serviceName` | No | — | Oracle service name |
 | `connections[].instanceName` | No | — | SQL Server instance name |
+| `connections[].localDataCenter` | No¹ | — | Cassandra local data centre (`datacenter1`). ¹Optional in the schema because no other engine has it, and **required by the Cassandra provider**: the driver refuses to connect without one |
 
 ---
 
@@ -276,7 +309,7 @@ In Kubernetes, ConfigMap updates propagate in ~60-120s (kubelet sync period). Co
 ### Docker
 
 ```bash
-docker run -d \
+docker run \
   -v ./seed-connections.yaml:/app/config/seed-connections.yaml:ro \
   -e SEED_CONFIG_PATH=/app/config/seed-connections.yaml \
   -e PG_PASSWORD=secret \

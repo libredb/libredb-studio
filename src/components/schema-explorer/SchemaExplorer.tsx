@@ -155,6 +155,7 @@ export function SchemaExplorer({
               isExpanded={expandedTables.has(table.name)}
               onToggle={() => toggleTable(table.name)}
               labels={labels}
+              capabilities={capabilities}
               isAdmin={isAdmin}
               onTableClick={onTableClick}
               onGenerateSelect={onGenerateSelect}

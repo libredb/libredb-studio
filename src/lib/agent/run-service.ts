@@ -48,6 +48,7 @@ import { verifyRunGoal } from "./goal-verifier";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import type { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import type { QueryResult } from "@/lib/types";
+import { AgentRunStoreError } from "./run-store";
 import type { AgentLedgerEntry, AgentRunLedgerView, AgentRunStore, AgentSettledStepEvent } from "./run-store";
 import type { AgentOperationId, AgentToolName } from "./tools";
 import type {
@@ -208,7 +209,14 @@ export type AgentRunServiceReason =
   | "RUN_NOT_RUNNING"
   | "RUN_HAS_LIVE_EXECUTION"
   /** The caller's target scope is not the connection the run was opened for. */
-  | "RUN_CONNECTION_MISMATCH";
+  | "RUN_CONNECTION_MISMATCH"
+  /**
+   * Another drive already owns this run in THIS process. The durable ledger has no
+   * compare-and-append fence, so two drives on one run would both read a step as
+   * uninvoked and both execute it (`docs/BACKLOG.md` B5). This is the process-local
+   * half of that fence; the cross-process half still belongs to the durable backend.
+   */
+  | "RUN_ALREADY_DRIVEN";
 
 export class AgentRunServiceError extends Error {
   readonly reasonCode: AgentRunServiceReason;
@@ -225,6 +233,10 @@ function report(view: AgentRunLedgerView): AgentRunStatusReport {
   return { record: view.record, cancellationRequested: view.cancellationRequestedAtMs !== null };
 }
 
+/** The runs this process is currently driving. Process memory on purpose: the
+ * durable ledger's queue is the cross-process owner; this closes the in-process gap. */
+const activeDrives = new Set<string>();
+
 export class AgentRunService {
   private readonly store: AgentRunStore;
   private readonly resources: AgentRunResources;
@@ -238,6 +250,32 @@ export class AgentRunService {
     this.store = options.store;
     this.resources = options.resources;
     this.clock = options.clock ?? Date.now;
+  }
+
+  /**
+   * Claims the right to drive a run in THIS process. A second drive on the same run
+   * refuses rather than waits, because two drives would both pass `runStep`'s
+   * read-then-append check and execute the same step twice. The caller releases in a
+   * `finally`, so a drive that throws still leaves the run claimable by the next one.
+   *
+   * The claim has no expiry, and needs none inside one process: the drive's `finally`
+   * always releases it, a single drive is bounded by the run's own deadline, and a
+   * process death drops the whole set — the cross-process case belongs to the durable
+   * backend's queue (`docs/BACKLOG.md` B5).
+   */
+  claimDrive(runId: string): void {
+    if (activeDrives.has(runId)) {
+      throw new AgentRunServiceError(
+        "RUN_ALREADY_DRIVEN",
+        `agent run "${runId}" is already being driven in this process`,
+      );
+    }
+    activeDrives.add(runId);
+  }
+
+  /** Releases the drive claim taken by `claimDrive`. Idempotent. */
+  releaseDrive(runId: string): void {
+    activeDrives.delete(runId);
   }
 
   /**
@@ -316,13 +354,33 @@ export class AgentRunService {
    * belongs to T9.
    */
   async cancel(runId: string, by: AgentRunActor): Promise<AgentRunStatusReport> {
-    const view = await this.readOrThrow(runId);
-    if (view.terminal) return report(view);
-    if (view.record.status === "queued") {
-      return report(await this.finalize(runId, "cancelled", { stopReason: "cancelled" }));
+    try {
+      const view = await this.readOrThrow(runId);
+      if (view.terminal) return report(view);
+      if (view.record.status === "queued") {
+        return report(await this.finalize(runId, "cancelled", { stopReason: "cancelled" }));
+      }
+      await this.store.requestCancellation(runId, by);
+      return report(await this.readOrThrow(runId));
+    } catch (error) {
+      /*
+        A run closed between the read above and the write below was ended by another
+        writer, and `finalize` — the only caller of `close` — appends `run-finished`
+        BEFORE it closes. So the re-read settles it: a terminal view is the answer the
+        caller asked for, and returning it beats a refusal the route would turn into a
+        500 for a user who pressed stop on a run that had just ended.
+
+        The re-read is checked rather than trusted. A closed stream over a run the
+        ledger does not show as ended means the cancellation was genuinely lost, and
+        answering 200 on a run still queued or running would be exactly the silent loss
+        `RUN_ALREADY_CLOSED` exists to make loud — so that case rethrows.
+      */
+      if (error instanceof AgentRunStoreError && error.reasonCode === "RUN_ALREADY_CLOSED") {
+        const settled = await this.readOrThrow(runId);
+        if (settled.terminal) return report(settled);
+      }
+      throw error;
     }
-    await this.store.requestCancellation(runId, by);
-    return report(await this.readOrThrow(runId));
   }
 
   /**

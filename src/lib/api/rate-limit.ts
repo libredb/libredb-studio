@@ -119,14 +119,20 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   // many model calls of its own, so this bounds how often LLM work is STARTED, never how much it
   // spends.
   ai: { maxVar: "RATE_LIMIT_AI_MAX", windowVar: "RATE_LIMIT_AI_WINDOW_SEC", maxDefault: 20, windowDefault: 60 },
-  // Shared across every db/ route that reaches a provider - query, multi-query, transaction,
+  // Shared across every route that reaches a database - query, multi-query, transaction,
   // disconnect, cancel, health, maintenance, monitoring, pool-stats, profile, provider-meta,
-  // schema, schema/list, schema/relations, schema-snapshot, test-connection - plus
-  // admin/fleet-health: seventeen routes today (grep -rl 'bucket: "query"' src/app/api/ finds
-  // fifteen; schema/list and schema/relations reach this bucket indirectly, through
-  // schema-route.ts's shared handleSchemaRequest). The same workload reached through a
-  // different endpoint must not get a second budget - re-verify and correct this comment again
-  // if guardRoute grows a new call site.
+  // schema, schema/list, schema/relations, schema-snapshot, test-connection, admin/fleet-health,
+  // plus the three storage routes (storage, storage/[collection], storage/migrate): TWENTY routes
+  // today (grep -rl 'bucket: "query"' src/app/api/ finds eighteen; schema/list and schema/relations
+  // reach this bucket indirectly, through schema-route.ts's shared handleSchemaRequest). The same
+  // workload reached through a different endpoint must not get a second budget - re-verify and
+  // correct this comment again if guardRoute grows a new call site.
+  //
+  // The storage family joined when AU1 moved it onto the shared 401 (2026-08-22), and that gave it
+  // a limiter it never had. It belongs here rather than in a bucket of its own: under
+  // STORAGE_PROVIDER=sqlite or postgres these routes read and write a real database, which is what
+  // this bucket meters. A bucket of its own would be a fourth configurable pair for a workload
+  // that is debounced write-through sync, far under 120 requests a minute in normal use.
   query: {
     maxVar: "RATE_LIMIT_QUERY_MAX",
     windowVar: "RATE_LIMIT_QUERY_WINDOW_SEC",

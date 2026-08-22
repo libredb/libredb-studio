@@ -179,3 +179,7 @@ deploy/digitalocean/droplet/scripts/99-img-check.sh
 
 
 
+
+# local gate-4 probe harness (issue #424), never committed
+/probe-424.ts
+/probe-results/

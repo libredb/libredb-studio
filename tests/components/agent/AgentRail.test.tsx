@@ -4,8 +4,9 @@ import "../../helpers/mock-navigation";
 
 import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render, fireEvent, waitFor, act } from "@testing-library/react";
+import { cleanup, render, fireEvent, waitFor, act, type RenderResult } from "@testing-library/react";
 import { AgentRail } from "@/components/agent/AgentRail";
+import { applyStatementName } from "@/components/agent/rail-parts";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 
@@ -69,6 +70,19 @@ const openedFor = (workflowType: AgentRunWorkflowType): string =>
   })}\n`;
 
 const STARTED_LINE = `${JSON.stringify({ kind: "event", event: { kind: "run-started", atMs: 1_001, mode: "planning" } })}\n`;
+
+/**
+ * The same event for a run the server opened in AGENT mode.
+ *
+ * It exists because the rail now describes an open run from the run's own record, so a
+ * ledger whose `run-started` says `planning` under a header that says `agent` is not a
+ * ledger any server writes — and a test built on one would be asserting against a run
+ * that cannot exist.
+ */
+const AGENT_STARTED_LINE = `${JSON.stringify({
+  kind: "event",
+  event: { kind: "run-started", atMs: 1_001, mode: "agent" },
+})}\n`;
 
 const COMPLETED_LINE = `${JSON.stringify({
   kind: "event",
@@ -268,6 +282,26 @@ function mockDivergentServer(classification: unknown, header: Record<string, unk
   return fetchMock;
 }
 
+/**
+ * Every entry the rail rendered, the run's scaffolding included.
+ *
+ * The rail folds that scaffolding — the header, the drive starting, the schema capture —
+ * behind one summary line that expands, and those entries carry
+ * `agent-timeline-chrome-item` rather than `agent-timeline-item` (item 7 of the rail
+ * redesign): `agent-timeline-item` is now the id of a SUBSTANTIVE entry, which is what
+ * makes counting them worth doing. A test about the LEDGER PARSER counts what was folded
+ * out of the stream and so asks for both, in document order — the chrome group is rendered
+ * first, and it is the prefix of every ledger a run actually writes.
+ */
+async function findAllEntries(view: RenderResult): Promise<HTMLElement[]> {
+  await waitFor(() => {
+    expect(
+      view.queryAllByTestId("agent-timeline-chrome-item").length + view.queryAllByTestId("agent-timeline-item").length,
+    ).toBeGreaterThan(0);
+  });
+  return [...view.queryAllByTestId("agent-timeline-chrome-item"), ...view.queryAllByTestId("agent-timeline-item")];
+}
+
 /** The five workflows live behind the disclosure now, so a test that names one opens it. */
 const openAdvanced = (view: { getByTestId: (id: string) => HTMLElement }): void => {
   fireEvent.click(view.getByTestId("agent-advanced-toggle"));
@@ -356,7 +390,8 @@ describe("AgentRail", () => {
 
   test("starting a run asks for the selected mode against the resolvable connection, then follows its ledger", async () => {
     const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
-    const { getByTestId, findAllByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+    const { getByTestId } = view;
 
     fireEvent.click(getByTestId("agent-mode-agent"));
     fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
@@ -364,10 +399,13 @@ describe("AgentRail", () => {
       fireEvent.click(getByTestId("agent-start"));
     });
 
-    const items = await findAllByTestId("agent-timeline-item");
+    // Both entries are the run's own scaffolding, so they are folded behind one summary
+    // line — and rendered in full inside it, which is what this reads.
+    const items = await findAllEntries(view);
     expect(items).toHaveLength(2);
     expect(items[0].textContent).toContain("Run opened in planning mode");
     expect(items[1].textContent).toContain("Run started in planning mode");
+    expect(getByTestId("agent-timeline-chrome").textContent).toContain("Run setup · 2 entries");
 
     // The classification comes first now, and the open request carries what it said —
     // here the answer every failure reaches, since this mock is not a classifier.
@@ -547,19 +585,22 @@ describe("AgentRail", () => {
   describe("the objective", () => {
     test("is cleared once the run has opened, and is still readable in the timeline", async () => {
       mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
-      const { getByTestId, findAllByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+      const { getByTestId } = view;
 
       fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
       await act(async () => {
         fireEvent.click(getByTestId("agent-start"));
       });
 
+      // The run has ENDED here, so the box is a box again — while a run is open it is the
+      // one-line summary, which the objective suite below pins.
       await waitFor(() => {
         expect((getByTestId("agent-objective") as HTMLTextAreaElement).value).toBe("");
       });
       // Not lost, only moved: the question is on the run's own header, quoted under
       // the first entry, beside the run that is answering it.
-      const items = await findAllByTestId("agent-timeline-item");
+      const items = await findAllEntries(view);
       expect(items[0].textContent).toContain("why is checkout slow");
     });
 
@@ -986,27 +1027,29 @@ describe("AgentRail", () => {
   test("an entry split across two chunks still renders once", async () => {
     const half = Math.floor(OPENED_LINE.length / 2);
     mockAgentFetch([OPENED_LINE.slice(0, half), OPENED_LINE.slice(half), STARTED_LINE.trimEnd()]);
-    const { getByTestId, findAllByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+    const { getByTestId } = view;
 
     fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
     await act(async () => {
       fireEvent.click(getByTestId("agent-start"));
     });
 
-    const items = await findAllByTestId("agent-timeline-item");
+    const items = await findAllEntries(view);
     expect(items).toHaveLength(2);
   });
 
   test("a line this build cannot read is skipped, and the rest of the timeline survives", async () => {
     mockAgentFetch(['{"kind":"something-newer"}\n', OPENED_LINE, "\n"]);
-    const { getByTestId, findAllByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+    const { getByTestId } = view;
 
     fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
     await act(async () => {
       fireEvent.click(getByTestId("agent-start"));
     });
 
-    const items = await findAllByTestId("agent-timeline-item");
+    const items = await findAllEntries(view);
     expect(items).toHaveLength(1);
     expect(items[0].textContent).toContain("Run opened");
   });
@@ -1071,7 +1114,8 @@ describe("AgentRail", () => {
       return jsonResponse({ runId: "arun_1", status: "queued", mode: "planning" }, 202);
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
-    const { getByTestId, findByTestId, findAllByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+    const { getByTestId, findByTestId } = view;
 
     fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
     await act(async () => {
@@ -1079,7 +1123,7 @@ describe("AgentRail", () => {
     });
 
     expect((await findByTestId("agent-error")).textContent).toContain("connection reset");
-    expect(await findAllByTestId("agent-timeline-item")).toHaveLength(1);
+    expect(await findAllEntries(view)).toHaveLength(1);
   });
 
   test("the rail stops following when it goes away", async () => {
@@ -1689,9 +1733,10 @@ describe("AgentRail", () => {
      * unavailable right now.
      */
     test("no pause or resume control is offered, because the service can honour neither", async () => {
-      const { queryByTestId, findAllByTestId } = await startRun([OPENED_LINE, STARTED_LINE]);
+      const view = await startRun([OPENED_LINE, STARTED_LINE]);
+      const { queryByTestId } = view;
 
-      await findAllByTestId("agent-timeline-item");
+      await findAllEntries(view);
       expect(queryByTestId("agent-pause")).toBeNull();
       expect(queryByTestId("agent-resume")).toBeNull();
     });
@@ -1714,7 +1759,19 @@ describe("AgentRail", () => {
       const budgets = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
 
       expect(queryByTestId("agent-budget-statements")).toBeNull();
-      expect(getByTestId("agent-budget-unknown").textContent).toContain("Automatic decides the workflow");
+      /*
+        The whole sentence, pinned.
+
+        It is the one claim in the budget block whose wording the rail redesign changed:
+        "Every ceiling BELOW is per workflow" became "Every ceiling HERE", because "below"
+        was a deictic that stopped being true once the ceilings moved into a sibling ⓘ.
+        Nothing pinned it before — both existing assertions checked a fragment — so a
+        worse rewrite would have gone through unnoticed. A reflow has to come here now.
+      */
+      expect(getByTestId("agent-budget-unknown").textContent).toBe(
+        "Every ceiling here is per workflow, and Automatic decides the workflow from your objective when the run " +
+          "opens — so the figures are stated once the run has one, and by the run's own record.",
+      );
 
       fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
       await act(async () => {
@@ -1890,6 +1947,14 @@ describe("AgentRail", () => {
    * Evidence citations (#329 T10b). The server refuses a claim whose evidence does
    * not match something the run produced; the rail's job is to show the user what
    * each claim rests on, and to keep the model's own words visibly the model's.
+   *
+   * They are read on the ANSWER CARD since the 2026-08-21 redesign, and since L6 that
+   * is the only place they are: the old `agent-report` section at the foot of the rail
+   * rendered the same claims and the same citations a second time, which is what put
+   * three "Apply to editor" controls for one statement on the report path. What each
+   * test asserts is unchanged — the claim quoted, the label, the ledger's own detail,
+   * the model's locator, the statement the artifact came from, and an unresolved
+   * reference saying so rather than looking checked. Only the ids moved.
    */
   describe("evidence citations", () => {
     test("a composed report renders its claims quoted, with what backs each of them", async () => {
@@ -1900,23 +1965,29 @@ describe("AgentRail", () => {
         fireEvent.click(getByTestId("agent-start"));
       });
 
-      const claims = await findAllByTestId("agent-report-claim");
+      const claims = await findAllByTestId("agent-answer-claim");
       expect(claims).toHaveLength(1);
       expect(claims[0].textContent).toContain("checkout is slow because orders is scanned");
+      // The model's own pointer into that evidence, carried through as its words, on the
+      // chip beside the claim.
+      expect(getByTestId("agent-answer-citation-chip").textContent).toContain("Artifact corr_9");
+      expect(getByTestId("agent-answer-citation-chip").textContent).toContain("row 2, total");
 
-      const citations = getByTestId("agent-report").querySelectorAll('[data-testid="agent-report-citation"]');
+      const citations = getByTestId("agent-answer-evidence").querySelectorAll(
+        '[data-testid="agent-answer-evidence-citation"]',
+      );
       expect(citations).toHaveLength(1);
       expect(citations[0].textContent).toContain("Artifact corr_9");
       expect(citations[0].textContent).toContain("3 rows via sql.query.read");
-      // The model's own pointer into that evidence, carried through as its words.
-      expect(citations[0].textContent).toContain("row 2, total");
       // And the statement the artifact came from, quoted rather than narrated.
       expect(citations[0].querySelector("pre")?.textContent).toBe("SELECT count(*) FROM orders");
     });
 
-    test("a run with no report renders no report section", () => {
+    test("a run with no report renders no report at all", () => {
       const { queryByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);
 
+      expect(queryByTestId("agent-answer-report")).toBeNull();
+      // And the section that used to repeat it below the transcript is gone for good.
       expect(queryByTestId("agent-report")).toBeNull();
     });
 
@@ -1931,9 +2002,10 @@ describe("AgentRail", () => {
         fireEvent.click(getByTestId("agent-start"));
       });
 
-      const [citation] = await findAllByTestId("agent-report-citation");
+      const [citation] = await findAllByTestId("agent-answer-evidence-citation");
       expect(citation.textContent).toContain("not in the part of this run's timeline the rail has read");
       expect(citation.querySelector("pre")).toBeNull();
+      expect(getByTestId("agent-answer-citation-chip").getAttribute("data-resolved")).toBe("false");
     });
   });
 
@@ -2020,20 +2092,33 @@ describe("AgentRail", () => {
       expect(queryAllByTestId("agent-apply-statement")).toHaveLength(0);
     });
 
-    test("a resolved citation carries both affordances; an unresolved one carries neither", async () => {
+    /*
+      A citation carries the statement it rests on and no hand-off of its own (L6).
+
+      It had both until the answer card became the answer: the card renders the same
+      claims and the same citations, so the section this pinned was a second rendering of
+      them — and its citation's "Apply to editor" was a THIRD offer of the answer's own
+      statement, since an answer's `sql` is the statement of the step whose artifact it
+      presents and the citation quotes that same step. Neither affordance is lost: the
+      statement is on the clipboard here, the card offers the marked hand-off, and the
+      artifact is offered by the `Result stored` entry that stored it.
+    */
+    test("a citation offers the statement it rests on, and no hand-off of its own", async () => {
       mockAgentFetch([OPENED_LINE, STARTED_LINE, DRAFTED_LINE, COMPLETED_LINE, REPORT_LINE]);
       const onShowArtifact = mock(() => {});
       const onApplyStatement = mock(() => {});
-      const { findAllByTestId, getByTestId } = await runWith({ onShowArtifact, onApplyStatement });
+      const { findAllByTestId, getByTestId, queryByTestId } = await runWith({ onShowArtifact, onApplyStatement });
 
-      const citations = await findAllByTestId("agent-report-citation");
+      const citations = await findAllByTestId("agent-answer-evidence-citation");
       expect(citations).toHaveLength(1);
+      expect(citations[0].querySelector("pre")?.textContent).toBe("SELECT count(*) FROM orders");
+      expect(getByTestId("agent-answer-citation-quoted-copy")).toBeTruthy();
+      expect(queryByTestId("agent-citation-apply-statement")).toBeNull();
+      expect(queryByTestId("agent-citation-show-result")).toBeNull();
 
-      fireEvent.click(getByTestId("agent-citation-show-result"));
+      // The artifact it cites, from the entry that recorded storing it.
+      fireEvent.click(getByTestId("agent-show-result"));
       expect(onShowArtifact).toHaveBeenCalledWith({ runId: "arun_1", correlationId: "corr_9" });
-
-      fireEvent.click(getByTestId("agent-citation-apply-statement"));
-      expect(onApplyStatement).toHaveBeenCalledWith("SELECT count(*) FROM orders");
     });
 
     /*
@@ -2063,9 +2148,8 @@ describe("AgentRail", () => {
       const onApplyStatement = mock(() => {});
       const { findAllByTestId, queryAllByTestId } = await runWith({ onShowArtifact, onApplyStatement });
 
-      await findAllByTestId("agent-report-citation");
+      await findAllByTestId("agent-answer-evidence-citation");
       expect(queryAllByTestId("agent-show-result")).toHaveLength(0);
-      expect(queryAllByTestId("agent-citation-show-result")).toHaveLength(0);
       expect(queryAllByTestId("agent-apply-statement")).toHaveLength(1);
     });
 
@@ -2073,9 +2157,8 @@ describe("AgentRail", () => {
       mockAgentFetch([OPENED_LINE, STARTED_LINE, DRAFTED_LINE, COMPLETED_LINE, REPORT_LINE]);
       const { findAllByTestId, queryAllByTestId } = await runWith({ onShowArtifact: mock(() => {}) });
 
-      await findAllByTestId("agent-report-citation");
-      expect(queryAllByTestId("agent-citation-show-result")).toHaveLength(1);
-      expect(queryAllByTestId("agent-citation-apply-statement")).toHaveLength(0);
+      await findAllByTestId("agent-answer-evidence-citation");
+      expect(queryAllByTestId("agent-show-result")).toHaveLength(1);
       expect(queryAllByTestId("agent-apply-statement")).toHaveLength(0);
     });
 
@@ -2096,7 +2179,7 @@ describe("AgentRail", () => {
       const note = await findByTestId("agent-report-retention");
       expect(note.textContent).toContain("released when the run ends");
       // No report was composed, which is exactly the case that had no explanation.
-      expect(queryByTestId("agent-report")).toBeNull();
+      expect(queryByTestId("agent-answer-report")).toBeNull();
     });
 
     test("a run that stored nothing says nothing about retention", async () => {
@@ -2112,7 +2195,7 @@ describe("AgentRail", () => {
       mockAgentFetch([OPENED_LINE, STARTED_LINE, COMPLETED_LINE, REPORT_LINE, FINISHED_LINE]);
       const { findByTestId, queryByTestId } = await runWith({});
 
-      await findByTestId("agent-report");
+      await findByTestId("agent-answer-report");
       expect(queryByTestId("agent-report-retention")).toBeNull();
     });
 
@@ -2121,8 +2204,10 @@ describe("AgentRail", () => {
       const onShowArtifact = mock(() => {});
       const { findAllByTestId, queryByTestId } = await runWith({ onShowArtifact });
 
-      await findAllByTestId("agent-report-citation");
-      expect(queryByTestId("agent-citation-show-result")).toBeNull();
+      const [citation] = await findAllByTestId("agent-answer-evidence-citation");
+      expect(citation.textContent).toContain("not in the part of this run's timeline the rail has read");
+      // Nothing stored it, so there is nothing anywhere in the rail to ask for.
+      expect(queryByTestId("agent-show-result")).toBeNull();
     });
   });
 
@@ -2207,7 +2292,7 @@ describe("AgentRail", () => {
       mockAgentFetch([OPENED_LINE, STARTED_LINE, COMPLETED_LINE, DRAFTED_LINE, REPORT_LINE, FINISHED_LINE]);
       const { findByTestId } = await runWith({ onShowArtifact });
 
-      await findByTestId("agent-report");
+      await findByTestId("agent-answer-report");
       expect(onShowArtifact).not.toHaveBeenCalled();
     });
 
@@ -2223,7 +2308,7 @@ describe("AgentRail", () => {
       ]);
       const { findByTestId } = await runWith({ onShowArtifact });
 
-      await findByTestId("agent-report");
+      await findByTestId("agent-answer-report");
       expect(onShowArtifact).toHaveBeenCalledTimes(1);
     });
 
@@ -2375,9 +2460,11 @@ describe("AgentRail", () => {
         connectionId: "seed:sales",
         objective,
       })}\n`;
-      const { findAllByTestId } = await runWith([opened, STARTED_LINE]);
+      const view = await runWith([opened, STARTED_LINE]);
 
-      const items = await findAllByTestId("agent-timeline-item");
+      // The header is chrome, so it is inside the folded group — and still quoting the
+      // objective exactly as it arrived, which is the property this is about.
+      const items = await findAllEntries(view);
       expect(items[0].querySelector("pre")?.textContent).toBe(objective);
       expect(items[0].querySelector("strong")).toBeNull();
     });
@@ -2486,10 +2573,12 @@ describe("AgentRail", () => {
         fireEvent.click(view.getByTestId("agent-start"));
       });
 
-      fireEvent.click(await view.findByTestId("agent-report-claim-copy"));
+      // On the answer card, which is where a report is read since the redesign — and the
+      // only place it is read since L6 took the duplicate section away.
+      fireEvent.click(await view.findByTestId("agent-answer-claim-copy"));
       await waitFor(() => expect(writeText).toHaveBeenCalledWith("checkout is slow because orders is scanned"));
 
-      fireEvent.click(await view.findByTestId("agent-citation-quoted-copy"));
+      fireEvent.click(await view.findByTestId("agent-answer-citation-quoted-copy"));
       await waitFor(() => expect(writeText).toHaveBeenCalledWith("SELECT count(*) FROM orders"));
     });
   });
@@ -2688,6 +2777,100 @@ describe("AgentRail", () => {
       });
 
       expect(scroller.scrollTop).toBe(0);
+    });
+
+    /**
+     * L1, measured in Chrome on 2026-08-21 — the blocker the redesign is FOR.
+     *
+     * Immediately after each run reached a terminal status, with no user scrolling at
+     * all, the scroller sat at its maximum (224 of 224 on plan/PostgreSQL, 248 of 248 on
+     * agent/PostgreSQL) and the answer card — the first child of this container — was
+     * that far above the fold. Following the newest entry is right while the run is
+     * PRODUCING entries; the moment it ends, the newest entry is `run-finished` and the
+     * thing the user waited for is at the top.
+     *
+     * So the following is bounded by the run being live, and the end of the run brings
+     * the answer into view once. The card stays inside the scroller deliberately: lifted
+     * out, a long report would take a fixed third of the panel away from the transcript,
+     * and the answer would sit under the reader's eyes while they are reading something
+     * else.
+     */
+    describe("and the answer, once the run has ended", () => {
+      /** A plan run's deliverable, so there is an answer card to bring into view. */
+      const DRAFT_LINE = `${JSON.stringify({
+        kind: "event",
+        event: {
+          kind: "plan-statement-drafted",
+          atMs: 1_004,
+          dialect: "postgres",
+          sql: "SELECT title FROM film",
+          readOnly: true,
+          identifiers: { kind: "checked", unknownTables: [] },
+        },
+      })}\n`;
+
+      test("a run that reaches a terminal status brings the answer into view, not the last entry", async () => {
+        const view = await startRun();
+        await act(async () => {
+          view.stream.push(OPENED_LINE);
+        });
+        await waitFor(() => {
+          expect(view.scroller.scrollTop).toBe(BOTTOM);
+        });
+
+        await act(async () => {
+          view.stream.push(DRAFT_LINE);
+          view.stream.push(FINISHED_LINE);
+        });
+
+        await waitFor(() => {
+          expect(view.scroller.scrollTop).toBe(0);
+        });
+        // Which is where the answer is: the card is the first thing in this container.
+        expect(view.scroller.firstElementChild?.getAttribute("data-testid")).toBe("agent-answer");
+      });
+
+      test("a reader who scrolled away is not yanked to the answer either", async () => {
+        const { stream, scroller } = await startRun();
+        await act(async () => {
+          stream.push(OPENED_LINE);
+        });
+        await waitFor(() => {
+          expect(scroller.scrollTop).toBe(BOTTOM);
+        });
+
+        scroller.scrollTop = 120;
+        fireEvent.scroll(scroller);
+        await act(async () => {
+          stream.push(DRAFT_LINE);
+          stream.push(FINISHED_LINE);
+        });
+
+        expect(scroller.scrollTop).toBe(120);
+      });
+
+      test("a viewport that shrinks after the run ended does not drag the transcript down", async () => {
+        // The bottom still moves when the host's result panel opens, and following it
+        // there would undo the reveal a beat after it happened. Nothing scrolled, so the
+        // reader is still counted as being at the end — the run being over is what stops
+        // the following, and that is what this pins.
+        const { stream, scroller } = await startRun();
+        await act(async () => {
+          stream.push(OPENED_LINE);
+          stream.push(DRAFT_LINE);
+          stream.push(FINISHED_LINE);
+        });
+        await waitFor(() => {
+          expect(scroller.scrollTop).toBe(0);
+        });
+
+        Object.defineProperty(scroller, "clientHeight", { value: 208, configurable: true });
+        await act(async () => {
+          resizeObserved(scroller);
+        });
+
+        expect(scroller.scrollTop).toBe(0);
+      });
     });
   });
 
@@ -3305,11 +3488,20 @@ describe("AgentRail", () => {
     test("the drafted statement gets a card of its own, showing the SQL verbatim", async () => {
       const { findByTestId } = await planRun([OPENED_LINE, STARTED_LINE, draftedLine(READ), FINISHED_LINE]);
 
+      // The statement moved UP, to the answer card at the top of the rail (item 2 of the
+      // rail redesign). Verbatim, in a block of its own: this is model text, and the
+      // rail's standing rule is that the user can see where the application stopped
+      // speaking.
+      expect((await findByTestId("agent-answer-statement")).querySelector("pre")?.textContent).toBe(READ.sql);
+      // The transcript entry keeps the guard's verdict — as data, and as the one line
+      // summarising what it no longer reprints — and reprints the statement nowhere: one
+      // statement, one place, which is what keeps the marked hand-off the only hand-off.
       const card = await findByTestId("agent-plan-statement");
-      // Verbatim, in a block of its own: this is model text, and the rail's standing
-      // rule is that the user can see where the application stopped speaking.
-      expect(card.querySelector("pre")?.textContent).toBe(READ.sql);
       expect(card.getAttribute("data-read-only")).toBe("true");
+      expect(card.querySelector("pre")).toBeNull();
+      expect((await findByTestId("agent-plan-statement-summary")).textContent).toContain(
+        "Checked as a bounded read against the captured inventory. Nothing was executed.",
+      );
     });
 
     test("applying hands the host the exact statement the ledger recorded", async () => {
@@ -3318,7 +3510,7 @@ describe("AgentRail", () => {
         onApplyStatement,
       });
 
-      fireEvent.click(await findByTestId("agent-plan-apply-statement"));
+      fireEvent.click(await findByTestId("agent-answer-plan-apply"));
       expect(onApplyStatement).toHaveBeenCalledWith(READ.sql);
     });
 
@@ -3332,8 +3524,8 @@ describe("AgentRail", () => {
         FINISHED_LINE,
       ]);
 
-      expect(queryByTestId("agent-plan-apply-statement")).toBeNull();
-      expect(await findByTestId("agent-plan-statement-copy")).not.toBeNull();
+      expect(queryByTestId("agent-answer-plan-apply")).toBeNull();
+      expect(await findByTestId("agent-answer-statement-copy")).not.toBeNull();
     });
 
     test("the statement can be copied through the control that works over plain HTTP", async () => {
@@ -3343,7 +3535,7 @@ describe("AgentRail", () => {
       Object.defineProperty(globalThis.navigator, "clipboard", { value: { writeText }, configurable: true });
       const { findByTestId } = await planRun([OPENED_LINE, STARTED_LINE, draftedLine(READ), FINISHED_LINE]);
 
-      fireEvent.click(await findByTestId("agent-plan-statement-copy"));
+      fireEvent.click(await findByTestId("agent-answer-statement-copy"));
       await waitFor(() => expect(writeText).toHaveBeenCalledWith(READ.sql));
     });
 
@@ -3364,7 +3556,7 @@ describe("AgentRail", () => {
         { onApplyStatement },
       );
 
-      const apply = await findByTestId("agent-plan-apply-statement");
+      const apply = await findByTestId("agent-answer-plan-apply");
       const name = apply.getAttribute("aria-label") ?? "";
       expect(name).toContain("Apply");
       // WCAG 2.5.3: the accessible name contains the visible label, so a voice user
@@ -3374,12 +3566,17 @@ describe("AgentRail", () => {
       // name, so it can be asserted rather than inferred from styling.
       const card = await findByTestId("agent-plan-statement");
       expect(card.getAttribute("data-read-only")).toBe("false");
-      const mark = await findByTestId("agent-plan-statement-guard");
+      const mark = await findByTestId("agent-answer-guard");
       expect(mark.textContent).toContain("did not read this as a bounded read");
       // The guard's own reason, beside the mark: it is this repository's closed
       // vocabulary rather than model text, and it is what tells a reader whether the
       // objection was about an effect or about text the guard could not settle.
       expect(mark.textContent).toContain("NON_READ_STATEMENT");
+      // And the transcript entry summarises the same objection, in the same words and
+      // with the same reason code, from the one module that writes the sentence.
+      expect((await findByTestId("agent-plan-statement-summary")).textContent).toContain(
+        "The statement guard did not read this as a bounded read (NON_READ_STATEMENT).",
+      );
     });
 
     /*
@@ -3414,30 +3611,39 @@ describe("AgentRail", () => {
       // Still marked, still amber, still not offered as an ordinary read: the run
       // could not establish that this only reads, and that is worth a user's attention.
       expect(card.getAttribute("data-read-only")).toBe("false");
-      expect((await findByTestId("agent-plan-statement-guard")).textContent).toContain("DIALECT_AMBIGUOUS_TEXT");
-      // And nowhere on it, or in the name the control carries, is the claim the server
-      // never made.
-      const name = (await findByTestId("agent-plan-apply-statement")).getAttribute("aria-label") ?? "";
-      expect(`${card.textContent} ${name}`).not.toContain("change or delete");
-      expect(`${card.textContent} ${name}`).not.toContain("This is not a read");
+      expect((await findByTestId("agent-answer-guard")).textContent).toContain("DIALECT_AMBIGUOUS_TEXT");
+      // And nowhere on the answer that carries the statement, nowhere on the entry that
+      // summarises it, and nowhere in the name the control carries, is the claim the
+      // server never made.
+      const name = (await findByTestId("agent-answer-plan-apply")).getAttribute("aria-label") ?? "";
+      const read = `${(await findByTestId("agent-answer")).textContent} ${card.textContent} ${name}`;
+      expect(read).not.toContain("change or delete");
+      expect(read).not.toContain("This is not a read");
     });
 
     /*
       The ledger shape a real run produces, which none of the cases above has: the
       closing prose HOLDS the fenced statement, and the drafted event is written from
-      it immediately after. So the same `DELETE` is on screen twice — inside the prose,
+      it immediately after. So the same `DELETE` was on screen twice — inside the prose,
       where #389's per-block control offers "Apply to editor" with no mark, no
       accessible name and no colour, and in the card, which marks it.
 
       The unmarked control sits directly above the marked one and is the one a user
       reaches for first. It is the silent hand-off item 4 of the design exists to
-      prevent, so it is withheld from the entry the statement was read out of; the
-      card is the hand-off, and the block keeps its clipboard.
+      prevent, so it is withheld from the entry the statement was read out of; the card
+      is the hand-off.
+
+      And since L2 the BLOCK is withheld with it, in both places that prose is rendered.
+      Measured in Chrome on 2026-08-21: the statement was printed three times over — on
+      the card, again inside the card's own `Why this statement`, and again in this entry,
+      each copy with its own `Copy`. The clipboard is not lost by that: the statement has
+      its own on the card, and `Copy all` still carries the whole prose with the fence in
+      it, because it takes the string the model wrote rather than this rendering of it.
     */
     test("the prose the statement was read out of offers no second, unmarked editor control", async () => {
       const onApplyStatement = mock((_sql: string) => {});
       const sql = "DELETE FROM film WHERE rental_count = 0";
-      const { findByTestId, queryByTestId, queryAllByTestId } = await planRun(
+      const { findByTestId, getByTestId, queryByTestId, queryAllByTestId } = await planRun(
         [
           OPENED_LINE,
           STARTED_LINE,
@@ -3453,12 +3659,22 @@ describe("AgentRail", () => {
         { onApplyStatement },
       );
 
-      // The marked control, and only it.
-      expect(await findByTestId("agent-plan-apply-statement")).not.toBeNull();
+      // The marked control, and only it — in the answer card, which is now the one place
+      // a plan run's statement is offered to the editor at all.
+      expect(await findByTestId("agent-answer-plan-apply")).not.toBeNull();
+      expect(queryAllByTestId("agent-answer-plan-apply")).toHaveLength(1);
       expect(queryByTestId("prose-code-apply")).toBeNull();
-      // Nothing else is taken away: the block still renders and still copies.
-      expect((await findByTestId("agent-prose")).textContent).toContain(sql);
-      expect(queryAllByTestId("prose-code-copy").length).toBe(1);
+      expect(queryAllByTestId("agent-apply-statement")).toHaveLength(0);
+      // And the statement itself is printed once, on the card. Neither rendering of the
+      // prose reprints it: not this entry, and not the card's own "Why this statement",
+      // which is the same text folded away.
+      expect((await findByTestId("agent-prose")).textContent).not.toContain(sql);
+      expect(queryAllByTestId("agent-answer-why-prose")).toHaveLength(1);
+      expect(getByTestId("agent-answer-why-prose").textContent).not.toContain(sql);
+      expect(queryAllByTestId("prose-code-copy")).toHaveLength(0);
+      // The prose keeps its own words, and the card keeps the statement.
+      expect((await findByTestId("agent-prose")).textContent).toContain("It removes the unrented titles.");
+      expect(getByTestId("agent-answer-statement").querySelector("pre")?.textContent).toBe(sql);
     });
 
     test("a plan run that drafted no statement keeps the fence reading #389 gave it", async () => {
@@ -3492,17 +3708,25 @@ describe("AgentRail", () => {
       // The finding reaches a screen reader too, on the control that acts on it: a
       // user who never sees the amber list is otherwise told only "Apply to editor"
       // about a statement whose names were not all found.
-      const name = (await findByTestId("agent-plan-apply-statement")).getAttribute("aria-label") ?? "";
+      const name = (await findByTestId("agent-answer-plan-apply")).getAttribute("aria-label") ?? "";
       expect(name).toContain("2 table(s)");
       expect(name).toContain("does not hold");
 
-      const findings = await findByTestId("agent-plan-statement-unknown");
+      const findings = await findByTestId("agent-answer-chip-names");
       // The names are engine and model text, so they are shown as quoted content
       // rather than spliced into the app's sentence — and they ARE shown: a count
       // alone leaves the user with nothing to look for in the statement above.
       expect(findings.textContent).toContain("payments");
       expect(findings.textContent).toContain("refunds");
-      expect(findings.textContent).toContain("not in the inventory");
+      // The sentence they are a list FOR, which names the list for a reader who cannot
+      // see it and is also what the guard's own note carries.
+      expect(findings.getAttribute("aria-label")).toContain("not in the inventory");
+      // The claim keeps the test id it has carried since before the card moved: a shared
+      // note blob cannot distinguish the right sentence for this reading from any
+      // sentence that happens to contain the phrase.
+      expect((await findByTestId("agent-plan-statement-unknown")).textContent).toBe(
+        "These names are not in the inventory this run read, so the statement may not run as written:",
+      );
     });
 
     test("the same finding names the objects in the engine's own word (#414)", async () => {
@@ -3534,7 +3758,7 @@ describe("AgentRail", () => {
         { onApplyStatement: mock((_sql: string) => {}) },
       );
 
-      const name = (await findByTestId("agent-plan-apply-statement")).getAttribute("aria-label") ?? "";
+      const name = (await findByTestId("agent-answer-plan-apply")).getAttribute("aria-label") ?? "";
       expect(name).toContain("1 datasource(s)");
       expect(name).not.toContain("table");
     });
@@ -3550,13 +3774,24 @@ describe("AgentRail", () => {
         { onApplyStatement: mock((_sql: string) => {}) },
       );
 
-      expect((await findByTestId("agent-plan-statement-unchecked")).textContent).toContain(
-        "No schema inventory was read",
+      // The sentence moved into the guard's own note, which is where everything the run
+      // established about this draft now reads — the claim is the same claim, in the node
+      // that has always carried it.
+      expect((await findByTestId("agent-plan-statement-unchecked")).textContent).toBe(
+        "No schema inventory was read for this run, so the names in this statement were not checked against anything.",
       );
-      expect(queryByTestId("agent-plan-statement-unknown")).toBeNull();
+      // And the line above it does not contradict it: no inventory was read, so the
+      // visible reading claims a bounded read and nothing about an inventory.
+      expect((await findByTestId("agent-answer-guard")).textContent).toBe(
+        "Checked as a bounded read. Nothing was executed.",
+      );
+      expect((await findByTestId("agent-plan-statement-summary")).textContent).toContain(
+        "Checked as a bounded read. Nothing was executed.",
+      );
+      expect(queryByTestId("agent-answer-chip-names")).toBeNull();
       // An empty list of unknown names would be a CLAIM — that every name resolves —
       // and this run made none, so the control says nothing checked them.
-      expect((await findByTestId("agent-plan-apply-statement")).getAttribute("aria-label")).toContain(
+      expect((await findByTestId("agent-answer-plan-apply")).getAttribute("aria-label")).toContain(
         "Nothing checked the names it uses",
       );
     });
@@ -3570,11 +3805,16 @@ describe("AgentRail", () => {
       ]);
 
       await findByTestId("agent-plan-statement");
-      expect(queryByTestId("agent-plan-statement-unknown")).toBeNull();
-      expect(queryByTestId("agent-plan-statement-unchecked")).toBeNull();
-      expect(queryByTestId("agent-plan-statement-guard")).toBeNull();
-      expect(queryByTestId("agent-plan-statement-guard-unread")).toBeNull();
-      expect(queryByTestId("agent-plan-statement-unread")).toBeNull();
+      expect(queryByTestId("agent-answer-chip-names")).toBeNull();
+      // The guard read it and was satisfied, so what is said is that and nothing else:
+      // no objection, no "nothing examined this", no report of a missing inventory.
+      expect((await findByTestId("agent-answer-guard")).textContent).toBe(
+        "Checked as a bounded read against the captured inventory. Nothing was executed.",
+      );
+      expect((await findByTestId("agent-answer-chip-guard")).textContent).toBe("Read-only");
+      const note = (await findByTestId("agent-answer-guard-note")).textContent ?? "";
+      expect(note).not.toContain("No schema inventory was read");
+      expect(note).not.toContain("not SQL");
     });
 
     /*
@@ -3607,11 +3847,21 @@ describe("AgentRail", () => {
         { onApplyStatement: mock((_sql: string) => {}) },
       );
 
+      // The visible line says the guard did not look, and the note behind it carries the
+      // whole claim — both in the words the transcript's card used to carry.
       const unread = await findByTestId("agent-plan-statement-guard-unread");
       expect(unread.textContent).toContain("The statement guard reads SQL");
       expect(unread.textContent).toContain("nothing examined this draft");
-      // The banner that blames the draft is not also on the card: one card, one claim.
-      expect(queryByTestId("agent-plan-statement-guard")).toBeNull();
+      expect((await findByTestId("agent-plan-statement-unread")).textContent).toBe(
+        "The names in this statement were not checked: the check that would do it reads SQL, and this engine's statements are not SQL.",
+      );
+      expect((await findByTestId("agent-answer-guard")).textContent).toBe(
+        "Not examined: the statement guard reads SQL, and this engine's statements are not SQL.",
+      );
+      // The banner that blames the draft is nowhere: one card, one claim. The chip says
+      // the same thing, and is not the verdict a checked statement earns.
+      expect((await findByTestId("agent-answer-chip-guard")).textContent).toBe("not checked");
+      expect((await findByTestId("agent-answer")).textContent).not.toContain("did not read this as a bounded read");
       // And the MACHINE-readable half says the same thing as the prose. `"false"` is
       // the objection the guard makes, and it made none here; a consumer keying on the
       // attribute must not be able to read one out of a draft nothing looked at.
@@ -3620,7 +3870,7 @@ describe("AgentRail", () => {
       // WCAG 2.5.3 still holds — the visible label is in the accessible name — and the
       // mark a screen-reader user hears is the one about the guard's reach, not the one
       // asserting that nothing established this only reads.
-      const name = (await findByTestId("agent-plan-apply-statement")).getAttribute("aria-label") ?? "";
+      const name = (await findByTestId("agent-answer-plan-apply")).getAttribute("aria-label") ?? "";
       expect(name).toContain("Apply");
       expect(name).toContain("this engine's statements are not SQL");
       expect(name).not.toContain("did not read this as a bounded read");
@@ -3653,10 +3903,13 @@ describe("AgentRail", () => {
 
       const unread = await findByTestId("agent-plan-statement-unread");
       expect(unread.textContent).toContain("the check that would do it reads SQL");
+      // Its own sentence and not the other one: this run may well HAVE an inventory, and
+      // a user told none was read would go looking for a grounding failure that did not
+      // happen. Two ids rather than one blob is what makes that assertable.
       expect(queryByTestId("agent-plan-statement-unchecked")).toBeNull();
-      expect(queryByTestId("agent-plan-statement-unknown")).toBeNull();
+      expect(queryByTestId("agent-answer-chip-names")).toBeNull();
 
-      const name = (await findByTestId("agent-plan-apply-statement")).getAttribute("aria-label") ?? "";
+      const name = (await findByTestId("agent-answer-plan-apply")).getAttribute("aria-label") ?? "";
       expect(name).toContain("The name check reads SQL too");
       expect(name).not.toContain("Nothing checked the names it uses.");
     });
@@ -3682,8 +3935,11 @@ describe("AgentRail", () => {
         { onApplyStatement: mock((_sql: string) => {}) },
       );
 
-      expect((await findByTestId("agent-plan-statement-guard")).textContent).toContain("NON_READ_STATEMENT");
-      expect(queryByTestId("agent-plan-statement-guard-unread")).toBeNull();
+      expect((await findByTestId("agent-answer-guard")).textContent).toContain("NON_READ_STATEMENT");
+      // Absent reads as "the guard applied", so what is said is the objection it made and
+      // never the sentence about an engine whose statements are not SQL.
+      expect((await findByTestId("agent-answer")).textContent).not.toContain("Not examined");
+      expect(queryByTestId("agent-plan-statement")).toBeTruthy();
     });
 
     test("a refusal renders as its own card, and the marker never reaches the user", async () => {
@@ -3699,8 +3955,13 @@ describe("AgentRail", () => {
       expect(card.textContent).toContain("Which table holds them?");
       expect(card.textContent).not.toContain("NO STATEMENT");
       // A refusal is not a statement: there is nothing to apply and nothing is offered.
+      //
+      // The apply control is asserted by the id it has NOW. It used to be
+      // `agent-plan-apply-statement`, built from a `testIdPrefix="agent-plan-"` this
+      // redesign removed with the transcript's copy of the statement — and a
+      // `toBeNull()` against an id no component can produce is a test that cannot fail.
       expect(queryByTestId("agent-plan-statement")).toBeNull();
-      expect(queryByTestId("agent-plan-apply-statement")).toBeNull();
+      expect(queryByTestId("agent-answer-plan-apply")).toBeNull();
     });
 
     test("an ordinary closing statement is not dressed as a refusal", async () => {
@@ -4106,8 +4367,13 @@ describe("AgentRail", () => {
         });
 
         // NOT Start: it is disabled from the moment the run is busy, and the browser
-        // drops focus to the body when the focused element disables under it.
-        expect(document.activeElement?.getAttribute("data-testid")).toBe("agent-objective");
+        // drops focus to the body when the focused element disables under it. So focus
+        // goes to the objective box — and one commit later the run opens, the box becomes
+        // the one-line summary of the question it was opened with (item 4 of the rail
+        // redesign), and the control that replaced it takes the focus the box lost. Left
+        // undone, that is the same "left nowhere" this whole suite is about, one step
+        // further along.
+        expect(document.activeElement?.getAttribute("data-testid")).toBe("agent-objective-edit");
         expect((view.getByTestId("agent-start") as HTMLButtonElement).disabled).toBe(true);
       });
     });
@@ -4522,6 +4788,968 @@ describe("AgentRail", () => {
         });
         expect(view.getByTestId("agent-opened-as").textContent).toContain("Opened as Optimize");
         expect(view.queryByTestId("agent-opened-as-change")).toBeNull();
+      });
+    });
+  });
+
+  /**
+   * The rail's 2026-08-21 redesign: what MOVED, and the three claims that may not move
+   * with it.
+   *
+   * Nothing here changes what a run does, what the ledger records or what any claim says.
+   * What changed is where a reader meets each of them, which is why these tests are about
+   * placement and derivation rather than about copy:
+   *
+   *  - **the safety strip states what the selected MODE executes**, on one axis, from one
+   *    module (`src/lib/agent/posture.ts`). The rail used to answer that question in six
+   *    places at once;
+   *  - **the engine notice gates nothing.** It presents a refusal the provider factory
+   *    makes, and one workflow — operations — runs on those engines regardless, so a
+   *    disabled Start would take a working thing away over a claim untrue of it;
+   *  - **the budget's three claims moved behind an ⓘ each and are still exactly
+   *    themselves.** A claim that is harder to reach is a decision; a claim that is
+   *    reworded on the way is a different claim.
+   */
+  describe("the redesigned rail", () => {
+    async function liveRun(props: Partial<React.ComponentProps<typeof AgentRail>> = {}, lines?: readonly string[]) {
+      mockAgentFetch(lines ?? [OPENED_LINE, STARTED_LINE]);
+      const view = render(<AgentRail {...DEFAULT_PROPS} {...props} />);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      return view;
+    }
+
+    describe("the safety strip", () => {
+      test("plan mode says it executes nothing, and says what its one reach is", () => {
+        const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" />);
+
+        expect(getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("safe");
+        expect(getByTestId("agent-safety-headline").textContent).toBe("Executes nothing it drafts");
+        // The qualifier is beside the pill and not behind the ⓘ, because "executes
+        // nothing" alone overclaims: plan mode's grounding capture IS a catalog read on
+        // PostgreSQL.
+        expect(getByTestId("agent-safety-qualifier").textContent).toContain("one schema read grounds it");
+      });
+
+      test("agent mode on an executable engine says what the engine enforces", () => {
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("reads");
+        expect(view.getByTestId("agent-safety-headline").textContent).toBe("Reads only");
+      });
+
+      test("agent mode on an engine it cannot execute on says so, and plan mode is offered", () => {
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="mongodb" />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("blocked");
+        expect(view.getByTestId("agent-safety-headline").textContent).toContain("MongoDB");
+        expect(view.getByTestId("agent-safety-qualifier").textContent).toContain("plan mode drafts here");
+      });
+
+      test("the tick in the consent step widens the strip, and only while it is ticked", async () => {
+        // The strip reads the hand-over from the step that is standing, because that is
+        // the decision being made: a widened reading before it is ticked would describe a
+        // run nobody has asked for.
+        // The started line says `agent` because the header this server writes does: the
+        // strip beside an open run reads that run's own mode, so a ledger disagreeing with
+        // itself is not a run any server could produce.
+        mockClassifiedFetch({ workflowType: "data-analysis", outcome: "classified" }, [AGENT_STARTED_LINE]);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("reads");
+        fireEvent.click(view.getByTestId("agent-auto-execute"));
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("widened");
+        expect(view.getByTestId("agent-safety-headline").textContent).toBe(
+          "Reads only, and one statement in your editor",
+        );
+
+        // And the run that opens carries it, so the strip beside a live run is describing
+        // that run rather than a control that no longer exists.
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
+        await view.findByTestId("agent-run-status");
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("widened");
+      });
+
+      test("a cancelled consent leaves the strip where it was", async () => {
+        mockClassifiedFetch({ workflowType: "data-analysis", outcome: "classified" });
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+        fireEvent.click(view.getByTestId("agent-auto-execute"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-cancel"));
+        });
+
+        // Nothing was widened, because nothing was opened.
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("reads");
+      });
+
+      /*
+        The hand-over is frozen for as long as the RUN is, and not one beat longer.
+
+        `openedWithHandover` is set when the run opens and never cleared, so with no
+        liveness guard the strip kept saying "Reads only, and one statement in your
+        editor" after the widened run had ended — over a panel whose next consent step
+        defaults the tick to OFF. This is the panel's single standing claim about what
+        pressing Start does, and after any widened run it stated a widening nobody had
+        agreed to for the run that was about to open.
+      */
+      test("a widened run that has ENDED stops the strip claiming the widening", async () => {
+        mockClassifiedFetch({ workflowType: "data-analysis", outcome: "classified" }, [
+          AGENT_STARTED_LINE,
+          FINISHED_LINE,
+        ]);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+        fireEvent.click(view.getByTestId("agent-auto-execute"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
+
+        await waitFor(() => {
+          expect(view.getByTestId("agent-run-status").textContent).toBe("succeeded");
+        });
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("reads");
+        expect(view.getByTestId("agent-safety-headline").textContent).toBe("Reads only");
+      });
+
+      /*
+        A consent step standing for the NEXT run may not relabel the run that is open.
+
+        Both of these are reachable through "change": the control renders only while the
+        run is open, choosing `data-analysis` in agent mode raises the consent step, and
+        the replacement is not opened — nor the open run stopped — until that step is
+        accepted. So a pending start and a live run coexist by design, and while they do
+        the strip has two candidate answers about the hand-over: the open run's record and
+        the standing step's tick. It owes the open run's, in both directions — the same
+        rule the mode axis already follows — because the claim is about the run that is
+        executing, and the run that is executing was bounded when it was opened.
+      */
+      test("a consent step raised beside a widened run does not un-widen the strip", async () => {
+        mockClassifiedFetch({ workflowType: "data-analysis", outcome: "classified" }, [AGENT_STARTED_LINE]);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+        fireEvent.click(view.getByTestId("agent-auto-execute"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
+        await view.findByTestId("agent-run-status");
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("widened");
+
+        // A second run is being decided beside the widened one, and its tick starts OFF.
+        fireEvent.click(view.getByTestId("agent-opened-as-change"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-change-workflow-data-analysis"));
+        });
+        expect(view.getByTestId("agent-consent")).toBeTruthy();
+
+        // The run that is open is still the widened one, and still says so.
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("widened");
+        expect(view.getByTestId("agent-safety-headline").textContent).toBe(
+          "Reads only, and one statement in your editor",
+        );
+      });
+
+      test("ticking a consent step raised beside an open run does not widen the strip either", async () => {
+        mockClassifiedFetch({ workflowType: "data-analysis", outcome: "classified" }, [AGENT_STARTED_LINE]);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" onRunStatement={() => {}} />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+        // Opened WITHOUT the hand-over: the tick is left off, so this run may not hand
+        // anything over and the strip may not say it will.
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-consent-open"));
+        });
+        await view.findByTestId("agent-run-status");
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("reads");
+
+        fireEvent.click(view.getByTestId("agent-opened-as-change"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-change-workflow-data-analysis"));
+        });
+        fireEvent.click(view.getByTestId("agent-auto-execute"));
+
+        // The tick belongs to the run that has not opened yet. The one that IS open was
+        // opened on reads, and it is what the strip is describing.
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("reads");
+        expect(view.getByTestId("agent-safety-headline").textContent).toBe("Reads only");
+      });
+
+      /*
+        The strip describes the OPEN run, and the mode axis is read off that run's own
+        record rather than off the toggle.
+
+        The toggle is frozen only while a start is HELD, which is deliberate — it decides
+        the NEXT run — so it is live again the moment this one opens. One click on Plan
+        beside a running agent run moved the strip to `safe` and the pill to "Executes
+        nothing it drafts" while the run kept executing reads and kept spending its
+        budget: the one direction that matters, since it overclaims safety.
+      */
+      test("clicking Plan beside a live agent run does not relabel that run", async () => {
+        mockClassifiedFetch({ workflowType: "investigation", outcome: "classified" }, [AGENT_STARTED_LINE]);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+        await view.findByTestId("agent-run-status");
+
+        fireEvent.click(view.getByTestId("agent-mode-planning"));
+
+        expect(view.getByTestId("agent-mode-planning").getAttribute("aria-pressed")).toBe("true");
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("reads");
+        expect(view.getByTestId("agent-safety-headline").textContent).toBe("Reads only");
+        // And the same reading on the line under the objective, which used to take its
+        // workflow from the run's fold and its mode from the toggle — two halves of one
+        // sentence from two sources.
+        expect(view.getByTestId("agent-objective-frame").textContent).toBe("Investigate · Agent mode");
+      });
+
+      test("once the run has ended the strip follows the selection again", async () => {
+        mockClassifiedFetch({ workflowType: "investigation", outcome: "classified" }, [
+          AGENT_STARTED_LINE,
+          FINISHED_LINE,
+        ]);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+        await waitFor(() => {
+          expect(view.getByTestId("agent-run-status").textContent).toBe("succeeded");
+        });
+
+        // There is no open run to describe, so the strip is back to answering what
+        // pressing Start would do.
+        fireEvent.click(view.getByTestId("agent-mode-planning"));
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("safe");
+        expect(view.getByTestId("agent-safety-headline").textContent).toBe("Executes nothing it drafts");
+      });
+    });
+
+    /*
+      L7, measured in Chrome on 2026-08-21: a muted line under Start read
+      `Executes nothing it drafts — one schema read grounds it, nothing else reaches the
+      database.` — the strip's headline and qualifier joined, about 200px below the strip
+      itself. Two identical sentences in one 384px panel.
+
+      The line is gone rather than reworded. The strip is permanent and states this for
+      the selected mode already, and the panel's other reading of the selection — the
+      amber engine notice — says something the strip does not.
+    */
+    describe("what pressing Start means, said once", () => {
+      const occurrences = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
+      /*
+        Asserted as a boolean rather than with `toBeNull()`, and that is not style: this
+        node lives deep inside the rail, and bun's inspector walks an element's parents
+        and listeners, so a restored line printed 23MB of one paragraph's ancestry and
+        the run stopped resembling a test run at all (measured while pinning this RED).
+        A regression here should read as one line.
+      */
+      const absent = (view: ReturnType<typeof render>, testId: string): boolean => view.queryByTestId(testId) === null;
+
+      test("the strip's sentence has no second copy under the button", () => {
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" />);
+
+        expect(absent(view, "agent-posture-line")).toBe(true);
+
+        // Both halves of it, each exactly once in the whole panel. Counted rather than
+        // queried by id, because the defect was not a testid: it was the same words
+        // rendered twice, and a reworded second copy would be the same defect.
+        const panel = view.container.textContent ?? "";
+        expect(view.getByTestId("agent-safety-headline").textContent).toBe("Executes nothing it drafts");
+        expect(occurrences(panel, "Executes nothing it drafts")).toBe(1);
+        expect(occurrences(panel, "one schema read grounds it, nothing else reaches the database")).toBe(1);
+      });
+
+      test("nor beside a run, where the strip is describing the run and not the selection", async () => {
+        const view = await liveRun({ connectionType: "postgres" });
+
+        await view.findByTestId("agent-run-status");
+        fireEvent.click(view.getByTestId("agent-objective-edit"));
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+
+        expect(absent(view, "agent-posture-line")).toBe(true);
+        // The strip goes on describing the run that is still open, which is the reading
+        // this state exists to keep apart from the toggle's.
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("safe");
+      });
+    });
+
+    describe("the engine notice", () => {
+      test("agent mode on an engine with no read-only statement path is told, before Start", () => {
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="mongodb" />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+
+        const notice = view.getByTestId("agent-engine-unsupported-notice").textContent ?? "";
+        expect(notice).toContain("MongoDB");
+        expect(notice).toContain("no read-only statement path");
+        // The two things that ARE open here, because a dead end is not what this is:
+        // the operations workflow sends no statement at all, and plan mode drafts.
+        expect(notice).toContain("The operations workflow still runs here");
+        expect(notice).toContain("Plan mode drafts on every engine");
+      });
+
+      test("it does not gate Start, because the refusal is the server's and one workflow is unaffected", () => {
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="mongodb" />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "what is blocked right now" } });
+
+        expect(view.getByTestId("agent-engine-unsupported-notice")).toBeTruthy();
+        expect((view.getByTestId("agent-start") as HTMLButtonElement).disabled).toBe(false);
+      });
+
+      test("its way out selects plan mode and starts nothing", () => {
+        const fetchMock = mock(async () => jsonResponse({}, 202));
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="mongodb" />);
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+
+        fireEvent.click(view.getByTestId("agent-engine-unsupported-plan"));
+
+        expect(view.getByTestId("agent-mode-planning").getAttribute("aria-pressed")).toBe("true");
+        expect(view.queryByTestId("agent-engine-unsupported-notice")).toBeNull();
+        expect(fetchMock).not.toHaveBeenCalled();
+      });
+
+      test("an engine agent mode CAN execute on is not warned about, and neither is an unresolved one", () => {
+        const executable = render(<AgentRail {...DEFAULT_PROPS} connectionType="sqlite" />);
+        fireEvent.click(executable.getByTestId("agent-mode-agent"));
+        expect(executable.queryByTestId("agent-engine-unsupported-notice")).toBeNull();
+        cleanup();
+
+        // Nothing has been resolved, so which engine this is has not been established:
+        // an amber card about an engine nobody named would be a claim the panel cannot
+        // support, and the strip says "Cannot execute yet" instead.
+        const unresolved = render(<AgentRail {...DEFAULT_PROPS} connectionType={null} />);
+        fireEvent.click(unresolved.getByTestId("agent-mode-agent"));
+        expect(unresolved.queryByTestId("agent-engine-unsupported-notice")).toBeNull();
+        expect(unresolved.getByTestId("agent-safety-headline").textContent).toBe("Cannot execute yet");
+      });
+
+      /*
+        The notice is about the SELECTION, and the strip beside it is about the run: those
+        are two questions, and while a run is open they have different answers.
+
+        Selecting Agent on an engine with no read-only statement path, beside a plan run
+        that is going, has to say what starting an agent run there would do — the strip
+        goes on describing the plan run, because that is the run that is executing.
+      */
+      test("its facts are the selection's, even while another run is describing the strip", async () => {
+        mockAgentFetch([OPENED_LINE, STARTED_LINE]);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="mongodb" />);
+        fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "what is slow" } });
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-start"));
+        });
+        await view.findByTestId("agent-run-status");
+
+        fireEvent.click(view.getByTestId("agent-mode-agent"));
+
+        const notice = view.getByTestId("agent-engine-unsupported-notice").textContent ?? "";
+        expect(notice).toContain("no read-only statement path");
+        expect(view.getByTestId("agent-engine-unsupported-reason").textContent).toContain("On MongoDB");
+        // The open plan run is still what the strip describes.
+        expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("safe");
+      });
+
+      test("plan mode is warned about nothing, on any engine", () => {
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="mongodb" />);
+
+        expect(view.queryByTestId("agent-engine-unsupported-notice")).toBeNull();
+      });
+    });
+
+    describe("the objective while a run is open", () => {
+      test("it is the question that was asked, with the way back to the box", async () => {
+        const view = await liveRun();
+
+        // The user's question, behind the `sr-only` name that replaced the box's `<label>`
+        // on this branch — see the test below for why that name is there at all.
+        expect((await view.findByTestId("agent-objective-summary")).textContent).toBe(
+          "The objective this run was opened with: why is checkout slow",
+        );
+        // No textarea: the question is settled, and three rows of it holding text nobody
+        // can change is the space the answer needed.
+        expect(view.queryByTestId("agent-objective")).toBeNull();
+
+        fireEvent.click(view.getByTestId("agent-objective-edit"));
+
+        // Edit puts the RUN's question back in the box, because refining what was asked
+        // is what it is for — retyping it is what it exists to avoid.
+        expect((view.getByTestId("agent-objective") as HTMLTextAreaElement).value).toBe("why is checkout slow");
+        expect(view.queryByTestId("agent-objective-summary")).toBeNull();
+      });
+
+      /*
+        The label the box carried is content the redesign dropped on exactly the branch
+        where the user can no longer see a form control to infer it from: a reader
+        arriving at an open run reached an unattributed sentence of their own text.
+
+        `sr-only` and not muted chrome, because a sighted user has the box's absence, the
+        Edit control and the frame line below to read it from — and the one line is the
+        space the answer needed.
+      */
+      test("the summary is named for a reader who cannot see the box it replaced", async () => {
+        const view = await liveRun();
+
+        const summary = await view.findByTestId("agent-objective-summary");
+        expect(summary.textContent).toBe("The objective this run was opened with: why is checkout slow");
+        // Nothing visible was added: the name is in the accessibility tree only.
+        expect(view.getByTestId("agent-objective-summary-label").className).toContain("sr-only");
+      });
+
+      test("a run that has ENDED gives the box back on its own", async () => {
+        const view = await liveRun({}, [OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
+
+        await waitFor(() => {
+          expect(view.getByTestId("agent-run-status").textContent).toBe("succeeded");
+        });
+        expect(view.queryByTestId("agent-objective-summary")).toBeNull();
+        expect((view.getByTestId("agent-objective") as HTMLTextAreaElement).value).toBe("");
+      });
+    });
+
+    describe("the folded run details", () => {
+      test("the summary carries the live figures, and is open while the run is", async () => {
+        const view = await liveRun({}, [OPENED_LINE, STARTED_LINE, COMPLETED_LINE]);
+        const budgets = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
+
+        await view.findByTestId("agent-budget-statements");
+        const figures = view.getByTestId("agent-run-details-figures").textContent ?? "";
+        expect(figures).toContain("3 steps");
+        expect(figures).toContain(`1/${budgets.maxStatementsPerRun} stmt`);
+        expect(figures).toContain("1.5/90.0 s");
+        expect((view.getByTestId("agent-run-details") as HTMLDetailsElement).open).toBe(true);
+      });
+
+      test("before a run there is nothing in flight, so it is shut and states no figure", () => {
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+        expect((view.getByTestId("agent-run-details") as HTMLDetailsElement).open).toBe(false);
+        // Not "0 steps · 0/30 stmt": that would state the DEFAULT workflow's ceilings on a
+        // summary line, and under Automatic that is a workflow nobody has chosen and the
+        // classifier may not pick. The gauges inside wait for a run for the same reason.
+        expect(view.queryByTestId("agent-run-details-figures")).toBeNull();
+      });
+
+      /*
+        The meter's own wrapper, which is the handle every test of the gauges as a BLOCK
+        reads them through. It survived the move behind the `<details>` as an untagged
+        layout div, and a testid nothing currently names is still the documented handle
+        for the next test.
+      */
+      test("the gauges keep the wrapper the meter has always been read through", async () => {
+        const view = await liveRun({}, [OPENED_LINE, STARTED_LINE, COMPLETED_LINE]);
+
+        const budget = await view.findByTestId("agent-budget");
+        expect(budget.contains(view.getByTestId("agent-budget-statements"))).toBe(true);
+        expect(view.getByTestId("agent-run-details").contains(budget)).toBe(true);
+      });
+
+      test("each of the three claims is reachable, and is the claim it always was", () => {
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+        openAdvanced(view);
+        fireEvent.click(view.getByTestId("agent-workflow-investigation"));
+
+        // Behind an ⓘ each, and in the accessibility tree whether or not it is open: the
+        // body is `sr-only` while shut rather than absent, so the claim is never reachable
+        // only by clicking.
+        expect(view.getByTestId("agent-budget-limits").textContent).toContain("10.0 s");
+        expect(view.getByTestId("agent-budget-reserve").textContent).toContain("asked to stop");
+        expect(view.getByTestId("agent-budget-caveats").textContent).toContain("a floor, never a ceiling");
+
+        const info = view.getByTestId("agent-budget-ceilings-info");
+        expect(info.getAttribute("aria-expanded")).toBe("false");
+        fireEvent.click(info);
+        expect(info.getAttribute("aria-expanded")).toBe("true");
+        expect(view.getByTestId("agent-budget-ceilings").className).not.toContain("sr-only");
+      });
+    });
+
+    describe("the folded run setup", () => {
+      /*
+        The visual collapse is deliberate; putting a counter into the live region was not.
+
+        The disclosure sits inside `<ol aria-live="polite">` and its summary interpolates a
+        running count, and the content of a closed `<details>` is not exposed at all — so a
+        reader following a run heard "Run setup · 1 entry", "· 2 entries", "· 3 entries"
+        where "Run opened", "Run started in plan mode" and "Schema captured" used to be.
+        The live region is the only channel a screen-reader user has for run progress.
+      */
+      test("its own counter is not announced, and the substantive entries still are", async () => {
+        const view = await liveRun();
+
+        const chrome = await view.findByTestId("agent-timeline-chrome");
+        // The nearest live ancestor governs, so silencing this subtree leaves the entries
+        // below it announced exactly as before.
+        expect(chrome.closest("li")?.getAttribute("aria-live")).toBe("off");
+        expect(view.getByTestId("agent-timeline").getAttribute("aria-live")).toBe("polite");
+      });
+    });
+
+    describe("the answer, above the transcript", () => {
+      const draftedLine = (event: Record<string, unknown>): string =>
+        `${JSON.stringify({
+          kind: "event",
+          event: { kind: "plan-statement-drafted", atMs: 1_005, dialect: "postgres", ...event },
+        })}\n`;
+
+      const READ = {
+        sql: "SELECT title FROM film ORDER BY rental_count DESC",
+        readOnly: true,
+        identifiers: { kind: "checked", unknownTables: [] },
+      };
+
+      test("the card is the first thing in the scroll area, above the timeline", async () => {
+        const view = await liveRun({}, [OPENED_LINE, STARTED_LINE, draftedLine(READ), FINISHED_LINE]);
+
+        await view.findByTestId("agent-answer");
+        const scroller = view.getByTestId("agent-timeline-scroll");
+        expect(scroller.firstElementChild?.getAttribute("data-testid")).toBe("agent-answer");
+        expect(view.getByTestId("agent-answer-plan")).toBeTruthy();
+      });
+
+      test("the statement is offered to the editor exactly once in the whole rail", async () => {
+        const onApplyStatement = mock((_sql: string) => {});
+        const view = await liveRun({ onApplyStatement }, [OPENED_LINE, STARTED_LINE, draftedLine(READ), FINISHED_LINE]);
+
+        await view.findByTestId("agent-answer-plan-apply");
+        // One marked control, and no unmarked twin: not in the transcript entry the card
+        // renders a second time, and not inside the prose the statement was read out of.
+        expect(view.queryAllByTestId("agent-answer-plan-apply")).toHaveLength(1);
+        expect(view.queryAllByTestId("agent-apply-statement")).toHaveLength(0);
+        expect(view.queryAllByTestId("prose-code-apply")).toHaveLength(0);
+
+        fireEvent.click(view.getByTestId("agent-answer-plan-apply"));
+        expect(onApplyStatement).toHaveBeenCalledWith(READ.sql);
+      });
+
+      test("an agent answer the card renders is not offered twice either", async () => {
+        // The card renders this entry's hand-off in its report state, so the transcript
+        // entry withholds its own: two "Apply to editor" controls for one statement, with
+        // nothing on either saying they are the same act, is what item 8 is about.
+        const onApplyStatement = mock((_sql: string) => {});
+        const answer = `${JSON.stringify({
+          kind: "event",
+          event: {
+            kind: "answer-composed",
+            atMs: 1_003,
+            sql: "SELECT count(*) FROM orders",
+            artifact: {
+              correlationId: "corr_9",
+              runId: "arun_1",
+              operationId: "sql.query.read",
+              summary: { rowCount: 1, columnNames: ["count"], elapsedMs: 4 },
+            },
+            presentation: { kind: "table" },
+            handover: "none",
+          },
+        })}\n`;
+        const view = await liveRun({ onApplyStatement }, [OPENED_LINE, STARTED_LINE, answer, REPORT_LINE]);
+
+        await view.findByTestId("agent-answer-report");
+        expect(view.queryAllByTestId("agent-answer-apply-statement")).toHaveLength(1);
+        expect(view.queryAllByTestId("agent-apply-statement")).toHaveLength(0);
+
+        fireEvent.click(view.getByTestId("agent-answer-apply-statement"));
+        expect(onApplyStatement).toHaveBeenCalledWith("SELECT count(*) FROM orders");
+      });
+
+      /*
+        A run CAN end `failed` holding what it produced, and the two surfaces have to
+        agree about it. `conclude` in `src/lib/agent/investigation.ts` writes the closing
+        prose and the drafted statement BEFORE `service.finish`, and is called with
+        `"failed"` for a model timeout, an exhausted deadline and the turn ceiling.
+
+        The card read the status first, so it rendered a failure banner — and the rail
+        withheld the transcript's copies anyway, because its suppression was keyed on the
+        LEDGER rather than on what the card renders. Net: no "Apply to editor" anywhere in
+        the rail for a drafted statement, no guard claims reachable, and an entry still
+        saying they were "in the answer at the top of this rail". One reading now answers
+        both surfaces (`answerCardState`).
+      */
+      const failedLine = (stopReason: string): string =>
+        `${JSON.stringify({
+          kind: "event",
+          event: { kind: "run-finished", atMs: 1_006, status: "failed", stopReason },
+        })}\n`;
+
+      test("a run that ran out of turns after drafting still shows the statement, and offers it once", async () => {
+        const onApplyStatement = mock((_sql: string) => {});
+        const view = await liveRun({ onApplyStatement }, [
+          OPENED_LINE,
+          STARTED_LINE,
+          draftedLine(READ),
+          failedLine("turn-limit"),
+        ]);
+
+        expect((await view.findByTestId("agent-answer-plan")).getAttribute("data-read-only")).toBe("true");
+        expect(view.getByTestId("agent-answer-statement").querySelector("pre")?.textContent).toBe(READ.sql);
+        // The one marked hand-off, still the only one: the card offers it and the entry
+        // the statement was read out of withholds its own, as on any other ending.
+        expect(view.queryAllByTestId("agent-answer-plan-apply")).toHaveLength(1);
+        expect(view.queryAllByTestId("agent-apply-statement")).toHaveLength(0);
+        // What the transcript entry promises is in the answer is in the answer.
+        expect(view.getByTestId("agent-answer-guard-note")).toBeTruthy();
+        expect(view.getByTestId("agent-plan-statement-caveat")).toBeTruthy();
+        expect(view.getByTestId("agent-plan-statement-summary").textContent).toContain("in the answer at the top");
+        // And the ending is still stated, on the card and in the transcript both.
+        expect(view.getByTestId("agent-answer-status").textContent).toBe("failed");
+        expect(view.getByTestId("agent-answer-failed")).toBeTruthy();
+      });
+
+      test("a report the run composed before it failed keeps the card's single hand-off", async () => {
+        const onApplyStatement = mock((_sql: string) => {});
+        const answer = `${JSON.stringify({
+          kind: "event",
+          event: {
+            kind: "answer-composed",
+            atMs: 1_003,
+            sql: "SELECT count(*) FROM orders",
+            artifact: {
+              correlationId: "corr_9",
+              runId: "arun_1",
+              operationId: "sql.query.read",
+              summary: { rowCount: 1, columnNames: ["count"], elapsedMs: 4 },
+            },
+            presentation: { kind: "table" },
+            handover: "none",
+          },
+        })}\n`;
+        const view = await liveRun({ onApplyStatement }, [
+          OPENED_LINE,
+          STARTED_LINE,
+          answer,
+          REPORT_LINE,
+          failedLine("deadline-exceeded"),
+        ]);
+
+        await view.findByTestId("agent-answer-report");
+        // Exactly one, and it is the card's — the suppression follows the card.
+        expect(view.queryAllByTestId("agent-answer-apply-statement")).toHaveLength(1);
+        expect(view.queryAllByTestId("agent-apply-statement")).toHaveLength(0);
+        expect(view.getByTestId("agent-answer-failed")).toBeTruthy();
+
+        fireEvent.click(view.getByTestId("agent-answer-apply-statement"));
+        expect(onApplyStatement).toHaveBeenCalledWith("SELECT count(*) FROM orders");
+      });
+
+      /*
+        The suppression follows what the card RENDERS, and this is the ledger that tells
+        the two derivations apart: a report AND a drafted statement, where the card's
+        reading is `plan`. Keyed on the ledger's report alone — as it was — the rail
+        withheld the answer entry's control for a card that is not offering it, which is
+        a control removed rather than de-duplicated. Every entry here is one the server
+        writes; what this pins is that the rail asks the card instead of guessing.
+      */
+      test("an answer the card is NOT rendering keeps its own control", async () => {
+        const onApplyStatement = mock((_sql: string) => {});
+        const answer = `${JSON.stringify({
+          kind: "event",
+          event: {
+            kind: "answer-composed",
+            atMs: 1_003,
+            sql: "SELECT count(*) FROM orders",
+            artifact: {
+              correlationId: "corr_9",
+              runId: "arun_1",
+              operationId: "sql.query.read",
+              summary: { rowCount: 1, columnNames: ["count"], elapsedMs: 4 },
+            },
+            presentation: { kind: "table" },
+            handover: "none",
+          },
+        })}\n`;
+        const view = await liveRun({ onApplyStatement }, [
+          OPENED_LINE,
+          STARTED_LINE,
+          answer,
+          REPORT_LINE,
+          draftedLine(READ),
+          FINISHED_LINE,
+        ]);
+
+        // The card is showing the statement, so it is offering no report hand-off.
+        await view.findByTestId("agent-answer-plan");
+        expect(view.queryAllByTestId("agent-answer-apply-statement")).toHaveLength(0);
+        // Which leaves the transcript's the only one there is, and it is still there.
+        expect(view.queryAllByTestId("agent-apply-statement")).toHaveLength(1);
+      });
+
+      test("a read the run took along the way keeps its own controls, because the card renders none of them", async () => {
+        const onApplyStatement = mock((_sql: string) => {});
+        const view = await liveRun({ onApplyStatement }, [OPENED_LINE, STARTED_LINE, DRAFTED_LINE, REPORT_LINE]);
+
+        // A `statement-drafted` entry is a different statement from the answer, and the
+        // card is not rendering it: withholding its control would take an affordance away
+        // rather than de-duplicate one.
+        expect(await view.findAllByTestId("agent-apply-statement")).toHaveLength(1);
+      });
+
+      /**
+       * L6, measured in Chrome on 2026-08-21 against live PostgreSQL and Gemini.
+       *
+       * The report path offered THREE "Apply to editor" controls at once —
+       * `agent-answer-apply-statement` on the card, `agent-apply-statement` on the
+       * `Statement drafted` entry and `agent-citation-apply-statement` in a surviving
+       * `agent-report` section — and printed the model's claim twice, because the old
+       * section stayed beside the new card. All three were the SAME statement: an
+       * answer's `sql` is the statement of the step whose artifact it presents, and the
+       * citation quotes that same step. None of the three carried an accessible name, on
+       * the one path where three unmarked hand-offs is worse than the one `main` had.
+       *
+       * The card IS the answer, which is what the design decided, so:
+       *
+       *  - the `agent-report` section is gone. Its claims are the card's, its citations
+       *    are the card's `agent-answer-evidence` fold — label, the ledger's own detail
+       *    and the statement each rests on — and its `Show result` was a second offer of
+       *    an artifact the `Result stored` entry already offers under the same rule;
+       *  - the transcript withholds a hand-off for the statement the card is handing
+       *    over, which is the report path's version of what the plan path already did to
+       *    the prose the statement was read out of. By the TEXT, not by the entry id: it
+       *    is a de-duplication of one statement, so a read the run took along the way
+       *    keeps its own control (the test above) unless it IS that statement.
+       */
+      describe("one answer, one hand-off", () => {
+        const ANSWERED = "SELECT country, count(*) FROM customer GROUP BY country";
+
+        const answerLine = (sql: string): string =>
+          `${JSON.stringify({
+            kind: "event",
+            event: {
+              kind: "answer-composed",
+              atMs: 1_004,
+              sql,
+              artifact: {
+                correlationId: "corr_9",
+                runId: "arun_1",
+                operationId: "sql.query.read",
+                summary: { rowCount: 5, columnNames: ["country", "count"], elapsedMs: 7 },
+              },
+              presentation: { kind: "table" },
+              handover: "none",
+            },
+          })}\n`;
+
+        const draftedStep = (sql: string): string =>
+          `${JSON.stringify({
+            kind: "event",
+            event: { kind: "statement-drafted", atMs: 1_002, stepId: "s1", sql, rationale: "count by country" },
+          })}\n`;
+
+        /** The ledger an agent run that reads once, answers and reports actually writes. */
+        const reportRun = (drafted: string, answered: string): readonly string[] => [
+          OPENED_LINE,
+          AGENT_STARTED_LINE,
+          draftedStep(drafted),
+          COMPLETED_LINE,
+          answerLine(answered),
+          REPORT_LINE,
+          FINISHED_LINE,
+        ];
+
+        test("the claim is printed once, and no second Report section repeats it", async () => {
+          const view = await liveRun({}, reportRun(ANSWERED, ANSWERED));
+
+          await view.findByTestId("agent-answer-report");
+          expect(view.queryByTestId("agent-report")).toBeNull();
+          expect(view.queryAllByTestId("agent-report-claim")).toHaveLength(0);
+          expect(view.queryAllByTestId("agent-answer-claim")).toHaveLength(1);
+          // What that section carried is in the fold: the citation, the ledger's own
+          // detail for it, and the statement it rests on.
+          const cited = view.getAllByTestId("agent-answer-evidence-citation");
+          expect(cited).toHaveLength(1);
+          expect(cited[0].textContent).toContain("Artifact corr_9");
+          expect(cited[0].textContent).toContain("3 rows via sql.query.read");
+          expect(cited[0].querySelector("pre")?.textContent).toBe(ANSWERED);
+        });
+
+        test("the whole rail offers one apply control, and it carries the name applyStatementName builds", async () => {
+          const onApplyStatement = mock((_sql: string) => {});
+          const view = await liveRun({ onApplyStatement }, reportRun(ANSWERED, ANSWERED));
+
+          const control = await view.findByTestId("agent-answer-apply-statement");
+          expect(view.queryAllByTestId("agent-answer-apply-statement")).toHaveLength(1);
+          // The two that used to stand beside it, each for the same statement.
+          expect(view.queryAllByTestId("agent-apply-statement")).toHaveLength(0);
+          expect(view.queryAllByTestId("agent-citation-apply-statement")).toHaveLength(0);
+          expect(view.queryAllByTestId("prose-code-apply")).toHaveLength(0);
+          // Named, which is why the control was allowed to move up here at all.
+          expect(control.getAttribute("aria-label")).toBe(applyStatementName(null));
+
+          fireEvent.click(control);
+          expect(onApplyStatement).toHaveBeenCalledWith(ANSWERED);
+        });
+
+        /*
+          The boundary of that suppression. A run reads more than once, and the answer
+          rests on one of those reads: the OTHER statements are other statements, and the
+          card renders none of them, so withholding their controls would remove an
+          affordance rather than de-duplicate one.
+        */
+        test("a read whose statement is not the answer's keeps the control it always had", async () => {
+          const other = "SELECT count(*) FROM rental";
+          const onApplyStatement = mock((_sql: string) => {});
+          const view = await liveRun({ onApplyStatement }, reportRun(other, ANSWERED));
+
+          await view.findByTestId("agent-answer-report");
+          expect(view.queryAllByTestId("agent-answer-apply-statement")).toHaveLength(1);
+          const kept = view.getAllByTestId("agent-apply-statement");
+          expect(kept).toHaveLength(1);
+
+          fireEvent.click(kept[0]);
+          expect(onApplyStatement).toHaveBeenCalledWith(other);
+        });
+
+        /*
+          The artifact is still reachable, which is what makes removing the citation's
+          own control a de-duplication too: `Result stored` carries the same correlation
+          id, under the same live-run rule.
+        */
+        test("the citation's result is still offered, from the entry that stored it", async () => {
+          const onShowArtifact = mock(() => {});
+          const view = await liveRun({ onShowArtifact }, [
+            OPENED_LINE,
+            AGENT_STARTED_LINE,
+            draftedStep(ANSWERED),
+            COMPLETED_LINE,
+            REPORT_LINE,
+          ]);
+
+          await view.findByTestId("agent-answer-report");
+          fireEvent.click((await view.findAllByTestId("agent-show-result"))[0]);
+          expect(onShowArtifact).toHaveBeenCalledWith({ runId: "arun_1", correlationId: "corr_9" });
+        });
+      });
+
+      /**
+       * L2 and L3, measured in Chrome on 2026-08-21.
+       *
+       * L2: the `Closing statement` entry rendered the model's closing prose in full, and
+       * that prose HOLDS the fenced statement — so the statement, its rationale and a
+       * second `Copy` all rendered again at full weight a few hundred pixels under the
+       * card. Item 8 of the design said this entry keeps its headline, timestamp and
+       * guard summary and reprints the statement no more; the per-block hand-off was
+       * withheld, the block itself was not.
+       *
+       * L3: the guard's reading was then stated three times inside ~400px — the card's
+       * line, this entry's four-line `detail`, and the amber summary box. One fact, three
+       * renderings, two of them long. The entry keeps the one-line summary and the full
+       * text stays in the card's ⓘ, where it already is.
+       */
+      describe("the transcript, once the card holds the answer", () => {
+        const closingLine = (text: string): string =>
+          `${JSON.stringify({ kind: "event", event: { kind: "closing-statement", atMs: 1_004, text } })}\n`;
+
+        const PROSE = `It counts the rentals per title.\n\`\`\`sql\n${READ.sql}\n\`\`\`\nRun it against the replica.`;
+
+        const planRun = (props: Partial<React.ComponentProps<typeof AgentRail>> = {}) =>
+          liveRun(props, [OPENED_LINE, STARTED_LINE, closingLine(PROSE), draftedLine(READ), FINISHED_LINE]);
+
+        test("the closing prose keeps its words and prints the statement no second time", async () => {
+          const view = await planRun({ onApplyStatement: mock((_sql: string) => {}) });
+
+          const prose = await view.findByTestId("agent-prose");
+          expect(prose.textContent).not.toContain(READ.sql);
+          expect(prose.querySelector("pre")).toBeNull();
+          // Every word around it is untouched — this is a suppressed duplicate, not an
+          // edited plan.
+          expect(prose.textContent).toContain("It counts the rentals per title.");
+          expect(prose.textContent).toContain("Run it against the replica.");
+          // And the statement is on the card, once, where the marked hand-off is.
+          expect(view.getByTestId("agent-answer-statement").querySelector("pre")?.textContent).toBe(READ.sql);
+        });
+
+        test("Copy all still carries the whole prose, fence and all", async () => {
+          const writeText = mock(() => Promise.resolve());
+          Object.defineProperty(globalThis.navigator, "clipboard", { value: { writeText }, configurable: true });
+          const view = await planRun();
+
+          fireEvent.click(await view.findByTestId("agent-prose-copy"));
+          await waitFor(() => expect(writeText).toHaveBeenCalledWith(PROSE));
+        });
+
+        test("the entry keeps the one-line reading and drops the paragraph the card carries", async () => {
+          const view = await liveRun({}, [
+            OPENED_LINE,
+            STARTED_LINE,
+            draftedLine({
+              sql: 'db.orders.aggregate([{ $group: { _id: "$customerId" } }])',
+              readOnly: false,
+              guardApplicable: false,
+              identifiers: { kind: "not-applicable" },
+            }),
+            FINISHED_LINE,
+          ]);
+
+          // The summary stays: it is the entry's account of what the card holds.
+          const summary = await view.findByTestId("agent-plan-statement-summary");
+          expect(summary.textContent).toContain("Not examined");
+          expect(summary.textContent).toContain("in the answer at the top of this rail");
+          // The long detail does not, in either of its two sentences.
+          const entry = summary.closest('[data-testid="agent-timeline-item"]');
+          expect(entry?.textContent).not.toContain("examined this draft at all");
+          expect(entry?.textContent).not.toContain("were not looked for in anything");
+          // Both are still reachable, in the ⓘ the card already carries them in.
+          expect(view.getByTestId("agent-plan-statement-guard-unread").textContent).toContain("nothing examined");
+          expect(view.getByTestId("agent-plan-statement-unread").textContent).toContain("were not checked");
+        });
+
+        test("an entry the card is not rendering keeps its own detail", async () => {
+          // The suppression follows what the CARD holds. A `Result stored` entry says what
+          // was stored and nothing else says it, so nothing is withheld there.
+          const view = await liveRun({}, [OPENED_LINE, AGENT_STARTED_LINE, COMPLETED_LINE, FINISHED_LINE]);
+
+          const items = await view.findAllByTestId("agent-timeline-item");
+          expect(items.map((item) => item.textContent).join(" ")).toContain("3 rows, 2 columns");
+        });
+      });
+
+      test("the run's grounding reaches the card, in the word the engine used for it", async () => {
+        const captured = `${JSON.stringify({
+          kind: "event",
+          event: {
+            kind: "context-captured",
+            atMs: 1_002,
+            fingerprint: "ctx_druid00",
+            tableCount: 3,
+            noun: { singular: "datasource", plural: "datasources" },
+          },
+        })}\n`;
+        const view = await liveRun({}, [OPENED_LINE, STARTED_LINE, captured, draftedLine(READ), FINISHED_LINE]);
+
+        // Off the run's own capture entry — the fold reads it there and nowhere else, so
+        // a connection retyped since the run cannot rewrite what it was read in.
+        expect((await view.findByTestId("agent-answer-chip-inventory")).textContent).toBe("3 datasources read");
+        expect(view.getByTestId("agent-answer-chip-fingerprint").textContent).toBe("ctx_drui");
       });
     });
   });

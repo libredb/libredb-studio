@@ -1,4 +1,5 @@
 import { getViewportForBounds, type Rect, type Viewport } from "@xyflow/react";
+import { downloadBlob } from "@/lib/export/download";
 
 // Browser canvas hard limits (Chrome/Safari, canvas-size test data): a canvas
 // over 16384px per side or ~268M pixels of area draws NOTHING - the failure
@@ -76,15 +77,6 @@ export function buildExportFilename(format: "png" | "svg"): string {
   return `erd_${Date.now()}.${format}`;
 }
 
-function downloadBlob(filename: string, blob: Blob): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.download = filename;
-  link.href = url;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
 export interface ExportViewportOptions {
   viewport: HTMLElement;
   bounds: Rect;
@@ -145,8 +137,8 @@ export async function exportViewportImage(format: "png" | "svg", options: Export
     if (!blob) {
       throw new Error("PNG encoding produced no data");
     }
-    downloadBlob(buildExportFilename("png"), blob);
+    downloadBlob(blob, buildExportFilename("png"));
   } else {
-    downloadBlob(buildExportFilename("svg"), svgDataUrlToBlob(capture.url, background));
+    downloadBlob(svgDataUrlToBlob(capture.url, background), buildExportFilename("svg"));
   }
 }

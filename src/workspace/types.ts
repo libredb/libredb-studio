@@ -1,5 +1,6 @@
 // src/workspace/types.ts
 import type { DatabaseType, TableSchema, SavedQuery, QueryWarning } from "@/lib/types";
+import type { ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 
 // === Connection (platform → studio) ===
 
@@ -7,6 +8,25 @@ export interface WorkspaceConnection {
   id: string;
   name: string;
   type: DatabaseType;
+  /**
+   * What this connection's provider can do, as `getCapabilities()` reports it.
+   *
+   * The standalone shell reads the same object from `POST /api/db/provider-meta`;
+   * the embedded shell cannot — it has no route of its own, and the connection it
+   * is handed carries no credentials to describe, so the host is the only party
+   * that can answer. Both fields are therefore supplied per connection here.
+   *
+   * Everything capability-driven is off until they are: the tab's query dialect,
+   * so a Redis connection gets Redis commands instead of `SELECT * FROM user:*`
+   * (#427); the schema explorer's per-row actions; the provider's own wording.
+   *
+   * Additive and optional, like every field on this published interface. Absent
+   * reads exactly as it did before the field existed — studio treats the provider
+   * as unknown and falls back to SQL and to the base labels.
+   */
+  capabilities?: ProviderCapabilities;
+  /** This provider's UI wording, as `getLabels()` reports it. See `capabilities`. */
+  labels?: ProviderLabels;
 }
 
 // === User (platform → studio) ===

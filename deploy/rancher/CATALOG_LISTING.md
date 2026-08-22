@@ -20,9 +20,38 @@ partner contact.
 > ten-engine wording against a version older than 0.11.0 — send the eight-engine
 > variant instead.
 >
-> The chart's own `description` in `Chart.yaml` still names seven engines, and that is
-> the string Rancher renders on the Apps catalog card. Correcting it means a chart
-> version bump and a fresh release, so it is tracked separately from this file.
+> **The count is now fourteen on `main`, and that wording waits for a release.**
+> Elasticsearch, OpenSearch and Apache Trino shipped on `main` with
+> [#424](https://github.com/libredb/libredb-studio/issues/424) Phases 1 and 2, and Apache
+> Cassandra with Phase 4; all four are in the `SHIPPED` record in
+> `src/lib/db/compatibility.ts`, but the catalog page describes a released version. So the
+> prose below stays at ten until a tag carries them, and then both the short and long
+> descriptions gain "Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra" and the
+> feature bullet becomes fourteen. Read the number from `SHIPPED` (minus
+> the embedded `libredb`) rather than from this file, and state the scope with it: on the
+> two search engines LibreDB Studio queries and browses — their SQL has no `INSERT`,
+> `UPDATE` or `CREATE TABLE` — so "manage data across …" must not be extended to include
+> them.
+>
+> **The chart's own `description` is not release-coupled and does name Cassandra.** An
+> earlier revision of this note said it deliberately did not, on the reasoning that
+> `charts/libredb-studio/` is a packaged path and editing it drags in a `Chart.yaml` version
+> bump (#167's required check), the README `--version` examples and the `operator/helm-charts`
+> mirror. Those four edits are the cost, not a reason to defer: the chart has been carried
+> with the engine since [#438](https://github.com/libredb/libredb-studio/pull/438), which
+> moved the description to thirteen and 0.1.39 to 0.1.40 in the PR that added Trino. Cassandra
+> followed the same path at chart 0.1.43. So a PR that adds an engine updates all four files;
+> it does not hand them to whoever cuts the next chart. Note the mirror must stay
+> byte-identical — run `bun run chart:bump` rather than editing
+> `operator/helm-charts/libredb-studio/` by hand, or the sync guard fails the required check.
+>
+> What *is* release-coupled is every marketplace and packaging description that spells the
+> count: `deploy/azure`, `deploy/railway`, `deploy/caprover`, `packaging/winget`,
+> `packaging/chocolatey`, `packaging/homebrew` and `desktop/src-tauri/tauri.conf.json` all
+> still say thirteen, because each describes an artifact a user can already download and
+> 0.12.0 ships no Cassandra provider. Read the number from `SHIPPED` when a tag carries it.
+> (`packaging/linux/nfpm.yaml` and the operator CSVs are the exception: both are consumed at
+> release time from `main`, so they name fourteen now and the next tag publishes it.)
 
 ## Listing facts
 

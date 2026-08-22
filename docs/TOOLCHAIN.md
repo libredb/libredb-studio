@@ -273,6 +273,21 @@ phase that can affect output.
 4. attw must use `build:lib`, not `next build`.
 5. `mock.module()` test isolation is unaffected by these static tools.
 
+## `experimental.optimizePackageImports` — measured at zero, so not enabled (2026-08-18)
+
+Proposed in #422 for `lucide-react`, `recharts`, `@xyflow/react`, `framer-motion` and `date-fns`.
+Measured before merging, and it changed nothing: first-load JS for `/` was **6030 KiB across 37 files
+with the option, and 6030 KiB across 37 files without it** — identical, measured in Chrome against
+`bun run build` + `bun run start`, summing every JS response from `/login` through the studio being
+interactive.
+
+Two reasons it cannot help here. `lucide-react`, `recharts` and `date-fns` are already in Next's own
+default list (`next/dist/esm/server/config.js`), which is concatenated with whatever the config names,
+so three of the five entries were never doing anything. And the remaining two are not barrel-of-icons
+packages, which is the shape the transform exists for.
+
+Do not re-add it without a number. The measurement takes one build and one page load.
+
 ## Suggested package versions
 
 `@biomejs/biome@^2.5`, `oxlint@^1.71`, `@arethetypeswrong/cli@^0.18.4`. `eslint` / `eslint-config-next` /

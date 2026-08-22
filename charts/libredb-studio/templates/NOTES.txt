@@ -119,3 +119,17 @@ SQLite is a single-writer database, so the HorizontalPodAutoscaler was not
 rendered and the deployment stays at replicaCount ({{ .Values.replicaCount }}).
 Use storageProvider=postgres for multi-replica setups.
 {{- end }}
+
+{{- if and (include "libredb-studio.serviceWantsIPv6" .) (include "libredb-studio.bindPinnedToIPv4" .) }}
+
+WARNING: this Service asks for an IPv6 address, but this release pins the
+container to {{ include "libredb-studio.effectiveBindAddress" . }} (IPv4 only).
+Kubernetes populates the IPv6 EndpointSlice from the pod's own IPv6 address
+without checking what the process bound, so connections to that address are
+refused - and the kubelet probes only the pod's primary IP, so the pod still
+reports Ready and nothing self-heals. Drop the pin and the container resolves
+its own address, preferring a dual-stack "::" it verifies at startup:
+  helm upgrade libredb libredb/libredb-studio --set config.bindAddress=""
+Or force it, if you would rather say it than leave it to the image:
+  helm upgrade libredb libredb/libredb-studio --set-string config.bindAddress=::
+{{- end }}

@@ -22,6 +22,7 @@ import { Download, Info, Loader2, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
+import { logger } from "@/lib/logger";
 import { DiagramActionsContext, type DiagramActions } from "./schema-diagram/diagram-context";
 import { FkEdge } from "./schema-diagram/FkEdge";
 import { TableNode } from "./schema-diagram/TableNode";
@@ -291,7 +292,11 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
         // theme the diagram is being read in.
         await exportViewportImage(format, { viewport, bounds, background: EXPORT_BACKGROUND[mode] });
       } catch (error) {
-        console.error(`Failed to export ${format.toUpperCase()}:`, error);
+        logger.warn("Diagram export failed", {
+          route: "SchemaDiagram",
+          format,
+          error: error instanceof Error ? error.message : String(error),
+        });
         toast({
           title: `${format.toUpperCase()} export failed`,
           description: error instanceof Error ? error.message : String(error),

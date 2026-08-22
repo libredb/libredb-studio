@@ -334,6 +334,28 @@ describe("MongoDBProvider", () => {
       expect(labels.rowName).toBe("document");
       expect(labels.selectAction).toBe("Find Documents");
     });
+
+    // `statementLanguage` is the sentence the agent's plan contract states verbatim
+    // (`ProviderLabels.statementLanguage`), and this engine needs one for the reason
+    // the search products did: asked for "one runnable statement in this MongoDB
+    // database's own query language", a live plan run on 2026-08-22 answered with
+    // mongosh shell syntax - `db.orders.aggregate([{ $group: ... }])` - which is
+    // correct MongoDB and unrunnable here, because `query()` takes the JSON command
+    // object and nothing else. So the sentence has to name the envelope AND rule out
+    // the shell by name; naming only what the language is did not survive contact
+    // with the model's prior on Elasticsearch and does not here either.
+    test("declares the JSON command envelope as the statement language and rules out mongosh", () => {
+      const { statementLanguage } = provider.getLabels();
+
+      expect(statementLanguage).toBeString();
+      // The keys a runnable command is built from - the ones `parseQuery` reads.
+      for (const key of ["collection", "operation", "filter", "pipeline"]) {
+        expect(statementLanguage).toContain(key);
+      }
+      // The two forms a model reaches for instead, named so they are excluded.
+      expect(statementLanguage).toContain("mongosh");
+      expect(statementLanguage).toContain("db.");
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -474,6 +496,83 @@ describe("MongoDBProvider", () => {
       // The collections after it are still read, which is the half of the defect a
       // user actually noticed.
       expect(schemas.find((s) => s.name === "orders")!.rowCount).toBe(42);
+    });
+
+    // Why nested fields are listed at all: the inventory this schema feeds is what
+    // grounds an agent plan run, and a document field recorded only as
+    // `shipping: object` tells a model that something is nested there and nothing
+    // about what. A live plan run on 2026-08-22 grouped by `$shipping.region` - a
+    // path that does not exist in the database it was handed - and MongoDB answers
+    // that with one null group rather than an error, so the plan looked runnable and
+    // was silently wrong. `shipping.city` is a first-class field name in MQL, so the
+    // fix is to name it.
+    test("lists nested object fields as dotted paths, down to the depth limit", async () => {
+      mockCollectionData = [
+        {
+          _id: new MockObjectId("aaa"),
+          total: 10,
+          shipping: { city: "Istanbul", method: "express", geo: { lat: 41, deep: { tooFar: 1 } } },
+        },
+      ];
+
+      const schemas = await provider.getSchema();
+      const names = schemas.find((s) => s.name === "users")!.columns.map((c) => c.name);
+
+      // The container is still listed - a query may address the whole subdocument.
+      expect(names).toContain("shipping");
+      expect(names).toContain("shipping.city");
+      expect(names).toContain("shipping.method");
+      // Depth 3 is reached and named.
+      expect(names).toContain("shipping.geo.lat");
+      // Depth 4 is not: an unbounded walk turns one deeply nested document into
+      // hundreds of rows in the schema tree and hundreds of lines in a model's
+      // context window. The container at the boundary is still named, so the reader
+      // knows the nesting continues.
+      expect(names).toContain("shipping.geo.deep");
+      expect(names).not.toContain("shipping.geo.deep.tooFar");
+    });
+
+    test("does not descend into arrays, and keeps _id first after nesting", async () => {
+      mockCollectionData = [
+        {
+          _id: new MockObjectId("aaa"),
+          items: [{ sku: "A-1", qty: 2 }],
+          tags: ["seed"],
+          createdAt: new Date("2026-01-01T00:00:00Z"),
+        },
+      ];
+
+      const schemas = await provider.getSchema();
+      const columns = schemas.find((s) => s.name === "users")!.columns;
+      const names = columns.map((c) => c.name);
+
+      expect(names[0]).toBe("_id");
+      expect(names).toContain("items");
+      expect(names).toContain("tags");
+      // An array element's fields are NOT dotted paths of the same kind: `items.sku`
+      // reads a value per array entry, so grouping or sorting on it does not mean
+      // what the same syntax means on a subdocument. Naming it in a flat field list
+      // would invite exactly that confusion, so the array is named and left closed.
+      expect(names).not.toContain("items.sku");
+      // A Date is an object to `typeof` and has no fields worth listing.
+      expect(names).not.toContain("createdAt.getTime");
+    });
+
+    test("caps the number of inferred fields so one wide document cannot flood the tree", async () => {
+      const wide: Record<string, unknown> = { _id: new MockObjectId("aaa") };
+      for (let i = 0; i < 60; i++) {
+        wide[`group${i}`] = Object.fromEntries(Array.from({ length: 10 }, (_, j) => [`f${j}`, j]));
+      }
+      mockCollectionData = [wide];
+
+      const schemas = await provider.getSchema();
+      const columns = schemas.find((s) => s.name === "users")!.columns;
+
+      // 60 containers + 600 leaves + _id would be 661 rows for one document.
+      expect(columns.length).toBeLessThanOrEqual(200);
+      // The cap keeps a deterministic prefix rather than an arbitrary slice, and _id
+      // survives it: it is the field every generated statement addresses.
+      expect(columns[0].name).toBe("_id");
     });
   });
 

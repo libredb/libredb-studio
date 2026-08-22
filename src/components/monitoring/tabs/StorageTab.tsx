@@ -36,7 +36,14 @@ export function StorageTab({ data, loading }: StorageTabProps) {
     return `${bytes} B`;
   };
 
-  // Calculate storage breakdown
+  // Calculate storage breakdown. Absence and zero are different inputs: a provider that
+  // OMITS `databaseSizeBytes` is saying no byte figure is knowable - Apache Cassandra's
+  // `system_views.disk_usage` publishes whole mebibytes, measured as "1 MiB" for a
+  // 19,476-byte table (#424) - so there is no total to divide by and no breakdown to
+  // draw, and this tab says so instead of formatting a "0 B" the engine never reported.
+  // A provider that sends a real 0 (Trino, Druid) has measured one, and keeps the
+  // arithmetic below unchanged.
+  const sizeKnown = overview?.databaseSizeBytes !== undefined;
   const totalSize = overview?.databaseSizeBytes ?? 0;
   const tablePercent = totalSize > 0 ? (totalTableSize / totalSize) * 100 : 0;
   const indexPercent = totalSize > 0 ? (totalIndexSize / totalSize) * 100 : 0;
@@ -62,8 +69,10 @@ export function StorageTab({ data, loading }: StorageTabProps) {
             <HardDrive strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium truncate">{formatBytes(totalTableSize)}</div>
-            <p className="text-xs sm:text-xs text-muted-foreground mt-1">{tablePercent.toFixed(1)}%</p>
+            <div className="text-lg sm:text-2xl font-medium truncate">
+              {sizeKnown ? formatBytes(totalTableSize) : "N/A"}
+            </div>
+            {sizeKnown && <p className="text-xs sm:text-xs text-muted-foreground mt-1">{tablePercent.toFixed(1)}%</p>}
           </CardContent>
         </Card>
 
@@ -73,8 +82,10 @@ export function StorageTab({ data, loading }: StorageTabProps) {
             <Archive strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-purple-500" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium truncate">{formatBytes(totalIndexSize)}</div>
-            <p className="text-xs sm:text-xs text-muted-foreground mt-1">{indexPercent.toFixed(1)}%</p>
+            <div className="text-lg sm:text-2xl font-medium truncate">
+              {sizeKnown ? formatBytes(totalIndexSize) : "N/A"}
+            </div>
+            {sizeKnown && <p className="text-xs sm:text-xs text-muted-foreground mt-1">{indexPercent.toFixed(1)}%</p>}
           </CardContent>
         </Card>
 
@@ -100,41 +111,48 @@ export function StorageTab({ data, loading }: StorageTabProps) {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-3 sm:p-4 pt-0 space-y-3 sm:space-y-4">
-          <div className="space-y-2 sm:space-y-3">
-            <div>
-              <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
-                <span className="flex items-center gap-1 sm:gap-2">
-                  <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-green-500" />
-                  Tables
-                </span>
-                <span className="font-medium">{formatBytes(totalTableSize)}</span>
+          {sizeKnown ? (
+            <div className="space-y-2 sm:space-y-3">
+              <div>
+                <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
+                  <span className="flex items-center gap-1 sm:gap-2">
+                    <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-green-500" />
+                    Tables
+                  </span>
+                  <span className="font-medium">{formatBytes(totalTableSize)}</span>
+                </div>
+                <Progress value={tablePercent} className="h-1.5 sm:h-2" />
               </div>
-              <Progress value={tablePercent} className="h-1.5 sm:h-2" />
-            </div>
 
-            <div>
-              <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
-                <span className="flex items-center gap-1 sm:gap-2">
-                  <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-purple-500" />
-                  Indexes
-                </span>
-                <span className="font-medium">{formatBytes(totalIndexSize)}</span>
+              <div>
+                <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
+                  <span className="flex items-center gap-1 sm:gap-2">
+                    <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-purple-500" />
+                    Indexes
+                  </span>
+                  <span className="font-medium">{formatBytes(totalIndexSize)}</span>
+                </div>
+                <Progress value={indexPercent} className="h-1.5 sm:h-2 [&>div]:bg-purple-500" />
               </div>
-              <Progress value={indexPercent} className="h-1.5 sm:h-2 [&>div]:bg-purple-500" />
-            </div>
 
-            <div>
-              <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
-                <span className="flex items-center gap-1 sm:gap-2">
-                  <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-muted-foreground" />
-                  <span className="hidden sm:inline">Other (TOAST, FSM)</span>
-                  <span className="sm:hidden">Other</span>
-                </span>
-                <span className="font-medium">{formatBytes(totalSize - totalTableSize - totalIndexSize)}</span>
+              <div>
+                <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
+                  <span className="flex items-center gap-1 sm:gap-2">
+                    <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-muted-foreground" />
+                    <span className="hidden sm:inline">Other (TOAST, FSM)</span>
+                    <span className="sm:hidden">Other</span>
+                  </span>
+                  <span className="font-medium">{formatBytes(totalSize - totalTableSize - totalIndexSize)}</span>
+                </div>
+                <Progress value={otherPercent} className="h-1.5 sm:h-2 [&>div]:bg-muted-foreground" />
               </div>
-              <Progress value={otherPercent} className="h-1.5 sm:h-2 [&>div]:bg-muted-foreground" />
             </div>
-          </div>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              <HardDrive strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p className="text-xs">No storage size information available.</p>
+            </div>
+          )}
         </CardContent>
       </Card>
 

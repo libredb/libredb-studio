@@ -93,6 +93,13 @@ export async function POST(req: Request) {
       if (error.reasonCode === "RUN_NOT_FOUND") {
         return NextResponse.json({ error: "No such agent run" }, { status: 404 });
       }
+      if (error.reasonCode === "RUN_ALREADY_DRIVEN") {
+        // 409, not 5xx, and deliberately NOT in `TERMINAL_REASONS`: the run is
+        // healthy and another drive is already carrying it, so this is "already
+        // being handled" rather than "ended for good". The queue should not keep
+        // redelivering while that other drive works.
+        return NextResponse.json({ error: error.message }, { status: 409 });
+      }
       if (TERMINAL_REASONS.has(error.reasonCode)) {
         // 409, not 5xx: the run ended, so redelivering this message will never
         // succeed and the queue should stop trying.

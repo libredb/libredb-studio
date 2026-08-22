@@ -16,6 +16,7 @@ jobs:
   lint-and-build:
     name: Lint, Typecheck and Build
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - name: Checkout code
@@ -42,6 +43,14 @@ jobs:
           bun run chart:check
         env:
           CHART_SYNC_STRICT: "1"
+
+      - name: Login channel showcase drift guard (#425)
+        # Same reasoning as the chart guard above: inside the required check so
+        # it actually gates. src/lib/distribution/channels.generated.ts is the
+        # login hero's copy of distribution/channels.yaml, generated and
+        # committed so the unauthenticated page parses no yaml at runtime -
+        # nothing else notices when the inventory moves on without it.
+        run: bun run channels:showcase:check
 
       - name: Localized README drift guard (#317)
         # Same reasoning as the chart guard above: inside the required check so
@@ -107,6 +116,7 @@ jobs:
   test:
     name: Unit & Integration Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - name: Checkout code
@@ -123,13 +133,14 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: v3.16.0
+          version: v4.1.3
 
       - name: Add Bitnami repo
-        run: helm repo add bitnami https://charts.bitnami.com/bitnami
+        run: helm repo add bitnami https://charts.bitnami.com/bitnami --timeout 5m
 
+      # --skip-refresh: the `helm repo add` above already fetched the index; Helm 4's `dependency build` re-fetches it by default and takes no --timeout.
       - name: Build chart dependencies
-        run: helm dependency build charts/libredb-studio
+        run: helm dependency build charts/libredb-studio --skip-refresh
 
       - name: Run merged test coverage (core + components)
         run: bun run test:coverage
@@ -158,15 +169,32 @@ jobs:
     name: E2E Tests
     needs: [lint-and-build]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Runs INSIDE Playwright's own image so `playwright install` never touches
+    # apt. `--with-deps` used to pull ~111 MB of system libraries from
+    # azure.archive.ubuntu.com on every run; when that mirror degrades - as it
+    # did on 2026-08-18/19, down to 21.8 kB/s - the step took 86 minutes and
+    # twice ran into the 6-hour job default, against 12 seconds of actual
+    # browser download and 3 minutes of actual tests. The image ships those
+    # libraries prebuilt, so the apt path is removed rather than retried.
+    # The tag MUST track @playwright/test in package.json: a mismatch only
+    # costs a re-download into PLAYWRIGHT_BROWSERS_PATH (the install step below
+    # is the fail-safe), never a broken job.
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
 
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
+      # oven-sh/setup-bun is not usable inside the Playwright image: it
+      # extracts bun from a .zip via @actions/tool-cache, which shells out to
+      # `unzip` - a binary this image does not ship, and installing it would
+      # put apt back on the critical path, which is the whole point of moving
+      # here. npm resolves bun through platform tarballs instead, so it needs
+      # no unzip. Keep the version in step with the setup-bun pins elsewhere.
       - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: "1.3.14"
+        run: npm install -g bun@1.3.14
 
       - name: Install dependencies
         uses: ./.github/actions/bun-install
@@ -181,10 +209,19 @@ jobs:
         # --config=playwright.channel.config.ts - a chromium-only project
         # list that never resolves the webkit-security project - so they stay
         # chromium-only on purpose.
-        run: bunx playwright install --with-deps chromium webkit
+        # No --with-deps: the container image already carries the system
+        # libraries. This step is now only a fail-safe for a tag/package
+        # version drift, and is a no-op when they agree.
+        run: bunx playwright install chromium webkit
 
       - name: Run E2E tests
-        run: bunx playwright test
+        # --grep-invert: e2e/functional-smoke.spec.ts needs a Docker daemon,
+        # which a container job does not have. It has its own job below. Being
+        # explicit matters: the spec's own `test.skip(!dockerAvailable())` would
+        # let it vanish silently here (it did - PR #435 turned 0 skipped into 1
+        # skipped with CI still green), and a test that disappears without
+        # saying so is worse than one that is openly not run.
+        run: bunx playwright test --grep-invert "Functional smoke"
         env:
           JWT_SECRET: test-secret-for-ci-build-only-32ch
           ADMIN_EMAIL: admin@libredb.org
@@ -199,6 +236,54 @@ jobs:
           name: playwright-report
           path: playwright-report/
 
+  # The product's reason to exist, end to end: boot the app, create a real
+  # PostgreSQL connection through the modal, run SQL, see rows. Split out of the
+  # e2e job because the spec starts its own throwaway postgres with
+  # `docker run -p 127.0.0.1:54329:5432` - that binds the HOST loopback, and a
+  # container job has its own network namespace and cannot reach it. Keeping
+  # this on the bare runner is what lets the spec stay free of any CI-only
+  # branch, which is the whole point of a test that claims to exercise the real
+  # path.
+  functional-smoke:
+    name: Functional Smoke (PostgreSQL)
+    needs: [lint-and-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Install Playwright browsers
+        # chromium only and no --with-deps: ubuntu-latest ships Google Chrome,
+        # so chromium's shared libraries are already present, and this job runs
+        # no webkit - webkit is the browser that needs the extra packages whose
+        # apt download made these jobs take 86 minutes (PR #435).
+        run: bunx playwright install chromium
+
+      - name: Run functional smoke
+        run: bunx playwright test --project=chromium --grep "Functional smoke"
+        env:
+          JWT_SECRET: test-secret-for-ci-build-only-32ch
+          ADMIN_EMAIL: admin@libredb.org
+          ADMIN_PASSWORD: test-admin
+          USER_EMAIL: user@libredb.org
+          USER_PASSWORD: test-user
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: playwright-report-functional-smoke
+          path: playwright-report/
+
   # The engines floor in package.json (>=24.0.0) is a tested claim: build the
   # standalone payload once, then boot it through the npx launcher on every
   # supported Node tier and assert the documented behaviour of each
@@ -206,6 +291,7 @@ jobs:
   engine-payload:
     name: Engine Smoke - Build Payload
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -244,6 +330,7 @@ jobs:
     name: Engine Smoke (Node ${{ matrix.node-version }})
     needs: [engine-payload]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -284,25 +371,31 @@ jobs:
     name: Channel E2E (tarball + npx)
     needs: [engine-payload]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Same Playwright image as the e2e job above, for the same reason (no apt
+    # on the critical path). Safe here because the tarball and npx channels
+    # only need node + bun; the docker/deb/rpm/snap channels elsewhere need a
+    # daemon or a package manager and therefore stay on the bare runner.
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
-      - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "24"
+      # No actions/setup-node: the Playwright image already ships Node 24
+      # (24.18.1 at v1.62.1-noble), and setup-node would unpack a Node tarball
+      # with `xz`, which this image does not ship either.
 
+      # npm rather than oven-sh/setup-bun - see the e2e job's note on unzip.
       - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: "1.3.14"
+        run: npm install -g bun@1.3.14
 
       - name: Install dependencies
         uses: ./.github/actions/bun-install
 
       - name: Install Playwright browsers
-        run: bunx playwright install --with-deps chromium
+        # Fail-safe only - see the e2e job's note on the container image.
+        run: bunx playwright install chromium
 
       - name: Download payload artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -319,6 +412,7 @@ jobs:
   helm-lint:
     name: Helm Chart Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -326,13 +420,14 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: v3.16.0
+          version: v4.1.3
 
       - name: Add Bitnami repo
-        run: helm repo add bitnami https://charts.bitnami.com/bitnami
+        run: helm repo add bitnami https://charts.bitnami.com/bitnami --timeout 5m
 
+      # --skip-refresh: the `helm repo add` above already fetched the index; Helm 4's `dependency build` re-fetches it by default and takes no --timeout.
       - name: Build chart dependencies
-        run: helm dependency build charts/libredb-studio
+        run: helm dependency build charts/libredb-studio --skip-refresh
 
       - name: Lint Helm chart
         run: helm lint charts/libredb-studio --strict
@@ -441,6 +536,7 @@ jobs:
       && (github.event.pull_request.head.repo.full_name == github.repository
         || github.event_name == 'push')
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6

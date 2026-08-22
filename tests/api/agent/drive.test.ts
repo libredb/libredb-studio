@@ -156,6 +156,20 @@ describe("POST /api/agent/drive", () => {
     expect(res.status).toBe(409);
   });
 
+  test("a delivery for a run another drive is already carrying is a conflict, not a failure", async () => {
+    // The duplicate-delivery case, and the one place the distinction matters: the run
+    // is HEALTHY and in flight, so this must not read as a server fault the queue
+    // retries forever against a run someone else owns. 409 tells it to drop the
+    // delivery; the drive that holds the claim finishes the run.
+    mockDriveAgentRun.mockRejectedValueOnce(
+      new AgentRunServiceError("RUN_ALREADY_DRIVEN", "already being driven in this process"),
+    );
+
+    const res = await POST(driveRequest({ token: await mintAgentDriveToken(RUN_ID) }));
+
+    expect(res.status).toBe(409);
+  });
+
   test("a drive that fails for any other reason reports a failure", async () => {
     mockDriveAgentRun.mockRejectedValueOnce(new Error("model unreachable"));
 

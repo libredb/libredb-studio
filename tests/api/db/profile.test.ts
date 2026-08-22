@@ -217,10 +217,14 @@ describe("POST /api/db/profile", () => {
           executionTime: 5,
         };
       }
-      if (parsed.operation === "countDocuments") {
+      if (parsed.operation === "count") {
         return { rows: [{ count: 50 }], fields: ["count"], rowCount: 1, executionTime: 3 };
       }
-      return { rows: [], fields: [], rowCount: 0, executionTime: 1 };
+      // The real provider answers an unknown operation with QueryError
+      // ("Unsupported operation: X"), so the mock must too: a mock that returns
+      // empty rows for anything at all accepted `countDocuments` - an operation
+      // MongoDBProvider has never supported - and the route shipped with it.
+      throw new Error(`Unsupported operation: ${parsed.operation}`);
     });
     mockGetOrCreateProvider.mockResolvedValueOnce(mongoProvider);
 

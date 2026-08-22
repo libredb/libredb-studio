@@ -219,7 +219,20 @@ export function ResultsGrid({
 
   const columns = useMemo<ColumnDef<typeof tableFeatureSet, Record<string, unknown>>[]>(() => {
     return result.fields.map((field) => ({
-      accessorKey: field,
+      // `id` + `accessorFn`, never `accessorKey`: TanStack reads a DOT in an
+      // accessorKey as a path into the row, so `shipping.city` was fetched as
+      // `row.shipping.city` while the row carries the flat key `"shipping.city"` -
+      // and the cell rendered NULL over a value the API had returned. Measured in
+      // the browser on 2026-08-19 against Elasticsearch 9.1.4, where every object
+      // field in a mapping flattens to exactly that shape, so most of a search
+      // cluster's columns were affected; the CSV export, which reads `row[column]`
+      // (`src/lib/export/csv.ts`), wrote the right value the whole time.
+      //
+      // `Object.hasOwn` for the same reason that export path has it: a column may
+      // legally be named `constructor`, and a bare lookup would answer with
+      // something off the prototype chain.
+      id: field,
+      accessorFn: (row: Record<string, unknown>) => (Object.hasOwn(row, field) ? row[field] : undefined),
       header: ({ column }) => {
         const hasFilter = columnFilters.has(field) && !!columnFilters.get(field);
         const isSensitive = effectiveMaskingEnabled && sensitiveColumns.has(field);

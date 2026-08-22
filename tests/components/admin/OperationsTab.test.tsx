@@ -1,6 +1,6 @@
 import "../../setup-dom";
 import "../../helpers/mock-sonner";
-import "../../helpers/mock-navigation";
+import { resetMockSearchParams, setMockSearchParams } from "../../helpers/mock-navigation";
 
 import { mock } from "bun:test";
 import { setupRechartssMock, setupFramerMotionMock } from "../../helpers/mock-monaco";
@@ -31,7 +31,7 @@ let mockActiveConnectionId: string | null = "c1";
 // The capabilities the selected connection's provider declares. `null` is the
 // state before `/api/db/provider-meta` answers, and the state it stays in when
 // that request fails (#282).
-let mockMetadata: { capabilities: Record<string, unknown> } | null = {
+let mockMetadata: { capabilities: Record<string, unknown>; labels?: Record<string, string> } | null = {
   capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze", "vacuum", "reindex"] },
 };
 
@@ -58,19 +58,26 @@ const defaultTables = [
   },
 ];
 
+// The options the tab asked for, so a test can assert that a provider whose rows
+// are derived groupings never requests tables at all (#U5).
+let lastMonitoringOptions: Record<string, unknown> | undefined;
+
 mock.module("@/hooks/use-monitoring-data", () => ({
-  useMonitoringData: mock(() => ({
-    data: {
-      activeSessions: defaultSessions,
-      tables: defaultTables,
-    },
-    loading: false,
-    error: null,
-    refresh: mockRefresh,
-    killSession: mockKillSession,
-    runMaintenance: mockRunMaintenance,
-    ...monitoringOverride,
-  })),
+  useMonitoringData: mock((_conn: unknown, options?: Record<string, unknown>) => {
+    lastMonitoringOptions = options;
+    return {
+      data: {
+        activeSessions: defaultSessions,
+        tables: defaultTables,
+      },
+      loading: false,
+      error: null,
+      refresh: mockRefresh,
+      killSession: mockKillSession,
+      runMaintenance: mockRunMaintenance,
+      ...monitoringOverride,
+    };
+  }),
 }));
 
 mock.module("@/hooks/use-provider-metadata", () => ({
@@ -188,10 +195,13 @@ describe("OperationsTab", () => {
     mockKillSession.mockImplementation(() => true);
     mockRunMaintenance.mockClear();
     mockRunMaintenance.mockImplementation(() => true);
+    lastMonitoringOptions = undefined;
+    resetMockSearchParams();
   });
 
   afterEach(() => {
     cleanup();
+    resetMockSearchParams();
   });
 
   // =========================================================================
@@ -311,6 +321,61 @@ describe("OperationsTab", () => {
     const titles = Array.from(container.querySelectorAll("button")).map((b) => b.getAttribute("title"));
     expect(titles).toContain("Analyze");
     expect(titles).not.toContain("Vacuum");
+  });
+
+  // ── Global maintenance cards speak the provider's language (#427) ─────────
+  //
+  // The six analyze/vacuum global ProviderLabels fields were declared in the type,
+  // set by four providers, and read by no component: Redis rendered Postgres's
+  // "Update Statistics / Updates query planner statistics for all tables".
+
+  test("renders the provider's own global maintenance wording", async () => {
+    mockMetadata = {
+      capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze", "vacuum"] },
+      labels: {
+        analyzeGlobalLabel: "Run Info",
+        analyzeGlobalTitle: "Server Info",
+        analyzeGlobalDesc: "Get Redis server information and statistics.",
+        vacuumGlobalLabel: "Run Memory Doctor",
+        vacuumGlobalTitle: "Memory Doctor",
+        vacuumGlobalDesc: "Analyzes memory usage and reports issues.",
+      },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+
+    expect(queryByText("Run Info")).not.toBeNull();
+    expect(queryByText("Server Info")).not.toBeNull();
+    expect(queryByText("Get Redis server information and statistics.")).not.toBeNull();
+    expect(queryByText("Run Memory Doctor")).not.toBeNull();
+    expect(queryByText("Memory Doctor")).not.toBeNull();
+    expect(queryByText("Analyzes memory usage and reports issues.")).not.toBeNull();
+
+    // The Postgres wording must be gone, not merely joined.
+    expect(queryByText("Run Analyze")).toBeNull();
+    expect(queryByText("Update Statistics")).toBeNull();
+    expect(queryByText("Reclaim Space")).toBeNull();
+  });
+
+  test("falls back to the generic wording when the provider ships no labels", async () => {
+    mockMetadata = {
+      capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze", "vacuum"] },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+
+    expect(queryByText("Run Analyze")).not.toBeNull();
+    expect(queryByText("Update Statistics")).not.toBeNull();
+    expect(queryByText("Updates query planner statistics for all tables.")).not.toBeNull();
+    expect(queryByText("Run Vacuum")).not.toBeNull();
+    expect(queryByText("Reclaim Space")).not.toBeNull();
+    expect(queryByText("Removes dead rows and returns space to the OS.")).not.toBeNull();
   });
 
   test("warning card present", async () => {
@@ -1218,5 +1283,78 @@ describe("OperationsTab", () => {
     expect(queryByText("Tables (1)")).not.toBeNull();
     expect(container.textContent).toContain("users");
     expect(container.textContent).toContain("1234");
+  });
+  // ── Derived groupings have no Tables panel (#U5) ───────────────────────────
+  //
+  // Redis and the embedded engine declare `tablesAreDerivedGroupings`: their rows
+  // are prefix/namespace groupings, not addressable tables, so the panel could
+  // only ever say "Tables (0)". The PANEL hangs off that one capability - the same
+  // one TableItem already reads.
+  //
+  // The REQUEST deliberately does not: useMonitoringData fetches once per connection
+  // through an options ref, so its single request is issued while `metadata` is still
+  // null and no later option change reaches it. Asserting `includeTables: false` here
+  // would pass on this file's synchronous metadata mock and be false in the browser -
+  // the vacuous-assertion class this repo has been bitten by before.
+
+  test("renders no Tables panel for a derived-groupings provider", async () => {
+    mockMetadata = {
+      capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze"], tablesAreDerivedGroupings: true },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+
+    expect(queryByText("Tables (0)")).toBeNull();
+    expect(queryByText("Tables (1)")).toBeNull();
+    // The sessions half of the split is untouched.
+    expect(queryByText("Sessions (1)")).not.toBeNull();
+  });
+
+  test("keeps the Tables panel while the capabilities are unknown", async () => {
+    // `metadata` is null before /api/db/provider-meta answers and when it fails.
+    // Every provider but two has addressable rows, so the panel stays — the same
+    // way TableItem treats an unknown capability as addressable.
+    mockMetadata = null;
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+
+    expect(queryByText("Tables (1)")).not.toBeNull();
+    // The request is unconditional, so the tab's one fetch always asks for tables.
+    expect(lastMonitoringOptions?.includeTables).toBe(true);
+  });
+
+  // ── A deep link from an Explorer row arrives selected (#U5) ────────────────
+
+  test("deep-linked table name arrives filtered and selected", async () => {
+    monitoringOverride = { data: { activeSessions: defaultSessions, tables: multiTables } };
+    setMockSearchParams(new URLSearchParams("table=orders"));
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText, container } = renderResult!;
+
+    expect(queryByText("orders")).not.toBeNull();
+    expect(queryByText("users")).toBeNull();
+    const selected = container.querySelectorAll('[data-selected="true"]');
+    expect(selected.length).toBe(1);
+    expect(selected[0]?.textContent).toContain("orders");
+  });
+
+  test("marks no row selected without a deep link", async () => {
+    monitoringOverride = { data: { activeSessions: defaultSessions, tables: multiTables } };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { container } = renderResult!;
+
+    expect(container.querySelectorAll('[data-selected="true"]').length).toBe(0);
   });
 });

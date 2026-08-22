@@ -33,6 +33,7 @@ import {
   XCircle,
   Table2,
 } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useMonitoringData } from "@/hooks/use-monitoring-data";
 import { storage } from "@/lib/storage";
 import { useAllConnections } from "@/hooks/use-all-connections";
@@ -58,12 +59,10 @@ export function OperationsTab() {
   const [killingPid, setKillingPid] = useState<number | string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  const monitoringOptions = useMemo(() => ({ includeTables: true, includeIndexes: false, includeStorage: false }), []);
-
-  const { data, loading, error, refresh, killSession, runMaintenance } = useMonitoringData(
-    selectedConnection,
-    monitoringOptions,
-  );
+  // The row an Explorer deep link named (`onOpenMaintenance("tables", name)` →
+  // /admin/operations?table=...). It seeds the filter and marks the row, so the
+  // named row is the one the operator lands on (#U5).
+  const deepLinkedTable = useSearchParams().get("table");
 
   // Offer only the maintenance the connected provider declares it can perform:
   // /api/db/maintenance rejects everything else with 400, so an ungated control can
@@ -72,9 +71,45 @@ export function OperationsTab() {
   // `metadata` is also null when /api/db/provider-meta fails, and failing open
   // would put the dead buttons back on exactly the connections this gate is for.
   const { metadata } = useProviderMetadata(selectedConnection);
+
+  // Redis and the embedded engine declare `tablesAreDerivedGroupings`: their rows
+  // are key-prefix/namespace groupings, not addressable tables, so a Tables panel
+  // there could only ever read "Tables (0)". Both the request and the panel hang
+  // off that one capability — the same one TableItem reads — rather than a new
+  // flag. An unknown capability counts as addressable: every provider but those
+  // two has real tables, and metadata is also null while provider-meta is in
+  // flight.
+  const rowsAreAddressable = metadata?.capabilities.tablesAreDerivedGroupings !== true;
+
+  // `includeTables` is NOT gated on the flag above, and that is measured rather than an oversight.
+  // useMonitoringData fetches once per CONNECTION (its effect depends on [connection, fetchData],
+  // and fetchData reads its options through a ref), autoRefresh is off here, so the one request
+  // this tab makes is issued while `metadata` is still null and no later option change can reach
+  // it. Gating it would need either a shared-hook rewrite or making every engine's health and
+  // session panels wait on provider-meta first. The PANEL below is gated instead: that is where
+  // the empty "Tables (0)" a key-value provider used to render actually came from, and rendering
+  // is reactive so it settles as soon as the capability arrives.
+  const monitoringOptions = useMemo(() => ({ includeTables: true, includeIndexes: false, includeStorage: false }), []);
+
+  const { data, loading, error, refresh, killSession, runMaintenance } = useMonitoringData(
+    selectedConnection,
+    monitoringOptions,
+  );
   const canRun = (type: MaintenanceType) =>
     metadata?.capabilities.supportsMaintenance === true && metadata.capabilities.maintenanceOperations.includes(type);
   const anyMaintenance = canRun("analyze") || canRun("vacuum") || canRun("reindex");
+  // The six analyze/vacuum global ProviderLabels fields were declared, set by
+  // seven providers, and read by no component, so every engine rendered
+  // Postgres's query-planner copy (#427).
+  //
+  // Which card each provider's wording actually reaches follows from the gates
+  // below, not from the labels: the analyze card renders for every provider that
+  // declares `analyze`, so Redis now says "Server Info" and MongoDB "Validate
+  // Collections"; the GLOBAL vacuum card is gated on the literal `vacuum`, which
+  // among the providers that ship vacuum wording only MongoDB declares.
+  //
+  // The `??` fallbacks stay: `metadata` may carry capabilities without labels.
+  const labels = metadata?.labels;
 
   const { connections: allConns } = useAllConnections();
   useEffect(() => {
@@ -143,7 +178,7 @@ export function OperationsTab() {
 
   const sessions = data?.activeSessions ?? [];
   const tables = data?.tables ?? [];
-  const [tableSearch, setTableSearch] = useState("");
+  const [tableSearch, setTableSearch] = useState(deepLinkedTable ?? "");
   const filteredTables = tables.filter((t) => t.tableName.toLowerCase().includes(tableSearch.toLowerCase()));
 
   const activeCount = sessions.filter((s) => s.state === "active").length;
@@ -259,12 +294,12 @@ export function OperationsTab() {
                     disabled={!!actionLoading || !selectedConnection}
                   >
                     {actionLoading === "analyze-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
-                    Run Analyze
+                    {labels?.analyzeGlobalLabel ?? "Run Analyze"}
                   </Button>
                 </div>
-                <h4 className="text-sm font-bold text-fg mb-1">Update Statistics</h4>
+                <h4 className="text-sm font-bold text-fg mb-1">{labels?.analyzeGlobalTitle ?? "Update Statistics"}</h4>
                 <p className="text-xs text-fg-muted leading-relaxed">
-                  Updates query planner statistics for all tables.
+                  {labels?.analyzeGlobalDesc ?? "Updates query planner statistics for all tables."}
                 </p>
               </div>
             )}
@@ -284,15 +319,18 @@ export function OperationsTab() {
                     disabled={!!actionLoading || !selectedConnection}
                   >
                     {actionLoading === "vacuum-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
-                    Run Vacuum
+                    {labels?.vacuumGlobalLabel ?? "Run Vacuum"}
                   </Button>
                 </div>
-                <h4 className="text-sm font-bold text-fg mb-1">Reclaim Space</h4>
-                <p className="text-xs text-fg-muted leading-relaxed">Removes dead rows and returns space to the OS.</p>
+                <h4 className="text-sm font-bold text-fg mb-1">{labels?.vacuumGlobalTitle ?? "Reclaim Space"}</h4>
+                <p className="text-xs text-fg-muted leading-relaxed">
+                  {labels?.vacuumGlobalDesc ?? "Removes dead rows and returns space to the OS."}
+                </p>
               </div>
             )}
 
-            {/* Reindex */}
+            {/* Reindex — ProviderLabels declares no reindexGlobal triad, so this
+                card stays generic; adding one is out of scope for #427. */}
             {canRun("reindex") && (
               <div className="p-4 rounded-xl border border-hairline bg-fill-subtle hover:bg-fill transition-colors">
                 <div className="flex items-start justify-between mb-3">
@@ -331,91 +369,99 @@ export function OperationsTab() {
 
       {/* Tables + Sessions Split */}
       <div className="grid gap-6 md:grid-cols-2">
-        {/* Table Operations */}
-        <div className="rounded-xl border border-hairline bg-panel">
-          <div className="p-4 border-b border-hairline flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Table2 className="w-4 h-4 text-blue-400" />
-              <span className="text-xs font-bold text-fg-secondary">Tables ({tables.length})</span>
-            </div>
-            <Input
-              placeholder="Filter..."
-              value={tableSearch}
-              onChange={(e) => setTableSearch(e.target.value)}
-              className="w-[140px] h-7 text-xs bg-raised border-hairline-strong"
-            />
-          </div>
-          <div className="max-h-[350px] overflow-y-auto">
-            {loading && tables.length === 0 ? (
-              <div className="p-4 space-y-2">
-                {[...Array(5)].map((_, i) => (
-                  <Skeleton key={i} className="h-10 w-full bg-overlay" />
-                ))}
+        {/* Table Operations — absent where the provider's rows are derived groupings */}
+        {rowsAreAddressable && (
+          <div className="rounded-xl border border-hairline bg-panel">
+            <div className="p-4 border-b border-hairline flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Table2 className="w-4 h-4 text-blue-400" />
+                <span className="text-xs font-bold text-fg-secondary">Tables ({tables.length})</span>
               </div>
-            ) : filteredTables.length === 0 ? (
-              <div className="p-8 text-center text-fg-subtle text-sm">No tables found.</div>
-            ) : (
-              <div className="divide-y divide-hairline">
-                {filteredTables.map((table) => (
-                  <div
-                    key={`${table.schemaName}.${table.tableName}`}
-                    className="group flex items-center justify-between px-4 py-2 hover:bg-fill transition-colors"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-fg-secondary truncate max-w-[160px]">
-                        {table.tableName}
+              <Input
+                placeholder="Filter..."
+                value={tableSearch}
+                onChange={(e) => setTableSearch(e.target.value)}
+                className="w-[140px] h-7 text-xs bg-raised border-hairline-strong"
+              />
+            </div>
+            <div className="max-h-[350px] overflow-y-auto">
+              {loading && tables.length === 0 ? (
+                <div className="p-4 space-y-2">
+                  {[...Array(5)].map((_, i) => (
+                    <Skeleton key={i} className="h-10 w-full bg-overlay" />
+                  ))}
+                </div>
+              ) : filteredTables.length === 0 ? (
+                <div className="p-8 text-center text-fg-subtle text-sm">No tables found.</div>
+              ) : (
+                <div className="divide-y divide-hairline">
+                  {filteredTables.map((table) => (
+                    <div
+                      key={`${table.schemaName}.${table.tableName}`}
+                      data-selected={table.tableName === deepLinkedTable ? "true" : undefined}
+                      className={`group flex items-center justify-between px-4 py-2 hover:bg-fill transition-colors ${
+                        table.tableName === deepLinkedTable ? "bg-fill" : ""
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-fg-secondary truncate max-w-[160px]">
+                          {table.tableName}
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-fg-muted">
+                          <span className="font-mono">{table.rowCount.toLocaleString()} rows</span>
+                          <span>-</span>
+                          <span className="font-mono">{table.tableSize}</span>
+                          {(table.bloatRatio ?? 0) > 10 && (
+                            <Badge
+                              variant="outline"
+                              className="text-[0.625rem] text-yellow-400 border-yellow-500/20 h-4"
+                            >
+                              {(table.bloatRatio ?? 0).toFixed(0)}% bloat
+                            </Badge>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-fg-muted">
-                        <span className="font-mono">{table.rowCount.toLocaleString()} rows</span>
-                        <span>-</span>
-                        <span className="font-mono">{table.tableSize}</span>
-                        {(table.bloatRatio ?? 0) > 10 && (
-                          <Badge variant="outline" className="text-[0.625rem] text-yellow-400 border-yellow-500/20 h-4">
-                            {(table.bloatRatio ?? 0).toFixed(0)}% bloat
-                          </Badge>
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {canRun("analyze") && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="w-7 h-7 text-fg-muted hover:text-yellow-500"
+                            title="Analyze"
+                            onClick={() => handleRunMaintenance("analyze", table.tableName)}
+                            disabled={!!actionLoading}
+                          >
+                            {actionLoading === `analyze-${table.tableName}` ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Search className="w-3 h-3" />
+                            )}
+                          </Button>
+                        )}
+                        {canRun("vacuum") && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="w-7 h-7 text-fg-muted hover:text-blue-500"
+                            title="Vacuum"
+                            onClick={() => handleRunMaintenance("vacuum", table.tableName)}
+                            disabled={!!actionLoading}
+                          >
+                            {actionLoading === `vacuum-${table.tableName}` ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <HardDrive className="w-3 h-3" />
+                            )}
+                          </Button>
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {canRun("analyze") && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="w-7 h-7 text-fg-muted hover:text-yellow-500"
-                          title="Analyze"
-                          onClick={() => handleRunMaintenance("analyze", table.tableName)}
-                          disabled={!!actionLoading}
-                        >
-                          {actionLoading === `analyze-${table.tableName}` ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <Search className="w-3 h-3" />
-                          )}
-                        </Button>
-                      )}
-                      {canRun("vacuum") && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="w-7 h-7 text-fg-muted hover:text-blue-500"
-                          title="Vacuum"
-                          onClick={() => handleRunMaintenance("vacuum", table.tableName)}
-                          disabled={!!actionLoading}
-                        >
-                          {actionLoading === `vacuum-${table.tableName}` ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <HardDrive className="w-3 h-3" />
-                          )}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Session Manager */}
         <div className="rounded-xl border border-hairline bg-panel">

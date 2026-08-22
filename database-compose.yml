@@ -355,6 +355,571 @@ services:
       timeout: 5s
       retries: 40
 
+  # Redis, as a service rather than a hand-started container. Its absence was the
+  # one hole in the shipped set (#424): `redis` had no compose entry, so its own
+  # gate-4 probe could not be reproduced on a clean machine.
+  redis:
+    image: redis:latest
+    container_name: libredb-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------------------------------------------------------------------------------------
+  # Search engines (issue #424, Phase 1). Two type-ids, one provider module, so BOTH have to
+  # be runnable at once: every claim the provider records is a claim about which of the two
+  # answered differently, and that can only be re-measured side by side.
+  #
+  # This is the exact configuration the Phase 1 probes ran against (read back with
+  # `docker inspect`): single-node discovery, security off, and a 512 MB heap each - about
+  # 1.2 GB of RSS for the pair. No `profiles:` on purpose, unlike the druid block: these are
+  # SHIPPED providers, so a plain `docker compose up` has to be able to reproduce their
+  # integration pass, the same rule clickhouse and couchbase follow above.
+  #
+  # Security is DISABLED on both, which is what makes the fixtures reproducible - and it is
+  # also the limit of what they can prove: a bogus `Basic` header is IGNORED here (HTTP 200
+  # on both, measured), so no 401/403 body could ever be captured from these containers. The
+  # transport decides `auth` on the HTTP status alone for exactly that reason.
+  # ---------------------------------------------------------------------------------------
+  elasticsearch:
+    # Pinned to the exact build the provider was live-verified against, the same rule the
+    # clickhouse service follows: the status codes, fault names and paging behaviour recorded
+    # in docs/providers/elasticsearch.md are version-specific claims.
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.1.4
+    container_name: libredb-elasticsearch
+    restart: unless-stopped
+    environment:
+      # One node forms its own cluster; without it the node waits for a seed host it will
+      # never find and the SQL endpoint never comes up.
+      discovery.type: single-node
+      # Off, so the endpoint is plain HTTP with no bootstrap password or enrolment token. The
+      # SQL API itself needs no licence beyond basic - that is what makes SQL, and not ES|QL,
+      # the query language both products can share.
+      xpack.security.enabled: "false"
+      # Sized for a laptop. The image otherwise claims a heap from the host's total memory.
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      # 9200 is the HTTP API, the only protocol this provider speaks. 9300 (transport) is
+      # deliberately not published: there is no transport-protocol client in this codebase.
+      - "9200:9200"
+    healthcheck:
+      # `_cluster/health` answers before any index exists, so it does not need seed data. A
+      # single-node cluster with a replica requested is YELLOW and never green, so waiting
+      # for green here would hang forever. The image ships curl.
+      test: ["CMD", "curl", "-sf", "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=3s"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  opensearch:
+    # Pinned for the same reason, and here the reason is sharper: the SQL PLUGIN's fault
+    # names are Java class names that its own releases rename, and `latest` resolved to 3.8.0
+    # when the provider was measured (`GET /` reported distribution `opensearch`, number
+    # 3.8.0, build_date 2026-08-01).
+    image: opensearchproject/opensearch:3.8.0
+    container_name: libredb-opensearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      # The fork's own switch, and NOT the same key as Elasticsearch's: the security plugin
+      # is installed rather than a licensed feature, so it is disabled by name. Without this
+      # the node serves HTTPS with a self-signed certificate and a default admin password.
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      # 9201 on the host because both products ship on 9200 in the container and the
+      # elasticsearch service above already publishes it. The provider's default port stays
+      # 9200 - this is a collision on THIS machine, not a fact about the product.
+      - "9201:9200"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=3s"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    # No seed sidecar, and one thing to expect instead: a stock node ships its own indices.
+    # Measured on an empty 3.8.0 cluster, `.plugins-ml-config` and `top_queries-<date>-<n>`
+    # are already there, so two thirds of the index listing is the engine's bookkeeping. The
+    # provider hides both; the second one carries no leading dot, so the dot convention alone
+    # does not catch it.
+
+  # ---------------------------------------------------------------------------------------
+  # Apache Trino (issue #424, Phase 2). One container is the whole cluster: the coordinator
+  # runs the worker in-process by default, which is enough to answer every statement the
+  # provider sends. Nothing else is needed to exercise it.
+  # ---------------------------------------------------------------------------------------
+  trino:
+    # Pinned to the exact build the provider was live-verified against, the same rule the
+    # clickhouse and elasticsearch services follow: the fault names, the page count of an
+    # exchange, the `SHOW STATS` shape and the 401 body recorded in docs/providers/trino.md
+    # are claims about 476, not about Trino in general. `version()` here returns the bare
+    # string "476", so the pin and the engine's own answer are the same token.
+    image: trinodb/trino:476
+    container_name: libredb-trino
+    restart: unless-stopped
+    ports:
+      # 8080 is the client protocol AND the web UI - one port, two surfaces, which is why
+      # the provider's default port is a generic number and the dialect is declared rather
+      # than inferred from it. There is no second protocol port to publish: Trino has no
+      # native wire beyond this HTTP one.
+      - "8080:8080"
+    healthcheck:
+      # The image's own script, not a bare `curl /v1/info`. Measured on a cold start: the
+      # statement endpoint answers at ~3.0s, `/v1/info` starts answering 200 at ~5.9s while
+      # still reporting `"starting": true`, and only at ~8.8s does it report false. A plain
+      # `curl -sf http://localhost:8080/v1/info` would therefore call the service healthy
+      # three seconds before it can plan a query. This script reads the port out of
+      # /etc/trino/config.properties and greps for `"starting": false`, which is the
+      # condition that actually matters.
+      test: ["CMD", "/usr/lib/trino/bin/health-check"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    # No seed sidecar, and no `depends_on`: the image ships the `tpch` catalog configured, so
+    # `tpch.tiny.nation` (25 rows) and `tpch.tiny.lineitem` (60175 rows) are queryable the
+    # moment the healthcheck passes - generated on read, never stored. `tpcds`, `memory`,
+    # `system` and `jmx` are configured too. Point a connection's Database field at `tpch`;
+    # `jmx` is what makes the overview's uptime readable, so leave that catalog in place.
+
+  cassandra:
+    # Pinned to the exact build the provider was live-verified against, the same rule
+    # the clickhouse, elasticsearch and trino services follow: the error codes, the
+    # `system_views` table set, the type codes for `duration` and `vector`, and the
+    # size_estimates behaviour recorded in docs/providers/cassandra.md are claims about
+    # 5.0.9 (`system.local.release_version`), not about Cassandra in general.
+    image: cassandra:5.0.9
+    container_name: libredb-cassandra
+    restart: unless-stopped
+    environment:
+      CASSANDRA_CLUSTER_NAME: libredb-probe
+      # 2G of a 4G limit. The image otherwise sizes the heap from the HOST's memory,
+      # which on a developer machine claims several gigabytes for a probe node.
+      MAX_HEAP_SIZE: 2G
+      # HEAP_NEWSIZE is deliberately NOT set. Cassandra 5.0 runs G1 by default and logs
+      # "heap_newsize is erroneously set" while ignoring it, so setting it only adds a
+      # warning to every start.
+    ports:
+      # 9042 is the native protocol, the only one this provider speaks. 7000/7001 are
+      # internode and 7199 is JMX - the latter is what `nodetool` uses, and no
+      # maintenance operation here goes through it (see the provider's empty
+      # maintenanceOperations). The old Thrift port 9160 no longer exists.
+      - "9042:9042"
+    mem_limit: 4g
+    healthcheck:
+      # `nodetool status` reporting UN (Up/Normal) for a node is the condition that
+      # actually matters: `cqlsh` connects a second later, and the native port accepts
+      # a socket well before either. MEASURED FROM COLD: 206 seconds to UN on this
+      # image, so any fixed sleep a future gate writes will be wrong - the retries
+      # below cover 300s and the healthcheck is what a `depends_on` must wait for.
+      test: ["CMD-SHELL", "nodetool status | grep -q '^UN'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    # No seed sidecar: the provider's live pass creates its own keyspace. The gate-4
+    # probe used `probe` with customers (500 rows), orders (2000), events (10
+    # partitions x 50 clustering rows), a secondary index and a 28-column type matrix.
+
+  # ==========================================================================
+  # Wire-compatible engines (issue #424, Phase 0)
+  #
+  # These have no provider of their own: each speaks the wire protocol of a driver
+  # we already ship, and the entries below are the instances a gate-4 probe
+  # actually ran against. They exist so the compatibility claims in
+  # `src/lib/db/compatibility.ts` can be re-measured rather than trusted.
+  #
+  # All of them carry `profiles: ["compat"]`, so a plain `docker compose up` still
+  # starts only the shipped engines. Bring them up deliberately:
+  #   docker compose -f database-compose.yml --profile compat up -d
+  # ==========================================================================
+
+  # -- PostgreSQL wire ------------------------------------------------------
+
+  citus:
+    image: citusdata/citus:latest
+    container_name: libredb-citus
+    profiles: ["compat"]
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5435:5432"
+
+  # network_mode: host is not a shortcut here. CockroachDB 26.x refuses an insecure
+  # cluster whose --listen-addr is not 127.0.0.1/localhost, and a loopback bind
+  # inside the container namespace cannot be published with -p. Host networking is
+  # the only way to reach an insecure single node; the alternative is a secure
+  # cluster with --accept-sql-without-tls.
+  #
+  # LINUX ONLY. Docker Desktop (macOS, Windows) runs containers inside a VM, where
+  # `host` is the VM rather than your machine, so 127.0.0.1:26257 will not answer
+  # there. On those platforms run a secure cluster with --accept-sql-without-tls and
+  # a normal port mapping instead. The probe behind this entry ran on Linux.
+  cockroachdb:
+    image: cockroachdb/cockroach:latest
+    container_name: libredb-cockroachdb
+    profiles: ["compat"]
+    network_mode: host
+    command: start-single-node --insecure --listen-addr=localhost:26257 --http-addr=localhost:18080
+    healthcheck:
+      test: ["CMD", "./cockroach", "sql", "--insecure", "--host=127.0.0.1:26257", "-e", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  materialize:
+    image: materialize/materialized:latest
+    container_name: libredb-materialize
+    profiles: ["compat"]
+    ports:
+      - "6875:6875"
+
+  risingwave:
+    image: risingwavelabs/risingwave:latest
+    container_name: libredb-risingwave
+    profiles: ["compat"]
+    command: single_node
+    ports:
+      - "4566:4566"
+
+  # TimescaleDB is an extension, not a fork: the server is a stock PostgreSQL 17 and
+  # `SELECT version()` says so. The extension version comes from pg_extension, which
+  # is why the probed version records both.
+  timescaledb:
+    image: timescale/timescaledb:latest-pg17
+    container_name: libredb-timescaledb
+    profiles: ["compat"]
+    environment:
+      POSTGRES_PASSWORD: probe
+      POSTGRES_DB: probe
+    ports:
+      - "15432:5432"
+
+  # `yugabyted` is the single-node launcher: it starts the master and the tserver in
+  # one container, and --background=false keeps it in the foreground so Docker owns
+  # the process and the container does not exit immediately. YSQL listens on 5433,
+  # NOT the PostgreSQL default 5432 - connecting to 5432 here reaches nothing. Sign
+  # in as user `yugabyte`, database `yugabyte`, no password.
+  yugabytedb:
+    image: yugabytedb/yugabyte:2.25.2.0-b359
+    container_name: libredb-yugabytedb
+    profiles: ["compat"]
+    command: bin/yugabyted start --background=false
+    ports:
+      - "15433:5433"
+
+  # THIRD-PARTY IMAGE, stated because it is unusual here: Apache publishes only
+  # BUILD images for Cloudberry - you compile the server inside them - so the
+  # project itself ships nothing runnable, and this is a community image. The probe
+  # behind this entry ran on it; nothing is claimed about an Apache-built server.
+  #
+  # Boot takes about two minutes before Postgres answers: the entrypoint initialises
+  # a coordinator and its segments first. `shm_size: 1gb` is what the probe ran with,
+  # the segment processes communicating through shared memory. Sign in as user
+  # `gpadmin`, password `probe`, database `probe`.
+  #
+  # `gpadmin` is a superuser, and the agent's execution profile refuses it as too
+  # broad, so an agent run here needs a least-privilege role created by hand - and
+  # even then the grounding read is refused, because gp_toolkit alone answers more
+  # rows than its budget allows (B52).
+  cloudberry:
+    image: woblerr/cloudberry:2.1.0-incubating
+    container_name: libredb-cloudberry
+    profiles: ["compat"]
+    shm_size: 1gb
+    environment:
+      CLOUDBERRY_PASSWORD: probe
+      CLOUDBERRY_DATABASE_NAME: probe
+    ports:
+      - "15435:5432"
+
+  # AlloyDB Omni is Google's downloadable AlloyDB, and it needs nothing unusual to
+  # run: `POSTGRES_PASSWORD` is the only variable the probe behind this entry set.
+  # No licence key, no `ulimit` change, no memory floor, and no `shm_size` - unlike
+  # the cloudberry service above, which needs one. Sign in as user `postgres` with
+  # the password below, database `postgres` (the entrypoint's default when
+  # POSTGRES_DB is unset).
+  #
+  # The tag is pinned, and the pin is free: the registry carries 87 tags including
+  # 15.x, 16.x, 17.5.0 and 17.7.0, and 17.9.0's digest is currently the same digest
+  # `:latest` serves. Only 17.9.0 was probed.
+  #
+  # `SELECT version()` here says "PostgreSQL 17.9" and nothing else - the string
+  # names AlloyDB nowhere - so the overview cannot be told apart from a stock
+  # PostgreSQL 17. Confirm which server you are on from the `alloydb.*` settings, or
+  # from this tag.
+  #
+  # Two things a probe here should expect. The columnar engine is OFF: switching it
+  # on takes ALTER SYSTEM plus a container restart, not a reload. And an agent run
+  # needs a least-privilege role created by hand, because the image's own `postgres`
+  # superuser is refused as too broad - after which the grounding read is refused
+  # anyway, at 536 rows against a 200-row budget, most of them the extension views
+  # this image installs into `public` itself (B52).
+  alloydb:
+    image: google/alloydbomni:17.9.0
+    container_name: libredb-alloydb
+    profiles: ["compat"]
+    environment:
+      POSTGRES_PASSWORD: probe
+    ports:
+      - "15436:5432"
+
+  # -- MySQL wire ----------------------------------------------------------
+
+  mariadb:
+    image: mariadb:latest
+    container_name: libredb-mariadb
+    profiles: ["compat"]
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: probe
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-uroot", "-proot", "--silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # TiDB needs no PD and no TiKV to run here: --store=unistore is its embedded
+  # single-node storage engine, so this is one container like every other entry, and
+  # an empty --path keeps that store in memory. TiDB speaks the MySQL protocol on
+  # 4000, not 3306. Sign in as user `root`, no password. The probe behind this entry
+  # ran on unistore only, never against a PD + TiKV cluster.
+  tidb:
+    image: pingcap/tidb:v8.5.1
+    container_name: libredb-tidb
+    profiles: ["compat"]
+    command: ["--store=unistore", "--path=", "--host=0.0.0.0"]
+    ports:
+      - "14000:4000"
+
+  # allin1 is StarRocks in one container - the frontend and the backend together -
+  # and it is the form the probe behind this entry ran against. StarRocks speaks the
+  # MySQL protocol on 9030, not 3306. Sign in as user `root`, no password.
+  starrocks:
+    image: starrocks/allin1-ubuntu:3.3-latest
+    container_name: libredb-starrocks
+    profiles: ["compat"]
+    ports:
+      - "19030:9030"
+
+  # vttestserver is Vitess in one container: it brings up the topology, a vtctld, a
+  # vtgate and a mysqld for the keyspace named in KEYSPACES, so this entry needs no
+  # cluster of its own.
+  #
+  # The tag is PINNED deliberately. The rolling `:mysql80` tag serves a
+  # 25.0.0-SNAPSHOT built from main - not a release, and not reproducible - so the
+  # probe behind this entry ran on v24.0.2 and this file names it.
+  #
+  # PORT is the base of the range vttestserver allocates, and vtgate's MySQL port is
+  # 33577, which is what this entry publishes; 3306 reaches nothing. Sign in as user
+  # `root`, no password, database `probe`. NUM_SHARDS=1 is the shape that was probed:
+  # a sharded keyspace was not.
+  #
+  # This fixture cannot be used to test a permission error. vttestserver accepts any
+  # username with any password and grants it full rights, and CREATE USER is a vtgate
+  # parse error, so no restricted role can be made here. That is the fixture, not
+  # Vitess.
+  vitess:
+    image: vitess/vttestserver:v24.0.2-mysql80
+    container_name: libredb-vitess
+    profiles: ["compat"]
+    environment:
+      PORT: 33574
+      KEYSPACES: probe
+      NUM_SHARDS: 1
+      MYSQL_BIND_HOST: 0.0.0.0
+    ports:
+      - "33577:33577"
+
+  # THE DOCUMENTED RUN COMMAND FOR THIS IMAGE FAILS, and the `ulimits` block below is
+  # the whole reason this entry is longer than the others. The container's default
+  # soft `nofile` is 1024 and OceanBase's own deployer requires at least 20000, so
+  # without the override the boot dies after about 12 seconds with `OBD-1007` and no
+  # server ever listens. Keep the ulimit, or the next person repeats that failure.
+  #
+  # The memory floor is real too: the project documents 2 cores and 8 GB as the
+  # minimum, and the probe behind this entry ran with a 12 GB limit. `MODE=mini` is
+  # what makes a single container viable at all - it is the small-footprint
+  # deployment, and it creates ONE user tenant named `test`.
+  #
+  # So sign in as `root@test`, no password, database `test` - the BUSINESS tenant,
+  # not `sys`. Connecting to the `sys` tenant instead shows nine databases including
+  # Oracle-mode artifacts (LBACSYS, ORAAUDITOR, SYS, ocs, sys_external_tbs) that a
+  # user tenant does not have. OceanBase speaks the MySQL protocol on 2881, not 3306.
+  # Wait for `boot success!` in the log before connecting; the container is up long
+  # before the server is.
+  #
+  # The tag is pinned, and the pin is free: 4.4.2-lts had the same digest as
+  # `:latest` at probe time. 507 MB compressed, 1.5 GB on disk.
+  #
+  # A probe here should expect no performance_schema database at all - health is the
+  # one surface that fails outright (ERROR 1049) - and every size reading 0 B,
+  # because information_schema.TABLES reports DATA_LENGTH 0 and INDEX_LENGTH 0. Row
+  # counts are correct after `ANALYZE TABLE t`, which must be the MySQL-mode form:
+  # the Oracle-mode `ANALYZE TABLE t COMPUTE STATISTICS` is rejected with ERROR 1235.
+  oceanbase:
+    image: oceanbase/oceanbase-ce:4.4.2-lts
+    container_name: libredb-oceanbase
+    profiles: ["compat"]
+    environment:
+      MODE: mini
+    ulimits:
+      nofile:
+        soft: 655350
+        hard: 655350
+    ports:
+      - "12881:2881"
+
+  # NO LICENCE KEY IS NEEDED, which is worth stating because issue #424 recorded the
+  # opposite as the reason this engine went unprobed. The dev image self-licenses
+  # with `ROOT_PASSWORD` as the only variable set: its log records
+  # `SetLicenseV4: Expiration = unlimited` and `Options = 72 (Developer Image
+  # edition)`, and every query in the probe behind this entry ran. There is one
+  # harmless WARN about exceeding a 1-unit capacity licence.
+  #
+  # SingleStore speaks the MySQL protocol on 3306, which the always-on `mysql`
+  # service already claims on the host, hence 13306 here. 8080 is its own Studio UI,
+  # published on 18081 for the same reason. Sign in as user `root` with the password
+  # below, database `probe` after you create one. No `ulimit` change is needed here,
+  # unlike the oceanbase service above; the probe behind this entry ran the container
+  # with `--cpus=8`.
+  #
+  # A probe here should expect five surfaces to fail on ONE cause that is ours, not
+  # SingleStore's: the provider sends every statement through mysql2's binary
+  # prepared protocol, and SingleStore answers `This command is not supported in the
+  # prepared statement protocol yet` to the parameterless SHOW and EXPLAIN
+  # statements that Test Connection, health, the overview and the monitoring
+  # dashboard need (D8 in docs/BACKLOG.md). Row counts and sizes read 0 for a
+  # populated table because information_schema.TABLES is left zeroed, and `ANALYZE`
+  # does not change it.
+  singlestore:
+    image: ghcr.io/singlestore-labs/singlestoredb-dev:0.2.82
+    container_name: libredb-singlestore
+    profiles: ["compat"]
+    environment:
+      ROOT_PASSWORD: "Probe123pass!"
+    ports:
+      - "13306:3306"
+      - "18081:8080"
+
+  # -- Redis wire ----------------------------------------------------------
+
+  valkey:
+    image: valkey/valkey:latest
+    container_name: libredb-valkey
+    profiles: ["compat"]
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: libredb-dragonfly
+    profiles: ["compat"]
+    ulimits:
+      memlock: -1
+    ports:
+      - "6381:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  keydb:
+    image: eqalpha/keydb:latest
+    container_name: libredb-keydb
+    profiles: ["compat"]
+    ports:
+      - "6382:6379"
+    healthcheck:
+      test: ["CMD", "keydb-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # -- MongoDB wire --------------------------------------------------------
+
+  # FerretDB is a proxy, not a database: it needs its own PostgreSQL-with-
+  # DocumentDB backend, which is why it is the only two-service entry here. Sign in
+  # with the BACKEND's PostgreSQL credentials - FerretDB rejects authMechanism=PLAIN.
+  ferretdb-backend:
+    image: ghcr.io/ferretdb/postgres-documentdb:latest
+    container_name: libredb-ferretdb-backend
+    profiles: ["compat"]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  ferretdb:
+    image: ghcr.io/ferretdb/ferretdb:latest
+    container_name: libredb-ferretdb
+    profiles: ["compat"]
+    depends_on:
+      ferretdb-backend:
+        condition: service_healthy
+    environment:
+      FERRETDB_POSTGRESQL_URL: postgres://postgres:postgres@ferretdb-backend:5432/postgres
+    ports:
+      - "27018:27017"
+
+  # -- CQL wire ------------------------------------------------------------
+
+  # Pinned to the exact build the Phase 4 probe ran against, the same rule the
+  # cassandra service above follows: `system.local.release_version` here is `3.0.8`,
+  # a Cassandra compatibility number, and the real build is only in
+  # `system.versions` (`2026.2.4-0.20260810.e54224b8cebb`).
+  #
+  # The compatibility row this reproduces covers TWO lines, and only one of them is
+  # here: `scylladb/scylla:2025.1` (`2025.1.14-0.20260612.103b84070f3b`) was probed in
+  # the same pass and behaved identically on every surface. To re-measure that half,
+  # run the same image tag by hand on a free host port - `9242` was the probe's - with
+  # these same flags; a second service would publish a name the docs table does not.
+  #
+  # The command flags are the sizing that was measured to work, not a
+  # conservative guess. `--memory 2G` inside a 3 GiB container is REFUSED outright
+  # with `insufficient physical memory: needed 2095054848 available 1488977920`;
+  # `--smp 1 --memory 1G --overprovisioned 1 --developer-mode 1` came up in well
+  # under a minute, against ~206 seconds for the cassandra image. `mem_limit: 4g`
+  # is the container the working combination was measured in, pinned for the same
+  # reason the cassandra service pins its own.
+  #
+  # The other thing a probe here must know: the 2026.2 line REFUSES SimpleStrategy
+  # (`SimpleStrategy doesn't support tablet replication`), so a keyspace has to be
+  # created with `{'class':'NetworkTopologyStrategy','datacenter1':1}` and the
+  # recipe in docs/providers/cassandra.md does not run unchanged.
+  #
+  # 9142 on the host because the cassandra service already publishes 9042; the
+  # native port is 9042 in the container on both, so this is a collision on THIS
+  # machine, not a fact about the product. No auth, data centre `datacenter1`.
+  #
+  # No healthcheck: none was measured on this image, and a wrong one would be worse
+  # than none - see the cassandra service above, where the readiness condition that
+  # actually matters was found by timing a cold start.
+  scylla:
+    image: scylladb/scylla:2026.2.4
+    container_name: libredb-scylla
+    profiles: ["compat"]
+    command: --smp 1 --memory 1G --overprovisioned 1 --developer-mode 1
+    ports:
+      - "9142:9042"
+    mem_limit: 4g
+
 volumes:
   # Named volumes only for Druid: it is the one service here whose processes must share
   # state (deep storage) and whose task history is worth surviving a restart. Everything

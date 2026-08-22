@@ -148,7 +148,15 @@ describe("the agent rail's module boundary", () => {
   const AGENT_DIR = path.join(process.cwd(), "src/components/agent");
   const RAIL_MODULES = [
     "AgentRail.tsx",
+    // The three the 2026-08-21 redesign split out of `AgentRail.tsx`, plus the module
+    // holding what it and the answer card both render. They are listed for the same
+    // reason the rail is: what may not reach a rail module may not reach a module the
+    // rail renders, and a card that pulled in the grid would be a grid in the rail.
+    "AnswerCard.tsx",
+    "ConsentCard.tsx",
+    "SafetyStrip.tsx",
     "hydration.ts",
+    "rail-parts.tsx",
     "timeline.ts",
     "use-agent-artifact.ts",
     "use-agent-prefill.ts",

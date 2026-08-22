@@ -258,6 +258,111 @@ describe("SSH Tunnel", () => {
       expect(tunnel2.localPort).toBe(tunnel1.localPort);
     });
 
+    // A one-shot tunnel (`shared: false`) is the transport for the routes that build a
+    // provider outside the caches - test-connection and schema-snapshot. Those carry a
+    // connection id that is thrown away (the connection dialog mints a fresh one per
+    // build), so a cached tunnel under that id would never be evicted by anything:
+    // `removeProvider` and the idle sweep only close tunnels of CACHED providers. Hence
+    // the three invariants below - never read the cache, never write it, and never let
+    // closing an unshared tunnel evict the shared entry that happens to share its id.
+    test("does not reuse the shared tunnel when shared is false", async () => {
+      const connId = "test-oneshot-nocache-" + Date.now();
+      lastConnectionId = connId;
+
+      const shared = await createSSHTunnel(
+        connId,
+        {
+          enabled: true,
+          host: "bastion.example.com",
+          port: 22,
+          username: "admin",
+          authMethod: "password",
+          password: "pass",
+        },
+        "db.internal",
+        5432,
+      );
+
+      const oneShot = await createSSHTunnel(
+        connId,
+        {
+          enabled: true,
+          host: "bastion.example.com",
+          port: 22,
+          username: "admin",
+          authMethod: "password",
+          password: "pass",
+        },
+        "db.internal",
+        5432,
+        { shared: false },
+      );
+
+      expect(oneShot).not.toBe(shared);
+    });
+
+    test("does not register a one-shot tunnel in the active map", async () => {
+      const connId = "test-oneshot-unregistered-" + Date.now();
+
+      const oneShot = await createSSHTunnel(
+        connId,
+        {
+          enabled: true,
+          host: "bastion.example.com",
+          port: 22,
+          username: "admin",
+          authMethod: "password",
+          password: "pass",
+        },
+        "db.internal",
+        5432,
+        { shared: false },
+      );
+
+      expect(hasTunnel(connId)).toBe(false);
+      expect(getTunnelInfo(connId)).toBeUndefined();
+
+      await oneShot.close();
+    });
+
+    test("closing a one-shot tunnel leaves the shared tunnel of the same id registered", async () => {
+      const connId = "test-oneshot-noevict-" + Date.now();
+      lastConnectionId = connId;
+
+      const shared = await createSSHTunnel(
+        connId,
+        {
+          enabled: true,
+          host: "bastion.example.com",
+          port: 22,
+          username: "admin",
+          authMethod: "password",
+          password: "pass",
+        },
+        "db.internal",
+        5432,
+      );
+
+      const oneShot = await createSSHTunnel(
+        connId,
+        {
+          enabled: true,
+          host: "bastion.example.com",
+          port: 22,
+          username: "admin",
+          authMethod: "password",
+          password: "pass",
+        },
+        "db.internal",
+        5432,
+        { shared: false },
+      );
+      await oneShot.close();
+
+      expect(hasTunnel(connId)).toBe(true);
+      expect(getTunnelInfo(connId)).toBe(shared);
+    });
+
     test("rejects on SSH connection error", async () => {
       const connId = "test-ssherr-" + Date.now();
       lastConnectionId = connId;

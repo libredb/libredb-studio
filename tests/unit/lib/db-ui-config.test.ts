@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { getDBConfig, getDBIcon, getDBColor, isFileBased } from "@/lib/db-ui-config";
+import { SHOWCASE_DATABASE_ORDER, SHOWCASE_RANK, listShowcaseDatabases } from "@/lib/db-showcase";
 import type { DatabaseType } from "@/lib/types";
 
 const ALL_TYPES: DatabaseType[] = [
@@ -14,6 +15,10 @@ const ALL_TYPES: DatabaseType[] = [
   "couchbase",
   "clickhouse",
   "druid",
+  "elasticsearch",
+  "opensearch",
+  "trino",
+  "cassandra",
 ];
 
 describe("db-ui-config", () => {
@@ -91,6 +96,42 @@ describe("db-ui-config", () => {
       expect(getDBConfig("druid").connectionFields).not.toContain("database");
     });
 
+    test("trino exposes its label, coordinator port and connection fields", () => {
+      expect(getDBConfig("trino").label).toBe("Trino");
+      expect(getDBConfig("trino").defaultPort).toBe("8080");
+      expect(getDBConfig("trino").connectionFields).toEqual(["host", "port", "user", "password", "database"]);
+    });
+
+    test("trino keeps the database field, because it selects the catalog", () => {
+      // The opposite of Druid, and the reason the two HTTP engines differ here: a Trino
+      // coordinator fronts MANY catalogs (measured on 476: `SHOW CATALOGS` answers
+      // jmx, memory, system, tpcds, tpch), and a connection pins one the way a
+      // PostgreSQL connection pins a database. Without the field every connection would
+      // open on whatever the coordinator defaults to, which is nothing.
+      expect(getDBConfig("trino").connectionFields).toContain("database");
+    });
+
+    test("cassandra asks for the data centre its driver refuses to start without", () => {
+      expect(getDBConfig("cassandra").label).toBe("Apache Cassandra");
+      expect(getDBConfig("cassandra").defaultPort).toBe("9042");
+      expect(getDBConfig("cassandra").connectionFields).toEqual([
+        "host",
+        "port",
+        "user",
+        "password",
+        "database",
+        "localDataCenter",
+      ]);
+    });
+
+    test("cassandra offers no connection-string paste, because there is no URI to paste", () => {
+      // `cassandra-driver` takes contact points plus a REQUIRED localDataCenter, and no
+      // URI convention carries the second. Offering the toggle would promise a paste
+      // the parser refuses (`cassandra://` is in no branch of
+      // connection-string-parser.ts).
+      expect(getDBConfig("cassandra").showConnectionStringToggle).toBe(false);
+    });
+
     test("every provider carries a distinct colour class", () => {
       const colors = ALL_TYPES.map((type) => getDBConfig(type).color);
       expect(new Set(colors).size).toBe(colors.length);
@@ -133,6 +174,69 @@ describe("db-ui-config", () => {
       expect(isFileBased("couchbase")).toBe(false);
       expect(isFileBased("clickhouse")).toBe(false);
       expect(isFileBased("druid")).toBe(false);
+    });
+  });
+});
+
+describe("db-showcase", () => {
+  describe("SHOWCASE_RANK", () => {
+    test("assigns every database type a distinct rank covering 0..N-1", () => {
+      // A stable sort silently preserves insertion order when two keys compare equal,
+      // so a duplicated rank would swap two engines without ever failing a type check.
+      // Asserting the ranks are a bijection onto 0..N-1 is what rules that out.
+      const ranks = ALL_TYPES.map((type) => SHOWCASE_RANK[type]);
+      expect([...ranks].sort((a, b) => a - b)).toEqual(ALL_TYPES.map((_, index) => index));
+    });
+  });
+
+  describe("SHOWCASE_DATABASE_ORDER", () => {
+    test("renders every configured engine exactly once", () => {
+      expect([...SHOWCASE_DATABASE_ORDER].sort()).toEqual([...ALL_TYPES].sort());
+    });
+
+    test("includes the embedded libredb provider", () => {
+      // Decided in issue #425 step 2: libredb is a shipped, user-selectable provider
+      // with its own doc and icon, so hiding it on the page that says "Supported
+      // Databases" would contradict the connection picker one click later.
+      expect(SHOWCASE_DATABASE_ORDER).toContain("libredb");
+    });
+
+    test("orders the engines by recognisability, best known first", () => {
+      expect([...SHOWCASE_DATABASE_ORDER]).toEqual([
+        "postgres",
+        "mysql",
+        "sqlite",
+        "mongodb",
+        "redis",
+        "oracle",
+        "mssql",
+        "elasticsearch",
+        "opensearch",
+        "cassandra",
+        "couchbase",
+        "clickhouse",
+        "druid",
+        "trino",
+        "libredb",
+      ]);
+    });
+  });
+
+  describe("listShowcaseDatabases", () => {
+    test("carries the label, icon and colour straight from DB_UI_CONFIG", () => {
+      const entries = listShowcaseDatabases();
+      expect(entries.map((entry) => entry.type)).toEqual([...SHOWCASE_DATABASE_ORDER]);
+      for (const entry of entries) {
+        const config = getDBConfig(entry.type);
+        expect(entry.label).toBe(config.label);
+        expect(entry.icon).toBe(config.icon);
+        expect(entry.color).toBe(config.color);
+      }
+    });
+
+    test("returns a fresh array each call, so a caller cannot mutate the shared order", () => {
+      expect(listShowcaseDatabases()).not.toBe(listShowcaseDatabases());
+      expect(listShowcaseDatabases()).toEqual(listShowcaseDatabases());
     });
   });
 });

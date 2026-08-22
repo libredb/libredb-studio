@@ -126,6 +126,8 @@ const mockHandleTestConnection = mock(async () => {});
 const mockHandleConnect = mock(async () => {});
 const mockHandlePasteConnectionString = mock(() => {});
 
+const mockSetLocalDataCenter = mock(() => {});
+
 let mockFormOverrides: Record<string, unknown> = {};
 
 function getDefaultForm() {
@@ -174,6 +176,8 @@ function getDefaultForm() {
     setServiceName: mockSetServiceName,
     instanceName: "",
     setInstanceName: mockSetInstanceName,
+    localDataCenter: "",
+    setLocalDataCenter: mockSetLocalDataCenter,
     showSSH: false,
     setShowSSH: mockSetShowSSH,
     sshEnabled: false,
@@ -233,6 +237,12 @@ mock.module("@/lib/db-ui-config", () => ({
   }),
   getDBIcon: () => () => null,
   getDBColor: () => "text-blue-400",
+  // `isFileBased` must be mocked now that `DB_UI_CONFIG` is an exported binding (#425 made
+  // it one so the login showcase can enumerate it). The real `isFileBased` reads that
+  // binding, and this mock replaces it with `{}`, so leaving the function to the real module
+  // makes it throw on `DB_UI_CONFIG[type].connectionFields` for every render. Mirrors the
+  // real rule: a file-based provider carries only a path.
+  isFileBased: (type: string) => type === "sqlite" || type === "libredb",
   DB_UI_CONFIG: {},
 }));
 
@@ -675,6 +685,88 @@ describe("ConnectionModal", () => {
 
     expect(queryByText("Database Name")).not.toBeNull();
     expect(queryByText("Bucket Name")).toBeNull();
+  });
+
+  // ── 34b. Trino labels the same field as the CATALOG it actually is ────────
+  //
+  // Not cosmetic, and not the same claim Couchbase makes. A Trino catalog is a whole
+  // external system - `hive`, `iceberg`, `tpch` - and it is the one value a user
+  // cannot guess: a coordinator with no catalog pinned resolves no table at all.
+  // Measured on 476, `SHOW CATALOGS` on the probe cluster answers five of them.
+
+  test("Trino type labels the database field Catalog and says what belongs in it", () => {
+    mockFormOverrides = { type: "trino" };
+    const props = createDefaultProps();
+    const { queryByText, container } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText("Catalog Name")).not.toBeNull();
+    expect(queryByText("Database Name")).toBeNull();
+    const databaseInput = container.querySelector("#database") as HTMLInputElement | null;
+    expect(databaseInput!.placeholder).toBe("tpch");
+    expect(queryByText(/The Trino catalog to open/)).not.toBeNull();
+  });
+
+  test("Trino warns that a password needs TLS, before the connection can 401 on it", () => {
+    // Measured on 476 with authentication DISABLED: `Authorization: Basic` over plain
+    // HTTP is answered 401, "Password not allowed for insecure authentication". So
+    // typing a password into an http:// connection BREAKS one that would otherwise
+    // work, which is the one failure mode a form must not produce silently.
+    mockFormOverrides = { type: "trino" };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText(/refuses a password over plain HTTP/)).not.toBeNull();
+  });
+
+  test("no other type carries the Trino hints", () => {
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText("Catalog Name")).toBeNull();
+    expect(queryByText(/refuses a password over plain HTTP/)).toBeNull();
+  });
+
+  // ── 34c. Cassandra asks for the one field its driver cannot start without ──
+  //
+  // `cassandra-driver` 4.9.0 refuses to connect with no local data centre at all
+  // ("'localDataCenter' is not defined in Client options and also was not specified in
+  // constructor", measured), and names the data centres it DID find when the value is
+  // wrong. No other engine here needs a topology answer from the connection, so the
+  // field is rendered in the open rather than behind the Advanced accordion.
+
+  test("Cassandra type labels the database field Keyspace and asks for the data centre", () => {
+    mockFormOverrides = { type: "cassandra" };
+    const props = createDefaultProps();
+    const { queryByText, container } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText("Keyspace Name")).not.toBeNull();
+    expect(queryByText("Database Name")).toBeNull();
+    const keyspaceInput = container.querySelector("#database") as HTMLInputElement | null;
+    expect(keyspaceInput!.placeholder).toBe("probe");
+
+    const dataCentre = container.querySelector("#localDataCenter") as HTMLInputElement | null;
+    expect(dataCentre).not.toBeNull();
+    expect(dataCentre!.placeholder).toBe("datacenter1");
+    expect(queryByText(/refuses to connect without/)).not.toBeNull();
+  });
+
+  test("editing the data centre reaches the form state", () => {
+    mockFormOverrides = { type: "cassandra" };
+    const props = createDefaultProps();
+    const { container } = render(React.createElement(ConnectionModal, props));
+
+    const dataCentre = container.querySelector("#localDataCenter") as HTMLInputElement;
+    fireEvent.change(dataCentre, { target: { value: "eu-west-1" } });
+
+    expect(mockSetLocalDataCenter).toHaveBeenCalledWith("eu-west-1");
+  });
+
+  test("no other type carries the Cassandra fields", () => {
+    const props = createDefaultProps();
+    const { queryByText, container } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText("Keyspace Name")).toBeNull();
+    expect(container.querySelector("#localDataCenter")).toBeNull();
   });
 
   // ── 35. Browser autofill stays out of the credential fields ───────────────

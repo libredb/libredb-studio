@@ -19,12 +19,15 @@ Three decisions. The first is the consequential one, which is why it is first.
 
 1. **Does it need a driver at all?** Score the engine against the rubric below. A database with a
    first-class HTTP API can be supported with no dependency at all, and that is worth real effort to
-   establish before you start. Four shipped providers need no driver: SQLite uses the built-in
-   `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts`, and three reach the engine over HTTP with
+   establish before you start. Seven shipped type-ids need no driver: SQLite uses the built-in
+   `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts`, and the rest reach the engine over HTTP with
    nothing but `fetch`/`node:https` — Couchbase over the documented REST endpoints
    ([couchbase.md](./providers/couchbase.md)), ClickHouse over its HTTP interface
-   ([clickhouse.md](./providers/clickhouse.md)), and Apache Druid over `POST /druid/v2/sql`
-   ([druid.md](./providers/druid.md)). If it does need one, it will be something like `pg`,
+   ([clickhouse.md](./providers/clickhouse.md)), Apache Druid over `POST /druid/v2/sql`
+   ([druid.md](./providers/druid.md)), Elasticsearch and OpenSearch over their SQL endpoints
+   ([elasticsearch.md](./providers/elasticsearch.md) · [opensearch.md](./providers/opensearch.md)),
+   and Apache Trino over its own client protocol
+   ([trino.md](./providers/trino.md)). If it does need one, it will be something like `pg`,
    `mysql2`, `mongodb`, `ioredis`, `oracledb` or `mssql`.
 
 2. **Which base class?**
@@ -33,8 +36,8 @@ Three decisions. The first is the consequential one, which is why it is first.
      `this.type` — identifier and string escaping, `LIMIT` clause building, placeholder style,
      read-only and DDL detection — plus a `prepareQuery()` that applies the shared query limiter.
      None of it touches a pool, a driver or a connection, so **an HTTP transport is no reason to
-     avoid it.** A standard-SQL engine reached over HTTP, such as ClickHouse or Apache Druid, should
-     extend it and get all of that for free. Druid is the clearest case of how little is left over:
+     avoid it.** A standard-SQL engine reached over HTTP, such as ClickHouse, Apache Druid or Apache Trino,
+     should extend it and get all of that for free. Druid is the clearest case of how little is left over:
      double-quoted identifiers and `LIMIT n OFFSET m` are both correct Druid SQL, so
      `escapeIdentifier()` and `buildLimitClause()` are inherited unchanged and `prepareQuery()` is
      the only override — for a single dialect trap, not for the transport.
@@ -163,10 +166,10 @@ directly; reshaping rows inside the transport would have broken schema loading. 
 
 ```typescript
 // Before:
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra';
 
 // After (example: adding CockroachDB):
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'cockroachdb';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'cockroachdb';
 ```
 
 ### 1.2 — Add to `QueryTab.type` if needed
@@ -184,6 +187,13 @@ export interface QueryTab {
 
 For most SQL databases, the existing `'sql'` type is sufficient. You only need a new tab type if your database uses a fundamentally different query language.
 
+A new tab type needs three things wired, all in `src/lib/editor/tab-language.ts` and its neighbours:
+declare `queryDialect` on the provider, add the arm to `resolveTabType()` **above** the
+`queryLanguage === 'json'` rung, and map the type to a Monaco language in
+`editorLanguageForTabType()` — registering that language module in `QueryEditor`'s
+`handleBeforeMount` alongside `registerLibreDBLanguage` / `registerRedisLanguage`. Skipping the
+dialect leaves the tab typed `mongodb` and the arm unreachable, which is exactly what #427 fixed.
+
 ## Step 2: Create the Provider Class
 
 Create the file under the right family folder, named by the canonical **type-id** —
@@ -197,7 +207,8 @@ is kept in sync with its per-provider doc). Don't copy a skeleton from this guid
 |-------------------|--------|------------------|-----------|
 | Pooled SQL (wire-protocol DB) | `SQLBaseProvider` | `postgres.ts` / `mysql.ts` | [postgres.md](./providers/postgres.md) · [mysql.md](./providers/mysql.md) |
 | Embedded / file SQL | `SQLBaseProvider` | `sqlite.ts` | [sqlite.md](./providers/sqlite.md) |
-| SQL database reached over HTTP (no driver) | `SQLBaseProvider` | `sql/clickhouse/` or `sql/druid/` | [clickhouse.md](./providers/clickhouse.md) · [druid.md](./providers/druid.md) |
+| SQL database reached over HTTP (no driver) | `SQLBaseProvider` | `sql/clickhouse/`, `sql/druid/` or `sql/trino/` | [clickhouse.md](./providers/clickhouse.md) · [druid.md](./providers/druid.md) · [trino.md](./providers/trino.md) |
+| SQL over HTTP where a **second product** speaks the same protocol | `SQLBaseProvider` | `sql/search/` (two ids, one module) or `sql/trino/` (one id, a dialect descriptor ready for the second) | [elasticsearch.md](./providers/elasticsearch.md) · [trino.md](./providers/trino.md) |
 | Document store | `BaseDatabaseProvider` | `mongodb.ts` | [mongodb.md](./providers/mongodb.md) |
 | Document store reached over HTTP/REST (no driver) | `BaseDatabaseProvider` | `document/couchbase/` | [couchbase.md](./providers/couchbase.md) |
 | Key-value store | `BaseDatabaseProvider` | `redis.ts` | [redis.md](./providers/redis.md) |
@@ -306,7 +317,7 @@ Then add the type to the selectable list that drives the ConnectionModal picker:
 // Append to the existing list - do not retype it, or you will drop a provider from the picker.
 const selectableTypes: DatabaseType[] = [
   'postgres', 'mysql', 'sqlite', 'oracle', 'mssql', 'mongodb', 'couchbase', 'redis', 'libredb',
-  'clickhouse', 'druid',
+  'clickhouse', 'druid', 'elasticsearch', 'opensearch', 'trino', 'cassandra',
   'cockroachdb',
 ];
 ```
@@ -327,6 +338,10 @@ bun add <driver-package>
 # Couchbase needs no driver — it speaks the Query and management REST APIs over fetch/node:https
 # ClickHouse needs no driver — plain SQL over its HTTP interface (port 8123)
 # Apache Druid needs no driver — plain SQL over POST /druid/v2/sql (Router 8888 or Broker 8082)
+# Elasticsearch / OpenSearch need no driver — SQL over _sql / _plugins/_sql (port 9200)
+# Apache Trino needs no driver — SQL over its client protocol, POST /v1/statement (port 8080)
+# bun add cassandra-driver  (Apache Cassandra — a binary protocol over TCP, so a driver is not
+#                            optional; this one is pure JS, which is the next best thing)
 ```
 
 If your engine exposes a documented HTTP API, weigh it against the native driver before adding a
@@ -386,9 +401,23 @@ before generating one.
 `not_bounded`: immediately after an `INSERT`, a `SELECT` returned zero rows. For an interactive
 editor that is unacceptable, so the transport sends `request_plus` and accepts the latency.
 
-**Pagination models differ.** Couchbase returns everything in one response; Trino makes the client
-poll a `nextUri` until it is absent; Elasticsearch uses `search_after`. The `query()` contract
-assumes one shot, so a polling protocol needs a bounded loop inside the transport.
+**Pagination models differ, and the engine may page you without being asked.** Couchbase returns
+everything in one response; Trino makes the client poll a `nextUri` until it is absent; the
+Elasticsearch and OpenSearch SQL endpoints hand back a `cursor` you POST again. (`search_after`, which
+this sentence used to name, belongs to the native search API — the SQL surface these providers use
+does not offer it. Read the endpoint you are actually going to call.) The `query()` contract assumes
+one shot, so a paging protocol needs a bounded loop inside the transport.
+
+The Elasticsearch case is the one worth copying, because it is not opt-in. Measured on 9.1.4:
+`SELECT k, COUNT(*) FROM probe_buckets GROUP BY k` over 1500 distinct values answers HTTP 200 with
+**1000 rows and a `cursor`** with no `fetch_size` requested — an aggregation is paged by the engine's
+own default. Dropping that cursor returns two thirds of the buckets and labels the result complete,
+which is worse than an error, because nobody reading a `GROUP BY` can tell that 500 groups are
+missing. Two traps come with following it: page two carries rows and **no** column declaration, so
+the declaration has to be carried forward from page one; and the loop needs its own ceiling
+(`MAX_PAGES` in `providers/sql/search/http-transport.ts`) plus a cursor-close on the way out, because
+the terminating condition is the server's and an abandoned cursor is server-side state. Assume any
+HTTP SQL endpoint may page, and probe an aggregation — not a plain `SELECT` — to find out.
 
 **Statelessness has a hard edge.** With one HTTP request per statement there is no session, so
 transactions, temp tables, `SET` and prepared statements all need explicit threading — a transaction
@@ -543,38 +572,46 @@ Every field and what it controls:
 | Field | Type | Controls |
 |-------|------|----------|
 | `queryLanguage` | `'sql' \| 'json'` | Monaco editor language mode, AI prompt style, query template format |
-| `queryDialect` | `'libredb' \| undefined` | Optional. Opts a provider's tables into a custom client-side query generator (see `query-generators.ts`); left undefined by SQL/Mongo/Redis |
+| `queryDialect` | `'libredb' \| 'redis' \| undefined` | Optional. Opts a provider's tables into a custom client-side query generator (see `query-generators.ts`) and picks the editor tab type and Monaco language. Checked **before** `queryLanguage` everywhere — `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
 | `supportsExplain` | `boolean` | EXPLAIN button visibility in QueryEditor toolbar |
 | `explainFormat` | `ExplainFormat \| undefined` | **Required whenever `supportsExplain` is true.** Selects the strategy in `src/lib/explain/index.ts`. Setting the flag without the format leaves the control visible and dead — the UI resets out of explain mode when metadata lacks it |
 | `supportsExternalQueryLimiting` | `boolean` | Whether route applies LIMIT to queries (SQL) or provider handles it (MongoDB) |
 | `supportsCreateTable` | `boolean` | "Create Table" button in SchemaExplorer |
 | `supportsInlineRowEdit` | `boolean?` | Whether the results grid offers inline row editing. `false` hides the EDIT toggle and every editable cell — set it where the engine has no `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` statement, which is what `use-inline-editing.ts` builds. Optional only because the interface is published and a required addition breaks external implementers; every provider here declares it, and an absent flag reads as unsupported |
+| `declaresForeignKeys` | `boolean?` | Whether this engine has foreign keys in its model at all. `false` says an empty `TableSchema.foreignKeys` means "no such constraint exists here", not "this schema declares none" — set it on every engine without referential constraints. Optional for the published-interface reason above; consumers gate on `=== false`, so an absent flag reads as "may declare them" |
+| `tablesAreDerivedGroupings` | `boolean?` | Whether `getSchema()`'s rows are objects the engine holds, or groupings this server derived from a bounded scan. `true` on Redis and LibreDB only. Where it is true the schema explorer hides every menu item that *addresses* the row — `Profile Table`, `Generate Test Data`, and both per-row maintenance items, all of which name the row to a route that needs a real object — and keeps the ones that merely name it (`Select`, `Generate`, `Copy Name`, `Generate Code`). The agent layer states it to a plan run in one sentence. Consumers gate on `=== true`, so an absent flag reads as "ordinary objects" |
 | `supportsMaintenance` | `boolean` | Whether maintenance API accepts requests for this provider |
-| `maintenanceOperations` | `MaintenanceType[]` | Which operation cards show in MaintenanceModal (vacuum, analyze, reindex, etc.) |
+| `maintenanceOperations` | `MaintenanceType[]` | Which global cards and per-table buttons the admin Operations tab renders. `/api/db/maintenance` rejects anything not in this list, so a surface that ignored it could only offer a control answering HTTP 400. The schema explorer's row menu does **not** read it — its per-row maintenance items are gated on `isAdmin` and on `tablesAreDerivedGroupings`; see `docs/BACKLOG.md` U9 for the mismatches that leaves |
 | `supportsConnectionString` | `boolean` | Used for future connection validation logic |
 | `defaultPort` | `number \| null` | Informational; actual UI port comes from `db-ui-config.ts` |
 | `schemaRefreshPattern` | `string` | Regex to detect write/DDL queries that should trigger schema reload |
 
 ### ProviderLabels
 
-Every field and where it appears:
+Every field and where it appears. There is **no `MaintenanceModal` component** — earlier revisions of
+this table named one for ten of these rows; `git grep MaintenanceModal src/` finds only a ClickHouse
+comment. Two surfaces read labels today, plus the agent's prompt layer:
 
 | Field | Where it appears |
 |-------|-----------------|
-| `entityName` | "Create {Table}" button title, "{Table} name copied", "{Table} Optimizer" |
-| `entityNamePlural` | "{Tables} found" count in MaintenanceModal |
-| `rowName` / `rowNamePlural` | "{rows}" count in MaintenanceModal table list |
-| `selectAction` | SchemaExplorer dropdown: "Select Top 100" / "Find Documents" |
-| `generateAction` | SchemaExplorer dropdown: "Generate Query" / "Generate Find" |
-| `analyzeAction` | SchemaExplorer dropdown + MaintenanceModal button title |
-| `vacuumAction` | SchemaExplorer dropdown + MaintenanceModal button title |
-| `searchPlaceholder` | SchemaExplorer search input placeholder text |
-| `analyzeGlobalLabel` | MaintenanceModal "Run Analyze" button text |
-| `analyzeGlobalTitle` | MaintenanceModal card title ("Update Statistics") |
-| `analyzeGlobalDesc` | MaintenanceModal card description paragraph |
-| `vacuumGlobalLabel` | MaintenanceModal "Run Vacuum" button text |
-| `vacuumGlobalTitle` | MaintenanceModal card title ("Reclaim Space") |
-| `vacuumGlobalDesc` | MaintenanceModal card description paragraph |
+| `entityName` | `SchemaExplorer` "Create {Table}" button title; `TableItem` "{Table} name copied" toast; lowercased by `inventoryNoun()` into the agent's prompt noun |
+| `entityNamePlural` | Lowercased by `inventoryNoun()` (`src/lib/agent/inventory-noun.ts`) into the agent's prompt noun. No UI surface reads it |
+| `rowName` / `rowNamePlural` | **Nothing reads these.** Declared, defaulted in `base-provider.ts`, set by several providers, consumed nowhere in `src/` |
+| `selectAction` | `TableItem` row menu, first item ("Select Top 50" / "Find Documents" / "Scan Keys") |
+| `generateAction` | `TableItem` row menu, second item ("Generate Query" / "Generate Find") |
+| `analyzeAction` | `TableItem` row menu only, and only where the rows are not derived groupings. The Operations tab's per-table Analyze button title is still the hardcoded "Analyze" (`docs/BACKLOG.md` U6) |
+| `vacuumAction` | `TableItem` row menu only, under the same derived-groupings gate as `analyzeAction`. The Operations tab's per-table button is gated on the literal `vacuum` and titled "Vacuum", so the four providers that point this label at `optimize`/`reindex` show a row item whose wording the tab does not repeat (`docs/BACKLOG.md` U9) |
+| `searchPlaceholder` | `SchemaExplorer` search input placeholder text |
+| `analyzeGlobalLabel` | Admin Operations tab, analyze card's button text ("Run Analyze") |
+| `analyzeGlobalTitle` | Admin Operations tab, analyze card title ("Update Statistics") |
+| `analyzeGlobalDesc` | Admin Operations tab, analyze card description paragraph |
+| `vacuumGlobalLabel` | Admin Operations tab, vacuum card's button text ("Run Vacuum") |
+| `vacuumGlobalTitle` | Admin Operations tab, vacuum card title ("Reclaim Space") |
+| `vacuumGlobalDesc` | Admin Operations tab, vacuum card description paragraph |
+
+The `*Global*` triads reach only the card, never the per-table button, and only where the card
+renders: the analyze card is gated on `analyze`, the vacuum card on the **literal** `vacuum`. There
+is no `reindexGlobal*` triad; that card is still hardcoded (`docs/BACKLOG.md` U6).
 
 ### PreparedQuery
 
@@ -600,21 +637,38 @@ For the authoritative, code-verified reference for each shipped provider (extend
 driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
 docs — they are the single source of truth and are kept in sync with the code:
 
-**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · redis · mongodb · couchbase · clickhouse · druid · libredb
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · libredb
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
 provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), or
-a driverless provider reached over HTTP (clickhouse or druid for SQL, couchbase for a document
-store).
+a driverless provider reached over HTTP (clickhouse, druid or trino for SQL, couchbase for a
+document store).
 
 ## Driver-free candidates
 
 Assessed against the rubric in [Prerequisites](#prerequisites). Anything not listed almost certainly needs a driver.
 
+Cassandra is the entry this table never had, and it is worth a paragraph for the opposite reason to
+Druid's: nothing about the DRIVER decision was interesting - a binary protocol over TCP cannot be
+reached by `fetch`, so `cassandra-driver` was never optional - and everything about the CAPABILITY
+decisions was. Six of them came out "no", each with a measurement behind it: no EXPLAIN (the keyword
+is not in the grammar), no cancellation (the protocol has no cancel frame and the driver publishes no
+method), no maintenance (every operation is a `nodetool` action over JMX), no create-table (the modal
+emits five type names CQL does not have), no inline row edit (CQL needs the WHOLE primary key
+restricted and the editor guesses one column), and **no row count and no size anywhere** - the one
+that shaped the whole provider, because Cassandra publishes figures that look exactly like both and
+are neither. The generalisable lesson is the reverse of the driver rubric: score the CAPABILITIES the
+same way, and count how many of them the engine can actually promise before writing the provider that
+declares them. See [cassandra.md](./providers/cassandra.md).
+
 **Shipped since this list was written:** Couchbase
 ([#263](https://github.com/libredb/libredb-studio/issues/263)), ClickHouse
-([#264](https://github.com/libredb/libredb-studio/issues/264)) and Apache Druid
-([#265](https://github.com/libredb/libredb-studio/issues/265)).
+([#264](https://github.com/libredb/libredb-studio/issues/264)), Apache Druid
+([#265](https://github.com/libredb/libredb-studio/issues/265)), Elasticsearch + OpenSearch
+([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 1) Apache Trino
+([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 2) and Apache Cassandra
+([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 4 - the first phase to add a
+runtime dependency, and a pure-JS one).
 
 Druid is worth a paragraph, because it **corrected this table's own verdict**. The entry that stood
 here rated it strong but predicted that `EXPLAIN PLAN FOR` "returns a native-query translation rather
@@ -627,16 +681,61 @@ types (`groupBy`, `scan`, `timeseries`, `topN`) rather than borrowing a relation
 The lesson for the next candidate is to read the engine's real EXPLAIN output before predicting the
 render model from its documentation. See [druid.md](./providers/druid.md).
 
+Elasticsearch and OpenSearch get a paragraph for the opposite reason: the entry that stood here was
+**right about the question and wrong about the answer**. It said the pair "needs a dialect decision
+first: the SQL endpoint is a subset, the native DSL is JSON", and that "OpenSearch is Apache 2.0 and
+the cleaner primary target". The dialect decision was indeed the first one, and it went to the SQL
+endpoint — both products expose one without a licence, and `SQLBaseProvider`'s `LIMIT n` is correct on
+both, which no JSON DSL would have been. Elastic's ES|QL was rejected on the same test: it exists on
+one of the two products only, so it cannot be the shared query language. But "primary target" turned
+out to be the wrong shape entirely. Neither product is primary: **two type-ids share one provider
+module**, because everything the two disagree about on the wire is one row of a dialect table
+(`providers/sql/search/http-transport.ts`) and the one difference above the wire — Elasticsearch's SQL
+has no `OFFSET` — is one declared trait rather than an `if`. The lesson for the next candidate: when a
+fork and its upstream both qualify, price the shared seam before you pick a favourite, and let the
+live probe decide how much the two actually differ. Measured, it was less than the licence history
+suggests — and asymmetrically: the *same* mistyped keyword is a `parsing_exception` (`syntax`) on
+Elasticsearch and a `SQLFeatureNotSupportedException` (`unsupported`) on OpenSearch, and a missing
+index is HTTP 400 on one and 404 on the other, which is why that provider classifies errors from the
+body and never from the status.
+
+Trino closed the entry that had stood at the top of this table, and it is worth a paragraph because
+**the product question really was the blocker, and the answer was a mapping rather than a feature**.
+"A catalog is another system, so what a connection pins is a product question" was correct. The answer
+is that the connection's `database` field pins **one catalog**, exactly as it pins one database on
+PostgreSQL, and the tree stays two levels; the alternative — fanning `information_schema` across every
+catalog — is unbounded in practice, because `jmx.current` alone publishes one table per MBean and one
+sidebar refresh would then depend on every configured connector being reachable. Cross-catalog queries
+still work, because a fully qualified name never needed the pin.
+
+The `nextUri` polling this table warned about is real and worse than it sounds: the loop terminates on
+the **absence of a link**, never on a state — `SELECT version()` takes five pages, a page reporting
+`FINISHED` can still carry a link, and the column declaration and the rows arrive on different pages.
+Two more measured traps generalise to any engine like it. A failed statement is an **HTTP 200** with
+the failure in the document, so nothing may infer success from a status. And a request the server
+refuses *before* it becomes a statement answers **plain text**, so an error path that `JSON.parse`s the
+body throws a second, misleading error on top of the first.
+
+The fragmented auth matrix turned into one hard rule: a password is a **TLS-only** credential, because
+the coordinator answers `401 Password not allowed for insecure authentication` over plain HTTP even
+with authentication switched off. Sending it anyway breaks a connection that works without it, so the
+transport refuses that configuration rather than the server doing it later.
+
+The lesson for the next candidate with a sibling product: **make the protocol's own naming a
+descriptor before you need it.** Trino generates its header family from the product name
+(`X-Trino-User`), and so does the transport — from `TrinoDialect.headerPrefix`, with no finished header
+name written down anywhere. PrestoDB is therefore a new entry in a table rather than a second
+transport, and it is a separate type-id when it comes. See [trino.md](./providers/trino.md).
+
 | Candidate | Verdict |
 |---|---|
-| **Trino / Starburst** | Highest strategic value — one provider fronts S3, Iceberg, Delta and Hive. Unscheduled on purpose: a catalog is another *system*, so what a connection pins is a product question. Also a `nextUri` polling protocol and a fragmented auth matrix |
-| **OpenSearch / Elasticsearch** | HTTP is the only protocol. Needs a dialect decision first: the SQL endpoint is a subset, the native DSL is JSON. OpenSearch is Apache 2.0 and the cleaner primary target |
+| **PrestoDB** | Shipped-adjacent: the `trino` transport already builds its headers from a dialect prefix, so this is a descriptor, a doc and an integration test. A separate type-id, because `version()` and the fault vocabulary differ |
 | **Snowflake / BigQuery / Databricks SQL** | REST SQL APIs exist and the data model fits; auth is the wall (key-pair JWT, service-account signing, OAuth) and that is where the no-dependency promise ends |
 | **CouchDB, ArangoDB, SurrealDB, Qdrant, Weaviate** | All HTTP, all non-SQL or only partially SQL. Feasible, but each needs its own query grammar the way MongoDB and LibreDB do |
 
 Contributions are welcome for any of these. Open an issue with the rubric score first, so the design
-decisions are settled before code exists — that is what let the Couchbase, ClickHouse and Druid
-providers each land as a single reviewable PR.
+decisions are settled before code exists — that is what let the Couchbase, ClickHouse, Druid, Trino and
+search providers each land as a single reviewable PR.
 
 ---
 
@@ -654,11 +753,18 @@ The integration points, all of which need an entry. This is the list the Strateg
 - [ ] `src/hooks/use-connection-form.ts` — **append** to `selectableTypes` (do not retype the array)
 - [ ] `src/components/icons/db-icons.tsx` — the engine's mark (`strokeWidth={1.5}`, no HTML size attrs)
 - [ ] `src/lib/seed/types.ts` — the seed-config `type` enum, or seeded connections fail validation
+- [ ] `src/lib/db/compatibility.ts` — the `SHIPPED` record. It is an exhaustive
+      `Record<DatabaseType, true>`, so the compiler refuses the omission rather than letting the
+      published engine count silently undercount; it is listed here because the count in `README.md`
+      and `docs/BRAND_MESSAGING.md` is derived from it and has to move in the same PR
 - [ ] `package.json` — the driver, **if** it needs one. A driver-free provider leaves it untouched, and
-      three shipped ones do: `couchbase`, `clickhouse` and `druid` each add nothing here
+      six shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch` and `trino`
+      each add nothing here
 - [ ] `database-compose.yml` — a service, so the next person can repeat the live pass. A distributed
       engine contributes a `profiles: [...]` set instead, as Druid's seven services do, so the default
-      stack does not grow for everyone
+      stack does not grow for everyone. Check what the image ships before writing a healthcheck: the
+      ClickHouse image has no `curl` and the Trino image ships its own `health-check` script that waits
+      for `"starting": false`, which a bare `curl /v1/info` would not
 
 **Conditionally, and each one is easy to miss because the code still compiles without it:**
 
@@ -701,6 +807,14 @@ has an established grammar or reads at the default, and whether its query text i
 > This list is maintained by hand and has been wrong before: it long claimed "no other files should
 > need changes", while Couchbase (#263) and ClickHouse (#264) each touched 27 files under `src/` and
 > `tests/`, and Druid (#265) roughly two dozen of its own. Trust the grep over this list.
+>
+> Cassandra (#424 Phase 4) found three surfaces the grep over `trino` reached and this list does not
+> name, all of them because it added a connection FIELD (`localDataCenter`) rather than only a
+> type-id: `src/hooks/use-connection-payload.ts` and `src/lib/storage/connection-secrets.ts` both
+> carry an exhaustive `Record<keyof DatabaseConnection, …>` that stops compiling until the new field
+> is classified, and `src/lib/seed/connection-filter.ts` maps seed fields onto a connection BY HAND,
+> so a field omitted there is silently dropped from every managed connection. The first two fail
+> `typecheck`; the third fails nothing at all, which is why it now has a test.
 
 What the Strategy Pattern *does* spare you is **provider logic**: no route, no shared component and no
 existing provider needs to know your engine exists. If you find yourself adding a `=== '<type-id>'`

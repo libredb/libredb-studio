@@ -184,3 +184,33 @@ describe("securityHeaders", () => {
     expect(securityHeaders({ hsts: false })["Strict-Transport-Security"]).toBeUndefined();
   });
 });
+
+/**
+ * B40: the shipped policy must stay byte-identical, but a contributor's first `bun dev` has to
+ * work - React's development build evals, so without this relaxation the login page never hydrates.
+ *
+ * Asserted through the OPTION, not through process.env: headers.ts is published as
+ * `@libredb/studio/security` and reads no environment, so the environment half of this decision
+ * belongs to config.ts and is asserted in its own suite.
+ */
+describe("studioCspDirectives allowEval", () => {
+  test("admits eval so React's development build can hydrate", () => {
+    expect(studioCspDirectives({ allowEval: true })["script-src"]).toContain("'unsafe-eval'");
+  });
+
+  test("omits eval when the option is absent or false", () => {
+    for (const options of [{}, { allowEval: false }]) {
+      expect({ options, scriptSrc: studioCspDirectives(options)["script-src"] }).toEqual({
+        options,
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+      });
+    }
+  });
+
+  test("relaxes nothing but script-src, and the serialized default policy is unchanged", () => {
+    const shipped = securityHeaders()["Content-Security-Policy"];
+    const relaxed = securityHeaders({ allowEval: true })["Content-Security-Policy"];
+
+    expect(relaxed).toBe(shipped.replace("'unsafe-inline'", "'unsafe-inline' 'unsafe-eval'"));
+  });
+});

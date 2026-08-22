@@ -42,7 +42,12 @@ export async function POST(req: NextRequest) {
         const totalCountResult = await provider.query(
           JSON.stringify({
             collection: tableName,
-            operation: "countDocuments",
+            // `count`, the operation MongoDBProvider dispatches (it calls the
+            // driver's countDocuments internally). `countDocuments` is not in its
+            // SUPPORTED_OPERATIONS, so every MongoDB profile answered 400
+            // "Unsupported operation: countDocuments" - the route's own test mock
+            // had accepted the name and hid it.
+            operation: "count",
             filter: {},
           }),
         );

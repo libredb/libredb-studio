@@ -94,6 +94,19 @@ authProvider: "local"
 config:
   # -- Log level
   logLevel: "info"
+  # -- Address the container listens on, written to HOSTNAME. Empty is the
+  # default and means "let the image choose": the container entrypoint binds a
+  # throwaway listener on "::", connects to it over IPv4, and keeps "::" only
+  # when that connection is accepted - a dual-stack listener it proved rather
+  # than assumed. It falls back to "0.0.0.0" when the namespace has no IPv6 at
+  # all, or when the "::" listener turns out to be IPv6-only while a
+  # non-loopback IPv4 address exists, and it logs one line naming the address
+  # it picked and the evidence for it. Set this only to overrule that: "::"
+  # forces a dual-stack listener, "0.0.0.0" pins the container to IPv4 and is
+  # what releases before chart 0.1.42 did unconditionally. A pinned IPv4
+  # literal alongside a dual-stack Service is the one combination that breaks,
+  # and NOTES.txt warns about it.
+  bindAddress: ""
   # -- Auth bootstrap mode: "" (default: AUTH_BOOTSTRAP is omitted and the app's zero-config
   # first run applies — missing JWT_SECRET / ADMIN_PASSWORD are auto-generated on first start,
   # printed once to the pod log, and stored in /app/data/auth-bootstrap.json), "on" (same,
@@ -263,6 +276,34 @@ service:
   nodePort: ""
   # -- Service annotations
   annotations: {}
+  # -- Address families the Service is allocated from: "SingleStack",
+  # "PreferDualStack" (two families on a dual-stack cluster, one on a
+  # single-stack cluster) or "RequireDualStack" (fails to create on a
+  # single-stack cluster). Empty renders no field at all, which is deliberate:
+  # Kubernetes does not treat an omitted policy as a static SingleStack default
+  # (on update it inherits the live Service's policy), and an explicit
+  # SingleStack is read as intent to TRUNCATE - it releases the secondary
+  # clusterIP of a Service that is already dual-stack.
+  # THE POD MUST LISTEN ON BOTH FAMILIES TOO, and since chart 0.1.42 it does
+  # without a second setting: config.bindAddress defaults to empty, the
+  # container proves a dual-stack listener at startup and binds "::". Nothing
+  # in Kubernetes checks what address the container bound - on a dual-stack
+  # cluster the IPv6 EndpointSlice is populated from the pod's own IPv6 address
+  # regardless, and kubelet probes only the primary podIP - so an IPv4-only
+  # listener here fails silently. That is now reachable only by pinning it:
+  # config.bindAddress="0.0.0.0", or an extraEnv HOSTNAME entry with an IPv4
+  # literal. Do not pair either with a dual-stack policy.
+  ipFamilyPolicy: ""
+  # -- Explicit family order, e.g. ["IPv4", "IPv6"]. Empty leaves the choice to
+  # the cluster's own default family. Entry 0 is the PRIMARY family: it is what
+  # spec.clusterIP (the address every IPv4-only client reads) is allocated from,
+  # and it is immutable - reordering the list on a live Service is rejected
+  # ("may not change once set"), so switching primaries needs the Service
+  # deleted and recreated. Two entries require service.ipFamilyPolicy to be
+  # PreferDualStack or RequireDualStack; the chart refuses to render otherwise.
+  # Naming a family the cluster does not have is rejected even under
+  # PreferDualStack, so leave this empty unless the order matters.
+  ipFamilies: []
 
 ingress:
   # -- Enable Ingress

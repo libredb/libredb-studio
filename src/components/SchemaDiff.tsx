@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { TableSchema, SchemaSnapshot, DatabaseType, DatabaseConnection } from "@/lib/types";
 import { storage } from "@/lib/storage";
+import { logger } from "@/lib/logger";
 import { useAllConnections } from "@/hooks/use-all-connections";
 import { diffSchemas } from "@/lib/schema-diff/diff-engine";
 import { generateMigrationSQL } from "@/lib/schema-diff/migration-generator";
@@ -125,7 +126,10 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
         setSnapshots(storage.getSchemaSnapshots());
         setTargetId(snapshot.id);
       } catch (err) {
-        console.error("Failed to fetch remote schema:", err);
+        logger.warn("Failed to fetch the remote schema for a diff", {
+          route: "SchemaDiff",
+          error: err instanceof Error ? err.message : String(err),
+        });
       } finally {
         setFetchingRemote(false);
       }
@@ -410,9 +414,15 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
         <div>
           <h4 className="text-xs text-fg-muted mb-2 font-medium">Columns</h4>
           <div className="space-y-1">
-            {diff.columns.map((col, i) => (
+            {/* Keyed by the name the row is ABOUT, not by its position: the diff is
+                recomputed whenever either side changes, and the rows come back in a
+                different order, which had React reusing one column's row for another's.
+                The inner `changes` lists are keyed by their own text — each entry names a
+                different attribute ("Type changed:", "Nullable changed:", …), so the text
+                is unique within a row and survives a reorder the way the index did not. */}
+            {diff.columns.map((col) => (
               <div
-                key={i}
+                key={col.columnName}
                 className={cn(
                   "px-3 py-2 rounded text-xs flex items-center gap-2",
                   col.action === "added" && "bg-green-500/5 border border-green-500/10",
@@ -423,8 +433,8 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
                 <span className="font-mono text-fg-secondary min-w-[120px]">{col.columnName}</span>
                 {col.action === "modified" && (
                   <div className="flex flex-col gap-0.5">
-                    {col.changes.map((change, j) => (
-                      <span key={j} className="text-xs text-fg-muted">
+                    {col.changes.map((change) => (
+                      <span key={change} className="text-xs text-fg-muted">
                         {change}
                       </span>
                     ))}
@@ -444,9 +454,9 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
         <div>
           <h4 className="text-xs text-fg-muted mb-2 font-medium">Indexes</h4>
           <div className="space-y-1">
-            {diff.indexes.map((idx, i) => (
+            {diff.indexes.map((idx) => (
               <div
-                key={i}
+                key={idx.indexName}
                 className={cn(
                   "px-3 py-2 rounded text-xs flex items-center gap-2",
                   idx.action === "added" && "bg-green-500/5 border border-green-500/10",
@@ -455,8 +465,8 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
                 )}
               >
                 <span className="font-mono text-fg-secondary">{idx.indexName}</span>
-                {idx.changes.map((change, j) => (
-                  <span key={j} className="text-xs text-fg-muted">
+                {idx.changes.map((change) => (
+                  <span key={change} className="text-xs text-fg-muted">
                     {change}
                   </span>
                 ))}
@@ -472,9 +482,14 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
         <div>
           <h4 className="text-xs text-fg-muted mb-2 font-medium">Foreign Keys</h4>
           <div className="space-y-1">
-            {diff.foreignKeys.map((fk, i) => (
+            {/* Keyed by the action as well as the column: a foreign key repointed at
+                another table is TWO entries under one column name, because the diff
+                engine keys an FK by `columnName→table.column` and reports the old one
+                removed and the new one added. The column name alone gave React two
+                children with the same key. */}
+            {diff.foreignKeys.map((fk) => (
               <div
-                key={i}
+                key={`${fk.action}:${fk.columnName}`}
                 className={cn(
                   "px-3 py-2 rounded text-xs flex items-center gap-2",
                   fk.action === "added" && "bg-green-500/5 border border-green-500/10",
@@ -482,8 +497,8 @@ function TableDiffDetail({ diff }: { diff: TableDiff }) {
                 )}
               >
                 <span className="font-mono text-fg-secondary">{fk.columnName}</span>
-                {fk.changes.map((change, j) => (
-                  <span key={j} className="text-xs text-fg-muted">
+                {fk.changes.map((change) => (
+                  <span key={change} className="text-xs text-fg-muted">
                     {change}
                   </span>
                 ))}

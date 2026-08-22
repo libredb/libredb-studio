@@ -811,7 +811,11 @@ jobs:
 
       - name: Install Playwright browsers (channel E2E)
         if: matrix.arch == 'amd64'
-        run: bunx playwright install --with-deps chromium
+        # chromium only, no --with-deps - see docker-build-push.yml's channel
+        # E2E for the reasoning. These channels install a .deb/.rpm/.snap and
+        # need dpkg/rpm/snapd plus sudo on the host, so Playwright's container
+        # image is not an option here; dropping the apt half is.
+        run: bunx playwright install chromium
 
       - name: Channel E2E - deb (native arch only)
         if: matrix.arch == 'amd64'
@@ -1041,7 +1045,11 @@ jobs:
 
       - name: Install Playwright browsers (channel E2E)
         if: steps.snapstore.outputs.enabled == 'true' && matrix.arch == 'amd64'
-        run: bunx playwright install --with-deps chromium
+        # chromium only, no --with-deps - see docker-build-push.yml's channel
+        # E2E for the reasoning. These channels install a .deb/.rpm/.snap and
+        # need dpkg/rpm/snapd plus sudo on the host, so Playwright's container
+        # image is not an option here; dropping the apt half is.
+        run: bunx playwright install chromium
 
       - name: Channel E2E - snap (gates the store publish)
         if: steps.snapstore.outputs.enabled == 'true' && matrix.arch == 'amd64'

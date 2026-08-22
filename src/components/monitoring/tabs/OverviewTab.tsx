@@ -30,6 +30,16 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
   // nothing, and that must not be displayed as a measured 0%.
   const cacheHitRatio = performance?.cacheHitRatio;
 
+  // The same distinction, on the two rows of the Performance card. An engine that
+  // holds no buffer pool publishes no usage - Trino omits it because "it holds no
+  // pages", Cassandra and SQLite omit it too - and an engine that takes no locks
+  // keeps no deadlock counter. Rendering those absences as "0%" with an empty bar
+  // and as the badge 0 in the healthy `secondary` variant claimed measurements
+  // nobody made, and the deadlock one read as a clean bill of health. A real 0 from
+  // an engine that does measure keeps exactly its former rendering.
+  const bufferPoolUsage = performance?.bufferPoolUsage;
+  const deadlocks = performance?.deadlocks;
+
   // A limit of 0 means "no limit published", not "no capacity": mssql.ts says so in
   // as many words, and Druid genuinely has no connection pool and no SQL-readable
   // limit. Dividing by it produced NaN, which rendered as the literal "NaN% used"
@@ -168,68 +178,12 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
 
       {/* Secondary Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
-        {/* Performance Metrics */}
-        <Card className="p-0">
-          <CardHeader className="p-3 sm:p-4 pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
-              <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
-              Performance
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-3 sm:p-4 pt-0 space-y-2 sm:space-y-3">
-            <div className="flex justify-between items-center gap-2">
-              <span className="text-xs sm:text-xs text-muted-foreground">Buffer Pool</span>
-              <div className="flex items-center gap-1 sm:gap-2">
-                <Progress value={performance?.bufferPoolUsage ?? 0} className="w-16 sm:w-24 h-1.5 sm:h-2" />
-                <span className="text-xs sm:text-xs font-medium w-8 sm:w-12 text-right">
-                  {performance?.bufferPoolUsage?.toFixed(0) ?? 0}%
-                </span>
-              </div>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-xs sm:text-xs text-muted-foreground">Deadlocks</span>
-              <Badge variant={performance?.deadlocks ? "destructive" : "secondary"} className="text-xs">
-                {performance?.deadlocks ?? 0}
-              </Badge>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-xs sm:text-xs text-muted-foreground">Checkpoint</span>
-              <span className="text-xs sm:text-xs font-mono truncate max-w-[100px] sm:max-w-none">
-                {performance?.checkpointWriteTime || "N/A"}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Quick Stats */}
-        <Card className="p-0">
-          <CardHeader className="p-3 sm:p-4 pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
-              <Hash strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
-              Quick Stats
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-3 sm:p-4 pt-0 space-y-2 sm:space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-xs sm:text-xs text-muted-foreground">Slow Queries</span>
-              <Badge variant={data?.slowQueries?.length ? "outline" : "secondary"} className="text-xs">
-                {data?.slowQueries?.length ?? 0}
-              </Badge>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-xs sm:text-xs text-muted-foreground">Active</span>
-              <Badge variant="secondary" className="text-xs">
-                {data?.activeSessions?.filter((s) => s.state === "active").length ?? 0}
-              </Badge>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-xs sm:text-xs text-muted-foreground">Idle</span>
-              <Badge variant="secondary" className="text-xs">
-                {data?.activeSessions?.filter((s) => s.state === "idle").length ?? 0}
-              </Badge>
-            </div>
-          </CardContent>
-        </Card>
+        <PerformanceSummaryCard
+          bufferPoolUsage={bufferPoolUsage}
+          deadlocks={deadlocks}
+          checkpointWriteTime={performance?.checkpointWriteTime}
+        />
+        <QuickStatsCard data={data} />
       </div>
     </div>
   );
@@ -256,5 +210,106 @@ function OverviewSkeleton() {
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * Buffer pool, deadlocks and checkpoint, each rendered from whether the engine
+ * published the figure at all. `undefined` is the absence; a real 0 keeps the
+ * rendering a measured 0 always had.
+ */
+function PerformanceSummaryCard({
+  bufferPoolUsage,
+  deadlocks,
+  checkpointWriteTime,
+}: Readonly<{
+  bufferPoolUsage: number | undefined;
+  deadlocks: number | undefined;
+  checkpointWriteTime: string | undefined;
+}>) {
+  return (
+    <Card className="p-0">
+      <CardHeader className="p-3 sm:p-4 pb-2">
+        <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
+          <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
+          Performance
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-3 sm:p-4 pt-0 space-y-2 sm:space-y-3">
+        <div className="flex justify-between items-center gap-2">
+          <span className="text-xs sm:text-xs text-muted-foreground">Buffer Pool</span>
+          <div className="flex items-center gap-1 sm:gap-2">
+            {bufferPoolUsage === undefined ? (
+              <>
+                <span className="text-xs sm:text-xs text-muted-foreground">Not measured</span>
+                <span className="text-xs sm:text-xs font-medium w-8 sm:w-12 text-right text-muted-foreground">N/A</span>
+              </>
+            ) : (
+              <>
+                <Progress value={bufferPoolUsage} className="w-16 sm:w-24 h-1.5 sm:h-2" />
+                <span className="text-xs sm:text-xs font-medium w-8 sm:w-12 text-right">
+                  {bufferPoolUsage.toFixed(0)}%
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-xs sm:text-xs text-muted-foreground">Deadlocks</span>
+          {deadlocks === undefined ? (
+            <div className="flex items-center gap-1 sm:gap-2">
+              <span className="text-xs sm:text-xs text-muted-foreground">Not measured</span>
+              <Badge variant="outline" className="text-xs text-muted-foreground">
+                N/A
+              </Badge>
+            </div>
+          ) : (
+            <Badge variant={deadlocks ? "destructive" : "secondary"} className="text-xs">
+              {deadlocks}
+            </Badge>
+          )}
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-xs sm:text-xs text-muted-foreground">Checkpoint</span>
+          <span className="text-xs sm:text-xs font-mono truncate max-w-[100px] sm:max-w-none">
+            {checkpointWriteTime || "N/A"}
+          </span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Slow-query and session counts, read straight off the payload. */
+function QuickStatsCard({ data }: Readonly<{ data: MonitoringData | null }>) {
+  return (
+    <Card className="p-0">
+      <CardHeader className="p-3 sm:p-4 pb-2">
+        <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
+          <Hash strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
+          Quick Stats
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-3 sm:p-4 pt-0 space-y-2 sm:space-y-3">
+        <div className="flex justify-between items-center">
+          <span className="text-xs sm:text-xs text-muted-foreground">Slow Queries</span>
+          <Badge variant={data?.slowQueries?.length ? "outline" : "secondary"} className="text-xs">
+            {data?.slowQueries?.length ?? 0}
+          </Badge>
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-xs sm:text-xs text-muted-foreground">Active</span>
+          <Badge variant="secondary" className="text-xs">
+            {data?.activeSessions?.filter((s) => s.state === "active").length ?? 0}
+          </Badge>
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-xs sm:text-xs text-muted-foreground">Idle</span>
+          <Badge variant="secondary" className="text-xs">
+            {data?.activeSessions?.filter((s) => s.state === "idle").length ?? 0}
+          </Badge>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

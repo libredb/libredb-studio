@@ -37,6 +37,18 @@ export const TABLE_LABELS: ProviderLabels = {
   entityNamePlural: "Tables",
 };
 
+/**
+ * A search cluster, which is the one family that also declares what its statements are
+ * WRITTEN IN — see `ProviderLabels.statementLanguage`. Pinned against the real
+ * declaration in `tests/integration/db/elasticsearch-provider.test.ts`.
+ */
+export const SEARCH_INDEX_LABELS: ProviderLabels = {
+  ...UNREAD_BY_THE_AGENT_LAYER,
+  entityName: "Index",
+  entityNamePlural: "Indices",
+  statementLanguage: "Elasticsearch SQL, the product's own SQL endpoint - NOT the JSON query DSL",
+};
+
 /** Redis, whose inventory rows are prefixes this server grouped, not objects. */
 export const KEY_PATTERN_LABELS: ProviderLabels = {
   ...UNREAD_BY_THE_AGENT_LAYER,

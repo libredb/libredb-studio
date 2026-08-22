@@ -168,6 +168,140 @@ const SQLITE_GRAMMAR: SqlGrammar = {
 };
 
 /**
+ * The two search engines and Trino are the rows here established by LIVE PROBE rather
+ * than from documentation or a bundled driver: their SQL surfaces are HTTP endpoints
+ * on a running cluster, so the grammar can be asked directly, and asking it beats
+ * every other source. The search probes ran 2026-08-19 against Elasticsearch 9.1.4 and
+ * OpenSearch 3.8.0, and they DISAGREE about two of the four facts - which is the
+ * reason the one provider implementation still has two rows here. The Trino probes ran
+ * 2026-08-20 against 476; that row sits below, after OpenSearch's.
+ */
+const ELASTICSEARCH_GRAMMAR: SqlGrammar = {
+  // `#` opens NOTHING: `SELECT 1 # x` is a `parsing_exception`, "mismatched input
+  // '#'", and so is `SELECT # x\n1`. So the rest of the line is not hidden, which is
+  // the only thing the readers in this folder ask about. Reading it as a comment (the
+  // compatibility default) would also leave every `#` run AMBIGUOUS
+  // (`hashRunIsAmbiguous`), and since #297 an unreadable span is a confirmation
+  // PROMPT rather than silence - a prompt on a statement this engine simply refuses.
+  hash: "code",
+  // NOT established, and left at the default deliberately. `[` has no meaning at all
+  // in this grammar - `SELECT [1, 2]` and `SELECT [customer] FROM probe_orders` are
+  // both "extraneous input '['" - so it is neither an identifier quote nor a
+  // subscript, and PD-5 forbids reading one dialect's rule off another's. The name
+  // reading can only cost a bound on a statement the engine refuses anyway, which is
+  // the same fail-safe argument the `mysql` and `oracle` rows make.
+  bracket: DEFAULT_SQL_GRAMMAR.bracket,
+  // FLAT: `SELECT /* a /* b */ 1 AS a` answers 200 with the column, so the first
+  // `*/` closed the run. A nesting reader would have seen an unterminated comment.
+  blockComment: "flat",
+  // `SELECT q'{it's}'` is a `parsing_exception` - the form does not exist here.
+  alternateQuoting: false,
+};
+const OPENSEARCH_GRAMMAR: SqlGrammar = {
+  // `#` really is a line comment, and this is where the fork's SQL plugin parts
+  // company with Elasticsearch's. Three probes, because "the statement still ran" is
+  // not enough to tell a comment from a token the parser ignored:
+  //   `SELECT 1 AS a # , 2 AS b`         -> 200, ONE column: the rest was hidden.
+  //   `SELECT 1 AS a # hidden\n, 2 AS b` -> 200, TWO columns: the run ended at the
+  //                                         newline, so it is a LINE comment.
+  //   `SELECT customer # FROM probe_orders` -> `SemanticCheckException`, "can't
+  //                                         resolve … customer": the FROM was hidden.
+  hash: "comment",
+  // `[…]` is an identifier quote, MySQL/SQL-Server style: `SELECT [customer] FROM
+  // probe_orders` answers the field's value, while `SELECT [1, 2]` is refused with
+  // "All items between Brackets should be identifiers, got:LITERAL_INT". It has no
+  // escape and does not nest - `[customer]]` and `[a[b]]` are both refused - which is
+  // the SQLITE_GRAMMAR situation exactly: this reading's doubled-`]` allowance can
+  // only swallow a closer in text the server rejects either way.
+  bracket: "quoted-identifier",
+  // FLAT, same probe and same answer as Elasticsearch.
+  blockComment: "flat",
+  // `SELECT q'{it's}'` is refused, "Illegal SQL expression".
+  alternateQuoting: false,
+};
+/**
+ * Established the same way and for the same reason as the two search rows: the engine
+ * IS an HTTP endpoint, so the grammar was asked directly rather than read off a
+ * document. All four probes ran 2026-08-20 against Trino 476 through
+ * `POST /v1/statement`, and every one of them is a statement rather than an inference.
+ */
+const TRINO_GRAMMAR: SqlGrammar = {
+  // `#` opens NOTHING, in either position: `SELECT 1 AS a # trailing` is "line 1:15:
+  // mismatched input '#'" and `SELECT # x` is "line 1:8: mismatched input '#'". So the
+  // rest of the line is not hidden, which is the only thing the readers here ask.
+  // Leaving it at the compatibility default would also make every `#` run AMBIGUOUS,
+  // and since #297 an unreadable span is a confirmation PROMPT rather than silence -
+  // a prompt on a statement this engine simply refuses.
+  hash: "code",
+  // A SUBSCRIPT, and both halves of that rule were measured rather than one inferred
+  // from the other. It subscripts: `SELECT ARRAY[1,2][1]` answers 1. It NESTS:
+  // `SELECT ARRAY[ARRAY[1,2],ARRAY[3,4]][1][2]` answers 2. And it is emphatically not
+  // a name quote - `SELECT [customer] FROM tpch.sf1.nation` fails with "Column
+  // 'customer' cannot be resolved", so the brackets were read THROUGH to an
+  // expression, which the identifier reading could never do. Names here are quoted
+  // with `"` (`identifier.ts` leaves this id on the standard default).
+  bracket: "subscript",
+  // FLAT: `SELECT /* a /* b */ 1 AS a` returns the column, so the first `*/` closed
+  // the run. A nesting reader would have seen an unterminated comment and refused to
+  // bound the statement.
+  blockComment: "flat",
+  // `SELECT q'{it''s}'` is "line 1:8: Unknown resolvedType: q" - the form does not
+  // exist here, so those characters are a name followed by an ordinary string.
+  alternateQuoting: false,
+};
+
+/**
+ * Established the same way as the three rows above and for the same reason - the
+ * server IS the source - and probed BEFORE any Cassandra provider code existed
+ * (2026-08-20, Apache Cassandra 5.0.9, `system.local.release_version`, over the
+ * native protocol). Every fact below is a statement the server answered, not a
+ * reading taken from a neighbouring dialect.
+ *
+ * One CQL fact has no field here to hold it, and it is worth naming because it bites
+ * the same readers: CQL has a THIRD comment form, `//`, and a line comment of EITHER
+ * form must be closed by a NEWLINE. Measured, `SELECT * FROM probe.customers LIMIT 3
+ * -- note` with nothing after it is a syntax error ("line 1:45 mismatched character
+ * '<EOF>' expecting set null"), and the same text with a trailing `\n` returns the
+ * rows. So on this one engine the shared limiter's insert-before-trailing-trivia
+ * rewrite (#280) can turn a VALID statement into a syntax error, because it trims the
+ * newline that closed the comment. `SqlGrammar` cannot express either fact, and
+ * widening it would change how every dialect's comments are read, so the Cassandra
+ * provider's own `prepareQuery` declines to rewrite a statement that would end inside
+ * a line comment. See `providers/sql/cassandra/index.ts`.
+ */
+const CASSANDRA_GRAMMAR: SqlGrammar = {
+  // `#` opens NOTHING and is not an identifier character either. Three probes:
+  // `… WHERE id = 1 # trailing` -> "line 1:44 no viable alternative at character
+  // '#'"; `SELECT # x\n id …` -> the same at 1:7; `SELECT id#a …` -> the same at 1:9.
+  // So the rest of the line is not hidden, which is the only thing the readers here
+  // ask. The compatibility default would leave every `#` run AMBIGUOUS, and since
+  // #297 an unreadable span is a confirmation PROMPT rather than silence - a prompt on
+  // a statement CQL refuses outright.
+  hash: "code",
+  // A SUBSCRIPT, and both halves of that reading were measured. It is read THROUGH to
+  // a term: `SELECT [id] FROM probe.customers WHERE id = 1` answers a column named
+  // `[id]` of type `list` holding `[1]` - the brackets built a collection literal from
+  // the column - and `SELECT [1, 2] …` is refused with "Cannot infer type for term
+  // [1, 2] in selection clause", a complaint about TYPING a term the parser already
+  // read. It NESTS: `SELECT [[id]] …` answers `[[1]]`. A literal inside it is a
+  // literal: `SELECT ['a]b'] …` reaches the same type-inference complaint, so the `]`
+  // inside the string did not close the run - which is precisely what the
+  // identifier reading, stopping at the first `]`, cannot do. CQL subscripts
+  // collections for real as well (`m['k']`), and names are quoted with `"` (measured:
+  // `SELECT "id" FROM probe.customers` returns the column, a backtick is "no viable
+  // alternative at character '`'", and a double-quoted STRING is a syntax error).
+  bracket: "subscript",
+  // FLAT: `SELECT /* a /* b */ id FROM probe.customers WHERE id = 1` returns the row,
+  // so the first `*/` closed the run. A nesting reader would have seen an
+  // unterminated comment and refused to bound the statement.
+  blockComment: "flat",
+  // `… WHERE name = q'{it''s}'` is "line 1:45 no viable alternative at input
+  // '{it's}'" - the form does not exist here, so those characters are a name followed
+  // by an ordinary string.
+  alternateQuoting: false,
+};
+
+/**
  * The established readings, one row per fact per dialect.
  *
  * A dialect absent from this table is at the compatibility default because its
@@ -177,9 +311,14 @@ const SQLITE_GRAMMAR: SqlGrammar = {
  * confirmation gate reads their editor text as SQL only where `readsSqlText` says
  * the text IS SQL, which for those two it does not (#297). Present for one fact and
  * undecided about another: `mysql` and `oracle` carry no established BRACKET
- * reading (see the row below).
+ * reading (see the row below), and `elasticsearch` carries none either - `[` is not
+ * in its grammar at all.
  *
- * Sources, one per row, all offline or first-party documentation:
+ * Sources, one per row, all offline or first-party documentation - except
+ * `elasticsearch` and `opensearch`, whose rows were established by probing the
+ * engines themselves (their SQL surface is an HTTP endpoint, so the grammar can be
+ * asked rather than read about). The probes and their answers are quoted on the two
+ * constants above, and the two products disagree about `#` and about `[…]`:
  *
  * - `mysql` - `#` to end of line is MySQL's and MariaDB's second comment form;
  *   this repo already skipped such a run in a statement's LEADING trivia before the
@@ -283,6 +422,10 @@ const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
   oracle: ORACLE_GRAMMAR,
   mssql: MSSQL_GRAMMAR,
   sqlite: SQLITE_GRAMMAR,
+  elasticsearch: ELASTICSEARCH_GRAMMAR,
+  opensearch: OPENSEARCH_GRAMMAR,
+  trino: TRINO_GRAMMAR,
+  cassandra: CASSANDRA_GRAMMAR,
 };
 
 /**
@@ -307,6 +450,30 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * `BaseDatabaseProvider` and never call `prepareQuery`. They reach the confirmation
  * gate, though, because both execution paths ask about whatever is in the editor
  * before running it (#297).
+ *
+ * `trino` is deliberately absent for the same reason as the two search ids: the editor
+ * text is the exact bytes `POST /v1/statement` receives, and the provider extends
+ * `SQLBaseProvider`.
+ *
+ * `cassandra` is deliberately absent too, and it is the closest call in this set. CQL
+ * genuinely lacks JOIN, OFFSET, EXPLAIN and subqueries - each measured as a syntax
+ * error on 5.0.9 - but this set is not about vocabulary: it asks whether the text is
+ * SQL-SHAPED, so that a SQL span reader can find where a literal ends and where a
+ * comment hides a write. CQL is written with the same statement keywords, the same
+ * `'…'` literals with doubled quotes, the same `"…"` quoted names and the same `--`
+ * and `/* *\/` comments, so that reading is correct here. Listing it would switch the
+ * SQL checks off for text that IS SQL - the mirror of the defect this set exists to
+ * fix.
+ *
+ * `elasticsearch` and `opensearch` are deliberately ABSENT: their editor text is SQL
+ * (measured - both answer `POST`ed statements with columns and rows, and both
+ * providers extend `SQLBaseProvider` and call `prepareQuery`). Listing them here
+ * would switch the SQL checks off for text that IS SQL, which is the mirror of the
+ * defect this set exists to fix: the confirmation gate would stop reading a statement
+ * it can read, and an unreadable statement's spans are what tell it a write is
+ * hiding behind a comment. The other direction is the one #297 measured - reading
+ * non-SQL as SQL prompted on ordinary reads - so a wrong answer here costs either a
+ * gate that never asks or a gate an operator learns to click through.
  */
 const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["mongodb", "redis"]);
 

@@ -22,6 +22,8 @@ describe("quoteLiteral", () => {
     expect(quoteLiteral("O'Brien", "mssql")).toBe("'O''Brien'");
     expect(quoteLiteral("O'Brien", "clickhouse")).toBe("'O''Brien'");
     expect(quoteLiteral("O'Brien", "druid")).toBe("'O''Brien'");
+    // Measured on Trino 476: `SELECT 'O''Brien' AS a` answers the row `O'Brien`.
+    expect(quoteLiteral("O'Brien", "trino")).toBe("'O''Brien'");
   });
 
   test("escapes the quote with a backslash where the grammar has no doubling", () => {
@@ -43,6 +45,9 @@ describe("quoteLiteral", () => {
     expect(quoteLiteral("a\\b", "oracle")).toBe("'a\\b'");
     expect(quoteLiteral("a\\b", "mssql")).toBe("'a\\b'");
     expect(quoteLiteral("a\\b", "druid")).toBe("'a\\b'");
+    // Measured on Trino 476: `SELECT 'a\b' AS a` answers the two characters `a\b`, so
+    // the backslash is data and doubling it would put a second one in the value.
+    expect(quoteLiteral("a\\b", "trino")).toBe("'a\\b'");
   });
 
   test("gives the standard form to an engine that has no SQL of its own", () => {
@@ -92,6 +97,17 @@ describe("positionalPlaceholder", () => {
     // test pins the pair with `bodyOf("country = $1").args`.
     expect(positionalPlaceholder("couchbase", 1)).toBe("$1");
     expect(positionalPlaceholder("couchbase", 2)).toBe("$2");
+  });
+
+  test("trino has no positional placeholder, because its provider refuses to bind one", () => {
+    // Trino DOES bind values, but only through `PREPARE`/`EXECUTE` plus an
+    // `X-Trino-Prepared-Statement` header, and the provider's transport seam carries
+    // the statement alone - so `TrinoProvider.query()` throws on a non-empty params
+    // array rather than sending an unbound placeholder. Emitting `?` here would build
+    // a statement the provider then declines to run, so the caller must quote the
+    // value with `quoteLiteral` instead. The same reasoning as the two search ids.
+    expect(positionalPlaceholder("trino", 1)).toBeNull();
+    expect(positionalPlaceholder("trino", 2)).toBeNull();
   });
 
   test("returns null where this repo knows there is no positional bind form", () => {

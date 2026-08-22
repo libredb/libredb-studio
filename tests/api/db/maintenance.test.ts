@@ -202,6 +202,46 @@ describe("POST /api/db/maintenance", () => {
     expect(data.error).toContain("Unauthorized");
   });
 
+  // Threat: a role denial that leaves no trace. An authenticated caller probing for a role it does
+  // not hold was invisible in the one channel this project treats as authoritative.
+  test("non-admin denial emits permission_denied with reason insufficient_role", async () => {
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "user", username: "bob" }),
+    );
+
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", connection: validConnection },
+    });
+
+    await POST(req as never);
+
+    expect(mockAuditPush).toHaveBeenCalledTimes(1);
+    const event = mockAuditPush.mock.calls[0][0] as Record<string, unknown>;
+    expect(event.type).toBe("permission_denied");
+    expect(event.reason).toBe("insufficient_role");
+    expect(event.user).toBe("bob");
+    expect(event.target).toBe("POST /api/db/maintenance");
+  });
+
+  test("a broken audit sink does not turn the role denial into a 500", async () => {
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "user", username: "bob" }),
+    );
+    mockAuditPush.mockImplementationOnce(() => {
+      throw new Error("audit sink unavailable");
+    });
+
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "users", connection: validConnection },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(403);
+  });
+
   // Guarded by guardRoute now: an unauthenticated caller is rejected at the session check,
   // before the route's own admin-role check ever runs, so this is 401 ("not authenticated"),
   // distinct from "non-admin user returns 403" above ("authenticated but forbidden").

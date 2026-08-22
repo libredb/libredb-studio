@@ -28,7 +28,9 @@ FAIL=0
 # was added. Verify with `grep -c '^run_group ' tests/run-components.sh`, which is how
 # the third drift was caught (#331 T5): 26 was declared while 27 calls existed, so the
 # green summary line reported a group count no run had.
-TOTAL_GROUPS=30
+# Drifted again before this line was touched: it read 30 while 32 `run_group` calls
+# existed, so every green run reported a group count no run had. 33 is the grep below.
+TOTAL_GROUPS=33
 EXTRA_BUN_ARGS=("$@")
 GROUP_INDEX=0
 COVERAGE_MODE=0
@@ -212,6 +214,9 @@ run_group "Group 10/12: PoolTab" \
 # Group 11: Smoke tests (isolated - mock globalThis.fetch + MonitoringEmbed)
 run_group "Group 11/12: Smoke tests" \
   tests/components/agent/AgentRail.test.tsx \
+  tests/components/agent/AnswerCard.test.tsx \
+  tests/components/agent/ConsentCard.test.tsx \
+  tests/components/agent/SafetyStrip.test.tsx \
   tests/components/agent/use-agent-run.test.tsx \
   tests/components/admin/MonitoringEmbed.test.tsx \
   tests/components/VisualExplain.test.tsx \
@@ -226,10 +231,12 @@ run_group "Group 11/12: Smoke tests" \
   tests/components/DataImportModal.test.tsx \
   tests/components/RootLayout.test.tsx \
   tests/components/AppErrorPages.test.tsx \
+  tests/components/LazyView.test.tsx \
   tests/components/Page.test.tsx \
   tests/components/LoginPage.test.tsx \
   tests/components/LoginPageOIDC.test.tsx \
   tests/components/CommunitySection.test.tsx \
+  tests/components/ConnectionSignature.test.tsx \
   tests/components/GitHubRepoLink.test.tsx \
   tests/components/MonitoringPage.test.tsx \
   tests/components/monitoring/MetricChart.test.tsx
@@ -300,6 +307,14 @@ run_group "Group 18: ThemeToggle" \
 
 run_group "Group 19: ThemeProvider" \
   tests/components/ThemeProvider.test.tsx
+
+# Group 20: WireCompatibilityHint. Its own group, and it had NO group at all until now:
+# the file shipped with #426 and was never added to this script, so its seven tests had
+# never run in CI once. It cannot join Group 11 or 15 either - it mocks
+# @/lib/db/compatibility, and mock.module is process-wide, so it would hand LoginPage's
+# engine-count assertions and ConnectionModal's own hint render a two-entry stub registry.
+run_group "Group 20: WireCompatibilityHint" \
+  tests/components/WireCompatibilityHint.test.tsx
 
 # Summary
 echo ""

@@ -28,6 +28,8 @@ package, which does not ship `public/` — set `NEXT_PUBLIC_MONACO_VS_PATH`.
 | Monaco loader config | `src/lib/editor/monaco-loader.ts` |
 | Asset staging | `scripts/copy-monaco.mjs` |
 | Completion provider | `src/lib/editor/sql-completions.ts` |
+| Tab type / language ladder | `src/lib/editor/tab-language.ts` |
+| Non-SQL command languages | `src/lib/editor/libredb-language.ts`, `src/lib/editor/redis-language.ts` |
 | Alias extraction | `src/lib/sql/alias-extractor.ts` |
 | Query limiting | `src/lib/db/utils/query-limiter.ts` |
 | Visual EXPLAIN | `src/components/VisualExplain.tsx` |

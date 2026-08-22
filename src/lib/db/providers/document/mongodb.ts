@@ -77,6 +77,22 @@ const SUPPORTED_OPERATIONS: ReadonlySet<MongoQuery["operation"]> = new Set([
   "deleteMany",
 ]);
 
+/**
+ * How deep `inferSchemaFromDocuments` walks a subdocument, counting the top level as
+ * 1 — so `shipping.geo.lat` is named and `shipping.geo.deep.tooFar` is not. Three
+ * levels is where the dotted paths a query actually groups or filters on live; past
+ * that the tree stops describing the collection and starts transcribing one document.
+ * The container at the boundary is still listed, so the nesting continuing is visible.
+ */
+const MAX_NESTED_FIELD_DEPTH = 3;
+
+/**
+ * Upper bound on the fields one collection reports. Nesting multiplies, and both
+ * consumers of this list are bounded surfaces: the schema tree a person scrolls and
+ * the inventory an agent run is given.
+ */
+const MAX_INFERRED_FIELDS = 200;
+
 // Maintenance operations runMaintenance() accepts; validated the same way.
 const SUPPORTED_MAINTENANCE_TYPES: ReadonlySet<MaintenanceType> = new Set([
   "analyze",
@@ -143,6 +159,17 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       vacuumGlobalLabel: "Run Compact",
       vacuumGlobalTitle: "Compact Storage",
       vacuumGlobalDesc: "Defragments and compacts collection storage to reclaim disk space.",
+      // Stated verbatim in the agent's plan contract, and needed for the reason the
+      // search products needed theirs: told to write "one runnable statement in this
+      // MongoDB database's own query language", a live plan run on 2026-08-22 wrote
+      // mongosh - `db.orders.aggregate([{ $group: ... }])`. That is correct MongoDB
+      // and unrunnable here, because `query()` parses the JSON command object and
+      // nothing else, so what the user was handed was a plan they could not execute.
+      // The sentence therefore carries the envelope itself and names the shell form
+      // it excludes: naming only what the language IS did not survive contact with
+      // the model's prior on Elasticsearch, and does not here either.
+      statementLanguage:
+        'the JSON command object this editor executes - {"collection": "<name>", "operation": "find" | "findOne" | "aggregate" | "count" | "distinct", "filter": {...}, "pipeline": [...], "options": {"limit": 50}} - and NOT mongosh shell syntax: a statement that starts with `db.` cannot be run here',
     };
   }
 
@@ -561,10 +588,16 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       return a.name.localeCompare(b.name);
     });
 
-    return columns;
+    // Bounded AFTER sorting, so what survives is a deterministic prefix rather than
+    // whichever fields the sampled documents happened to mention first - and `_id`,
+    // the field every generated statement addresses, always survives. The bound
+    // exists because nesting multiplies: a document with 60 subdocuments of 10 fields
+    // each is 661 rows in the schema tree and 661 lines in a model's context window,
+    // for one collection. Same reason `getSchema` already stops at 200 collections.
+    return columns.slice(0, MAX_INFERRED_FIELDS);
   }
 
-  private extractFieldTypes(doc: Document, prefix: string, fieldTypes: Map<string, Set<string>>): void {
+  private extractFieldTypes(doc: Document, prefix: string, fieldTypes: Map<string, Set<string>>, depth = 1): void {
     for (const [key, value] of Object.entries(doc)) {
       const fieldName = prefix ? `${prefix}.${key}` : key;
 
@@ -575,11 +608,22 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       const type = this.getMongoType(value);
       fieldTypes.get(fieldName)!.add(type);
 
-      // Don't recurse into nested objects for now (keep it flat)
-      // Uncomment below to include nested fields
-      // if (type === 'object' && value !== null && !Array.isArray(value)) {
-      //   this.extractFieldTypes(value as Document, fieldName, fieldTypes);
-      // }
+      // Descend into subdocuments, because `shipping.city` is a field name in this
+      // engine's own query language and a schema that stops at `shipping: object`
+      // does not name it. That absence is not only cosmetic: the same inventory
+      // grounds an agent plan run, and a run on 2026-08-22 grouped by
+      // `$shipping.region` - a path the database does not have - which MongoDB
+      // answers with a single null group rather than an error, so the plan read as
+      // runnable and was silently wrong.
+      //
+      // `getMongoType` has already ruled out every object that is really a scalar
+      // (Date, ObjectId, Binary, Decimal128) and arrays, which are deliberately left
+      // closed: `items.sku` addresses one value PER ARRAY ENTRY, so it does not mean
+      // on an array what the same syntax means on a subdocument, and listing it
+      // beside the others would invite exactly that confusion.
+      if (type === "object" && depth < MAX_NESTED_FIELD_DEPTH) {
+        this.extractFieldTypes(value as Document, fieldName, fieldTypes, depth + 1);
+      }
     }
   }
 

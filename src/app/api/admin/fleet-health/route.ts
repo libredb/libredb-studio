@@ -3,7 +3,17 @@ import { getOrCreateProvider } from "@/lib/db";
 import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
-import { guardRoute } from "@/lib/api/require-session";
+import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
+import { logger } from "@/lib/logger";
+
+/**
+ * The widest fan-out one request may ask for. guardRoute bounds how OFTEN this route is called,
+ * not how WIDE a single call is: without this, one admin-authenticated POST opened as many
+ * provider connections concurrently as its body named, and the rate limiter counted one request.
+ * A fleet dashboard names tens of connections, so 100 is well clear of real use; the bound is
+ * stated in the 400 so an operator who hits it can see what happened.
+ */
+const MAX_FLEET_CONNECTIONS = 100;
 
 export interface FleetHealthItem {
   connectionId: string;
@@ -27,6 +37,7 @@ export async function POST(request: Request) {
   if ("response" in guard) return guard.response;
 
   if (guard.session.role !== "admin") {
+    auditRoleDenial({ route: "POST /api/admin/fleet-health", user: guard.session.username, request });
     return NextResponse.json({ error: "Unauthorized. Admin access required." }, { status: 403 });
   }
 
@@ -37,6 +48,13 @@ export async function POST(request: Request) {
 
     if (!connections || !Array.isArray(connections)) {
       return NextResponse.json({ error: "connections array is required" }, { status: 400 });
+    }
+
+    if (connections.length > MAX_FLEET_CONNECTIONS) {
+      return NextResponse.json(
+        { error: `Too many connections: at most ${MAX_FLEET_CONNECTIONS} may be health-checked per request` },
+        { status: 400 },
+      );
     }
 
     const results: FleetHealthItem[] = await Promise.all(

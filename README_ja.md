@@ -31,7 +31,7 @@
 
 ```bash
 # Docker（推奨）
-docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest
+docker run -p 3000:3000 ghcr.io/libredb/libredb-studio:latest
 
 # または Node.js 24+ で（Dockerなし）
 npx @libredb/studio
@@ -67,11 +67,11 @@ LibreDB Studioは逆向きです。**データをツールのところへ持っ�
 
 ## 主な機能
 
-### 10のエンジン、1つのインターフェース
+### 14のエンジン、1つのインターフェース
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid
+PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra
 
-スキーマエクスプローラ、ER図、スキーマ差分、モニタリングは全SQLエンジンで共通です。MongoDBとRedisはSQLエンジンではないため、ER図とスキーマ差分はありません。DruidはHTTP SQL APIに貼り付けられるURIがないためhostとportで設定する二重の例外で、生成されるマイグレーションもDDLを出力せず制約を明示します（Couchbaseのスキーマレスなコレクションも同様）。
+スキーマエクスプローラ、ER図、スキーマ差分、モニタリングは全SQLエンジンで共通です。MongoDBとRedisはSQLエンジンではないため、ER図とスキーマ差分はありません。Druid、Elasticsearch、OpenSearch、TrinoはこのビルドがパースできるURI形式を持たないためhostとportで設定する二重の例外で、生成されるマイグレーションもDDLを出力せず制約を明示します（Couchbaseのスキーマレスなコレクションも同様）。検索クラスタのER図は箱だけで線がありません。インデックスは外部キーを宣言せず、エンジンのモデルにも宣言できる外部キーが存在しないためです。
 
 | データベース | ドライバ | 機能 |
 | :--- | :--- | :--- |
@@ -84,9 +84,13 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 | **Couchbase** | ドライバなし、HTTPのみ（Query + 管理REST） | フルSQL++ IDE、EXPLAIN、bucket/scope/collectionエクスプローラ、`INFER`によるカラム推論 |
 | **ClickHouse** | ドライバなし、HTTPのみ（SQLインターフェース、8123） | フルSQL IDE、JSON EXPLAINツリー、システムテーブルからのスキーマ取得、`OPTIMIZE TABLE` |
 | **Apache Druid** | ドライバなし、HTTPのみ（`POST /druid/v2/sql`） | 読み取り専用SQL IDE、ネイティブクエリのEXPLAINツリー、`INFORMATION_SCHEMA`、`sys.*`監視 |
+| **Elasticsearch** | ドライバなし、HTTPのみ（`POST /_sql?format=json`、9200） | 読み取り専用SQL IDE、mappingベースのインデックス／フィールドエクスプローラ、クラスタヘルスとインデックスごとのドキュメント数・ストアサイズ。EXPLAINなし、メンテナンス操作なし、スロークエリ／セッションパネルなし。Elasticsearch SQLには`OFFSET`もないため、2ページ目以降は取得できません |
+| **OpenSearch** | ドライバなし、HTTPのみ（`POST /_plugins/_sql`、9200） | Elasticsearchと同じproviderモジュールによる、同じ読み取り専用SQL IDEとエクスプローラ。こちらは`LIMIT n OFFSET m`が使えるため、ページングも使えます |
+| **Apache Trino** | ドライバなし、HTTPのみ（クライアントプロトコル、`POST /v1/statement`、8080） | 設定済みの全カタログに対するフルSQL IDE、接続がピン留めしたカタログの`information_schema`スキーマツリー、`system.runtime`と`jmx`による監視、`SHOW STATS`による実際の行数、クエリキャンセルと`kill_query`メンテナンス。Trinoはクエリエンジンであり自身は何も保存しないため、主キー・外部キー・インデックスをどこにも宣言しません（ER図は箱だけで線がなく、インライン行編集は無効、サイズ系パネルはカタログ名を示します）。失敗したステートメントもHTTP 200で返り、認証を無効にしたクラスタでも平文HTTP上のパスワードは拒否されます |
+| **Apache Cassandra** | `cassandra-driver`（純JavaScript、ネイティブモジュールなし） | ネイティブプロトコル（9042）上のCQL IDE、パーティションキーとクラスタリングキーを明示するキースペースブラウザ、`system_views`によるオーバービュー・稼働時間・実行中ステートメント。接続には**`localDataCenter`が必須**です（ドライバがこれなしでは接続を拒否します）。EXPLAINはありません（CQLの文法にキーワードが存在しません）。クエリキャンセルもありません（プロトコルにキャンセルフレームがありません）。メンテナンス操作もありません（コンパクション・修復・フラッシュはいずれも`nodetool`のJMX操作です）。そして**行数もサイズも表示しません**：Cassandraが公開するのはフラッシュ済みファイルからのパーティション推定値（500行のクラスタリングテーブルで143と測定）と整数メビバイト（19,476バイトのテーブルで`1 MiB`）だけであり、誤った数値を出すより何も出さない方を選んでいます |
 | **Redis** | `ioredis` | コマンドエディタ、キーブラウザ、INFOベースの監視 |
 
-> **トランスポート層のセキュリティはエンジンごとではなく横断的な機能です。** SSHトンネルはproviderが接続する前に張られ、接続先はローカルのエンドポイントに書き換えられます。つまりエンジンに依存せず、hostとportが設定された接続であれば適用されます。接続文字列で入力した接続（MongoDB、Couchbase、ClickHouseで選択できます）はhostもportも持たないためトンネルされません。SQLiteも同様です。SSL/TLSパネルが実際に効くのはPostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druidです。Oracle、MongoDB、Redisはこの設定を無視するため、この3つで暗号化されるかどうかはダイアログの選択ではなく接続文字列の内容次第になります。
+> **トランスポート層のセキュリティはエンジンごとではなく横断的な機能です。** SSHトンネルはproviderが接続する前に張られ、接続先はローカルのエンドポイントに書き換えられます。つまりエンジンに依存せず、hostとportが設定された接続であれば適用されます。接続文字列で入力した接続（MongoDB、Couchbase、ClickHouseで選択できます）はhostもportも持たないためトンネルされません。SQLiteも同様です。SSL/TLSパネルが実際に効くのはPostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trinoです。Trinoでは任意ではなく必須に近い意味を持ちます。コーディネータが平文HTTP上のパスワードを拒否するためです。Oracle、MongoDB、Redisはこの設定を無視するため、この3つで暗号化されるかどうかはダイアログの選択ではなく接続文字列の内容次第になります。
 
 > RedisがこのSQL指向のインターフェースに乗るのは規約によるものです。`getSchema()` はブロッキングしない `SCAN`（**`KEYS *` は使いません**）でキーのプレフィックスを「テーブル」としてまとめ、ヘルスとメトリクスは `INFO`、スロークエリとセッションは `SLOWLOG GET` / `CLIENT LIST` から取得します。
 
@@ -186,7 +190,7 @@ StudioのAIの中心は、エディタの隣にあるエージェントレール
 
 | 方法 | コマンド |
 | :--- | :--- |
-| **Docker** | `docker run -d -p 3000:3000 ghcr.io/libredb/libredb-studio:latest` |
+| **Docker** | `docker run -p 3000:3000 ghcr.io/libredb/libredb-studio:latest` |
 | **npx** | `npx @libredb/studio` |
 | **Helm** | `helm install libredb oci://ghcr.io/libredb/charts/libredb-studio` |
 | **Homebrew** | `brew trust libredb/tap && brew install libredb/tap/libredb-studio` |

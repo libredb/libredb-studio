@@ -108,10 +108,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends gosu && \
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
+# The bind-address resolver the entrypoint runs (issue #432). It lives next to
+# the entrypoint, OUTSIDE /app, so a volume mounted on /app cannot hide it, and
+# outside the standalone payload so the native channels - which bind 127.0.0.1
+# by design (#134) - can never inherit container bind policy.
+COPY docker/bind-address.mjs /usr/local/lib/libredb-studio/bind-address.mjs
+
 # Render uses PORT env variable, default to 3000
 EXPOSE 3000/tcp
 ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
+# Empty is the "nobody chose" sentinel: an image-level empty ENV suppresses
+# Docker's HOSTNAME=<container-id> injection (which the resolver would otherwise
+# be unable to tell apart from an operator's own value), while leaving a
+# bypassed entrypoint on Next's own `process.env.HOSTNAME || '0.0.0.0'` default -
+# i.e. exactly this image's pre-#432 behaviour. Anything non-empty an operator
+# passes is honoured verbatim.
+ENV HOSTNAME=""
 
 # server.js is created by next build from the standalone output
 # https://nextjs.org/docs/pages/api-reference/next-config-js/output

@@ -757,3 +757,115 @@ describe("useTabManager", () => {
     expect(newTab.query).toContain('"operation": "find"');
   });
 });
+
+// ─── Redis: dialect-aware tab type and type-aware generation (#427) ───
+
+describe("useTabManager — Redis dialect", () => {
+  const redisMetadata: ProviderMetadata = {
+    capabilities: {
+      ...defaultMetadata.capabilities,
+      queryLanguage: "json" as const,
+      queryDialect: "redis" as const,
+      defaultPort: 6379,
+    },
+    labels: defaultMetadata.labels,
+  } as ProviderMetadata;
+
+  // The provider's schema nodes: a `:`-prefix grouping and a bare key, each
+  // carrying the sampled Redis type on the `type` column (redis.ts getSchema).
+  const redisSchema: TableSchema[] = [
+    {
+      name: "session:*",
+      columns: [
+        { name: "key", type: "string", nullable: false, isPrimary: true },
+        { name: "type", type: "hash", nullable: false, isPrimary: false },
+        { name: "value", type: "hash", nullable: true, isPrimary: false },
+      ],
+      indexes: [],
+    },
+    {
+      name: "counter",
+      columns: [
+        { name: "key", type: "string", nullable: false, isPrimary: true },
+        { name: "type", type: "hash", nullable: false, isPrimary: false },
+        { name: "value", type: "hash", nullable: true, isPrimary: false },
+      ],
+      indexes: [],
+    },
+  ];
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test("addTab creates a redis tab type", () => {
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ type: "redis", port: 6379 }),
+        metadata: redisMetadata,
+        schema: redisSchema,
+      }),
+    );
+
+    act(() => {
+      result.current.addTab();
+    });
+
+    expect(result.current.tabs[1].type).toBe("redis");
+  });
+
+  test("handleTableClick creates a redis tab and passes the table's columns to the generator", () => {
+    const executeFn = mock(() => {});
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ type: "redis", port: 6379 }),
+        metadata: redisMetadata,
+        schema: redisSchema,
+      }),
+    );
+
+    act(() => {
+      result.current.handleTableClick("session:*", executeFn);
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.type).toBe("redis");
+    expect(newTab.query).toBe("SCAN 0 MATCH session:* COUNT 50");
+  });
+
+  test("handleTableClick on a bare key uses the sampled type from its columns", () => {
+    const executeFn = mock(() => {});
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ type: "redis", port: 6379 }),
+        metadata: redisMetadata,
+        schema: redisSchema,
+      }),
+    );
+
+    act(() => {
+      result.current.handleTableClick("counter", executeFn);
+    });
+
+    expect(result.current.tabs[1].query).toBe("HGETALL counter");
+  });
+
+  test("handleGenerateSelect creates a redis tab", () => {
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ type: "redis", port: 6379 }),
+        metadata: redisMetadata,
+        schema: redisSchema,
+      }),
+    );
+
+    act(() => {
+      result.current.handleGenerateSelect("session:*");
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.type).toBe("redis");
+    expect(newTab.query).toContain("SCAN 0 MATCH session:* COUNT 50");
+    expect(newTab.query).not.toContain('"collection"');
+  });
+});

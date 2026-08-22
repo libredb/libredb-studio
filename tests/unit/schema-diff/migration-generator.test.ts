@@ -750,6 +750,107 @@ describe("generateMigrationSQL: ClickHouse ALTER", () => {
   });
 });
 
+describe("generateMigrationSQL: Cassandra spells ADD and DROP without the COLUMN keyword", () => {
+  // All three measured on 5.0.9. `ALTER TABLE probe.tmp_ok ADD COLUMN extra TEXT` is
+  // "line 1:42 mismatched input 'TEXT' expecting EOF" and `... DROP COLUMN extra` is
+  // "mismatched input 'extra' expecting EOF", while `ADD extra text` and
+  // `DROP extra` both succeed. The keyword is simply not in CQL's ALTER grammar, so
+  // inheriting the shared spelling would emit two statements the server refuses.
+  test("an added column uses CQL's own ADD spelling", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "cassandra");
+
+    expect(sql).toContain('ALTER TABLE "users" ADD "phone" varchar(20);');
+    expect(sql).not.toContain("ADD COLUMN");
+  });
+
+  test("a removed column uses CQL's own DROP spelling", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "cassandra");
+
+    expect(sql).toContain('ALTER TABLE "users" DROP "legacy_col";');
+    expect(sql).not.toContain("DROP COLUMN");
+  });
+
+  test("an added column carries no NOT NULL and no DEFAULT, because CQL has neither", () => {
+    // Measured: `CREATE TABLE probe.t (id UUID PRIMARY KEY, name TEXT NOT NULL)` is
+    // "no viable alternative at input 'NOT'", and the same shape with `DEFAULT 'x'`
+    // or `UNIQUE` fails the same way. A CQL column definition is a name and a type.
+    // The modified-table path is where this is observable, because the created-table
+    // path is declined outright (see the next describe).
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "cassandra");
+
+    expect(sql).toContain('ALTER TABLE "users" ADD "phone" varchar(20);');
+    expect(sql).not.toContain("NOT NULL");
+    expect(sql).not.toContain("DEFAULT");
+  });
+
+  test("no transaction wrapper, because CQL has neither BEGIN nor COMMIT", () => {
+    // Measured on 5.0.9: `BEGIN;` answers "line 1:5 mismatched input ';' expecting
+    // K_BATCH" and `COMMIT;` answers "no viable alternative at input 'COMMIT'". CQL's
+    // only grouping is `BEGIN BATCH ... APPLY BATCH`, which is not a transaction and
+    // takes no DDL. The shared wrapper is gated on `!== "sqlite"` alone, so Cassandra
+    // inherited it the moment the type id existed - putting a statement the server
+    // refuses on the first line of a migration whose ALTERs otherwise run.
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "cassandra");
+
+    expect(sql).not.toContain("BEGIN;");
+    expect(sql).not.toContain("COMMIT;");
+  });
+
+  test("no foreign-key statement, because the clause is not in the grammar", () => {
+    // Measured on 5.0.9: `ALTER TABLE probe.customers ADD CONSTRAINT fk_x FOREIGN KEY
+    // (id) REFERENCES probe.orders (id)` is "line 1:48 mismatched input 'FOREIGN'
+    // expecting EOF", and `DROP CONSTRAINT IF EXISTS fk_x` is "mismatched input 'IF'".
+    //
+    // Reachable even though the provider reports `declaresForeignKeys: false`, which is
+    // what makes this worth a branch: `SchemaDiff.tsx` takes the dialect from the CURRENT
+    // connection and the diff from a snapshot that may belong to a DIFFERENT one, so a
+    // Cassandra connection compared against a PostgreSQL snapshot carries foreign keys
+    // into this generator. The sqlite branch beside it declines the same way.
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "cassandra");
+
+    expect(sql).not.toContain("FOREIGN KEY");
+    expect(sql).not.toContain("ADD CONSTRAINT");
+    expect(sql).not.toContain("DROP CONSTRAINT");
+    expect(sql).toContain("-- Apache Cassandra: Cannot add a foreign key");
+    expect(sql).toContain("-- Apache Cassandra: Cannot drop a foreign key");
+  });
+});
+
+describe("generateMigrationSQL: Cassandra declines CREATE TABLE rather than guess the partitioning", () => {
+  // `src/components/SchemaDiff.tsx` calls this generator with the connection's `type`
+  // and never consults `supportsCreateTable`, so the refusal the provider already
+  // publishes (`cassandra/index.ts`) has to be repeated on this path or the two
+  // contradict each other.
+  //
+  // Measured on 5.0.9 against two probe tables that differ only in one pair of
+  // brackets - `probe.composite_pk` is `PRIMARY KEY ((tenant, day), ts)` and
+  // `probe.pk_flat` is `PRIMARY KEY (tenant, day, ts)`. `SELECT * FROM probe.pk_flat
+  // WHERE tenant = 'a'` is served; the same restriction on `probe.composite_pk`
+  // answers code 2200, "Cannot execute this query as it might involve data filtering
+  // and thus may have unpredictable performance". `system_schema.columns` reports the
+  // same three columns as key columns for both, and `ColumnDiff` keeps only
+  // `targetIsPrimary` - so the diff cannot say which of the two physical layouts was
+  // meant, and the shared `PRIMARY KEY (a, b, c)` serializer would silently pick the
+  // flat one.
+  test("an added table emits a refusal naming the reason, not CREATE TABLE", () => {
+    const sql = generateMigrationSQL(makeAddedTableDiff(), "cassandra");
+
+    expect(sql).toContain('-- Apache Cassandra: Cannot generate CREATE TABLE for "users".');
+    expect(sql).toContain("partition key and clustering columns");
+    // Not the statement, and not the statement commented out either.
+    expect(sql).not.toMatch(/^\s*(--\s*)?CREATE TABLE/m);
+    expect(sql).not.toContain("PRIMARY KEY (");
+    expect(sql).not.toContain('"id" integer');
+  });
+
+  test("the declined table takes its indexes with it, since there is no table to index", () => {
+    const sql = generateMigrationSQL(makeAddedTableDiff(), "cassandra");
+
+    expect(sql).not.toContain("idx_users_email");
+    expect(sql).not.toMatch(/CREATE (UNIQUE )?INDEX/);
+  });
+});
+
 /**
  * Exhaustive by construction, in the spirit of `PICKER_COVERAGE` in
  * `tests/hooks/use-connection-form.test.ts`: a new `DatabaseType` fails typecheck here until it is
@@ -765,6 +866,23 @@ const MODIFIED_COLUMN_COVERAGE: Record<DatabaseType, { label: string; reason: st
   clickhouse: "has-own-branch",
   couchbase: { label: "Couchbase", reason: "schemaless JSON documents" },
   druid: { label: "Apache Druid", reason: "no ALTER TABLE" },
+  // Measured on Trino 476 and NOT an "unsupported" guess: the PostgreSQL branch's own
+  // text is a SYNTAX error here (`ALTER TABLE ... ALTER COLUMN id TYPE varchar` ->
+  // "line 1:50: mismatched input 'TYPE'. Expecting: '.', 'DROP', 'SET'"), and Trino's
+  // own spelling then hands the question to the catalog, which answered "This
+  // connector does not support setting column types". So there is no one statement a
+  // portable migration could carry.
+  trino: { label: "Trino", reason: "the connector" },
+  // Neither grammar has ALTER at all (measured on Elasticsearch 9.1.4 and OpenSearch
+  // 3.8.0), and a mapping's existing field cannot be retyped even outside SQL, so the
+  // comment sends the user to a reindex rather than to a statement.
+  elasticsearch: { label: "Elasticsearch", reason: "reindexing into an index" },
+  opensearch: { label: "OpenSearch", reason: "reindexing into an index" },
+  // Measured on Cassandra 5.0.9, and the reason is the engine's own sentence:
+  // `ALTER TABLE probe.customers ALTER name TYPE blob` answers "Altering column types
+  // is no longer supported". The PostgreSQL branch's text would not even parse
+  // (`ALTER COLUMN` is not in CQL's grammar), so nothing portable can be emitted.
+  cassandra: { label: "Apache Cassandra", reason: "no longer supports altering a column's type" },
   mongodb: { label: "MongoDB", reason: "schemaless" },
   redis: { label: "Redis", reason: "no column definitions" },
   libredb: { label: "LibreDB", reason: "JSON command grammar" },

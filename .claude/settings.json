@@ -1,4 +1,57 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(printf 'opt-fix4.log\\\\n')",
+      "Bash(bun run *)",
+      "Bash(bash /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/surface.sh \"lfm2:24b\" optimize 5)",
+      "Bash(bash /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/publish.sh)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/db-advice.py)",
+      "Bash(python3 /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/column-advice.py)",
+      "Bash(printf 'col-advice.log\\\\n')",
+      "Bash(cat)",
+      "Bash(bash /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/col-advice.sh)",
+      "Bash(python3 /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/enable-col.py)",
+      "Bash(bash /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/col2.sh)",
+      "Bash(bash /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/bottom4.sh)",
+      "Bash(python3 ledger.py arun_20fda0016f17442c93904bc76bdfef41)",
+      "Bash(python3 ledger.py arun_1a9560bf2dbd4a6690a07465a164c90c)",
+      "Bash(timeout 600 python3 count-declines.py)",
+      "Bash(python3 count-declines.py)",
+      "Bash(bash /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/ds14.sh)",
+      "Bash(bash /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/ds7.sh)",
+      "Bash(python3 ledger.py arun_b838b27de67244b8bc6fbb802c42bb25)",
+      "Bash(bash /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/ds7opt.sh)",
+      "Bash(python3 ledger.py arun_2286d696c98848b691204c73aaa16d85)",
+      "Bash(bash /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/stray.sh)",
+      "Bash(bash /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/enum.sh)",
+      "Bash(bash /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/usedup.sh)",
+      "Bash(python3 shapes.py usedup.log)",
+      "Bash(python3 ledger.py arun_a4737f1815c4446eb4b8a57f33b05ec7)",
+      "Bash(python3 shapes.py usedup2.log)",
+      "Bash(python3 ledger.py arun_8201feed0dfb40bc99f8513187450197)",
+      "Bash(python3 empty-signature.py)",
+      "Bash(python3 ledger.py arun_f0bf022881a3490d84b3941338e24cc6)",
+      "Bash(bash near2.sh)",
+      "Bash(python3 plan-losses.py)",
+      "Bash(python3 /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/plan-fixes.py)",
+      "Bash(python3 ledger.py arun_a796c4cdf93e4f1f96c7fe94b3252f6d)",
+      "Bash(python3 ledger.py arun_415bf11301df44399ecaeb4d40f2c59c)",
+      "Bash(python3 ledger.py arun_20e544af6881494c90cc646635dab752)",
+      "Bash(python3 turn-gaps.py)",
+      "Bash(bash at90b.sh)",
+      "Bash(python3 which-dropped.py)",
+      "Bash(python3 timeout-cost.py)",
+      "Bash(git rev-list *)",
+      "Bash(git diff *)",
+      "Bash(python3 /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/conflict-scan.py)",
+      "Bash(python3 /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/resolve-merge.py)",
+      "Bash(python3 /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/brace-walk.py)",
+      "Bash(python3 /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/drift.py)",
+      "Bash(python3 /private/tmp/claude-501/-Users-yusuf-projects-libredb-libredb-studio/03abe938-f496-4f4e-9eb6-cdcf04067647/scratchpad/find-missing.py)",
+      "Bash(git worktree *)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -6,8 +59,8 @@
         "hooks": [
           {
             "type": "command",
-            "if": "Bash(git commit*)",
             "command": "if bun run lint && bun run typecheck && bun run test && bun run build; then exit 0; else echo 'Pre-commit checks failed (lint / typecheck / test / build) — fix before committing.' >&2; exit 2; fi",
+            "if": "Bash(git commit*)",
             "timeout": 900,
             "statusMessage": "Pre-commit checks: lint, typecheck, test, build…"
           }

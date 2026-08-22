@@ -12,6 +12,10 @@ const mockBuildAuthorizationUrl = mock(
   (_config: unknown, _params: Record<string, string>) =>
     new URL("https://provider.com/authorize?state=mock-state-value"),
 );
+const mockBuildEndSessionUrl = mock(
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  (_config: unknown, _params: Record<string, string>) => new URL("https://provider.com/logout"),
+);
 const mockClaims = mock(() => ({ sub: "user-123", email: "user@test.com" }) as Record<string, unknown> | undefined);
 const mockAuthorizationCodeGrant = mock(async () => ({
   claims: mockClaims,
@@ -25,6 +29,7 @@ mock.module("openid-client", () => ({
   randomState: mockRandomState,
   randomNonce: mockRandomNonce,
   buildAuthorizationUrl: mockBuildAuthorizationUrl,
+  buildEndSessionUrl: mockBuildEndSessionUrl,
   authorizationCodeGrant: mockAuthorizationCodeGrant,
   ClientSecretPost: mockClientSecretPost,
 }));
@@ -225,42 +230,74 @@ describe("buildLogoutUrl", () => {
     process.env.OIDC_ISSUER = "https://libredb.eu.auth0.com";
     process.env.OIDC_CLIENT_ID = "test-client-id";
     process.env.OIDC_CLIENT_SECRET = "test-client-secret";
+    mockDiscoveryFn.mockClear();
+    mockBuildEndSessionUrl.mockClear();
+    // mockClear() drops recorded calls but keeps whatever return value a previous test queued, so
+    // the default is re-established here: otherwise a mockReturnValue set in one test silently
+    // decides what a later test sees, and the suite's outcome depends on declaration order.
+    mockBuildEndSessionUrl.mockReturnValue(new URL("https://provider.com/logout"));
+    resetDiscoveryCache();
   });
 
   afterEach(() => {
     Object.assign(process.env, originalEnv);
+    resetDiscoveryCache();
   });
 
-  test("builds Auth0 logout URL with /v2/logout", () => {
-    const url = buildLogoutUrl("http://localhost:3000/login");
+  test("builds Auth0 logout URL with /v2/logout", async () => {
+    const url = await buildLogoutUrl("http://localhost:3000/login");
     expect(url).not.toBeNull();
     expect(url).toContain("/v2/logout");
     expect(url).toContain("client_id=test-client-id");
     expect(url).toContain("returnTo=http%3A%2F%2Flocalhost%3A3000%2Flogin");
   });
 
-  test("builds generic OIDC logout URL for non-Auth0 issuers", () => {
+  test("uses the discovered end-session endpoint instead of deriving one from the issuer", async () => {
     process.env.OIDC_ISSUER = "https://keycloak.example.com/realms/myrealm";
-    const url = buildLogoutUrl("http://localhost:3000/login");
+    const returnTo = "http://localhost:3000/login";
+    // Deliberately a BARE endpoint, with no query string and an origin that is not the issuer's:
+    // the assertions below then describe what buildLogoutUrl() did, not what this fixture spelled out.
+    mockBuildEndSessionUrl.mockReturnValue(new URL("https://logout.example.net/custom/end-session"));
+
+    const url = await buildLogoutUrl(returnTo);
     expect(url).not.toBeNull();
-    expect(url).toContain("/protocol/openid-connect/logout");
-    expect(url).toContain("client_id=test-client-id");
-    expect(url).toContain("post_logout_redirect_uri=");
+    // The endpoint comes from Discovery, not from the issuer: neither the issuer's origin nor its
+    // /realms/myrealm path may appear in the result. That is the regression this test exists for.
+    const parsed = new URL(url!);
+    expect(parsed.origin).toBe("https://logout.example.net");
+    expect(parsed.pathname).toBe("/custom/end-session");
+    // The only logout parameter this module owns. `client_id` is NOT asserted on the URL: the real
+    // buildEndSessionUrl() injects it (openid-client build/index.js sets it when absent), and that
+    // function is mocked here — asserting it would only re-assert the mock's own output.
+    expect(mockBuildEndSessionUrl).toHaveBeenCalledWith("mock-oidc-config", {
+      post_logout_redirect_uri: returnTo,
+    });
   });
 
-  test("builds Zitadel logout URL", () => {
+  test("returns null when the provider does not advertise an end-session endpoint", async () => {
+    process.env.OIDC_ISSUER = "https://provider.example.com/tenant";
+    mockBuildEndSessionUrl.mockImplementationOnce(() => {
+      throw new Error("authorization server metadata does not contain an end_session_endpoint");
+    });
+
+    const url = await buildLogoutUrl("http://localhost:3000/login");
+
+    expect(url).toBeNull();
+  });
+
+  test("builds Zitadel logout URL", async () => {
     process.env.OIDC_ISSUER = "https://my-instance.zitadel.cloud";
     process.env.OIDC_ROLE_CLAIM = "urn:zitadel:iam:org:project:roles";
-    const url = buildLogoutUrl("http://localhost:3000/login");
+    const url = await buildLogoutUrl("http://localhost:3000/login");
     expect(url).not.toBeNull();
     expect(url).toContain("/oidc/v1/end_session");
     expect(url).toContain("client_id=test-client-id");
     expect(url).toContain("post_logout_redirect_uri=");
   });
 
-  test("returns null when OIDC config is missing", () => {
+  test("returns null when OIDC config is missing", async () => {
     delete process.env.OIDC_ISSUER;
-    const url = buildLogoutUrl("http://localhost:3000/login");
+    const url = await buildLogoutUrl("http://localhost:3000/login");
     expect(url).toBeNull();
   });
 });

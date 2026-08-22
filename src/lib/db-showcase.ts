@@ -1,0 +1,88 @@
+import { DB_UI_CONFIG, type DBIcon } from "@/lib/db-ui-config";
+import { isExternalDatabaseType } from "@/lib/db/compatibility";
+import type { DatabaseType } from "@/lib/types";
+
+/**
+ * Display rank for the marketing surfaces (the login hero's "Supported Databases"
+ * block, issue #425). Typed `Record<DatabaseType, number>`, so a further member of the
+ * union fails `bun run typecheck` on the missing key instead of quietly never being
+ * shown - the same compile-time-exhaustive trick the connection picker's coverage map
+ * uses in tests/hooks/use-connection-form.test.ts.
+ *
+ * The order is recognisability-first: an evaluator scanning the login page should meet
+ * the names they already know before the ones they do not. It is deliberately NOT the
+ * connection picker's order (`selectableTypes`, src/hooks/use-connection-form.ts),
+ * which groups by connect-form affordance instead. The two lists answer different
+ * questions, so they are not unified; keep both when adding a provider.
+ */
+export const SHOWCASE_RANK: Record<DatabaseType, number> = {
+  postgres: 0,
+  mysql: 1,
+  sqlite: 2,
+  mongodb: 3,
+  redis: 4,
+  oracle: 5,
+  mssql: 6,
+  // The two search engines sit here, ahead of the analytical stores: Elasticsearch is
+  // one of the best-known names on this page, and OpenSearch reads as its sibling to
+  // anyone who knows it - which is also what the code says, since the two type-ids
+  // share one HTTP SQL transport (#424).
+  elasticsearch: 7,
+  opensearch: 8,
+  // Ahead of the analytical stores and behind the search pair: Cassandra is a
+  // first-rank name for anyone who has met a wide-column store, and it is the only
+  // one of those on this page.
+  cassandra: 9,
+  couchbase: 10,
+  clickhouse: 11,
+  druid: 12,
+  // Ahead of the embedded store and behind the three analytical ones: Trino is the
+  // name an evaluator is most likely to already know out of this last group, because
+  // it is the engine a data platform is usually met THROUGH rather than one more
+  // store to choose between.
+  trino: 13,
+  // Last on purpose: the embedded store is the least recognisable name here. It is
+  // still shown - it is a shipped provider with a doc (docs/providers/libredb.md), an
+  // icon and a slot in the connection picker, so omitting it would make the login page
+  // contradict the app (issue #425, step 2).
+  libredb: 14,
+};
+
+/**
+ * Every configured engine, in showcase order. Derived from `DB_UI_CONFIG`'s own keys
+ * rather than written out a second time, so an engine cannot be dropped from the page
+ * by being forgotten in a literal array - only by being removed from the config.
+ */
+export const SHOWCASE_DATABASE_ORDER: readonly DatabaseType[] = (Object.keys(DB_UI_CONFIG) as DatabaseType[]).sort(
+  (a, b) => SHOWCASE_RANK[a] - SHOWCASE_RANK[b],
+);
+
+export interface ShowcaseDatabase {
+  type: DatabaseType;
+  label: string;
+  icon: DBIcon;
+  color: string;
+  /**
+   * True for the embedded store, false for a database the user already runs.
+   *
+   * The showcase shows all fifteen providers while the hero claims fourteen engines,
+   * and this flag is how the page carries that difference without any surface typing
+   * the word "libredb": the pill it marks is the one the count leaves out.
+   */
+  embedded: boolean;
+}
+
+/**
+ * The engine list a marketing surface renders: brand icon, label and accent colour
+ * taken straight from `DB_UI_CONFIG`, so no engine name is ever typed into JSX.
+ * Returns a fresh array so a caller cannot mutate the shared order.
+ */
+export function listShowcaseDatabases(): ShowcaseDatabase[] {
+  return SHOWCASE_DATABASE_ORDER.map((type) => ({
+    type,
+    label: DB_UI_CONFIG[type].label,
+    icon: DB_UI_CONFIG[type].icon,
+    color: DB_UI_CONFIG[type].color,
+    embedded: !isExternalDatabaseType(type),
+  }));
+}

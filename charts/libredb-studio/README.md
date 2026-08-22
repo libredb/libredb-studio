@@ -2,7 +2,7 @@
 
 [![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio)](https://artifacthub.io/packages/search?repo=libredb-studio)
 
-Web-based SQL IDE for cloud-native teams supporting PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, and Redis.
+Web-based SQL IDE for cloud-native teams supporting fourteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra.
 
 ## Prerequisites
 
@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.36 \
+  --version 0.1.45 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -293,6 +293,73 @@ helm install libredb libredb/libredb-studio \
   # ... secrets omitted for brevity
 ```
 
+### IPv6 and dual-stack
+
+Dual-stack used to be two settings. Since chart **0.1.42** it is one: the address families the
+**Service** is allocated from. The address the **pod** listens on is no longer a values decision —
+the ConfigMap writes an empty `HOSTNAME`, and the container resolves its own address at startup,
+preferring `::`:
+
+```bash
+helm install libredb libredb/libredb-studio \
+  --set service.ipFamilyPolicy=PreferDualStack
+```
+
+The container does not assume `::` is dual-stack, it proves it: it binds a throwaway listener on
+`::` on an ephemeral port, connects to it over `127.0.0.1`, and keeps `::` only if that connection
+is accepted. It falls back to `0.0.0.0` in two cases — the namespace has no IPv6 at all, or the
+`::` listener really did turn out to be IPv6-only *and* a non-loopback IPv4 address exists that
+would otherwise lose reachability. One line in the pod log names the address it chose and why, so
+`kubectl logs` answers "what is it listening on" without a shell.
+
+`config.bindAddress` overrules the resolver when you would rather state it than leave it to the
+image:
+
+| `config.bindAddress` | Effect |
+|---|---|
+| `""` (default) | the container resolves it, preferring a verified dual-stack `::` |
+| `"::"` | force a dual-stack listener, no probe |
+| `"0.0.0.0"` | pin the container to IPv4 — what every chart before 0.1.42 did unconditionally |
+
+`extraEnv` still wins over `config.bindAddress`: it renders an explicit `env` entry, which
+overrides the ConfigMap key of the same name. As in the `extraEnv` examples further down, a second
+variable needs its own index — reusing `extraEnv[0]` overwrites this one.
+
+**The one pairing that breaks is now a deliberate one.** Kubernetes never checks what address the
+container bound: on a dual-stack cluster the pod has an IPv6 address either way, so the IPv6
+EndpointSlice is populated and kube-proxy routes to it, where an IPv4-only listener answers with a
+TCP RST. Kubelet probes only the primary podIP, so the pod stays `Ready` and the IPv6 path is
+silently dead. That is unreachable by default now; it needs an explicit IPv4 pin, through
+`config.bindAddress` or an `extraEnv` `HOSTNAME`. The install notes warn on exactly that
+combination.
+
+**Upgrading from 0.1.40 or earlier.** A release whose Service is single-stack IPv4 is unaffected in
+practice — the pod answers on IPv4 as before, through the same socket. A release with a dual-stack
+or IPv6 Service starts answering on its IPv6 address, which is the point of the change but is still
+a change: on a cluster where that address is reachable from further away than the IPv4 one, review
+your NetworkPolicy before upgrading, or set `config.bindAddress=0.0.0.0` to keep today's behaviour.
+Pinning `image.tag` to an older release is safe too: those images treat an empty `HOSTNAME` as
+unset and bind `0.0.0.0`, exactly as they do today.
+
+`service.ipFamilyPolicy` takes `SingleStack`, `PreferDualStack` or `RequireDualStack`;
+`service.ipFamilies` pins the order explicitly, e.g. `[IPv6, IPv4]`, and needs a dual-stack policy
+alongside it or the chart refuses to render. Both are empty by default, so the cluster's own
+default applies and existing installs upgrade to an unchanged Service. Three cluster-side rules are
+worth knowing before you set them:
+
+- `RequireDualStack` fails to create on a single-stack cluster, and naming a family the cluster
+  does not have in `service.ipFamilies` is rejected even under `PreferDualStack`.
+- The first entry of `service.ipFamilies` is the primary family — it is what `spec.clusterIP` is
+  allocated from — and it is immutable. Reordering the list on a live Service is rejected; the
+  Service has to be deleted and recreated.
+- A `PreferDualStack` Service is not retroactively upgraded when the cluster later gains
+  dual-stack. Adding the second family is a deliberate change, and removing it again requires
+  setting `service.ipFamilyPolicy=SingleStack` in the same upgrade.
+
+With `service.type: LoadBalancer` these fields govern the cluster IPs only. Whether the external
+address is dual-stack is up to the cloud load-balancer controller, several of which want their own
+annotation for it.
+
 ## Rate Limiting Across Replicas
 
 Studio's built-in rate limiter (login attempts, AI endpoints, and every database-reaching route —
@@ -432,6 +499,7 @@ helm uninstall libredb
 | `secrets.userEmail` | User email | `user@libredb.org` |
 | `secrets.userPassword` | User password (optional; enables the non-admin account) | `""` |
 | `secrets.existingSecret` | Use existing Secret | `""` |
+| `config.bindAddress` | Container bind address (`HOSTNAME`): empty lets the image resolve one, preferring a verified dual-stack `::`; `::` forces it; `0.0.0.0` pins IPv4 | `""` |
 | `config.storageProvider` | Storage: local, sqlite, postgres | `local` |
 | `config.llmProvider` | AI provider | `""` |
 | `agent.enabled` | Explicit off-switch for the agent runtime. Unset writes nothing and the app derives availability (a configured model plus a writable ledger); `false` writes `LIBREDB_AGENT_ENABLED=false`; `true` declines the off-switch but cannot conjure a model. Rendering fails when an agent could run above one replica | unset |
@@ -441,6 +509,8 @@ helm uninstall libredb
 | `persistence.fixPermissions` | Chown the mounted volume to `runAsUser:fsGroup` in a root init container (hostPath / static PVs the kubelet does not `fsGroup`). Rendering fails when the OpenShift security-context adaptation is active - restricted-v2 rejects a root container and the UID/GID come from the namespace range there | `false` |
 | `service.type` | Service type | `ClusterIP` |
 | `service.port` | Service port | `80` |
+| `service.ipFamilyPolicy` | Service address families: `SingleStack`, `PreferDualStack` or `RequireDualStack`; empty renders no field and leaves the cluster default in place | `""` |
+| `service.ipFamilies` | Explicit family order, e.g. `[IPv4, IPv6]`; entry 0 is the immutable primary family. Two entries require a dual-stack `service.ipFamilyPolicy` (the chart refuses to render otherwise) | `[]` |
 | `ingress.enabled` | Enable Ingress | `false` |
 | `route.labels` | Labels added to every enabled route (a per-route label with the same key wins); `labels` is therefore a reserved key name and cannot be a route name | `{}` |
 | `route.annotations` | Annotations added to every enabled route (a per-route annotation with the same key wins); reserved key name, as `route.labels` | `{}` |

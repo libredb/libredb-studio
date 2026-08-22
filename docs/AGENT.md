@@ -30,7 +30,14 @@ Three properties frame everything below, and each of them is load-bearing rather
   anywhere.** They are the only providers implementing `queryReadOnly` (`postgres.ts:870`,
   `sqlite.ts:397`), so any other engine fails profiled acquisition with
   `PROFILE_UNSUPPORTED_BY_PROVIDER` and the run ends `engine-unsupported`
-  (`src/lib/agent/runtime.ts:199`). The restriction is a property of the **execution profile**, not
+  (`src/lib/agent/runtime.ts:199`). Surfaces that must *state* that reach — the login hero does,
+  since #425 — read `AGENT_EXECUTION_ENGINES` (`src/lib/agent/engine-support.ts`), which mirrors the
+  gate rather than replacing it: the factory keeps probing `typeof provider.queryReadOnly`, and
+  `tests/unit/lib/agent/engine-support.test.ts` measures the provider prototypes so the constant
+  cannot go stale against them in either direction. It is client-safe by construction (it imports
+  only `DatabaseType`), and it deliberately says nothing about plan mode, which executes nothing
+  anywhere, or about `operations`, which runs everywhere.
+  The restriction is a property of the **execution profile**, not
   of the factory: `agent-read-only` sends model-authored statements and is served only where the
   engine can bound one, `agent-handover` sends the statement a run already answered with and takes
   the same gate for the same reason, while `agent-operations` sends no statement at all — it calls
@@ -41,7 +48,7 @@ Three properties frame everything below, and each of them is load-bearing rather
   on which of its two readings it takes**: `agent-read-only` on the dialects `CATALOG_PLANS` serves,
   because it composes catalog statements, and `agent-operations` everywhere else, because asking a
   provider to describe its own schema sends nothing an engine has to plan. That is what lets grounding
-  reach the nine engines the read-only profile refuses, and it still cannot narrow any workflow's
+  reach the twelve the read-only profile refuses, and it still cannot narrow any workflow's
   reach: the profile whose acquisition would be refused is never the profile that capture asks for. Everything else about
   the three acquisitions is identical: the same `readOnly: true` open, the same optional
   least-privilege `agentUser`, and the same profiled cache, so neither an operations run nor an
@@ -264,7 +271,7 @@ from *answered* — a run that stopped because the model composed a cited report
 because the model had nothing more to say are both `succeeded`, and only this says which. The rail
 reads it and states the difference. The STATUS word is deliberately not the thing that carries it —
 [Whether the run answered](#whether-the-run-answered) is the field that does, beside the status
-rather than instead of it (B24).
+rather than instead of it.
 
 `stopReason` sits beside `reason`, which says why a drive died before or outside the loop. They
 answer different questions and are mutually exclusive in practice; when both are present, `reason`
@@ -350,7 +357,7 @@ What a grounded plan run is given, and where each part comes from:
   which process happened to have read a catalog first. They are read from what the engine already
   holds — `pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite — so no column
   is scanned and no value is read out of any row. `ESTIMATE_BUILDERS` serves those two dialects and
-  nothing else, and #414 added no engine to it: on the other nine `readSchemaStatistics` answers
+  nothing else, and #414 added no engine to it: on the other twelve `readSchemaStatistics` answers
   `DIALECT_HAS_NO_STATISTICS` — *"this engine does not hold statistics this run knows how to read"* —
   so **a known schema with no statistics is now the ORDINARY combination rather than a rare one**, and
   the two sentences the run is handed agree: the inventory is a record of what exists, and every
@@ -471,7 +478,7 @@ Three consequences worth stating plainly, because each is easy to assume the oth
 
 1. **A plan run costs statements now.** On PostgreSQL and SQLite grounding is catalog reads plus one
    statistics read (two on SQLite: the `sqlite_stat1` availability probe has to be its own statement,
-   because SQLite resolves table names at prepare time). On the other nine engines it is **one** — the
+   because SQLite resolves table names at prepare time). On the other twelve it is **one** — the
    single `db.schema.read` call, with no statistics read to add, since those dialects hold none this
    run knows how to read. They come out of the same per-run statement budget every other read does,
    and they are audited the same way. The ledger-reuse path saves the schema reading and deliberately
@@ -529,7 +536,7 @@ not in the inventory. Since #414 the WORDING varies with the engine's `queryLang
 not: on a `json` engine the run is asked for one statement or command in that engine's own language —
 a MongoDB aggregation rather than a SELECT — and told that this engine speaks no SQL, while the tag
 stays the canonical type-id in both arms. That is deliberate rather than an oversight: `isQueryFenceTag`
-is a total record over `DatabaseType`, so all eleven ids pass it, whereas a draft the model fenced as
+is a total record over `DatabaseType`, so all fourteen ids pass it, whereas a draft the model fenced as
 ```` ```javascript ```` passes nothing and records no `plan-statement-drafted` event at all — the run
 would score as having drafted nothing while the user is looking at a statement. A run that cannot answer from the
 inventory takes the other legitimate ending: a line beginning `NO STATEMENT:` saying exactly what is
@@ -717,7 +724,7 @@ Two consequences worth stating:
   composed path has and the provider path cannot: reads audited statement by statement rather than as
   one opaque call; foreign keys, which no provider can report on an engine that declares none; and
   SQLite's inventory, which is parsed out of the DDL text the engine stored and which its provider
-  does not expose in the same shape. Collapsing the other nine onto the composed one is the thing
+  does not expose in the same shape. Collapsing the other twelve onto the composed one is the thing
   #414 exists because nobody can do: a catalog statement has to be written per dialect and verified
   against a live server, and until it is, refusing the dialect was the honest answer and reading the
   provider is a better one.
@@ -1692,7 +1699,7 @@ Two honest limits, both deliberate:
   own words to decide whether the model answered would be grading the answer with the
   answer. What is checked is what the claims **rested on**, which is a fact about the run.
   A citation the ledger cannot resolve is skipped rather than assumed empty.
-- **The verdict is on the ledger, beside the status rather than instead of it** (B24, ratified
+- **The verdict is on the ledger, beside the status rather than instead of it** (ratified
   2026-08-13). `run-finished` carries an optional `goalVerdict`, written by
   `AgentRunService.finalize` — the one method every terminal path goes through, including the
   cancellation checkpoint that ends a run without returning to the loop. The status vocabulary is
@@ -1778,7 +1785,7 @@ model passed the capability probe**; for anybody else the answer is that there i
 | --- | --- | --- |
 | **Any AI at all, for an EMBEDDED user** — one working panel and one exported component, which is less than "both tabs worked". The embedded shell rendered both TABS regardless of `features.ai`, and only Autopilot was behind them: `AIAutopilotPanel` had no feature gate, so a libredb-platform user had a fully working Autopilot panel posting to `/api/db/monitoring` and `/api/ai/autopilot` on the HOST's origin. The NL2SQL tab rendered an EMPTY PANE under the default `features.ai: false` — the shell passed `isOpen={features.ai ? isNL2SQLOpen : false}` and the panel returns `null` when it is not open — so what an embedded host lost there is `NL2SQLPanel` itself, exported from `@libredb/studio/components` for a host to mount on its own, plus the tab for a host that had switched `features.ai` on. | Nothing. The rail lives in the standalone shell only; the package carries no agent surface, `WorkspaceFeatures` deliberately gained no agent field, and no package entry point transitively imports `src/lib/agent`. For an embedded user every "what a run does instead" cell below is false, because there is no run. | The removal itself (`5bbea51`, which deletes the export, both render arms and the flag), read against the code it deleted: `git show 5bbea51^:src/workspace/StudioWorkspace.tsx` (the two `features.ai ?` props), `git show 5bbea51^:src/components/NL2SQLPanel.tsx` (`if (!isOpen) return null`), `git show 5bbea51^:src/workspace/types.ts` (`DEFAULT_WORKSPACE_FEATURES.ai: false`); `tests/unit/agent-package-boundary.test.ts`; [The surface in the app](#the-surface-in-the-app). |
 | **A TOOLLESS model drove both panels.** Each posted a prompt and rendered what came back, so any configured model produced an answer — including one that cannot call a tool, which is what a small local `ollama` model usually is. | An agent run is refused before it opens: the start path probes the model, and an established incapability is a `422` naming what could not be established. What such a model can still drive is planning mode, which is toolless by contract: the model there is handed no tool, runs no statement of the user's, writes nothing, and drafts a statement for the user to run themselves. | `src/lib/agent/capability-gate.ts`; `tests/isolated/agent-capability-gate.test.ts`; [What a refused model looks like in the app](#what-a-refused-model-looks-like-in-the-app). |
-| **One click that RAN the model's SQL.** NL2SQL's Run and Autopilot's Execute pushed model-authored SQL — including DDL — straight into the studio's execution path. | The rail hands a statement to the **editor** and never runs it: an explicit "Apply to editor" on a drafted statement, a recommendation, or a plan run's drafted statement. Nothing in the runtime executes a proposed statement. A plan run's statement is offered through its own card rather than the shared control, because that card is also what marks a statement the guard did not classify as read-only and names the tables the inventory does not hold — the marking and the offer have to arrive together. | `src/components/agent/timeline.ts` — the `statement-drafted` and `recommendation` entries carry `applySql`, and `plan-statement-drafted` deliberately does not; `src/components/agent/AgentRail.tsx` — the plan statement card; `tests/evals/query-optimization.test.ts` — the recommendation is recorded and no `CREATE INDEX` reaches the database. |
+| **One click that RAN the model's SQL.** NL2SQL's Run and Autopilot's Execute pushed model-authored SQL — including DDL — straight into the studio's execution path. | The rail hands a statement to the **editor** and never runs it: an explicit "Apply to editor" on a drafted statement, a recommendation, or a plan run's drafted statement. Nothing in the runtime executes a proposed statement. A plan run's statement is offered through the answer card rather than the shared control, because that card is also what marks a statement the guard did not classify as read-only and names what the inventory does not hold, in the engine's own noun — the marking and the offer have to arrive together, and since the 2026-08-21 redesign that offer exists in exactly one place. | `src/components/agent/timeline.ts` — the `statement-drafted` and `recommendation` entries carry `applySql`, and `plan-statement-drafted` deliberately does not; `src/components/agent/AnswerCard.tsx` — the marked hand-off, and `AgentRail.tsx` withholding every other one; `tests/evals/query-optimization.test.ts` — the recommendation is recorded and no `CREATE INDEX` reaches the database. |
 | **Proposed a statement the run never sent.** NL2SQL's product was a statement, whatever the model wrote. | Only `recommend_change` proposes an unexecuted statement; it accepts `index` or `rewrite`, the statement must match the card it is filed under, and it belongs to the `query-optimization` workflow. An investigation — what a plain-English question opens — cannot propose anything. | `src/lib/agent/tools.ts` (`recommendationSchema`, `matchesCard`, `QUERY_OPTIMIZATION_TOOLS`); `tests/evals/legacy-surface-coverage.test.ts`. |
 | **Read live monitoring.** Autopilot's whole input came from `/api/db/monitoring`: slow queries, index usage, table statistics, cache and connection metrics. | **Restored, and bounded.** `inspect_operations` reads the same provider methods under the `db.operations.read` descriptor, and it reaches ONE workflow: a run opened to Operate. An investigation or an assessment is still offered nothing that reads monitoring, so "the agent can read monitoring" is only true of that workflow. The two deferrals that tracked this — the monitoring half of the M2 tooling entry, and the assessment's missing monitor snapshot — are closed and removed from the backlog. | `src/lib/agent/tools.ts`; `tests/evals/legacy-surface-coverage.test.ts` — the members and the operations they may name are asserted as a set, so a monitoring member under ANY name has to land there; `tests/evals/operations.test.ts` — the arc, on an engine that answers no statement. |
 | **A free-form markdown report**, opening with a performance score out of 100 and closing with configuration advice. | A report is claims, each citing an artifact this run read or the snapshot it captured, verified against the run's own ledger before it is recorded. A number cited to nothing cannot be reported — the citation is what is checked, never the claim's text, so a fabricated score citing a real artifact would be accepted. | `src/lib/agent/tools.ts` (`composeReportTool`); `tests/evals/legacy-surface-coverage.test.ts` — an invented correlation id is refused and the run ends `unanswered (no-report)`. |
@@ -1849,14 +1856,161 @@ mobile layout. Visibility is discovered at runtime from `GET /api/agent/config`:
 unavailable nothing renders and no further agent request is made. The hook reads `body.enabled ===
 true` and nothing else — a refusal, an unreachable server, a body of another shape and the richer
 `{enabled: false, reason, detail}` body all resolve to absent. The rail is imported statically, like
-every other component in this repository, so the six client modules under `src/components/agent/` and
+every other component in this repository, so every client module under `src/components/agent/` and
 `src/hooks/use-agent-capability.ts` — plus `execution-policy.ts`, whose ceilings the meter reads as
 values — are in the standalone bundle either way; what availability governs is what renders and what
 runs, not what was bundled.
 
-The rail shows the run's semantic timeline, a stop control, evidence citations, and a budget meter.
-What each of those says to a user, in the words it actually renders, is
-[`docs/AGENT_GUIDE.md`](./AGENT_GUIDE.md). Two rules govern it:
+The rail shows, from the top down: a **safety strip** stating what the open run executes — or, before
+one, what the selected mode would — the
+objective, the start controls, a folded **Run details** holding the budget meter, and a scroll area
+whose first block is the run's **answer** — the drafted statement or the report with its evidence
+citations — and whose remainder is the semantic timeline. There is no second report section under the
+transcript: the card is the answer. What each of those says to a user, in the words it actually
+renders, is [`docs/AGENT_GUIDE.md`](./AGENT_GUIDE.md).
+
+**The safety strip is one module's reading, in four levels** (`src/lib/agent/posture.ts`, rendered by
+`src/components/agent/SafetyStrip.tsx`). Each level is a pill and a qualifier on one line, and both
+halves are the posture's: the strip owns the palette and the popover and writes no sentence of its
+own.
+
+| Level | The pill says | The qualifier beside it | When |
+| --- | --- | --- | --- |
+| `safe` | *Executes nothing it drafts* | *one schema read grounds it, nothing else reaches the database* | Plan mode, on every engine, with or without the hand-over |
+| `reads` | *Reads only* | the policy row's own per-statement row cap and timeout, *enforced by the engine* | Agent mode on an engine in `AGENT_EXECUTION_ENGINES`, hand-over not ticked |
+| `widened` | *Reads only, and one statement in your editor* | `AGENT_HANDOVER_BUDGET`'s row cap, *no time limit, same read-only session* | The same, with the hand-over consented for the run being opened |
+| `blocked` | *Cannot execute on `<engine>`* | *plan mode drafts here, and the operations workflow still runs* | Agent mode on any other engine |
+| `blocked` | *Cannot execute yet* | *no connection is resolved, so no engine has been established* | Agent mode with no connection resolved |
+
+Four levels and five readings: `blocked` covers both arms that execute nothing and have no bound to
+state, and they stay separate arms because "has no read-only statement path" is a claim about an
+engine, which a panel that has resolved no connection has not seen. Not one engine name and not one
+figure is typed in the module — the names come from `AGENT_EXECUTION_ENGINES` through
+`getDBConfig().label` and the figures from the policy rows, which is the rule `hero-proof.tsx`
+follows and #425 is the record of what typing them costs. `blocked` also takes no hue of its own
+(`fg-muted`): nothing executes and there is nothing to widen, so it is a dead end rather than a
+hazard, and the amber pre-start card below — which renders for an unsupported engine and not for an
+unresolved connection (`engineUnsupported`, `AgentRail.tsx`) — is where that reading is alerted.
+
+**The qualifier is visible, and that is a claim rather than a layout choice.** A bare "executes
+nothing" overclaims: on the dialects `CATALOG_PLANS` serves (`src/lib/agent/context-snapshot.ts`)
+plan mode's grounding capture IS a catalog read, and `engine-support.ts` says in its own header that
+copy compressing these facts overclaims. So both halves sit on the same line, the row wraps rather
+than truncating — a qualifier cut off mid-clause is the same overclaim with an ellipsis on it — and
+the ⓘ carries the whole claim rather than the missing half. That claim node is rendered whether or
+not the popover is open (`sr-only` while shut, and the strip's `aria-describedby` target either way),
+so the ⓘ is never the only route to it.
+
+Both `blocked` readings are presentation of a refusal the provider factory already decides, and they
+gate nothing — **Start** stays live, because the `operations` workflow sends no statement and runs on
+every engine. What the strip does not do is make the offered-then-withdrawn run impossible: an agent
+run started there still spends a model turn before it ends `engine-unsupported`, which is what is
+left of B38.
+
+**One module, two questions, because with a run open they stop having the same answer.** The strip
+says what the OPEN run does, and both of its axes come off that run (`describedMode` and
+`handoverConsented`, `AgentRail.tsx`): the mode from `AgentRunTimeline.mode`, which
+`foldLedgerEntries` reads off the run's header or off `run-started`, and the hand-over from what the
+open request carried (`openedWithHandover`). Neither may come from the control beside it, and each
+fails differently if it does. The mode toggle is frozen only while a start is HELD — deliberately,
+because it decides the next run — so it is live again the moment this one opens, and reading it there
+let one click on **Plan** restate a running agent run as *Executes nothing it drafts*.
+`openedWithHandover` is a record and is never cleared, so it is gated on the run still being open, or
+the strip goes on promising *one statement in your editor* after the widened run has ended while the
+next consent step defaults the tick to OFF. The same reading writes the workflow-and-mode line under
+the objective, so the panel's two descriptions of one run cannot disagree.
+
+The amber engine notice asks the other question — what pressing Start would do — and takes the
+SELECTION (`selectionPosture`): the toggle's mode, and the hand-over tick only where a consent step is
+actually standing. The notice renders *on* the selected mode and offers the way out of that selection,
+so the run's reading there would put plan mode's body inside a card whose whole subject is the engine
+agent mode cannot execute on. The two readings coincide whenever no run is open, which is most of the
+panel's life; they differ in the one state where a box and a run both exist, an objective being edited
+beside a run that is still going.
+
+A muted line under **Start** used to ask that question in words, and it is gone: it printed the
+strip's own headline and qualifier joined, about 200 pixels below the strip (L7, measured 2026-08-21),
+so one 384-pixel panel carried the same sentence twice. The strip is permanent and states it for the
+selected mode already. The login hero's claim — *plan mode drafts one statement, runs nothing* /
+*agent mode runs read-only on \<engines\>* — was the considered alternative and was not taken: it
+describes both modes at once, for a visitor who has selected neither.
+
+The strip exists because the rail answered this question in six places at once — a mode description, a
+consent paragraph, a budget note, a guard line, a refusal and a claim under the answer — and a user
+comparing two of them could not tell which one bounded the run.
+
+Three rules govern the layout, beyond the two below. The **answer card is a second rendering of
+entries the ledger already holds** — no field on it is one a run did not record. It has one state per
+ending the ledger can reach and no state that is not one of them: a plan run's drafted statement with
+what the guard made of it (`agent-answer-plan`), an agent run's quoted claim with its citations
+(`agent-answer-report`), the step a live run is on with its spend (`agent-answer-running`), a plan run
+that drafted nothing (`agent-answer-refused`) and a run that failed having produced nothing
+(`agent-answer-failed`). Which of them it is, is decided by the run's **product and not by its
+status**, in the one exported reading `answerCardState` — a run can end `failed` holding a drafted
+statement or a composed report, because `conclude()` records both before `service.finish()` and is
+called with `failed` for a model timeout, an exhausted deadline and the turn ceiling. The ending is
+then stated beside the product, so `agent-answer-failed` is the whole card only on a run that
+produced nothing. The transcript withholds its copies from that same reading rather than from the
+ledger: the rail asks the card what it is rendering, so a suppression cannot outlive what it
+de-duplicates. The
+**`Apply to editor` control for a run's own statement exists exactly once**, in that card, carrying the
+accessible name `applyStatementName` builds; the transcript entry it duplicates keeps its headline,
+its timestamp and a one-line guard summary and reprints neither the statement nor the guard's
+paragraph, because an unmarked control against the statement is the silent hand-off the marking exists to
+prevent.
+
+**What that suppression covers was settled by driving the built rail, not by reading it** (the four
+runs of 2026-08-21, against live PostgreSQL, live MongoDB and live Gemini). Four things it did not
+cover, each measured:
+
+- the whole report was rendered **twice** — the card and a surviving `agent-report` section at the
+  foot of the scroll area — so the model's claim printed twice and the report path offered *three*
+  `Apply to editor` controls for one statement, none of them named. That section is gone: its claims
+  are the card's, and its citations are the card's `Evidence` fold, label, the ledger's own detail and
+  the statement each rests on. Its `Show result` was itself a second offer of the artifact the
+  `Result stored` entry offers under the same live-run rule;
+- an agent run records **every statement it executes** (`statement-drafted`) and the answer's `sql` is
+  the statement of the step whose artifact it presents — so the same text reached the ledger twice.
+  The transcript therefore withholds a hand-off for the statement the card is handing over **by text**
+  and not by entry id, which is what keeps it a de-duplication: a read the run took along the way
+  whose statement is not the answer's keeps its own control;
+- the closing prose **holds** the fenced statement, so every surface rendering that prose reprinted
+  it — in the card's own `Why this statement` and again in the transcript entry. `renderProse`'s
+  `cardedStatement` suppresses that one block where the statement is displayed beside it, the same
+  shape as the per-block control's own suppression. Nothing is edited: every other fence renders, and
+  `Copy all` takes the string the model wrote rather than this rendering of it;
+- and the guard's reading was stated **three times** inside ~400px, twice at length. The entry whose
+  statement the card holds now drops its `detail` paragraph and keeps the one-line summary; the full
+  text is where it already was, in the card's ⓘ under its own test ids.
+
+**Two more the same drive measured, neither of them a duplication.** The card's grounding chips —
+`${n} ${noun.plural} read` and the schema fingerprint — are read off the run's **capture** and not off
+the guard's reading, so they are stated on every engine. They had been a second prop beside the
+timeline, and a claim a caller can forget to pass is a claim that disappears: on MongoDB the answer
+carried the amber `not checked` chip **alone**, while the chrome fold two lines below it said *Schema
+captured — 5 collections* (L4). That is backwards where it costs most — where nothing examined the
+draft, the inventory it was drafted against is the only grounding claim left. And a citation chip
+names its evidence at **chip length**: a correlation id is a UUID, so `Artifact
+722b2a10-e3f2-4b9c-8177-367359a21500` filled a 384-pixel chip and left no room for what the ledger
+knows about that read (L8). `AgentEvidenceCitation` therefore carries `shortLabel` beside `label` —
+the identifier cut to the eight characters the schema-snapshot label was already written at, both
+spelled by one author in `citationOf` — and the chip prints that plus the ledger's own `detail`, while
+the whole identifier stays in the `Evidence` fold. `detail` is what states, in text and not in amber
+alone (WCAG 1.4.1), whether the rail resolved the citation at all; the two readings keep separate test
+ids, because a shared one would pass on either sentence.
+
+**The answer is followed, not the newest entry.** The scroller follows the newest entry while the run
+is live and brings the answer into view — once — when the run reaches a terminal status, because the
+newest entry at that moment is `run-finished` while the thing the user waited for is at the top: both
+paths were measured landing at their own scroll maximum with the card entirely above the fold. A
+reader who scrolled away is left where they are in both regimes. The card stays inside the scroller
+deliberately — lifted out, a long report would take a fixed share of a 384-pixel panel away from the
+transcript. And the **budget meter is folded**: the gauges (`agent-budget`) and all three of its claims —
+`agent-budget-limits`, `agent-budget-reserve`, `agent-budget-caveats` — live inside
+`agent-run-details`, open by default only while the run is live, with each claim behind an ⓘ on the
+figure it qualifies and still in the accessibility tree whether or not that popover is open.
+
+Two further rules govern it:
 
 - **A control the service cannot honour is not rendered at all.** There is no disabled-looking button
   standing in for a capability, which is why the rail stops a run but does not offer pause/resume
@@ -2046,7 +2200,7 @@ src/lib/agent/
 ├── runtime.ts            # composition root: the only place that assembles a tool context
 ├── tools.ts              # the four tools + server-side selection; the only database reach,
                           #   the model's tools and the server's own grounding reads alike
-├── composed-sql.ts       # the SQL the SERVER writes, per dialect — two of the eleven
+├── composed-sql.ts       # the SQL the SERVER writes, per dialect — two of the fourteen
 ├── sqlite-ddl.ts         # reading SQLite's stored DDL back into an inventory
 ├── execution-policy.ts   # the frozen policy and the run-level ceilings
 ├── deadline.ts           # the wall-clock deadline and the timeout clamp
@@ -2067,8 +2221,10 @@ src/lib/agent/
 └── untrusted-content.ts  # the prompt-side fence for database content
 
 src/app/api/agent/        # the six route paths above
-src/components/agent/     # AgentRail.tsx, timeline.ts (event fold), hydration.ts,
-                          #   use-agent-run.ts, use-agent-artifact.ts
+src/components/agent/     # AgentRail.tsx, SafetyStrip.tsx, AnswerCard.tsx,
+                          #   ConsentCard.tsx, rail-parts.tsx (what the rail and the
+                          #   answer card both render), timeline.ts (event fold),
+                          #   hydration.ts, use-agent-run.ts, use-agent-artifact.ts
 src/hooks/                # use-agent-capability.ts (the flag probe; the rail's own hooks
                           #   sit beside it above)
 ```
@@ -2080,11 +2236,11 @@ They are listed here so the honest boundary is visible from the behaviour docume
 from the tracker.
 
 **Inherited from the enforcement layer** — `docs/BACKLOG.md`, section "Agent M1 deferrals (#328)",
-entries A1-A3 (that file carries a second, unrelated A-series under its security section). These bound
-what any agent statement can be promised: a SQLite statement is not preempted, so its timeout is post-execution and
-an overrunning statement blocks the runtime (A1); `VACUUM INTO` can create an empty file at a chosen
-path (A2); out-of-scope **reads** have no database-native control on either provider — the
-declared-target allowlist, the statement guard and the role's own grants are the whole boundary (A3).
+entries A1-A3. These bound what any agent statement can be promised: a SQLite statement is not
+preempted, so its timeout is post-execution and an overrunning statement blocks the runtime (A1);
+`VACUUM INTO` can create an empty file at a chosen path (A2); out-of-scope **reads** have no
+database-native control on either provider — the declared-target allowlist, the statement guard and
+the role's own grants are the whole boundary (A3).
 
 **From this milestone:**
 
@@ -2151,10 +2307,6 @@ classifier's real-world agreement rate was measured — and they are the same ki
 - **B39** — a data-analysis run has no honest way to conclude that the question is not about this
   database. Its only route to `answered` is a reading of the data, so a run that establishes the
   question is unanswerable fabricates one — the #356 shape again, in a new place.
-- **B40** — `bun dev` cannot log in: the CSP omits `unsafe-eval` in every environment and React's
-  development build needs it, so the login page never hydrates. Production is unaffected.
-- **B41** — `defaults` in a seed config does not merge `roles`, though the documentation says the
-  block is merged into every connection.
 - **B43** — every copy control outside the agent rail reaches `navigator.clipboard` unguarded, and it
   is a secure-context API: nine call sites across seven components, four of which claim success — by
   a label or a toast — in the same statement that starts a write nobody observed.
@@ -2176,19 +2328,12 @@ classifier's real-world agreement rate was measured — and they are the same ki
   an operational reading to the emptiness rule is "precisely backwards" — and that argument applies
   to a plan artifact verbatim. The #356 shape a third time: a rule stated in terms of an artifact
   only one valid answer can produce.
-- **B47** — `engine-unsupported` — *"The agent cannot run on this database engine: it offers no
-  read-only execution profile"* — is also what a user is shown when their AGENT CREDENTIAL cannot be
-  resolved, on an engine that is fully supported. `resolveAgentCredential` throws the same
-  `ExecutionProfileError` that a missing `queryReadOnly` throws, before any provider exists and on
-  every engine, and `classifyDriveFailure` cannot tell the two apart though the reason codes already
-  do. Pre-existing for every workflow; #411 only lets an `operations` run reach it during its
-  grounding capture, before the first turn, which is the least explicable moment for it to arrive.
 - **B48** — the two grounding paths fail differently. Since #414 a plan run on one of the nine
   provider-path engines survives an unreachable host, a wrong password or a half-configured
   `agentUser`: `captureFromProvider` converts a `DatabaseError` or an `ExecutionProfileError` raised
   before the reading leaves into an unavailable capture, and the run answers ungrounded with that
   diagnosis. The composed path — PostgreSQL and SQLite — still lets the same failure out, ending the
-  run `internal` or, on the profile error, `engine-unsupported` (B47). Deliberate at #414, which had
+  run `internal` or, on the profile error, `agent-credential-unusable`. Deliberate at #414, which had
   no business changing how the two engines it did not touch fail, and an asymmetry a reader will
   trip over until it is resolved.
 - **B49** — a **LibreDB** connection can never be grounded, and the reason is not the agent's.
@@ -2199,15 +2344,6 @@ classifier's real-world agreement rate was measured — and they are the same ki
   is already open by another process"*, converted by `captureFromProvider` into an honest ungrounded
   run with no `context-captured` event. The same lock is what makes the connection-test modal report a
   failed connection (`docs/BACKLOG.md` D3), so the two close together.
-- **B50** — a grounded Redis plan run drafts `KEYS user:*`, the blocking O(N) command this product's
-  own provider refuses to use: the schema read is a non-blocking `SCAN` and never `KEYS *`. Measured
-  on two runs after #414's vocabulary work, both grounded on the same 17 real key prefixes — one
-  refused correctly with `NO STATEMENT:` and the other drafted `KEYS`, naming a whole key for the
-  lookup half exactly as the new rule intends. Grounding is working; this is draft QUALITY. Nothing
-  runs — plan mode executes nothing — so the hazard needs the user to apply the draft and run it. The
-  open question is whether one sentence about operational cost belongs in the rules, against the
-  owner's deferral of per-engine knowledge files and the argument that banning a command by name is
-  engine trivia that goes stale. Recorded, not decided.
 - **B51** — the loop delivers three notices to a model (the reserve warning, the report reminder of
   #416, the present-before-report notice of #417) and records none of them. `recordEvent` is called
   for what the RUN did and never for what the server said to it, so a rescued run and a run that never
@@ -2219,6 +2355,67 @@ classifier's real-world agreement rate was measured — and they are the same ki
   resumed drive starts with all three false. The guards are the part that keeps being got wrong —
   both new notices shipped with a condition that named one thing and read another, and both were
   caught in review rather than by a gate.
+- **B52** — the composed PostgreSQL grounding capture is refused by what the IMAGE ships rather
+  than by a wide user schema, and it has now been measured on three different servers.
+  `composeCatalogRead` projects one row per COLUMN against `maxResultRows: 200` and refuses rather
+  than truncates, which its own comment estimates as "roughly 25 tables of eight columns". Measured on
+  2026-08-20 against a stock TimescaleDB 2.29.2 (PostgreSQL 17.11) with TWO user tables:
+  `information_schema.columns` answers 478 rows, of which 473 belong to the extension's own schemas
+  and 5 to the user, so the capture is refused and the plan run answers ungrounded. Verified as
+  server-caused, not path-caused: plain PostgreSQL 18 and YugabyteDB both captured their schemas under
+  the same least-privilege role, and granting that role the internal schemas changed nothing.
+  Reproduced the same day on Apache Cloudberry 2.1.0-incubating (PostgreSQL 14.4), which is a fork
+  rather than an extension, so the shape is not one product's: with the same two user tables the read
+  is refused as `CATALOG_READ_REFUSED` at **289 rows against the 200 allowed**, **282** of those rows
+  belonging to Cloudberry's own `gp_toolkit` schema and 7 to the user's two tables. The total is
+  per-role and only means something with the role named: the same read as `gpadmin` answers 481 rows,
+  470 of them `gp_toolkit`, 7 `public` and 4 `pg_ext_aux`. Cloudberry also puts a second wall in front
+  of the first, which a user hitting it needs to know about: `gpadmin` is the login the engine gives
+  you and it is a superuser, so the execution profile refuses the role as unverified or too broad
+  (`is_superuser`, `reads_server_files`, `writes_server_files`, `executes_programs`) and an agent run
+  there needs a hand-made least-privilege `agentUser` before it can even reach the row budget - and
+  then hits it. Measured a third time the same day on AlloyDB Omni 17.9.0 (PostgreSQL 17.9), which is
+  the instance that decides the fix: the read is refused at **536 rows against the 200 allowed** with
+  only **7** of them the user's, and the overflow is **not** in an internal schema - 341 of the 348
+  rows attributed to `public` are the 49 extension views the image installs into `public` itself, with
+  `google_ml` 144 and `ai` 44 behind them. Narrowing the capture to `schema=public` therefore still
+  refuses, at 348 rows, so the candidate fix of excluding the schemas the object browser treats as
+  internal - which would have rescued both TimescaleDB and Cloudberry - is refuted here, and the only
+  surviving fix is to aggregate columns per table so the projection is one row per OBJECT. AlloyDB
+  Omni is a superuser-login image too, so it hits Cloudberry's first wall as well. Two controls keep
+  those numbers attributable: plain PostgreSQL 18.4 in the same pass projects 7 rows and captures its
+  2 tables, and the 0-rows-as-agent-role result on the `relations` kind reproduces identically on that
+  baseline, so it is PostgreSQL's privilege rule and not an AlloyDB property. The agent is therefore
+  unusable out of the box on all three, and the same shape will appear on any PostgreSQL whose image
+  ships wide catalogs or wide extension views before the user has created anything.
+- **B54** — a REFUSED grounding capture records nothing in the run's own ledger, so the failure above
+  cannot be diagnosed from the record. A capture that succeeds writes `context-captured` with its
+  fingerprint, table count and snapshot; the `capture.kind === "unavailable"` branch pushes the
+  ungrounded note into the model's prompt and returns without recording anything. Measured on the same
+  AlloyDB Omni run: the ledger holds four events - `run-opened`, `run-started`, `closing-statement`,
+  `run-finished` - and its 849 bytes name no catalog read, no reason code and no row count, while the
+  Vitess ledger beside it carries `context-captured` with `ctx_3ce059ca...` and `tableCount 2`. The
+  reason (`CATALOG_READ_REFUSED`, 536 against 200) is computed, handed to the model and dropped; it is
+  not in the server log either. So the only trace is the model's own sentence, and this repo has
+  already recorded why that is dangerous - a missing event reads as work that was not needed rather
+  than knowledge that was lost.
+- **B55** — a grounded LibreDB plan run drafts `GET users:*`, and `get` is an exact-key lookup with no
+  glob: the key does not exist, so the command answers zero rows and no error. The inventory's rows are
+  NAMED `users:*`, which reads as a glob the grammar does not have, and LibreDB declares no
+  `statementLanguage`, so the five verbs (`get`, `put`, `delete`, `prefix`, `range`) are left to be
+  guessed. MongoDB and Redis were fixed the same way in 0.13.1 - each declares the sentence its
+  statement form needs - and LibreDB's turn was deferred by the owner on 2026-08-22 until the other
+  providers are done.
+- **B56** — a planning run's grounding is HELD for the process lifetime, so a schema that changes is
+  invisible to plan mode until a restart. `holdSnapshotForConnection` keeps one inventory per
+  connection identity with no expiry, and it is consulted before any capture. Measured twice on
+  2026-08-22: after MongoDB's inference began expanding subdocuments, `schema/list` returned
+  `shipping.city` at once and the schema tree showed it, while two plan runs still grouped by
+  `$shipping.region` and recorded no `context-captured` event at all; a restart fixed it on the first
+  run. Redis showed the same shape, refusing an objective about keys that had just been seeded. The
+  design intent - a run reasons over the inventory its claims cite - is not the problem; a NEW run
+  inheriting it indefinitely is, and B54's gap means the ledger cannot tell "held, hours old" from
+  "captured just now".
 
 ## Related documentation
 

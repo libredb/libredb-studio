@@ -1,9 +1,10 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 import { SignJWT } from "jose";
 import { config, proxy } from "@/proxy";
 import { AGENT_DRIVE_HEADER, AGENT_DRIVE_PATH, mintAgentDriveToken } from "@/lib/agent/drive-token";
+import { clearRateLimitState } from "@/lib/api/rate-limit";
 
 // ─── JWT helpers ────────────────────────────────────────────────────────────
 
@@ -166,6 +167,66 @@ describe("proxy", () => {
       expect(location).toContain("http://localhost:3000");
       expect(location).not.toContain("/admin");
       expect(location).not.toContain("/login");
+    });
+
+    // Threat: the redirect above used to be silent. A non-admin token probing /admin left no trace
+    // in the one channel this project treats as authoritative, so the only role denial the proxy
+    // makes was invisible next to the origin_mismatch line it already records.
+    test("the redirect emits permission_denied with reason insufficient_role", async () => {
+      const token = await createToken("user");
+      const spy = spyOn(console, "log").mockImplementation(() => {});
+      try {
+        await proxy(createNextRequest("/admin", token));
+
+        const lines = spy.mock.calls.map((call) => JSON.parse(call[0] as string) as Record<string, unknown>);
+        expect(lines).toHaveLength(1);
+        expect(lines[0].event).toBe("permission_denied");
+        expect(lines[0].reason).toBe("insufficient_role");
+        expect(lines[0].actor).toBe("user");
+        expect(lines[0].route).toBe("GET /admin");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    // Threat the metering answers: holding a signed non-admin token bounds how many IDENTITIES
+    // reach the branch, not how many requests each makes. Unmetered, one session polling /admin
+    // fills a log volume and evicts real events from the 1000-entry ring the admin UI reads.
+    test("the audit line is bounded per identity while the redirect stays unconditional", async () => {
+      // A distinct non-admin role, so this burst gets its own bucket key rather than sharing "user".
+      const token = await createToken("flooder");
+      const spy = spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const responses = [];
+        for (let i = 0; i < 8; i++) responses.push(await proxy(createNextRequest("/admin", token)));
+
+        // Every request is still refused - the denial is never the thing being rationed.
+        expect(responses.every((res) => isRedirect(res))).toBe(true);
+        // The anon bucket's default is 5 per 300s and the trip itself is recorded, so a burst of
+        // eight leaves exactly six lines. Pinned rather than bounded: an unmetered emit writes
+        // eight, and this number is what fails if the metering is ever removed.
+        expect(spy.mock.calls.length).toBe(6);
+      } finally {
+        spy.mockRestore();
+        clearRateLimitState();
+      }
+    });
+
+    test("a broken audit sink still redirects rather than failing the request", async () => {
+      const token = await createToken("user");
+      const logSpy = spyOn(console, "log").mockImplementation(() => {
+        throw new Error("audit sink unavailable");
+      });
+      const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const res = await proxy(createNextRequest("/admin", token));
+
+        expect(isRedirect(res)).toBe(true);
+        expect(getRedirectLocation(res)).not.toContain("/admin");
+      } finally {
+        logSpy.mockRestore();
+        errorSpy.mockRestore();
+      }
     });
   });
 

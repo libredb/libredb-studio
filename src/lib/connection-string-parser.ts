@@ -22,6 +22,47 @@ export interface ParsedConnection {
 }
 
 /**
+ * The canonical URI scheme each engine is reachable by, for the engines that HAVE one.
+ *
+ * Deliberately partial, and the gaps are the point: SQLite is a file path, LibreDB is
+ * embedded in the process, and Druid is reached over plain HTTP through the form. Inventing
+ * `sqlite://` or `druid://` to make the map look complete would put a scheme on the login
+ * page that `parseConnectionString` below rejects - a claim the product does not honour,
+ * which is the class of defect issue #425 exists to remove.
+ *
+ * Cassandra is absent for a different reason again, and a stronger one: its driver needs
+ * a REQUIRED `localDataCenter` alongside the contact points (measured on 4.9.0 - it
+ * refuses to construct a client without one), and no URI convention in use carries that
+ * field. A `cassandra://host:9042/keyspace` form would therefore parse into a connection
+ * that cannot open, which is worse than no paste at all.
+ *
+ * Trino is the sharpest version of that gap, and worth naming because it looks like it
+ * belongs here: it HAS a canonical URL, `jdbc:trino://host:port/catalog/schema`. That is
+ * a JDBC URL and not a URI - `new URL()` reads its scheme as `jdbc:` - and stripping the
+ * prefix to make one would invent a `trino://` form no Trino tool emits. So the id is
+ * absent, its capabilities say `supportsConnectionString: false`, and its form offers no
+ * paste toggle. Pinned by tests/unit/lib/connection-string-parser.test.ts.
+ *
+ * Aliases the parser also accepts (`postgresql://`, `mongodb+srv://`, `rediss://`,
+ * `sqlserver://`, `couchbases://`, and ClickHouse's `http(s)://`) are not listed: this map
+ * answers "what is the one scheme to show a reader for this engine", not "what will parse".
+ *
+ * `tests/unit/lib/connection-string-parser.test.ts` pins the entries against the parser
+ * itself - every scheme here must round-trip to its own `DatabaseType` - so the map cannot
+ * drift away from the `startsWith` checks below without failing CI.
+ */
+export const ENGINE_URI_SCHEMES: Partial<Record<DatabaseType, string>> = {
+  postgres: "postgres",
+  mysql: "mysql",
+  mongodb: "mongodb",
+  redis: "redis",
+  oracle: "oracle",
+  mssql: "mssql",
+  couchbase: "couchbase",
+  clickhouse: "clickhouse",
+};
+
+/**
  * Parse a database connection string URL into its components.
  * Supports: postgres://, postgresql://, mysql://, mongodb://, mongodb+srv://, redis://,
  * couchbase://, couchbases://, clickhouse://, http://, https://

@@ -757,3 +757,24 @@ describe("resolveAgentLedgerWorld", () => {
     });
   });
 });
+
+describe("AgentRunStore — a closed run refuses further appends", () => {
+  test("an append after close is refused, never silently lost", async () => {
+    const { store } = storeAt();
+    const run = await store.openRun(OPEN_INPUT);
+    await store.close(run.runId);
+
+    const error = await captureStoreError(() =>
+      store.appendEvent(run.runId, event("tool-invoked", 2, { stepId: "s1", tool: "run_read_query" })),
+    );
+    expect(error.reasonCode).toBe("RUN_ALREADY_CLOSED");
+  });
+
+  test("the run is still readable after close; only appends are refused", async () => {
+    const { store } = storeAt();
+    const run = await store.openRun(OPEN_INPUT);
+    await store.close(run.runId);
+
+    expect((await store.read(run.runId))?.record.runId).toBe(run.runId);
+  });
+});

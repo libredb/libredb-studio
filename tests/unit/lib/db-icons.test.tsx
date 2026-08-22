@@ -13,6 +13,10 @@ import {
   CouchbaseIcon,
   ClickHouseIcon,
   DruidIcon,
+  ElasticsearchIcon,
+  OpenSearchIcon,
+  TrinoIcon,
+  CassandraIcon,
 } from "@/components/icons/db-icons";
 
 describe("db-icons", () => {
@@ -28,6 +32,12 @@ describe("db-icons", () => {
     { name: "CouchbaseIcon", Component: CouchbaseIcon },
     { name: "ClickHouseIcon", Component: ClickHouseIcon },
     { name: "DruidIcon", Component: DruidIcon },
+    // This list is hand-written and NOT enforced by any type, so a new provider's
+    // icon is only covered because its name was added here (#424 Phase 1).
+    { name: "ElasticsearchIcon", Component: ElasticsearchIcon },
+    { name: "OpenSearchIcon", Component: OpenSearchIcon },
+    { name: "TrinoIcon", Component: TrinoIcon },
+    { name: "CassandraIcon", Component: CassandraIcon },
   ];
 
   for (const { name, Component } of icons) {
