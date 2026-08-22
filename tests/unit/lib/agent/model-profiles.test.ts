@@ -8,6 +8,7 @@ import {
   presentReminderLimitFor,
   remindsWithoutTools,
   requiresEvidenceBeforeReminder,
+  retriesEmptyTurn,
   planStatementRetriesFor,
   reportReminderLimitFor,
   reportReserveMsFor,
@@ -195,6 +196,22 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(requiresEvidenceBeforeReminder("deepseek-r1:14b")).toBe(true);
     expect(requiresEvidenceBeforeReminder("nemotron-3.5-lightning:30b")).toBe(false);
     expect(requiresEvidenceBeforeReminder("some-model-released-tomorrow:70b")).toBe(false);
+  });
+
+  test("the model measured answering nothing at all, and nobody else", () => {
+    /*
+      `gemma4:26b` lost database-assessment fifteen measured times before this was read
+      correctly. It was taken for a model declining to file, and the two fixes for that were
+      measured and deleted — a second reminder 4/5 to 2/5, a lower ceiling to 3/5.
+
+      Its losing runs carry no stopping text at all, and both entries that would hold it are
+      written whenever a turn has any. The model returns an EMPTY completion, which the loop
+      reads as a model that chose to stop. Asking again costs one turn, so only the model whose
+      ledger showed the empty turn arriving with the work already done gets it.
+    */
+    expect(retriesEmptyTurn("gemma4:26b")).toBe(true);
+    expect(retriesEmptyTurn("qwen3:8b")).toBe(false);
+    expect(retriesEmptyTurn("some-model-released-tomorrow:70b")).toBe(false);
   });
 
   test("the answer is asked for once, and no measurement has earned a second", () => {

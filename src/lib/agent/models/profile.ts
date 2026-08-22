@@ -106,6 +106,25 @@ export interface AgentModelProfile {
    */
   readonly requireEvidenceBeforeReminder?: boolean;
   /**
+   * Whether a turn that came back EMPTY is asked again before the run is ended.
+   *
+   * What `gemma4:26b` had been losing database-assessment to across fifteen measured runs, and
+   * what it took the stopping-turn record to see. The loss was read as a model declining to
+   * file, and two fixes aimed at that reading were measured and deleted: a second reminder took
+   * the cell from 4/5 to 2/5, a lower call ceiling to 3/5.
+   *
+   * Neither was the illness. The losing runs carry no stopping text at all — no
+   * `model-stopped-saying`, no `closing-statement`, both of which are written whenever there is
+   * any — and end within seconds of the reminder. The model returns an empty completion, twice:
+   * once before the reminder, which the loop already survives, and once after, which ends it.
+   *
+   * An empty turn is not a model that chose to stop, and a run holding readings it has not
+   * filed has everything done but the last call. Off by default: a model that answers nothing
+   * twice over may well be stopping, and spending a turn to find that out is a turn taken from
+   * every other model's reading.
+   */
+  readonly retryEmptyTurn?: boolean;
+  /**
    * How many times a report may be held to ask for the answer that belongs beside it.
    *
    * One is enough for a model that forgot. `mistral-small3.2:24b` does not forget: held once
@@ -226,6 +245,15 @@ export const DEFAULT_REMIND_WITHOUT_TOOLS = false;
  * earns the wait, and it earns it alone.
  */
 export const DEFAULT_REQUIRE_EVIDENCE_BEFORE_REMINDER = false;
+
+/**
+ * Not asked again, which is what every locked cell was measured against.
+ *
+ * An empty turn ends the run, and for most models that reading is right: nothing came back
+ * because nothing more was coming. Only a model whose ledger shows the empty turn arriving with
+ * the work already done earns the retry.
+ */
+export const DEFAULT_RETRY_EMPTY_TURN = false;
 
 /**
  * One, which is what every locked answer-presenting cell was measured against.

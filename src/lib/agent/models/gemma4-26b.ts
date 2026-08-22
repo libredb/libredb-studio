@@ -64,5 +64,19 @@ export const GEMMA4_26B: AgentModelProfile = {
   */
   unreportedCallCeiling: 10,
   reportReminderLimit: 1,
+  /*
+    The illness, after two wrong medicines.
+
+    What the file above says is still unread — "the text of the stopping turn" — turned out to
+    be the answer: there is none. The losing assessments carry no `model-stopped-saying` and no
+    `closing-statement`, and both are written whenever the turn holds any text at all. Ten
+    seconds pass between the reminder and the end of the run.
+
+    So it is not declining to file and it is not out of turns. It returns an EMPTY completion,
+    which the loop reads as a model that chose to stop. That is why both earlier fixes made it
+    worse: a second reminder and a lower ceiling are answers to a model that keeps working, and
+    this one had stopped answering.
+  */
+  retryEmptyTurn: true,
   notices: { ...BASELINE_NOTICES },
 };

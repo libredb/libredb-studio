@@ -59,6 +59,7 @@ import {
   DEFAULT_PRESENT_REMINDER_LIMIT,
   DEFAULT_REMIND_WITHOUT_TOOLS,
   DEFAULT_REQUIRE_EVIDENCE_BEFORE_REMINDER,
+  DEFAULT_RETRY_EMPTY_TURN,
   DEFAULT_REPORT_RESERVE_MS,
   DEFAULT_SAMPLING,
   DEFAULT_UNREPORTED_CALL_CEILING,
@@ -170,6 +171,16 @@ export function requiresEvidenceBeforeReminder(modelId: string): boolean {
   return (
     MODEL_PROFILES[modelId.toLowerCase()]?.requireEvidenceBeforeReminder ?? DEFAULT_REQUIRE_EVIDENCE_BEFORE_REMINDER
   );
+}
+
+/**
+ * Whether an empty turn is asked again before this model's run is ended.
+ *
+ * False everywhere but the model measured returning nothing with its readings already taken,
+ * so introducing the retry changed no other model's turn count.
+ */
+export function retriesEmptyTurn(modelId: string): boolean {
+  return MODEL_PROFILES[modelId.toLowerCase()]?.retryEmptyTurn ?? DEFAULT_RETRY_EMPTY_TURN;
 }
 
 /**

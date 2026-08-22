@@ -64,6 +64,7 @@ import {
   presentReminderLimitFor,
   remindsWithoutTools,
   requiresEvidenceBeforeReminder,
+  retriesEmptyTurn,
   planStatementRetriesFor,
   reportReminderLimitFor,
   reportReserveMsFor,
@@ -2448,6 +2449,8 @@ export async function runInvestigation(
    * notice is the work it was asked to do.
    */
   let narrowedAtEvent = Number.POSITIVE_INFINITY;
+  /** Whether this drive has already re-asked an empty turn; see `retryEmptyTurn`. */
+  let emptyTurnRetried = false;
   const priorProgress = describePriorProgress(record);
   if (priorProgress !== null) messages.push({ role: "user", content: priorProgress });
 
@@ -3086,6 +3089,26 @@ export async function runInvestigation(
         An agent run is the case where the prose is lost — the verdict wants a report, this is
         not one, and nothing keeps it.
       */
+      /*
+        A turn that came back with NOTHING, asked once more.
+
+        `gemma4:26b` lost database-assessment fifteen measured times to this and it was read
+        as a model declining to file: two fixes aimed at that reading were measured and
+        deleted, a second reminder taking the cell from 4/5 to 2/5 and a lower ceiling to 3/5.
+        The stopping-turn record is what finally showed the illness — there is no stopping
+        text on the losing runs, and both entries that would carry it are written whenever
+        there is any. It returns an empty completion, once before the reminder, which the loop
+        already survives, and once after, which ends the run.
+
+        Empty rather than merely short, because that is the whole claim: a turn with prose in
+        it is a model saying something, and this is the absence of an answer. Once per drive,
+        and only for a model whose ledger asked.
+      */
+      if (turn.text.trim().length === 0 && !emptyTurnRetried && retriesEmptyTurn(model.modelId)) {
+        emptyTurnRetried = true;
+        messages.push(...turn.assistantMessages);
+        return null;
+      }
       if (record.mode === "agent" && turn.text.trim().length > 0) {
         await service.recordEvent(runId, {
           kind: "model-stopped-saying",

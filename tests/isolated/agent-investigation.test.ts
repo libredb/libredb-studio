@@ -4530,6 +4530,48 @@ describe("a run is told to report only when it holds something to report from", 
     expect(script.turns[1]?.transcript ?? "").toContain("compose_report");
   });
 
+  test("a turn that came back with nothing at all is asked once more", async () => {
+    /*
+      What `gemma4:26b` has been losing database-assessment to for fifteen measured runs, read
+      properly for the first time.
+
+      It was read as a model refusing to file: the run profiles its tables, counts things, and
+      then produces a turn with no call and no report. Two fixes were aimed at that reading and
+      both were measured and deleted — a second reminder took it from 4/5 to 2/5, a lower call
+      ceiling to 3/5. Both were the wrong medicine, and its own profile said what was still
+      missing: the text of the stopping turn.
+
+      There is none. No `model-stopped-saying`, no `closing-statement` — both are written only
+      when there is text — and ten seconds between the reminder and the end. The model did not
+      argue and did not keep reading. It returned an EMPTY completion, and an empty turn ends
+      the run as though the model had chosen to stop.
+
+      So it is asked again. A run that has read something and not filed it has the whole job
+      done but the last call, and one more turn is the cheapest thing this loop can spend.
+      Once, per model, and off by default: a model that answers nothing twice is stopping.
+    */
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    // Two empty turns, which is the measured sequence: the FIRST is already survivable — it
+    // draws the report reminder and the loop goes on. The second is where the run ended,
+    // because the reminder is spent and an empty turn reads as a model that has stopped.
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT id FROM orders", rationale: "reading" }),
+      answersProse(),
+      answersProse(),
+      reportOn("the orders table has rows"),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, undefined, "gemma4:26b"),
+      resources: b.resources,
+    });
+
+    expect(script.turns).toHaveLength(4);
+    expect(result.stopReason).toBe("report-composed");
+  });
+
   test("a refusal about the SHAPE of a call records which fields failed", async () => {
     /*
       The code alone could not be diagnosed. `INVALID_TOOL_INPUT` is the largest refusal
