@@ -51,6 +51,15 @@ export const NEMOTRON_3_5_LIGHTNING_30B: AgentModelProfile = {
     its closing prose is a full report, citing the snapshot fingerprint, listing all eight
     tables with their columns, keys and foreign keys. It ends without the statement the bar
     asks for. One more turn is what won that cell on `qwen3:14b`.
+
+    Measured 5/5 and the cell was called locked — then measured again at the limit the product
+    actually ships, 90 seconds instead of the 150 the board was built with, and it lost on run
+    one. The extra turn is real and it is not enough: this model's plan turn does not fit in 90
+    seconds, which the header above already recorded as a speed problem rather than a settings
+    one. The retry stays because it is what carried the five passes; the LOCK does not.
+
+    It is the only one of 115 that the shipped limit takes back. The other five cells flagged
+    the same way were open already, so the board is a 90-second board now.
   */
   planStatementRetries: 1,
   notices: { ...BASELINE_NOTICES },
