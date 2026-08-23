@@ -279,6 +279,55 @@ if [ "$DEB_ONLY" != "true" ]; then
     exit 1
   fi
 
+  # ----------------------------------------------------------------------------
+  # linuxdeploy writes the wrapped launcher into the AppDir as 0770 root:root,
+  # and the AppImage runtime hides that from the only case anyone tests: the
+  # squashfs is mounted through FUSE privately to the invoking user, and a
+  # private FUSE mount skips the kernel permission check, so double-clicking
+  # works whatever the recorded mode says. Read the same bytes WITH permission
+  # checks - an extracted AppDir owned by another uid, a container running as
+  # non-root, or firejail's --appimage mount, which is what AppImageHub's review
+  # CI uses - and AppRun cannot exec AppRun.wrapped. The app dies with a bare
+  # "Permission denied" and never opens a window.
+  #
+  # So the modes are audited here and the image is repacked when the audit
+  # fails. The repack reuses the ORIGINAL runtime bytes and the original
+  # squashfs parameters rather than calling appimagetool again: the runtime is
+  # what decides whether the AppImage mounts on the user's machine at all, and
+  # swapping it for a different build to fix a file mode would trade this defect
+  # for a worse one.
+  # ----------------------------------------------------------------------------
+  PERM_DIR="$WORK_DIR/appimage-perms"
+  mkdir -p "$PERM_DIR"
+  (cd "$PERM_DIR" && "$BUILT" --appimage-extract > /dev/null)
+  if node "$ROOT_DIR/scripts/check-appimage-perms.mjs" "$PERM_DIR/squashfs-root"; then
+    echo "==> Permissions: the bundler left every file world-readable, no repack needed"
+  else
+    echo "==> Permissions: repacking the AppImage with the offending modes widened"
+    find "$PERM_DIR/squashfs-root" -type f -perm -u+x ! -perm -o+x -exec chmod go+rx {} +
+    find "$PERM_DIR/squashfs-root" -type f ! -perm -o+r -exec chmod go+r {} +
+    OFFSET=$("$BUILT" --appimage-offset)
+    head -c "$OFFSET" "$BUILT" > "$PERM_DIR/runtime.bin"
+    tail -c "+$((OFFSET + 1))" "$BUILT" > "$PERM_DIR/original.sqfs"
+    # Match the bundler's own squashfs parameters instead of hardcoding them, so
+    # a future appimagetool that changes compression does not silently produce a
+    # differently-packed image here.
+    SQFS_COMP=$(unsquashfs -s "$PERM_DIR/original.sqfs" | awk '/^Compression/ { print $2 }')
+    SQFS_BLOCK=$(unsquashfs -s "$PERM_DIR/original.sqfs" | awk '/^Block size/ { print $3 }')
+    echo "==> Permissions: repacking with -comp $SQFS_COMP -b $SQFS_BLOCK"
+    mksquashfs "$PERM_DIR/squashfs-root" "$PERM_DIR/repacked.sqfs" \
+      -comp "$SQFS_COMP" -b "$SQFS_BLOCK" -root-owned -noappend -no-progress -quiet
+    cat "$PERM_DIR/runtime.bin" "$PERM_DIR/repacked.sqfs" > "$PERM_DIR/repacked.AppImage"
+    chmod +x "$PERM_DIR/repacked.AppImage"
+    # Re-extract the repacked image and audit that, not the tree we chmodded:
+    # the artifact is what ships, and a repack that dropped the modes would
+    # otherwise pass on the strength of the input.
+    rm -rf "$PERM_DIR/verify" && mkdir -p "$PERM_DIR/verify"
+    (cd "$PERM_DIR/verify" && "$PERM_DIR/repacked.AppImage" --appimage-extract > /dev/null)
+    node "$ROOT_DIR/scripts/check-appimage-perms.mjs" "$PERM_DIR/verify/squashfs-root"
+    BUILT="$PERM_DIR/repacked.AppImage"
+  fi
+
   install -m 0755 "$BUILT" "$OUT_DIR/$ASSET"
   (cd "$OUT_DIR" && sha256sum "$ASSET" > "${ASSET}.sha256")
   echo "==> Wrote $OUT_DIR/$ASSET ($(du -h "$OUT_DIR/$ASSET" | cut -f1))"

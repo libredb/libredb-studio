@@ -93,7 +93,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf file
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf file squashfs-tools
 
       - name: Build the AppImage and smoke test the bundled server
         # --keep-stage leaves the payload and the Node sidecar in place, which the

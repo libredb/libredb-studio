@@ -82,7 +82,7 @@ Notes on the choices, since they are easy to get wrong later:
 
 ```bash
 # One-time system dependencies (Debian/Ubuntu names)
-sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf file
+sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf file squashfs-tools
 
 # Stage the payload + node sidecar, then bundle an AppImage (keeps the staging
 # directories so `tauri dev` works straight after)
@@ -108,6 +108,23 @@ cd desktop/src-tauri && cargo test
   `.github/workflows/release-artifacts.yml`; both artifacts are required release
   assets. `--deb-only` skips the AppImage, which is the way to build on a host
   without the linuxdeploy GTK toolchain (`librsvg2-dev` and friends).
+- **The bundler leaves one file unusable to anyone but its builder, and the
+  build repacks the image to fix it.** linuxdeploy writes `AppRun.wrapped` into
+  the AppDir as `0770 root:root`. The AppImage runtime hides that from the only
+  case anyone tests: the squashfs is mounted through FUSE privately to the
+  invoking user, and a private FUSE mount skips the kernel permission check, so
+  double-clicking works whatever the recorded mode says. Read the same bytes
+  WITH permission checks - an extracted AppDir owned by another uid, a container
+  running as non-root, or firejail's `--appimage` mount, which is what
+  AppImageHub's review CI uses - and `AppRun` cannot exec `AppRun.wrapped`: a
+  bare `Permission denied`, no window, nothing to diagnose from. So
+  `scripts/build-desktop-appimage.sh` audits the extracted modes with
+  `scripts/check-appimage-perms.mjs` and, when the audit fails, widens the modes
+  and repacks with `mksquashfs` (hence `squashfs-tools`). The repack reuses the
+  **original runtime bytes and squashfs parameters** rather than calling
+  appimagetool again: the runtime decides whether the image mounts on the user's
+  machine at all, so swapping it to fix a file mode would trade this defect for a
+  worse one.
 - **The x64 AppImage is built on the oldest still-supported Ubuntu LTS, and that
   is load-bearing.** An AppImage inherits the glibc of its build machine, so the
   runner label sets the floor for every user: built on 24.04 the bundled
