@@ -28,9 +28,9 @@ import {
   Skull,
   Database,
   ShieldAlert,
-  Loader2,
-  CheckCircle2,
-  XCircle,
+  LoaderCircle,
+  CircleCheck,
+  CircleX,
   Table2,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
@@ -435,7 +435,7 @@ export function OperationsTab() {
                             disabled={!!actionLoading}
                           >
                             {actionLoading === `analyze-${table.tableName}` ? (
-                              <Loader2 className="w-3 h-3 animate-spin" />
+                              <LoaderCircle className="w-3 h-3 animate-spin" />
                             ) : (
                               <Search className="w-3 h-3" />
                             )}
@@ -451,7 +451,7 @@ export function OperationsTab() {
                             disabled={!!actionLoading}
                           >
                             {actionLoading === `vacuum-${table.tableName}` ? (
-                              <Loader2 className="w-3 h-3 animate-spin" />
+                              <LoaderCircle className="w-3 h-3 animate-spin" />
                             ) : (
                               <HardDrive className="w-3 h-3" />
                             )}
@@ -562,7 +562,7 @@ export function OperationsTab() {
                           disabled={killingPid === session.pid}
                         >
                           {killingPid === session.pid ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
+                            <LoaderCircle className="h-3 w-3 animate-spin" />
                           ) : (
                             <Skull className="h-3 w-3" />
                           )}
@@ -602,9 +602,9 @@ export function OperationsTab() {
                 <span className="text-fg-tertiary font-mono truncate">{entry.target}</span>
                 <div className="ml-auto flex items-center gap-2 shrink-0">
                   {entry.result === "success" ? (
-                    <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                    <CircleCheck className="w-3 h-3 text-emerald-500" />
                   ) : (
-                    <XCircle className="w-3 h-3 text-red-500" />
+                    <CircleX className="w-3 h-3 text-red-500" />
                   )}
                   <span className="text-fg-subtle font-mono text-xs">{entry.duration}ms</span>
                 </div>

@@ -12,9 +12,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   Wrench,
   Search as SearchIcon,
-  BarChart3,
-  CheckCircle2,
-  XCircle,
+  ChartColumn,
+  CircleCheck,
+  CircleX,
   RefreshCw,
   Clock,
   Activity,
@@ -50,7 +50,7 @@ export function AuditTab() {
             value="stats"
             className="gap-2 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-400 data-[state=active]:bg-transparent data-[state=active]:text-blue-400 text-fg-muted text-xs px-4"
           >
-            <BarChart3 className="h-3.5 w-3.5" />
+            <ChartColumn className="h-3.5 w-3.5" />
             Stats
           </TabsTrigger>
         </TabsList>
@@ -191,9 +191,9 @@ function OperationsAudit() {
                 <TableRow key={event.id} className="border-hairline hover:bg-fill">
                   <TableCell className="py-2">
                     {event.result === "success" ? (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                      <CircleCheck className="w-3.5 h-3.5 text-emerald-500" />
                     ) : (
-                      <XCircle className="w-3.5 h-3.5 text-red-500" />
+                      <CircleX className="w-3.5 h-3.5 text-red-500" />
                     )}
                   </TableCell>
                   <TableCell className="py-2 font-mono text-xs text-fg-muted">
@@ -310,9 +310,9 @@ function QueryAudit() {
                 <TableRow key={idx} className="border-hairline hover:bg-fill">
                   <TableCell className="py-2">
                     {item.status === "success" ? (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                      <CircleCheck className="w-3.5 h-3.5 text-emerald-500" />
                     ) : (
-                      <XCircle className="w-3.5 h-3.5 text-red-500" />
+                      <CircleX className="w-3.5 h-3.5 text-red-500" />
                     )}
                   </TableCell>
                   <TableCell className="py-2 font-mono text-xs text-fg-muted whitespace-nowrap">

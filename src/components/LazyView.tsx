@@ -15,9 +15,10 @@ import { cn } from "@/lib/utils";
  * either unsaid is how a click on Charts becomes a spinner that never stops, or —
  * with no fallback at all — a click that does nothing.
  *
- * `LoaderCircle`, not `Loader2`: on lucide-react 1.x the latter is a legacy-rename
- * alias that ships no `@deprecated` tag, so nothing warns while it is alive and the
- * first signal is a build breaking on the release that drops it (docs/BACKLOG.md P6).
+ * `LoaderCircle`, not `Loader2`, and the same everywhere: on lucide-react 1.x the
+ * old spellings are legacy-rename aliases that ship no `@deprecated` tag, so nothing
+ * warns while one is alive and the first signal is a build breaking on the release
+ * that drops it. Every icon import in this repo uses its canonical v1 name.
  */
 export function ViewLoading({ label, className }: { label: string; className?: string }) {
   return (

@@ -21,7 +21,7 @@ import {
   Layers,
   LogOut,
   Bot,
-  AlignLeft,
+  TextAlignStart,
   Save,
 } from "lucide-react";
 import { DatabaseConnection, TableSchema, SavedQuery, QueryHistoryItem } from "@/lib/types";
@@ -118,7 +118,7 @@ export function CommandPalette({
             <CommandShortcut>Ctrl+Enter</CommandShortcut>
           </CommandItem>
           <CommandItem onSelect={() => runAction(onFormatQuery)}>
-            <AlignLeft strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-tertiary" />
+            <TextAlignStart strokeWidth={1.5} className="w-3.5 h-3.5 text-fg-tertiary" />
             <span>Format Query</span>
           </CommandItem>
           <CommandItem onSelect={() => runAction(onSaveQuery)}>

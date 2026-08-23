@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Bot, ChevronDown, ChevronRight, Loader2, PencilLine, Play, Square, TriangleAlert } from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, LoaderCircle, PencilLine, Play, Square, TriangleAlert } from "lucide-react";
 import { CopyButton } from "@/components/copy-button";
 import { renderProse } from "@/components/rich-text";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -1977,7 +1977,7 @@ export function AgentRail({
         */}
         {classifying && (
           <p data-testid="agent-classifying" className="mt-2 flex items-center gap-1 text-[0.625rem] text-fg-muted">
-            <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" aria-hidden="true" />
+            <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin" aria-hidden="true" />
             Reading your objective to choose a workflow.
           </p>
         )}
@@ -2167,7 +2167,7 @@ export function AgentRail({
               className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 disabled:opacity-40 disabled:hover:bg-blue-500/15 transition-colors"
             >
               {run.isBusy || classifying ? (
-                <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
+                <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin" />
               ) : (
                 <Play strokeWidth={1.5} className="w-3 h-3" />
               )}

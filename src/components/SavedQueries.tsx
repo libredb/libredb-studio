@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { storage } from "@/lib/storage";
 import { SavedQuery } from "@/lib/types";
-import { Bookmark, Search, Trash2, Edit3, Tag, Calendar } from "lucide-react";
+import { Bookmark, Search, Trash2, PenLine, Tag, Calendar } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { format } from "date-fns";
@@ -93,7 +93,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
                       className="h-6 w-6 text-fg-muted hover:text-fg-bright"
                       onClick={() => onSelectQuery(q.query)}
                     >
-                      <Edit3 strokeWidth={1.5} className="w-3 h-3" />
+                      <PenLine strokeWidth={1.5} className="w-3 h-3" />
                     </Button>
                     <Button
                       variant="ghost"

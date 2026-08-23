@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X7, U2–U18 · 9
 - [Authentication and security headers](#authentication-and-security-headers) — AU2
 - [Tests](#tests) — T1–T3 · 2
-- [Dependencies](#dependencies) — P1–P6 · 6
+- [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC1–DOC3 · 3
 - [Release pipeline](#release-pipeline) — REL1
 - [Chart configuration surface](#chart-configuration-surface) — N1–N3 · 3
@@ -870,29 +870,6 @@ so in `CLAUDE.md`, which today says nothing about it, or sweep the orphans and t
 `calendar.tsx` went. Until then every Dependabot major on one of those packages costs a review for a
 component nothing renders. Reproduce the list with a per-file importer count over `src/components/ui/`.
 
-### P6. Twenty-one lucide icon imports survive only through legacy-rename aliases
-
-The lucide-react 1.31 bump found this and did not fix it. These names were renamed upstream and are
-re-exported under their old spelling, at runtime and in the types: `AlertTriangle`, `Loader2`,
-`Loader2Icon`, `CheckCircle2`, `BarChart3`, `BarChart2`, `AlertCircle`, `FileJson`, `XCircle`,
-`AlignLeft`, `Edit3`, `Filter`, `Wand2`, `MoreVertical`, `MoreHorizontal`, `MoreHorizontalIcon`,
-`History`, `PlayCircle`, `LineChart`, `PieChart`, `AreaChart` — 51 import sites. Geometry is
-byte-identical to what we rendered before, so nothing is broken today.
-
-The failure mode is what makes it worth recording. lucide-react 1.31.0 ships **zero** `@deprecated`
-JSDoc tags, so no editor, linter or typecheck warns while an alias is alive. The first signal is the
-build breaking on the release that drops it. That is exactly how `Github` arrived — a hard break, not a
-warning.
-
-`History` is the one with a rendered-output consequence: in v1 it aliases `RotateCcwClock`, and
-`createLucideIcon` derives the emitted class from the canonical name, so its element class moves from
-`lucide-history` to `lucide-rotate-ccw-clock`. No test asserts that class today (checked all 17
-`lucide-*` class literals under `src/` and `tests/`), but a migration should re-check it.
-
-**Done when:** each import uses its canonical v1 name (`TriangleAlert`, `LoaderCircle`, `CircleCheck`,
-`ChartColumn`, …), which turns a future silent removal into a no-op.
-
----
 
 ## Documentation
 

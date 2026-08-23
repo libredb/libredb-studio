@@ -19,8 +19,8 @@ import {
   Globe,
   Key,
   Link,
-  CheckCircle2,
-  XCircle,
+  CircleCheck,
+  CircleX,
   ClipboardPaste,
   Lock,
   ChevronDown,
@@ -841,9 +841,9 @@ export function ConnectionModal({
                   )}
                 >
                   {testResult.success ? (
-                    <CheckCircle2 strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
+                    <CircleCheck strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
                   ) : (
-                    <XCircle strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
+                    <CircleX strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
                   )}
                   <span className="leading-relaxed">{testResult.message}</span>
                 </div>

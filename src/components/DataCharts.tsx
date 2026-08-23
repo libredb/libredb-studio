@@ -25,19 +25,19 @@ import { toast } from "sonner";
 import { type AgentChartSpec, QueryResult } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
-  BarChart3,
-  LineChart as LineChartIcon,
-  PieChart as PieChartIcon,
-  AreaChart as AreaChartIcon,
+  ChartColumn,
+  ChartLine as LineChartIcon,
+  ChartPie as PieChartIcon,
+  ChartArea as AreaChartIcon,
   Download,
   Settings2,
   TrendingUp,
   Hash,
   Calendar,
   Type,
-  AlertCircle,
+  CircleAlert,
   Circle,
-  BarChart2,
+  ChartNoAxesColumn,
   Save,
   FolderOpen,
   X,
@@ -645,13 +645,13 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
   }
 
   const chartTypes: { type: ChartType; icon: React.ReactNode; label: string }[] = [
-    { type: "bar", icon: <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5" />, label: "Bar" },
+    { type: "bar", icon: <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5" />, label: "Bar" },
     { type: "line", icon: <LineChartIcon strokeWidth={1.5} className="w-3.5 h-3.5" />, label: "Line" },
     { type: "pie", icon: <PieChartIcon strokeWidth={1.5} className="w-3.5 h-3.5" />, label: "Pie" },
     { type: "area", icon: <AreaChartIcon strokeWidth={1.5} className="w-3.5 h-3.5" />, label: "Area" },
     { type: "scatter", icon: <Circle strokeWidth={1.5} className="w-3.5 h-3.5" />, label: "Scatter" },
-    { type: "histogram", icon: <BarChart2 strokeWidth={1.5} className="w-3.5 h-3.5" />, label: "Histogram" },
-    { type: "stacked-bar", icon: <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5" />, label: "Stacked" },
+    { type: "histogram", icon: <ChartNoAxesColumn strokeWidth={1.5} className="w-3.5 h-3.5" />, label: "Histogram" },
+    { type: "stacked-bar", icon: <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5" />, label: "Stacked" },
     { type: "stacked-area", icon: <AreaChartIcon strokeWidth={1.5} className="w-3.5 h-3.5" />, label: "Stack Area" },
   ];
 
@@ -664,7 +664,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
       case "categorical":
         return <Type strokeWidth={1.5} className="w-3 h-3" />;
       default:
-        return <AlertCircle strokeWidth={1.5} className="w-3 h-3" />;
+        return <CircleAlert strokeWidth={1.5} className="w-3 h-3" />;
     }
   };
 

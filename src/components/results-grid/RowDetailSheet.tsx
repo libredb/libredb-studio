@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import { Copy, FileJson, Check, Eye, Lock, TriangleAlert } from "lucide-react";
+import { Copy, FileBraces, Check, Eye, Lock, TriangleAlert } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -109,7 +109,7 @@ export function RowDetailSheet({
           <div className="flex items-center justify-between">
             <SheetTitle className="text-fg flex items-center gap-2">
               <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                <FileJson strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
+                <FileBraces strokeWidth={1.5} className="w-3.5 h-3.5 text-blue-400" />
               </div>
               Row #{rowIndex + 1}
             </SheetTitle>

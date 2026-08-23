@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { FileText, Loader2, Search, Sparkles, Download } from "lucide-react";
+import { FileText, LoaderCircle, Search, Sparkles, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TableSchema } from "@/lib/types";
 import { renderInline } from "@/components/rich-text";
@@ -177,7 +177,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
               isAiLoading ? "bg-teal-600/20 text-teal-400 cursor-wait" : "bg-teal-600 hover:bg-teal-500 text-white",
             )}
           >
-            {isAiLoading && <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />}
+            {isAiLoading && <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin" />}
             {!isAiLoading && <Sparkles strokeWidth={1.5} className="w-3 h-3" />}
             {aiDocs ? "Regenerate" : "AI Describe"}
           </button>
@@ -212,7 +212,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType }: DatabaseDo
             <div className="flex items-center gap-2 mb-3">
               <Sparkles strokeWidth={1.5} className="w-3 h-3 text-teal-400" />
               <span className="text-xs font-medium text-teal-400">AI-Generated Documentation</span>
-              {isAiLoading && <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin text-teal-400" />}
+              {isAiLoading && <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin text-teal-400" />}
             </div>
             {aiDocs && <div className="prose prose-invert prose-xs max-w-none">{renderMarkdown(aiDocs)}</div>}
           </div>

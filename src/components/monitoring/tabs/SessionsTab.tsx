@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Users, Skull, Activity, Clock, Loader2 } from "lucide-react";
+import { Users, Skull, Activity, Clock, LoaderCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -207,7 +207,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
                             disabled={killingPid === session.pid}
                           >
                             {killingPid === session.pid ? (
-                              <Loader2 strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 animate-spin" />
+                              <LoaderCircle strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 animate-spin" />
                             ) : (
                               <Skull strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
                             )}

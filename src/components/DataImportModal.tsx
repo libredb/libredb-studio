@@ -9,13 +9,13 @@ import { cn } from "@/lib/utils";
 import {
   Upload,
   FileSpreadsheet,
-  FileJson,
+  FileBraces,
   FileText,
   Check,
-  AlertTriangle,
+  TriangleAlert,
   Table2,
   ArrowRight,
-  Loader2,
+  LoaderCircle,
   X,
 } from "lucide-react";
 import type { DatabaseType, TableSchema } from "@/lib/types";
@@ -365,7 +365,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                     <span className="text-xs">CSV</span>
                   </div>
                   <div className="flex items-center gap-1.5 text-fg-muted">
-                    <FileJson strokeWidth={1.5} className="w-3.5 h-3.5" />
+                    <FileBraces strokeWidth={1.5} className="w-3.5 h-3.5" />
                     <span className="text-xs">JSON</span>
                   </div>
                 </div>
@@ -382,7 +382,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
               />
               {error && (
                 <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2">
-                  <AlertTriangle strokeWidth={1.5} className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                  <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 text-red-400 shrink-0" />
                   <span className="text-xs text-red-400">{error}</span>
                 </div>
               )}
@@ -395,7 +395,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   {fileType === "json" ? (
-                    <FileJson strokeWidth={1.5} className="w-5 h-5 text-amber-400" />
+                    <FileBraces strokeWidth={1.5} className="w-5 h-5 text-amber-400" />
                   ) : (
                     <FileText strokeWidth={1.5} className="w-5 h-5 text-emerald-400" />
                   )}
@@ -639,7 +639,7 @@ export function DataImportModal({ isOpen, onClose, onImport, tables, databaseTyp
                   >
                     {isImporting ? (
                       <>
-                        <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" /> Importing...
+                        <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin" /> Importing...
                       </>
                     ) : (
                       <>

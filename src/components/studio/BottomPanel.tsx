@@ -17,7 +17,7 @@ import type { ResultExportFormat } from "@/lib/export/result-export";
 import { resolveExplainPlan } from "@/lib/explain";
 import { cn } from "@/lib/utils";
 import {
-  BarChart3,
+  ChartColumn,
   Bookmark,
   Clock,
   Columns3,
@@ -269,7 +269,7 @@ export function BottomPanel({
     {
       key: "charts",
       label: "Charts",
-      icon: <BarChart3 strokeWidth={1.5} className="w-3 h-3" />,
+      icon: <ChartColumn strokeWidth={1.5} className="w-3 h-3" />,
       activeClass: "text-cyan-400 border-cyan-500 bg-fill",
     },
     {

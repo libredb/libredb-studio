@@ -6,18 +6,18 @@ import type { QueryEditorRef } from "@/components/QueryEditor";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
-  AlignLeft,
+  TextAlignStart,
   Bot,
   ChevronDown,
   Copy,
   Database,
-  Edit3,
+  PenLine,
   Gauge,
   LogOut,
-  MoreVertical,
+  EllipsisVertical,
   Pencil,
   Play,
-  PlayCircle,
+  CirclePlay,
   Plus,
   Save,
   Settings,
@@ -266,12 +266,12 @@ export function StudioMobileHeader({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 text-xs text-fg-muted">
-                  <MoreVertical strokeWidth={1.5} className="w-3 h-3" />
+                  <EllipsisVertical strokeWidth={1.5} className="w-3 h-3" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="bg-raised border-hairline-strong w-48">
                 <DropdownMenuItem onClick={() => queryEditorRef.current?.format()} className="cursor-pointer text-xs">
-                  <AlignLeft strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Format SQL
+                  <TextAlignStart strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Format SQL
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => {
@@ -316,7 +316,7 @@ export function StudioMobileHeader({
                       className="cursor-pointer text-xs"
                       disabled={!activeConnection}
                     >
-                      <PlayCircle strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> BEGIN Transaction
+                      <CirclePlay strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> BEGIN Transaction
                     </DropdownMenuItem>
                   ) : (
                     <>
@@ -324,10 +324,10 @@ export function StudioMobileHeader({
                         onClick={transaction.commit}
                         className="cursor-pointer text-xs text-emerald-400"
                       >
-                        <PlayCircle strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> COMMIT
+                        <CirclePlay strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> COMMIT
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={transaction.rollback} className="cursor-pointer text-xs text-red-400">
-                        <PlayCircle strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> ROLLBACK
+                        <CirclePlay strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> ROLLBACK
                       </DropdownMenuItem>
                     </>
                   ))}
@@ -341,7 +341,7 @@ export function StudioMobileHeader({
 
                 {onToggleEditing && (
                   <DropdownMenuItem onClick={onToggleEditing} className="cursor-pointer text-xs">
-                    <Edit3 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
+                    <PenLine strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
                     {editingEnabled ? "Disable Editing" : "Enable Editing"}
                   </DropdownMenuItem>
                 )}

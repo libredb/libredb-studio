@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Clock, AlertTriangle, Search, ArrowUpDown } from "lucide-react";
+import { Clock, TriangleAlert, Search, ArrowUpDown } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -105,7 +105,7 @@ export function QueriesTab({ data, loading, labels }: QueriesTabProps) {
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Slow</CardTitle>
-            <AlertTriangle
+            <TriangleAlert
               className={`h-3 w-3 sm:h-4 sm:w-4 ${slowCount > 0 ? "text-yellow-500" : "text-muted-foreground"}`}
             />
           </CardHeader>

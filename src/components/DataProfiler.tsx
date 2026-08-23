@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { Loader2, BarChart3, X, Hash, AlertCircle, Sparkles, Lock } from "lucide-react";
+import { LoaderCircle, ChartColumn, X, Hash, CircleAlert, Sparkles, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TableSchema, DatabaseConnection } from "@/lib/types";
 import { detectSensitiveColumns, maskValue } from "@/lib/data-masking";
@@ -208,7 +208,7 @@ export function DataProfiler({
         */}
         <div className="relative z-10 shrink-0 flex items-center justify-between gap-2 px-5 py-3 border-b border-hairline">
           <div className="flex min-w-0 items-center gap-2">
-            <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
+            <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
             <span className="text-xs font-medium text-fg shrink-0">Data Profiler</span>
             <span className="text-xs text-fg-muted font-mono truncate">{tableName}</span>
           </div>
@@ -225,14 +225,14 @@ export function DataProfiler({
         <div className="flex-1 overflow-auto p-5 space-y-4">
           {isLoading && (
             <div className="flex items-center justify-center gap-2 py-12 text-fg-muted">
-              <Loader2 strokeWidth={1.5} className="w-5 h-5 animate-spin" />
+              <LoaderCircle strokeWidth={1.5} className="w-5 h-5 animate-spin" />
               <span className="text-xs">Profiling {tableName}...</span>
             </div>
           )}
 
           {error && (
             <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-400 flex items-center gap-2">
-              <AlertCircle strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
+              <CircleAlert strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
               {error}
             </div>
           )}
@@ -374,7 +374,7 @@ export function DataProfiler({
                   <div className="flex items-center gap-2 mb-2">
                     <Sparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />
                     <span className="text-xs font-medium text-cyan-400">AI Analysis</span>
-                    {isAiLoading && <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin text-cyan-400" />}
+                    {isAiLoading && <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin text-cyan-400" />}
                   </div>
                   {aiSummary && (
                     <div className="text-xs text-fg-tertiary leading-relaxed whitespace-pre-wrap">{aiSummary}</div>

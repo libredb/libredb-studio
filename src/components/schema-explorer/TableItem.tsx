@@ -6,13 +6,13 @@ import {
   Table as TableIcon,
   Play,
   ChevronRight,
-  Filter,
-  MoreVertical,
+  Funnel,
+  EllipsisVertical,
   Copy,
   Trash2,
   Code,
-  BarChart3,
-  Wand2,
+  ChartColumn,
+  WandSparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -97,7 +97,7 @@ function renderMenuItems({
         {labels?.selectAction || "Select Top 50"}
       </Item>
       <Item onClick={() => callbacks.onGenerateSelect?.(table.name)}>
-        <Filter strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-blue-500" />
+        <Funnel strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-blue-500" />
         {labels?.generateAction || "Generate Query"}
       </Item>
       <Item onClick={() => copyToClipboard(table.name, `${labels?.entityName || "Table"} name`)}>
@@ -109,7 +109,7 @@ function renderMenuItems({
       <Separator />
       {rowsAreAddressable && (
         <Item onClick={() => callbacks.onProfileTable?.(table.name)}>
-          <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-cyan-500" />
+          <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-cyan-500" />
           {"Profile Table"}
         </Item>
       )}
@@ -119,7 +119,7 @@ function renderMenuItems({
       </Item>
       {rowsAreAddressable && (
         <Item onClick={() => callbacks.onGenerateTestData?.(table.name)}>
-          <Wand2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-amber-500" />
+          <WandSparkles strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-amber-500" />
           {"Generate Test Data"}
         </Item>
       )}
@@ -237,7 +237,7 @@ export const TableItem = React.memo(function TableItem({
                     className="absolute inset-0 w-full h-full opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 focus-within:opacity-100 transition-opacity hover:bg-accent flex items-center justify-center"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <MoreVertical
+                    <EllipsisVertical
                       strokeWidth={1.5}
                       className="w-3.5 h-3.5 text-muted-foreground group-hover:text-foreground"
                     />

@@ -5,14 +5,14 @@ import {
   GitCompare,
   Plus,
   Minus,
-  Edit3,
+  PenLine,
   Camera,
   FileCode,
   ChevronRight,
   ChevronDown,
   Clock,
   Database,
-  AlertTriangle,
+  TriangleAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -156,7 +156,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
       case "modified":
         return (
           <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs">
-            <Edit3 strokeWidth={1.5} className="w-2.5 h-2.5 mr-0.5" />
+            <PenLine strokeWidth={1.5} className="w-2.5 h-2.5 mr-0.5" />
             {"Modified"}
           </Badge>
         );
@@ -246,7 +246,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
                         <div className="flex items-center gap-1">
                           <Database strokeWidth={1.5} className="w-3 h-3 text-blue-400" /> {c.name}
                           {c.environment === "production" && (
-                            <AlertTriangle strokeWidth={1.5} className="w-3 h-3 text-red-400" />
+                            <TriangleAlert strokeWidth={1.5} className="w-3 h-3 text-red-400" />
                           )}
                         </div>
                       </SelectItem>
@@ -382,7 +382,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
           </div>
         ) : (
           <div className="flex-1 flex items-center justify-center text-fg-subtle gap-2">
-            <AlertTriangle strokeWidth={1.5} className="w-3.5 h-3.5" />
+            <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5" />
             <span className="text-xs">Cannot compare same schema with itself</span>
           </div>
         )}
@@ -519,7 +519,7 @@ function getActionIcon(action: string) {
     case "removed":
       return <Minus className="w-3 h-3 text-red-400" />;
     case "modified":
-      return <Edit3 strokeWidth={1.5} className="w-3 h-3 text-yellow-400" />;
+      return <PenLine strokeWidth={1.5} className="w-3 h-3 text-yellow-400" />;
     default:
       return null;
   }

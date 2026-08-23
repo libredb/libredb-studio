@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Trash2, Table as TableIcon, Type, Settings2, Loader2 } from "lucide-react";
+import { Plus, Trash2, Table as TableIcon, Type, Settings2, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 
 interface ColumnDefinition {
@@ -264,7 +264,7 @@ export function CreateTableModal({ isOpen, onClose, onTableCreated }: CreateTabl
             className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium gap-2 px-6"
           >
             {isSubmitting ? (
-              <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
+              <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin" />
             ) : (
               <Plus strokeWidth={1.5} className="w-3 h-3" />
             )}

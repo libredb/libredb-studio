@@ -3,7 +3,7 @@
 import React, { type Dispatch, type SetStateAction } from "react";
 import type { QueryTab } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { FileJson, Hash, Plus, X } from "lucide-react";
+import { FileBraces, Hash, Plus, X } from "lucide-react";
 
 interface StudioTabBarProps {
   tabs: QueryTab[];
@@ -75,7 +75,7 @@ export function StudioTabBar({
               {tab.type === "sql" ? (
                 <Hash strokeWidth={1.5} className="w-3 h-3" />
               ) : (
-                <FileJson strokeWidth={1.5} className="w-3 h-3" />
+                <FileBraces strokeWidth={1.5} className="w-3 h-3" />
               )}
               <input
                 autoFocus
@@ -123,7 +123,7 @@ export function StudioTabBar({
               {tab.type === "sql" ? (
                 <Hash strokeWidth={1.5} className="w-3 h-3" />
               ) : (
-                <FileJson strokeWidth={1.5} className="w-3 h-3" />
+                <FileBraces strokeWidth={1.5} className="w-3 h-3" />
               )}
               <span className="text-xs truncate font-medium">{tab.name}</span>
             </button>

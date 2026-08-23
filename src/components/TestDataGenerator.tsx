@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { Wand2, X, Play, RefreshCw } from "lucide-react";
+import { WandSparkles, X, Play, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "@/components/copy-button";
 import { DatabaseType, TableSchema } from "@/lib/types";
@@ -241,7 +241,7 @@ export function TestDataGenerator({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-hairline">
           <div className="flex items-center gap-2">
-            <Wand2 strokeWidth={1.5} className="w-3.5 h-3.5 text-amber-400" />
+            <WandSparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-amber-400" />
             <span className="text-xs font-medium text-fg">Test Data Generator</span>
             <span className="text-xs text-fg-muted font-mono">{tableName}</span>
           </div>
