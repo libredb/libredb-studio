@@ -111,6 +111,24 @@ describe("db-ui-config", () => {
       expect(getDBConfig("trino").connectionFields).toContain("database");
     });
 
+    test("mongodb asks where the credentials live, alongside the database to open", () => {
+      // Two different questions on MongoDB, and only there: users are created in a
+      // database of their own, and the driver checks them against whichever database
+      // the URI names. Without the field the ordinary deployment - users in `admin`,
+      // data elsewhere - had no form to fill in.
+      expect(getDBConfig("mongodb").label).toBe("MongoDB");
+      expect(getDBConfig("mongodb").defaultPort).toBe("27017");
+      expect(getDBConfig("mongodb").connectionFields).toEqual([
+        "host",
+        "port",
+        "user",
+        "password",
+        "database",
+        "connectionString",
+        "authSource",
+      ]);
+    });
+
     test("cassandra asks for the data centre its driver refuses to start without", () => {
       expect(getDBConfig("cassandra").label).toBe("Apache Cassandra");
       expect(getDBConfig("cassandra").defaultPort).toBe("9042");

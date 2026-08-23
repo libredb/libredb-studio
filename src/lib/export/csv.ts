@@ -23,6 +23,7 @@
  * is no setting and no checkbox, the same answer OWASP, GitHub and Google Sheets give.
  */
 
+import { asBytes, binaryText } from "./binary";
 import { jsonText } from "./json";
 
 /**
@@ -41,6 +42,12 @@ const NEEDS_QUOTING = /["\r\n,]/;
 function renderValue(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (value instanceof Date) return value.toISOString();
+  // Before the object branch, and through the same module the grid renders with:
+  // a `bytea`/`BLOB` value used to be written as its serialized-Buffer JSON — four
+  // bytes of digits per byte of data, unrecoverable — and the file has to say what
+  // the screen says.
+  const bytes = asBytes(value);
+  if (bytes !== undefined) return binaryText(bytes);
   // A JSON column, a Postgres array, a Mongo sub-document: `String(...)` answers
   // `[object Object]` for all of them, which loses the cell entirely. Through
   // `jsonText`, because a bare `JSON.stringify` throws on a bigint or a cycle and

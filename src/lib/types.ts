@@ -102,6 +102,18 @@ export interface DatabaseConnection {
    * `serviceName`.
    */
   localDataCenter?: string;
+  /**
+   * MongoDB: the database the credentials live in (`?authSource=admin`).
+   *
+   * Not the same question as `database`, which is the one being opened. MongoDB
+   * stores users in a database of their own, and the driver authenticates against
+   * whichever database the URI names when nothing says otherwise - so the ordinary
+   * deployment, users in `admin` and data elsewhere, could not be reached through the
+   * form fields at all: it failed as a credentials error, which is what it looks like
+   * and is not what it is. No other engine here separates the two, which is why this
+   * is a field of its own rather than a reuse of `database`.
+   */
+  authSource?: string;
   managed?: boolean; // true = admin-controlled, read-only in UI
   seedId?: string; // stable reference to seed config ID
   agentUser?: string; // optional least-privilege role for the agent read-only execution profile (#328)

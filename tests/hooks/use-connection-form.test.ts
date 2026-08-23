@@ -1047,6 +1047,108 @@ describe("useConnectionForm", () => {
     expect(result.current.localDataCenter).toBe("");
   });
 
+  // ── buildConnection with the MongoDB authSource ────────────────────────
+
+  test("buildConnection includes the MongoDB authSource", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 20 } },
+    });
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setType("mongodb");
+      result.current.setAuthSource("admin");
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const testCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/test-connection"),
+    );
+    const body = JSON.parse(testCall![1]!.body as string);
+    expect(body.authSource).toBe("admin");
+  });
+
+  test("an authSource typed for another engine is not sent", async () => {
+    // MongoDB is the only engine here that keeps its users in a database of their
+    // own, so the field stays on it, exactly as `serviceName` stays on Oracle.
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 20 } },
+    });
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setType("postgres");
+      result.current.setAuthSource("admin");
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const testCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/test-connection"),
+    );
+    const body = JSON.parse(testCall![1]!.body as string);
+    expect(body.authSource).toBeUndefined();
+  });
+
+  test("populates the MongoDB authSource in edit mode, and clears it when there is none", () => {
+    // The edit effect OVERWRITES: a connection whose credentials live in the database
+    // it opens must show an empty field, otherwise the last connection's `admin` is
+    // saved onto it and the driver looks for the user in the wrong place.
+    const withAuthDb: DatabaseConnection = {
+      id: "m1",
+      name: "Shop",
+      type: "mongodb",
+      host: "mongo.internal",
+      port: 27017,
+      database: "shop",
+      authSource: "admin",
+      createdAt: new Date(),
+    };
+    const withoutAuthDb: DatabaseConnection = {
+      id: "m2",
+      name: "Other",
+      type: "mongodb",
+      host: "mongo-2.internal",
+      port: 27017,
+      database: "shop",
+      createdAt: new Date(),
+    };
+
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, editConnection: withAuthDb },
+    });
+
+    expect(result.current.authSource).toBe("admin");
+
+    rerender({ ...defaultProps, editConnection: withoutAuthDb });
+
+    expect(result.current.authSource).toBe("");
+  });
+
+  test("clearing the modal clears the authSource before the next new connection", () => {
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true },
+    });
+
+    act(() => {
+      result.current.setType("mongodb");
+      result.current.setAuthSource("admin");
+    });
+
+    expect(result.current.authSource).toBe("admin");
+
+    rerender({ ...defaultProps, isOpen: false });
+
+    expect(result.current.authSource).toBe("");
+  });
+
   // ── buildConnection with MSSQL instanceName ────────────────────────────
 
   test("buildConnection includes MSSQL instanceName", async () => {

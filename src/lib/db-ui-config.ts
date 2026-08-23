@@ -40,6 +40,9 @@ export interface DatabaseUIConfig {
     // refuses to construct a load-balancing policy without a local data centre, so a
     // connection with this empty cannot open at all.
     | "localDataCenter"
+    // MongoDB only: the database its credentials live in, which the driver otherwise
+    // assumes is the one being opened.
+    | "authSource"
   )[];
 }
 
@@ -74,7 +77,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     label: "MongoDB",
     defaultPort: "27017",
     showConnectionStringToggle: true,
-    connectionFields: ["host", "port", "user", "password", "database", "connectionString"],
+    connectionFields: ["host", "port", "user", "password", "database", "connectionString", "authSource"],
   },
   redis: {
     icon: RedisIcon,

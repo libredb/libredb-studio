@@ -337,7 +337,8 @@ throw — it does **not** confirm the cancellation actually took effect. Exposed
   `number`s and can **lose precision** beyond 2^53 / at high scale (the same class of issue as
   Oracle's `NUMBER`). Fetching them as strings would preserve fidelity.
 - **Binary** (`VARBINARY`/`IMAGE`/`rowversion`) comes back as a Node `Buffer` and is **not**
-  sanitized to a hex string (contrast the MySQL provider's `sanitizeRow`).
+  sanitized to a hex string (contrast the MySQL provider's `sanitizeRow`), so it reaches the client
+  as the JSON shape a `Buffer` serializes to and is rendered as hex there (§7).
 - **Only the first result set is returned.** `query()` reads `result.recordset` (singular), so a
   multi-statement batch or a stored procedure returning several result sets surfaces just one.
 
@@ -548,8 +549,11 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   (MITM-exposed). For verified TLS, set `connection.ssl` mode `verify-ca`/`verify-full`. (Azure hosts
   validate by default.)
 - **Binary columns aren't sanitized.** `VARBINARY`/`IMAGE`/`rowversion` come back as Node `Buffer`s
-  and serialize to the grid as `Buffer` JSON (no `0x…` hex conversion like the MySQL provider) — see
-  [§5.3](#53-data-type--parameter-handling).
+  and cross the wire as `{"type":"Buffer","data":[…]}` (no `0x…` hex conversion like the MySQL
+  provider) — see [§5.3](#53-data-type--parameter-handling). The client recovers them: the results
+  grid, the row detail sheet and the CSV export all classify that shape as binary and render `\x…`
+  hex (`src/lib/export/binary.ts`), so what remains is the response size — about four bytes of JSON
+  digits per byte of data.
 - **Numeric precision loss** — `BIGINT`/`DECIMAL`/`NUMERIC`/`MONEY` are returned as JS `number`s and
   can lose precision; they would need to be fetched as strings to stay exact ([§5.3](#53-data-type--parameter-handling)).
 - **Parameters bound without explicit types** — relies on `mssql` type inference, which can mis-type

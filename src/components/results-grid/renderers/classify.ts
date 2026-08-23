@@ -1,3 +1,4 @@
+import { asBytes } from "@/lib/export/binary";
 import type { ValueKind } from "./types";
 
 // Only JSON containers (object/array) count: strings holding bare JSON
@@ -21,6 +22,11 @@ function parsesToJsonContainer(value: string): boolean {
 export function classifyValue(value: unknown): ValueKind {
   if (value === null || value === undefined) {
     return "null";
+  }
+  // Before the object branch, which would otherwise claim every binary value:
+  // a `bytea`/`BLOB` cell is an object in both the shapes it arrives in.
+  if (asBytes(value) !== undefined) {
+    return "binary";
   }
   if (typeof value === "object") {
     return "json";

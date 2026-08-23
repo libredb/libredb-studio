@@ -65,6 +65,8 @@ function makeMonitoringData(): MonitoringData {
         rowCount: 10000,
         tableSize: "500 MB",
         tableSizeBytes: 524288000,
+        indexSize: "120 MB",
+        indexSizeBytes: 125829120,
         totalSize: "700 MB",
         totalSizeBytes: 734003200,
       },
@@ -74,10 +76,14 @@ function makeMonitoringData(): MonitoringData {
         rowCount: 2500,
         tableSize: "200 MB",
         tableSizeBytes: 209715200,
+        indexSize: "80 MB",
+        indexSizeBytes: 83886080,
         totalSize: "300 MB",
         totalSizeBytes: 314572800,
       },
     ],
+    // Deliberately larger than the whole database: the index total is taken from the per-table
+    // figures above, never from these rows. See the double-count test below.
     indexes: [
       {
         schemaName: "public",
@@ -86,8 +92,8 @@ function makeMonitoringData(): MonitoringData {
         columns: ["created_at"],
         isUnique: false,
         isPrimary: false,
-        indexSize: "120 MB",
-        indexSizeBytes: 125829120,
+        indexSize: "2.00 GB",
+        indexSizeBytes: 2 * 1024 * 1024 * 1024,
         scans: 100,
       },
     ],
@@ -174,5 +180,43 @@ describe("StorageTab", () => {
     // largest tables are sorted by total size descending
     expect(queryByText("orders")).not.toBeNull();
     expect(queryByText("users")).not.toBeNull();
+  });
+
+  test("the index total is the per-table figure, not the sum of the index rows", () => {
+    // InnoDB has no separate primary-key index: the clustered index IS the table, so
+    // `mysql.innodb_index_stats` reports the PRIMARY row's size as the row data. Summing every
+    // index row therefore counts the table data twice - measured against MySQL 26.7.0 on a 144 KB
+    // database, the sum read 147,456 B (49,152 data + 98,304 indexes), which drew "Indexes" as
+    // 100% of the database and a remainder of "-49152 B". The fixture's index row is 2 GB, the
+    // whole database, so a regression to summing it is visible here rather than only on a server.
+    const { queryByText, queryAllByText } = render(<StorageTab data={makeMonitoringData()} loading={false} />);
+
+    // 120 MB + 80 MB from the two tables, on a 2 GB database.
+    expect(queryAllByText("200.00 MB").length).toBe(2); // Indexes card and breakdown row
+    expect(queryAllByText("9.8%").length).toBe(1);
+    expect(queryByText("1.12 GB")).not.toBeNull(); // the remainder, still positive
+    expect(queryAllByText("2.00 GB").length).toBe(1); // the DB Size card, and nothing else
+  });
+
+  test("a table reported without an index size does not turn the totals into a measurement", () => {
+    // MySQL keeps per-index bytes in `mysql.innodb_index_stats`: a user granted only its own
+    // database is denied that table, and a MyISAM table has no row there (both measured
+    // 2026-08-23), so `indexSizeBytes` is absent. Summing it as 0 published an index total the
+    // server never reported, and left the remainder ("Other") inflated by the unknown share.
+    const base = makeMonitoringData();
+    const unknownIndexSize = {
+      ...base,
+      tables: (base.tables ?? []).map((t) => {
+        const copy = { ...t };
+        delete (copy as { indexSizeBytes?: number }).indexSizeBytes;
+        return copy;
+      }),
+    } as MonitoringData;
+
+    const { queryAllByText } = render(<StorageTab data={unknownIndexSize} loading={false} />);
+
+    // Indexes card, breakdown row and the now-uncomputable remainder.
+    expect(queryAllByText("N/A").length).toBe(3);
+    expect(queryAllByText("200.00 MB").length).toBe(0);
   });
 });

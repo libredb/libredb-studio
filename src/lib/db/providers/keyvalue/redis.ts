@@ -14,7 +14,7 @@
  * HGETALL user:1
  */
 
-import Redis from "ioredis";
+import Redis, { type RedisOptions } from "ioredis";
 import { BaseDatabaseProvider } from "../../base-provider";
 import {
   type DatabaseConnection,
@@ -142,8 +142,36 @@ export class RedisProvider extends BaseDatabaseProvider {
     }
   }
 
+  /**
+   * ioredis hands `tls` straight to `tls.connect`, so the connection form's material
+   * travels under Node's own names — the same mapping the PostgreSQL, MySQL and
+   * Couchbase adapters use. `require` encrypts without checking the chain, because a
+   * self-hosted Redis presents a self-signed certificate; the verifying modes check
+   * it. An explicit flag always wins. Absent the key entirely for `disable`: ioredis
+   * negotiates TLS whenever `tls` is present, `{}` included.
+   *
+   * Exercised against a TLS-only server, both arms (2026-08-23, `redis:latest` started with
+   * `--port 0 --tls-port 6380` so no plaintext port exists): with `disable` the connection is
+   * refused ("Connection is closed."), and with `require` it reports connected in 1ms. The two
+   * arms together are what make it a measurement rather than a shape — before `tls` reached the
+   * driver, `require` failed exactly like `disable`.
+   */
+  private buildTLSOptions(): RedisOptions["tls"] {
+    const ssl = this.config.ssl;
+    if (!ssl || ssl.mode === "disable") return undefined;
+
+    const tls: NonNullable<RedisOptions["tls"]> = {
+      rejectUnauthorized: ssl.rejectUnauthorized ?? (ssl.mode === "verify-ca" || ssl.mode === "verify-full"),
+    };
+    if (ssl.caCert) tls.ca = ssl.caCert;
+    if (ssl.clientCert) tls.cert = ssl.clientCert;
+    if (ssl.clientKey) tls.key = ssl.clientKey;
+    return tls;
+  }
+
   public async connect(): Promise<void> {
     try {
+      const tls = this.buildTLSOptions();
       this.client = new Redis({
         host: this.config.host,
         port: this.config.port || 6379,
@@ -151,6 +179,7 @@ export class RedisProvider extends BaseDatabaseProvider {
         db: this.config.database ? parseInt(this.config.database, 10) : 0,
         connectTimeout: this.queryTimeout,
         lazyConnect: true,
+        ...(tls ? { tls } : {}),
       });
 
       await this.client.connect();

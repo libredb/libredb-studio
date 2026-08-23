@@ -144,6 +144,41 @@ describe("SeedDefaultsSchema", () => {
   });
 });
 
+describe("SeedConnectionSchema: MongoDB's authSource", () => {
+  // A seeded MongoDB connection whose users live in `admin` is the ordinary
+  // deployment. Without this key the descriptor could not say so, and the managed
+  // connection reported a credentials error.
+  it("accepts a seeded connection that names its auth database", () => {
+    const result = SeedConnectionSchema.safeParse({
+      id: "shop",
+      name: "Shop",
+      type: "mongodb",
+      host: "mongo.internal",
+      port: 27017,
+      database: "shop",
+      user: "app",
+      password: "s3cret",
+      authSource: "admin",
+      roles: ["*"],
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an auth database that is not a string", () => {
+    const result = SeedConnectionSchema.safeParse({
+      id: "shop",
+      name: "Shop",
+      type: "mongodb",
+      host: "mongo.internal",
+      authSource: 1,
+      roles: ["*"],
+    });
+
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("SeedConnectionSchema: Cassandra's localDataCenter", () => {
   // The driver refuses to connect without it, so a seeded Cassandra connection that
   // could not carry it would be a managed connection nobody can open. It is optional

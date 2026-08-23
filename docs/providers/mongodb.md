@@ -19,6 +19,7 @@
 | **Connection string** | ✅ Supported and used directly (`mongodb://` / `mongodb+srv://`) |
 | **Transactions** | ❌ no explicit begin/commit/rollback API |
 | **Query cancellation** | ❌ no `cancelQuery` (operations can be killed via maintenance `killOp`) |
+| **SSL** | Yes — `connection.ssl` → `tls` + Node's `ca`/`cert`/`key` ([§4.1](#41-ssl--tls)) |
 | **Source** | [`src/lib/db/providers/document/mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts) |
 | **Tests** | [`tests/integration/db/mongodb-provider.test.ts`](../../tests/integration/db/mongodb-provider.test.ts) |
 
@@ -81,8 +82,16 @@ requires `collection` and `operation`:
 ```json
 { "collection": "users", "operation": "find", "filter": {"age": {"$gt": 18}}, "options": {"limit": 10} }
 { "collection": "orders", "operation": "aggregate", "pipeline": [{"$group": {"_id": "$status", "count": {"$sum": 1}}}] }
+{ "collection": "products", "operation": "distinct", "field": "category", "filter": {"active": true} }
 { "collection": "users", "operation": "insertOne", "documents": [{"name": "John"}] }
 ```
+
+`distinct` is the one operation with a key of its own: `field`, the driver's own parameter name, and
+it is **required**. The example above answers one row per category, shaped `{ "category": <value> }`.
+A missing or non-string `field` is a `QueryError` naming the key it wanted — it used to read the
+field from the first key of `options.projection` and fall back to `_id`, so
+`{"operation": "distinct", "field": "category"}` answered 120 rows of `_id` (measured 2026-08-22 on
+`mongo:latest`, 120 products in five categories). `options.projection` is **not** an alias for it.
 
 Supported operations: `find`, `findOne`, `aggregate`, `count`, `distinct`, `insertOne`, `insertMany`,
 `updateOne`, `updateMany`, `deleteOne`, `deleteMany`. See the
@@ -142,8 +151,17 @@ unchanged), but it is **not** a true no-op: it returns `limit: options.limit || 
 `connectionString` is used **directly** (this is a genuine connection-string provider, unlike
 SQL Server). `buildConnectionString()` ([mongodb.ts:189](../../src/lib/db/providers/document/mongodb.ts))
 returns `config.connectionString` if present, else assembles
-`mongodb://<user>:<password>@<host>:<port>/<database>` (credentials are URL-encoded; the
-`<user>:<password>@` segment is omitted when no credentials are set).
+`mongodb://<user>:<password>@<host>:<port>/<database>[?authSource=<authSource>]` (credentials and
+the auth database are URL-encoded; the `<user>:<password>@` segment is omitted when no credentials
+are set, and the query string when no `authSource` is).
+
+**`authSource` is the database the credentials live in, and it is not always the one being opened.**
+MongoDB creates users inside a database, and the driver checks them against whichever database the
+URI names when nothing says otherwise — so the ordinary deployment, users in `admin` and data
+elsewhere, could not be reached through the discrete fields at all: it failed as a credentials
+error, which is what it looks like and is not what it is. Leave the field empty when the user
+was created in the database being opened. A pasted `connectionString` is used verbatim and carries
+its own `?authSource=`, so the form offers no separate input in that mode.
 
 ```ts
 // Connection string (SRV or standard)
@@ -154,6 +172,11 @@ const a = { id: 'mg-1', name: 'App', type: 'mongodb',
 const b = { id: 'mg-1', name: 'App', type: 'mongodb',
   host: 'localhost', port: 27017, database: 'app',
   user: 'admin', password: 'secret', createdAt: new Date() };
+
+// Discrete fields, user created in `admin` — the ordinary deployment
+const c = { id: 'mg-1', name: 'App', type: 'mongodb',
+  host: 'localhost', port: 27017, database: 'shop',
+  user: 'app', password: 'secret', authSource: 'admin', createdAt: new Date() };
 ```
 
 `validate()` ([mongodb.ts:123](../../src/lib/db/providers/document/mongodb.ts)) requires either a
@@ -170,6 +193,35 @@ pool is configured from `ProviderOptions.pool`:
 
 The database name comes from `config.database`, else it is parsed out of the connection string, else
 defaults to `test`. After connecting, a `{ ping: 1 }` command validates the connection.
+
+### 4.1 SSL / TLS
+
+`buildTLSOptions()` ([mongodb.ts:275](../../src/lib/db/providers/document/mongodb.ts)) maps
+`connection.ssl` onto the driver's TLS options. `tls`, `ca`, `cert`, `key` and `rejectUnauthorized`
+are all on the driver's own allow-list (`LEGAL_TLS_SOCKET_OPTIONS` in `mongodb/lib/cmap/connect.js`)
+and reach `tls.connect` under Node's names, so the material maps exactly as it does for PostgreSQL,
+MySQL and Couchbase:
+
+| `ssl.mode` | Options added |
+|------------|---------------|
+| absent / `disable` | none — the client is built as before |
+| `require` | `tls: true`, `rejectUnauthorized: false` |
+| `verify-ca` / `verify-full` | `tls: true`, `rejectUnauthorized: true` |
+
+`caCert` / `clientCert` / `clientKey` become `ca` / `cert` / `key` when set, each independently — a
+cluster can demand mutual TLS while presenting a self-signed certificate itself. An explicit
+`ssl.rejectUnauthorized` always wins over the mode. `require` does not check the chain because a
+self-hosted replica set presents a self-signed certificate by default.
+
+Measured against a TLS-only server on 2026-08-23 (`mongo:latest --tlsMode requireTLS`): `disable` is
+refused - the server logs *"The server is configured to only allow SSL connections"* - and `require`
+connects in 20ms, with *"Ingress TLS handshake complete"* on the server side. Both arms matter, since
+before the mode reached the driver `require` failed the same way `disable` does.
+
+> Unlike `authSource`, this **is** applied alongside a pasted `connectionString`. The URI is returned
+> verbatim, so a `tls=` cannot be appended to it, but the options object is a second channel the
+> driver reads — and the connection dialog shows the SSL panel in connection-string mode too, so a
+> selection made there has to mean something.
 
 ---
 
@@ -191,10 +243,10 @@ injection, no transactions, and no `cancelQuery`. `EXPLAIN` is not supported
   (so `{ "operation": "findOne", "options": { "sort": { "_id": -1 } } }` does *not* return the
   latest document).
 - **`aggregate`** ignores `options` entirely (bound it with a `$limit` stage in the pipeline).
-- **`distinct`** has **no dedicated field parameter**: the field is taken from the **first key of
-  `options.projection`**, e.g. `{ "collection": "users", "operation": "distinct",
-  "options": { "projection": { "country": 1 } } }` returns distinct `country` values (output shape
-  `{ "country": <value> }`). With no projection it defaults to `_id`.
+- **`distinct`** ignores `options` entirely and takes its field from the top-level **`field`** key,
+  e.g. `{ "collection": "users", "operation": "distinct", "field": "country" }` returns distinct
+  `country` values (output shape `{ "country": <value> }`). The key is required: a missing or
+  non-string one is a `QueryError`, never a silent `_id`.
 
 ---
 
@@ -240,7 +292,7 @@ Every method is wrapped in try/catch and degrades to a sensible default on permi
 | `getPerformanceMetrics()` | `serverStatus` (WiredTiger + opcounters) | cache-hit %, **ops/sec** (`query`+`insert`+`update`+`delete` opcounters ÷ uptime — *total operations, not just queries*), buffer-pool % (cache bytes), `deadlocks: 0` |
 | `getSlowQueries()` | `system.profile` | per-op time/returned; **`[]` if the profiler isn't enabled** (`db.setProfilingLevel(1)`); sorted by `millis` (slowest) — note `getHealth()`'s slow-query block instead sorts by `ts` (most recent) and emits a placeholder row when disabled |
 | `getActiveSessions()` | `currentOp` | opid, ns, lock waits, duration — ⚠️ the **`user` field is populated from `op.client`** (the client `host:port`), **not** an authenticated user |
-| `getTableStats()` | `collStats` per collection | row count + data/index/total sizes |
+| `getTableStats()` | `collStats` per collection | row count + data/index/total sizes, `totalIndexSize` carried as the byte figure `indexSizeBytes` and not only as formatted text |
 | `getIndexStats()` | `$indexStats` + `indexes()` | **real `scans`** (`accesses.ops`); `indexSize` `N/A`; **`indexType` only distinguishes `text` vs `btree`** — `hashed`/`2dsphere`/`2d`/wildcard/clustered are all mislabelled `btree` |
 | `getStorageStats()` | `dbStats` + WiredTiger | Data / Indexes / Storage / WiredTiger cache (with usage %) |
 
@@ -344,7 +396,8 @@ serialization, schema inference, monitoring, and maintenance.
 Validation, connect/disconnect, capabilities, labels, `prepareQuery`, every `query` operation
 (find/aggregate/count/distinct/insert/update/delete), `getSchema` inference, health, maintenance,
 overview, performance, slow queries, active sessions, table/index/storage stats, **BSON
-serialization** (ObjectId/Binary/Decimal128/Date/nested), and `getMonitoringData`.
+serialization** (ObjectId/Binary/Decimal128/Date/nested), `getMonitoringData`, and **every `ssl.mode`
+branch** asserted against the options object the `MongoClient` constructor received.
 
 ```bash
 bun test tests/integration/db/mongodb-provider.test.ts   # just this file
@@ -407,9 +460,6 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
 - **`Binary` values are shown as a placeholder** (`<Binary: N bytes>`), not the raw bytes, and only
   a subset of BSON types are normalised (`Long`/`Timestamp`/`UUID`/`RegExp`/`Code`/`DBRef` render as
   generic objects).
-- **`distinct` has no dedicated field parameter.** The field is derived from the first key of
-  `options.projection` — an overload of `projection` (which normally means field inclusion). Users
-  must know this incantation; *Future:* add an explicit `options.field`.
 - **`findOne` silently ignores `sort`/`skip`/`limit`** (only `projection` is honoured), so it cannot
   be used to fetch "the latest" document by sort.
 - **`aggregate` ignores `options.limit`/`skip`** and has no safety cap — only an in-pipeline

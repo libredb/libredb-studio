@@ -76,12 +76,20 @@ const mockCallResults: Record<string, unknown> = {
  */
 const capturedCalls: Array<{ command: string; args: string[] }> = [];
 
+/**
+ * Every options object the provider handed the `Redis` constructor. The TLS
+ * selection is observable nowhere else: ioredis takes it at construction time and
+ * never exposes it again.
+ */
+const capturedRedisOptions: Record<string, unknown>[] = [];
+
 mock.module("ioredis", () => {
   class MockRedis {
     private _config: unknown;
 
     constructor(config?: unknown) {
       this._config = config;
+      capturedRedisOptions.push((config ?? {}) as Record<string, unknown>);
     }
 
     async connect() {
@@ -199,6 +207,66 @@ describe("RedisProvider", () => {
       await provider.connect();
       await provider.disconnect();
       expect(provider.isConnected()).toBe(false);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // TLS
+  // --------------------------------------------------------------------------
+
+  describe("the TLS options handed to ioredis", () => {
+    /** The options object of the connection this test just opened. */
+    const lastOptions = (): Record<string, unknown> => capturedRedisOptions[capturedRedisOptions.length - 1];
+
+    const connectWithSSL = async (ssl: DatabaseConnection["ssl"]) => {
+      provider = new RedisProvider({ ...baseConfig, ssl });
+      await provider.connect();
+      return lastOptions();
+    };
+
+    test("carries no tls option when the connection names no SSL config", async () => {
+      await provider.connect();
+      expect("tls" in lastOptions()).toBe(false);
+    });
+
+    test("carries no tls option in mode disable", async () => {
+      const options = await connectWithSSL({ mode: "disable" });
+      expect("tls" in options).toBe(false);
+    });
+
+    test("mode require encrypts without checking the chain", async () => {
+      const options = await connectWithSSL({ mode: "require" });
+      expect(options.tls).toEqual({ rejectUnauthorized: false });
+    });
+
+    test("mode verify-ca and verify-full check the chain", async () => {
+      expect(await connectWithSSL({ mode: "verify-ca" })).toMatchObject({ tls: { rejectUnauthorized: true } });
+      expect(await connectWithSSL({ mode: "verify-full" })).toMatchObject({ tls: { rejectUnauthorized: true } });
+    });
+
+    test("an explicit rejectUnauthorized wins over the mode", async () => {
+      const options = await connectWithSSL({ mode: "verify-full", rejectUnauthorized: false });
+      expect(options.tls).toEqual({ rejectUnauthorized: false });
+    });
+
+    test("the CA and client certificate bundle reaches the driver under Node's own names", async () => {
+      const options = await connectWithSSL({
+        mode: "verify-full",
+        caCert: "-----BEGIN CERTIFICATE-----ca-----END CERTIFICATE-----",
+        clientCert: "-----BEGIN CERTIFICATE-----client-----END CERTIFICATE-----",
+        // Deliberately not a PEM header: `-----BEGIN PRIVATE KEY-----` alone, with no material
+        // after it, is enough for gitleaks' `private-key` rule, so the realistic string fails the
+        // Secret Scan gate for a secret that does not exist (the same reason
+        // tests/unit/db/cassandra/wire.test.ts uses this literal). These assertions are about which
+        // option name carries the value, not what the value looks like.
+        clientKey: "client-key-pem",
+      });
+      expect(options.tls).toEqual({
+        rejectUnauthorized: true,
+        ca: "-----BEGIN CERTIFICATE-----ca-----END CERTIFICATE-----",
+        cert: "-----BEGIN CERTIFICATE-----client-----END CERTIFICATE-----",
+        key: "client-key-pem",
+      });
     });
   });
 

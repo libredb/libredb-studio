@@ -2,8 +2,8 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting fourteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra
 type: application
-version: 0.1.45
-appVersion: "0.13.1"
+version: 0.1.46
+appVersion: "0.13.2"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -26,10 +26,10 @@ keywords:
   - elasticsearch
   - opensearch
   - trino
-  # Missing since Apache Cassandra shipped in 0.12.0 (#448). ArtifactHub search
-  # matches on keywords, so an engine absent here is an engine nobody finds - and
-  # #167 makes a keyword-only fix cost a chart version of its own, which is why it
-  # rides this release, where `version:` moves anyway.
+  # ArtifactHub search matches on keywords, so an engine absent here is an engine
+  # nobody finds. Added in 0.1.45, one chart version after Apache Cassandra
+  # shipped in 0.12.0 (#448) - #167 makes a keyword-only fix cost a chart version
+  # of its own, so a new engine's keyword belongs in the release that ships it.
   - cassandra
   - web-ide
 maintainers:
@@ -39,14 +39,15 @@ annotations:
   artifacthub.io/category: database
   artifacthub.io/license: MIT
   artifacthub.io/prerelease: "false"
-  # False, and for this release it is simply true: 0.13.1 changes no dependency and
-  # no security behaviour. Its content is provider correctness on MongoDB and Redis.
-  # The app-level security fixes remain recorded on 0.1.37, the chart version that
-  # first shipped them; the adm-zip pin note belongs to 0.1.44 and is unchanged.
+  # False: 0.13.2 changes no dependency and no security behaviour. Its content is
+  # the Linux desktop AppImage's glibc floor and provider correctness, neither of
+  # which reaches the chart or the image. The app-level security fixes remain
+  # recorded on 0.1.37, the chart version that first shipped them; the adm-zip pin
+  # note belongs to 0.1.44 and is unchanged.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:0.13.1
+      image: ghcr.io/libredb/libredb-studio:0.13.2
       platforms:
         - linux/amd64
         - linux/arm64
@@ -58,12 +59,16 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "MongoDB is usable again on a managed connection: the seeded copy reaches the browser without its connection string, which made the app read every MongoDB capability as absent and answer with SQL - Find Documents on a collection wrote SELECT * FROM <collection> LIMIT 50 against a document engine"
-    - "Profile Table works on MongoDB. It had asked the provider for an operation the provider has never supported, so every collection answered HTTP 400"
-    - "The MongoDB schema tree names the fields inside a subdocument - shipping.city, not just shipping - to a depth of three and up to 200 fields per collection, which is also what the query agent is grounded on"
-    - "The query agent drafts statements a user can actually run on MongoDB and Redis: the JSON command object rather than mongosh shell syntax, and one Redis command rather than a numbered list of two"
-    - "Chart 0.1.45 changes no template: its content is the appVersion move to 0.13.1. The IPv6 bind behaviour is 0.1.42's, unchanged"
-    - "Track app release 0.13.1 (appVersion bump; default image tag follows)"
+    - "The Linux desktop AppImage could not start at all on Ubuntu 22.04, Debian 12 or an enterprise distribution of that generation: built on a newer image, it required GLIBC_2.38 in every bundled GTK and WebKit library, so the loader refused every shared object and no window ever opened"
+    - "The x64 AppImage is now built on the oldest still-supported LTS and a test refuses a floating runner label on that job, because no release gate can see a glibc floor that only older machines hit"
+    - "MariaDB is named as MariaDB - the overview published every MariaDB server as MySQL, an assertion the server never made - and an unmeasured cache hit ratio is no longer reported as 99%"
+    - "Trino returned every bigint past 2^53 silently rounded, because the client protocol sends it as an unquoted JSON number"
+    - "The two connection routes outside the provider caches never opened the SSH tunnel and reached the raw database host instead"
+    - "MongoDB: the ordinary host and port deployment could not be connected to at all, authSource was dropped, and distinct queries and their errors were handled wrongly"
+    - "The query agent's foreign-key read came back empty under the least-privilege PostgreSQL role the documentation prescribes; it now reads pg_constraint"
+    - "Eight engines offered a transaction control the engine rejects with HTTP 400, because transaction support was assumed rather than declared per provider"
+    - "Chart 0.1.46 changes no template: its content is the appVersion move to 0.13.2"
+    - "Track app release 0.13.2 (appVersion bump; default image tag follows)"
 dependencies:
   - name: postgresql
     version: "16.x.x"

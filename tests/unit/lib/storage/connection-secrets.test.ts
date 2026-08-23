@@ -84,6 +84,9 @@ describe("the classification is exhaustive by construction", () => {
       [
         "agentPassword",
         "agentUser",
+        // MongoDB's auth database. A database NAME, so `public`; the password
+        // checked against it is the secret and is classified below.
+        "authSource",
         "color",
         "connectionString",
         "createdAt",

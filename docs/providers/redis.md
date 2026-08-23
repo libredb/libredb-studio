@@ -14,6 +14,7 @@
 | **Query language** | `json` (plain command **or** JSON command object) |
 | **Default port** | `6379` |
 | **Connection pooling** | None — single lazy connection |
+| **SSL** | Yes — `connection.ssl` → ioredis `tls` ([§4.3](#43-ssl--tls)) |
 | **Source** | [`src/lib/db/providers/keyvalue/redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts) |
 | **Tests** | [`tests/integration/db/redis-provider.test.ts`](../../tests/integration/db/redis-provider.test.ts) |
 | **Tracking issue** | [#7 — Implement Redis Provider](https://github.com/libredb/libredb-studio/issues/7) |
@@ -228,6 +229,7 @@ Redis uses the discrete-field form of `DatabaseConnection` (not `connectionStrin
 | `port` | — | Defaults to `6379` |
 | `password` | — | Sent as `password`; omit for unauthenticated instances |
 | `database` | — | Logical DB index, parsed as int; defaults to `0` |
+| `ssl` | — | `SSLConfig`; becomes the ioredis `tls` option ([§4.3](#43-ssl--tls)) |
 
 ```ts
 const connection = {
@@ -250,6 +252,32 @@ discrete fields. However, the UI connection-string parser
 recognise `redis://` and `rediss://` URLs and **decomposes** them into `host` / `port` (default
 `6379`) / `password` / `database` before they reach the provider. So a user can paste a
 `redis://:pw@host:6379/0` URL into the modal, but the provider never sees the raw string.
+
+### 4.3 SSL / TLS
+
+`buildTLSOptions()` ([`redis.ts:156`](../../src/lib/db/providers/keyvalue/redis.ts)) maps
+`connection.ssl` onto the single `tls` option ioredis hands to `tls.connect`, so the material travels
+under Node's own names — the same mapping the PostgreSQL, MySQL and Couchbase adapters use:
+
+| `ssl.mode` | `tls` option |
+|------------|--------------|
+| absent / `disable` | **not present at all** — ioredis negotiates TLS whenever `tls` is set, `{}` included |
+| `require` | `{ rejectUnauthorized: false }` |
+| `verify-ca` / `verify-full` | `{ rejectUnauthorized: true }` |
+
+`caCert` / `clientCert` / `clientKey` become `ca` / `cert` / `key` when set, each independently — a
+server can demand mutual TLS while presenting a self-signed certificate itself. An explicit
+`ssl.rejectUnauthorized` always wins over the mode. `require` does not check the chain because a
+self-hosted Redis presents a self-signed certificate by default.
+
+Measured against a TLS-only server on 2026-08-23 (`redis:latest --port 0 --tls-port 6380`, so no
+plaintext port exists): `disable` is refused with *"Connection is closed."* and `require` connects in
+1ms. Both arms matter — before the mode reached the driver, `require` failed the same way `disable`
+does, so the pair is what distinguishes a wired path from a documented shape.
+
+> The paste-parser recognises `rediss://` but does **not** carry the secure scheme into the form
+> ([§4.2](#42-connection-string-nuance)), so a pasted `rediss://` URL still needs a mode picked in
+> the SSL panel.
 
 ---
 
@@ -587,8 +615,9 @@ Redis 6.0+ instance.
 The suite covers: validation, connect/disconnect, capabilities, labels, `prepareQuery`, all query
 formats (JSON, plain, empty, `HGETALL`, `INFO`, nil), error handling (malformed JSON, missing
 `command`, Redis-side error, disconnected provider), schema scanning, health, overview, performance,
-slow queries, active sessions, table/index/storage stats, `getMonitoringData`, maintenance, and a
-battery of common commands (`KEYS`, `SET`, `DEL`, `PING`, `DBSIZE`).
+slow queries, active sessions, table/index/storage stats, `getMonitoringData`, maintenance, a
+battery of common commands (`KEYS`, `SET`, `DEL`, `PING`, `DBSIZE`), and **every `ssl.mode` branch**
+asserted against the options object the `Redis` constructor received.
 
 ### 11.3 Run it
 
@@ -642,11 +671,11 @@ request/response contract.
 
 ## 13. Known limitations & future work
 
-- **TLS (`rediss://`) is parsed but not connected.** The connection-string parser recognises
-  `rediss://`, but it does not preserve the secure scheme, and `connect()` neither passes a `tls`
-  option to `ioredis` nor reads `config.ssl`. The provider always attempts a **plaintext**
-  connection, so a TLS-only endpoint will fail to connect rather than negotiate TLS. *Future:*
-  thread `config.ssl` into the `ioredis` constructor.
+- **A pasted `rediss://` URL does not select TLS by itself.** `connect()` now reads `config.ssl`
+  ([§4.3](#43-ssl--tls)), but the connection-string parser drops the secure scheme when it decomposes
+  the URL into `host`/`port`/`password`/`database`, so a `rediss://` paste still lands with the SSL
+  panel on `disable`. *Future:* have the parser carry `sslMode: 'require'` for `rediss://`, the way
+  it already does for `https://` ClickHouse endpoints.
 - **No Cluster / Sentinel support.** Only a single standalone node is supported.
 - **`SCAN` is capped at 1000 keys** for schema discovery — prefixes that only appear beyond the cap
   won't show as "tables". This is a deliberate bound, not a bug.

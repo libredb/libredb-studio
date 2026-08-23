@@ -6,6 +6,7 @@ import { getRenderer } from "@/components/results-grid/renderers/registry";
 import { jsonRenderer } from "@/components/results-grid/renderers/json";
 import { nullRenderer } from "@/components/results-grid/renderers/null";
 import { scalarRenderer } from "@/components/results-grid/renderers/scalar";
+import { binaryRenderer } from "@/components/results-grid/renderers/binary";
 import type { ValueKind } from "@/components/results-grid/renderers/types";
 
 // =============================================================================
@@ -50,6 +51,21 @@ describe("classifyValue", () => {
     expect(classifyValue("null")).toBe("scalar");
   });
 
+  test("a byte-shaped value is kind binary, in both the wire and the live form", () => {
+    // The HTTP path hands the JSON shape a Node Buffer stringifies to; the
+    // embeddable shell hands the live object.
+    expect(classifyValue({ type: "Buffer", data: [1, 2, 171] })).toBe("binary");
+    expect(classifyValue({ type: "Buffer", data: [] })).toBe("binary");
+    expect(classifyValue(new Uint8Array([1, 2]))).toBe("binary");
+    expect(classifyValue(Buffer.from([1, 2]))).toBe("binary");
+  });
+
+  test("an object that only looks like a serialized Buffer stays json", () => {
+    expect(classifyValue({ type: "Buffer" })).toBe("json");
+    expect(classifyValue({ type: "Buffer", data: [1, "two"] })).toBe("json");
+    expect(classifyValue({ type: "Buffer", data: [999] })).toBe("json");
+  });
+
   test("a non-JSON string stays scalar", () => {
     expect(classifyValue("{not json")).toBe("scalar");
     expect(classifyValue("[1, 2")).toBe("scalar");
@@ -66,6 +82,7 @@ describe("getRenderer", () => {
     expect(getRenderer("null")).toBe(nullRenderer);
     expect(getRenderer("scalar")).toBe(scalarRenderer);
     expect(getRenderer("json")).toBe(jsonRenderer);
+    expect(getRenderer("binary")).toBe(binaryRenderer);
   });
 
   test("falls back to the scalar renderer for an unregistered kind", () => {
@@ -73,7 +90,7 @@ describe("getRenderer", () => {
   });
 
   test("every renderer declares the kind it is registered under", () => {
-    for (const kind of ["null", "scalar", "json"] as const) {
+    for (const kind of ["null", "scalar", "json", "binary"] as const) {
       expect(getRenderer(kind).kind).toBe(kind);
     }
   });
@@ -103,6 +120,15 @@ describe("renderCompact", () => {
   test("jsonRenderer keeps a JSON string's raw display in the grid", () => {
     const pretty = '{\n  "id": 1\n}';
     expect(jsonRenderer.renderCompact(pretty)).toEqual({ display: pretty, className: "text-fg-secondary" });
+  });
+
+  test("binaryRenderer renders hex in the cell and truncates a long value with its size", () => {
+    expect(binaryRenderer.renderCompact({ type: "Buffer", data: [1, 2, 171, 255] })).toEqual({
+      display: "\\x0102abff",
+      className: "text-cyan-400/80 font-mono",
+    });
+    const long = new Uint8Array(1024 * 1024).fill(0xab);
+    expect(binaryRenderer.renderCompact(long).display).toBe(`\\x${"ab".repeat(32)}... (1.0 MB)`);
   });
 
   test("scalarRenderer keeps the status-string coloring", () => {
@@ -176,6 +202,16 @@ describe("renderDetail", () => {
     const detail = jsonRenderer.renderDetail(prettyLossy);
     expect(detail.text).toBe(prettyLossy);
     expect(detail.preserveWhitespace).toBe(true);
+  });
+
+  test("binaryRenderer writes the whole value in the detail sheet, never a preview", () => {
+    const long = new Uint8Array(1024).fill(0xab);
+    expect(binaryRenderer.renderDetail(long)).toEqual({
+      text: `\\x${"ab".repeat(1024)}`,
+      className: "text-cyan-400/80 font-mono",
+      preserveWhitespace: false,
+    });
+    expect(binaryRenderer.renderDetail({ type: "Buffer", data: [] }).text).toBe("\\x");
   });
 
   test("whitespace inside JSON string values never triggers the raw fallback", () => {

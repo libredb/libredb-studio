@@ -12,6 +12,9 @@ let mockBreakFn: () => Promise<void>;
 let mockPoolCloseFn: () => Promise<void>;
 let mockCreatePoolFn: () => Promise<unknown>;
 const mockInitOracleClientFn = mock((_opts?: Record<string, unknown>) => undefined);
+// The attributes `createPool` received. The connect string and the TLS attributes are
+// observable nowhere else: the pool is where they are stated and it exposes neither.
+let lastPoolAttrs: Record<string, unknown> = {};
 
 const createMockConnection = () => ({
   execute: (sql: string, params?: unknown[], opts?: unknown) => mockExecuteFn(sql, params, opts),
@@ -34,7 +37,10 @@ mock.module("oracledb", () => {
     initOracleClient: mockInitOracleClientFn,
     outFormat: 0,
     autoCommit: false,
-    createPool: () => mockCreatePoolFn(),
+    createPool: (attrs: Record<string, unknown>) => {
+      lastPoolAttrs = attrs;
+      return mockCreatePoolFn();
+    },
   };
   return { default: oracledbMock };
 });
@@ -427,6 +433,82 @@ describe("OracleProvider", () => {
           connectionString: "localhost:1521/ORCL",
         } as unknown as DatabaseConnection);
       }).not.toThrow();
+    });
+  });
+
+  // =========================================================================
+  // 1a. TLS
+  // =========================================================================
+
+  describe("the TLS attributes handed to createPool", () => {
+    const connectWithSSL = async (ssl: DatabaseConnection["ssl"], extra: Partial<DatabaseConnection> = {}) => {
+      provider = new OracleProvider({ ...baseConfig, ...extra, ssl });
+      await provider.connect();
+      return lastPoolAttrs;
+    };
+
+    test("stays on plain TCP when the connection names no SSL config", async () => {
+      await provider.connect();
+      expect(lastPoolAttrs.connectString).toBe("localhost:1521/ORCL");
+      expect("walletContent" in lastPoolAttrs).toBe(false);
+      expect("sslServerDNMatch" in lastPoolAttrs).toBe(false);
+    });
+
+    test("stays on plain TCP in mode disable", async () => {
+      const attrs = await connectWithSSL({ mode: "disable" });
+      expect(attrs.connectString).toBe("localhost:1521/ORCL");
+      expect("sslServerDNMatch" in attrs).toBe(false);
+    });
+
+    test("mode require switches the protocol to TCPS and asks for no DN match", async () => {
+      const attrs = await connectWithSSL({ mode: "require" });
+      expect(attrs.connectString).toBe("tcps://localhost:1521/ORCL");
+      expect(attrs.sslServerDNMatch).toBe(false);
+    });
+
+    test("verify-ca checks the chain without the hostname; verify-full asks for both", async () => {
+      // Thin mode always calls tls.connect with rejectUnauthorized: true, so the chain
+      // is checked in every TCPS mode and the DN/hostname match is the only knob.
+      expect(await connectWithSSL({ mode: "verify-ca" })).toMatchObject({
+        connectString: "tcps://localhost:1521/ORCL",
+        sslServerDNMatch: false,
+      });
+      expect(await connectWithSSL({ mode: "verify-full" })).toMatchObject({
+        connectString: "tcps://localhost:1521/ORCL",
+        sslServerDNMatch: true,
+      });
+    });
+
+    test("the CA and client certificate bundle reaches the driver as one walletContent PEM", async () => {
+      const attrs = await connectWithSSL({
+        mode: "verify-full",
+        caCert: "-----BEGIN CERTIFICATE-----ca-----END CERTIFICATE-----",
+        clientCert: "-----BEGIN CERTIFICATE-----client-----END CERTIFICATE-----",
+        // Deliberately not a PEM header: `-----BEGIN PRIVATE KEY-----` alone, with no material
+        // after it, is enough for gitleaks' `private-key` rule, so the realistic string fails the
+        // Secret Scan gate for a secret that does not exist (the same reason
+        // tests/unit/db/cassandra/wire.test.ts uses this literal). These assertions are about which
+        // option name carries the value, not what the value looks like.
+        clientKey: "client-key-pem",
+      });
+      expect(attrs.walletContent).toBe(
+        "-----BEGIN CERTIFICATE-----ca-----END CERTIFICATE-----\n" +
+          "-----BEGIN CERTIFICATE-----client-----END CERTIFICATE-----\n" +
+          "client-key-pem",
+      );
+    });
+
+    test("a pasted connect string keeps its own protocol, and still gets the wallet", async () => {
+      // Rewriting the string the user typed would drop what only they know (a full TNS
+      // descriptor, a wallet_location, an SDU), so the protocol in it is the answer.
+      // The wallet and the DN-match flag are separate pool attributes and still apply.
+      const attrs = await connectWithSSL(
+        { mode: "verify-full", caCert: "-----BEGIN CERTIFICATE-----ca-----END CERTIFICATE-----" },
+        { connectionString: "tcps://prod.example.net:2484/PDB1" },
+      );
+      expect(attrs.connectString).toBe("tcps://prod.example.net:2484/PDB1");
+      expect(attrs.walletContent).toBe("-----BEGIN CERTIFICATE-----ca-----END CERTIFICATE-----");
+      expect(attrs.sslServerDNMatch).toBe(true);
     });
   });
 

@@ -108,6 +108,8 @@ export function ConnectionModal({
     setInstanceName,
     localDataCenter,
     setLocalDataCenter,
+    authSource,
+    setAuthSource,
 
     // SSH Tunnel
     showSSH,
@@ -152,6 +154,11 @@ export function ConnectionModal({
   // at all - measured on 5.0.9, "No keyspace has been specified. USE a keyspace, or
   // explicitly specify keyspace.tablename".
   const isCassandra = type === "cassandra";
+  // MongoDB keeps its users in a database of their own, and the driver checks the
+  // credentials against whichever database the URI names when nothing says otherwise.
+  // So the ordinary deployment - users in `admin`, data elsewhere - had no way through
+  // the discrete fields at all, and failed as a credentials error.
+  const isMongoDB = type === "mongodb";
   const databaseFieldLabel = isCouchbase ? "Bucket" : isTrino ? "Catalog" : isCassandra ? "Keyspace" : "Database";
   const databaseFieldPlaceholder = isTrino ? "tpch" : isCassandra ? "probe" : "db";
   const connectionUriPlaceholder = isCouchbase
@@ -497,6 +504,35 @@ export function ConnectionModal({
                       </p>
                     )}
                   </div>
+
+                  {/*
+                    In the open rather than behind the Advanced accordion for the
+                    reason Cassandra's field below is: the deployment that needs it is
+                    the ordinary one, and the failure without it is a credentials error
+                    that names nothing. The connection-string mode has no such field -
+                    a pasted URI carries `?authSource=` itself.
+                  */}
+                  {isMongoDB && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Key strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="authSource" className="text-xs font-medium text-fg-muted">
+                          Authentication Database
+                        </Label>
+                      </div>
+                      <Input
+                        id="authSource"
+                        value={authSource}
+                        onChange={(e) => setAuthSource(e.target.value)}
+                        placeholder="admin"
+                        className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
+                      />
+                      <p className="text-xs text-fg-muted">
+                        The database the user was created in, usually admin. Leave empty when the credentials live in
+                        the database above.
+                      </p>
+                    </div>
+                  )}
 
                   {/*
                     Rendered in the open, not behind the Advanced accordion that holds

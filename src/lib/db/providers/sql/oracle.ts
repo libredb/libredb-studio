@@ -277,7 +277,41 @@ export class OracleProvider extends SQLBaseProvider {
     const port = this.config.port || 1521;
     const serviceName = this.config.serviceName || this.config.database || "ORCL";
 
-    return `${host}:${port}/${serviceName}`;
+    // TCPS is how the Thin driver is told to negotiate TLS at all: it calls
+    // `tls.connect` only when the resolved address protocol is TCPS (audited in the
+    // installed package, `oracledb/lib/thin/sqlnet/ntTcp.js`). A pasted connect string
+    // returns above unchanged, so its own protocol — or its full TNS descriptor —
+    // decides for it; rewriting it would drop what only the user knows.
+    const scheme = this.config.ssl && this.config.ssl.mode !== "disable" ? "tcps://" : "";
+
+    return `${scheme}${host}:${port}/${serviceName}`;
+  }
+
+  /**
+   * Oracle has no `rejectUnauthorized` equivalent: Thin mode calls `tls.connect` with
+   * `rejectUnauthorized: true` unconditionally, so the chain is checked in every TCPS
+   * connection and a self-signed server is reachable only by supplying its CA here.
+   * What IS optional is the DN/hostname check, which `verify-full` asks for and
+   * `require`/`verify-ca` do not — so those two map to `sslServerDNMatch: false`
+   * rather than to a weaker chain check, which no knob offers.
+   *
+   * `walletContent` is the driver's single-PEM channel: it hands the same string to
+   * `tls.createSecureContext()` as `cert`, `key` AND `ca`, so the form's three fields
+   * are concatenated into one blob instead of mapped to three options.
+   *
+   * NOT exercised against a TLS listener (the probe instance speaks TCP), so this is
+   * the audited shape of the driver's own attributes and no claim about a verified path.
+   */
+  private buildTLSAttributes(): Record<string, unknown> {
+    const ssl = this.config.ssl;
+    if (!ssl || ssl.mode === "disable") return {};
+
+    const wallet = [ssl.caCert, ssl.clientCert, ssl.clientKey].filter(Boolean).join("\n");
+
+    return {
+      sslServerDNMatch: ssl.mode === "verify-full",
+      ...(wallet ? { walletContent: wallet } : {}),
+    };
   }
 
   public async connect(): Promise<void> {
@@ -298,6 +332,7 @@ export class OracleProvider extends SQLBaseProvider {
         poolMin: this.poolConfig.min,
         poolMax: this.poolConfig.max,
         poolTimeout: Math.floor(this.poolConfig.idleTimeout / 1000),
+        ...this.buildTLSAttributes(),
       });
 
       // Test the connection

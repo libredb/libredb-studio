@@ -54,9 +54,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # x64 tracks the release job's image, not the newest one: this is the
+          # only AppImage build that runs outside a release, so it is the only
+          # place a break on the pinned image surfaces before a tag exists, and
+          # an AppImage built on a newer image than the release uses proves
+          # nothing about the artifact users get. See
+          # tests/unit/desktop-appimage-portability.test.ts.
           - arch: x64
             flatpak_arch: x86_64
-            runner: ubuntu-24.04
+            runner: ubuntu-22.04
           - arch: arm64
             flatpak_arch: aarch64
             runner: ubuntu-24.04-arm

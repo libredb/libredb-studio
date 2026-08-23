@@ -306,7 +306,7 @@ All monitoring reads from `SHOW STATUS`/`SHOW VARIABLES`, `information_schema`, 
 | `getSlowQueries()` | `performance_schema.events_statements_summary_by_digest` | per-digest stats |
 | `getActiveSessions()` | `information_schema.PROCESSLIST` | pid, user, db, host, command, duration |
 | `getTableStats()` | `information_schema.TABLES` | sizes; bloat **estimated from `DATA_FREE`** (no live/dead tuples, no last-vacuum/analyze) |
-| `getIndexStats()` | `information_schema.STATISTICS` (+ optional `INNODB_*`) | columns, unique/primary; **`scans` = `CARDINALITY`** (a proxy, not a real scan counter) |
+| `getIndexStats()` | `information_schema.STATISTICS` + `mysql.innodb_index_stats` | columns, unique/primary; **`scans` = `CARDINALITY`** (a proxy, not a real scan counter); per-index size, or **absent** — see the index-size note below |
 | `getStorageStats()` | `information_schema.TABLES`, `SHOW BINARY LOGS` | Data size, Binary Logs (if enabled), InnoDB data file (size `N/A`) |
 
 **Graceful degradation — note the *different* failure modes:**
@@ -323,6 +323,34 @@ All monitoring reads from `SHOW STATUS`/`SHOW VARIABLES`, `information_schema`, 
 - `deadlocks` reads `Innodb_deadlocks`, which is **MariaDB's** status variable. MySQL does not publish
   it — measured as an empty `SHOW STATUS` result on both 8.0.46 and 26.7.0 — so the field is absent on
   MySQL and present on MariaDB. It is the one metric that survives `performance_schema` being off.
+
+**Index sizes: `mysql.innodb_index_stats`, and `indexSizeBytes` may be absent.** The per-index byte
+figure is `stat_value * @@innodb_page_size` for the `stat_name = 'size'` row of the InnoDB
+persistent-statistics table, matched to the `information_schema.STATISTICS` row on
+database/table/index name. Three consequences, all measured on 2026-08-23:
+
+- **No `INNODB_*` view publishes it.** The former statement summed
+  `information_schema.INNODB_TABLESPACES.INDEX_SIZE`, a column that exists on neither MySQL 26.7.0
+  nor the MySQL 8.0 inside Vitess 24.0.2 (`ER_BAD_FIELD_ERROR` on both), so *every* index reported
+  `0 B` on every server. It also grouped by `(t.NAME, i.NAME)` while selecting a tablespace total,
+  which made the figure per-table even when the query worked.
+- **The schema is the one the server reports, not the one you connected to.** Vitess answers
+  `information_schema.STATISTICS` with the physical shard database — `vt_probe_0`, not the keyspace
+  `probe` — so the size lookup uses the `TABLE_SCHEMA` value just returned. With that, a per-index
+  size on Vitess reads the same 16 KB as the MySQL control; the old `LIKE 'probe/%'` matched nothing.
+- **A missing row means unavailable, not empty.** Reading `mysql.innodb_index_stats` needs `SELECT`
+  on the `mysql` schema (`ER_TABLEACCESS_DENIED_ERROR` for a user granted only its own database), and
+  MyISAM tables have no row there at all. In both cases `indexSizeBytes` is **omitted** and
+  `indexSize` is `"N/A"`, rather than a `0 B` the server never reported.
+
+**The storage panel's index total is the per-TABLE figure, not the sum of those per-index rows.**
+InnoDB has no separate primary-key index: the clustered index IS the table, so
+`mysql.innodb_index_stats` reports the `PRIMARY` row's size as the row data and summing every index
+row counts that data twice. Measured on MySQL 26.7.0 against a 144 KB database, the sum read
+147,456 B — 49,152 of data plus 98,304 of indexes — which drew *Indexes* as 100% of the database and
+a remainder of `-49152 B`. `getTableStats()` carries `INDEX_LENGTH` as `indexSizeBytes` (it computed
+that number and dropped it before 2026-08-23, which is why the panel had nothing to add up), and
+that is what MySQL itself calls index bytes.
 
 ---
 

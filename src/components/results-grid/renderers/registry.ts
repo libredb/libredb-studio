@@ -1,3 +1,4 @@
+import { binaryRenderer } from "./binary";
 import { jsonRenderer } from "./json";
 import { nullRenderer } from "./null";
 import { scalarRenderer } from "./scalar";
@@ -7,6 +8,7 @@ const renderers: Partial<Record<ValueKind, ValueRenderer>> = {
   null: nullRenderer,
   scalar: scalarRenderer,
   json: jsonRenderer,
+  binary: binaryRenderer,
 };
 
 export function getRenderer(kind: ValueKind): ValueRenderer {

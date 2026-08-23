@@ -19,7 +19,7 @@
 | **Connection string** | Supported — EZConnect `host:port/service` or a TNS string (passed straight to the driver's `connectString`) |
 | **Transactions** | Yes — explicit begin/commit/rollback (**no** auto-rollback timeout) |
 | **Query cancellation** | Yes — tracked connection + `connection.break()` |
-| **SSL** | Not configured by the provider (TLS via connect string / Oracle wallet) |
+| **SSL** | Yes — `connection.ssl` selects TCPS, the DN match and the wallet ([§4.3](#43-ssl--tls)) |
 | **Source** | [`src/lib/db/providers/sql/oracle.ts`](../../src/lib/db/providers/sql/oracle.ts) |
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/oracle-provider.test.ts`](../../tests/integration/db/oracle-provider.test.ts) |
@@ -41,7 +41,7 @@ providers, with several Oracle-isms that are worth knowing before reading the co
 | Maintenance | vacuum / analyze / reindex / kill | `analyze` (DBMS_STATS) / `optimize` (index rebuild) / `kill` |
 | Transaction timeout | 5-minute auto-rollback | **none** |
 | Cancellation | `pg_cancel_backend(pid)` | `connection.break()` (tracked connection) |
-| SSL | `buildSSLConfig()` + cloud auto-detect | **not handled** — TLS via connect string / wallet |
+| SSL | `buildSSLConfig()` + cloud auto-detect | `tcps://` + `sslServerDNMatch` + `walletContent` (no cloud auto-detect) |
 | Monitoring source | `pg_stat_*` | `V$` views (privilege-gated, each guarded) |
 | UI labels | default SQL | **overridden** (Gather Statistics / Rebuild Indexes) |
 
@@ -172,12 +172,15 @@ connection and marks the transaction active — **there is no timeout**. An aban
 holds its connection (and locks) until explicitly committed/rolled back or the connection is
 reclaimed by the pool.
 
-### 3.5 No SSL config path
+### 3.5 SSL through the connect string, not a `buildSSLConfig()`
 
-The Oracle provider **does not read `connection.ssl`** and has no `buildSSLConfig()` /
-cloud-auto-detect. Transport security is expected to be configured outside the provider — via a TLS
-(`tcps`) connect string or an Oracle wallet. (So, unlike Postgres/MySQL, there is no
-`rejectUnauthorized: false` auto-detect caveat here.)
+The Oracle provider has no `buildSSLConfig()` and no cloud auto-detect: TLS is not an option object
+here but a **protocol in the connect string**. The Thin driver calls `tls.connect` only when the
+resolved address protocol is TCPS (audited in `oracledb/lib/thin/sqlnet/ntTcp.js`), so honouring
+`connection.ssl` means composing `tcps://host:port/service` — see [§4.3](#43-ssl--tls) for the full
+mapping, and for the two Oracle-specific consequences: the chain is **always** verified (there is no
+`rejectUnauthorized` to turn off), and the CA and client certificates travel as one `walletContent`
+PEM rather than three options.
 
 ### 3.6 Privilege-resilient monitoring
 
@@ -229,8 +232,31 @@ exposes `{ total: connectionsOpen, idle, active: connectionsInUse, waiting: 0 }`
 
 ### 4.3 SSL / TLS
 
-Not handled by the provider — see [§3.5](#35-no-ssl-config-path). Use a `tcps://` connect string or
-an Oracle wallet for encrypted transport.
+`getConnectString()` and `buildTLSAttributes()`
+([oracle.ts:271](../../src/lib/db/providers/sql/oracle.ts)) map `connection.ssl` onto the three
+things the driver understands:
+
+| `ssl.mode` | Connect string | `sslServerDNMatch` | Chain verified |
+|------------|----------------|--------------------|----------------|
+| absent / `disable` | `host:port/service` | not set | — (plaintext) |
+| `require` | `tcps://host:port/service` | `false` | **yes** (unavoidable) |
+| `verify-ca` | `tcps://host:port/service` | `false` | yes |
+| `verify-full` | `tcps://host:port/service` | `true` | yes |
+
+`caCert`, `clientCert` and `clientKey` are concatenated, in that order and newline-separated, into a
+single `walletContent` attribute. That is the driver's own shape, not a convenience: Thin mode hands
+the same string to `tls.createSecureContext()` as `cert`, `key` **and** `ca`.
+
+> **Note: `require` is not "encrypt without verifying" on Oracle.** Thin mode calls `tls.connect` with
+> `rejectUnauthorized: true` unconditionally, so every TCPS connection checks the chain and
+> `ssl.rejectUnauthorized: false` has nothing to map to. A server with a self-signed certificate is
+> reachable only by supplying its CA in `caCert`. `require` and `verify-ca` therefore differ from
+> `verify-full` only in the **DN/hostname** match, which is the one check Oracle does expose.
+
+> Note: a pasted `connectionString` is returned **verbatim**, so its own protocol (or full TNS
+> descriptor) decides whether the transport is encrypted — a `require` selected alongside a `tcp`
+> connect string cannot upgrade it. `sslServerDNMatch` and `walletContent` are separate pool
+> attributes and still apply.
 
 ### 4.4 Thick-mode opt-in (`ORACLE_CLIENT_LIB_DIR`)
 
@@ -479,7 +505,9 @@ The suite covers: validation, connect/disconnect, query, capabilities, **labels 
 **`prepareQuery` FETCH FIRST / OFFSET-FETCH**, `getSchema` (columns/PKs/FKs/indexes grouping),
 health, maintenance (analyze/optimize/kill), pool stats, the transaction lifecycle, query
 cancellation (`break()`), overview, performance metrics, slow queries, active sessions,
-table/index/storage stats, and error mapping.
+table/index/storage stats, error mapping, and **every `ssl.mode` branch** (the TCPS switch, the
+DN-match flag, the concatenated `walletContent`, and a pasted connect string keeping its own
+protocol) asserted against the attributes `createPool` received.
 
 ### 12.3 Run it
 
@@ -548,6 +576,12 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 - **Module-global driver settings.** The constructor sets `oracledb.outFormat`/`autoCommit` on the
   shared `oracledb` module singleton (not per-pool/connection) — fine for a single embedding, but a
   process-wide side effect to be aware of if Oracle is ever used alongside another `oracledb` consumer.
+- **TLS cannot be encryption-only, and cannot be forced onto a pasted connect string.** Thin mode
+  always verifies the chain, so `ssl.mode: require` needs the server's CA in `caCert` when the
+  certificate is self-signed, and `ssl.rejectUnauthorized: false` has no Oracle equivalent
+  ([§4.3](#43-ssl--tls)). A `connectionString` is passed through verbatim, so the protocol it names
+  is the one used. *Future:* surface the mismatch in the dialog rather than leaving the connect
+  string to decide silently.
 - **No transaction auto-rollback timeout** (unlike Postgres/MySQL) — an abandoned transaction holds
   its connection/locks until committed, rolled back, or pool-reclaimed.
 - **Schema is owner-scoped** to the connecting user (`OWNER = USER`); objects in other schemas the
