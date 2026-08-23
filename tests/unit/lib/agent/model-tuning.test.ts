@@ -65,6 +65,13 @@ const document = (overrides: Record<string, unknown> = {}): Record<string, unkno
   ...overrides,
 });
 
+/** Writes a document to a temp file and returns its path, for the operator-supplied layer. */
+const writeDocument = (body: unknown): string => {
+  const path = join(mkdtempSync(join(tmpdir(), "libredb-tuning-")), "models.json");
+  writeFileSync(path, typeof body === "string" ? body : JSON.stringify(body));
+  return path;
+};
+
 afterEach(() => {
   delete process.env[ENV];
   resetTuning();
@@ -227,6 +234,55 @@ describe("the three layers", () => {
     expect(tuning.providers.ollama?.unreportedCallCeiling).toBe(7);
   });
 
+  test("a model's own sampling beats a tier's value for the same surface", () => {
+    /*
+      Asserted through the RESOLVER, not through the parsed document, because that is where this
+      went wrong. The first version of `samplingFor` chose one surface value — the model's if it
+      had one, otherwise the tier's — and spread it last, so a tier's per-surface value landed on
+      top of a model's own general sampling. The document-level test above would not have caught
+      it: both entries parse correctly, and it is the merge that inverts them.
+    */
+    process.env[ENV] = writeDocument(
+      document({
+        providers: [
+          {
+            id: "ollama",
+            settings: { perWorkflow: { investigation: { temperature: 1.9, topP: 0.3 } } },
+            rationale: { perWorkflow: ["a tier value, to be beaten by a model's own"] },
+          },
+        ],
+        models: [],
+      }),
+    );
+    resetTuning();
+    // `qwen3:8b` states no per-surface value for investigation, so the tier is the only other
+    // candidate — and its own measured sampling must still win.
+    expect(samplingFor("qwen3:8b", "investigation", "ollama")).toEqual({ temperature: 0, topP: 1 });
+    // Its own per-surface value stands where it has one.
+    expect(samplingFor("qwen3:8b", "query-optimization", "ollama")).toEqual({ temperature: 0.8, topP: 0.9 });
+  });
+
+  test("a tier's sampling does reach a model that has no entry at all", () => {
+    // The other half: the tier is not inert, it is outranked. A model nobody measured takes it.
+    process.env[ENV] = writeDocument(
+      document({
+        providers: [
+          {
+            id: "ollama",
+            settings: { sampling: { temperature: 0.4, topP: 0.7 } },
+            rationale: { sampling: ["measured across this provider"] },
+          },
+        ],
+        models: [],
+      }),
+    );
+    resetTuning();
+    expect(samplingFor("some-model-released-tomorrow:70b", "investigation", "ollama")).toEqual({
+      temperature: 0.4,
+      topP: 0.7,
+    });
+  });
+
   test("no tier is claimed for a run whose provider nobody passed", () => {
     expect(providerTier(undefined)).toEqual({});
   });
@@ -245,12 +301,6 @@ describe("the three layers", () => {
 });
 
 describe("a document an operator supplies", () => {
-  const writeDocument = (body: unknown): string => {
-    const path = join(mkdtempSync(join(tmpdir(), "libredb-tuning-")), "models.json");
-    writeFileSync(path, typeof body === "string" ? body : JSON.stringify(body));
-    return path;
-  };
-
   test("gives a model Studio never measured the settings somebody else measured", () => {
     /*
       Requirement (e), as a behaviour rather than an assertion: a model with no entry in Studio's

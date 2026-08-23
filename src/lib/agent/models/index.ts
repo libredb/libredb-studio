@@ -182,6 +182,21 @@ export function samplingFor(
 ): AgentSampling {
   const tier = providerTier(provider);
   const own = entryFor(modelId);
-  const surface = workflow === undefined ? undefined : (own?.perWorkflow?.[workflow] ?? tier.perWorkflow?.[workflow]);
-  return { ...DEFAULT_SAMPLING, ...tier.sampling, ...own?.sampling, ...surface };
+  /*
+    Each source's surface value sits with that source, and NOT collapsed into one `surface`
+    picked before the spread.
+
+    The collapsed form is wrong and was written here first: `own?.perWorkflow?.[w] ??
+    tier.perWorkflow?.[w]` spread last means that a model stating no value for this surface gets
+    the TIER's — spread after its own general sampling, so a provider's per-surface guess beats a
+    model's own measurement. That is the one thing this file's contract says must be impossible,
+    and it is the only merge that does not go through `resolve`.
+
+    Latent rather than live when it was found: no call site passes `provider` yet and every
+    shipped tier is empty. Fixed anyway, and pinned below, because "wrong but unreachable" is how
+    a defect waits for the commit that reaches it.
+  */
+  const tierSurface = workflow === undefined ? undefined : tier.perWorkflow?.[workflow];
+  const ownSurface = workflow === undefined ? undefined : own?.perWorkflow?.[workflow];
+  return { ...DEFAULT_SAMPLING, ...tier.sampling, ...tierSurface, ...own?.sampling, ...ownSurface };
 }

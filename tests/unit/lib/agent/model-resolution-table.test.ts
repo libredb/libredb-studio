@@ -7,7 +7,7 @@
  * answers alone cannot change what any model does.
  *
  * The table is LITERAL, and deliberately so. It was printed once from the tree that still held
- * eleven modules and pasted here; it is never regenerated. A table regenerated from the code it
+ * the ten modules and pasted here; it is never regenerated. A table regenerated from the code it
  * is meant to check would turn a transcription error into a passing test, which is the one
  * failure this file exists to prevent. After a new measurement, it is edited by hand, beside the
  * value that changed.
