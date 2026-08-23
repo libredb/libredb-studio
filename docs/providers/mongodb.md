@@ -213,6 +213,11 @@ cluster can demand mutual TLS while presenting a self-signed certificate itself.
 `ssl.rejectUnauthorized` always wins over the mode. `require` does not check the chain because a
 self-hosted replica set presents a self-signed certificate by default.
 
+Measured against a TLS-only server on 2026-08-23 (`mongo:latest --tlsMode requireTLS`): `disable` is
+refused - the server logs *"The server is configured to only allow SSL connections"* - and `require`
+connects in 20ms, with *"Ingress TLS handshake complete"* on the server side. Both arms matter, since
+before the mode reached the driver `require` failed the same way `disable` does.
+
 > Unlike `authSource`, this **is** applied alongside a pasted `connectionString`. The URI is returned
 > verbatim, so a `tls=` cannot be appended to it, but the options object is a second channel the
 > driver reads — and the connection dialog shows the SSL panel in connection-string mode too, so a

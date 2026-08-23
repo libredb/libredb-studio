@@ -270,6 +270,11 @@ server can demand mutual TLS while presenting a self-signed certificate itself. 
 `ssl.rejectUnauthorized` always wins over the mode. `require` does not check the chain because a
 self-hosted Redis presents a self-signed certificate by default.
 
+Measured against a TLS-only server on 2026-08-23 (`redis:latest --port 0 --tls-port 6380`, so no
+plaintext port exists): `disable` is refused with *"Connection is closed."* and `require` connects in
+1ms. Both arms matter — before the mode reached the driver, `require` failed the same way `disable`
+does, so the pair is what distinguishes a wired path from a documented shape.
+
 > The paste-parser recognises `rediss://` but does **not** carry the secure scheme into the form
 > ([§4.2](#42-connection-string-nuance)), so a pasted `rediss://` URL still needs a mode picked in
 > the SSL panel.

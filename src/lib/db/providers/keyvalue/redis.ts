@@ -150,8 +150,11 @@ export class RedisProvider extends BaseDatabaseProvider {
    * it. An explicit flag always wins. Absent the key entirely for `disable`: ioredis
    * negotiates TLS whenever `tls` is present, `{}` included.
    *
-   * NOT exercised against a TLS server (the probe instance speaks plaintext), so this
-   * is the documented shape of the driver's option and no claim about a verified path.
+   * Exercised against a TLS-only server, both arms (2026-08-23, `redis:latest` started with
+   * `--port 0 --tls-port 6380` so no plaintext port exists): with `disable` the connection is
+   * refused ("Connection is closed."), and with `require` it reports connected in 1ms. The two
+   * arms together are what make it a measurement rather than a shape — before `tls` reached the
+   * driver, `require` failed exactly like `disable`.
    */
   private buildTLSOptions(): RedisOptions["tls"] {
     const ssl = this.config.ssl;
