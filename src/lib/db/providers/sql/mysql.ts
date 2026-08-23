@@ -290,15 +290,22 @@ const INDEX_STATS_SQL = `
         LIMIT 200;
       `;
 
+// Sizes come from the InnoDB persistent-statistics table, not from the INNODB_* views in
+// information_schema. Two measurements on 2026-08-23 forced the move: `INNODB_TABLESPACES` has no
+// `INDEX_SIZE` column on MySQL 26.7.0 or on the MySQL 8.0 inside Vitess 24.0.2 (both answer
+// ER_BAD_FIELD_ERROR), and the old statement's `WHERE t.NAME LIKE 'schema/%'` assumed InnoDB names
+// the table after the database you connected to, which Vitess does not — it stores the physical
+// shard database, `vt_probe_0/orders`. `stat_value` is the index size in pages, per index rather
+// than per tablespace, and the row is keyed on database/table/index columns that
+// information_schema.STATISTICS reports the same way, so nothing here parses or guesses a prefix.
 const INDEX_SIZES_SQL = `
           SELECT
-            CONCAT(t.NAME) as full_name,
-            SUM(s.INDEX_SIZE * @@innodb_page_size) as size_bytes
-          FROM information_schema.INNODB_INDEXES i
-          JOIN information_schema.INNODB_TABLES t ON i.TABLE_ID = t.TABLE_ID
-          JOIN information_schema.INNODB_TABLESPACES s ON t.SPACE = s.SPACE
-          WHERE t.NAME LIKE ?
-          GROUP BY t.NAME, i.NAME;
+            database_name,
+            table_name,
+            index_name,
+            stat_value * @@innodb_page_size as size_bytes
+          FROM mysql.innodb_index_stats
+          WHERE stat_name = 'size' AND database_name = ?;
         `;
 
 const STORAGE_STATS_SQL = `
@@ -1007,6 +1014,9 @@ export class MySQLProvider extends SQLBaseProvider {
           tableSize: formatBytes(tableSizeBytes),
           tableSizeBytes,
           indexSize: formatBytes(indexSizeBytes),
+          // The byte figure was computed and then dropped, so the storage panel had no per-table
+          // index total to add up: `INDEX_LENGTH` is what MySQL itself calls index bytes.
+          indexSizeBytes,
           totalSize: formatBytes(totalSizeBytes),
           totalSizeBytes,
           bloatRatio: Math.round(bloatRatio * 10) / 10,
@@ -1025,21 +1035,28 @@ export class MySQLProvider extends SQLBaseProvider {
     try {
       const [rows] = await conn.execute<RowDataPacket[]>(INDEX_STATS_SQL, asExecuteParams([schema]));
 
-      // Get index sizes from INNODB_SYS_INDEXES if available
+      // Vitess answers information_schema.STATISTICS with the physical shard database
+      // (`vt_probe_0`) even though the filter above named the keyspace, so the size lookup asks
+      // for the schema the server just reported rather than the one we connected to.
+      const physicalSchema = (rows[0]?.schema_name as string | undefined) ?? schema;
+
       const indexSizes: Record<string, number> = {};
       try {
-        const [sizeRows] = await conn.execute<RowDataPacket[]>(INDEX_SIZES_SQL, [`${schema}/%`]);
+        const [sizeRows] = await conn.execute<RowDataPacket[]>(INDEX_SIZES_SQL, asExecuteParams([physicalSchema]));
 
         for (const row of sizeRows) {
-          indexSizes[row.full_name] = parseInt(row.size_bytes || "0");
+          indexSizes[`${row.database_name}/${row.table_name}/${row.index_name}`] = parseInt(row.size_bytes || "0");
         }
       } catch {
-        // INNODB_SYS tables not available
+        // Reading mysql.innodb_index_stats needs SELECT on the mysql schema, which a user granted
+        // only its own database does not have (measured ER_TABLEACCESS_DENIED_ERROR). Every index
+        // then reports no size at all rather than a fabricated 0 bytes.
       }
 
       return rows.map((r) => {
-        const indexKey = `${r.schema_name}/${r.table_name}`;
-        const indexSizeBytes = indexSizes[indexKey] || 0;
+        // An absent row is not a zero-byte index: MyISAM tables and InnoDB tables whose
+        // persistent statistics were never written have no row here at all.
+        const indexSizeBytes = indexSizes[`${r.schema_name}/${r.table_name}/${r.index_name}`];
 
         return {
           schemaName: r.schema_name || schema || "",
@@ -1049,7 +1066,7 @@ export class MySQLProvider extends SQLBaseProvider {
           columns: r.columns?.split(",") || [],
           isUnique: Boolean(r.is_unique),
           isPrimary: Boolean(r.is_primary),
-          indexSize: formatBytes(indexSizeBytes),
+          indexSize: indexSizeBytes === undefined ? "N/A" : formatBytes(indexSizeBytes),
           indexSizeBytes,
           scans: parseInt(r.cardinality || "0"),
         };

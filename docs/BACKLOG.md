@@ -22,10 +22,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S1–S8 · 8
-- [Drivers and connections](#drivers-and-connections) — D1–D11, U17 · 11
+- [Drivers and connections](#drivers-and-connections) — D1–D12, U17 · 8
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X7, U2–U18 · 9
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X8, U2–U18 · 9
 - [Authentication and security headers](#authentication-and-security-headers) — AU2
 - [Tests](#tests) — T1–T3 · 2
 - [Dependencies](#dependencies) — P1–P5 · 5
@@ -156,34 +156,6 @@ pool-level `error` event, and each `connect()` now records that.
 Whether the MongoDB, Redis, ClickHouse, Druid, Couchbase, Cassandra or Trino clients expose a fatal
 `error` event that can reach `uncaughtException` is an open question, not a claim.
 
-### D2. Oracle, MongoDB and Redis ignore the SSL/TLS panel the connection dialog shows them
-
-`ConnectionModal.tsx` gates the SSL/TLS and SSH tunnel panels on `!isFileBased(type)`. Every engine
-except the two file-based ones (`sqlite`, `libredb`) renders both.
-
-The defect is narrow: **the visible `config.ssl` selection is not enforced by three providers.**
-`oracle.ts`, `mongodb.ts` and `redis.ts` never read it. A user who sets the mode to `require` on
-those three gets no error and no guarantee. The connection may still be encrypted, but only if the
-connection string says so: `oracle.ts` passes a supplied `connectionString` through verbatim, and the
-MongoDB driver honours `tls=true` in the URI. Silently accepting a security setting and dropping it
-is the problem, not plaintext.
-
-Every other provider reads it — postgres, mysql, mssql, couchbase, clickhouse, druid, cassandra,
-trino and the two search providers.
-
-Two scope facts worth keeping straight:
-
-- The SSH tunnel is provider-independent. `factory.ts` opens it and rewrites host/port before
-  `createDatabaseProvider`, but skips it when either is absent. Connection-string mode (mongodb,
-  couchbase, clickhouse) clears both in `use-connection-form.ts`, so those connections are not
-  tunnelled even though the panel is offered.
-- "Every engine except SQLite" is wrong twice over. See the file-based pair above.
-
-The READMEs now state the real scope, so the documentation half is closed. The UI half is open.
-
-**Done when:** the three providers are wired (oracledb via the connect string, `mongodb` via `tls`
-options, `ioredis` via `tls`), or the panel is hidden where it cannot be honoured.
-
 ### D3. Testing a connection to an already-open embedded file fails on its own exclusive lock
 
 `POST /api/db/test-connection` calls `createDatabaseProvider` directly rather than going through the
@@ -213,48 +185,6 @@ Same lock, same fix as B49. Close the two together.
 **Done when:** testing a connection that resolves to an already-open single-writer file reuses the
 open provider, or the test is skipped with an honest message. Either way the modal must not present a
 lock conflict as a failed connection test.
-
-### D4. A MongoDB connection cannot name the database its credentials live in (`authSource`)
-
-`buildConnectionString()` composes `mongodb://user:pass@host:port/<database>` and nothing else.
-`authSource` appears nowhere in the repository: not in the form, not in `DatabaseConnection`, not in
-the driver options. The driver authenticates against the database named in the URI when no
-`authSource` is given, so the ordinary deployment — users in `admin`, data elsewhere — cannot be
-connected to through the form fields at all. It fails as a credentials error, which is what it looks
-like and is not what it is.
-
-The workaround exists and is not discoverable: MongoDB offers the connection-string toggle, and a
-pasted `mongodb://user:pass@host:port/shop?authSource=admin` passes through verbatim.
-
-Raised while driving agent grounding (#414) and left out of it: this is a connection-form feature.
-
-**Done when:** the form carries an optional auth-database field that reaches the URI, with the
-provider triad (code, `docs/providers/mongodb.md`, `tests/integration/db/mongodb-provider.test.ts`).
-
-### D6. The MySQL index-size query assumes InnoDB names its table after the database you connected to
-
-`INDEX_SIZES_SQL` in `src/lib/db/providers/sql/mysql.ts` filters
-`information_schema.INNODB_TABLES.NAME LIKE ?`, and `getIndexStats` passes `` `${schema}/%` `` — the
-connection's own database plus a slash. That is InnoDB's convention on a single MySQL server, and the
-query treats it as universal.
-
-Measured 2026-08-20 against Vitess 24.0.2 (`vitess/vttestserver:v24.0.2-mysql80`, keyspace `probe`):
-**every per-index size reads 0 bytes.** Vitess names the InnoDB table after the physical shard
-database, so the rows are `vt_probe_0/orders` and `LIKE 'probe/%'` matches none. The same query
-returns 35 rows against a MySQL 9 control, so the statement is fine and the parameter is not.
-
-**The defect is ours.** Vitess publishes the sizes under the name its own storage uses. The provider
-asks for a name only an unsharded single server has, then swallows the mismatch: the lookup sits in a
-`try {} catch {}` commented "INNODB_SYS tables not available", so zero matched rows is
-indistinguishable from a server with no such catalog. The join key repeats the assumption — the map is
-keyed on `INNODB_TABLES.NAME` and looked up with `${r.schema_name}/${r.table_name}` from
-`information_schema.STATISTICS`, so a matched row would still need the two catalogs to agree.
-
-The result is the class this repo treats as worse than a blank panel. The index rows come from
-`STATISTICS`, which answers, so every index lists with a size of 0 B. A wrong number, not a missing one.
-
-**Done when:** a per-index size on Vitess reads what `INNODB_INDEXES` holds, or the panel reports the
-size as unavailable rather than 0.
 
 ### D7. Three providers answer the performance panel with a fabricated cache hit ratio
 
@@ -372,31 +302,6 @@ stops being gated on health, which is the wider question and should be answered 
 SingleStore in the same pass — and the ScyllaDB row in `docs/providers/README.md` is re-probed
 against that build.
 
-### D10. MongoDB `distinct` takes its field from `options.projection`, and any other spelling silently returns `_id`
-
-`query()`'s `distinct` branch reads the field as
-`query.options?.projection ? Object.keys(query.options.projection)[0] : "_id"`
-(`src/lib/db/providers/document/mongodb.ts`). So the field is carried by the FIRST KEY of a
-projection, which is not what a projection means anywhere else in the envelope, and is documented
-nowhere: `docs/providers/mongodb.md` §3.1 lists `distinct` among the supported operations and shows
-no example of one.
-
-Measured 2026-08-22 against live `mongo:latest`, 120 seeded products in five categories:
-
-| Sent | Answered |
-| --- | --- |
-| `{"operation":"distinct","filter":{},"field":"category"}` | 120 rows of `_id` — the `field` key is ignored and the default stands |
-| `{"operation":"distinct","options":{"projection":{"category":1}}}` | 5 rows: books, clothing, electronics, home, sports |
-
-The first is the failure mode that matters: `field` is the obvious spelling (it is the driver's own
-parameter name), it is accepted without complaint, and the answer is a plausible-looking list of ids
-rather than an error. A user reads it as "this collection has 120 distinct categories".
-
-**Done when:** `distinct` takes its field from a named key, an unknown or missing one is a
-`QueryError` naming what it expected rather than a silent `_id`, and §3.1 shows a `distinct` example.
-The driver's spelling (`field`) is the one to accept; `options.projection` may stay as a compatible
-alias or go, since nothing in the product generates a `distinct` today.
-
 ---
 ### U17. Four things the Cassandra provider declined to do
 
@@ -480,6 +385,22 @@ first-contact policy is written in `docs/providers/`-adjacent documentation the 
 
 ---
 
+### D12. A pasted `rediss://` URL lands on SSL mode `disable`, so the scheme is silently dropped
+
+`src/lib/connection-string-parser.ts` reads a pasted Redis URL and does not carry its secure scheme
+into `config.ssl`: `rediss://host:6380` produces a connection whose mode is `disable`. Since the
+provider now honours that mode (it did not before 2026-08-23), the paste path is the one place left
+where a user asks for TLS and does not get it — and it looks like it worked, because the connection
+form fills in and saves.
+
+The fix is named and one line: `withSSLMode()` in the same file (`:144`) is the existing precedent
+for a scheme that implies a mode; `postgresql://…?sslmode=` already goes through it.
+
+Scope note: this is a different intake path from the SSL/TLS panel, which is why it was left out of
+the panel work rather than folded into it. `docs/providers/redis.md` records it as a known limitation.
+
+**Done when:** a pasted `rediss://` URL arrives with mode `require` (or higher), with a parser test.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -537,17 +458,6 @@ writers. `csv.ts` and `result-export.ts` are pure and hold no browser reference 
 can reuse them; `download.ts` is the only browser-bound module there. Worth costing against the
 agent's own export gap (B33, B34), which wants the same route.
 
-### X3. A binary column exports as its JSON shape
-
-A `bytea`/`BLOB` value arrives in the browser as `{"type":"Buffer","data":[1,2,…]}` — the shape
-`JSON.stringify` gives a Node Buffer — and both the grid and the CSV write exactly that. A megabyte
-of data becomes about four megabytes of digits, and no reader can turn it back.
-
-Deliberately NOT fixed in the export path alone. `src/components/results-grid/renderers/` classifies
-a value by shape and is the one place both surfaces read. A binary rule belongs there, so the grid,
-the row detail sheet and the export agree on hex, base64 or a truncation. Fixing only the writer
-would make the file disagree with the screen.
-
 ### X4. Four modals stay mounted while closed, so their code cannot be split
 
 `DataProfiler`, `CodeGenerator`, `TestDataGenerator` and `DataImportModal` render `null` when closed
@@ -590,6 +500,23 @@ holding `2026-01-01` as a timestamp.
 **Done when:** every provider fills `columnTypes` for the columns it declares — the provider triad's
 own work, one PR. It also lets the grid label a column without guessing
 (`ResultsGrid.declaredTypeOf` already reads it).
+
+### X8. The SQL INSERT and DDL exports still write a binary value as its JSON shape
+
+The grid, the row detail sheet and the CSV agree on `\x…` hex (2026-08-23), and `sqlValue` in
+`src/lib/export/result-export.ts` does not: a `bytea`/`BLOB` cell is still written as a quoted
+`{"type":"Buffer","data":[…]}` literal, so a replayed INSERT stores that text rather than the bytes.
+
+Not a one-liner, which is why it was left out of the value-rendering work: the hex literal is
+dialect-specific. `\x…` is Postgres, MySQL and SQL Server want `0x…`, and the SQL standard spelling
+is `X'…'`. The export already knows its target dialect for the DDL type names (#422), so the
+literal belongs next to that knowledge.
+
+The JSON export is deliberately unchanged: the Buffer shape in a `.json` file is at least
+machine-recoverable.
+
+**Done when:** each dialect the export offers writes a binary literal its own engine accepts, proven
+by replaying an exported file into that engine.
 
 ### U2. The rule that catches an arity change on a JSX handler is configured but not aimed at components
 
@@ -869,7 +796,6 @@ This is a decision, not a bump: either accept the vendored set as a deliberate o
 so in `CLAUDE.md`, which today says nothing about it, or sweep the orphans and their packages the way
 `calendar.tsx` went. Until then every Dependabot major on one of those packages costs a review for a
 component nothing renders. Reproduce the list with a per-file importer count over `src/components/ui/`.
-
 
 ## Documentation
 

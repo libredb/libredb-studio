@@ -55,6 +55,18 @@ describe("filterByRoles: engine-specific fields", () => {
 
     expect(managed.localDataCenter).toBe("datacenter1");
   });
+
+  it("carries a MongoDB connection's auth database through to the managed connection", () => {
+    // Dropped here, a seeded connection whose users live in `admin` authenticates
+    // against the data database instead and reports a credentials error - the same
+    // silent loss, in the mapping that fails no gate.
+    const [managed] = filterByRoles(
+      [{ ...baseConn, type: "mongodb", port: 27017, database: "shop", authSource: "admin" }],
+      ["user"],
+    );
+
+    expect(managed.authSource).toBe("admin");
+  });
 });
 
 describe("filterByRoles", () => {

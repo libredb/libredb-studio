@@ -18,6 +18,12 @@ let mockCollections: { name: string; type: string }[] = [
   { name: "orders", type: "collection" },
 ];
 let mockCurrentOps: Record<string, unknown>[] = [];
+// The URI `buildConnectionString()` composed, as the driver received it. The only
+// place the query string is observable: `MongoClient` is where it goes.
+let lastMongoUri = "";
+// The options object the driver received. TLS is observable nowhere else: the
+// `MongoClient` constructor is the only place it is stated.
+let lastMongoOptions: Record<string, unknown> = {};
 
 const createMockCursor = (data: Record<string, unknown>[]) => {
   const cursor = {
@@ -169,6 +175,8 @@ mock.module("mongodb", () => ({
     constructor(uri: string, opts?: unknown) {
       this._uri = uri;
       this._opts = opts;
+      lastMongoUri = uri;
+      lastMongoOptions = (opts ?? {}) as Record<string, unknown>;
     }
 
     async connect() {
@@ -278,6 +286,103 @@ describe("MongoDBProvider", () => {
   });
 
   // --------------------------------------------------------------------------
+  // URI composition
+  // --------------------------------------------------------------------------
+
+  describe("the composed URI", () => {
+    test("carries no query string when no auth database is named", async () => {
+      await provider.connect();
+      expect(lastMongoUri).toBe("mongodb://localhost:27017/testdb");
+    });
+
+    test("names the auth database as ?authSource, and percent-encodes it", async () => {
+      // MongoDB keeps users in one database and the data in another, and the driver
+      // authenticates against the database in the URI when nothing says otherwise. So
+      // the ordinary deployment - users in `admin`, data elsewhere - could not be
+      // reached through the form fields at all: it failed as a credentials error.
+      provider = new MongoDBProvider({ ...baseConfig, user: "app", password: "s3cret", authSource: "admin db" });
+      await provider.connect();
+      expect(lastMongoUri).toBe("mongodb://app:s3cret@localhost:27017/testdb?authSource=admin%20db");
+    });
+
+    test("a pasted connection string is passed through verbatim, authSource and all", async () => {
+      // The URI the user typed is the whole answer. Re-composing it would drop the
+      // options only they know about (replica set, TLS, read preference), so an
+      // `authSource` field alongside it is ignored rather than appended twice.
+      provider = new MongoDBProvider({
+        ...baseConfig,
+        authSource: "admin",
+        connectionString: "mongodb://app:s3cret@remote:27017/shop?authSource=users&replicaSet=rs0",
+      });
+      await provider.connect();
+      expect(lastMongoUri).toBe("mongodb://app:s3cret@remote:27017/shop?authSource=users&replicaSet=rs0");
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // TLS
+  // --------------------------------------------------------------------------
+
+  describe("the TLS options handed to the driver", () => {
+    const connectWithSSL = async (ssl: DatabaseConnection["ssl"], extra: Partial<DatabaseConnection> = {}) => {
+      provider = new MongoDBProvider({ ...baseConfig, ...extra, ssl });
+      await provider.connect();
+      return lastMongoOptions;
+    };
+
+    test("carries no tls option when the connection names no SSL config", async () => {
+      await provider.connect();
+      expect("tls" in lastMongoOptions).toBe(false);
+    });
+
+    test("carries no tls option in mode disable", async () => {
+      expect("tls" in (await connectWithSSL({ mode: "disable" }))).toBe(false);
+    });
+
+    test("mode require encrypts without checking the chain", async () => {
+      const options = await connectWithSSL({ mode: "require" });
+      expect(options.tls).toBe(true);
+      expect(options.rejectUnauthorized).toBe(false);
+    });
+
+    test("mode verify-ca and verify-full check the chain", async () => {
+      expect(await connectWithSSL({ mode: "verify-ca" })).toMatchObject({ tls: true, rejectUnauthorized: true });
+      expect(await connectWithSSL({ mode: "verify-full" })).toMatchObject({ tls: true, rejectUnauthorized: true });
+    });
+
+    test("an explicit rejectUnauthorized wins over the mode", async () => {
+      const options = await connectWithSSL({ mode: "verify-full", rejectUnauthorized: false });
+      expect(options.rejectUnauthorized).toBe(false);
+    });
+
+    test("the CA and client certificate bundle reaches the driver under Node's own names", async () => {
+      const options = await connectWithSSL({
+        mode: "verify-full",
+        caCert: "-----BEGIN CERTIFICATE-----ca-----END CERTIFICATE-----",
+        clientCert: "-----BEGIN CERTIFICATE-----client-----END CERTIFICATE-----",
+        // Deliberately not a PEM header: `-----BEGIN PRIVATE KEY-----` alone, with no material
+        // after it, is enough for gitleaks' `private-key` rule, so the realistic string fails the
+        // Secret Scan gate for a secret that does not exist (the same reason
+        // tests/unit/db/cassandra/wire.test.ts uses this literal). These assertions are about which
+        // option name carries the value, not what the value looks like.
+        clientKey: "client-key-pem",
+      });
+      expect(options.ca).toBe("-----BEGIN CERTIFICATE-----ca-----END CERTIFICATE-----");
+      expect(options.cert).toBe("-----BEGIN CERTIFICATE-----client-----END CERTIFICATE-----");
+      expect(options.key).toBe("client-key-pem");
+    });
+
+    test("is honoured alongside a pasted connection string, unlike authSource", async () => {
+      // The URI is passed through verbatim, so a `tls=` it does not carry cannot be
+      // appended to it - but the options object is a second, independent channel the
+      // driver reads, and the form shows the SSL panel in connection-string mode too.
+      const options = await connectWithSSL({ mode: "require" }, { connectionString: "mongodb://remote:27017/shop" });
+      expect(lastMongoUri).toBe("mongodb://remote:27017/shop");
+      expect(options.tls).toBe(true);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // Connection lifecycle
   // --------------------------------------------------------------------------
 
@@ -363,7 +468,9 @@ describe("MongoDBProvider", () => {
 
       expect(statementLanguage).toBeString();
       // The keys a runnable command is built from - the ones `parseQuery` reads.
-      for (const key of ["collection", "operation", "filter", "pipeline"]) {
+      // `field` is here because a model that cannot see it writes a `distinct` with no
+      // field, which is now refused rather than answered with `_id`.
+      for (const key of ["collection", "operation", "filter", "pipeline", "field"]) {
         expect(statementLanguage).toContain(key);
       }
       // The two forms a model reaches for instead, named so they are excluded.
@@ -801,6 +908,14 @@ describe("MongoDBProvider", () => {
       const stats = await provider.getTableStats();
       expect(stats).toBeArray();
     });
+
+    test("carries the index bytes the server measured, not only their formatted form", async () => {
+      // `collStats.totalIndexSize` was formatted for display and then dropped, so the storage
+      // panel had no per-collection index total to add up and reported it as unavailable.
+      const stats = await provider.getTableStats();
+      expect(stats.length).toBeGreaterThan(0);
+      expect(stats[0].indexSizeBytes).toBe(512);
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -915,15 +1030,51 @@ describe("MongoDBProvider", () => {
       expect(result.rowCount).toBe(1);
     });
 
-    test("distinct returns values", async () => {
+    test("distinct collects the values of the named field", async () => {
       const result = await provider.query(
         JSON.stringify({
           collection: "users",
           operation: "distinct",
-          filter: "name",
+          filter: {},
+          field: "name",
         }),
       );
-      expect(result.rows).toBeArray();
+      expect(result.rows).toEqual([{ name: "Alice" }, { name: "Bob" }]);
+      expect(result.fields).toEqual(["name"]);
+    });
+
+    test("distinct with no field is an error naming the key it wanted", async () => {
+      // Measured 2026-08-22 on live mongo:latest, 120 products in five categories:
+      // this used to answer 120 rows of `_id`, because the field came from the first
+      // key of `options.projection` and defaulted to `_id`. A plausible list of ids
+      // reads as "120 distinct categories"; an error does not.
+      await expect(
+        provider.query(JSON.stringify({ collection: "users", operation: "distinct", filter: {} })),
+      ).rejects.toThrow(/distinct requires a "field"/);
+    });
+
+    test("distinct does not take its field from options.projection", async () => {
+      // The former spelling. It is gone rather than kept as an alias: nothing in the
+      // product generates a `distinct`, so there is no caller to be compatible with,
+      // and one accepted key is one thing to document.
+      await expect(
+        provider.query(
+          JSON.stringify({
+            collection: "users",
+            operation: "distinct",
+            options: { projection: { name: 1 } },
+          }),
+        ),
+      ).rejects.toThrow(/distinct requires a "field"/);
+    });
+
+    test("distinct rejects a field that is not a field name", async () => {
+      await expect(
+        provider.query(JSON.stringify({ collection: "users", operation: "distinct", field: "" })),
+      ).rejects.toThrow(/distinct requires a "field"/);
+      await expect(
+        provider.query(JSON.stringify({ collection: "users", operation: "distinct", field: { name: 1 } })),
+      ).rejects.toThrow(/distinct requires a "field"/);
     });
   });
 

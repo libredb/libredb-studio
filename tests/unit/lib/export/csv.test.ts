@@ -155,3 +155,27 @@ describe("toCsv — a value JSON cannot serialize", () => {
     expect(csv).toContain("root");
   });
 });
+
+describe("toCsv — a binary value", () => {
+  // A `bytea`/`BLOB` cell used to be written as the JSON shape a Node Buffer
+  // stringifies to — about four bytes of digits per byte of data, and nothing a
+  // reader can turn back. The file has to say what the grid says, so both go
+  // through `asBytes`/`binaryText`.
+  test("writes the same hex the grid shows, not the serialized Buffer", () => {
+    expect(csvRow([{ type: "Buffer", data: [1, 2, 171, 255] }])).toBe("\\x0102abff");
+    expect(csvRow([new Uint8Array([1, 2, 171, 255])])).toBe("\\x0102abff");
+  });
+
+  test("writes the whole value, never the cell's truncated preview", () => {
+    const long = new Uint8Array(64).fill(0xab);
+    expect(csvRow([long])).toBe(`\\x${"ab".repeat(64)}`);
+  });
+
+  test("an empty byte array is the prefix alone, distinguishable from NULL", () => {
+    expect(csvRow([{ type: "Buffer", data: [] }, null])).toBe("\\x,");
+  });
+
+  test("a document that only looks like a serialized Buffer keeps its JSON form", () => {
+    expect(csvRow([{ type: "Buffer", data: [1, "two"] }])).toBe('"{""type"":""Buffer"",""data"":[1,""two""]}"');
+  });
+});

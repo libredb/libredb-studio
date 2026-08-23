@@ -1405,6 +1405,13 @@ describe("the identity a held inventory is filed under", () => {
     expect(repointed({ agentUser: "agent_ro" })).not.toBe(connectionIdentity(CONNECTION));
   });
 
+  test("a different auth database is a different identity, because it is a different user record", () => {
+    // MongoDB looks the user up in the database `authSource` names, so the same name
+    // against `admin` and against the data database is two principals with two catalog
+    // views - the same reason the role fields are keyed.
+    expect(repointed({ authSource: "admin" })).not.toBe(connectionIdentity(CONNECTION));
+  });
+
   test("a rotated password is the SAME identity, because it is not which database this is", () => {
     expect(repointed({ password: "rotated" })).toBe(connectionIdentity(CONNECTION));
   });

@@ -76,6 +76,10 @@ export const SeedConnectionSchema = z.object({
   // other thirteen type-ids have no use for the field; the provider is what refuses a
   // connection that omits it.
   localDataCenter: z.string().optional(),
+  // MongoDB only: the database its credentials live in (`admin` in the ordinary
+  // deployment). Optional because the driver falls back to the database being opened,
+  // which is right only when the two are the same.
+  authSource: z.string().optional(),
 });
 
 export const SeedConfigSchema = z

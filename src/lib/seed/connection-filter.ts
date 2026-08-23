@@ -38,6 +38,9 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
       // Cassandra's required data centre. Dropping it here would list a seeded ring
       // the product cannot open, because the driver refuses to connect without one.
       localDataCenter: conn.localDataCenter,
+      // MongoDB's auth database. Dropping it here would list a seeded connection that
+      // authenticates against the wrong database and reports a credentials error.
+      authSource: conn.authSource,
       createdAt: new Date(),
       managed: conn.managed ?? true,
       roles: conn.roles,

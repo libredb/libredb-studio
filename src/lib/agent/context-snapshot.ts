@@ -611,6 +611,10 @@ export function connectionIdentity(connection: DatabaseConnection): string {
         connection.serviceName ?? "",
         connection.instanceName ?? "",
         connection.user ?? "",
+        // The database the user is looked up in. Same name, different auth database is
+        // a different user record, so it can be a different catalog view - the reason
+        // the role fields are in here.
+        connection.authSource ?? "",
         connection.agentUser ?? "",
       ]),
     )

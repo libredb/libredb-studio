@@ -55,6 +55,7 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   serviceName: "edited",
   instanceName: "edited",
   localDataCenter: "edited",
+  authSource: "edited",
   group: "preserved",
   managed: "preserved",
   seedId: "preserved",
@@ -119,6 +120,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   // the two above: `cassandra-driver` refuses to connect without it, so a hidden
   // field would be a connection nobody could open.
   const [localDataCenter, setLocalDataCenter] = useState("");
+  // MongoDB's auth database. In the open for the same reason as the field above: it is
+  // what the ordinary deployment (users in `admin`) cannot connect without.
+  const [authSource, setAuthSource] = useState("");
 
   // SSH Tunnel
   const [showSSH, setShowSSH] = useState(false);
@@ -161,6 +165,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // connection that carries no data centre must show an empty field, or the
       // previously edited ring's name gets saved onto this one.
       setLocalDataCenter(editConnection.localDataCenter || "");
+      // Overwritten for the same reason: a connection that names no auth database must
+      // show an empty field, not the last one edited.
+      setAuthSource(editConnection.authSource || "");
       // SSL
       if (editConnection.ssl) {
         setSSLMode(editConnection.ssl.mode);
@@ -205,6 +212,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         // either refuses or - when the name exists on both rings - accepts as a
         // silently wrong topology.
         setLocalDataCenter("");
+        // A leftover auth database sends the next connection's credentials to a
+        // database that may not hold them, which reads as a wrong password.
+        setAuthSource("");
       }
     }
   }, [isOpen, editConnection]);
@@ -272,6 +282,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       ...(type === "oracle" && serviceName ? { serviceName } : {}),
       ...(type === "mssql" && instanceName ? { instanceName } : {}),
       ...(type === "cassandra" && localDataCenter ? { localDataCenter } : {}),
+      ...(type === "mongodb" && authSource ? { authSource } : {}),
     };
   }, [
     sslMode,
@@ -300,6 +311,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     serviceName,
     instanceName,
     localDataCenter,
+    authSource,
   ]);
 
   const handleTestConnection = useCallback(async () => {
@@ -513,6 +525,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setInstanceName,
     localDataCenter,
     setLocalDataCenter,
+    authSource,
+    setAuthSource,
 
     // SSH Tunnel
     showSSH,

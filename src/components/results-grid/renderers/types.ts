@@ -2,7 +2,7 @@
 // kind by shape (never by connection type) and renderers are selected from the
 // registry by kind. Adding a renderer is a new module plus a registry entry.
 
-export type ValueKind = "null" | "scalar" | "json";
+export type ValueKind = "null" | "scalar" | "json" | "binary";
 
 export interface CompactValue {
   display: string;

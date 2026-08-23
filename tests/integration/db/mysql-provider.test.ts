@@ -301,9 +301,13 @@ function defaultMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
     ]);
   }
 
-  // INNODB_INDEXES / INNODB_TABLES (for index sizes — may fail gracefully)
-  if (normalized.includes("innodb_indexes") || normalized.includes("innodb_tables")) {
-    return Promise.resolve([[], []]);
+  // mysql.innodb_index_stats (per-index sizes) — only `users.PRIMARY` has a persistent-stats
+  // row, so `users.idx_email` exercises the "no row" path.
+  if (normalized.includes("innodb_index_stats")) {
+    return Promise.resolve([
+      [{ database_name: "testdb", table_name: "users", index_name: "PRIMARY", size_bytes: "16384" }],
+      [],
+    ]);
   }
 
   // KILL query (maintenance)
@@ -995,6 +999,9 @@ describe("MySQLProvider", () => {
       expect(typeof first.tableSizeBytes).toBe("number");
       expect(first.tableSizeBytes).toBe(4096);
       expect(typeof first.indexSize).toBe("string");
+      // The byte figure, not only the formatted string: the storage panel's index total is the sum
+      // of these, and MySQL used to compute this number and drop it, so the panel read "N/A".
+      expect(first.indexSizeBytes).toBe(2048);
       expect(typeof first.totalSize).toBe("string");
       expect(typeof first.totalSizeBytes).toBe("number");
       expect(first.totalSizeBytes).toBe(6144);
@@ -1031,8 +1038,82 @@ describe("MySQLProvider", () => {
       expect(primary.isPrimary).toBe(true);
       expect(typeof primary.scans).toBe("number");
       expect(primary.scans).toBe(100);
-      expect(typeof primary.indexSize).toBe("string");
-      expect(typeof primary.indexSizeBytes).toBe("number");
+      expect(primary.indexSize).toBe("16 KB");
+      expect(primary.indexSizeBytes).toBe(16384);
+    });
+
+    test("reports an index with no persistent-stats row as unavailable, not as zero bytes", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const stats = await provider.getIndexStats();
+
+      // `users.idx_email` has no mysql.innodb_index_stats row (MyISAM tables and
+      // never-analyzed InnoDB tables behave the same way on a live server).
+      const secondary = stats[1];
+      expect(secondary.indexName).toBe("idx_email");
+      expect(secondary.indexSize).toBe("N/A");
+      expect(secondary.indexSizeBytes).toBeUndefined();
+    });
+
+    test("reports every size as unavailable when the mysql schema is not readable", async () => {
+      mockExecuteFn = (sql, params) => {
+        if (sql.toLowerCase().includes("innodb_index_stats")) {
+          return Promise.reject(new Error("SELECT command denied to user 'app'@'%' for table 'innodb_index_stats'"));
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const stats = await provider.getIndexStats();
+
+      expect(stats.length).toBe(2);
+      for (const index of stats) {
+        expect(index.indexSize).toBe("N/A");
+        expect(index.indexSizeBytes).toBeUndefined();
+      }
+    });
+
+    test("looks the sizes up under the schema the server reported, not the one connected to", async () => {
+      // Vitess answers information_schema.STATISTICS with the physical shard database
+      // (`vt_testdb_0`) even though the filter named the keyspace.
+      const sizeParams: unknown[][] = [];
+      mockExecuteFn = (sql, params) => {
+        const normalized = sql.toLowerCase();
+        if (normalized.includes("information_schema.statistics") && normalized.includes("group_concat")) {
+          return Promise.resolve([
+            [
+              {
+                schema_name: "vt_testdb_0",
+                table_name: "orders",
+                index_name: "PRIMARY",
+                index_type: "BTREE",
+                columns: "id",
+                is_unique: 1,
+                is_primary: 1,
+                cardinality: "3",
+              },
+            ],
+            [],
+          ]);
+        }
+        if (normalized.includes("innodb_index_stats")) {
+          sizeParams.push(params ?? []);
+          return Promise.resolve([
+            [{ database_name: "vt_testdb_0", table_name: "orders", index_name: "PRIMARY", size_bytes: "16384" }],
+            [],
+          ]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const stats = await provider.getIndexStats();
+
+      expect(sizeParams).toEqual([["vt_testdb_0"]]);
+      expect(stats[0].indexSizeBytes).toBe(16384);
+      expect(stats[0].indexSize).toBe("16 KB");
     });
   });
 

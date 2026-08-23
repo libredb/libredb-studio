@@ -1880,7 +1880,7 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
         columns: index.columns.join(", "),
         isUnique: index.isUnique,
         isPrimary: index.isPrimary,
-        indexSizeBytes: index.indexSizeBytes,
+        indexSizeBytes: index.indexSizeBytes ?? null,
         scans: index.scans,
         usageRatio: index.usageRatio ?? null,
       })),

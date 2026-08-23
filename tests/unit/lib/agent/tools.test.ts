@@ -2604,6 +2604,35 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     });
   });
 
+  test("an index the engine published no size for reaches the model as null, not as zero", async () => {
+    // MySQL omits `indexSizeBytes` when `mysql.innodb_index_stats` is unreadable or holds no row
+    // for the index, and a 0 there would read to the model as a measured empty index.
+    const h = curatedHarness(
+      {},
+      {
+        getIndexStats: mock(async () => [
+          {
+            schemaName: "public",
+            tableName: "orders",
+            indexName: "orders_pkey",
+            columns: ["id"],
+            isUnique: true,
+            isPrimary: true,
+            indexSize: "N/A",
+            scans: 0,
+          },
+        ]),
+      },
+    );
+
+    const indexes = await inspectOperationsTool(h.context, { kind: "index-stats" });
+
+    if (indexes.kind !== "completed") throw new Error("expected completed");
+    expect(h.artifacts.get(indexes.artifact.correlationId, 1_000)?.value.rows[0]).toMatchObject({
+      indexSizeBytes: null,
+    });
+  });
+
   test("health is projected as ONE row of figures, and never as a second copy of the other readings", async () => {
     // `HealthInfo` nests its own slow-query and session lists, and both have their own
     // kind. Projecting them here would give one fact two shapes and two ways to cite it.

@@ -39,6 +39,9 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   // `system.local.data_center` and prints in the driver's own error message when it
   // is wrong. Nothing about it is a credential.
   localDataCenter: "public",
+  // A DATABASE NAME (`admin`), not a credential. The password that authenticates
+  // against it is the secret, and it is classified above.
+  authSource: "public",
   managed: "public",
   seedId: "public",
   agentUser: "public",

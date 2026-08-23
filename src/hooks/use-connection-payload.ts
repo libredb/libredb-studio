@@ -58,6 +58,10 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   // statement reaches, and a wrong value refuses the connection outright, so two
   // connections differing only here are not the same connection.
   localDataCenter: "resolution",
+  // Which database the credentials are checked against. A copy that authenticates
+  // somewhere else is authenticating as a different principal, so it does not resolve
+  // to the same connection.
+  authSource: "resolution",
   // The role a run executes as. A copy that carries its own is a different execution
   // profile even when it points at the same database (#328).
   agentUser: "resolution",

@@ -53,6 +53,10 @@ interface MongoQuery {
   pipeline?: Document[];
   update?: Document;
   documents?: Document[];
+  // `distinct` only, and the driver's own parameter name. Typed as unknown because
+  // parseQuery() casts unvalidated JSON: the dispatch re-checks it the way it
+  // re-checks `operation`.
+  field?: unknown;
   options?: {
     limit?: number;
     skip?: number;
@@ -171,7 +175,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       // it excludes: naming only what the language IS did not survive contact with
       // the model's prior on Elasticsearch, and does not here either.
       statementLanguage:
-        'the JSON command object this editor executes - {"collection": "<name>", "operation": "find" | "findOne" | "aggregate" | "count" | "distinct", "filter": {...}, "pipeline": [...], "options": {"limit": 50}} - and NOT mongosh shell syntax: a statement that starts with `db.` cannot be run here',
+        'the JSON command object this editor executes - {"collection": "<name>", "operation": "find" | "findOne" | "aggregate" | "count" | "distinct", "filter": {...}, "pipeline": [...], "field": "<name>" (distinct only), "options": {"limit": 50}} - and NOT mongosh shell syntax: a statement that starts with `db.` cannot be run here',
       // `getSlowQueries()` reads `system.profile`, which does not exist until the
       // profiler is switched on - so the empty panel is the ordinary case here, and it
       // used to name a PostgreSQL extension (#U12).
@@ -218,6 +222,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         maxIdleTimeMS: this.poolConfig.idleTimeout,
         connectTimeoutMS: this.poolConfig.acquireTimeout,
         serverSelectionTimeoutMS: this.poolConfig.acquireTimeout,
+        ...this.buildTLSOptions(),
       };
 
       this.client = new MongoClient(connectionString, options);
@@ -254,6 +259,33 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     }
   }
 
+  /**
+   * `tls`, `ca`, `cert`, `key` and `rejectUnauthorized` are all on the driver's own
+   * allow-list of TLS options (`LEGAL_TLS_SOCKET_OPTIONS` in mongodb/lib/cmap/connect.js)
+   * and reach `tls.connect` under Node's names, so the connection form's material maps
+   * the same way it does for PostgreSQL, MySQL and Couchbase. `require` encrypts
+   * without checking the chain, because a self-hosted replica set presents a
+   * self-signed certificate; the verifying modes check it. An explicit flag wins.
+   *
+   * Unlike `authSource`, this is applied with a pasted `connectionString` as well: the
+   * URI is returned verbatim so a `tls=` cannot be appended to it, but the options
+   * object is a second channel the driver reads, and the dialog shows the SSL panel in
+   * connection-string mode too.
+   */
+  private buildTLSOptions(): MongoClientOptions {
+    const ssl = this.config.ssl;
+    if (!ssl || ssl.mode === "disable") return {};
+
+    const options: MongoClientOptions = {
+      tls: true,
+      rejectUnauthorized: ssl.rejectUnauthorized ?? (ssl.mode === "verify-ca" || ssl.mode === "verify-full"),
+    };
+    if (ssl.caCert) options.ca = ssl.caCert;
+    if (ssl.clientCert) options.cert = ssl.clientCert;
+    if (ssl.clientKey) options.key = ssl.clientKey;
+    return options;
+  }
+
   private buildConnectionString(): string {
     if (this.config.connectionString) {
       return this.config.connectionString;
@@ -268,7 +300,13 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     const port = this.config.port || 27017;
     const database = this.config.database || "test";
 
-    return `mongodb://${auth}${host}:${port}/${database}`;
+    // The database the credentials live in, which is not always the one being opened:
+    // without it the driver authenticates against the database in the path, so users
+    // in `admin` and data elsewhere - the ordinary deployment - failed as a
+    // credentials error. A pasted connection string returned above carries its own.
+    const authSource = this.config.authSource ? `?authSource=${encodeURIComponent(this.config.authSource)}` : "";
+
+    return `mongodb://${auth}${host}:${port}/${database}${authSource}`;
   }
 
   private getDatabaseName(): string {
@@ -354,11 +392,25 @@ export class MongoDBProvider extends BaseDatabaseProvider {
               rows = [{ count }];
               break;
 
-            case "distinct":
-              const field = query.options?.projection ? Object.keys(query.options.projection)[0] : "_id";
+            case "distinct": {
+              // Named, and required. The field used to be the FIRST KEY of
+              // `options.projection` with `_id` as the fallback, which meant
+              // `{"operation":"distinct","field":"category"}` - the driver's own
+              // spelling - answered 120 rows of `_id` on a live probe (2026-08-22,
+              // 120 products in five categories). A plausible list is worse than an
+              // error, so the projection spelling is gone rather than aliased:
+              // nothing in the product generates a `distinct`.
+              const field = query.field;
+              if (typeof field !== "string" || field.length === 0) {
+                throw new QueryError(
+                  'distinct requires a "field": the name of the field to collect values of',
+                  "mongodb",
+                );
+              }
               const values = await collection.distinct(field, query.filter || {});
               rows = values.map((v) => ({ [field]: v }));
               break;
+            }
 
             case "insertOne":
               if (!query.documents || query.documents.length === 0) {
@@ -985,6 +1037,9 @@ export class MongoDBProvider extends BaseDatabaseProvider {
           tableSize: formatBytes(collStats.size || 0),
           tableSizeBytes: collStats.size || 0,
           indexSize: formatBytes(collStats.totalIndexSize || 0),
+          // `collStats.totalIndexSize` is a byte count the server measured; it was formatted for
+          // display and then dropped, leaving the storage panel with no index total to add up.
+          indexSizeBytes: collStats.totalIndexSize || 0,
           totalSize: formatBytes((collStats.size || 0) + (collStats.totalIndexSize || 0)),
           totalSizeBytes: (collStats.size || 0) + (collStats.totalIndexSize || 0),
         });

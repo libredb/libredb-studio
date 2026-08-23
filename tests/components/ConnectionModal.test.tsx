@@ -127,6 +127,7 @@ const mockHandleConnect = mock(async () => {});
 const mockHandlePasteConnectionString = mock(() => {});
 
 const mockSetLocalDataCenter = mock(() => {});
+const mockSetAuthSource = mock(() => {});
 
 let mockFormOverrides: Record<string, unknown> = {};
 
@@ -178,6 +179,8 @@ function getDefaultForm() {
     setInstanceName: mockSetInstanceName,
     localDataCenter: "",
     setLocalDataCenter: mockSetLocalDataCenter,
+    authSource: "",
+    setAuthSource: mockSetAuthSource,
     showSSH: false,
     setShowSSH: mockSetShowSSH,
     sshEnabled: false,
@@ -767,6 +770,51 @@ describe("ConnectionModal", () => {
 
     expect(queryByText("Keyspace Name")).toBeNull();
     expect(container.querySelector("#localDataCenter")).toBeNull();
+  });
+
+  // ── 34d. MongoDB asks where the credentials live ───────────────────────────
+  //
+  // The driver checks a user against whichever database the URI names, so a
+  // deployment with its users in `admin` and its data elsewhere - the ordinary one -
+  // could not be reached through the discrete fields at all, and said so as a
+  // credentials error. The field is in the open, not behind Advanced.
+
+  test("MongoDB offers an authentication database field", () => {
+    mockFormOverrides = { type: "mongodb" };
+    const props = createDefaultProps();
+    const { queryByText, container } = render(React.createElement(ConnectionModal, props));
+
+    const authDb = container.querySelector("#authSource") as HTMLInputElement | null;
+    expect(authDb).not.toBeNull();
+    expect(authDb!.placeholder).toBe("admin");
+    expect(queryByText(/The database the user was created in/)).not.toBeNull();
+  });
+
+  test("editing the authentication database reaches the form state", () => {
+    mockFormOverrides = { type: "mongodb" };
+    const props = createDefaultProps();
+    const { container } = render(React.createElement(ConnectionModal, props));
+
+    fireEvent.change(container.querySelector("#authSource") as HTMLInputElement, { target: { value: "admin" } });
+
+    expect(mockSetAuthSource).toHaveBeenCalledWith("admin");
+  });
+
+  test("the connection-string mode has no authentication database field", () => {
+    // A pasted URI carries `?authSource=` itself and is used verbatim, so a second
+    // input would be a value with nowhere to go.
+    mockFormOverrides = { type: "mongodb", mongoConnectionMode: "connectionString" };
+    const props = createDefaultProps();
+    const { container } = render(React.createElement(ConnectionModal, props));
+
+    expect(container.querySelector("#authSource")).toBeNull();
+  });
+
+  test("no other type carries the MongoDB field", () => {
+    const props = createDefaultProps();
+    const { container } = render(React.createElement(ConnectionModal, props));
+
+    expect(container.querySelector("#authSource")).toBeNull();
   });
 
   // ── 35. Browser autofill stays out of the credential fields ───────────────

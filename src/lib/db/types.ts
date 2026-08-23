@@ -673,7 +673,12 @@ export interface IndexStats {
   isUnique: boolean;
   isPrimary: boolean;
   indexSize: string;
-  indexSizeBytes: number;
+  /**
+   * Omitted when the engine publishes no size for this index. MySQL keeps per-index sizes in
+   * `mysql.innodb_index_stats`, which a restricted user cannot read and which holds no row for a
+   * MyISAM table, so a `0` there would be a fabricated measurement rather than a small index.
+   */
+  indexSizeBytes?: number;
   scans: number;
   usageRatio?: number;
 }
