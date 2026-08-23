@@ -240,8 +240,8 @@ describe("the drafted statement is read out of the closing prose", () => {
 
   /*
     Measured, and it is our defect rather than the models'. `no-statement` blocks four cells
-    and four of the losing runs across THREE models — `qwen3:4b`, `qwen3.5:4b`,
-    `nemotron3:33b` — end with exactly this:
+    and four of the losing runs across THREE models, `qwen3:4b` among them, end with exactly
+    this:
 
         NO STATEMENT:
         The provided schema inventory includes the complete answer to the question, so a
@@ -485,7 +485,7 @@ describe("a statement the model wrote without a fence", () => {
   /*
     Measured, and the two shapes it comes in have to be told apart.
 
-    `qwen3:1.7b` was asked for a plan and produced this, verbatim:
+    One model was asked for a plan and produced this, verbatim:
 
         sqlite
         SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' …
@@ -496,7 +496,7 @@ describe("a statement the model wrote without a fence", () => {
     and the statement under it. It simply left out the backticks, and the run was scored
     `no-statement` — the plan-mode bar — for a formatting slip around a real statement.
 
-    `qwen3:0.6b` produced the other shape on the same objective:
+    Another produced the other shape on the same objective:
 
         sqlite
         <sqlite>

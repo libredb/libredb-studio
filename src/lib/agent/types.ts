@@ -572,7 +572,7 @@ export type AgentRunEvent =
        * used to write nothing at all. A database tool that declines writes `tool-refused`; a
        * ledger tool that declines wrote silence.
        *
-       * Measured cost of that silence, twice in one evening. `mistral-small3.2:24b` loses
+       * Measured cost of that silence, twice in one evening. One evaluated model loses
        * data-analysis on `no-answer`, and its ledger holds no hold and no answer — because
        * `present_answer` was called and refused, which sets `answerAttempted` and disables
        * the hold that would have asked again, invisibly. Five different refusals produce that
@@ -591,7 +591,7 @@ export type AgentRunEvent =
        *
        * The code alone turned out not to be diagnosable. `INVALID_TOOL_INPUT` is the largest
        * refusal family on record — a hundred and fifty across every model measured — and
-       * `deepseek-r1:7b` produced eight of them in one run, holding the same tool, without
+       * One model produced eight of them in one run, holding the same tool, without
        * the record saying which part of the object was wrong even once.
        *
        * Still the server's own vocabulary and nothing else: these are the schema's field
@@ -633,7 +633,7 @@ export type AgentRunEvent =
        * reserve warning — was pushed into the conversation and left no trace, so a ledger could
        * not distinguish a run that ignored a reminder from a run that never got one.
        *
-       * It cost a diagnosis to lack. `granite4.1:3b` was held on one plan, did exactly what
+       * It cost a diagnosis to lack. One model was held on one plan, did exactly what
        * the hold asked (an index recommendation citing that plan), then stopped without
        * reporting — and whether the drive had told it to report was unanswerable from the
        * record, which is the difference between a model that declines and a mechanism that

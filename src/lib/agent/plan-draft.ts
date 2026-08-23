@@ -62,14 +62,14 @@ const REFUSAL_LINE = /^\s*NO STATEMENT:\s*(.*)$/i;
 /**
  * A line that plainly OPENS a statement, for a run that wrote one without a fence.
  *
- * Measured on two local models asked for the same plan. `qwen3:1.7b` wrote the engine tag
+ * Measured on two local models asked for the same plan. One wrote the engine tag
  * on its own line and the statement under it, backticks and all left out:
  *
  *     sqlite
  *     SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';
  *
  * and lost the cell to `no-statement` — the plan-mode bar — for a formatting slip around
- * a real statement. `qwen3:0.6b` wrote prose in XML-ish tags on the same objective, and
+ * a real statement. The other wrote prose in XML-ish tags on the same objective, and
  * that one must keep failing: `plan-statement-drafted` is recorded whenever this reader
  * returns a statement, with the validation riding along rather than gating it, so a reader
  * that accepted a sentence would score the run answered while the user reads prose. The
@@ -178,7 +178,7 @@ export function readPlanStatement(text: string, dialect?: DatabaseType): PlanSta
     Set when a refusal marker was read whose OWN line carried nothing after it, so the
     reason may still arrive on a later line.
 
-    Measured on four losing runs across `qwen3:4b`, `qwen3.5:4b` and `nemotron3:33b`, all
+    Measured on four losing runs across three models, all
     ending the same way: the marker, a line break, then the explanation and the question.
     Every one of those runs did what plan mode asks and every one was scored as having said
     nothing, because this reader only ever looked at the remainder of the marker's own line.

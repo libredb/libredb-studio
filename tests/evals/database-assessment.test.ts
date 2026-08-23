@@ -138,7 +138,7 @@ describe("the bar this workflow is judged against is stated to the model", () =>
     nothing had told them a profile was required.
 
     The rule names the TOOL for a measured reason, which is why this asserts the tool
-    name and not a paraphrase. Told "profile at least one table", `qwen3.5:4b` composed
+    name and not a paraphrase. Told "profile at least one table", one model composed
     eighteen count statements by hand with `run_read_query` and three other models went
     to `inspect_schema`: every one of them had done what the sentence asked and none
     produced the `table-profiled` event the verifier reads.
@@ -430,7 +430,7 @@ describe("the verdict is previewed before the report lands, not after the run di
   test("and it is narrowed to what would fix it, so it cannot spend the turn elsewhere", async () => {
     /*
       Measured with the ledger's own record of the hold, once `call-held` made holds
-      visible. On `qwen3.5:4b` the notice fired and the model then called `inspect_schema`
+      visible. On that model the notice fired and it then called `inspect_schema`
       four times and `run_read_query` three times without ever profiling; on `qwen3:8b` it
       fired and the run went back to `inspect_schema`. `qwen3.5:9b` took the offer on one
       run and answered.
@@ -533,7 +533,7 @@ describe("a run that reports past the notice is asked again, up to a bound", () 
       report-composed      <- and the model reports anyway
       no-table-profile
 
-    `qwen3:8b`, `qwen3:14b` and `qwen3.5:4b` lose this surface 5 times out of 5, so it is not
+    `qwen3:8b`, `qwen3:14b` and a third model lose this surface 5 times out of 5, so it is not
     variance: told once, left holding only the two tools its verdict accepts, the model picks
     the report again. One ask was a guess, and fifteen consecutive losses are the answer to it.
 

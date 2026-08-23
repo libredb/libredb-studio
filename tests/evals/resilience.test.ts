@@ -140,7 +140,7 @@ describe("a failed statement is told what the table actually holds", () => {
   test("and where that column actually lives, when the inventory has it elsewhere", async () => {
     /*
       Naming what a table holds does not answer a model looking for a join key. Measured:
-      `lfm2:24b` asked for `department.emp_no` twice in one run, having been told after the first
+      One evaluated model asked for `department.emp_no` twice in one run, having been told after the first
       that department holds dept_no and dept_name. It was not confused about department — it was
       looking for where emp_no lives, and that is in the inventory too.
 
@@ -168,7 +168,7 @@ describe("a failed statement is told what the table actually holds", () => {
 
   test("the tables that do hold it are named, so a join key can be found", async () => {
     // Every fixture table carries `name`, so a run told that one lacks it should be pointed at
-    // the others. This is the arm `lfm2:24b` needed and did not get: it asked twice for a column
+    // the others. This is the arm that model needed and did not get: it asked twice for a column
     // that exists, in a different table, and was twice told only what the first one holds.
     const run = await open({
       answer: async () => {

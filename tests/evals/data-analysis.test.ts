@@ -123,7 +123,7 @@ describe("a run whose present_answer was REFUSED is still asked to present", () 
     disabled the hold which asks a reporting run to present its answer first. So the arc that
     should recover could not:
 
-        granite4.1:3b   profiled a table · presented the PROFILE · refused, correctly, with
+        one model       profiled a table · presented the PROFILE · refused, correctly, with
                         "present the result of a run_read_query you drafted" · drafted exactly
                         that and ran it · and was never asked to present it. One run then
                         called compose_report five times against a stale citation, the next
@@ -167,9 +167,9 @@ describe("a run that reports having read nothing is left alone", () => {
     The empty arm of the present-before-report check, and the measurement that closed it.
 
     Sweeping this cell across ten models turned up three that lost `no-answer` without ever
-    reading the data, each arriving differently: `lfm2:24b` drafted three statements and had all
-    three refused by the database, `mistral-small3.2:24b` read only the catalog,
-    `deepseek-r1:14b` called nothing. A sentence was written for them — "you have read none" —
+    reading the data, each arriving differently: one drafted three statements and had all three
+    refused by the database, one read only the catalog, one called nothing at all. A sentence was
+    written for them — "you have read none" —
     and measured on all three. Not one recovered: their runs lose either way, relabelled
     `no-report` instead of `no-answer`.
 
@@ -230,7 +230,7 @@ describe("§4.4 case 1: a chart of a column the result does not have", () => {
 
       It used to be nowhere. `present_answer` settles no step, so a refusal from it wrote
       nothing at all, and a reader could not tell a call the tool sent back from a call the
-      model never made. That cost an evening on `mistral-small3.2:24b`, whose data-analysis
+      model never made. That cost an evening on one evaluated model, whose data-analysis
       runs lose on `no-answer` with neither a hold nor an answer in the ledger: the refused
       call sets the flag that disables the hold which would have asked again, and left no
       trace of having done so. Five different refusals produce that same empty trace, and

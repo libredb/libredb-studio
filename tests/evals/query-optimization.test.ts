@@ -267,7 +267,7 @@ describe("THE GATE: the verifier fails the run when the template's own artifact 
     works is not the same as saying the report is judged on having used one. Measured
     across 25 local models, 6 failed on `no-plan-comparison`, and their ledgers have
     the shape the gate above scripts, character for character: `inspect_schema`,
-    `run_read_query`, ONE `inspect_plan`, report. `nemotron-3.5-lightning:30b` and
+    `run_read_query`, ONE `inspect_plan`, report. Two evaluated models and
     `qwen3.5:9b` produced identical arcs. They diagnosed the statement correctly and
     stopped, never calling `recommend_change` at all — which is a reasonable place to
     stop if nothing has said otherwise.
@@ -293,7 +293,7 @@ describe("a run holding two plans and reporting without comparing them is asked 
     enough on its own.
 
     Told that one plan answers nothing, models stopped taking one plan and started taking
-    several: `qwen3.5:4b` and `qwen3.5:2b` went to FIVE, `nemotron-3.5-lightning:30b` to
+    several: two models went to FIVE, a third to
     three. Not one of them then called `compare_plans`. They hold both artifact ids and
     report anyway — so this asks, at the only moment it can still be acted on, and names
     the ids rather than describing where to find them.
@@ -335,10 +335,10 @@ describe("a run holding two plans and reporting without comparing them is asked 
       for those.
 
       Measured on the clean sweep: `granite4.1:30b` inspected one plan and reported, and
-      `granite4.1:3b` did the same after a refused read. Both had moved UP from
+      Another did the same after a refused read. Both had moved UP from
       `no-report` to a real report, and both stopped one call short. The stated bar had
-      already moved other models to three and five plans (`nemotron-3.5-lightning:30b`,
-      `qwen3.5:4b`, `qwen3.5:2b`), so what was missing here was the nudge and not the
+      already moved three other models to three and five plans, so what was missing here was
+      the nudge and not the
       rule.
     */
     const run = await open("sqlite");

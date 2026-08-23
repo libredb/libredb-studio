@@ -2,7 +2,7 @@
  * Driving a model that cannot emit `tool_calls`.
  *
  * Some capable models do not speak the OpenAI tool-call format at all. Measured on a
- * local Ollama endpoint, every `deepseek-r1` distill — 7b, 8b, 14b, 32b — is handed
+ * local Ollama endpoint, a whole family of reasoning distills is handed
  * tools, reasons about the question, and answers in prose without ever emitting a
  * `tool_calls` array. The capability gate reads that correctly and refuses the run,
  * which is right when there is nothing else to try, and wasteful when there is: the
@@ -53,7 +53,7 @@ const PROTOCOL = [
  * has no tool to call — for it, calling one means emitting the object — so the same
  * sentence tells it WHAT to do and not HOW.
  *
- * Measured: `deepseek-r1:7b` took a reading and then narrated, was reminded to report,
+ * Measured: one such model took a reading and then narrated, was reminded to report,
  * and narrated again, ending `no-report` three times out of three. The instruction had
  * landed; the format had not.
  */
@@ -125,7 +125,7 @@ function objectsIn(text: string): string[] {
     A last candidate for an object whose closing braces never arrived, appended AFTER every
     well-formed one so a complete reply is read exactly as it was before.
 
-    Measured: a `deepseek-r1:8b` assessment closed with 498 characters holding six `{` and
+    Measured: one assessment closed with 498 characters holding six `{` and
     five `}` — two well-formed claims, each citing an artifact id from one of its own
     `profile_table` calls, and the outermost brace missing because the reply was cut off.
     Both readers saw nothing and the run scored `no-report`. The work was done; one byte was
@@ -170,7 +170,7 @@ export const PROMPTED_ACTION_SHAPE = z.object({
 /**
  * The arguments, plus whatever the model wrote one level too high.
  *
- * `deepseek-r1:7b`, query-optimization: thirty-five `recommend_change` refusals in one run,
+ * One evaluated model, query-optimization: thirty-five `recommend_change` refusals in one run,
  * all reporting the same three fields, until the deadline ended it. Read with the refusal
  * detail the ledger now carries, those three are not three mistakes — `change: invalid value;
  * statement: expected string; rationale: expected string` is an EMPTY arguments object, listed
@@ -222,7 +222,7 @@ export function readPromptedAction(text: string, tools: readonly AgentToolDefini
 /**
  * A call the model wrapped in an envelope of its own invention.
  *
- * Measured on `deepseek-r1:7b`, the only model in the fleet with no agent cell at any
+ * Measured on the model that then had no agent cell at any
  * score. Its investigation turns look like this:
  *
  *     {"actions": {"inspect_schema": {"arguments": {"kind": "columns", "table": "employee"},

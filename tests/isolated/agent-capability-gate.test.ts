@@ -94,7 +94,7 @@ describe("the model gate on the start path", () => {
   });
 
   test("a model that only lacks tool calling is admitted to drive the run in prose", async () => {
-    // The `deepseek-r1` case, measured: the endpoint streams and the model reasons
+    // The reasoning-distill case, measured: the endpoint streams and the model reasons
     // well, it simply never emits `tool_calls`. Refusing it threw away a model that
     // produced the correct call 15 times out of 15 when asked for one in prose.
     probeAgentModel.mockImplementation(async () => REFUSAL);
@@ -133,7 +133,7 @@ describe("the model gate on the start path", () => {
     // The shape a real refusal has: two missing, one disproved. A model that called no
     // tool sent no arguments, so `structuredOutput` is unestablished as a CONSEQUENCE
     // rather than as a second thing watched to fail — which is why the admission reads
-    // `disproved`. Requiring one entry in `missing` rejected every deepseek-r1 size.
+    // `disproved`. Requiring one entry in `missing` rejected every size of that family.
     probeAgentModel.mockImplementation(async () => ({
       ...REFUSAL,
       refusal: {

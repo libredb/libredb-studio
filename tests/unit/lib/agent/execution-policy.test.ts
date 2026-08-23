@@ -393,7 +393,7 @@ describe("the per-turn ceiling reads its environment", () => {
     The constant's own docblock explains why 90 seconds was right: "turns on this workload
     land in seconds, so a ceiling this far above them is only ever reached by a call that is
     not coming back." That was written against hosted APIs. On a local endpoint a 33 GB
-    reasoning model's FIRST turn can exceed it — `deepseek-r1:8b` in planning mode was cut at
+    reasoning model's FIRST turn can exceed it — one such model in planning mode was cut at
     92 s with a zero-event ledger, on a prompt this repository had just enlarged itself.
 
     So the value becomes configuration rather than a constant, and the default does not move:

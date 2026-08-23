@@ -57,7 +57,7 @@ export type AgentCapabilityGateVerdict =
  * unobserved: the model was handed a tool and answered without calling it. Anything
  * else — an endpoint that never streamed, arguments that did not validate — is a model
  * the prose path cannot rescue either, because it needs the same stream and the same
- * schema. Measured on `deepseek-r1` 7b, 8b and 14b, which land here and then produce
+ * schema. Measured on three sizes of one reasoning family, which land here and then produce
  * the correct action 15 times out of 15 when asked for one.
  */
 function onlyLacksToolCalling(refusal: AgentCapabilityRefusal): boolean {
@@ -67,7 +67,7 @@ function onlyLacksToolCalling(refusal: AgentCapabilityRefusal): boolean {
   // `disproved` is the half the probe WATCHED fail, and it already excludes
   // `structuredOutput` when tool calling was never established (`capability-probe.ts`).
   // Requiring one entry in `missing` therefore rejected exactly the models this exists
-  // for: every `deepseek-r1` size arrives with two missing and one disproved.
+  // for: every size of that family arrives with two missing and one disproved.
   const watched = refusal.disproved;
   return refusal.capabilities.streaming && watched.length === 1 && watched[0] === "toolCalling";
 }

@@ -416,7 +416,7 @@ describe("an engine that cannot serve a reading", () => {
 
 describe("a run that took readings and cited none is asked once, with the ids", () => {
   /*
-    Measured, and the shape is unambiguous: `mistral-small3.2:24b` called
+    Measured, and the shape is unambiguous: one evaluated model called
     `inspect_operations` SIX times, every call completed, and then composed a report whose
     only citation was the schema inventory — `no-reading`, the arm #411 made necessary.
     `verifyOperationsGoal` asks for one `source: "artifact"` reference and got none.
@@ -487,7 +487,7 @@ describe("a run that took readings and cited none is asked once, with the ids", 
       that a run with nothing to cite would be asked for the impossible. Half right: it
       cannot be asked to CITE, which is why this notice still stays silent for it. But it
       can be asked to READ, and never being told that is what an entire cell was made of —
-      see the describe block below, where `lfm2:24b` loses this surface 5 times out of 5
+      see the describe block below, where one model loses this surface 5 times out of 5
       without ever calling `inspect_operations`.
 
       So the two sentences divide by what the run holds: artifacts and the wrong citation
@@ -519,7 +519,7 @@ describe("a run that read NOTHING is told what this workflow is scored on", () =
     hole: a run that took NO reading and reported off the captured inventory holds nothing,
     hears nothing, and dies of `no-reading` having never been told the bar exists.
 
-    Measured, and it is an entire cell. `lfm2:24b` loses `operations` 5 times out of 5, and
+    Measured, and it is an entire cell. One model loses `operations` 5 times out of 5, and
     all five ledgers are four events long: started, context captured, report composed,
     finished. Five to six seconds. It answers "eight tables with no associated indexes"
     from the inventory it was handed and never calls `inspect_operations`. It is a 24B model

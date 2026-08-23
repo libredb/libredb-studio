@@ -121,7 +121,7 @@ describe("reading an action back out of a model's prose", () => {
   /*
     The fields a model wrote one level too high, and what they cost before they were read.
 
-    `deepseek-r1:7b`, query-optimization: THIRTY-FIVE `recommend_change` refusals in a single
+    One evaluated model, query-optimization: THIRTY-FIVE `recommend_change` refusals in a single
     run, every one of them saying the same three fields did not match, until the run hit its
     deadline. The refusal detail is what made it readable — `change: invalid value; statement:
     expected string; rationale: expected string` is not three separate mistakes, it is an
@@ -172,8 +172,7 @@ describe("a tool call the model wrote as its payload rather than as a call", () 
     `no-report` was 37 of 66 failing cells across 25 local models on six surfaces. Reading
     the ledgers of 36 of those runs, SEVEN had written a complete `compose_report` payload
     into their prose — a fenced JSON object with a `claims` array — instead of calling the
-    tool. Seven different families: `deepseek-r1:14b`, `deepseek-r1:32b`, `granite4.1:30b`,
-    `lfm2:24b`, `nemotron3:33b`, `qwen3:0.6b`, `qwen3:1.7b`. `granite4.1:3b` did it too and
+    tool. Seven different families did it, `granite4.1:30b` among them, and an eighth did it and
     appended "(The compose_report tool was successfully used with the required structure,
     producing the above report.)" — it believed it had called the tool.
 
@@ -254,7 +253,7 @@ describe("what these models actually write, read off their ledgers", () => {
   /*
     Both of the cases below were recovered from real losing runs, and both are runs where the
     model had DONE the work and lost the cell on the envelope its answer arrived in. That is
-    the measured shape of the largest loss class on this path: four `deepseek-r1` distills
+    the measured shape of the largest loss class on this path: four reasoning distills
     lock 2 cells out of 24 between them, and the ledgers are full of correct payloads that
     were never read.
 
@@ -278,7 +277,7 @@ describe("what these models actually write, read off their ledgers", () => {
 
   test("a payload whose last brace never arrived is still read", () => {
     /*
-      `deepseek-r1:8b`, database-assessment: 498 characters of closing prose holding six `{`
+      One evaluated model, database-assessment: 498 characters of closing prose holding six `{`
       and five `}`. Two well-formed claims, each citing an artifact id from one of its own
       two `profile_table` calls — and the outermost brace missing, because the endpoint cut
       the reply off. `objectsIn` only emitted a candidate when depth returned to zero, so
@@ -299,7 +298,7 @@ describe("what these models actually write, read off their ledgers", () => {
 
   test("a call wrapped in an envelope is read out of it", () => {
     /*
-      `deepseek-r1:7b`, investigation: the intended call is legible twice over — the key
+      Another, investigation: the intended call is legible twice over — the key
       names a tool this run holds, and the nested `arguments` object fits that tool's schema
       — but the outermost object fits nothing, so nothing was recovered and the run ended
       having called no tool at all. It is the only model in the fleet with no agent cell at

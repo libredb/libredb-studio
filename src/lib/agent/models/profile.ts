@@ -80,7 +80,7 @@ export interface AgentModelProfile {
   /**
    * How many times a report may be held to ask for the answer that belongs beside it.
    *
-   * One is enough for a model that forgot. `mistral-small3.2:24b` does not forget: held once
+   * One is enough for a model that forgot. One evaluated model did not forget: held once
    * on data-analysis and told to present its answer first, it composes the report anyway, and
    * the report lands with an empty answer pane and a `no-answer` verdict.
    */
@@ -118,7 +118,7 @@ export interface AgentModelProfile {
   /**
    * Whether a refused call is handed a worked example built from this run's ledger.
    *
-   * OFF by default for the same reason. Measured on `lfm2:24b`, where it collapsed a loop of
+   * OFF by default for the same reason. Measured on one model, where it collapsed a loop of
    * twenty-eight identical `INVALID_TOOL_INPUT` refusals into one — the model took the example
    * and got the shape right on its next turn. That is a real effect on a real ledger and it did
    * not win the cell, so it is on for that model and off everywhere else until another

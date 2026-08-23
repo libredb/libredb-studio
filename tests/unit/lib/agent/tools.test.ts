@@ -656,7 +656,7 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
     test("and it hands over a call this run could make, built from its own ledger", () => {
       /*
         Naming the failing field was the previous step, and it was measured as not enough:
-        `lfm2:24b` was refused here twenty-eight times in a row on one data-analysis run, with
+        One evaluated model was refused here twenty-eight times in a row on one data-analysis run, with
         the paths named every time, and never changed the shape it sent. `qwen3:8b` did the
         same thirty-seven times before that.
 
@@ -685,7 +685,7 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
 
     test("present_answer offers the same example, one call earlier in the arc", () => {
       /*
-        `lfm2:24b` showed both halves in a single run. Refused on `compose_report` it took the
+        One model showed both halves in a single run. Refused on `compose_report` it took the
         example and got the report right on its next turn — the loop of twenty-eight identical
         refusals was gone. It was then refused on `present_answer`, which carried no example,
         and never tried again: the run scored `no-answer` having done every piece of the work.
@@ -750,7 +750,7 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
 
     test("compare_plans offers the two ids a run holding two plans can compare", () => {
       /*
-        The last id-bearing tool to carry a worked call. `lfm2:24b` failed the shape of this one
+        The last id-bearing tool to carry a worked call. One model failed the shape of this one
         three times in a single run while also failing `recommend_change` four times — both
         routes through the plan bar, neither buildable — and by then it had been held twice and
         tried after each hold. It is not declining to answer.
@@ -817,7 +817,7 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
         The arm an optimization verdict accepts without a comparison: a run holding ONE plan
         satisfies its bar by recommending an index that cites that plan.
 
-        `granite4.1:3b` failed the shape of that call four times in a single run — while its
+        Another failed the shape of that call four times in a single run — while its
         closing prose showed it knew exactly what to recommend — and the example had been given
         to `compose_report` and `present_answer` but not to this tool. With the report example
         alone, the next measurement got its report through and still lost the cell here.
@@ -2144,7 +2144,7 @@ describe("composeReportTool — a claim must cite something the run actually pro
 
   test("and the refusal names the ids this run CAN cite, so the retry is not another guess", () => {
     /*
-      Measured on `granite4.1:3b`, data-analysis. The run did the analysis correctly — profiled
+      Measured on one model's data-analysis run. It did the analysis correctly — profiled
       a table, drafted `SELECT emp_no, amount FROM salary ORDER BY amount DESC LIMIT 1`, ran it
       — then called `compose_report` five times, was refused with the same sentence five times,
       and stopped. Nothing in that sentence said which ids existed, so every retry was a fresh

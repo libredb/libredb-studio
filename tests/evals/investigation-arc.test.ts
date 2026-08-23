@@ -410,7 +410,7 @@ describe("a catalog read that matched nothing is refused, not answered with an e
     `sqlite_master` read matched nothing, and `readCatalog` returned that as a COMPLETED step
     with `rowCount: 0` and a citable correlation id. The model then cited it, and
     `restsOnlyOnEmptyResults` scored the run `empty-evidence`: three families produced
-    character-identical ledgers doing this (`gemma4:26b`, `mistral-small3.2:24b`, `lfm2:24b`).
+    character-identical ledgers doing this, `gemma4:26b` among them.
 
     The model was not wrong. The server answered a question about a non-existent object with
     success. `profile_table` has had the correct behaviour all along — it refuses a table the

@@ -315,8 +315,8 @@ function planningEngine(context: AgentToolContext): PlanningEngine {
  * the artifacts and the goal verifier still scores the run `no-report`.
  *
  * Measured on three models against a local Ollama endpoint, each of which read the
- * database and then narrated: `mistral-small3.2:24b` (4 readings), `lfm2:24b` (11 on
- * a data-analysis run), `qwen3.5:2b` (42). None of them was refusing to report; each
+ * database and then narrated: three models measured during evaluation, with 4, 11 and 42
+ * readings behind the prose. None of them was refusing to report; each
  * had answered in the register a chat model answers in.
  *
  * Once, and only after a call: a model that would not call the tool the first time it
@@ -362,7 +362,7 @@ function planningEngine(context: AgentToolContext): PlanningEngine {
  * A workflow offered `present_answer` is one whose whole point is the answer: the goal
  * verifier scores it `no-answer` when the report lands with nothing presented beside
  * it, and the rail shows a report with an empty answer pane. Measured on three models
- * (`qwen3.5:4b`, `qwen3.5:9b`, `mistral-small3.2:24b`), each read the data, got a
+ * (three models, one of them supported), each read the data, got a
  * result, and then went straight to `compose_report`: the reading was taken and the
  * answer was one call away.
  *
@@ -395,10 +395,10 @@ function planningEngine(context: AgentToolContext): PlanningEngine {
  *
  * Measured on three models in one sweep, arriving here three different ways:
  *
- *     lfm2:24b               drafted three statements, all three refused by the database,
+ *     one model              drafted three statements, all three refused by the database,
  *                            then reported anyway
- *     mistral-small3.2:24b   read the schema only, which is the catalog and not the data
- *     deepseek-r1:14b        called nothing at all
+ *     another                read the schema only, which is the catalog and not the data
+ *     a third                called nothing at all
  *
  * So the sentence names the distinction the first two got wrong — the catalog is not the data
  * — and says what to do rather than what went wrong, because a run that has burned three
@@ -410,7 +410,7 @@ function planningEngine(context: AgentToolContext): PlanningEngine {
  *
  * The measured second half of `no-plan-comparison`. Telling the run that one plan
  * answers nothing worked as far as it goes — models stopped taking one plan and began
- * taking several (`qwen3.5:4b` and `qwen3.5:2b` took five, `nemotron-3.5-lightning:30b`
+ * taking several (two models took five, a third
  * three) — and then not one of them called `compare_plans`. They hold both artifact ids
  * and report anyway. So this does not describe where to find the ids: it names them.
  *
@@ -572,7 +572,7 @@ function shortfallNotice(
       ].join(" "),
       // `profile_table` IS what this verdict accepts, so the narrowed set is exactly the two
       // tools the run now needs — and the ledger argued for narrowing here: told once and
-      // left holding everything, `qwen3.5:4b` called `inspect_schema` four times and
+      // left holding everything, one model called `inspect_schema` four times and
       // `run_read_query` three without ever profiling.
       narrow: true,
     };
@@ -592,7 +592,7 @@ function shortfallNotice(
       took NO reading and reported off the captured inventory holds nothing, hears nothing,
       and dies of `no-reading` never having been told the bar exists.
 
-      `lfm2:24b` loses `operations` five times out of five, and all five ledgers are four
+      One evaluated model loses `operations` five times out of five, and all five ledgers are four
       events long: started, context captured, report composed, finished, in five seconds. It
       answers from the inventory it was handed and never calls `inspect_operations`. It is a
       24B model that reads competently on other surfaces, so this is not capacity — it is a
@@ -692,7 +692,7 @@ function citedArtifactIds(input: unknown): readonly string[] {
 /**
  * What a run is told once when it is about to report on none of what it read.
  *
- * Measured: `mistral-small3.2:24b` called `inspect_operations` SIX times, every call
+ * Measured: one model called `inspect_operations` SIX times, every call
  * completed, and then composed a report whose only citation was the schema inventory.
  * `verifyOperationsGoal` asks for one `source: "artifact"` reference and got none, so the
  * run scored `no-reading` having done the work. The same misdirection on the other
@@ -734,10 +734,10 @@ function citeWhatYouReadNotice(ids: readonly string[], everythingCitedWasEmpty: 
  * plan it already holds.
  *
  * Measured on the clean sweep, after the stated rule was in place: `granite4.1:30b`
- * inspected one plan and reported, and `granite4.1:3b` did the same after a refused read.
+ * inspected one plan and reported, and a second did the same after a refused read.
  * Both had risen from `no-report` to a real report and stopped one call short of the bar.
  * The same rule had already moved other models to three and five plans
- * (`nemotron-3.5-lightning:30b`, `qwen3.5:4b`, `qwen3.5:2b`), so what these needed was
+ * (three of them), so what these needed was
  * the nudge at the moment of reporting rather than a different rule at the start.
  */
 function secondPlanBeforeReportNotice(plan: string): string {
@@ -1426,7 +1426,7 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
     // describes how the two instruments WORK; none of it says the report is judged on
     // having used one. Measured across 25 local models, 6 failed on
     // `no-plan-comparison` with the arc the gate in `tests/evals/query-optimization`
-    // scripts: one `inspect_plan`, then a report. `nemotron-3.5-lightning:30b` and
+    // scripts: one `inspect_plan`, then a report. Two evaluated models and
     // `qwen3.5:9b` produced identical ledgers — a correct diagnosis, and no
     // `recommend_change` call at all. Stopping after the diagnosis is a reasonable
     // reading of "explain why it is slow" when nothing has said otherwise, so this
@@ -1449,7 +1449,7 @@ const WORKFLOW_TOOL_RULES: Readonly<Record<AgentRunWorkflowType, string>> = Obje
     //
     // The bar NAMES THE TOOL, and that wording was measured rather than chosen. A first
     // version said "profile at least one table", which reads as an activity: of the
-    // eight models it was measured on, `qwen3.5:4b` satisfied those words by writing
+    // eight models it was measured on, one satisfied those words by writing
     // eighteen `run_read_query` count statements by hand, and three more went to
     // `inspect_schema` — none produced the event the verifier reads, so all four still
     // failed while believing they had complied. The `operations` rule that works names
@@ -2051,7 +2051,7 @@ interface ModelTurn {
  * How many times a report may be held for the verdict it would earn before it is let through.
  *
  * Was once, and five repeats on three models say once is not enough. `qwen3:8b`, `qwen3:14b`
- * and `qwen3.5:4b` lose `database-assessment` 5 times out of 5, and every ledger has the same
+ * and another lose `database-assessment` 5 times out of 5, and every ledger has the same
  * shape: the notice fires, the run is narrowed to the two tools its verdict accepts, and the
  * model reports again anyway. Fifteen consecutive losses is not variance.
  *
@@ -2133,7 +2133,7 @@ const AGENT_INSTRUMENT_RESULT: Readonly<Partial<Record<AgentToolName, AgentRunEv
  * Whether a narrowed run has used one of its kept instruments enough times to stop keeping it.
  *
  * The loop the narrowing left open, and it only became visible once the tool started working.
- * `deepseek-r1:7b` on query-optimization was refused `recommend_change` thirty-six times in a
+ * One evaluated model on query-optimization was refused `recommend_change` thirty-six times in a
  * run, on a field the refusal did not name. Once it named it, the same cell recorded
  * THIRTY-THREE recommendations and still scored `no-report`: the ceiling fired, the run
  * narrowed, and narrowing keeps this surface's instruments so its own bar stays reachable — so
@@ -2413,8 +2413,8 @@ export async function runInvestigation(
       and read here rather than re-derived: a resumed drive must ask the way the drive that
       died asked.
 
-      `prompted` means the model cannot emit `tool_calls` — measured on every `deepseek-r1`
-      distill — so the SDK is handed no tools at all and the contract is stated in prose
+      `prompted` means the model cannot emit `tool_calls` — measured on a whole family of
+      reasoning distills — so the SDK is handed no tools at all and the contract is stated in prose
       instead. Everything downstream is unchanged: the action read back out of the reply
       goes through the same `AGENT_TOOL_DEFINITIONS` schema and the same audited pipeline.
 
@@ -2445,8 +2445,9 @@ export async function runInvestigation(
     const messages: ModelMessage[] = [{ role: "user", content: record.objective }];
     /*
       The contract is a USER message, not an addition to the instructions, and that is the
-      vendor's own guidance rather than a preference: DeepSeek-R1's model card says "avoid
-      adding a system prompt; all instructions should be contained within the user prompt".
+      vendor's own guidance rather than a preference: the model card for the reasoning family
+      that takes this path says "avoid adding a system prompt; all instructions should be
+      contained within the user prompt".
       Measured, it decided the run — with the contract in the instructions the model
       produced the action format correctly and ignored the arc, reporting on turn one with
       no readings. It also keeps `instructions` byte-for-byte what it was for every run.
@@ -2462,9 +2463,9 @@ export async function runInvestigation(
      * narrowed set regardless of protocol.
      *
      * So a narrowed prompted run read a contract listing `run_read_query`, called it, and was
-     * answered "There is no tool called run_read_query in this run." Every `deepseek-r1`
-     * distill takes this path; between the four of them they lock 2 cells of 24. Confirmed in
-     * code by audit before it was fixed here.
+     * answered "There is no tool called run_read_query in this run." A whole family of
+     * reasoning distills takes this path. Confirmed in code by audit before it was fixed
+     * here.
      */
     let narrowingDeclared = false;
     /**
@@ -3196,11 +3197,11 @@ export async function runInvestigation(
             twice. A flag also tracked whether `present_answer` had been CALLED, and a refused
             call set it — which switched this hold off for the rest of the run.
 
-            That cost two models a cell. `granite4.1:3b` presented a table profile, was told
+            That cost two models a cell. One presented a table profile, was told
             correctly to present the result of a `run_read_query` instead, drafted exactly that
             and ran it, and was then never asked to present it: one run answered by calling
             `compose_report` five times against a stale citation, the next stopped outright.
-            `mistral-small3.2:24b` lost the same cell the same way.
+            The other lost the same cell the same way.
 
             The ledger answers it alone. A successful presentation writes `answer-composed`, a
             refused one writes `call-declined`, and only the first of those means answered. The
@@ -3211,8 +3212,8 @@ export async function runInvestigation(
           /*
             A run that read and did not present. The other arm — a run that read NOTHING — was
             given a sentence of its own for a while and it is gone: three models were measured
-            arriving there (`lfm2:24b` with every statement refused by the database,
-            `mistral-small3.2:24b` reading only the catalog, `deepseek-r1:14b` calling nothing)
+            arriving there — one with every statement refused by the database, one reading
+            only the catalog, one calling nothing at all —
             and not one of them recovered. Their runs lose either way, labelled `no-report`
             instead of `no-answer`, so the machinery was deleted rather than kept switched off:
             an unearned behaviour is exactly what `models/profile.ts` refuses to accumulate.
@@ -3231,7 +3232,7 @@ export async function runInvestigation(
           first among the report checks: it is the general case, and the purpose-written
           notices below answer the shortfalls it deliberately declines to speak for.
 
-          A hold spends a turn, so it is worth nothing to a run that has none. `deepseek-r1:8b`
+          A hold spends a turn, so it is worth nothing to a run that has none. One evaluated model
           is the measured case: it called `compose_report` at 383 seconds of a 450-second run,
           was held and told to inspect a plan first, and its turns take 100 seconds. The hold
           converted a report scoring one shortfall into `no-report`. Where a profile says so,
@@ -3269,7 +3270,7 @@ export async function runInvestigation(
               Once `call-held` made holds visible, the same three cells were measured again:
               the notice fires every time. `qwen3.5:9b` took the offer on one run and answered
               after six `profile_table` calls. On the runs that failed, the model heard it and
-              spent the turn elsewhere — `qwen3.5:4b` called `inspect_schema` four times and
+              spent the turn elsewhere — one called `inspect_schema` four times and
               `run_read_query` three, `qwen3:8b` went back to `inspect_schema`. So the notice
               is not the missing part; the wandering after it is.
 
@@ -3616,7 +3617,7 @@ async function profileTable(
  * The gap this closes is the one `call-held` closed for the drive's own refusals. These five
  * tools perform no effect, so a refusal from one settles no step and used to write nothing:
  * a database tool that declines writes `tool-refused`, and a ledger tool that declined wrote
- * silence. `mistral-small3.2:24b` cost an hour to that silence — its data-analysis runs lose
+ * silence. One evaluated model cost an hour to that silence — its data-analysis runs lose
  * on `no-answer` with no hold and no answer in the ledger, because `present_answer` was
  * called and refused, which disables the hold that would have asked again and leaves no
  * trace of having done so. Five different refusals produce that same empty trace and each
@@ -3626,7 +3627,7 @@ async function profileTable(
  * server's vocabulary, and they are also what a reader can grep for. Since #4xx the entry
  * also carries `detail` when the refusal had one, which is the same vocabulary a step
  * further in — the validator's own field paths. The code by itself proved undiagnosable:
- * `deepseek-r1:7b` was refused `INVALID_TOOL_INPUT` on `recommend_change` eight times in a
+ * One evaluated model was refused `INVALID_TOOL_INPUT` on `recommend_change` eight times in a
  * single run, and the record could not say which part of the object it kept getting wrong.
  */
 async function declined(

@@ -282,7 +282,7 @@ async function startRun(
   /*
     The PROSE protocol, which had no test coverage at all until now.
 
-    `toolProtocol: "prompted"` is the path every `deepseek-r1` distill takes, because none of
+    `toolProtocol: "prompted"` is the path a whole family of reasoning distills takes, because none of
     them can emit `tool_calls`. Four of the 25 measured models go through it and between them
     they lock 2 cells of 24 — and the reason no test ever caught why is that no test ever ran
     this branch. Adding the parameter is the cheap half of fixing that.
@@ -4320,7 +4320,7 @@ describe("a run that will not record what it read is narrowed to what would fini
       `handleCall` enforces the narrowed set regardless of protocol.
 
       So a narrowed prompted run reads a contract listing `run_read_query`, calls it, and is
-      answered "There is no tool called run_read_query in this run." Every `deepseek-r1`
+      answered "There is no tool called run_read_query in this run." Every such
       distill takes this path; between the four of them they lock 2 cells out of 24.
 
       The fix re-declares the contract at the moment of narrowing, which is the same thing
@@ -4387,7 +4387,7 @@ describe("a run that will not record what it read is narrowed to what would fini
     /*
       The loop the narrowing did not close, and it only became visible once the tool worked.
 
-      `deepseek-r1:7b` on query-optimization was refused `recommend_change` thirty-six times
+      One evaluated model on query-optimization was refused `recommend_change` thirty-six times
       in a run, on a field the refusal did not name. Once it did, the same cell recorded
       THIRTY-THREE recommendations and still scored `no-report`: the ceiling fired, the run
       narrowed, and the narrowed set keeps this surface's instruments so its bar stays
@@ -4516,7 +4516,7 @@ describe("a run that will not record what it read is narrowed to what would fini
   reaching for a tool, which from the drive looks the same as giving up.
 
   Granting it opened a second hole, and only a model that took the bypass could show it.
-  `deepseek-r1:14b` on database-assessment heard the reminder as the FIRST entry in its
+  One evaluated model on database-assessment heard the reminder as the FIRST entry in its
   ledger — before any read — obeyed, and was declined `UNVERIFIABLE_EVIDENCE` five times
   running; its first `profile_table` came after the last refusal. A run holding neither
   artifact nor snapshot cannot cite one, and the refusal that normally lists what to cite
@@ -4573,7 +4573,7 @@ describe("a run is told to report only when it holds something to report from", 
     /*
       The code alone could not be diagnosed. `INVALID_TOOL_INPUT` is the largest refusal
       family on record — around a hundred and fifty across every model measured — and
-      `deepseek-r1:7b` produced eight against `recommend_change` in a single run, holding
+      One evaluated model produced eight against `recommend_change` in a single run, holding
       the tool throughout, while the ledger could only say the shape was wrong eight times.
       Which part of the object it kept getting wrong was unreadable, so no fix could be
       aimed at it.
@@ -4607,7 +4607,7 @@ describe("a run is told to report only when it holds something to report from", 
     /*
       What the first version of this refusal could not distinguish, found by reading it.
 
-      `deepseek-r1:7b` produced thirty-two `recommend_change` refusals in one run reading
+      One evaluated model produced thirty-two `recommend_change` refusals in one run reading
       `change: invalid value` — and that sentence covers two different mistakes, an absent
       field and a value outside the set, because Zod reports one code for both. Neither the
       reader nor the MODEL could tell which it was, and the model is the one that had to act

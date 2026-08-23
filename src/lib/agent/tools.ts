@@ -312,7 +312,7 @@ export type AgentToolUnavailableCode =
  *
  * `detail` is what this server said no ABOUT — the validator's field paths, the codes it can
  * name — and never what it was sent. It exists because the code alone proved undiagnosable:
- * eight `INVALID_TOOL_INPUT` refusals in one `deepseek-r1:7b` run said the shape was wrong
+ * eight `INVALID_TOOL_INPUT` refusals in one evaluated model's run said the shape was wrong
  * eight times and never which part.
  */
 type AgentToolUnavailable = {
@@ -1110,7 +1110,7 @@ function invalidEvidenceInput(problems: string, example?: string): AgentToolOutc
     /*
       And a literal call the model can copy, when the run holds an id to build one from.
 
-      Naming the failing field was the previous step and it was not enough: `lfm2:24b` was
+      Naming the failing field was the previous step and it was not enough: one model was
       refused here TWENTY-EIGHT times in a row on one data-analysis run, each time with the
       paths named, and never changed the shape it sent. `qwen3:8b` did the same thirty-seven
       times before that. A model that has misread a schema description twice does not need it
@@ -1153,7 +1153,7 @@ function exampleCompareCall(events: readonly AgentRunEvent[]): string | undefine
  *
  * The index arm, because that is the one an optimization verdict accepts without a comparison:
  * a run holding ONE plan satisfies its bar by recommending an index that cites that plan, and
- * that is exactly the call `granite4.1:3b` failed on the shape of four times in a single run
+ * that is exactly the call one evaluated model failed on the shape of four times in a single run
  * while its prose showed it knew what to say.
  *
  * The statement is a placeholder naming no table on purpose. This layer knows which plan the
@@ -1511,7 +1511,7 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
   const named = table.columns.slice(0, 12).map((column) => column.name);
   /*
     And WHERE the column it wanted actually lives, when the inventory has it elsewhere.
-    Measured: `lfm2:24b` asked for `department.emp_no` twice in one run, having been told after
+    Measured: one model asked for `department.emp_no` twice in one run, having been told after
     the first that department has dept_no and dept_name. Naming what a table holds does not
     answer a model looking for a join key — `emp_no` exists, in dept_emp, employee, salary and
     title — and the whole inventory is already in hand.
@@ -1781,7 +1781,7 @@ function parseToolInput<T>(
  * every loss — and the wire recording of a `qwen3:8b` run shows it from the inside. The
  * model called `compose_report`, was told "The arguments did not match the shape this tool
  * declares", called it again unchanged, was told the same sentence, and did that for
- * THIRTY-SEVEN turns until the run ended having reported nothing. A `granite4.1:3b`
+ * THIRTY-SEVEN turns until the run ended having reported nothing. Another model's
  * `data-analysis` run spent 14 of its 42 turns the same way.
  *
  * The sentence is true and unusable: it names no field, so there is nothing in it to act
@@ -1805,7 +1805,7 @@ function describeIssues(issues: readonly z.core.$ZodIssue[]): string {
     /*
       A closed set is named, because "invalid value" was not something a model could act on.
 
-      `deepseek-r1:7b` was refused `recommend_change` thirty-two times in one run on this
+      One evaluated model was refused `recommend_change` thirty-two times in one run on this
       issue alone — one field, the same sentence every time, until the deadline. Zod reports
       one code here for two different mistakes, an absent field and a value outside the set,
       so neither the model nor a reader of the ledger could tell which; and the two words it
@@ -2079,7 +2079,7 @@ async function readCatalog(
     citable correlation id. The model then cited it, as it should be able to cite anything the
     server called a success, and `restsOnlyOnEmptyResults` scored the run `empty-evidence`.
     Three families produced character-identical ledgers doing exactly this: `gemma4:26b`,
-    `mistral-small3.2:24b` and `lfm2:24b`.
+    two models measured during evaluation.
 
     `profile_table` has had the right behaviour all along — it refuses a table the inventory
     does not list (`TABLE_NOT_INVENTORIED`) — and this is the same refusal for the same reason.
@@ -2769,7 +2769,7 @@ export function comparePlansTool(
 
   const parsed = parseToolInput(planComparisonSchema, input);
   if (!parsed.ok) {
-    // The last id-bearing tool to get a worked call. `lfm2:24b` failed the shape of this one
+    // The last id-bearing tool to get a worked call. One model failed the shape of this one
     // three times in a single run while also failing `recommend_change` four times -- both
     // routes through the plan bar, neither buildable.
     const example = offersRefusalExamples(context.modelId) ? exampleCompareCall(run.events) : undefined;
@@ -2827,7 +2827,7 @@ export function recommendChangeTool(
   }
   if (!matchesCard(parsed.value.change, parsed.value.statement)) {
     /*
-      With a worked call where the model has earned one. `lfm2:24b` hit this refusal five times
+      With a worked call where the model has earned one. One model hit this refusal five times
       in a single optimization run — the card said `index` and the statement was not a CREATE
       INDEX, or the reverse — and the sentence above names the rule without showing either
       shape. It is the one evidence-bearing refusal that carried no example.
@@ -2942,7 +2942,7 @@ const ANSWER_OPERATION: AgentOperationId = "sql.query.read";
 /**
  * The evidence this run CAN cite, named, for a refusal that would otherwise only say no.
  *
- * Measured on `granite4.1:3b`, data-analysis, and it is the clearest instance of a failure
+ * Measured on one model's data-analysis runs, and it is the clearest instance of a failure
  * class this repository has already paid for three times: a refusal that states the rule and
  * not the fix. That run did the analysis correctly — it profiled a table, drafted
  * `SELECT emp_no, amount FROM salary ORDER BY amount DESC LIMIT 1`, and ran it — then called
@@ -3250,7 +3250,7 @@ export function presentAnswerTool(
       The same worked example the report refusal carries, for the same measured reason and one
       call earlier in the arc.
 
-      `lfm2:24b` was the case that showed both halves in one run. Refused on `compose_report`,
+      One model showed both halves in a single run. Refused on `compose_report`,
       it took the example and got the report right on its next turn — the loop of twenty-eight
       identical refusals was gone. It was then refused on `present_answer`, which had no
       example, and it never tried again: the run scored `no-answer` having done every piece of
