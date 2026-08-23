@@ -1,40 +1,30 @@
 # gemma4
 
-`ollama pull gemma4:<size>` · sizes measured: 12b, 26b
+`ollama pull gemma4:<size>` · sizes supported: 26b
 
-Both sizes pass all three workflows, and 26b is the fastest large model measured.
-Nothing here needed a runtime fix.
+Every size listed here runs **all six agent surfaces**, five consecutive times each: 30 of 30
+runs. The size that carries this family, and the one whose ledger taught this project what an empty completion looks like.
 
-## Results
+## What it does, and how long it takes
 
-| Size | Disk | Investigate | Operate | Analyze | Score |
-| --- | --- | --- | --- | --- | --- |
-| **12b** | **7.6 GB** | ✅ 21s | ✅ 72s | ✅ 119s | **3/3** |
-| **26b** | **17 GB** | ✅ 6.5s | ✅ 12.0s | ✅ 25.6s | **3/3** |
+Seconds are the median of the runs that passed, per surface.
 
-26b is not just larger, it is faster on this workload: 25.6s on the analysis question
-against 119s for 12b. The larger model spends fewer turns getting there.
+| Size | Disk | Investigate | Optimize | Assess | Operate | Analyze | Plan | Median | Slowest |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| gemma4:26b | 16 GB | 15s | 1:02 | 31s | 26s | 46s | 36s | **36s** | 1:32 |
 
-```bash
-ollama pull gemma4:26b
-LLM_PROVIDER=ollama LLM_MODEL=gemma4:26b LLM_API_URL=http://localhost:11434/v1
-```
+Every cell is 5/5, so the table says how long rather than whether.
 
-## Answer quality
+## What it needs that the defaults do not give it
 
-On the salary question, 26b reported 16,171,239 for Development. Reproduced by hand,
-that figure double-counts 103 employees who changed department: it joins through
-`dept_emp` rather than `current_dept_emp`, so anyone who moved is counted twice.
+### `gemma4:26b`
 
-The run passes — it read the data, presented a result and cited it, which is what the
-verifier checks. Whether the join was the right one is not something any automated
-check on this workload can see. [`qwen3.8`](../qwen/qwen3.8.md) got the more
-defensible figure and was, at the time, the one being scored as having failed.
+**call ceiling of 10.** It reads more thoroughly than a run has room for: eleven calls in, with nothing left to spend a twelfth on.
 
-Treat a passing run as a run that did the work, not as a run that was right.
+**empty-turn retry.** Fifteen measured losses on one cell to a turn that came back empty. Two other fixes were tried on the wrong reading of it first and made the cell worse; this took it to 5/5.
 
-## Note on the chat template
 
-`gemma4` ships without a `.Tools` block in its Ollama chat template and calls tools
-perfectly. If you are debugging a model that will not call tools, the template is not
-where the answer is — see [`deepseek-r1`](../deepseek/deepseek-r1.md).
+---
+
+Method, and where these numbers stop being safe to generalise from:
+[`methodology.md`](../methodology.md).

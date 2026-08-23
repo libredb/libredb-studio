@@ -846,7 +846,7 @@ again for this page against the same endpoint. Both readings agree on the verdic
 These two are here as readings of the PROBE, not as a statement about which models this product
 supports. Passing the probe means a model can call a tool; running the agent means clearing six
 surfaces five times each. The models that do the second are listed in
-[`docs/models/`](models/), and neither model above is one of them.
+[`docs/llms/`](llms/), and neither model above is one of them.
 
 Three operator facts follow from that, and each is a reading of the numbers above rather than a
 recommendation copied from a vendor page:

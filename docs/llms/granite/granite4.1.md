@@ -1,37 +1,35 @@
 # granite4.1
 
-`ollama pull granite4.1:<size>` · sizes measured: 3b, 8b, 30b
+`ollama pull granite4.1:<size>` · sizes supported: 8b, 30b
 
-The fastest family measured by a wide margin — and the one where speed does not carry
-over to the analysis question.
+Every size listed here runs **all six agent surfaces**, five consecutive times each: 30 of 30
+runs. The fastest family measured, and both supported sizes clear every surface.
 
-## Results
+## What it does, and how long it takes
 
-| Size | Disk | Investigate | Operate | Analyze | Score |
-| --- | --- | --- | --- | --- | --- |
-| 3b | 2.1 GB | ✅ 2.8s | ✅ 1.3s | ❌ `no-report` | 2/3 |
-| 8b | 5.3 GB | ✅ 4.0s | ✅ 2.9s | ❌ `empty-evidence` | 2/3 |
-| **30b** | **17 GB** | ✅ 6.7s | ✅ 23.7s | ✅ 19.9s | **3/3** |
+Seconds are the median of the runs that passed, per surface.
 
-`granite4.1:3b` finishing Operate in **1.3 seconds** is the fastest run recorded on
-any model here. For questions that are only about the engine's own state, at 2.1 GB,
-that is hard to beat.
+| Size | Disk | Investigate | Optimize | Assess | Operate | Analyze | Plan | Median | Slowest |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **8b** | 5.3 GB | 6s | 10s | 7s | 11s | 16s | 5s | **11s** | 22s |
+| **30b** | 17 GB | 16s | 42s | 21s | 31s | 26s | 26s | **26s** | 52s |
 
-## The two smaller sizes fail differently
+Every cell is 5/5, so the table says how long rather than whether.
 
-**3b — `no-report`.** It reads, then writes its findings as prose instead of calling
-`compose_report`. The runtime reminds such a run once; this one narrates again.
+## What it needs that the defaults do not give it
 
-**8b — `empty-evidence`.** More interesting: it composes a report, but the claims
-cite nothing the run established. This is the citation contract doing its job rather
-than a defect. A report whose claims are not backed by a reading this run took is
-refused, and that refusal is the feature — it is what stops a confident summary of a
-database nobody looked at.
+### `granite4.1:8b`
 
-Neither is fixable by a nudge. `empty-evidence` in particular should not be: loosening
-it would let exactly the failure the contract exists to prevent through.
+**worked refusal examples.** A refused call comes back with a correctly-shaped one built from this run's own ledger. It knows what to record and cannot always build the object carrying it.
 
-## Recommendation
+**empty-turn retry.** Its optimization runs were corrected once and then returned nothing at all — no call, no text. An empty turn reads as a model that stopped; asked again, the cell went 3/5 to 5/5.
 
-Use `granite4.1:30b` if you want the whole workflow set. Use `granite4.1:3b`
-deliberately, for operational questions only, where its speed is remarkable.
+
+### `granite4.1:30b`
+
+Nothing. Measured at the defaults — temperature 0, top_p 1, a ceiling of twelve unreported calls — and it clears every surface on them.
+
+---
+
+Method, and where these numbers stop being safe to generalise from:
+[`methodology.md`](../methodology.md).

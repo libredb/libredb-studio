@@ -1,67 +1,39 @@
 # qwen3
 
-`ollama pull qwen3:<size>` · sizes measured: 0.6b, 1.7b, 4b, 8b, 14b
+`ollama pull qwen3:<size>` · sizes supported: 8b, 14b, 4b
 
-The family where the size threshold is visible in one table. The same generation,
-the same training, the same tool-calling format — and 4b answers every workflow
-while 1.7b answers none. Whatever agent work needs, it is not present at 1.7b and
-is present at 4b.
+Every size listed here runs **all six agent surfaces**, five consecutive times each: 30 of 30
+runs. Three sizes supported, and the smallest is not the fastest — size buys memory rather than speed on this workload.
 
-## Results
+## What it does, and how long it takes
 
-| Size | Disk | Investigate | Operate | Analyze | Score |
-| --- | --- | --- | --- | --- | --- |
-| 0.6b | 522 MB | — | ❌ `no-report` | ❌ `no-report` | 0/3 |
-| 1.7b | 1.4 GB | ❌ `no-report` | ❌ `no-report` | ❌ `no-answer` | 0/3 |
-| **4b** | **2.5 GB** | ✅ 27s | ✅ 36s | ✅ 56s | **3/3** |
-| **8b** | **5.2 GB** | ✅ | ✅ 17s | ✅ 31s | **3/3** |
-| 14b | 9.3 GB | not yet measured | | | |
+Seconds are the median of the runs that passed, per surface.
 
-## 4b is the recommendation for a modest machine
+| Size | Disk | Investigate | Optimize | Assess | Operate | Analyze | Plan | Median | Slowest |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **8b** | 5.2 GB | 10s | 1:18 | 46s | 36s | 46s | 26s | **36s** | 1:48 |
+| **14b** | 9.3 GB | 15s | 3:10 | 1:22 | 46s | 31s | 21s | **41s** | 5:03 |
+| **4b** | 2.5 GB | 41s | 2:04 | 1:13 | 1:12 | 1:43 | 46s | **1:12** | 2:40 |
 
-2.5 GB, and it does the whole job: it reads, it presents the result, it reports with
-citations. On the salary question it made 5 tool calls and left an `answer-composed`
-entry on the ledger — the thing a 0.6b run never produces.
+Every cell is 5/5, so the table says how long rather than whether.
 
-It is also the counterexample to reading version numbers as quality: `qwen3:4b` is an
-older generation than `qwen3.5:2b`, and it scores 3/3 where that one scores 0/3.
+## What it needs that the defaults do not give it
 
-```bash
-ollama pull qwen3:4b
-LLM_PROVIDER=ollama LLM_MODEL=qwen3:4b LLM_API_URL=http://localhost:11434/v1
-```
+### `qwen3:8b`
 
-## Why the small sizes fail
+**sampling on optimization only.** The only sampled cell in the product. At temperature 0 it opened with the wrong tool ten times out of ten; at 0.8 it opened with the right one and won. Its other five surfaces are deterministic.
 
-They call tools. That is the surprise — `qwen3:0.6b` and `qwen3:1.7b` both invoke
-`inspect_operations` correctly, with the right argument. What they will not do is
-finish: having taken readings, they write their findings as prose instead of calling
-`compose_report`, and a run that ends that way recorded nothing.
 
-The runtime reminds such a run once, and these sizes narrate again rather than
-reporting. The reminder rescues models that were one call short; these are not one
-call short, they are answering in a different register entirely.
+### `qwen3:14b`
 
-`qwen3:0.6b` is worth calling out because it is the most-downloaded Qwen model on
-Hugging Face by a wide margin. It is an excellent small chat model. It is not an
-agent.
+**one extra plan turn.** The model this setting was written for: five surfaces locked and plan lost four times in five, always for the same missing sentence.
 
-## Ledger evidence
 
-`qwen3:4b`, the salary question:
+### `qwen3:4b`
 
-```
-run-started -> context-captured -> statement-drafted
-            -> tool-invoked (run_read_query) -> tool-completed
-            -> answer-composed
-            -> report-composed -> run-finished
-```
+Nothing. Measured at the defaults — temperature 0, top_p 1, a ceiling of twelve unreported calls — and it clears every surface on them.
 
-`qwen3:1.7b`, the same question:
+---
 
-```
-run-started -> context-captured -> tool-invoked x4 -> tool-completed x4
-            -> run-finished    (stopReason: model-stopped, unmet: no-report)
-```
-
-Four readings taken, nothing recorded.
+Method, and where these numbers stop being safe to generalise from:
+[`methodology.md`](../methodology.md).

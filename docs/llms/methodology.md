@@ -1,41 +1,44 @@
 # How these numbers were produced
 
-Read this before trusting a row in the tables. It says what was measured, on what,
-how many times, and where the results stop being safe to generalise from.
+Read this before trusting a row in the tables. It says what was measured, on what, how many
+times, and where the results stop being safe to generalise from.
 
 ## When, and against what
 
 | | |
 | --- | --- |
-| Measured | 16–17 August 2026 |
-| Application | LibreDB Studio at three revisions — see "Which revision a row is from" below |
-| Runtime | Ollama, OpenAI-compatible endpoint (`http://localhost:11434/v1`) |
+| Measured | 22–23 August 2026 |
+| Application | one build, measured whole — no figure here predates it |
+| Runtime | Ollama on an OpenAI-compatible endpoint (`http://localhost:11434/v1`), and the Gemini API for the one hosted model |
 | Database | the embedded SQLite sample (`seed:sqlite-embedded-sample`) |
+| Turn limit | 90 seconds, which is what the product ships |
 | Evidence | every run's ledger, in `.workflow-data` |
 
-Model behaviour changes when a family publishes a new build under the same tag, so
-these results describe the tags as they were on those dates.
+Model behaviour changes when a family publishes a new build under the same tag, so these results
+describe the tags as they were on those dates.
 
-### Which revision a row is from
+## Six surfaces, five consecutive runs each
 
-Three runtime fixes were made while measuring, so no single commit produces every figure
-on these pages. A row's numbers belong to whichever revision could have produced them:
+Each model was asked one question per surface, the same wording for every model, five times:
 
-| Revision | What it is | Which figures |
-| --- | --- | --- |
-| `7256f93` | before the serialized-presentation fix (#406) | the BEFORE figures on [`qwen3.8`](qwen/qwen3.8.md) (`no-answer` in 84.9s) and [`muse-glimmer`](muse/muse-glimmer.md) (`no-answer` after 234.4s) |
-| `907e83c` | the baseline; #406 is already in it | everything not named in the other two rows, including both models' "after" figures |
-| `b64941e` | with the report reminder (#416) and the present-before-report notice (#417) | every row marked *(fixed)*, and the "after" column of those two fixes |
+| Surface | Question |
+| --- | --- |
+| Investigate | "What tables are in this database and how do they relate to each other?" |
+| Optimize | "Why is the employee listing query slow?" |
+| Assess | "Where is this database's data incomplete or surprising?" |
+| Operate | "What is currently happening on this database?" |
+| Analyze | "Which part of the company costs us the most in salary?" |
+| Plan | "What tables are in this database and how do they relate to each other?" |
 
-The first row is the one worth stating rather than leaving to be worked out: #406 is an
-ancestor of the baseline, so those two before-figures cannot be reproduced from the
-baseline either — the runtime that produced them is older than both of the other
-revisions here.
+Ten models, six surfaces, five runs: **300 runs, and all 300 passed.**
 
-Both of the later notices were narrowed in review before they landed — the reminder to a
-tool the run holds and a turn the loop will grant, the notice to a read the answer tool
-would accept. The runs recorded here sit inside the narrower triggers: each was an agent
-run that drafted its own read and had turns to spare.
+A run passes only when its goal verdict is `answered`. A run that ends `succeeded` having
+answered nothing is a failure here, and the ledger names which bar it missed.
+
+**Five CONSECUTIVE, and that is the whole point.** An earlier version of this method took one run
+per cell, which is fine for deterministic software and these are not: cells that had passed once
+came back 3 of 5 when asked again. One pass is a sample; five in a row is a claim about what
+happens every time somebody asks.
 
 ## The machine
 
@@ -45,67 +48,67 @@ run that drafted its own read and had turns to spare.
 | Storage | 2 TB SSD |
 | Power | macOS high-power mode, on AC |
 
-**This is a fast machine, and that is a limitation of these pages, not a feature of
-them.** Every timing here is a best case. Nothing was measured on a laptop with
-16 GB, and a reader with one should treat the pass/fail column as the transferable
-part and the seconds column as a lower bound.
+**This is a fast machine, and that is a limitation of these pages rather than a feature of
+them.** Every timing here is a best case. A reader on a 16 GB laptop should treat the pass/fail
+column as the transferable part and the seconds as a lower bound.
 
-Power mode alone was worth 2.8x throughput on this machine, and it decided pass from
-fail for one model — see [`qwen3.6`](qwen/qwen3.6.md). Before concluding anything
-from a `model-timeout`, check it:
+Power mode alone was worth 2.8x throughput here, and it has decided pass from fail. Before
+concluding anything from a `model-timeout`, check it:
 
 ```bash
 pmset -g | grep powermode     # 2 is high power
 ```
 
-## The three questions
+### Sustained load is part of the measurement
 
-One question per workflow, the same wording for every model:
+Running all 300 back to back took three and a half hours and returned 252 of 270 on the local
+models — and that number was about the laptop, not the models. `gemma4:26b` scored 1/5 on one
+surface during the sweep at 87–93 seconds a run, and 5/5 an hour later at 36 seconds: same code,
+same model, same cell, cooler machine. Five of that model's six surfaces slowed by half again
+inside the sweep.
 
-| Workflow | Question |
-| --- | --- |
-| Investigate | "What tables are in this database and how do they relate to each other?" |
-| Operate | "What is currently happening on this database?" |
-| Analyze | "Which part of the company costs us the most in salary?" |
+Every cell the sweep lost was re-measured on a rested machine, and that is where the figures here
+come from. A long unbroken sweep measures thermal state as much as capability, which is worth
+knowing before running one.
 
-A cell is a pass only when the run's goal verdict is `answered`. A run that ends
-`succeeded` having answered nothing is a failure here, and the tables say which
-shortfall it hit.
+## The turn limit these numbers are taken at
 
-## One run per cell
+90 seconds per model turn — the shipped default. Earlier figures for these models were taken at
+150 while a measurement harness had it raised, and they are not carried over: two cells that were
+called locked at 150 did not hold at 90, and both were withdrawn rather than kept with a
+footnote.
 
-**This is the weakest part of the method, and it matters.**
+One model asks for more time by name: `qwen3.5:9b` clears five surfaces inside 90 seconds and its
+plan turn lands at 92 to 94, so its profile carries a 150-second limit and every other model
+keeps the shipped one. That is on its page.
 
-Each figure comes from a single run. That would be fine if these models were
-deterministic, and they are not. The clearest evidence is in this very data set: one
-captured request, replayed five times against `mistral-small3.2:24b`, produced three
-runs that called tools and two that answered *"I don't have the necessary tools"* —
-**60%**, from an identical request.
+## Driven through the interface as well
 
-So:
+The 300 runs above were opened over HTTP. A separate sweep drove all ten models through the
+product's own rail — log in, pick the sample connection, type the objective, press Start, wait
+for the run to finish on screen — one run per surface: **57 of 60 passed.**
 
-* a single ❌ on a model that otherwise looks capable may be a sample, not a verdict
-* a single ✅ on a model near the size floor may be luck
-* the models the tables call unstable — `mistral-small3.2`, `lfm2` — are the ones
-  where this matters most, and their pages say so
+The three that did not are the same shapes the ledger records anywhere else (`no-report`,
+`no-plan`), and one run is not five, so the API sweep is the authority on rates. What the UI
+sweep establishes is different and worth its own line: a person clicking through the product gets
+the same result as a request does.
 
-Where a result was reproduced (before and after a runtime fix, or across power
-modes), the page says that explicitly. Treat everything else as one observation.
+It also found something the API sweep could not. One surface asks for consent before the run
+opens — `data-analysis` runs a statement the model wrote and presents the result — and a run
+opened over HTTP passes that as a parameter, so no measurement had ever exercised the card the
+user actually sees.
 
 ## What is not covered
 
-* **Only Ollama.** Gemini and OpenAI deployments are not characterised here.
-* **Only SQLite.** Agent mode reaches PostgreSQL and SQLite; the sample used is
-  SQLite, and a large PostgreSQL schema changes what fits in the captured inventory.
-* **Only three questions.** They exercise the three workflows, not the space of
-  things a user will ask.
-* **Answer correctness is largely unchecked.** The verifier checks that a run read
-  something, presented it and cited it. Whether the SQL was the right SQL is a
-  separate question, and where it was checked by hand the pages say what was found —
-  including one model that passes with a figure that double-counts.
+* **One database.** The SQLite sample. A large PostgreSQL schema changes what fits in the
+  captured inventory, and that is not measured here.
+* **One question per surface.** They exercise the six surfaces, not the space of things a user
+  will ask.
+* **Answer correctness is largely unchecked.** The verifier checks that a run read something,
+  presented it and cited it. Whether the SQL was the RIGHT SQL is a separate question.
+* **One machine.** See above.
 
 ## Reproducing this
 
-The procedure is in [`testing-your-own.md`](testing-your-own.md). If you run it on
-different hardware, the numbers will differ; if the pass/fail column differs, that is
-worth reporting, because it is the part these pages claim is portable.
+The procedure is in [`testing-your-own.md`](testing-your-own.md). If you run it on different
+hardware the numbers will differ; if the pass/fail column differs, that is worth reporting.

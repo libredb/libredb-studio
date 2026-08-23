@@ -26,6 +26,13 @@ export default defineConfig({
     baseURL: `http://localhost:${port}`,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
+    // Kept for every test rather than only for failures, because the agent specs are the ones
+    // somebody watches: a model sweep runs for over an hour and the question afterwards is what
+    // the rail actually did, which a passing run answers as usefully as a failing one.
+    video: "retain-on-failure",
+    // Watchable when asked for. Unset in CI and in an ordinary run, so nothing slows down by
+    // default; `PWSLOWMO=350` puts a beat between actions when somebody is watching the sweep.
+    launchOptions: { slowMo: Number(process.env.PWSLOWMO ?? 0) },
   },
   projects: [
     {

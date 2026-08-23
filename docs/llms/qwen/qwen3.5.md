@@ -1,45 +1,30 @@
 # qwen3.5
 
-`ollama pull qwen3.5:<size>` · sizes measured: 2b, 4b, 9b
+`ollama pull qwen3.5:<size>` · sizes supported: 9b
 
-Two of the three sizes pass everything. The one that does not is the smallest, and it
-fails the same way every sub-4B model does.
+Every size listed here runs **all six agent surfaces**, five consecutive times each: 30 of 30
+runs. One supported size, and the only model in the product with a turn limit of its own.
 
-## Results
+## What it does, and how long it takes
 
-| Size | Disk | Investigate | Operate | Analyze | Score |
-| --- | --- | --- | --- | --- | --- |
-| 2b | 2.7 GB | ❌ `no-report` | ❌ `no-report` | ❌ `no-report` | 0/3 |
-| **4b** | **3.4 GB** | ✅ 24s | ✅ 10s | ✅ | **3/3** |
-| **9b** | **6.6 GB** | ✅ 25s | ✅ 16s | ✅ | **3/3** |
+Seconds are the median of the runs that passed, per surface.
 
-## 4b and 9b needed a runtime fix to reach 3/3
+| Size | Disk | Investigate | Optimize | Assess | Operate | Analyze | Plan | Median | Slowest |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| qwen3.5:9b | 5.8 GB | 31s | 31s | 52s | 21s | 26s | 1:38 | **33s** | 1:38 |
 
-Both passed Investigate and Operate from the start and failed Analyze with
-`no-answer`: they read the data, got the right result, and then called
-`compose_report` without ever calling `present_answer`. The report landed with an
-empty answer pane beside it, and the goal verifier scored the run as having answered
-nothing.
+Every cell is 5/5, so the table says how long rather than whether.
 
-The answer was one call away in both cases. The runtime now intercepts that
-`compose_report` — the call is not executed, and the run is told to present the
-result it already has first. Both models then present and report normally.
+## What it needs that the defaults do not give it
 
-| | Before | After |
-| --- | --- | --- |
-| 4b Analyze | `no-answer` | ✅ `answered`, 5 tool calls |
-| 9b Analyze | `no-answer` | ✅ `answered` |
+### `qwen3.5:9b`
 
-## Why 2b fails
+**a 150-second turn limit.** Five surfaces clear the shipped 90 seconds comfortably; its plan turn lands at 92 to 94. The limit stays 90 for every other model.
 
-It calls tools eagerly — on the salary question it made **42 tool calls** — and then
-writes its findings as prose instead of calling `compose_report`. Reminded once that
-a run reports by calling the tool, it narrates again.
+**empty-turn retry.** Its optimization runs stopped answering after being corrected, leaving no text behind.
 
-Compare [`qwen3:4b`](qwen3.md), an older generation at a smaller download, which
-scores 3/3. Within Qwen, size predicts agent capability and generation does not.
 
-```bash
-ollama pull qwen3.5:4b
-LLM_PROVIDER=ollama LLM_MODEL=qwen3.5:4b LLM_API_URL=http://localhost:11434/v1
-```
+---
+
+Method, and where these numbers stop being safe to generalise from:
+[`methodology.md`](../methodology.md).
