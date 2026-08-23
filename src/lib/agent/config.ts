@@ -69,6 +69,29 @@ export const AGENT_WORLD_TARGET_ENV = "WORKFLOW_TARGET_WORLD";
  */
 const AGENT_TURN_TIMEOUT_ENV = "AGENT_MODEL_TURN_TIMEOUT_MS";
 
+const AGENT_MODEL_TUNING_ENV = "AGENT_MODEL_TUNING_PATH";
+
+/**
+ * A file of measured per-model settings to layer over the ones Studio ships with, if any.
+ *
+ * This is how a model Studio has never measured gets settings somebody else measured: mount a
+ * file, name it here, restart. No release, no code change, no settings screen — which is how
+ * everything else in this product is configured.
+ *
+ * A path rather than a URL, deliberately. It works with no egress, it needs no cache and no
+ * story about what a run should do while a fetch is in flight, and a file an operator put on
+ * their own disk needs no provenance argument that a remote document would.
+ *
+ * Blank is the same as unset, because an empty variable is what a template renders when nobody
+ * filled it in, and reading it as "load the file called ''" would turn an unconfigured install
+ * into a warning on every boot. Whether the file parses is not decided here: see
+ * `model-tuning/index.ts`, which ignores a document it cannot read and keeps the bundled one.
+ */
+export function agentModelTuningPath(): string | undefined {
+  const raw = process.env[AGENT_MODEL_TUNING_ENV]?.trim();
+  return raw === undefined || raw === "" ? undefined : raw;
+}
+
 /**
  * The configured per-turn ceiling, or `undefined` when nothing usable was set.
  *

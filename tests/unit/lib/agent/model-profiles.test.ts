@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  MODEL_PROFILES,
+  modelProfiles,
   ceilingFor,
   noticesFor,
   presentReminderLimitFor,
@@ -177,22 +177,28 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
 
   test("every model carries its own copy of every sentence, and they start identical", () => {
     /*
-      The isolation this directory is FOR, applied to wording as well as to numbers.
+      The isolation this directory is FOR, applied to wording as well as to numbers — and this
+      assertion is weaker than it used to be, deliberately.
 
       A sentence is read by a model and acted on by that model, so a wording that recovers one
       run can be the wording another gives up on — a measured value, not a constant. Twice a
       shared value was changed here, won several cells and lost others, and the only move left
-      was to revert and hand back the wins. With the sentence in the model's own file, the
-      models it helped keep it and the models it hurt keep what they had.
+      was to revert and hand back the wins. Every profile therefore used to carry its own copy of
+      all three sentences, and this test asserted the copy existed.
 
-      The equality is asserted, not asserted-about: the copies were spread from the baseline at
-      the moment sharing stopped, so on day one every model is sent exactly the bytes it was
-      sent before, and 97 locked cells stay locked without being re-measured. This test is what
-      makes that a fact rather than a claim — and it is expected to go red the first time a
-      measurement moves one model's wording, which is the point.
+      The copies are gone, because the settings are data now and wording must not be. It
+      interpolates `PLAN_NO_STATEMENT_MARKER`, which a literal copy would silently drift from;
+      and the document is shaped to be supplied from outside Studio, where carrying prompt text
+      would hand whoever writes it a say in what Studio tells a model mid-run.
+
+      So the protection moved rather than disappeared, and it is worth being precise about what
+      is left. Every measured model resolves to the baseline — asserted here — and the pinned
+      digests in `model-resolution-table.test.ts` hold the exact bytes, so editing a shared
+      sentence turns THAT test red rather than quietly re-taking cells. What is no longer
+      structurally impossible is a deliberate edit applying to all ten at once; what is still
+      impossible is doing it without a test saying so.
     */
-    for (const [name, profile] of Object.entries(MODEL_PROFILES)) {
-      expect(profile.notices, `${name} shares its wording instead of owning it`).toBeDefined();
+    for (const name of Object.keys(modelProfiles())) {
       expect(noticesFor(name), `${name} is sent something other than what it was measured with`).toEqual(
         BASELINE_NOTICES,
       );
@@ -208,7 +214,7 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
   test("every profile states what measured it", () => {
     // The guard against a pile of invented constants: an override with no measurement behind
     // it is indistinguishable from a guess, and this file is where guesses would accumulate.
-    for (const [name, profile] of Object.entries(MODEL_PROFILES)) {
+    for (const [name, profile] of Object.entries(modelProfiles())) {
       expect(profile.measured.length, `${name} has no measurement recorded`).toBeGreaterThan(20);
     }
   });

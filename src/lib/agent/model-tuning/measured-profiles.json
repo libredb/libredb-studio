@@ -1,0 +1,322 @@
+{
+  "schemaVersion": 1,
+  "measuredAgainst": {
+    "turnTimeoutMs": 90000,
+    "protocol": "six surfaces, five consecutive passing runs each",
+    "defaults": {
+      "sampling": {
+        "temperature": 0,
+        "topP": 1
+      },
+      "unreportedCallCeiling": 12,
+      "reportReminderLimit": 1,
+      "planStatementRetries": 0,
+      "presentReminderLimit": 1,
+      "retryEmptyTurn": false,
+      "refusalExamples": false
+    }
+  },
+  "providers": [],
+  "models": [
+    {
+      "id": "gemini-3.5-flash-lite",
+      "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
+      "summary": [
+        "`gemini-3.5-flash-lite` — measured at the defaults, and pinned to them.",
+        "6 of 6 modes locked, 30 of 30 runs passed.",
+        "Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5",
+        "Every mode is locked.",
+        "The one HOSTED model in this directory, and the only reason that is worth saying here is that its numbers were obtained the same way as the nine local ones — same six surfaces, same five consecutive passes per surface, same shipped turn limit — so the ten are one table and not two.",
+        "Nothing here differs from the default, and that is exactly why the file exists. The default is a shared value, and a shared value is what has twice cost this repository a locked cell: pinning sampling to 0 won five cells and lost one, and reordering a workflow's rules won nothing and lost one. Those numbers above were obtained at temperature 0, top_p 1, and a ceiling of 12 unreported calls. Writing them here means a later change to the defaults cannot silently invalidate them — this model keeps what it was measured with until a new measurement says otherwise."
+      ],
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": true,
+        "refusalExamples": false
+      },
+      "rationale": {
+        "retryEmptyTurn": [
+          "Its one loss in thirty, and it is the shape this switch was written for.",
+          "Query-optimization: the report is refused once — `claims.0.evidence.0.source` naming neither of the two forms evidence takes — then held for the plan the surface is scored on, and then the run ends `model-stopped` carrying no text at all. Neither `model-stopped-saying` nor `closing-statement`, and both are written whenever a turn holds any.",
+          "So it is not declining to fix the call; it stops answering after being corrected."
+        ]
+      }
+    },
+    {
+      "id": "gemma4:26b",
+      "measured": "database-assessment, fifteen runs across three configurations: 4/5 at the defaults, 3/5 with an unreported-call ceiling of 9 (never fired, every run made 8 calls), 2/5 with two report reminders (calls rose from 8 to 11 and two runs hit the deadline). The losing runs gather evidence and then produce a turn with neither a call nor a report. The second reminder does reach the model and it goes back to reading rather than filing, so the cause is not a forgotten call or a shortage of turns. Call count does not separate winners from losers either: a run that reported in 26 seconds made 11 calls, as many as one that reported nothing. Its other five surfaces lock 5/5 at these defaults. Measured again at 4/5 once the stopping turn became readable: the losing run profiled nine tables, ran two queries, then returned an EMPTY completion — no call, no text — at eleven calls, one under the general ceiling. Its ceiling is 10 on that reading.",
+      "summary": [
+        "`gemma4:26b` — at the defaults, after two overrides were measured and deleted.",
+        "Five surfaces lock 5/5. `database-assessment` has been measured fifteen times and the losing runs all end the same shape: profile tables, count things, then a turn with neither a tool call nor a report, and the drive concludes `model-stopped` with `no-report` unmet.",
+        "Two fixes were tried on that reading and both are gone, because both were measured:",
+        "defaults 4/5 ceiling of 9 calls 3/5 — every run made 8 calls, so it never fired two report reminders 2/5 — calls rose 8 to 11 and two runs hit the deadline",
+        "The second one is the informative failure. The extra reminder does reach the model: it goes back to work and profiles more tables. It does not report. So the model is not forgetting to file, and it is not short of turns — it is spending the turn it was given on more reading, and on two runs that spending cost the run its deadline.",
+        "Neither call count separates the winners from the losers, which is what rules out narrowing: the run that reported in 26 seconds made 11 calls, exactly as many as the run that reported nothing. A ceiling low enough to catch a loser would catch a winner with it.",
+        "So this file pins the defaults and the numbers stay recorded. What is still unread is the text of the stopping turn — the ledger records calls and settlements, not what the model said when it made no call — and that is what the next attempt here needs before it changes anything."
+      ],
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 10,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": true,
+        "refusalExamples": false
+      },
+      "rationale": {
+        "unreportedCallCeiling": [
+          "Ten, and this is the second time a ceiling has been set here — the first was a guess and this one is not.",
+          "Earlier the same day a ceiling of 9 was set on the reading that one losing run had profiled eleven tables, and it was deleted a measurement later: five fresh runs all made EIGHT calls, so neither 12 nor 9 could have fired and what had been measured was noise.",
+          "What was missing then was the ledger entry that now exists. The losing run in the latest five profiled NINE tables, ran two queries, and then returned a turn with no tool call and no text at all — an empty completion, which is why `model-stopped-saying` recorded nothing for it. Eleven calls, one under the general ceiling, and nothing left in the model to spend a twelfth on.",
+          "So the distribution is now visible rather than assumed: this model's passing assessments finish in about eight calls and its losing one goes to eleven and empties out. Ten catches the second without touching the first, and the point of the number is that gap — a run narrowed at ten still has the turn it needs to file what it already has."
+        ],
+        "retryEmptyTurn": [
+          "The illness, after two wrong medicines.",
+          "What the file above says is still unread — \"the text of the stopping turn\" — turned out to be the answer: there is none. The losing assessments carry no `model-stopped-saying` and no `closing-statement`, and both are written whenever the turn holds any text at all. Ten seconds pass between the reminder and the end of the run.",
+          "So it is not declining to file and it is not out of turns. It returns an EMPTY completion, which the loop reads as a model that chose to stop. That is why both earlier fixes made it worse: a second reminder and a lower ceiling are answers to a model that keeps working, and this one had stopped answering."
+        ]
+      }
+    },
+    {
+      "id": "granite4.1:30b",
+      "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
+      "summary": [
+        "`granite4.1:30b` — measured at the defaults, and pinned to them.",
+        "6 of 6 modes locked, 30 of 30 runs passed.",
+        "Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5",
+        "Every mode is locked.",
+        "Nothing here differs from the default, and that is exactly why the file exists. The default is a shared value, and a shared value is what has twice cost this repository a locked cell: pinning sampling to 0 won five cells and lost one, and reordering a workflow's rules won nothing and lost one. Those numbers above were obtained at temperature 0, top_p 1, and a ceiling of 12 unreported calls. Writing them here means a later change to the defaults cannot silently invalidate them — this model keeps what it was measured with until a new measurement says otherwise."
+      ],
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "refusalExamples": false
+      },
+      "rationale": {}
+    },
+    {
+      "id": "granite4.1:8b",
+      "measured": "3/6 modes locked, 24/30 runs passed at these settings. Investigate 3/5 · Optimize 2/5 · Assess 5/5 · Operate 4/5 · Analyze 5/5 · Plan 5/5.",
+      "summary": [
+        "`granite4.1:8b` — measured at the defaults, and pinned to them.",
+        "3 of 6 modes locked, 24 of 30 runs passed.",
+        "Investigate 3/5 · Optimize 2/5 · Assess 5/5 · Operate 4/5 · Analyze 5/5 · Plan 5/5",
+        "Still open: Investigate, Optimize, Operate.",
+        "Nothing here differs from the default, and that is exactly why the file exists. The default is a shared value, and a shared value is what has twice cost this repository a locked cell: pinning sampling to 0 won five cells and lost one, and reordering a workflow's rules won nothing and lost one. Those numbers above were obtained at temperature 0, top_p 1, and a ceiling of 12 unreported calls. Writing them here means a later change to the defaults cannot silently invalidate them — this model keeps what it was measured with until a new measurement says otherwise."
+      ],
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": true,
+        "refusalExamples": true
+      },
+      "rationale": {
+        "refusalExamples": [
+          "Three `no such column` refusals on data-analysis. The smallest of the four cases selected this way and recorded as such: if the advice moves nothing here it is the weakest evidence of the set, not a verdict on the advice."
+        ],
+        "retryEmptyTurn": [
+          "Its query-optimization losses are one shape, and it is a shape with a measured cure.",
+          "The cell reads 3/5 on a rested machine and 4/5 on the build from before this branch merged `main`, so it is the model rather than the laptop and rather than anything changed here — its 5/5 came from one lucky five. Both losing ledgers read identically: a statement drafted, the read completed, the report reminder delivered, and the run ends `model-stopped` carrying no text at all — neither `model-stopped-saying` nor `closing-statement`, and both are written whenever a turn holds any. An EMPTY completion, which the loop reads as a model that chose to stop.",
+          "That is what took `gemma4:26b` from fifteen losses on one cell to 5/5. Same signature, same switch, and the same bound: once per drive."
+        ]
+      }
+    },
+    {
+      "id": "ornith:9b",
+      "measured": "2/6 modes locked, 25/30 runs passed at these settings. Investigate 4/5 · Optimize 3/5 · Assess 4/5 · Operate 5/5 · Analyze 5/5 · Plan 4/5.",
+      "summary": [
+        "`ornith:9b` — measured at the defaults, and pinned to them.",
+        "2 of 6 modes locked, 25 of 30 runs passed.",
+        "Investigate 4/5 · Optimize 3/5 · Assess 4/5 · Operate 5/5 · Analyze 5/5 · Plan 4/5",
+        "Still open: Investigate, Optimize, Assess, Plan.",
+        "Nothing here differs from the default, and that is exactly why the file exists. The default is a shared value, and a shared value is what has twice cost this repository a locked cell: pinning sampling to 0 won five cells and lost one, and reordering a workflow's rules won nothing and lost one. Those numbers above were obtained at temperature 0, top_p 1, and a ceiling of 12 unreported calls. Writing them here means a later change to the defaults cannot silently invalidate them — this model keeps what it was measured with until a new measurement says otherwise."
+      ],
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 1,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "refusalExamples": false
+      },
+      "rationale": {
+        "planStatementRetries": [
+          "Its last open cell, and the loss is `no-statement` twice over.",
+          "The closing prose is not a bad plan — it names all eight tables, their columns and their keys, correctly. What it never writes is a runnable statement or the explicit `NO STATEMENT:` refusal, and plan mode's bar is one of those two. `qwen3:14b` lost the same cell the same way and the extra turn won it."
+        ]
+      }
+    },
+    {
+      "id": "qwen3.5:9b",
+      "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
+      "summary": [
+        "`qwen3.5:9b` — measured at the defaults, and pinned to them.",
+        "6 of 6 modes locked, 30 of 30 runs passed.",
+        "Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5",
+        "Every mode is locked.",
+        "Nothing here differs from the default, and that is exactly why the file exists. The default is a shared value, and a shared value is what has twice cost this repository a locked cell: pinning sampling to 0 won five cells and lost one, and reordering a workflow's rules won nothing and lost one. Those numbers above were obtained at temperature 0, top_p 1, and a ceiling of 12 unreported calls. Writing them here means a later change to the defaults cannot silently invalidate them — this model keeps what it was measured with until a new measurement says otherwise."
+      ],
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": true,
+        "refusalExamples": false,
+        "turnTimeoutMs": 150000
+      },
+      "rationale": {
+        "turnTimeoutMs": [
+          "Its plan turn does not fit the 90 seconds the product allows, and nothing else about it is marginal: the other five surfaces clear 5/5 with room.",
+          "The turns are bimodal — 26 seconds when the cell passes, 92 to 94 when it does not — so the verdict is decided by which side of the line one turn lands on. Measured 1/5 here and 1/5 on the build from before this branch merged `main`, which rules out both a regression and the laptop. The 5/5 that put this model on the list was taken when the limit was 150, and 150 is what it is given back.",
+          "Only this model. The default stays 90 for the other nine, because it is a promise about how long a person waits rather than a fact about any model."
+        ],
+        "retryEmptyTurn": [
+          "The same ending its Plan cell had, one surface over: query-optimization loses on `no-report` with the run stopping after feedback and leaving no text behind, which is an empty completion rather than a model that gave up on the work."
+        ]
+      }
+    },
+    {
+      "id": "qwen3.8:latest",
+      "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
+      "summary": [
+        "`qwen3.8:latest` — measured at the defaults, and pinned to them.",
+        "6 of 6 modes locked, 30 of 30 runs passed.",
+        "Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5",
+        "Every mode is locked.",
+        "Nothing here differs from the default, and that is exactly why the file exists. The default is a shared value, and a shared value is what has twice cost this repository a locked cell: pinning sampling to 0 won five cells and lost one, and reordering a workflow's rules won nothing and lost one. Those numbers above were obtained at temperature 0, top_p 1, and a ceiling of 12 unreported calls. Writing them here means a later change to the defaults cannot silently invalidate them — this model keeps what it was measured with until a new measurement says otherwise."
+      ],
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "refusalExamples": false
+      },
+      "rationale": {}
+    },
+    {
+      "id": "qwen3:14b",
+      "measured": "5/6 modes locked, 29/30 runs passed. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 4/5. The single loss is no-statement on plan: the run described all eight tables, both join tables and the key each relation travels on, then stopped without a fenced statement or the NO STATEMENT refusal that plan mode scores. Its other four plan runs fenced a statement, so it gets one extra turn to be asked for the deliverable — a planning run costs 15 seconds, and no other model is offered it.",
+      "summary": [
+        "`qwen3:14b` — one extra plan turn, to ask for the deliverable it skipped.",
+        "Five surfaces lock 5/5. `plan` is 4 of 5 and loses on one shortfall, `no-statement`, and the losing run is not a bad plan. It lists all eight tables with their columns, names both join tables, says which key every relation travels on, and marks the two column-less tables as views. It answers the objective completely."
+      ],
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 1,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "refusalExamples": false
+      },
+      "rationale": {
+        "planStatementRetries": [
+          "What it never writes is the deliverable. Plan mode scores one of exactly two endings — a fenced statement this engine could run, or the explicit `NO STATEMENT:` refusal for a question the inventory cannot support — and this run wrote prose and stopped. Its other four runs fenced a statement, so the model can do it; on one run in five it answers the question and forgets what the answer is for.",
+          "Planning had no notice for that: the prose arrives, `conclude` files it as the closing statement, and the run is over. So the mechanism is new, and it is off by default — a plan run that produced prose has answered or it has not, and 24 models clear this bar unaided. One turn, offered to this model only, costing 15 seconds of a run that spends 15.",
+          "The notice offers the refusal as plainly as the statement. Asking only for SQL would push a model whose inventory cannot answer into inventing a table name to satisfy the bar, which is the failure the verifier accepts refusals to avoid."
+        ]
+      }
+    },
+    {
+      "id": "qwen3:4b",
+      "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
+      "summary": [
+        "`qwen3:4b` — measured at the defaults, and pinned to them.",
+        "6 of 6 modes locked, 30 of 30 runs passed.",
+        "Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5",
+        "Every mode is locked.",
+        "Nothing here differs from the default, and that is exactly why the file exists. The default is a shared value, and a shared value is what has twice cost this repository a locked cell: pinning sampling to 0 won five cells and lost one, and reordering a workflow's rules won nothing and lost one. Those numbers above were obtained at temperature 0, top_p 1, and a ceiling of 12 unreported calls. Writing them here means a later change to the defaults cannot silently invalidate them — this model keeps what it was measured with until a new measurement says otherwise."
+      ],
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "refusalExamples": false
+      },
+      "rationale": {}
+    },
+    {
+      "id": "qwen3:8b",
+      "measured": "query-optimization: 3/5 at temperature 0.8, then 1/5 and 0/5 at temperature 0. All 15 ledgers on that surface read: opening with inspect_plan answers 3/3, opening with inspect_schema answers 1/12, and at temperature 0 it opens with inspect_schema 10 times out of 10. Its other five surfaces lock 5/5 deterministically, so the override is scoped to this one cell and not to the model.",
+      "summary": [
+        "`qwen3:8b` — five surfaces deterministic, `query-optimization` sampled.",
+        "The first model to earn a file of its own, and the measurement that gave it one is the reason this directory exists at all."
+      ],
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "refusalExamples": false,
+        "perWorkflow": {
+          "query-optimization": {
+            "temperature": 0.8,
+            "topP": 0.9
+          }
+        }
+      },
+      "rationale": {
+        "perWorkflow": [
+          "The loop set no temperature for a long time, so every run inherited Ollama's 0.8. Pinning it to 0 won five cells across the fleet — a cell locks only at 5/5 consecutive passes, so the bar is a variance test as much as a capability one — and it cost this model its `query-optimization` cell, 3/5 down to 0/5.",
+          "All fifteen of its ledgers on that surface were read. The opening move decides the run:",
+          "opened with `inspect_plan` → 3 of 3 answered opened with `inspect_schema` → 1 of 12 answered",
+          "At 0.8 it opened with `inspect_plan` on 3 of 5 runs and won all three. At 0 it opened with `inspect_schema` on 10 of 10 and lost every one, with near-identical timings (+7.7–9.8s, then +4.8–6.5s). Determinism did not make it worse at optimization; it pinned it to the losing branch instead of letting it wander into the winning one.",
+          "WHY THE LOSING BRANCH LOSES, which is the defect this profile works around rather than fixes: the workflow's first rule orders `inspect_schema` with `kind=\"indexes\"`, the sample database declares no secondary index anywhere, and the zero-row read is answered \"There is no object of that name in this database\" — false, since the object exists and simply has no indexes. Nothing is written to the ledger for it either, so the turn is invisible as well as wasted. 218 of 267 catalog calls across 133 optimization runs are that shape.",
+          "So this override is honest but temporary. When that refusal tells the truth, the losing branch stops being a trap and this file should be re-measured at the default before it is kept. That is written here rather than in a backlog because the next person to read it will be reading this file."
+        ]
+      }
+    }
+  ]
+}
