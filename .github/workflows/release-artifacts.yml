@@ -873,8 +873,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Pinned to the oldest still-supported LTS, never a floating label: an
+          # AppImage inherits the glibc of its build machine and only degrades
+          # downwards from there. Built on 24.04, the bundled GTK/WebKit stack
+          # requires GLIBC_2.38 and the Tauri binary GLIBC_2.39, so the artifact
+          # cannot load a single shared object on Ubuntu 22.04 (glibc 2.35) -
+          # which is both what enterprise-distribution users still run and what
+          # AppImageHub's review CI executes the submitted AppImage on. Nothing
+          # in the release pipeline can catch that regression, hence the pin and
+          # tests/unit/desktop-appimage-portability.test.ts.
           - arch: x64
-            runner: ubuntu-latest
+            runner: ubuntu-22.04
+          # arm64 still builds on 24.04-arm; lowering it (Raspberry Pi OS
+          # bookworm ships glibc 2.36) is tracked in docs/BACKLOG.md.
           - arch: arm64
             runner: ubuntu-24.04-arm
     steps:

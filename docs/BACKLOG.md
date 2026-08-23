@@ -30,7 +30,7 @@ None of it is a GitHub issue.
 - [Tests](#tests) — T1–T3 · 2
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC1–DOC3 · 3
-- [Release pipeline](#release-pipeline) — REL1
+- [Release pipeline](#release-pipeline) — REL1–REL2 · 2
 - [Chart configuration surface](#chart-configuration-surface) — N1–N3 · 3
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H13 · 10
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C2–C10 · 9
@@ -876,6 +876,29 @@ future Helm 4 packaging change that a Helm 3 client rejects at install time.
 no Helm client at all) also runs a pinned Helm 3.16 `helm repo add` + `helm pull` + `helm install` of
 the published chart version against a kind cluster, or an equivalent post-publish smoke lands
 elsewhere.
+
+---
+
+### REL2. The arm64 AppImage still carries a glibc 2.39 floor
+
+`desktop-appimage` builds x64 on `ubuntu-22.04` (glibc 2.35) so the AppImage loads on the oldest
+still-supported LTS, and `tests/unit/desktop-appimage-portability.test.ts` pins that. The arm64 leg
+still runs on `ubuntu-24.04-arm`, so the arm64 AppImage requires GLIBC_2.38 in every bundled GTK and
+WebKit library and GLIBC_2.39 in the Tauri binary - measured on 0.13.1 for x64, and the arm64 leg
+builds from the same runner generation.
+
+That excludes the arm64 targets the artifact mostly exists for: Raspberry Pi OS bookworm ships glibc
+2.36, Debian 12 arm64 the same, Ubuntu 22.04 arm64 2.35. The failure is the loader refusing every
+shared object, so there is nothing to diagnose from the user's side beyond "it does not start".
+
+Not done with the x64 fix because the `ubuntu-22.04-arm` runner label was never exercised by this
+repo, and `desktop-appimage` is a hard release gate: a bad label fails the whole release, and a
+failed release costs a patch version. It wants one throwaway `workflow_dispatch` run to confirm the
+label and that jammy-arm64 carries `libwebkit2gtk-4.1-dev`, not a blind flip on a release commit.
+
+**Done when:** the arm64 matrix entry builds on `ubuntu-22.04-arm`, the resulting AppImage is
+verified to load on a glibc 2.35 or 2.36 arm64 root filesystem, and the `not.toContain("latest")`
+assertion in the portability test is joined by an explicit arm64 label assertion.
 
 ---
 
