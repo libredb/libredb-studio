@@ -28,5 +28,16 @@ export const GEMINI_3_5_FLASH_LITE: AgentModelProfile = {
     "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  /*
+    Its one loss in thirty, and it is the shape this switch was written for.
+
+    Query-optimization: the report is refused once — `claims.0.evidence.0.source` naming neither
+    of the two forms evidence takes — then held for the plan the surface is scored on, and then
+    the run ends `model-stopped` carrying no text at all. Neither `model-stopped-saying` nor
+    `closing-statement`, and both are written whenever a turn holds any.
+
+    So it is not declining to fix the call; it stops answering after being corrected.
+  */
+  retryEmptyTurn: true,
   notices: { ...BASELINE_NOTICES },
 };

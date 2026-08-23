@@ -61,6 +61,7 @@ import {
   noticesFor,
   presentReminderLimitFor,
   retriesEmptyTurn,
+  turnTimeoutMsFor,
   planStatementRetriesFor,
   reportReminderLimitFor,
   samplingFor,
@@ -2353,7 +2354,12 @@ export async function runInvestigation(
   // hosted API and measurably wrong for a local reasoning model, where nine cells across 25
   // models ended `model-timeout` with the model still working. An explicit
   // `options.turnTimeoutMs` still wins — that is the seam the tests drive.
-  const turnTimeoutMs = options.turnTimeoutMs ?? agentModelTurnTimeoutMs();
+  //
+  // Between the two sits the MODEL's own, for the one measured case where the shipped limit and
+  // the model disagree: `qwen3.5:9b` clears five surfaces inside 90 seconds and its plan turn
+  // lands at 92 to 94, so the cell is decided by which side of the line one turn falls on. It
+  // asks for its own by name rather than the default moving for everyone; see `turnTimeoutMs`.
+  const turnTimeoutMs = options.turnTimeoutMs ?? turnTimeoutMsFor(model.modelId) ?? agentModelTurnTimeoutMs();
 
   // Refuses a run that has ended, and tells us what the previous process left
   // behind. A queued run is one nothing has driven yet; a running one is a resume.

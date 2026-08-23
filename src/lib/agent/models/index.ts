@@ -111,6 +111,17 @@ export function retriesEmptyTurn(modelId: string): boolean {
  *
  * One everywhere but the model measured reporting straight through the first telling.
  */
+/**
+ * This model's own turn limit, or undefined where the shipped one fits it.
+ *
+ * Undefined rather than a default, because there IS no per-model default here: the fallback is
+ * the product's setting, which the drive already reads, and returning it from this function
+ * would put the same number in two places for a resolver to disagree with later.
+ */
+export function turnTimeoutMsFor(modelId: string): number | undefined {
+  return MODEL_PROFILES[modelId.toLowerCase()]?.turnTimeoutMs;
+}
+
 export function presentReminderLimitFor(modelId: string): number {
   return MODEL_PROFILES[modelId.toLowerCase()]?.presentReminderLimit ?? DEFAULT_PRESENT_REMINDER_LIMIT;
 }

@@ -5,6 +5,7 @@ import {
   noticesFor,
   presentReminderLimitFor,
   retriesEmptyTurn,
+  turnTimeoutMsFor,
   planStatementRetriesFor,
   reportReminderLimitFor,
   samplingFor,
@@ -122,6 +123,24 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(planStatementRetriesFor("qwen3:14b")).toBe(1);
     expect(planStatementRetriesFor("qwen3:8b")).toBe(0);
     expect(planStatementRetriesFor("some-model-released-tomorrow:70b")).toBe(0);
+  });
+
+  test("a model whose turn does not fit the shipped limit is given its own", () => {
+    /*
+      `qwen3.5:9b` clears five surfaces and loses Plan, and the loss is not a plan the verdict
+      rejected — the run ends `model-timeout` having produced nothing. Its plan turns are
+      bimodal: 26 seconds when they land, 92 to 94 when they do not, against a shipped limit of
+      90. Measured 1/5 on this build and 1/5 on the build from before `main` was merged, so it
+      is neither a regression nor the laptop; the cell's earlier 5/5 was taken when the limit
+      was 150.
+
+      The limit stays 90 for everyone else. Raising the product's default to fit one model
+      would spend every other model's user's patience on it, and this is the narrower thing the
+      profile directory exists for: the model that needs more time asks for it by name.
+    */
+    expect(turnTimeoutMsFor("qwen3.5:9b")).toBe(150_000);
+    expect(turnTimeoutMsFor("qwen3:8b")).toBeUndefined();
+    expect(turnTimeoutMsFor("some-model-released-tomorrow:70b")).toBeUndefined();
   });
 
   test("the model measured answering nothing at all, and nobody else", () => {

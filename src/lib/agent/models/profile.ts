@@ -85,6 +85,22 @@ export interface AgentModelProfile {
    * the report lands with an empty answer pane and a `no-answer` verdict.
    */
   readonly presentReminderLimit?: number;
+  /**
+   * How long ONE turn of this model may take, where the shipped limit does not fit it.
+   *
+   * The product allows 90 seconds a turn, which is a statement about how long a person waits
+   * rather than about any model. `qwen3.5:9b` is the measured case where the two disagree: five
+   * of its surfaces clear comfortably and its plan turn is bimodal — 26 seconds when it lands,
+   * 92 to 94 when it does not — so the cell scores 1/5 by finishing just the wrong side of the
+   * line. Measured the same on the build from before this branch merged `main`, so it is neither
+   * a regression nor a hot laptop; the 5/5 that put this model on the list was taken when the
+   * limit was 150.
+   *
+   * Per model rather than raising the default, because the default is the promise made to
+   * everyone: nine models finish inside it, and moving it for the tenth spends every other
+   * user's patience on a model they may not be running.
+   */
+  readonly turnTimeoutMs?: number;
 
   /**
    * Every sentence this model is told, when it is told anything.

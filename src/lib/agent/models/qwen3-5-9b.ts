@@ -24,5 +24,25 @@ export const QWEN3_5_9B: AgentModelProfile = {
     "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
   sampling: DEFAULT_SAMPLING,
   unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
+  /*
+    Its plan turn does not fit the 90 seconds the product allows, and nothing else about it is
+    marginal: the other five surfaces clear 5/5 with room.
+
+    The turns are bimodal — 26 seconds when the cell passes, 92 to 94 when it does not — so the
+    verdict is decided by which side of the line one turn lands on. Measured 1/5 here and 1/5 on
+    the build from before this branch merged `main`, which rules out both a regression and the
+    laptop. The 5/5 that put this model on the list was taken when the limit was 150, and 150 is
+    what it is given back.
+
+    Only this model. The default stays 90 for the other nine, because it is a promise about how
+    long a person waits rather than a fact about any model.
+  */
+  turnTimeoutMs: 150_000,
+  /*
+    The same ending its Plan cell had, one surface over: query-optimization loses on `no-report`
+    with the run stopping after feedback and leaving no text behind, which is an empty completion
+    rather than a model that gave up on the work.
+  */
+  retryEmptyTurn: true,
   notices: { ...BASELINE_NOTICES },
 };
