@@ -25,7 +25,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1–D16, U17 · 10
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X10, U2–U18 · 9
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X11, U2–U18 · 10
 - [Authentication and security headers](#authentication-and-security-headers) — AU2
 - [Tests](#tests) — T1–T3 · 2
 - [Dependencies](#dependencies) — P1–P5 · 5
@@ -571,6 +571,40 @@ than reverted.
 
 **Done when:** a binary cell from MySQL and from Cassandra exports as its dialect's binary literal and
 replays into its own engine, with one spelling shown across every surface.
+
+### X11. A foreign engine's type name still reaches a target dialect nobody measured
+
+The DDL export re-spells a bare declared type the target dialect does not stand behind, and it can
+only do that for the four dialects whose bare names were measured one `CREATE TABLE probe (c <name>)`
+at a time: postgres, mysql, oracle and mssql (`STANDS_ALONE` in
+`src/lib/export/result-export.ts`). A dialect absent from that table has nothing completed - which is
+right when the DECLARING engine is one of the six wire formats that spell their types out in full,
+and wrong when a bare name arrives from somewhere else.
+
+Measured 2026-08-24, an Oracle result exported under each target:
+
+| Target | `NAME` (Oracle `VARCHAR2`) | `DBL` (`BINARY_DOUBLE`) | `BODY` (`CLOB`) |
+| --- | --- | --- | --- |
+| postgres | `TEXT` | `DOUBLE PRECISION` | `TEXT` |
+| mysql | `TEXT` | `DOUBLE` | `TEXT` |
+| mssql | `NVARCHAR(MAX)` | `FLOAT` | `NVARCHAR(MAX)` |
+| clickhouse | **`VARCHAR2`** | **`BINARY_DOUBLE`** | **`CLOB`** |
+| *(no connection)* | **`VARCHAR2`** | **`BINARY_DOUBLE`** | **`CLOB`** |
+
+The last two rows are files that replay nowhere. Reachable the same way the measured rows are: both
+shells pass the ACTIVE connection's type beside the tab's own result, so querying Oracle and then
+switching to a ClickHouse connection before exporting is enough. The no-connection row is the one
+that regressed - before the four node drivers declared anything, a value-shaped guess wrote
+`TEXT` / `DOUBLE PRECISION` there, which is portable, and an Oracle-only spelling is not.
+
+**It cannot be fixed by widening the rule.** Re-spelling from the family whenever the target is
+unmeasured breaks Trino, whose own bare `varchar` is legal and unbounded and would become the `TEXT`
+Trino does not have. So each remaining dialect needs its own measured `STANDS_ALONE` row -
+clickhouse, trino, cassandra, sqlite, druid and the two search engines - which is a live container
+per engine, the same way the first four were done.
+
+**Done when:** every dialect the export offers has a measured stands-alone set (or a written reason
+it needs none), and an Oracle or MySQL result exported under each of them replays into that engine.
 
 ### U2. The rule that catches an arity change on a JSX handler is configured but not aimed at components
 

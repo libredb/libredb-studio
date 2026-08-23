@@ -254,7 +254,12 @@ const BARE_TYPE_FAMILY: Record<string, InferredKind> = {
  * A dialect absent from this table has nothing completed, which keeps every other
  * engine exactly as it was: SQLite's column types are advisory affinities, and the six
  * wire formats that already fill `columnTypes` spell their own types out in full
- * (`Nullable(String)`, `array(varchar)`), so there is no bare name to complete.
+ * (`Nullable(String)`, `array(varchar)`), so there is no bare name of THEIR OWN to
+ * complete. A bare name that arrives from somewhere else still reaches those targets
+ * verbatim - an Oracle result exported under a ClickHouse connection writes
+ * `VARCHAR2` (measured) - and widening the rule is not the fix, because Trino's own
+ * bare `varchar` is legal and unbounded and would become a `TEXT` it does not have.
+ * Each remaining dialect needs its own measured row: BACKLOG X11.
  */
 const STANDS_ALONE: Partial<Record<DatabaseType, readonly string[]>> = {
   postgres: [
