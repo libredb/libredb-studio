@@ -28,11 +28,14 @@ interface Job {
   strategy?: { matrix?: { include?: MatrixEntry[] } };
 }
 
-const releaseArtifacts = parseYaml(
-  fs.readFileSync(path.join(__dirname, "../../.github/workflows/release-artifacts.yml"), "utf8"),
-) as { jobs: Record<string, Job> };
+const workflow = (name: string): { jobs: Record<string, Job> } =>
+  parseYaml(fs.readFileSync(path.join(__dirname, "../../.github/workflows", name), "utf8")) as {
+    jobs: Record<string, Job>;
+  };
 
-const desktopMatrix = releaseArtifacts.jobs["desktop-appimage"]?.strategy?.matrix?.include ?? [];
+const desktopMatrix = workflow("release-artifacts.yml").jobs["desktop-appimage"]?.strategy?.matrix?.include ?? [];
+const smokeMatrix = workflow("flatpak-smoke.yml").jobs.appimage?.strategy?.matrix?.include ?? [];
+const x64Runner = (matrix: MatrixEntry[]): string | undefined => matrix.find((entry) => entry.arch === "x64")?.runner;
 
 describe("release-artifacts.yml desktop-appimage glibc floor", () => {
   test("builds every architecture on a pinned runner image, never a floating label", () => {
@@ -47,6 +50,16 @@ describe("release-artifacts.yml desktop-appimage glibc floor", () => {
     // ubuntu-22.04 and fails the submission when no window appears, so this
     // label is what keeps the catalog listing alive as well as the users on
     // enterprise distributions the AppImage exists for.
-    expect(desktopMatrix.find((entry) => entry.arch === "x64")?.runner).toBe("ubuntu-22.04");
+    expect(x64Runner(desktopMatrix)).toBe("ubuntu-22.04");
+  });
+
+  test("the pull-request AppImage smoke builds on the same image the release does", () => {
+    // flatpak-smoke.yml is the only job that builds an AppImage outside a
+    // release, so it is the only place a build break on the pinned image can
+    // surface before a tag exists. Letting the two drift means the release
+    // builds a configuration nothing ever exercised, on a job that is a hard
+    // release gate.
+    expect(smokeMatrix.length).toBeGreaterThan(0);
+    expect(x64Runner(smokeMatrix)).toBe(x64Runner(desktopMatrix));
   });
 });
