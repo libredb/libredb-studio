@@ -69,6 +69,8 @@ export class RedisProvider extends BaseDatabaseProvider {
       // Redis commands are not SQL, so the inline row editor's `UPDATE ... SET` has
       // nothing here to run against (issue #269).
       supportsInlineRowEdit: false,
+      // MULTI/EXEC exists in Redis and is not exposed here.
+      supportsTransactions: false,
       // Redis has no constraints of any kind, and this provider's "tables" are key
       // prefixes it grouped rather than declared objects. It emits no `foreignKeys`
       // field at all; this says why (#414).
@@ -117,6 +119,11 @@ export class RedisProvider extends BaseDatabaseProvider {
       // addressable and is not (#427).
       statementLanguage:
         'exactly one Redis command, in the plain form `SCAN 0 MATCH session:* COUNT 50` or the lossless form {"command": "GET", "args": ["session:1"]} - one command and no more, with no list numbering, no bullet, no `redis-cli` prefix and no trailing semicolon; and the inventory\'s `prefix:*` rows are groupings this server summarised, not keys, so reach a prefix with SCAN ... MATCH and a key by its real name',
+      // `getSlowQueries()` maps SLOWLOG GET, so an empty panel means the log is empty
+      // rather than absent - a different fact from the PostgreSQL extension this used
+      // to advertise (#U12), and the one a Redis operator can act on.
+      slowQueriesEmptyState:
+        "Redis lists what SLOWLOG holds, and nothing has yet run slower than slowlog-log-slower-than.",
     };
   }
 

@@ -3,7 +3,7 @@
 import React, { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle } from "react";
 import Editor, { useMonaco } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
-import { Zap, Loader2, AlignLeft, Trash2, Copy, Play, Hash } from "lucide-react";
+import { Zap, LoaderCircle, TextAlignStart, Trash2, Copy, Play, Hash } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { format } from "sql-formatter";
@@ -15,6 +15,8 @@ import { registerRedisLanguage } from "@/lib/editor/redis-language";
 import { configureMonacoLoader } from "@/lib/editor/monaco-loader";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
 import { logger } from "@/lib/logger";
+import { writeToClipboard } from "@/components/copy-button";
+import { toast } from "sonner";
 
 // Serve Monaco from our own origin rather than @monaco-editor/react's jsdelivr default.
 // Runs at module load so it is in place before the first <Editor> mounts.
@@ -368,8 +370,15 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     }));
 
     const handleCopy = () => {
+      // `writeToClipboard` rather than `navigator.clipboard` directly (B43): that API is
+      // absent over plain HTTP off loopback, which several distribution channels are.
+      // This button carries no label of its own to flip, so a failure has to be said out
+      // loud or it is not said at all. It cannot be a `CopyButton`: the text lives in the
+      // editor ref, so there is no `text` prop that would still be current at click time.
       const textToCopy = getSelectedText() || editorRef.current?.getValue() || "";
-      navigator.clipboard.writeText(textToCopy);
+      void writeToClipboard(textToCopy).then((copied) => {
+        if (!copied) toast.error("Could not copy the query — select the text and copy it yourself");
+      });
     };
 
     const handleClear = () => {
@@ -544,7 +553,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               onClick={handleFormat}
               title={language === "json" ? "Format JSON (Shift+Alt+F)" : "Format SQL (Shift+Alt+F)"}
             >
-              <AlignLeft strokeWidth={1.5} className="w-3 h-3" /> Format
+              <TextAlignStart strokeWidth={1.5} className="w-3 h-3" /> Format
             </Button>
           )}
 
@@ -611,7 +620,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
             onChange={handleEditorChange}
             loading={
               <div className="h-full w-full bg-canvas flex items-center justify-center">
-                <Loader2 strokeWidth={1.5} className="w-6 h-6 animate-spin text-fg-subtle" />
+                <LoaderCircle strokeWidth={1.5} className="w-6 h-6 animate-spin text-fg-subtle" />
               </div>
             }
             onMount={(editor, monaco) => {

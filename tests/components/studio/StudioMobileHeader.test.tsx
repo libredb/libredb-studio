@@ -1,10 +1,20 @@
 import "../../setup-dom";
-import "../../helpers/mock-sonner";
 import "../../helpers/mock-navigation";
 
 import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render, fireEvent } from "@testing-library/react";
+import { cleanup, render, fireEvent, waitFor } from "@testing-library/react";
+import { mockToastError } from "../../helpers/mock-sonner";
+
+// The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
+// `navigator.clipboard` is what plain HTTP off loopback actually hands the page, and an
+// editing command that answers false is what a browser that refuses the copy does.
+const originalClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator, "clipboard");
+const originalExecCommand = Object.getOwnPropertyDescriptor(globalThis.document, "execCommand");
+
+function setExecCommand(execCommand: ((command: string) => boolean) | undefined): void {
+  Object.defineProperty(globalThis.document, "execCommand", { value: execCommand, configurable: true });
+}
 
 mock.module("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => React.createElement("div", {}, children),
@@ -67,6 +77,11 @@ const conn: DatabaseConnection = {
 describe("StudioMobileHeader", () => {
   afterEach(() => {
     cleanup();
+    if (originalClipboard === undefined)
+      Object.defineProperty(globalThis.navigator, "clipboard", { value: undefined, configurable: true });
+    else Object.defineProperty(globalThis.navigator, "clipboard", originalClipboard);
+    if (originalExecCommand === undefined) setExecCommand(undefined);
+    else Object.defineProperty(globalThis.document, "execCommand", originalExecCommand);
   });
 
   const mockOnAskAgent = mock(() => {});
@@ -249,6 +264,46 @@ describe("StudioMobileHeader", () => {
     expect(queryByText("Import Data")).not.toBeNull();
   });
 
+  test("BEGIN Transaction not rendered when the trio is withheld (#U13)", () => {
+    // The positive is asserted by "BEGIN Transaction click calls onBeginTransaction"
+    // above, on the same defaults; here only the three callbacks are removed.
+    const { queryByText } = render(
+      <StudioMobileHeader
+        {...defaults}
+        onBeginTransaction={undefined}
+        onCommitTransaction={undefined}
+        onRollbackTransaction={undefined}
+      />,
+    );
+    expect(queryByText("BEGIN Transaction")).toBeNull();
+    // The menu itself still rendered, so the absence above is the gate and not a
+    // component that failed to mount.
+    expect(queryByText("Import Data")).not.toBeNull();
+    expect(queryByText("Enable Sandbox")).not.toBeNull();
+  });
+
+  test("COMMIT and ROLLBACK not rendered when the trio is withheld mid-transaction", () => {
+    const { queryByText } = render(
+      <StudioMobileHeader
+        {...defaults}
+        transactionActive
+        onBeginTransaction={undefined}
+        onCommitTransaction={undefined}
+        onRollbackTransaction={undefined}
+      />,
+    );
+    expect(queryByText("COMMIT")).toBeNull();
+    expect(queryByText("ROLLBACK")).toBeNull();
+    expect(queryByText("Import Data")).not.toBeNull();
+  });
+
+  test("Enable Sandbox not rendered when onTogglePlayground is withheld (#U13)", () => {
+    const { queryByText } = render(<StudioMobileHeader {...defaults} onTogglePlayground={undefined} />);
+    expect(queryByText("Enable Sandbox")).toBeNull();
+    expect(queryByText("BEGIN Transaction")).not.toBeNull();
+    expect(queryByText("Import Data")).not.toBeNull();
+  });
+
   test("Import Data click calls onImport", () => {
     const { queryByText } = render(<StudioMobileHeader {...defaults} />);
     const item = queryByText("Import Data");
@@ -306,6 +361,21 @@ describe("StudioMobileHeader", () => {
 
     expect(writeText).toHaveBeenCalledTimes(1);
     expect((writeText.mock.calls as unknown[][])[0][0]).toBe("SELECT 2");
+  });
+
+  // B43: this item reached `navigator.clipboard` unguarded, which is undefined over plain
+  // HTTP off loopback — several distribution channels ship that way — so the write threw
+  // inside the handler and the menu closed over an empty clipboard with nothing said.
+  test("Copy Query says the copy failed when both write paths refuse", async () => {
+    mockToastError.mockClear();
+    Object.defineProperty(globalThis.navigator, "clipboard", { value: undefined, configurable: true });
+    setExecCommand(() => false);
+
+    const { queryByText } = render(<StudioMobileHeader {...defaults} />);
+    fireEvent.click(queryByText("Copy Query")!.closest('[role="menuitem"]')!);
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1));
+    expect(String((mockToastError.mock.calls as unknown[][])[0][0])).toContain("Could not copy");
   });
 
   test("renders a repository link in the header actions", () => {

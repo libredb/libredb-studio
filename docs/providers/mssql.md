@@ -425,6 +425,7 @@ validates the target parses as an integer SPID.
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core T-SQL DML |
+| `supportsTransactions` | `true` — the `mssql` package's `Transaction` over one held pool connection, so the trio and the SANDBOX toggle are offered (#U13) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; read from `sys.foreign_keys`, so an empty list is about the schema or the role, not the engine |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze', 'check', 'optimize', 'kill']` |
@@ -436,6 +437,12 @@ validates the target parses as an integer SPID.
 
 `analyzeAction` → *"Update Statistics"*, `vacuumAction` → *"Rebuild Indexes"*, plus the matching
 global labels. The UI display name for the database type is *"SQL Server"* (`db-ui-config.ts`).
+
+`slowQueriesEmptyState` → *"Query stats come from sys.dm_exec_query_stats, which needs the VIEW
+SERVER STATE permission."* The monitoring Queries panel's empty state was hardcoded to PostgreSQL's
+`pg_stat_statements` advice on every engine (`docs/BACKLOG.md` U12); `getSlowQueries()` here reads
+that DMV ([§8](#8-monitoring--health)) and returns `[]` when the read is refused, so the permission
+is the thing a DBA can act on.
 
 ---
 

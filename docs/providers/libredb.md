@@ -522,6 +522,7 @@ for a different reason — the rows are derived groupings, see 5.3.
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — the command grammar (`get`/`put`/`delete`/`prefix`/`range`) has no `UPDATE ... SET` for the results grid's inline editor to emit |
+| `supportsTransactions` | `false` — the command grammar has no transaction verb at all, so the trio and SANDBOX are not offered (#U13) |
 | `declaresForeignKeys` | `false` — the catalog declares namespaces and columns and nothing that references another namespace, so there is no foreign key to read |
 | `tablesAreDerivedGroupings` | `true` — the namespaces come from a bounded `kv.range` over 10000 keys, grouped by prefix, so they are this server's summary of what one scan reached rather than objects the engine declares. The agent layer states this to a plan run in one sentence |
 | `supportsMaintenance` | `false` |
@@ -538,6 +539,11 @@ refresh — `put` and `delete` both add or remove keys.
 The label map relabels the generic schema-explorer UI for key-value semantics: entity ->
 "Key Prefix", row -> "key", select -> "Scan Keys", generate -> "Generate Command",
 analyze -> "Key Info", search placeholder -> "Search keys...", etc.
+
+One label is about the monitoring tab instead: `slowQueriesEmptyState` -> *"LibreDB keeps no
+statistics about finished statements in this version."* `getSlowQueries()` answers `[]`
+unconditionally ([§7](#7-monitoring--health)), so the Queries panel is always empty here, and its
+sentence was hardcoded to PostgreSQL's `pg_stat_statements` advice (`docs/BACKLOG.md` U12).
 
 ---
 

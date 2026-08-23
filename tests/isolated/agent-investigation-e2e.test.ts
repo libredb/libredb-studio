@@ -253,9 +253,9 @@ class PostgresEngineDouble {
     // would let a regression that dropped the clause pass unnoticed here. Only the
     // COLUMN read is narrowed: the relation and index reads are answered whole because
     // nothing in this arc narrows them, so a later test that does would need this to
-    // grow their selectors (`tc.table_name`, `t.relname`) too.
+    // grow their selectors (`rel.relname`, `t.relname`) too.
     if (/information_schema\.columns/.test(text)) return engineRows(narrowByTable(PG_COLUMN_ROWS, text));
-    if (/information_schema\.table_constraints/.test(text)) return engineRows(PG_RELATION_ROWS);
+    if (/\bpg_constraint\b/.test(text)) return engineRows(PG_RELATION_ROWS);
     if (/\bpg_index\b/.test(text)) return engineRows(PG_INDEX_ROWS);
     // The wrong identifier, refused by the engine in the engine's own words.
     if (/\bordrs\b/.test(text)) throw pgServerError('relation "ordrs" does not exist', "42P01");

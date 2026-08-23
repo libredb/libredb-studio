@@ -382,9 +382,11 @@ describe("the schema's relations reach the model as their own fenced block", () 
 
     const transcript = drive.transcripts[0] ?? "";
     expect(transcript).toContain("schema relations");
-    // The sample declares no foreign keys, and the block says so rather than
-    // showing an empty list a reader could mistake for "the run did not look".
-    expect(transcript).toContain("no table in this inventory declares a foreign key");
+    // The sample's read returns no foreign key, and the block says what that does and
+    // does not establish rather than showing an empty list a reader could mistake for
+    // "the run did not look" — or for a database that has none.
+    expect(transcript).toContain("No foreign key was read for any table in this inventory");
+    expect(transcript).toContain("do not report that this database has no foreign keys");
   });
 
   test("the block is fenced, so identifiers in it are untrusted content like any other", async () => {

@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { Code, X, Copy, Check, ChevronDown } from "lucide-react";
+import { Code, X, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CopyButton } from "@/components/copy-button";
 import { TableSchema } from "@/lib/types";
 
 interface CodeGeneratorProps {
@@ -249,19 +250,12 @@ export function generateCode(lang: Language, table: TableSchema): string {
 
 export function CodeGenerator({ isOpen, onClose, tableName, tableSchema, databaseType }: CodeGeneratorProps) {
   const [language, setLanguage] = useState<Language>("typescript");
-  const [copied, setCopied] = useState(false);
   const [showLangDropdown, setShowLangDropdown] = useState(false);
 
   const code = useMemo(() => {
     if (!tableSchema) return "// No schema available";
     return generateCode(language, tableSchema);
   }, [language, tableSchema]);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   if (!isOpen) return null;
 
@@ -317,14 +311,17 @@ export function CodeGenerator({ isOpen, onClose, tableName, tableSchema, databas
           <pre className="p-5 text-xs font-mono text-fg-secondary overflow-auto max-h-[50vh] bg-canvas leading-relaxed whitespace-pre">
             {code}
           </pre>
-          <button
-            onClick={handleCopy}
-            className="absolute top-3 right-3 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-fill-strong hover:bg-edge text-xs text-fg-tertiary transition-colors"
-          >
-            {copied && <Check strokeWidth={1.5} className="w-3 h-3 text-emerald-400" />}
-            {!copied && <Copy strokeWidth={1.5} className="w-3 h-3" />}
-            {copied ? "Copied!" : "Copy"}
-          </button>
+          {/*
+            `CopyButton` rather than a local `copied` flag (B43): the flag flipped in the
+            same statement that started the write, which reads "Copied!" over an empty
+            clipboard wherever `navigator.clipboard` is absent — plain HTTP off loopback,
+            which several distribution channels are.
+          */}
+          <CopyButton
+            text={code}
+            testId="code-generator-copy"
+            className="absolute top-3 right-3 gap-1.5 px-2.5 py-1 rounded-lg bg-fill-strong hover:bg-edge text-xs"
+          />
         </div>
 
         <div className="px-5 py-3 border-t border-hairline bg-surface">

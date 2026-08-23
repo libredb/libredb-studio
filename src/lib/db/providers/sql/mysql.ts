@@ -14,6 +14,7 @@ import {
   type MaintenanceResult,
   type ProviderOptions,
   type ProviderCapabilities,
+  type ProviderLabels,
   type SlowQuery,
   type ActiveSession,
   type DatabaseOverview,
@@ -339,7 +340,25 @@ export class MySQLProvider extends SQLBaseProvider {
       explainFormat: "mysql-json",
       supportsConnectionString: true,
       supportsInlineRowEdit: true,
+      // The driver's own connection.beginTransaction() over one held connection.
+      supportsTransactions: true,
       maintenanceOperations: ["analyze", "optimize", "check", "kill"],
+    };
+  }
+
+  /**
+   * Only the slow-query empty state; every other label is the SQL default and right.
+   *
+   * `getSlowQueries()` reads `performance_schema.events_statements_summary_by_digest`
+   * and answers `[]` when that read fails, which on a server with the Performance
+   * Schema off is the ordinary case. The panel used to name PostgreSQL's extension
+   * there (#U12) - a statement store MySQL does not have under any name.
+   */
+  public override getLabels(): ProviderLabels {
+    return {
+      ...super.getLabels(),
+      slowQueriesEmptyState:
+        "Query stats come from performance_schema.events_statements_summary_by_digest - enable the Performance Schema to see them.",
     };
   }
 

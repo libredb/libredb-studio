@@ -6,18 +6,18 @@ import type { QueryEditorRef } from "@/components/QueryEditor";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
-  AlignLeft,
+  TextAlignStart,
   Bot,
   ChevronDown,
   Copy,
   Database,
-  Edit3,
+  PenLine,
   Gauge,
   LogOut,
-  MoreVertical,
+  EllipsisVertical,
   Pencil,
   Play,
-  PlayCircle,
+  CirclePlay,
   Plus,
   Save,
   Settings,
@@ -36,6 +36,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { GitHubRepoLink } from "@/components/github-repo-link";
+import { writeToClipboard } from "@/components/copy-button";
+import { toast } from "sonner";
 
 interface StudioMobileHeaderProps {
   connections: DatabaseConnection[];
@@ -57,10 +59,20 @@ interface StudioMobileHeaderProps {
   onClearQuery: () => void;
   onExecuteQuery: () => void;
   onCancelQuery: () => void;
-  onBeginTransaction: () => void;
-  onCommitTransaction: () => void;
-  onRollbackTransaction: () => void;
-  onTogglePlayground: () => void;
+  /**
+   * The transaction trio, supplied together or not at all — the same contract
+   * `QueryToolbar` states. A caller whose provider declares no transaction session
+   * omits all three and BEGIN/COMMIT/ROLLBACK do not render, instead of offering
+   * three items that answer HTTP 400 (#U13).
+   */
+  onBeginTransaction?: () => void;
+  onCommitTransaction?: () => void;
+  onRollbackTransaction?: () => void;
+  /**
+   * Omitted where the caller cannot run sandboxed queries: the sandbox auto-rolls-back
+   * through the same transaction route, so it is withheld with the trio (#U13).
+   */
+  onTogglePlayground?: () => void;
   /** Omitted where the provider declares no inline row editing (issue #269). */
   onToggleEditing?: () => void;
   onImport: () => void;
@@ -106,6 +118,13 @@ export function StudioMobileHeader({
   onAskAgent,
 }: StudioMobileHeaderProps) {
   const router = useRouter();
+  // Bundled so the three cannot be half-supplied, the rule QueryToolbar follows: an
+  // item that BEGINs without one that COMMITs would strand the user inside a
+  // transaction it cannot close.
+  const transaction =
+    onBeginTransaction && onCommitTransaction && onRollbackTransaction
+      ? { begin: onBeginTransaction, commit: onCommitTransaction, rollback: onRollbackTransaction }
+      : null;
 
   return (
     <header className="md:hidden border-b border-hairline bg-surface/95 backdrop-blur-xl sticky top-0 z-30">
@@ -247,17 +266,23 @@ export function StudioMobileHeader({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 text-xs text-fg-muted">
-                  <MoreVertical strokeWidth={1.5} className="w-3 h-3" />
+                  <EllipsisVertical strokeWidth={1.5} className="w-3 h-3" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="bg-raised border-hairline-strong w-48">
                 <DropdownMenuItem onClick={() => queryEditorRef.current?.format()} className="cursor-pointer text-xs">
-                  <AlignLeft strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Format SQL
+                  <TextAlignStart strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Format SQL
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => {
+                    // `writeToClipboard` rather than `navigator.clipboard` directly (B43):
+                    // that API is absent over plain HTTP off loopback, which several
+                    // distribution channels are, and this menu closes on click — a toast is
+                    // the only place left to say the clipboard is still empty.
                     const query = queryEditorRef.current?.getValue() || currentQuery;
-                    navigator.clipboard.writeText(query);
+                    void writeToClipboard(query).then((copied) => {
+                      if (!copied) toast.error("Could not copy the query — select the text and copy it yourself");
+                    });
                   }}
                   className="cursor-pointer text-xs"
                 >
@@ -284,33 +309,39 @@ export function StudioMobileHeader({
                   <span className="text-[0.625rem] font-medium text-fg-subtle">Advanced</span>
                 </div>
 
-                {!transactionActive ? (
-                  <DropdownMenuItem
-                    onClick={onBeginTransaction}
-                    className="cursor-pointer text-xs"
-                    disabled={!activeConnection}
-                  >
-                    <PlayCircle strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> BEGIN Transaction
-                  </DropdownMenuItem>
-                ) : (
-                  <>
-                    <DropdownMenuItem onClick={onCommitTransaction} className="cursor-pointer text-xs text-emerald-400">
-                      <PlayCircle strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> COMMIT
+                {transaction !== null &&
+                  (!transactionActive ? (
+                    <DropdownMenuItem
+                      onClick={transaction.begin}
+                      className="cursor-pointer text-xs"
+                      disabled={!activeConnection}
+                    >
+                      <CirclePlay strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> BEGIN Transaction
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={onRollbackTransaction} className="cursor-pointer text-xs text-red-400">
-                      <PlayCircle strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> ROLLBACK
-                    </DropdownMenuItem>
-                  </>
-                )}
+                  ) : (
+                    <>
+                      <DropdownMenuItem
+                        onClick={transaction.commit}
+                        className="cursor-pointer text-xs text-emerald-400"
+                      >
+                        <CirclePlay strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> COMMIT
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={transaction.rollback} className="cursor-pointer text-xs text-red-400">
+                        <CirclePlay strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> ROLLBACK
+                      </DropdownMenuItem>
+                    </>
+                  ))}
 
-                <DropdownMenuItem onClick={onTogglePlayground} className="cursor-pointer text-xs">
-                  <Pencil strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
-                  {playgroundMode ? "Disable Sandbox" : "Enable Sandbox"}
-                </DropdownMenuItem>
+                {onTogglePlayground && (
+                  <DropdownMenuItem onClick={onTogglePlayground} className="cursor-pointer text-xs">
+                    <Pencil strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
+                    {playgroundMode ? "Disable Sandbox" : "Enable Sandbox"}
+                  </DropdownMenuItem>
+                )}
 
                 {onToggleEditing && (
                   <DropdownMenuItem onClick={onToggleEditing} className="cursor-pointer text-xs">
-                    <Edit3 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
+                    <PenLine strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
                     {editingEnabled ? "Disable Editing" : "Enable Editing"}
                   </DropdownMenuItem>
                 )}

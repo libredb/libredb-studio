@@ -1397,9 +1397,27 @@ on. It is a relation list rather than Mermaid for the same reason — `||--o{` i
 than a quoted pair, and a diagram drawing a relation the database does not have is worse than none.
 Two further rules follow from the same principle rather than from formatting: a pairing this
 inventory cannot know is **not invented** (several edges between one pair of tables may be separate
-keys or one composite key returned as a cross product, B8, so the group is one line that names the
-columns and says the pairing is unknown), and the block is bounded in **characters**, because a
+single-column keys or the columns of one composite key: the composed read is one row per referencing
+column and carries no constraint identity, so nothing downstream can group them — the group is one
+line that names the columns and says the pairing is unknown), and the block is bounded in **characters**, because a
 count of edges is not a bound on a prompt.
+
+**An empty relations read is three facts, and the block says which one it has**
+(`er-diagram.ts`). A zero-row read cannot tell a schema that declares no foreign key from a role that
+cannot see the ones it declares, and a run that treats those as the same thing states a falsehood
+with a citation attached: measured on the seeded dvdrental, the `SELECT`-only role
+[`docs/AGENT_DEMO.md`](./AGENT_DEMO.md) prescribes read 0 rows where `pg_constraint` holds 18, and an
+investigation answered "there are no declared foreign key constraints between tables in the
+database" — cited, confident and wrong. The read is fixed at its source (`composePostgresRelations`
+reads `pg_constraint`, which needs only `USAGE` on the schema), and that fix does not settle the
+general case, since any role can be narrower than its database. So the block distinguishes three
+cases: an engine with no such construct is told nothing could have been found (from
+`ProviderCapabilities.declaresForeignKeys`, never from the connection's type); a read that returned
+rows gets the rows; and a read that returned none on an engine that has them is told what was not
+seen — the limit of the reading, plus an instruction not to report that this database has no foreign
+keys and to treat any join the run relies on as inferred from names rather than declared. It is the
+same rule the inventory's omission notice follows: what was not read is said, because silence gets
+read as absence.
 
 ## What bounds a run
 
@@ -2279,8 +2297,6 @@ the role's own grants are the whole boundary (A3).
   cancel.
 - **B5** — the ledger assumes one writer per run and cannot enforce it.
 - **B6** — every cost ceiling is per-drive, so N resumes can cost up to N times one drive's budget.
-- **B7** — a PostgreSQL expression index is absent from the schema inventory.
-- **B8** — the composed foreign-key read cannot pair a composite key's columns.
 - **B9** — nothing enqueues a drive, so an interrupted run is resumable but never resumed.
 - **B10** — no token budget is enforced, so the meter reports none.
 - **B11** — the rail can stop a run but cannot pause or resume one.
@@ -2315,12 +2331,13 @@ the role's own grants are the whole boundary (A3).
 - **B34** — a hydrated result cannot be exported: the Export menu serializes the tab's own rows, so it
   is hidden while a run's result is shown.
 
-The next six were found by driving the product against a live model in a browser, which is the only
-way any of them could have been found: every one of them passes every gate. The one after them was
-found later, by another route, and is listed here because it is the same kind of thing — a defect
-no gate in this repository objects to. The last three came from repeating that exercise against the
-inference surface (#407) — twenty-six runs over `docs/AGENT_DEMO.md`, which is also where the
-classifier's real-world agreement rate was measured — and they are the same kind of thing again.
+The entries below were found by driving the product against a live model in a browser, which is the
+only way any of them could have been found: every one of them passes every gate. A few were found
+later and by other routes, and are listed here because they are the same kind of thing — a defect no
+gate in this repository objects to. Several came from repeating that exercise against the inference
+surface (#407) — twenty-six runs over `docs/AGENT_DEMO.md`, which is also where the classifier's
+real-world agreement rate was measured. The count is deliberately not stated: entries leave this list
+as they are fixed, and a numeral here goes stale silently.
 
 - **B36** — a follow-up question is answered as if it were the first. Runs carry no memory of each
   other, and neither the surface nor the model says so — the model picks a plausible referent and
@@ -2334,19 +2351,6 @@ classifier's real-world agreement rate was measured — and they are the same ki
 - **B39** — a data-analysis run has no honest way to conclude that the question is not about this
   database. Its only route to `answered` is a reading of the data, so a run that establishes the
   question is unanswerable fabricates one — the #356 shape again, in a new place.
-- **B43** — every copy control outside the agent rail reaches `navigator.clipboard` unguarded, and it
-  is a secure-context API: nine call sites across seven components, four of which claim success — by
-  a label or a toast — in the same statement that starts a write nobody observed.
-- **B44** — the composed foreign-key read returns nothing under the least-privilege role this
-  repository's own demo script prescribes, and the run then asserts the negative. PostgreSQL
-  restricts the `information_schema` constraint views to constraints on tables the role owns or
-  holds a privilege other than `SELECT` on, so a `SELECT`-only agent role reads an empty relations
-  graph — measured on the seeded dvdrental as 0 rows where `pg_constraint` holds 18 — and an
-  investigation answers "there are no declared foreign key constraints between tables in the
-  database", confidently, citing a snapshot that genuinely contained nothing. It makes B8's
-  `pg_constraint` rewrite a correctness fix rather than a precision one, and leaves a second half
-  standing behind it: an empty read cannot tell "none exist" from "none visible to this role", and
-  should license neither.
 - **B45** — every query-optimization run is scored `unanswered / empty-evidence`, including one that
   compared two plans, priced both and wrote the correct `CREATE INDEX`. A `sql.explain.estimate`
   artifact records `rowCount: 0` because a plan arrives in a single column, and

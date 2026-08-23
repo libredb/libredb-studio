@@ -1066,6 +1066,66 @@ describe("Studio", () => {
     expect(capturedBottomPanelProps.editingEnabled).toBe(true);
   });
 
+  // --- Transaction capability gate (#U13) ---
+  test("passes the transaction trio and the sandbox toggle through when supportsTransactions is true", () => {
+    // The positive first: the default mock declares the capability, so both shells
+    // must receive all four callbacks and they must reach the hook.
+    render(<Studio />);
+
+    for (const props of [capturedQueryToolbarProps, capturedMobileHeaderProps]) {
+      expect(typeof props.onBeginTransaction).toBe("function");
+      expect(typeof props.onCommitTransaction).toBe("function");
+      expect(typeof props.onRollbackTransaction).toBe("function");
+      expect(typeof props.onTogglePlayground).toBe("function");
+    }
+
+    act(() => (capturedQueryToolbarProps.onBeginTransaction as () => void)());
+    expect(mockHandleTransaction).toHaveBeenCalledWith("begin");
+    act(() => (capturedMobileHeaderProps.onRollbackTransaction as () => void)());
+    expect(mockHandleTransaction).toHaveBeenCalledWith("rollback");
+    act(() => (capturedQueryToolbarProps.onTogglePlayground as () => void)());
+    expect(mockSetPlaygroundMode).toHaveBeenCalledWith(true);
+  });
+
+  test("withholds the trio and the sandbox toggle when supportsTransactions is false", () => {
+    // POST /api/db/transaction answers 400 "Transaction control is not supported for
+    // this database type" on these engines; measured 2026-08-19 on OpenSearch.
+    capabilitiesOverride = { supportsTransactions: false };
+    render(<Studio />);
+
+    for (const props of [capturedQueryToolbarProps, capturedMobileHeaderProps]) {
+      expect(props.onBeginTransaction).toBeUndefined();
+      expect(props.onCommitTransaction).toBeUndefined();
+      expect(props.onRollbackTransaction).toBeUndefined();
+      expect(props.onTogglePlayground).toBeUndefined();
+      // The shell still rendered — the assertions above are about these four props
+      // and not about a component that failed to mount.
+      expect(typeof props.onExecuteQuery).toBe("function");
+    }
+  });
+
+  test("withholds them when the capability is absent entirely", () => {
+    // Optional on the published `ProviderCapabilities`, so an absent flag must read
+    // as unsupported rather than inheriting a permissive default.
+    capabilitiesOverride = { supportsTransactions: undefined };
+    render(<Studio />);
+
+    expect(capturedQueryToolbarProps.onBeginTransaction).toBeUndefined();
+    expect(capturedQueryToolbarProps.onTogglePlayground).toBeUndefined();
+    expect(capturedMobileHeaderProps.onCommitTransaction).toBeUndefined();
+    expect(typeof capturedQueryToolbarProps.onExecuteQuery).toBe("function");
+  });
+
+  test("withholds them while provider metadata is unresolved", () => {
+    metadataOverride = { metadata: null };
+    render(<Studio />);
+
+    expect(capturedQueryToolbarProps.onBeginTransaction).toBeUndefined();
+    expect(capturedQueryToolbarProps.onTogglePlayground).toBeUndefined();
+    expect(capturedMobileHeaderProps.onRollbackTransaction).toBeUndefined();
+    expect(typeof capturedQueryToolbarProps.onExecuteQuery).toBe("function");
+  });
+
   test("withholds the editing affordance while provider metadata is unresolved", () => {
     // metadata is also null when /api/db/provider-meta fails, so unknown must
     // hide the control rather than fall open (the T3 precedent).

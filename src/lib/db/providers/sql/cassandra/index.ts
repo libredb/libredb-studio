@@ -212,6 +212,8 @@ export class CassandraProvider extends SQLBaseProvider {
       // real table - is "Some partition key parts are missing: id". Editing a key
       // column is refused outright ("PRIMARY KEY part id found in SET part").
       supportsInlineRowEdit: false,
+      // CQL has no transaction; BATCH is not one.
+      supportsTransactions: false,
       // There is no referential constraint in the model at all: `ALTER TABLE … ADD
       // CONSTRAINT … FOREIGN KEY …` is a syntax error, because the clause does not
       // exist. An empty relations list is the engine's answer and not the schema's
@@ -266,6 +268,10 @@ export class CassandraProvider extends SQLBaseProvider {
       // error here (each measured). The two search engines declare this field for the
       // same reason.
       statementLanguage: "CQL (Cassandra Query Language) - no JOIN, no subquery, no OFFSET",
+      // `getSlowQueries()` is empty by design here (introspect.ts), so this panel is
+      // ALWAYS empty on Cassandra - and it used to name a PostgreSQL extension (#U12).
+      slowQueriesEmptyState:
+        "Cassandra keeps no aggregate of finished statements: the slow-query threshold writes to the node's log file rather than to a table.",
     };
   }
 

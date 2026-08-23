@@ -9,18 +9,18 @@ import {
   Database,
   Clock,
   LayoutGrid,
-  AlertTriangle,
-  CheckCircle2,
+  TriangleAlert,
+  CircleCheck,
   TrendingUp,
   HardDrive,
   Target,
   ChevronRight,
   Info,
-  FileJson,
+  FileBraces,
   Activity,
   Sparkles,
   Play,
-  Loader2,
+  LoaderCircle,
   ListTree,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -678,7 +678,7 @@ function AIExplainTab({
           className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium text-fg-tertiary hover:text-fg-bright hover:bg-fill transition-all"
         >
           {isLoading ? (
-            <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
+            <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin" />
           ) : (
             <Sparkles strokeWidth={1.5} className="w-3 h-3" />
           )}
@@ -690,7 +690,7 @@ function AIExplainTab({
       <div className="flex-1 overflow-auto p-4">
         {error && (
           <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/5 border border-red-500/10 text-red-400 text-xs mb-4">
-            <AlertTriangle strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
+            <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
             {error}
           </div>
         )}
@@ -699,14 +699,14 @@ function AIExplainTab({
 
         {isLoading && !aiResponse && (
           <div className="flex items-center gap-3 text-fg-muted text-xs">
-            <Loader2 strokeWidth={1.5} className="w-3.5 h-3.5 animate-spin text-purple-400" />
+            <LoaderCircle strokeWidth={1.5} className="w-3.5 h-3.5 animate-spin text-purple-400" />
             <span>Analyzing execution plan...</span>
           </div>
         )}
 
         {isLoading && aiResponse && (
           <div className="flex items-center gap-2 mt-2 text-fg-subtle text-xs">
-            <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
+            <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin" />
             <span>Still generating...</span>
           </div>
         )}
@@ -830,7 +830,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                 {tab === "insights" && <Zap strokeWidth={1.5} className="w-3 h-3 inline mr-1" />}
                 {tab === "ai" && <Sparkles strokeWidth={1.5} className="w-3 h-3 inline mr-1" />}
                 {tab === "tree" && <Layers strokeWidth={1.5} className="w-3 h-3 inline mr-1" />}
-                {tab === "raw" && <FileJson strokeWidth={1.5} className="w-3 h-3 inline mr-1" />}
+                {tab === "raw" && <FileBraces strokeWidth={1.5} className="w-3 h-3 inline mr-1" />}
                 {tab === "ai" ? "AI Explain" : tab}
               </button>
             ))}
@@ -879,9 +879,9 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
                       )}
                     >
                       {warning.type === "critical" ? (
-                        <AlertTriangle strokeWidth={1.5} className="w-3 h-3 text-red-400" />
+                        <TriangleAlert strokeWidth={1.5} className="w-3 h-3 text-red-400" />
                       ) : warning.type === "warning" ? (
-                        <AlertTriangle strokeWidth={1.5} className="w-3 h-3 text-amber-400" />
+                        <TriangleAlert strokeWidth={1.5} className="w-3 h-3 text-amber-400" />
                       ) : (
                         <Info strokeWidth={1.5} className="w-3 h-3 text-blue-400" />
                       )}
@@ -910,7 +910,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
             {analysis && analysis.warnings.length === 0 && (
               <div className="flex items-center gap-3 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/10">
                 <div className="p-1 rounded bg-emerald-500/10">
-                  <CheckCircle2 strokeWidth={1.5} className="w-3 h-3 text-emerald-400" />
+                  <CircleCheck strokeWidth={1.5} className="w-3 h-3 text-emerald-400" />
                 </div>
                 <div>
                   <h4 className="text-xs font-medium text-emerald-300">Query looks good</h4>

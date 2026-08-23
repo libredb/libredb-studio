@@ -103,6 +103,8 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       // (get/put/delete/prefix/range), so there is no `UPDATE ... SET` for the
       // inline row editor to emit (issue #269).
       supportsInlineRowEdit: false,
+      // The command grammar has no transaction verb.
+      supportsTransactions: false,
       // The embedded engine's catalog declares namespaces and columns, and nothing
       // that references another namespace. There is no foreign key to read (#414).
       declaresForeignKeys: false,
@@ -135,6 +137,9 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       vacuumGlobalLabel: "Compact",
       vacuumGlobalTitle: "Compact",
       vacuumGlobalDesc: "Not supported for LibreDB in this version.",
+      // `getSlowQueries()` answers `[]` unconditionally, so the monitoring Queries
+      // panel is ALWAYS empty here - and it used to name a PostgreSQL extension (#U12).
+      slowQueriesEmptyState: "LibreDB keeps no statistics about finished statements in this version.",
     };
   }
 

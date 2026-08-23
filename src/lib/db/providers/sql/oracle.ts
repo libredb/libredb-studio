@@ -226,6 +226,8 @@ export class OracleProvider extends SQLBaseProvider {
       supportsExplain: false,
       supportsConnectionString: true,
       supportsInlineRowEdit: true,
+      // Oracle is always in a transaction; the held connection commits or rolls back.
+      supportsTransactions: true,
       maintenanceOperations: ["analyze", "optimize", "kill"],
     };
   }
@@ -241,6 +243,10 @@ export class OracleProvider extends SQLBaseProvider {
       vacuumGlobalLabel: "Rebuild Indexes",
       vacuumGlobalTitle: "Rebuild All Indexes",
       vacuumGlobalDesc: "Rebuilds all indexes to reclaim space and improve performance.",
+      // `getSlowQueries()` reads V$SQL, and a user without SELECT on the V$ views gets
+      // `[]` from the swallowed failure. The panel used to name a PostgreSQL extension
+      // there (#U12); the grant is the thing an Oracle DBA can act on.
+      slowQueriesEmptyState: "Query stats come from V$SQL, which this user needs SELECT on to read.",
     };
   }
 

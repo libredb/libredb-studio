@@ -1735,6 +1735,9 @@ describe("PostgresProvider", () => {
       // `UPDATE t SET c = v WHERE pk = v` is core PostgreSQL DML — exactly the
       // statement shape the inline row editor builds (#269).
       expect(caps.supportsInlineRowEdit).toBe(true);
+      // BEGIN/COMMIT/ROLLBACK run over one held pool client here, so the toolbar's
+      // transaction trio and the sandbox toggle are offered (#U13).
+      expect(caps.supportsTransactions).toBe(true);
       // Inherited from the base capabilities: this engine declares foreign keys, so
       // an empty `foreignKeys` list is a fact about the schema or the role, never
       // about the engine (#414).
@@ -1743,6 +1746,27 @@ describe("PostgresProvider", () => {
       expect(caps.maintenanceOperations).toContain("analyze");
       expect(caps.maintenanceOperations).toContain("reindex");
       expect(caps.maintenanceOperations).toContain("kill");
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getLabels
+  // --------------------------------------------------------------------------
+
+  describe("getLabels()", () => {
+    // The Operations tab's global reindex card was hardcoded to exactly this wording
+    // for every engine. PostgreSQL is the engine it was written for - `runMaintenance`
+    // sends `REINDEX DATABASE` with no target - so declaring it here changes nothing
+    // on this provider and lets SQLite and Couchbase say what theirs does (#U6).
+    test("declares the global reindex wording the card used to hardcode", () => {
+      const labels = new PostgresProvider(makePgConfig()).getLabels();
+
+      expect(labels.reindexGlobalLabel).toBe("Run Reindex");
+      expect(labels.reindexGlobalTitle).toBe("Rebuild Indexes");
+      expect(labels.reindexGlobalDesc).toContain("REINDEX DATABASE");
+      // The rest of the vocabulary is still the base default, not a local copy.
+      expect(labels.entityName).toBe("Table");
+      expect(labels.analyzeGlobalLabel).toBe("Run Analyze");
     });
   });
 

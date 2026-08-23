@@ -55,7 +55,7 @@ import {
 } from "@/lib/data-masking";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { AlertTriangle, Database, Plus } from "lucide-react";
+import { TriangleAlert, Database, Plus } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -140,6 +140,28 @@ export default function Studio() {
         if (editing.editingEnabled) editing.handleDiscardChanges();
       }
     : undefined;
+
+  // The transaction trio and the sandbox toggle are offered only where the provider
+  // declares it holds a transaction session (#U13). The server's gate is
+  // `isTransactionProvider(provider)` — a runtime shape check no client can read — so
+  // both shells used to supply all four unconditionally and POST /api/db/transaction
+  // answered 400 "Transaction control is not supported for this database type"
+  // (measured 2026-08-19 on OpenSearch, for both begin and rollback). Unknown hides
+  // them, like the row-edit gate above: metadata is also null when
+  // /api/db/provider-meta fails.
+  //
+  // Supplied as one bundle because SANDBOX auto-rolls-back through the same route,
+  // and because QueryToolbar's contract is that the three arrive together or not at
+  // all.
+  const canRunTransactions = metadata?.capabilities.supportsTransactions === true;
+  const transactionHandlers = canRunTransactions
+    ? {
+        onBeginTransaction: () => txn.handleTransaction("begin"),
+        onCommitTransaction: () => txn.handleTransaction("commit"),
+        onRollbackTransaction: () => txn.handleTransaction("rollback"),
+        onTogglePlayground: () => txn.setPlaygroundMode(!txn.playgroundMode),
+      }
+    : {};
 
   // === Cross-hook orchestration: connection-change effect ===
   useEffect(() => {
@@ -428,10 +450,7 @@ export default function Studio() {
               onClearQuery={() => tabMgr.updateCurrentTab({ query: "" })}
               onExecuteQuery={() => queryExec.executeQuery()}
               onCancelQuery={() => queryExec.cancelQuery()}
-              onBeginTransaction={() => txn.handleTransaction("begin")}
-              onCommitTransaction={() => txn.handleTransaction("commit")}
-              onRollbackTransaction={() => txn.handleTransaction("rollback")}
-              onTogglePlayground={() => txn.setPlaygroundMode(!txn.playgroundMode)}
+              {...transactionHandlers}
               onToggleEditing={onToggleEditing}
               onImport={() => setIsImportModalOpen(true)}
               onExplain={
@@ -560,10 +579,7 @@ export default function Studio() {
                           onSaveQuery={() => setIsSaveQueryModalOpen(true)}
                           onExecuteQuery={() => queryExec.executeQuery()}
                           onCancelQuery={() => queryExec.cancelQuery()}
-                          onBeginTransaction={() => txn.handleTransaction("begin")}
-                          onCommitTransaction={() => txn.handleTransaction("commit")}
-                          onRollbackTransaction={() => txn.handleTransaction("rollback")}
-                          onTogglePlayground={() => txn.setPlaygroundMode(!txn.playgroundMode)}
+                          {...transactionHandlers}
                           onToggleEditing={onToggleEditing}
                           onImport={() => setIsImportModalOpen(true)}
                         />
@@ -770,7 +786,7 @@ export default function Studio() {
           <div className="px-6 pt-6 pb-4">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-red-500/10 flex items-center justify-center shrink-0">
-                <AlertTriangle strokeWidth={1.5} className="w-5 h-5 text-amber-400" />
+                <TriangleAlert strokeWidth={1.5} className="w-5 h-5 text-amber-400" />
               </div>
               <div className="flex-1 min-w-0">
                 <AlertDialogTitle className="text-[0.8125rem] font-medium text-fg mb-1">

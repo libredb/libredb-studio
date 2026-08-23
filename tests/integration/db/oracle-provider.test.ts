@@ -552,6 +552,8 @@ describe("OracleProvider", () => {
       // `UPDATE t SET c = v WHERE pk = v` is core Oracle DML — the shape the inline
       // row editor builds (#269).
       expect(caps.supportsInlineRowEdit).toBe(true);
+      // One held connection carries the transaction, so the trio is offered (#U13).
+      expect(caps.supportsTransactions).toBe(true);
       // Inherited from the base capabilities: this engine declares foreign keys, so
       // an empty `foreignKeys` list is a fact about the schema or the role, never
       // about the engine (#414).
@@ -567,6 +569,16 @@ describe("OracleProvider", () => {
     test("returns Gather Statistics as analyzeAction", () => {
       const labels = provider.getLabels();
       expect(labels.analyzeAction).toBe("Gather Statistics");
+    });
+
+    // Until #U12 the monitoring Queries panel told an Oracle DBA to install a
+    // PostgreSQL extension. `getSlowQueries()` reads V$SQL and swallows a failure into
+    // `[]`, so the grant on that view is what the sentence must name.
+    test("names V$SQL, not a Postgres extension, as where query stats come from", () => {
+      const { slowQueriesEmptyState } = provider.getLabels();
+
+      expect(slowQueriesEmptyState).toContain("V$SQL");
+      expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
     });
   });
 

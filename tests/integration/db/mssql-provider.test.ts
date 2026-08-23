@@ -582,6 +582,8 @@ describe("MSSQLProvider", () => {
       // `UPDATE t SET c = v WHERE pk = v` is core T-SQL DML — the shape the inline
       // row editor builds (#269).
       expect(caps.supportsInlineRowEdit).toBe(true);
+      // The mssql Transaction object over one held pool connection (#U13).
+      expect(caps.supportsTransactions).toBe(true);
       // Inherited from the base capabilities: this engine declares foreign keys, so
       // an empty `foreignKeys` list is a fact about the schema or the role, never
       // about the engine (#414).
@@ -597,6 +599,17 @@ describe("MSSQLProvider", () => {
     test("returns Update Statistics as analyzeAction", () => {
       const labels = provider.getLabels();
       expect(labels.analyzeAction).toBe("Update Statistics");
+    });
+
+    // Until #U12 the monitoring Queries panel told a SQL Server DBA to install a
+    // PostgreSQL extension. `getSlowQueries()` reads sys.dm_exec_query_stats and
+    // swallows a failure into `[]`, so the permission on that DMV is what it must name.
+    test("names sys.dm_exec_query_stats, not a Postgres extension, as the source of query stats", () => {
+      const { slowQueriesEmptyState } = provider.getLabels();
+
+      expect(slowQueriesEmptyState).toContain("sys.dm_exec_query_stats");
+      expect(slowQueriesEmptyState).toContain("VIEW SERVER STATE");
+      expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
     });
   });
 

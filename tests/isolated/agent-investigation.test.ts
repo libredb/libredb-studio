@@ -219,7 +219,7 @@ const kindsOf = (events: readonly AgentRunEvent[]): string[] => events.map((even
 const CONTEXT_READS = 3;
 
 /** The three statements one context capture sends, in order. */
-const CATALOG_READS = ["information_schema.columns", "information_schema.table_constraints", "pg_index"] as const;
+const CATALOG_READS = ["information_schema.columns", "pg_constraint", "pg_index"] as const;
 
 /**
  * The statements the MODEL's tool calls sent, after the drive's own catalog reads.
@@ -251,12 +251,7 @@ const modelStatements = (spy: ReturnType<typeof mock>, captured = CONTEXT_READS)
  * Every needle is a fragment only a server-composed catalog or statistics read
  * contains, on this suite's PostgreSQL connection.
  */
-const GROUNDING_READ_MARKERS = [
-  "information_schema.columns",
-  "information_schema.table_constraints",
-  "pg_index",
-  "pg_stats",
-] as const;
+const GROUNDING_READ_MARKERS = ["information_schema.columns", "pg_constraint", "pg_index", "pg_stats"] as const;
 
 const userStatements = (spy: ReturnType<typeof mock>): string[] =>
   spy.mock.calls
@@ -844,7 +839,7 @@ describe("planning mode runs no statement of the user's", () => {
           rowCount: 2,
         });
       }
-      if (sql.includes("table_constraints")) {
+      if (sql.includes("pg_constraint")) {
         return queryResult({
           rows: [
             {
@@ -900,8 +895,8 @@ describe("planning mode runs no statement of the user's", () => {
     const laterCatalogReads = b.queryReadOnly.mock.calls
       .slice(catalogReadsSoFar)
       // Matched on the catalog reads' own FROM clauses: the statistics statement names
-      // `information_schema` too, in a NOT IN list.
-      .filter(([sql]) => typeof sql === "string" && /information_schema\.(columns|table_constraints)/.test(sql));
+      // `information_schema` too, in a NOT IN list, and so does the relation read.
+      .filter(([sql]) => typeof sql === "string" && /information_schema\.columns|FROM pg_constraint/.test(sql));
     expect(laterCatalogReads).toEqual([]);
   });
 
@@ -1138,7 +1133,7 @@ describe("planning mode runs no statement of the user's", () => {
           rowCount: 3,
         });
       }
-      if (sql.includes("table_constraints")) {
+      if (sql.includes("pg_constraint")) {
         return queryResult({
           rows: [
             {
@@ -1451,17 +1446,16 @@ describe("planning mode runs no statement of the user's", () => {
       });
 
       /*
-        The relations block's empty sentence hedged between "that may be how the schema
-        is" and "the keys may be enforced by the application" — two claims about a
-        database that COULD declare a foreign key and did not. This engine cannot, and
-        the third sentence says so instead of inviting a reader to wonder about a schema
-        decision nobody made.
+        An engine that declares no foreign keys and a read that saw none are different
+        facts, and the block says which one it has. On an engine with no such construct
+        the other sentence — the one about what this reading was allowed to see — would
+        report a read limit where there was nothing to read, so it must not appear.
       */
       test("an engine that cannot declare a foreign key is not described as one that declared none", async () => {
         const { transcript } = await planOnProvider("json");
 
         expect(transcript).toContain("this engine does not declare foreign keys at all");
-        expect(transcript).not.toContain("That may be how the schema is");
+        expect(transcript).not.toContain("not the same as there being none");
       });
 
       /*
@@ -1780,8 +1774,8 @@ describe("planning mode runs no statement of the user's", () => {
      *
      * The relations half was missing when this fixture was first written, and the test
      * below passed for the wrong reason: with no foreign keys, `renderErDiagram`
-     * short-circuits to its "no table declares a foreign key" branch and its notice is
-     * never rendered at all — so an assertion that no tool is named certified a property
+     * short-circuits to its empty-read branch and its omission notice is never rendered
+     * at all — so an assertion that no tool is named certified a property
      * the code did not have. Found by review on #411.
      */
     const wideCatalog = async (sql: string): Promise<QueryResult> => {
@@ -1798,7 +1792,7 @@ describe("planning mode runs no statement of the user's", () => {
           rowCount: 300,
         });
       }
-      if (sql.includes("information_schema.table_constraints")) {
+      if (sql.includes("pg_constraint")) {
         return queryResult({
           rows: Array.from({ length: 299 }, (_, index) => ({
             table_schema: "public",
@@ -2286,7 +2280,7 @@ describe("planning mode runs no statement of the user's", () => {
     "Apply to editor" control reads SQL out of a fence in the browser — it works when
     the model fences its SQL and silently offers nothing when it does not — so plan
     mode's entire deliverable was recorded nowhere and could be checked by nothing
-    (`docs/BACKLOG.md` B44).
+    at all.
 
     What is asserted here is the wiring and, as carefully, its limits: an unknown
     table is RECORDED and the statement is still offered, a write is MARKED and still
@@ -3519,7 +3513,7 @@ describe("the run reads its schema context through the catalog tool", () => {
     // Server-composed, every one of them: nothing here takes a statement from a
     // model, and each went through the same acquisition seam as any tool call.
     expect(catalogStatements(b)[0]).toContain("information_schema.columns");
-    expect(catalogStatements(b)[1]).toContain("information_schema.table_constraints");
+    expect(catalogStatements(b)[1]).toContain("pg_constraint");
     expect(catalogStatements(b)[2]).toContain("pg_index");
     expect(b.acquireProvider).toHaveBeenCalledTimes(CONTEXT_READS);
     expect(kindsOf(await eventsOf(b.store, run.runId))[1]).toBe("context-captured");

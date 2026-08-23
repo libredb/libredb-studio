@@ -355,6 +355,7 @@ validates that the target parses as an integer connection id.
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core MySQL DML |
+| `supportsTransactions` | `true` — the transaction runs on one held connection through the driver's own `beginTransaction()`, so the trio and the SANDBOX toggle are offered (#U13) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; InnoDB declares them, so an empty list means this schema (or this role) has none, not the engine |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze', 'optimize', 'check', 'kill']` |
@@ -364,9 +365,17 @@ validates that the target parses as an integer connection id.
 
 ### Labels
 
-MySQL uses the default SQL `getLabels()` from `BaseDatabaseProvider` (entity → *Table*, *Select Top
-50*, etc.); it is not overridden. (The default `analyzeAction`/`vacuumAction` wording is generic SQL
-phrasing; MySQL's actual maintenance verbs are optimize/check/analyze.)
+MySQL keeps the default SQL `getLabels()` from `BaseDatabaseProvider` (entity → *Table*, *Select Top
+50*, etc.) for everything a person clicks. (The default `analyzeAction`/`vacuumAction` wording is
+generic SQL phrasing; MySQL's actual maintenance verbs are optimize/check/analyze.)
+
+**One field is overridden** ([mysql.ts:346](../../src/lib/db/providers/sql/mysql.ts)):
+`slowQueriesEmptyState` → *"Query stats come from
+performance_schema.events_statements_summary_by_digest - enable the Performance Schema to see them."*
+The monitoring Queries panel's empty state was hardcoded to PostgreSQL's `pg_stat_statements` advice
+on every engine (`docs/BACKLOG.md` U12) — an extension MySQL does not have under any name, while the
+digest table this provider actually reads ([§8](#8-monitoring--health)) is a server switch a DBA can
+act on.
 
 ---
 

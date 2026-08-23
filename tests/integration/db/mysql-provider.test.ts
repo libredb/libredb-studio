@@ -485,6 +485,8 @@ describe("MySQLProvider", () => {
       // `UPDATE t SET c = v WHERE pk = v` is core MySQL DML — the shape the inline
       // row editor builds (#269).
       expect(caps.supportsInlineRowEdit).toBe(true);
+      // One held connection carries the transaction, so the trio is offered (#U13).
+      expect(caps.supportsTransactions).toBe(true);
       // Inherited from the base capabilities: this engine declares foreign keys, so
       // an empty `foreignKeys` list is a fact about the schema or the role, never
       // about the engine (#414).
@@ -493,6 +495,27 @@ describe("MySQLProvider", () => {
       expect(caps.maintenanceOperations).toContain("optimize");
       expect(caps.maintenanceOperations).toContain("check");
       expect(caps.maintenanceOperations).toContain("kill");
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Labels
+  // --------------------------------------------------------------------------
+
+  describe("getLabels()", () => {
+    // The only label this provider declares. Until #U12 the monitoring Queries panel
+    // told a MySQL operator to install a PostgreSQL extension; `getSlowQueries()` reads
+    // `performance_schema.events_statements_summary_by_digest` and swallows a failure
+    // into `[]`, so the Performance Schema is the switch the sentence must name.
+    test("names the Performance Schema, not a Postgres extension, as the source of query stats", () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      const { slowQueriesEmptyState, entityName } = provider.getLabels();
+
+      expect(slowQueriesEmptyState).toContain("performance_schema.events_statements_summary_by_digest");
+      expect(slowQueriesEmptyState).toContain("Performance Schema");
+      expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+      // Everything else is still the inherited SQL wording, which is right for MySQL.
+      expect(entityName).toBe("Table");
     });
   });
 

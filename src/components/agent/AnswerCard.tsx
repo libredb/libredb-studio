@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Loader2, PencilLine, RotateCcw, Square, TriangleAlert } from "lucide-react";
+import { LoaderCircle, PencilLine, RotateCcw, Square, TriangleAlert } from "lucide-react";
 import { CopyButton } from "@/components/copy-button";
 import { renderProse } from "@/components/rich-text";
 import type { AgentChartSpec, AgentRunStatus } from "@/lib/agent/types";
@@ -811,7 +811,7 @@ function RunningAnswer({
   return (
     <div data-testid="agent-answer-running" className="mt-1.5">
       <p data-testid="agent-answer-step" className="flex items-center gap-1.5 text-xs text-fg-secondary">
-        <Loader2 strokeWidth={1.5} className="w-3 h-3 shrink-0 animate-spin" aria-hidden="true" />
+        <LoaderCircle strokeWidth={1.5} className="w-3 h-3 shrink-0 animate-spin" aria-hidden="true" />
         {current?.headline}
       </p>
       {current?.detail !== undefined && <p className="mt-0.5 pl-4.5 text-[0.625rem] text-fg-muted">{current.detail}</p>}

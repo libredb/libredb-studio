@@ -48,6 +48,8 @@ import type { DatabaseConnection } from "@/lib/db/types";
 // Shared with the Druid transport, which is in the same position; ClickHouse escapes
 // it server-side instead (`output_format_json_quote_64bit_integers`, #264).
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { readStatementEnd } from "@/lib/sql/statement-end";
 import {
   type TrinoDialect,
   type TrinoErrorCategory,
@@ -95,13 +97,11 @@ const QUERY_PATH = "/v1/query";
 /**
  * The statement travels as its own text, with no JSON envelope around it.
  *
- * It also travels VERBATIM: nothing here edits it, and the endpoint takes exactly
- * one statement with no terminator. Measured on 476, `SELECT 1;` is a
- * `SYNTAX_ERROR` (`mismatched input ';'`) where `SELECT 1` succeeds - so a
- * trailing semicolon is the caller's to remove, and every caller inside this
- * product has already had it removed by `splitStatements()`, which consumes it as
- * the delimiter. See `docs/BACKLOG.md` D5 for why the seam does not strip one
- * itself and what would have to be true to change that.
+ * The endpoint takes exactly one statement with no terminator, and this file is
+ * what makes that true of the text it sends: `withoutTerminator` below drops a
+ * single trailing semicolon, because measured on 476 `SELECT 1;` is a
+ * `SYNTAX_ERROR` (`line 1:9: mismatched input ';'`) where `SELECT 1` succeeds.
+ * Nothing else here edits the statement.
  */
 const SQL_CONTENT_TYPE = "text/plain";
 const JSON_ACCEPT = "application/json";
@@ -349,6 +349,41 @@ function parseJson(text: string): unknown {
   } catch {
     return null;
   }
+}
+
+/**
+ * Exactly the trivia this may drop: whitespace around ONE semicolon.
+ *
+ * Trino's grammar has no statement terminator, so a semicolon a caller wrote out
+ * of habit is a syntax error rather than a no-op - and this is the second Trino
+ * quirk the provider absorbs for a caller rather than reporting. The first is
+ * `prepareQuery()` in `index.ts`, which transposes `LIMIT n OFFSET m` into the one
+ * order the grammar has; absorbing that and not this would leave a library
+ * consumer calling `query("SELECT 1;")` with an engine-specific failure and no hint
+ * that the semicolon caused it (`docs/BACKLOG.md` D5).
+ */
+const LONE_TERMINATOR = /^\s*;\s*$/;
+
+/**
+ * The statement without the terminator Trino refuses, or the statement unchanged.
+ *
+ * Deliberately NOT a splitter. The endpoint takes one statement, so
+ * `SELECT 1; SELECT 2` has to keep failing the way the engine already fails it -
+ * and it does, because a semicolon with code after it belongs to the statement's
+ * own text as `readStatementEnd` reads it, leaving no trailing run to match.
+ *
+ * `readStatementEnd` and not `replace(/;\s*$/, "")` for the reason that module
+ * exists (#280): it scans spans, so a `;` inside a literal or inside a trailing
+ * comment is not the end of anything. What it reports is the whole trailing run,
+ * and only a run that is exactly one semicolon is dropped - which is what leaves a
+ * doubled terminator (a second, empty statement) and a comment written after the
+ * terminator alone rather than guessed at. `rewritable` is that module's own answer
+ * to whether the end may be CUT: it is false where a span never closes, and text
+ * nobody can parse is text nobody may edit.
+ */
+function withoutTerminator(sql: string, grammar: SqlGrammar): string {
+  const { end, rewritable } = readStatementEnd(sql, grammar);
+  return rewritable && LONE_TERMINATOR.test(sql.slice(end)) ? sql.slice(0, end) : sql;
 }
 
 /** Bracket a bare IPv6 literal, which is otherwise not a legal URL authority. */
@@ -811,7 +846,13 @@ export class TrinoHttpTransport implements TrinoTransport {
   private async submit(sql: string, options: TrinoQueryOptions): Promise<Record<string, unknown>> {
     return await this.request(
       `${this.origin}${STATEMENT_PATH}`,
-      { method: "POST", headers: this.submitHeaders(options), body: sql },
+      // The grammar comes from the DESCRIPTOR's type-id, like everything else that
+      // differs between the products this transport can speak to.
+      {
+        method: "POST",
+        headers: this.submitHeaders(options),
+        body: withoutTerminator(sql, resolveSqlGrammar(this.dialect.id)),
+      },
       options.signal,
     );
   }

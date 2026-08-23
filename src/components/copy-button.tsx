@@ -66,8 +66,15 @@ function copyByEditingCommand(text: string): boolean {
   return copied;
 }
 
-/** The async clipboard where there is one, the editing command where there is not. */
-async function writeToClipboard(text: string): Promise<boolean> {
+/**
+ * The async clipboard where there is one, the editing command where there is not.
+ *
+ * Exported for the sites that cannot be a `CopyButton` (B43): a menu item that must
+ * keep its menu-item semantics, and a toolbar button whose text lives in an editor ref
+ * rather than in React state, so there is no `text` prop to hand over. Everything else
+ * uses the component above.
+ */
+export async function writeToClipboard(text: string): Promise<boolean> {
   // Typed as always present by the DOM lib, and absent in every insecure context, so
   // the narrowing is the honest reading rather than defensive noise.
   const clipboard = navigator.clipboard as Clipboard | undefined;

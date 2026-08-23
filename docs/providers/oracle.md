@@ -414,6 +414,7 @@ inside `DBMS_STATS` arguments / `ALTER` identifiers that can't take bind paramet
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core Oracle DML |
+| `supportsTransactions` | `true` — Oracle is always in a transaction and the held connection commits or rolls back, so the trio and the SANDBOX toggle are offered (#U13) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; read from `ALL_CONSTRAINTS`, so an empty list is about the schema or the owner, not the engine |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze', 'optimize', 'kill']` |
@@ -426,6 +427,12 @@ inside `DBMS_STATS` arguments / `ALTER` identifiers that can't take bind paramet
 Oracle **overrides** the default SQL labels so the UI uses Oracle vocabulary:
 `analyzeAction` → *"Gather Statistics"*, `vacuumAction` → *"Rebuild Indexes"*, and the matching
 global labels (*"Gather Stats"*, *"Rebuild All Indexes"*).
+
+`slowQueriesEmptyState` → *"Query stats come from V$SQL, which this user needs SELECT on to read."*
+The monitoring Queries panel's empty state was hardcoded to PostgreSQL's `pg_stat_statements` advice
+on every engine (`docs/BACKLOG.md` U12); `getSlowQueries()` here reads `V$SQL`
+([§8](#8-monitoring--health)) and returns `[]` when that read is refused, so the grant is the thing a
+DBA can act on.
 
 ---
 

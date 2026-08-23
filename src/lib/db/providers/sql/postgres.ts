@@ -15,6 +15,7 @@ import {
   type MaintenanceResult,
   type ProviderOptions,
   type ProviderCapabilities,
+  type ProviderLabels,
   type ProviderExecutionContext,
   type ReadOnlyStatementBudget,
   type SlowQuery,
@@ -626,7 +627,25 @@ export class PostgresProvider extends SQLBaseProvider {
       explainFormat: "postgres-json",
       supportsConnectionString: true,
       supportsInlineRowEdit: true,
+      // BEGIN / COMMIT / ROLLBACK over one held pool client (`beginTransaction()` below).
+      supportsTransactions: true,
       maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
+    };
+  }
+
+  /**
+   * Only the global reindex triad; every other label is the SQL default and right.
+   *
+   * The Operations tab's reindex card was hardcoded to this wording for every engine
+   * (#U6), so declaring it here changes nothing on PostgreSQL and lets the two other
+   * providers that declare `reindex` say what theirs does instead.
+   */
+  public override getLabels(): ProviderLabels {
+    return {
+      ...super.getLabels(),
+      reindexGlobalLabel: "Run Reindex",
+      reindexGlobalTitle: "Rebuild Indexes",
+      reindexGlobalDesc: "Runs REINDEX DATABASE, reconstructing every index in the database.",
     };
   }
 

@@ -114,6 +114,7 @@
 ### 15. Professional Data Export
 *   **Format Versatility:** Instantly export query result sets to CSV, JSON, SQL `INSERT` statements, or a generated `CREATE TABLE` DDL.
 *   **Developer-Ready:** Clean data output optimized for external analysis, reporting, or database migrations.
+*   **Formula-Safe CSV:** A cell whose value starts with `=`, `+`, `-`, `@`, a tab or a carriage return is written with a leading apostrophe, so a spreadsheet shows it as text instead of evaluating it when the file is opened; this is unconditional and has no setting, and a plain number such as `-12.5` is left exactly as it is.
 
 ### 16. Authentication & Identity Management
 *   **Secure User Onboarding:** Full-featured login/logout flows and session management via Next.js middleware and API routes.

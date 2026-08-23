@@ -16,7 +16,7 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
-import { ArrowUpDown, ArrowUp, ArrowDown, Eye, Filter, Lock } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, Eye, Funnel, Lock } from "lucide-react";
 import {
   type MaskingConfig,
   detectSensitiveColumnsFromConfig,
@@ -279,7 +279,7 @@ export function ResultsGrid({
               }}
               title="Filter column"
             >
-              <Filter strokeWidth={1.5} className="w-3 h-3" />
+              <Funnel strokeWidth={1.5} className="w-3 h-3" />
             </button>
             {activeFilterCol === field && (
               <div

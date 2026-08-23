@@ -783,6 +783,7 @@ target names none), so a hostile or oddly-named table cannot break out of the ge
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — a bare `UPDATE ... SET` is code `48` `NOT_IMPLEMENTED` here ([§13](#13-known-limitations--future-work)) |
+| `supportsTransactions` | `false` — reached over stateless HTTP, and ClickHouse has no general transaction to wrap anyway, so the trio and SANDBOX are not offered (#U13) |
 | `declaresForeignKeys` | `false` — `REFERENCES` parses in a column definition and enforces nothing, and `system.*` holds no constraint catalog to read one back from |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['optimize', 'analyze', 'kill']` |
@@ -802,6 +803,12 @@ not exist: `analyzeAction`/`analyzeGlobalLabel`/`analyzeGlobalTitle` → *"Table
 *"Merge Parts"*. The card descriptions name the substituted operation explicitly (`OPTIMIZE TABLE
 ... FINAL`) rather than reusing generic wording that would describe a command ClickHouse does not
 have.
+
+One more label, and it is about the monitoring tab rather than maintenance:
+`slowQueriesEmptyState` → *"Query stats come from system.query_log, which records nothing while
+log_queries is off."* The Queries panel's empty state was hardcoded to PostgreSQL's
+`pg_stat_statements` advice for every engine (`docs/BACKLOG.md` U12), and `system.query_log`
+([§7](#7-monitoring--health)) is what an operator here can actually act on.
 
 ---
 

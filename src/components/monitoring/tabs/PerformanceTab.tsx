@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Activity, Gauge, Zap, AlertTriangle } from "lucide-react";
+import { Activity, Gauge, Zap, TriangleAlert } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -223,7 +223,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
         <Card className={`p-0 border-2 transition-colors ${getThresholdColor(deadlockThreshold)}`}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Deadlocks</CardTitle>
-            <AlertTriangle className={`h-3 w-3 sm:h-4 sm:w-4 ${deadlockIconClass(deadlocks)}`} />
+            <TriangleAlert className={`h-3 w-3 sm:h-4 sm:w-4 ${deadlockIconClass(deadlocks)}`} />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
             {deadlocks === undefined ? (
@@ -299,7 +299,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
                 nothing to advise about a cache nobody measured. */}
             {cacheHitRatio !== undefined && cacheHitRatio < 90 && (
               <div className="flex items-start gap-2 p-2 bg-yellow-500/10 rounded-md">
-                <AlertTriangle
+                <TriangleAlert
                   strokeWidth={1.5}
                   className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500 mt-0.5 flex-shrink-0"
                 />
@@ -311,7 +311,7 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
             )}
             {(performance?.deadlocks ?? 0) > 0 && (
               <div className="flex items-start gap-2 p-2 bg-red-500/10 rounded-md">
-                <AlertTriangle strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-red-500 mt-0.5 flex-shrink-0" />
+                <TriangleAlert strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-red-500 mt-0.5 flex-shrink-0" />
                 <div>
                   <p className="text-xs sm:text-xs font-medium">Deadlocks</p>
                   <p className="text-xs sm:text-xs text-muted-foreground hidden sm:block">Review lock ordering</p>

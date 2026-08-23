@@ -4,9 +4,23 @@ import "../helpers/mock-navigation";
 
 import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { CodeGenerator } from "@/components/CodeGenerator";
 import type { TableSchema } from "@/lib/types";
+
+// The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
+// `navigator.clipboard` is what plain HTTP off loopback actually hands the page, and an
+// editing command that answers false is what a browser that refuses the copy does.
+const originalClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator, "clipboard");
+const originalExecCommand = Object.getOwnPropertyDescriptor(globalThis.document, "execCommand");
+
+function setClipboard(clipboard: { writeText: (text: string) => Promise<void> } | undefined): void {
+  Object.defineProperty(globalThis.navigator, "clipboard", { value: clipboard, configurable: true });
+}
+
+function setExecCommand(execCommand: ((command: string) => boolean) | undefined): void {
+  Object.defineProperty(globalThis.document, "execCommand", { value: execCommand, configurable: true });
+}
 
 const schema: TableSchema = {
   name: "users",
@@ -23,6 +37,10 @@ const schema: TableSchema = {
 describe("CodeGenerator", () => {
   afterEach(() => {
     cleanup();
+    if (originalClipboard === undefined) setClipboard(undefined);
+    else Object.defineProperty(globalThis.navigator, "clipboard", originalClipboard);
+    if (originalExecCommand === undefined) setExecCommand(undefined);
+    else Object.defineProperty(globalThis.document, "execCommand", originalExecCommand);
   });
 
   test("does not render when isOpen is false", () => {
@@ -55,13 +73,28 @@ describe("CodeGenerator", () => {
     const writeText = mock(async (t: string) => {
       void t;
     });
-    Object.defineProperty(globalThis.navigator, "clipboard", { value: { writeText }, configurable: true });
+    setClipboard({ writeText });
 
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
     );
-    fireEvent.click(queryByText("Copy")!);
+    fireEvent.click(getByTestId("code-generator-copy"));
     expect(writeText).toHaveBeenCalledTimes(1);
+  });
+
+  // B43: the label used to flip in the same statement that started the write, so on the
+  // plain-HTTP channels this product ships on it read "Copied!" over an empty clipboard.
+  test("does not claim a copy when both write paths refuse", async () => {
+    setClipboard(undefined);
+    setExecCommand(() => false);
+
+    const { getByTestId } = render(
+      <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
+    );
+    fireEvent.click(getByTestId("code-generator-copy"));
+
+    await waitFor(() => expect(getByTestId("code-generator-copy").textContent).toContain("Copy failed"));
+    expect(getByTestId("code-generator-copy").textContent).not.toContain("Copied");
   });
 
   test("close button fires onClose", () => {
@@ -155,17 +188,17 @@ describe("CodeGenerator", () => {
     expect(queryByText(/go format/)).not.toBeNull();
   });
 
-  test("copy button shows Copied! after click", () => {
+  test("copy button reports the copy once the write has reported one", async () => {
     const writeText = mock(async (t: string) => {
       void t;
     });
-    Object.defineProperty(globalThis.navigator, "clipboard", { value: { writeText }, configurable: true });
+    setClipboard({ writeText });
 
-    const { queryByText } = render(
+    const { getByTestId } = render(
       <CodeGenerator isOpen onClose={mock(() => {})} tableName="users" tableSchema={schema} />,
     );
-    fireEvent.click(queryByText("Copy")!);
-    expect(queryByText("Copied!")).not.toBeNull();
+    fireEvent.click(getByTestId("code-generator-copy"));
+    await waitFor(() => expect(getByTestId("code-generator-copy").textContent).toContain("Copied"));
   });
 
   test("dropdown closes after selecting language", () => {

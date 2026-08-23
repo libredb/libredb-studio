@@ -27,8 +27,8 @@ import {
   Wrench,
   Shield,
   ArrowRight,
-  CheckCircle2,
-  XCircle,
+  CircleCheck,
+  CircleX,
   Link2,
   HardDrive,
   Sparkles,
@@ -989,9 +989,9 @@ function AnalyticsSection({
                     </div>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       {item.status === "success" ? (
-                        <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                        <CircleCheck className="w-3 h-3 text-emerald-500" />
                       ) : (
-                        <XCircle className="w-3 h-3 text-red-500" />
+                        <CircleX className="w-3 h-3 text-red-500" />
                       )}
                       <span className="text-xs text-fg-subtle whitespace-nowrap">{formatRelativeTime(item.time)}</span>
                     </div>

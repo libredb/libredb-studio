@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import { ShieldAlert, ShieldCheck, AlertTriangle, Loader2, Play, X } from "lucide-react";
+import { ShieldAlert, ShieldCheck, TriangleAlert, LoaderCircle, Play, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
@@ -66,7 +66,7 @@ const RISK_CONFIG = {
     color: "text-amber-400",
     bg: "bg-amber-500/10",
     border: "border-amber-500/20",
-    icon: AlertTriangle,
+    icon: TriangleAlert,
     label: "Medium Risk",
   },
   high: {
@@ -230,7 +230,7 @@ export function QuerySafetyDialog({
           */}
           {unreadableRun && (
             <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
-              <AlertTriangle strokeWidth={1.5} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-400" />
+              <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-400" />
               <div>
                 <span className="text-xs font-medium text-amber-400">Part of this statement could not be read</span>
                 <p className="text-xs text-fg-tertiary mt-0.5">
@@ -244,7 +244,7 @@ export function QuerySafetyDialog({
 
           {isAnalyzing && (
             <div className="flex items-center justify-center gap-2 py-8 text-fg-muted">
-              <Loader2 strokeWidth={1.5} className="w-5 h-5 animate-spin" />
+              <LoaderCircle strokeWidth={1.5} className="w-5 h-5 animate-spin" />
               <span className="text-xs">Analyzing query safety...</span>
             </div>
           )}

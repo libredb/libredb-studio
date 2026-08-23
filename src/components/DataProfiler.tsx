@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { Loader2, BarChart3, X, Hash, AlertCircle, Sparkles, Lock } from "lucide-react";
+import { LoaderCircle, ChartColumn, X, Hash, CircleAlert, Sparkles, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TableSchema, DatabaseConnection } from "@/lib/types";
 import { detectSensitiveColumns, maskValue } from "@/lib/data-masking";
@@ -74,6 +74,34 @@ export function DataProfiler({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, tableName]);
+
+  /*
+    Escape closes the modal.
+
+    U4: `/api/db/profile` can fail for any provider (#427 measured it on Redis,
+    where the route answered 400 for every key-prefix row), and the card that
+    failure renders was a dead end - this shell is hand-rolled rather than a
+    `ui/dialog`, so nothing bound Escape for it and the header control was the only
+    exit. Swapping the shell for the Radix primitive would bring Escape along, but
+    it also portals the card out of the subtree `[data-studio-workspace]` styles by
+    descendant selector, and re-homing the embedded surface's chrome is a larger
+    change than a dismiss fix should make.
+
+    Registered on `document`, following CommandPalette's shortcut effect
+    (src/components/CommandPalette.tsx:79): the card takes no focus of its own when
+    it opens, so a handler on the card would never see the key. Bound only while
+    open, so a closed profiler - of which the tree holds one per surface - is not a
+    listener that swallows Escape from whatever else is on screen.
+  */
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
 
   const fetchProfile = async () => {
     if (!connection || !tableSchema) return;
@@ -171,13 +199,24 @@ export function DataProfiler({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="bg-overlay border border-hairline-strong rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-hairline">
-          <div className="flex items-center gap-2">
-            <BarChart3 strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="text-xs font-medium text-fg">Data Profiler</span>
-            <span className="text-xs text-fg-muted font-mono">{tableName}</span>
+        {/*
+          `shrink-0` and `relative z-10`, and the title row `min-w-0` with the table
+          name truncating: the card is `overflow-hidden`, so a header that shrinks or
+          overflows takes its close control out of reach along with it - and the names
+          that overflow it are exactly the ones the profile route fails on (a Redis key
+          prefix is a whole glob, not an identifier).
+        */}
+        <div className="relative z-10 shrink-0 flex items-center justify-between gap-2 px-5 py-3 border-b border-hairline">
+          <div className="flex min-w-0 items-center gap-2">
+            <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0 text-cyan-400" />
+            <span className="text-xs font-medium text-fg shrink-0">Data Profiler</span>
+            <span className="text-xs text-fg-muted font-mono truncate">{tableName}</span>
           </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-fill text-fg-muted">
+          <button
+            onClick={onClose}
+            aria-label="Close data profiler"
+            className="shrink-0 p-1 rounded hover:bg-fill text-fg-muted"
+          >
             <X strokeWidth={1.5} className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -186,14 +225,14 @@ export function DataProfiler({
         <div className="flex-1 overflow-auto p-5 space-y-4">
           {isLoading && (
             <div className="flex items-center justify-center gap-2 py-12 text-fg-muted">
-              <Loader2 strokeWidth={1.5} className="w-5 h-5 animate-spin" />
+              <LoaderCircle strokeWidth={1.5} className="w-5 h-5 animate-spin" />
               <span className="text-xs">Profiling {tableName}...</span>
             </div>
           )}
 
           {error && (
             <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-400 flex items-center gap-2">
-              <AlertCircle strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
+              <CircleAlert strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
               {error}
             </div>
           )}
@@ -335,7 +374,7 @@ export function DataProfiler({
                   <div className="flex items-center gap-2 mb-2">
                     <Sparkles strokeWidth={1.5} className="w-3.5 h-3.5 text-cyan-400" />
                     <span className="text-xs font-medium text-cyan-400">AI Analysis</span>
-                    {isAiLoading && <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin text-cyan-400" />}
+                    {isAiLoading && <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin text-cyan-400" />}
                   </div>
                   {aiSummary && (
                     <div className="text-xs text-fg-tertiary leading-relaxed whitespace-pre-wrap">{aiSummary}</div>

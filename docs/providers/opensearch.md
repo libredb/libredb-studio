@@ -930,6 +930,7 @@ difference — `OFFSET` — has no field in `ProviderCapabilities` to declare it
 | `supportsExternalQueryLimiting` | `true` | **Both** limiter forms are correct here, `LIMIT n` and `LIMIT n OFFSET m` |
 | `supportsCreateTable` | **`false`** | Not in the grammar ([§5.6](#56-this-grammar-has-delete-and-it-is-off)) |
 | `supportsInlineRowEdit` | **`false`** | `UPDATE` is not in the grammar, so the editor's statement could only ever produce an error (#269) |
+| `supportsTransactions` | **`false`** | `BEGIN` is not in the grammar and the surface is stateless HTTP. Measured 2026-08-19 on OpenSearch 3.8.0: `POST /api/db/transaction` answered HTTP 400, *"Transaction control is not supported for this database type"*, for both `begin` and `rollback` — the measurement #U13 came from |
 | `declaresForeignKeys` | **`false`** | The engine has no such constraint in its model, so the empty `foreignKeys` means "impossible here" rather than "none declared, or none visible to this role" — the distinction #414 was about |
 | `supportsMaintenance` | **`false`** | Nothing in `MaintenanceType` is SQL-reachable ([§8](#8-maintenance)) |
 | `maintenanceOperations` | `[]` | Consequence of the above |
@@ -954,6 +955,7 @@ is what Redis and LibreDB declare.
 | `vacuumAction` / `vacuumGlobalLabel` | `Merge Segments` |
 | `searchPlaceholder` | `Search indices or fields...` |
 | `statementLanguage` | `OpenSearch SQL, the SQL plugin's own dialect - NOT the JSON query DSL, NOT an aggregation body, and NOT PPL` |
+| `slowQueriesEmptyState` | `The slow log is written to the node's own log file, which no API returns, so this SQL surface does not reach it.` |
 
 `statementLanguage` is the one label written for a **model** rather than for the UI, and this product's
 spelling differs from the upstream one because its alternatives do: the SQL plugin ships **PPL** beside
@@ -961,6 +963,12 @@ SQL, and ES|QL does not exist here. The run that made the field necessary was on
 plan run answered with a native aggregation body, correct for the cluster and unrunnable through the
 SQL endpoint (measured in the browser, 2026-08-19). See
 [elasticsearch.md §9](./elasticsearch.md#9-capabilities--labels) for the mechanism, which is shared.
+
+`slowQueriesEmptyState` is the monitoring Queries panel's empty state, and it says what §7 already
+says about `getSlowQueries()`. That sentence was hardcoded to PostgreSQL's `pg_stat_statements`
+advice on every engine, measured in the browser on 2026-08-19 against **this** panel on a search
+connection (`docs/BACKLOG.md` U12) - the #427 defect in another panel, and fixed the same way: by
+reading the label.
 
 These are not decoration. `inventory-noun.ts` lowercases `entityName` into the noun the **agent**
 reasons with, so a cluster described as holding "tables" of "rows" invites statements written for a

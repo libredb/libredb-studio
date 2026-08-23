@@ -166,60 +166,76 @@ describe("the edge of what the run read", () => {
   });
 });
 
-describe("bounds and empty shapes", () => {
-  test("a schema with no foreign keys says so, rather than showing an empty list", () => {
-    const rendered = renderErDiagram(snapshot([table("a"), table("b")]), "minimal");
+/*
+  The three-way distinction an empty relations read has to keep.
 
-    expect(rendered).toContain("no table in this inventory declares a foreign key");
-    // And it says the other possibility, because it is a real one.
-    expect(rendered).toContain("enforced by the application");
-  });
+  A zero-row read is three different facts wearing one shape, and the run was licensed
+  to pick the wrong one: an investigation over the seeded dvdrental answered "there are
+  no declared foreign key constraints between tables in the database", confidently,
+  citing a snapshot that genuinely contained nothing because the role could not see the
+  18 keys `pg_constraint` holds. The read itself is fixed elsewhere
+  (`composePostgresRelations`); what is asserted here is that the TEXT stops licensing
+  the negative, since any role can be narrower than the database it reads.
+
+  One test per arm, and each names what the block SAYS rather than what it omits: an
+  assertion that the false sentence is absent would keep passing if this whole rendering
+  were deleted.
+*/
+describe("an empty read, an absent concept and a real graph are told apart", () => {
+  const EMPTY = snapshot([table("a"), table("b")]);
 
   /*
-    #414. The hedge above offers two explanations and both of them are claims about a
-    database that COULD have declared a foreign key and chose not to. Grounding reached
-    MongoDB, Redis, LibreDB, Druid, ClickHouse and Couchbase, where there is no such
-    construct to decline — so on those six the sentence is wrong in both branches at
-    once, and it invites a reader to wonder about a schema decision nobody made.
-
-    Driven from the provider's own capability rather than from the connection's type,
-    which `CLAUDE.md` forbids outside a provider class: six engines would have been
-    listed at this call site and the seventh forgotten.
+    #414. The arm is driven from the provider's own capability rather than from the
+    connection's type, which `CLAUDE.md` forbids outside a provider class: MongoDB,
+    Redis, LibreDB, Druid, ClickHouse and Couchbase all reach here, and a type check at
+    this call site is how six would have been listed and the seventh forgotten. On those
+    six there is no construct to decline, so the (c) sentence is wrong here too — a read
+    limit is not what is being reported.
   */
-  test("an engine that declares no foreign keys AT ALL gets its own sentence, not the hedge", () => {
-    const rendered = renderErDiagram(snapshot([table("a"), table("b")]), "minimal", {
-      engineDeclaresForeignKeys: false,
-    });
+  test("(a) an engine with no foreign-key concept says nothing could have been found", () => {
+    const rendered = renderErDiagram(EMPTY, "minimal", { engineDeclaresForeignKeys: false });
 
     expect(rendered).toContain("this engine does not declare foreign keys at all");
     expect(rendered).toContain("nothing of that kind here for a reading to have found or missed");
-    // Neither branch of the hedge survives here: both would be false.
-    expect(rendered).not.toContain("That may be how the schema is");
-    expect(rendered).not.toContain("enforced by the application rather than the database");
+    // Not the read-limit sentence: on these six engines there is no read to have missed.
+    expect(rendered).not.toContain("not the same as there being none");
+  });
+
+  test("(b) an engine that has them and a read that found rows reports the rows", () => {
+    const rendered = renderErDiagram(WITH_CUSTOMERS, "minimal", { engineDeclaresForeignKeys: true });
+
+    expect(relationLines(rendered)).toEqual(['"orders" -> "customers"']);
+    expect(rendered).not.toContain("not the same as there being none");
+    expect(rendered).not.toContain("does not declare foreign keys at all");
   });
 
   /*
-    The flag is optional on the published `ProviderCapabilities`, so an absent value is
-    a provider that has not declared either way — and the hedge is the weaker claim,
-    which is the right thing to say about an engine nobody has decided about. Anything
-    else would assert an absence out of a silence.
+    Both values take this arm, and that is the point of the loop: `declaresForeignKeys`
+    is optional on the published `ProviderCapabilities`, so an absent flag is a provider
+    that has decided nothing — and the honest sentence is the one that claims least,
+    which is the right thing to say about an engine nobody has ruled on.
   */
-  test("a provider that says nothing about it keeps the hedge, and one that says true keeps it too", () => {
+  test("(c) an engine that has them and a read that found none refuses to assert the negative", () => {
     for (const declares of [undefined, true]) {
-      const rendered = renderErDiagram(snapshot([table("a"), table("b")]), "minimal", {
+      const rendered = renderErDiagram(EMPTY, "minimal", {
         ...(declares === undefined ? {} : { engineDeclaresForeignKeys: declares }),
       });
+      const because = String(declares);
 
-      expect(rendered, String(declares)).toContain("no table in this inventory declares a foreign key");
-      expect(rendered, String(declares)).not.toContain("does not declare foreign keys at all");
+      // What it says: the read's limit, the reason, and the instruction that follows.
+      expect(rendered, because).toContain("No foreign key was read for any table in this inventory");
+      expect(rendered, because).toContain("not the same as there being none");
+      expect(rendered, because).toContain("a role narrower than the database reads an empty graph");
+      expect(rendered, because).toContain("do not report that this database has no foreign keys");
+      expect(rendered, because).toContain("inferred from names rather than declared");
+      // And only then the negatives: neither of the other two arms' sentences.
+      expect(rendered, because).not.toContain("does not declare foreign keys at all");
+      expect(rendered, because).not.toContain("declares a foreign key.");
     }
   });
+});
 
-  /*
-    The sentence is only reached when there is nothing to show. An engine that declares
-    no foreign keys and an inventory that somehow carries one is a contradiction the
-    RELATIONS win: what was read is more informative than what was declared possible.
-  */
+describe("bounds and empty shapes", () => {
   /*
     #414, second finding. An engine that declares no foreign keys is usually one whose
     inventory rows are not tables either, so the two sentences above named something the
@@ -236,9 +252,9 @@ describe("bounds and empty shapes", () => {
     expect(cannotDeclare).toContain("Whatever relates these key patterns to each other");
     expect(cannotDeclare).not.toContain("table");
 
-    const declaredNone = renderErDiagram(rows, "minimal", { noun });
-    expect(declaredNone).toContain("no key pattern in this inventory declares a foreign key");
-    expect(declaredNone).not.toContain("no table in this inventory");
+    const readNone = renderErDiagram(rows, "minimal", { noun });
+    expect(readNone).toContain("No foreign key was read for any key pattern in this inventory");
+    expect(readNone).not.toContain("any table in this inventory");
   });
 
   /*

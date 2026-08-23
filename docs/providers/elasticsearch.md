@@ -925,6 +925,7 @@ difference — `OFFSET` — has no field in `ProviderCapabilities` to declare it
 | `supportsExternalQueryLimiting` | `true` | `LIMIT n` is correct here; the one form that is not is refused by `prepareQuery()` ([§5.5](#55-the-preparequery-override-there-is-no-second-page)) |
 | `supportsCreateTable` | **`false`** | Not in the grammar ([§5.6](#56-this-grammar-does-not-write)) |
 | `supportsInlineRowEdit` | **`false`** | `UPDATE` is not in the grammar, so the editor's statement could only ever produce an error (#269) |
+| `supportsTransactions` | **`false`** | `BEGIN` is not in the grammar and the surface is stateless HTTP; the trio and SANDBOX are withheld instead of answering HTTP 400 (#U13) |
 | `declaresForeignKeys` | **`false`** | The engine has no such constraint in its model, so the empty `foreignKeys` means "impossible here" rather than "none declared, or none visible to this role" — the distinction #414 was about |
 | `supportsMaintenance` | **`false`** | Nothing in `MaintenanceType` is SQL-reachable ([§8](#8-maintenance)) |
 | `maintenanceOperations` | `[]` | Consequence of the above |
@@ -949,6 +950,7 @@ is what Redis and LibreDB declare.
 | `vacuumAction` / `vacuumGlobalLabel` | `Merge Segments` |
 | `searchPlaceholder` | `Search indices or fields...` |
 | `statementLanguage` | `Elasticsearch SQL, the product's own SQL endpoint - NOT the JSON query DSL, NOT an aggregation body, and NOT ES\|QL` |
+| `slowQueriesEmptyState` | `The slow log is written to the node's own log file, which no API returns, so this SQL surface does not reach it.` |
 
 `statementLanguage` is the one label here written for a **model** rather than for the UI, and it is
 declared on these two engines alone. Measured in the browser on 2026-08-19: a plan run on a search
@@ -959,6 +961,12 @@ the SQL endpoint this provider speaks to. The statement guard then declined to c
 `queryLanguage: "sql"` was already true and settled nothing, because the engine's NAME carries the
 stronger prior — so the label names what the language is **not**, and
 [`investigation.ts`](../../src/lib/agent/investigation.ts) states it in the plan contract.
+
+`slowQueriesEmptyState` is the monitoring Queries panel's empty state, and it says what §7 already
+says about `getSlowQueries()`. That sentence was hardcoded to PostgreSQL's `pg_stat_statements`
+advice on every engine, measured in the browser on 2026-08-19 against **this** panel on a search
+connection (`docs/BACKLOG.md` U12) - the #427 defect in another panel, and fixed the same way: by
+reading the label.
 
 These are not decoration. `inventory-noun.ts` lowercases `entityName` into the noun the **agent**
 reasons with, so a cluster described as holding "tables" of "rows" invites statements written for a

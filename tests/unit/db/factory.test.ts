@@ -435,6 +435,51 @@ describe("createDatabaseProvider", () => {
     expect(provider).toBeDefined();
     expect(provider.type).toBe("libredb");
   });
+
+  // ─── supportsTransactions agrees with the route's own shape check (#U13) ───
+  //
+  // `POST /api/db/transaction` gates on `isTransactionProvider(provider)` — the three
+  // methods being present — which no client can read, so `Studio.tsx` reads the
+  // declared capability instead. Two declarations for one fact drift, and the drift is
+  // silent in both directions: `true` without the methods puts back the HTTP 400 the
+  // capability exists to prevent, and `false` with them hides working controls. Every
+  // SHIPPED type is checked rather than a sample, since the one nobody notices is
+  // exactly the one that drifts.
+  test("every provider's supportsTransactions matches whether it implements the trio", async () => {
+    const overrides: Record<string, Partial<DatabaseConnection>> = {
+      sqlite: { database: ":memory:" },
+      mongodb: { connectionString: "mongodb://localhost/test" },
+      oracle: { serviceName: "ORCL" } as Partial<DatabaseConnection>,
+      couchbase: { port: 8091, database: "travel" },
+      elasticsearch: { port: 9200 },
+      opensearch: { port: 9200 },
+      clickhouse: { port: 8123, database: "demo" },
+      druid: { port: 8888 },
+      trino: { port: 8080, database: "tpch" },
+      cassandra: { port: 9042, database: "probe", localDataCenter: "datacenter1" } as Partial<DatabaseConnection>,
+      libredb: { database: "/tmp/test.libredb" },
+    };
+
+    const declaringTypes: string[] = [];
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      const provider = (await createDatabaseProvider(makeConnection(type, overrides[type] ?? {}))) as unknown as Record<
+        string,
+        unknown
+      >;
+      const implementsTrio =
+        typeof provider.beginTransaction === "function" &&
+        typeof provider.commitTransaction === "function" &&
+        typeof provider.rollbackTransaction === "function";
+      const declared = (provider.getCapabilities as () => { supportsTransactions?: boolean })().supportsTransactions;
+
+      expect(declared).toBe(implementsTrio);
+      if (declared === true) declaringTypes.push(type);
+    }
+
+    // The positive half, pinned by name: exactly four providers hold a transaction
+    // session, so a fifth (or a lost one) fails here and not only in the loop above.
+    expect(declaringTypes.sort()).toEqual(["mssql", "mysql", "oracle", "postgres"]);
+  });
 });
 
 // ─── getOrCreateProvider — uses 'sqlite' for lightweight testing ─────

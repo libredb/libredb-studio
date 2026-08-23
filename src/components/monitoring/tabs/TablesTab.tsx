@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Table2, Search, AlertTriangle, Loader2, RefreshCw, Zap, type LucideIcon } from "lucide-react";
+import { Table2, Search, TriangleAlert, LoaderCircle, RefreshCw, Zap, type LucideIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -190,7 +190,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Vacuum</CardTitle>
-            <AlertTriangle
+            <TriangleAlert
               className={`h-3 w-3 sm:h-4 sm:w-4 ${vacuumIconClass(vacuumStateKnown, tablesNeedingVacuum)}`}
             />
           </CardHeader>
@@ -292,7 +292,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
                                 title={label}
                               >
                                 {actionLoading === `${type}-${table.tableName}` ? (
-                                  <Loader2 strokeWidth={1.5} className="h-3 w-3 animate-spin" />
+                                  <LoaderCircle strokeWidth={1.5} className="h-3 w-3 animate-spin" />
                                 ) : (
                                   <Icon strokeWidth={1.5} className="h-3 w-3" />
                                 )}

@@ -679,6 +679,109 @@ describe("DataProfiler", () => {
     const nineNineNine = within(container).queryAllByText("999");
     expect(nineNineNine.length).toBeGreaterThan(0);
   });
+  // ── U4: the error state has two exits ────────────────────────────────────
+  //
+  // `/api/db/profile` failing is not a Redis-only story (#427 measured it there,
+  // where the route answered 400 for every key-prefix row) - any provider can fail
+  // the request, and before this the card it renders was a dead end: nothing bound
+  // Escape and the header control was the only way out. Both exits are pinned, and
+  // each is pinned only after the error card is proven on screen, so neither test
+  // could pass against a component that never renders the error branch.
+
+  const REDIS_PROFILE_ERROR = "WRONGTYPE Operation against a key holding the wrong kind of value";
+
+  function mockFailingProfile() {
+    restoreGlobalFetch();
+    mockGlobalFetch({
+      "/api/db/profile": { ok: false, status: 400, json: { error: REDIS_PROFILE_ERROR } },
+    });
+  }
+
+  /**
+   * A host that OWNS `isOpen`, so `onClose` actually unmounts the card. Asserting
+   * on the callback alone would pass for a modal that calls it and then stays put,
+   * which is the shape of the defect U4 describes.
+   */
+  function ProfilerHost({ onClosed }: { onClosed: () => void }) {
+    const [open, setOpen] = React.useState(true);
+    return (
+      <DataProfiler
+        {...createDefaultProps({
+          isOpen: open,
+          onClose: () => {
+            setOpen(false);
+            onClosed();
+          },
+        })}
+      />
+    );
+  }
+
+  test("Escape dismisses a failed profile", async () => {
+    mockFailingProfile();
+    const onClosed = mock(() => {});
+
+    const { container } = render(<ProfilerHost onClosed={onClosed} />);
+
+    // Positive first: the error card is on screen.
+    await waitFor(() => {
+      expect(within(container).queryByText(REDIS_PROFILE_ERROR)).not.toBeNull();
+    });
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(container.innerHTML).toBe("");
+    });
+    expect(onClosed).toHaveBeenCalledTimes(1);
+  });
+
+  test("the header close control dismisses a failed profile", async () => {
+    mockFailingProfile();
+    const onClosed = mock(() => {});
+
+    const { container } = render(<ProfilerHost onClosed={onClosed} />);
+
+    await waitFor(() => {
+      expect(within(container).queryByText(REDIS_PROFILE_ERROR)).not.toBeNull();
+    });
+
+    // Reached by its accessible name, not by a CSS class: an icon-only control
+    // with no name is one a screen-reader user cannot find either.
+    const closeButton = within(container).getByLabelText("Close data profiler");
+    fireEvent.click(closeButton);
+
+    await waitFor(() => {
+      expect(container.innerHTML).toBe("");
+    });
+    expect(onClosed).toHaveBeenCalledTimes(1);
+  });
+
+  test("a key other than Escape leaves the failed profile open", async () => {
+    mockFailingProfile();
+    const onClosed = mock(() => {});
+
+    const { container } = render(<ProfilerHost onClosed={onClosed} />);
+
+    await waitFor(() => {
+      expect(within(container).queryByText(REDIS_PROFILE_ERROR)).not.toBeNull();
+    });
+
+    fireEvent.keyDown(document, { key: "a" });
+
+    expect(within(container).queryByText(REDIS_PROFILE_ERROR)).not.toBeNull();
+    expect(onClosed).not.toHaveBeenCalled();
+  });
+
+  test("Escape does not fire onClose while the profiler is closed", () => {
+    const onClose = mock(() => {});
+    render(<DataProfiler {...createDefaultProps({ isOpen: false, onClose })} />);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   // Same rule as every other connection-bearing request: a managed (seed)
   // connection is sent as its seed id, because the copy the browser holds has had
   // `password` and `connectionString` stripped. Sending the object made

@@ -521,6 +521,8 @@ export class ClickHouseProvider extends SQLBaseProvider {
       // `ALTER TABLE t UPDATE c = v WHERE ...`, an asynchronous mutation rather
       // than a statement the shared hook can emit, so the control is hidden here.
       supportsInlineRowEdit: false,
+      // Reached over stateless HTTP, and ClickHouse has no general transaction anyway.
+      supportsTransactions: false,
       // ClickHouse parses REFERENCES in a column definition and enforces nothing by
       // it, and `system.*` holds no constraint catalog to read one back from. So
       // there is no declared foreign key here in any sense a reader could use (#414).
@@ -551,6 +553,10 @@ export class ClickHouseProvider extends SQLBaseProvider {
       vacuumGlobalTitle: "Merge Parts",
       vacuumGlobalDesc:
         "Runs OPTIMIZE TABLE ... FINAL, which merges a table's parts and applies pending mutations. ClickHouse reclaims space by merging, so there is no VACUUM equivalent.",
+      // `getSlowQueries()` reads system.query_log, which records nothing while
+      // `log_queries` is off - a different fact from the PostgreSQL extension the panel
+      // used to advertise (#U12).
+      slowQueriesEmptyState: "Query stats come from system.query_log, which records nothing while log_queries is off.",
     };
   }
 

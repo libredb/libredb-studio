@@ -177,6 +177,11 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: true,
       supportsInlineRowEdit: true,
+      // False, unlike supportsInlineRowEdit above: this class implements no
+      // transaction methods, so a subclass that does not add them has none, and
+      // POST /api/db/transaction refuses the call. The four that hold a session for
+      // one (postgres, mysql, oracle, mssql) override this.
+      supportsTransactions: false,
       // The default is the SQL default: a relational engine has foreign keys whether
       // or not a given schema uses them. The engines that have none override this
       // (#414), which is the direction that carries the strong claim.

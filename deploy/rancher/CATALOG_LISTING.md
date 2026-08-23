@@ -45,13 +45,15 @@ partner contact.
 > byte-identical — run `bun run chart:bump` rather than editing
 > `operator/helm-charts/libredb-studio/` by hand, or the sync guard fails the required check.
 >
-> What *is* release-coupled is every marketplace and packaging description that spells the
-> count: `deploy/azure`, `deploy/railway`, `deploy/caprover`, `packaging/winget`,
-> `packaging/chocolatey`, `packaging/homebrew` and `desktop/src-tauri/tauri.conf.json` all
-> still say thirteen, because each describes an artifact a user can already download and
-> 0.12.0 ships no Cassandra provider. Read the number from `SHIPPED` when a tag carries it.
-> (`packaging/linux/nfpm.yaml` and the operator CSVs are the exception: both are consumed at
-> release time from `main`, so they name fourteen now and the next tag publishes it.)
+> What *is* release-coupled is every marketplace description that spells the count:
+> `deploy/azure`, `deploy/railway` and `deploy/caprover` still say thirteen, because each
+> describes an artifact a user can already download and 0.12.0 ships no Cassandra provider.
+> Read the number from `SHIPPED` when a tag carries it. Two groups are no longer in that set.
+> `packaging/winget`, `packaging/chocolatey`, `packaging/homebrew` and
+> `desktop/src-tauri/tauri.conf.json` now carry **no number at all** - nothing regenerates them
+> from the registry, so any digit in them is stale the day the next engine lands (issue #445).
+> And `packaging/linux/nfpm.yaml` and the operator CSVs are consumed at release time from
+> `main`, so they name fourteen now and the next tag publishes it.
 
 ## Listing facts
 

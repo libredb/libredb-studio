@@ -18,7 +18,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { TableSchema } from "@/lib/types";
-import { Download, Info, Loader2, Search, X } from "lucide-react";
+import { Download, Info, LoaderCircle, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
@@ -321,7 +321,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
   if (schema.length === 0) {
     return (
       <div className="absolute inset-0 z-50 bg-canvas flex flex-col items-center justify-center">
-        <Loader2 strokeWidth={1.5} className="w-8 h-8 text-blue-500 animate-spin mb-4" />
+        <LoaderCircle strokeWidth={1.5} className="w-8 h-8 text-blue-500 animate-spin mb-4" />
         <p className="text-fg-muted text-xs">Generating ERD Diagram...</p>
       </div>
     );
@@ -380,7 +380,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
                   onClick={() => exportDiagram("png")}
                 >
                   {exporting === "png" ? (
-                    <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
+                    <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin" />
                   ) : (
                     <Download strokeWidth={1.5} className="w-3 h-3" />
                   )}{" "}
@@ -394,7 +394,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
                   onClick={() => exportDiagram("svg")}
                 >
                   {exporting === "svg" ? (
-                    <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
+                    <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin" />
                   ) : (
                     <Download strokeWidth={1.5} className="w-3 h-3" />
                   )}{" "}
@@ -431,7 +431,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
                   <span>{graph.edgeCount} relationships</span>
                   {isLayouting && (
                     <span className="flex items-center gap-1 text-fg-subtle">
-                      <Loader2 strokeWidth={1.5} className="w-3 h-3 animate-spin" />
+                      <LoaderCircle strokeWidth={1.5} className="w-3 h-3 animate-spin" />
                       layout
                     </span>
                   )}
@@ -477,7 +477,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
               transform is temporarily swapped for the fit-all capture. */}
           {exporting && (
             <div className="absolute inset-0 z-50 bg-canvas/85 flex flex-col items-center justify-center gap-2">
-              <Loader2 strokeWidth={1.5} className="w-6 h-6 text-blue-500 animate-spin" />
+              <LoaderCircle strokeWidth={1.5} className="w-6 h-6 text-blue-500 animate-spin" />
               <p className="text-fg-muted text-xs">Exporting {exporting.toUpperCase()}...</p>
             </div>
           )}

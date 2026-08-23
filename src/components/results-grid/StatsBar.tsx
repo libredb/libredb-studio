@@ -3,7 +3,7 @@
 import React from "react";
 import { QueryResult } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { ChevronDown, LayoutGrid, Table2, Loader2, EyeOff, Eye, Save, X, Filter, Lock } from "lucide-react";
+import { ChevronDown, LayoutGrid, Table2, LoaderCircle, EyeOff, Eye, Save, X, Funnel, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { CellChange } from "@/components/ResultsGrid";
 import { describeWarning } from "@/components/results-grid/utils";
@@ -68,7 +68,7 @@ export function StatsBar({
             onClick={onClearFilters}
             title="Clear all filters"
           >
-            <Filter strokeWidth={1.5} className="w-3 h-3" />
+            <Funnel strokeWidth={1.5} className="w-3 h-3" />
             {activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""} &bull; {filteredRowCount} shown
             <X strokeWidth={1.5} className="w-3 h-3" />
           </button>
@@ -180,7 +180,7 @@ export function LoadMoreFooter({ hasMore, onLoadMore, isLoadingMore }: LoadMoreF
       >
         {isLoadingMore && (
           <>
-            <Loader2 strokeWidth={1.5} className="w-3 h-3 mr-2 animate-spin" />
+            <LoaderCircle strokeWidth={1.5} className="w-3 h-3 mr-2 animate-spin" />
             {LOADING_LABEL}
           </>
         )}

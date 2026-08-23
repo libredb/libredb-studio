@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Server, Activity, Clock, Loader2, RefreshCw } from "lucide-react";
+import { Server, Activity, Clock, LoaderCircle, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -64,7 +64,7 @@ export function PoolTab({ connection }: PoolTabProps) {
   if (loading && !stats) {
     return (
       <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
-        <Loader2 strokeWidth={1.5} className="h-4 w-4 animate-spin" />
+        <LoaderCircle strokeWidth={1.5} className="h-4 w-4 animate-spin" />
         Loading pool statistics...
       </div>
     );

@@ -137,7 +137,7 @@ function useStudioTheme() {
     };
   }, []);
 }
-import { AlertTriangle } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { AnimatePresence } from "framer-motion";
 import {
@@ -528,7 +528,7 @@ export function StudioWorkspace({
           <div className="px-6 pt-6 pb-4">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-red-500/10 flex items-center justify-center shrink-0">
-                <AlertTriangle strokeWidth={1.5} className="w-5 h-5 text-amber-400" />
+                <TriangleAlert strokeWidth={1.5} className="w-5 h-5 text-amber-400" />
               </div>
               <div className="flex-1 min-w-0">
                 <AlertDialogTitle className="text-xs font-medium text-fg mb-1">Load all results?</AlertDialogTitle>

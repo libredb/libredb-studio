@@ -224,34 +224,45 @@ function groupByPair(relations: readonly Relation[]): readonly (readonly Relatio
 }
 
 /**
- * The relation list, or a sentence saying there is none.
+ * The relation list, or a sentence about why there is none.
  *
- * The empty case is worth its own words: a database whose tables declare no foreign
- * keys is a real and common shape, and a reader shown an empty list would not know
- * whether the run failed to look.
+ * The empty case is worth its own words: a reader shown an empty list would not know
+ * whether the run failed to look, and the two ways it can be empty are not the same
+ * fact.
  *
  * TWO empty sentences since #414, because an empty relations read means two different
- * things and the hedge could only cover one of them. The hedge offers "that may be how
- * the schema is" and "the keys may be enforced by the application" — both of which are
- * claims about a database that COULD have declared foreign keys and did not. Grounding
- * reached MongoDB, Redis, LibreDB, Druid, ClickHouse and Couchbase, where there is no
- * such construct to decline: on those engines both branches of the hedge are wrong at
- * once, and the reader is invited to wonder about a schema decision nobody made.
+ * things and one sentence could only cover one of them. Grounding reached MongoDB,
+ * Redis, LibreDB, Druid, ClickHouse and Couchbase, where a foreign key is not a
+ * construct to decline: any sentence about what this schema does or does not declare is
+ * wrong there, and the reader is invited to wonder about a schema decision nobody made.
  *
  * `engineDeclaresForeignKeys` is `ProviderCapabilities.declaresForeignKeys`, and it is
  * a capability rather than an engine check for the rule `CLAUDE.md` states: engine
  * behaviour is declared by the provider that has it, and `=== 'mongodb'` outside a
  * provider class is how six of these would have been listed here and the seventh
  * forgotten. The flag is optional on the published interface, so this reads `=== false`
- * and an absent value keeps the hedge — the weaker claim, which is the right default
- * for an engine nobody has decided about.
+ * and an absent value takes the other sentence — the one that claims least, which is
+ * the right default for an engine nobody has decided about.
  *
- * B44 is a THIRD absence and its hedge is not weakened by either of these. That entry
- * is about a role that cannot SEE the keys a database really declares — measured live,
- * 18 foreign keys and 0 visible rows — which is a fact about a privilege and not about
- * an engine. An engine that declares none and a role that sees none are different
- * things to tell an operator, and the day B44's half lands it will be a fourth sentence
- * and not a rewording of one of these.
+ * The OTHER empty sentence — the one an engine that does declare foreign keys gets —
+ * used to hedge between "that may be how the schema is" and "the keys may be enforced
+ * by the application", and both of those are readings of an absence that was never
+ * established. A role can be narrower than the database it reads: measured live on the
+ * seeded dvdrental, 18 foreign keys in `pg_constraint` and 0 rows visible to the
+ * `SELECT`-only role this repository's own demo script prescribes, and an investigation
+ * answered "there are no declared foreign key constraints between tables in the
+ * database", confidently, citing a snapshot that genuinely contained nothing. The read
+ * is fixed at its source (`composePostgresRelations` reads `pg_constraint`, which needs
+ * only `USAGE`), and that fix does not reach the general case: ANY role can be narrower
+ * than the database, so a zero-row read is not evidence of a zero-key schema and this
+ * block no longer offers a reading of one. It states the limit of what was read and
+ * tells the model not to report the negative — the same rule the inventory's omission
+ * notice follows, where silence would be read as absence.
+ *
+ * So the three cases are distinct and stay distinct: an engine with no such construct
+ * (nothing could have been found), a read that returned rows (they are listed), and a
+ * read that returned none on an engine that has them (what was not seen, not what does
+ * not exist). None of the three is a rewording of another.
  *
  * `noun` is what this engine calls the things the relations run between, from
  * `ProviderLabels` by way of `inventoryNoun`. It matters most in exactly the two
@@ -277,7 +288,7 @@ export function renderErDiagram(
     if (options.engineDeclaresForeignKeys === false) {
       return `${header}\nNone, and none could be: this engine does not declare foreign keys at all, so there is nothing of that kind here for a reading to have found or missed. Whatever relates these ${noun.plural} to each other is enforced somewhere other than the database, and this run has not seen it.`;
     }
-    return `${header}\nNone: no ${noun.singular} in this inventory declares a foreign key. That may be how the schema is, or the keys may be enforced by the application rather than the database.`;
+    return `${header}\nNo foreign key was read for any ${noun.singular} in this inventory, and that is not the same as there being none. This reading sees only what the role it connected as is allowed to see, and a role narrower than the database reads an empty graph from a schema that declares many — nothing here can tell that apart from a schema that declares none. So do not report that this database has no foreign keys: report that no relation could be read on this connection, and treat any join you rely on as inferred from names rather than declared.`;
   }
 
   const groups = groupByPair(relations);

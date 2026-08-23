@@ -262,6 +262,9 @@ export class TrinoProvider extends SQLBaseProvider {
       // primary key for any table in any catalog, so there is no column that
       // identifies one row - an edit would silently rewrite every row that matches.
       supportsInlineRowEdit: false,
+      // Trino has START TRANSACTION, but a transaction lives in an HTTP session
+      // header this provider does not carry between statements.
+      supportsTransactions: false,
       // No `table_constraints`, no `key_column_usage`, no foreign keys in the model at
       // all. An empty relations list is the engine's answer and not the schema's
       // (#414).
@@ -318,6 +321,11 @@ export class TrinoProvider extends SQLBaseProvider {
       vacuumGlobalTitle: "Trino Owns No Storage",
       vacuumGlobalDesc:
         "Trino is a query engine: the bytes live in the systems its connectors reach, and reclaiming them is done there. Nothing runs from here.",
+      // `getSlowQueries()` reads system.runtime.queries, which is the coordinator's own
+      // bounded history rather than a persisted store - a different fact from the
+      // PostgreSQL extension the panel used to advertise (#U12).
+      slowQueriesEmptyState:
+        "Query stats come from system.runtime.queries, which holds only what this coordinator still remembers.",
     };
   }
 

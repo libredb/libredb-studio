@@ -127,7 +127,7 @@ the case [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) names ClickHouse
 | `getPlaceholder()` | Returns `?`, which is exactly what Druid's positional parameters use ([§3.10](#310-positional-parameters-really-execute)) |
 | `shouldEnableSSL()` | Inherited but **never called**, deliberately. It infers TLS from substrings in the host name, which would silently switch a self-hosted cluster whose hostname merely contains one. TLS here comes from the connection's own `ssl` config only ([§4.3](#43-tls)) |
 | `prepareQuery()` (base) | The shared query limiter; `DruidProvider` calls it first and only overrides the `OFFSET`-with-no-`LIMIT` case |
-| `getLabels()` (base) | Everything but the two entity labels ([§9](#9-capabilities--labels)) |
+| `getLabels()` (base) | Everything but the two entity labels and the slow-query empty state ([§9](#9-capabilities--labels)) |
 
 ### 2.4 Registration & lifecycle
 
@@ -1234,6 +1234,7 @@ Both halves of that are real constraints, not scope cuts made lightly:
 | `supportsExternalQueryLimiting` | `true` | `LIMIT n` / `LIMIT n OFFSET m` are both correct Druid SQL |
 | `supportsCreateTable` | **`false`** | `CREATE` is not in the grammar; a datasource is created by ingestion ([§3.11](#311-the-three-false-capabilities-are-each-impossible-not-merely-unimplemented)) |
 | `supportsInlineRowEdit` | **`false`** | `UPDATE t SET ...` answers `Unsupported SQL statement [UPDATE]`; Druid SQL has no row-level DML ([§5.5](#55-druid-sql-cannot-write-and-the-server-says-so-clearly)) |
+| `supportsTransactions` | **`false`** | Druid SQL has no DML at all, so there is nothing for a transaction to hold; the trio and SANDBOX are withheld instead of answering HTTP 400 (#U13) |
 | `declaresForeignKeys` | **`false`** | Druid has no constraints — no primary key either — and a datasource cannot reference another, so an empty relations list is the engine and not the schema |
 | `supportsMaintenance` | **`false`** | Nothing in `MaintenanceType` is reachable from Druid SQL ([§8](#8-maintenance)) |
 | `maintenanceOperations` | `[]` | Consequence of the above |
@@ -1243,10 +1244,14 @@ Both halves of that are real constraints, not scope cuts made lightly:
 
 ### `getLabels()` ([index.ts:194](../../src/lib/db/providers/sql/druid/index.ts))
 
-Exactly two overrides:
+Three overrides:
 
 - `entityName` → **"Datasource"**, `entityNamePlural` → **"Datasources"**. Datasource is the Druid
   word for a table, and the sidebar is where a user meets it.
+- `slowQueriesEmptyState` → **"Druid keeps no query log: no system table and no endpoint holds
+  finished queries."** `getSlowQueries()` is empty by design, so the monitoring Queries panel is
+  **always** empty here, and its hardcoded sentence used to tell the reader to enable
+  `pg_stat_statements` (`docs/BACKLOG.md` U12).
 
 Everything else is inherited on purpose. **A Druid row is a row**, so renaming it would only make the
 grid speak a dialect the cluster does not. The maintenance labels are irrelevant here

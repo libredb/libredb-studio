@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useCallback } from "react";
 import { TableSchema } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
-import { Search, Hash, Loader2, AlertCircle, Database, Plus, Settings } from "lucide-react";
+import { Search, Hash, LoaderCircle, CircleAlert, Database, Plus, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AnimatePresence } from "framer-motion";
@@ -69,7 +69,7 @@ export function SchemaExplorer({
     return (
       <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
         <div className="relative mb-4">
-          <Loader2 strokeWidth={1.5} className="w-8 h-8 animate-spin text-blue-500/20" />
+          <LoaderCircle strokeWidth={1.5} className="w-8 h-8 animate-spin text-blue-500/20" />
           <Database strokeWidth={1.5} className="w-3.5 h-3.5 absolute inset-0 m-auto text-blue-500 animate-pulse" />
         </div>
         <span className="text-xs font-medium animate-pulse">Scanning Schema...</span>
@@ -81,7 +81,7 @@ export function SchemaExplorer({
     return (
       <div className="flex flex-col items-center justify-center py-12 px-6 text-center">
         <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4 border border-border">
-          <AlertCircle strokeWidth={1.5} className="w-6 h-6 text-muted-foreground" />
+          <CircleAlert strokeWidth={1.5} className="w-6 h-6 text-muted-foreground" />
         </div>
         <h3 className="text-foreground text-xs font-medium mb-1">No structures found</h3>
         <p className="text-xs text-muted-foreground leading-relaxed">

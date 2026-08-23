@@ -275,6 +275,7 @@ three, though `runMaintenance` also accepts `optimize`/`kill`/`reindex` when inv
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — the query language is JSON commands, so there is no `UPDATE ... SET` for the results grid's inline editor to emit |
+| `supportsTransactions` | `false` — multi-document transactions need a client session this provider does not hold, so BEGIN/COMMIT/ROLLBACK and SANDBOX are not offered; they used to be, and answered HTTP 400 (#U13) |
 | `declaresForeignKeys` | `false` — MongoDB has no foreign key constraint at all, so an empty `foreignKeys` list here is the engine's model and not this database's shape |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['vacuum', 'analyze', 'check']` |
@@ -297,6 +298,12 @@ to write "one runnable statement in this MongoDB database's own query language",
 2026-08-22 answered `db.orders.aggregate([{ $group: … }])`, which is correct MongoDB and unrunnable
 here, because `query()` parses the JSON command object and nothing else. Naming only what the
 language *is* did not survive contact with the model's prior; naming what it is not did.
+
+`slowQueriesEmptyState` (*"Query stats come from the database profiler - run db.setProfilingLevel()
+to start recording into system.profile."*) is the monitoring Queries panel's empty state. That
+sentence was hardcoded to PostgreSQL's `pg_stat_statements` advice on every engine
+(`docs/BACKLOG.md` U12); here `getSlowQueries()` reads `system.profile`
+([§7](#7-monitoring--health)), which does not exist until the profiler is switched on.
 
 ---
 

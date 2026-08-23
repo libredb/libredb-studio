@@ -491,6 +491,7 @@ by no component (#427).
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — Redis commands are not SQL, so there is no `UPDATE ... SET` for the results grid's inline editor to emit |
+| `supportsTransactions` | `false` — `MULTI`/`EXEC` exists in Redis and is not exposed through this provider, so the transaction trio and SANDBOX are not offered (#U13) |
 | `declaresForeignKeys` | `false` — Redis has no constraints at all, and the "tables" here are key prefixes this provider grouped rather than objects anyone declared |
 | `tablesAreDerivedGroupings` | `true` — `getSchema()` SCANs a bounded slice of the keyspace and groups the real key names it found by their prefix, so a `user:*` row is this server's own summary and not a key any command can be given. The agent layer states this to a plan run, in one sentence, so a grounded run does not draft a command against a grouping |
 | `supportsMaintenance` | `true` |
@@ -528,6 +529,12 @@ commands — but about the **shape** they were packaged in:
 list numbering and the second command — alongside the two accepted forms (plain and the lossless
 `{"command": …, "args": […]}`), and repeats in words what `tablesAreDerivedGroupings` says in a flag:
 a `prefix:*` row is this server's grouping, not a key, so a prefix is reached with `SCAN … MATCH`.
+
+`slowQueriesEmptyState` (*"Redis lists what SLOWLOG holds, and nothing has yet run slower than
+slowlog-log-slower-than."*) is the monitoring Queries panel's empty state. It exists for the same
+reason the `analyzeGlobal*` triad had to be read rather than merely declared (#427): that panel's
+sentence was hardcoded to PostgreSQL's `pg_stat_statements` advice on every engine
+(`docs/BACKLOG.md` U12), while what is empty here is the `SLOWLOG` (§7).
 
 `analyzeGlobalLabel` / `analyzeGlobalTitle` / `analyzeGlobalDesc` (*"Run Info"*, *"Server Info"*,
 *"Get Redis server information and statistics."*) are rendered by the admin Operations tab. The

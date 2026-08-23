@@ -273,6 +273,10 @@ describe("SQLiteProvider", () => {
       // `UPDATE t SET c = v WHERE pk = v` is core SQLite DML — the shape the inline
       // row editor builds (#269).
       expect(caps.supportsInlineRowEdit).toBe(true);
+      // False although SQLite HAS transactions: this provider holds no session for
+      // one, so POST /api/db/transaction refuses the call and the controls must not
+      // be offered (#U13). The flag describes the provider's surface, not the engine.
+      expect(caps.supportsTransactions).toBe(false);
       // Inherited from the base capabilities: this engine declares foreign keys, so
       // an empty `foreignKeys` list is a fact about the schema or the role, never
       // about the engine (#414).
@@ -770,6 +774,28 @@ describe("SQLiteProvider", () => {
       const labels = provider.getLabels();
       expect(labels.entityName).toBe("Table");
       expect(typeof labels.selectAction).toBe("string");
+    });
+
+    // The monitoring Queries panel is ALWAYS empty here - `getSlowQueries()` answers
+    // `[]` unconditionally - and until #U12 it told the reader to enable a PostgreSQL
+    // extension. What it says now must not name one.
+    test("says SQLite keeps no statement statistics rather than naming a Postgres extension", () => {
+      const { slowQueriesEmptyState } = new SQLiteProvider(makeSQLiteConfig()).getLabels();
+
+      expect(slowQueriesEmptyState).toContain("SQLite keeps no statistics");
+      expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+    });
+
+    // SQLite declares the `reindex` maintenance operation and `runMaintenance()`
+    // sends a bare `REINDEX` for the global card, which rebuilds every index in the
+    // FILE - not in a database of tables the way the hardcoded copy read (#U6).
+    test("declares the global reindex wording the bare REINDEX it runs deserves", () => {
+      const labels = new SQLiteProvider(makeSQLiteConfig()).getLabels();
+
+      expect(labels.reindexGlobalLabel).toBe("Run Reindex");
+      expect(labels.reindexGlobalTitle).toBe("Rebuild Indexes");
+      expect(labels.reindexGlobalDesc).toContain("REINDEX");
+      expect(labels.reindexGlobalDesc).toContain("database file");
     });
   });
 });

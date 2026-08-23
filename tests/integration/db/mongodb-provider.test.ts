@@ -313,6 +313,9 @@ describe("MongoDBProvider", () => {
       // No SQL at all here: the query language is JSON commands, so the inline row
       // editor's `UPDATE ... SET` has nothing to run against (#269).
       expect(caps.supportsInlineRowEdit).toBe(false);
+      // Multi-document transactions need a client session this provider does not
+      // hold, so the trio and the sandbox toggle are withheld (#U13).
+      expect(caps.supportsTransactions).toBe(false);
       // MongoDB has no foreign key constraint, so an empty `foreignKeys` here is the
       // engine's model and not this database's shape (#414).
       expect(caps.declaresForeignKeys).toBe(false);
@@ -333,6 +336,17 @@ describe("MongoDBProvider", () => {
       expect(labels.entityName).toBe("Collection");
       expect(labels.rowName).toBe("document");
       expect(labels.selectAction).toBe("Find Documents");
+    });
+
+    // Until #U12 the monitoring Queries panel told a MongoDB operator to install a
+    // PostgreSQL extension. `getSlowQueries()` reads `system.profile`, which does not
+    // exist until the profiler is on, so that is the switch the sentence must name.
+    test("names the profiler, not a Postgres extension, as where query stats come from", () => {
+      const { slowQueriesEmptyState } = provider.getLabels();
+
+      expect(slowQueriesEmptyState).toContain("profiler");
+      expect(slowQueriesEmptyState).toContain("system.profile");
+      expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
     });
 
     // `statementLanguage` is the sentence the agent's plan contract states verbatim

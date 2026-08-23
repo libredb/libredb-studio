@@ -6,8 +6,8 @@ import { QueryHistoryItem } from "@/lib/types";
 import { csvRow } from "@/lib/export/csv";
 import { downloadText } from "@/lib/export/download";
 import {
-  CheckCircle2,
-  AlertCircle,
+  CircleCheck,
+  CircleAlert,
   RotateCcw,
   Trash2,
   Search,
@@ -15,7 +15,7 @@ import {
   ArrowUpDown,
   Hash,
   Database,
-  History as HistoryIcon,
+  RotateCcwClock as HistoryIcon,
   X,
 } from "lucide-react";
 import { Button } from "./ui/button";
@@ -310,12 +310,12 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                       <div className="flex justify-center">
                         {item.status === "success" && (
                           <div className="w-5 h-5 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
-                            <CheckCircle2 strokeWidth={1.5} className="w-3 h-3 text-emerald-500" />
+                            <CircleCheck strokeWidth={1.5} className="w-3 h-3 text-emerald-500" />
                           </div>
                         )}
                         {item.status !== "success" && (
                           <div className="w-5 h-5 rounded-full bg-red-500/10 flex items-center justify-center border border-red-500/20">
-                            <AlertCircle strokeWidth={1.5} className="w-3 h-3 text-red-500" />
+                            <CircleAlert strokeWidth={1.5} className="w-3 h-3 text-red-500" />
                           </div>
                         )}
                       </div>

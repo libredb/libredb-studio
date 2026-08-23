@@ -168,6 +168,34 @@ describe("registerLibreDBLanguage", () => {
       expect(single.test('"a"')).toBe(false);
     });
 
+    // ── U10: this tokenizer deliberately has NO cross-line string state ───────
+    //
+    // The Redis tokenizer grew one, because that provider's `commandBody()` carries
+    // quote state across the line break and stores a two-line value
+    // (docs/providers/redis.md §3.4a). This provider does not: `firstCommandLine()`
+    // takes the first non-comment LINE and `tokenize()` rejects an unmatched quote
+    // (*"Unmatched quote in command"*, docs/providers/libredb.md §5.1), so no
+    // quoted value can span a line break here. Carrying a string state across lines
+    // would paint the rest of a cheatsheet as one value while the provider still
+    // runs its first command — the same disagreement U10 is about, the other way
+    // round.
+    test("the tokenizer has a single root state: a quote never opens across a line", () => {
+      const monaco = createMockMonaco();
+      registerLibreDBLanguage(monaco);
+
+      expect(Object.keys(monaco._state.tokensProviders[0]!.provider.tokenizer)).toEqual(["root"]);
+
+      // Both quote rules match a whole single-line literal and push no state, so an
+      // unterminated quote simply ends at the line break like every other rule.
+      const rules = rootRules();
+      for (const index of [DOUBLE_QUOTED, SINGLE_QUOTED]) {
+        const [regex, action] = rules[index]!;
+        expect(action).toBe("string");
+        expect(regex.test('put note "line1')).toBe(false);
+        expect(regex.test("put note 'line1")).toBe(false);
+      }
+    });
+
     // The ordering property the tokenizer relies on: no two rules can match at the
     // same position, so the list is order-independent today. A rule added with an
     // overlapping opening character would make order load-bearing silently.

@@ -408,6 +408,8 @@ export class MSSQLProvider extends SQLBaseProvider {
       supportsExplain: false,
       supportsConnectionString: true,
       supportsInlineRowEdit: true,
+      // The mssql package's Transaction object over one held pool connection.
+      supportsTransactions: true,
       maintenanceOperations: ["analyze", "check", "optimize", "kill"],
     };
   }
@@ -423,6 +425,11 @@ export class MSSQLProvider extends SQLBaseProvider {
       vacuumGlobalLabel: "Rebuild Indexes",
       vacuumGlobalTitle: "Rebuild All Indexes",
       vacuumGlobalDesc: "Rebuilds all indexes to reclaim space and reduce fragmentation.",
+      // `getSlowQueries()` reads sys.dm_exec_query_stats, and a login without VIEW
+      // SERVER STATE gets `[]` from the swallowed failure. The panel used to name a
+      // PostgreSQL extension there (#U12); the permission is what a DBA can act on.
+      slowQueriesEmptyState:
+        "Query stats come from sys.dm_exec_query_stats, which needs the VIEW SERVER STATE permission.",
     };
   }
 

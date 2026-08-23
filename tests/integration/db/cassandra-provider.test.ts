@@ -433,6 +433,8 @@ describe("capabilities", () => {
     // amount = 1 WHERE customer_id = 3` - a plausible guess on a real table - is
     // "Some partition key parts are missing: id".
     expect(capabilities.supportsInlineRowEdit).toBe(false);
+    // CQL has no transaction; BATCH is not one (#U13).
+    expect(capabilities.supportsTransactions).toBe(false);
   });
 
   test("there are no foreign keys in the model at all", () => {
@@ -495,6 +497,15 @@ describe("labels", () => {
     // does neither from a statement.
     expect(labels.analyzeGlobalDesc).toContain("nodetool");
     expect(labels.vacuumGlobalDesc).toContain("nodetool");
+  });
+
+  test("the empty slow-query panel says Cassandra keeps no such aggregate", () => {
+    // `getSlowQueries()` is empty by design here, so this panel is ALWAYS empty - and
+    // until #U12 it told the reader to enable a PostgreSQL extension (#427's defect in
+    // another panel). The log file is the fact, so it is what the sentence names.
+    expect(labels.slowQueriesEmptyState).toContain("no aggregate of finished statements");
+    expect(labels.slowQueriesEmptyState).toContain("log file");
+    expect(labels.slowQueriesEmptyState).not.toContain("pg_stat_statements");
   });
 
   test("the statement language is named, because CQL is not SQL", () => {

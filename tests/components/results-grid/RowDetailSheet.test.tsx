@@ -4,8 +4,22 @@ import "../../helpers/mock-navigation";
 
 import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { RowDetailSheet } from "@/components/results-grid/RowDetailSheet";
+
+// The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
+// `navigator.clipboard` is what plain HTTP off loopback actually hands the page, and an
+// editing command that answers false is what a browser that refuses the copy does.
+const originalExecCommand = Object.getOwnPropertyDescriptor(globalThis.document, "execCommand");
+
+function setExecCommand(execCommand: ((command: string) => boolean) | undefined): void {
+  Object.defineProperty(globalThis.document, "execCommand", { value: execCommand, configurable: true });
+}
+
+function refuseEveryWritePath(): void {
+  Object.defineProperty(globalThis.navigator, "clipboard", { value: undefined, configurable: true });
+  setExecCommand(() => false);
+}
 
 mock.module("@/components/ui/sheet", () => ({
   Sheet: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
@@ -42,6 +56,8 @@ describe("results-grid/RowDetailSheet", () => {
 
   afterEach(() => {
     cleanup();
+    if (originalExecCommand === undefined) setExecCommand(undefined);
+    else Object.defineProperty(globalThis.document, "execCommand", originalExecCommand);
   });
 
   test("does not render when closed", () => {
@@ -143,7 +159,7 @@ describe("results-grid/RowDetailSheet", () => {
     expect(String(writeText.mock.calls[0]?.[0])).toBe("Alice");
   });
 
-  test("shows check icon after copying a field value", () => {
+  test("shows check icon after copying a field value", async () => {
     const { container } = render(
       <RowDetailSheet
         row={{ id: 1, name: "Bob" }}
@@ -162,8 +178,67 @@ describe("results-grid/RowDetailSheet", () => {
     fireEvent.click(copyButtons[0]!);
 
     // After copy, the Check icon (emerald-400 colored) should replace the Copy icon
-    const checkIcon = container.querySelector(".text-emerald-400");
-    expect(checkIcon).not.toBeNull();
+    await waitFor(() => expect(container.querySelector(".text-emerald-400")).not.toBeNull());
+  });
+
+  // B43: both of these labels used to flip in the same statement that started the write,
+  // so on the plain-HTTP channels this product ships on they reported a copy that never
+  // happened. The refusal below is the real one: no clipboard object at all, and an
+  // editing command that answers false.
+  test("field copy shows no check icon when both write paths refuse", async () => {
+    refuseEveryWritePath();
+    const { container } = render(
+      <RowDetailSheet
+        row={{ id: 1, name: "Bob" }}
+        fields={["id", "name"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+      />,
+    );
+
+    const copyButtons = Array.from(container.querySelectorAll("button")).filter(
+      (b) => !b.textContent?.includes("Copy JSON"),
+    );
+    fireEvent.click(copyButtons[0]!);
+
+    await waitFor(() => expect(container.querySelector(".text-amber-400")).not.toBeNull());
+    expect(container.querySelector(".text-emerald-400")).toBeNull();
+  });
+
+  test("Copy JSON says Copied once the write has reported one", async () => {
+    const { getByTestId, queryByText } = render(
+      <RowDetailSheet
+        row={{ id: 1, email: "alice@example.com" }}
+        fields={["id", "email"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+      />,
+    );
+
+    fireEvent.click(queryByText("Copy JSON")!);
+
+    await waitFor(() => expect(getByTestId("sheet-content").textContent).toContain("Copied"));
+    expect(getByTestId("sheet-content").textContent).not.toContain("Copy failed");
+  });
+
+  test("Copy JSON does not say Copied when both write paths refuse", async () => {
+    refuseEveryWritePath();
+    const { getByTestId, queryByText } = render(
+      <RowDetailSheet
+        row={{ id: 1, email: "alice@example.com" }}
+        fields={["id", "email"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+      />,
+    );
+
+    fireEvent.click(queryByText("Copy JSON")!);
+
+    await waitFor(() => expect(getByTestId("sheet-content").textContent).toContain("Copy failed"));
+    expect(queryByText("Copied")).toBeNull();
   });
 
   test("displays NULL for null and undefined values", () => {

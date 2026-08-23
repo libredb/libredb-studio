@@ -30,7 +30,7 @@
     "targets": ["appimage", "deb"],
     "category": "DeveloperTool",
     "shortDescription": "The open-source SQL IDE for cloud-native teams",
-    "longDescription": "LibreDB Studio is an open-source SQL IDE for thirteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch and Apache Trino - with AI query assistance. The desktop build runs the same server LibreDB Studio ships everywhere else as a local sidecar and keeps all data on this machine.",
+    "longDescription": "LibreDB Studio is an open-source SQL IDE for PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra, with AI query assistance. The desktop build runs the same server LibreDB Studio ships everywhere else as a local sidecar and keeps all data on this machine.",
     "homepage": "https://libredb.org",
     "publisher": "LibreDB",
     "license": "MIT",
