@@ -81,25 +81,23 @@ const AGENT_TURN_TIMEOUT_ENV = "AGENT_MODEL_TURN_TIMEOUT_MS";
  *
  * A value that is not a positive whole number is ignored rather than clamped or thrown on: a
  * mistyped variable must not end every turn instantly, which is worse than the value the
- * operator meant to set. The BOUND against the workflow deadlines is applied by the caller,
- * which is where those deadlines live.
+ * operator meant to set.
+ *
+ * What it IS bounded against is the workflow deadlines, which live in `execution-policy.ts`.
+ * The import goes THIS way for a reason the build caught: `execution-policy.ts` is reachable
+ * from the browser (`Studio.tsx` -> `use-agent-prefill.ts`) and this module imports
+ * `fs/promises`, so a read placed there would have pulled Node's filesystem into the client
+ * bundle. The dependency has to point from the server-only module to the client-safe one.
+ *
+ * `AGENT_WORKFLOW_BUDGETS` guarantees every workflow can take at least two turns — an
+ * invariant that file's own test asserts — so a ceiling past half the smallest deadline would
+ * configure a run that cannot finish. Capped rather than obeyed into incoherence.
  */
 export function agentModelTurnTimeoutMs(): number {
   const raw = process.env[AGENT_TURN_TIMEOUT_ENV];
   if (raw === undefined) return AGENT_MODEL_TURN_TIMEOUT_MS;
   const asked = Number(raw.trim());
   if (!Number.isSafeInteger(asked) || asked <= 0) return AGENT_MODEL_TURN_TIMEOUT_MS;
-  /*
-    Bounded against the workflow deadlines, which live in `execution-policy.ts`. The import
-    goes THIS way for a reason the build caught: `execution-policy.ts` is reachable from the
-    browser (`Studio.tsx` -> `use-agent-prefill.ts`), and this module imports `fs/promises`,
-    so a read placed there would have pulled Node's filesystem into the client bundle. The
-    dependency has to point from the server-only module to the client-safe one.
-
-    `AGENT_WORKFLOW_BUDGETS` guarantees every workflow can take at least two turns — an
-    invariant that file's own test asserts — so a ceiling past half the smallest deadline
-    would configure a run that cannot finish. Capped rather than obeyed into incoherence.
-  */
   const smallestDeadline = Math.min(...Object.values(AGENT_WORKFLOW_BUDGETS).map((budget) => budget.runDeadlineMs));
   return Math.min(asked, Math.floor(smallestDeadline / 2) - 1);
 }

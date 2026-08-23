@@ -224,6 +224,22 @@ describe("a tool call the model wrote as its payload rather than as a call", () 
     expect(readPromptedPayload('{"thoughts": "I should probably report now"}', [report, profile])).toBeNull();
   });
 
+  test("a payload the model left malformed is skipped rather than half-read", () => {
+    /*
+      The recovery path reads every brace-delimited span in the prose, and prose is where
+      unparseable ones live: a model that writes `{claims: [...]}` without quoting its keys, or
+      one whose reply was cut mid-object, produces a span that is not JSON at all.
+
+      Skipped rather than refused, because a later span in the same reply may still be the call —
+      which is exactly the arrangement here: the broken object comes first and the whole one
+      after it, and the whole one is what comes back.
+    */
+    const text =
+      '{"claims": [{"claim": "The engineering table is sparsely populated.", "evidence": [{"source": "artifact", "correlationId": "a1"}]}]}\nand then, half-written: {claims: unquoted}';
+
+    expect(readPromptedPayload(text, [report, profile])?.name).toBe("compose_report");
+  });
+
   test("an object that fits TWO held tools recovers nothing, because the intent is unknown", () => {
     // Two tools taking the same shape is the case a reader must not guess at.
     const first = definition("first_tool", "one", z.strictObject({ table: z.string() }));
