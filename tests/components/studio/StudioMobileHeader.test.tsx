@@ -264,6 +264,46 @@ describe("StudioMobileHeader", () => {
     expect(queryByText("Import Data")).not.toBeNull();
   });
 
+  test("BEGIN Transaction not rendered when the trio is withheld (#U13)", () => {
+    // The positive is asserted by "BEGIN Transaction click calls onBeginTransaction"
+    // above, on the same defaults; here only the three callbacks are removed.
+    const { queryByText } = render(
+      <StudioMobileHeader
+        {...defaults}
+        onBeginTransaction={undefined}
+        onCommitTransaction={undefined}
+        onRollbackTransaction={undefined}
+      />,
+    );
+    expect(queryByText("BEGIN Transaction")).toBeNull();
+    // The menu itself still rendered, so the absence above is the gate and not a
+    // component that failed to mount.
+    expect(queryByText("Import Data")).not.toBeNull();
+    expect(queryByText("Enable Sandbox")).not.toBeNull();
+  });
+
+  test("COMMIT and ROLLBACK not rendered when the trio is withheld mid-transaction", () => {
+    const { queryByText } = render(
+      <StudioMobileHeader
+        {...defaults}
+        transactionActive
+        onBeginTransaction={undefined}
+        onCommitTransaction={undefined}
+        onRollbackTransaction={undefined}
+      />,
+    );
+    expect(queryByText("COMMIT")).toBeNull();
+    expect(queryByText("ROLLBACK")).toBeNull();
+    expect(queryByText("Import Data")).not.toBeNull();
+  });
+
+  test("Enable Sandbox not rendered when onTogglePlayground is withheld (#U13)", () => {
+    const { queryByText } = render(<StudioMobileHeader {...defaults} onTogglePlayground={undefined} />);
+    expect(queryByText("Enable Sandbox")).toBeNull();
+    expect(queryByText("BEGIN Transaction")).not.toBeNull();
+    expect(queryByText("Import Data")).not.toBeNull();
+  });
+
   test("Import Data click calls onImport", () => {
     const { queryByText } = render(<StudioMobileHeader {...defaults} />);
     const item = queryByText("Import Data");

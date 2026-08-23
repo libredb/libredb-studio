@@ -136,13 +136,37 @@ export interface ProviderCapabilities {
    */
   supportsInlineRowEdit?: boolean;
   /**
+   * Whether THIS PROVIDER implements the interactive transaction session that
+   * `POST /api/db/transaction` drives — `beginTransaction()` / `commitTransaction()`
+   * / `rollbackTransaction()` over one held connection. It is a statement about the
+   * provider's surface, not about whether the engine has a transaction concept
+   * somewhere: SQLite has `BEGIN`, and this provider still declares `false`, because
+   * it holds no session for one and the route refuses the call.
+   *
+   * It exists because the route's own gate is `isTransactionProvider(provider)`, a
+   * runtime shape check no client can read. `Studio.tsx` therefore supplied
+   * BEGIN/COMMIT/ROLLBACK — and SANDBOX, which auto-rolls-back through the same
+   * route — on every connection. Measured 2026-08-19 on OpenSearch: HTTP 400,
+   * "Transaction control is not supported for this database type", for both `begin`
+   * and `rollback`. Elasticsearch, Druid, Couchbase, MongoDB, Redis, Trino,
+   * Cassandra, SQLite and LibreDB were all in that position.
+   *
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`
+   * (`src/exports/types.ts`): a required field added after the fact stops every
+   * external implementer compiling. Every provider in this repo declares it, and the
+   * UI gates on `=== true`, so an absent flag — and an unresolved `metadata` — reads
+   * as no transactions rather than inheriting a permissive default.
+   */
+  supportsTransactions?: boolean;
+  /**
    * Whether this engine has foreign keys to declare at all — not whether any
    * particular schema declares one, and not whether the current role can see them.
    *
    * It exists because an empty `TableSchema.foreignKeys` means two different things
    * and the reader cannot tell them apart. On PostgreSQL an empty list means this
-   * schema declares none (or, per `docs/BACKLOG.md` B44, that this role cannot see
-   * them); on MongoDB, Redis, LibreDB, Druid, ClickHouse and Couchbase it means the
+   * schema declares none, or that the role this connection reads with cannot see the
+   * ones it declares — an empty read cannot tell those two apart, which is why the
+   * agent's relations block reports neither of them as fact; on MongoDB, Redis, LibreDB, Druid, ClickHouse and Couchbase it means the
    * engine has no such constraint in its model, so no reading of any kind could ever
    * return one. A consumer that hedges between "the schema is like that" and "the
    * application enforces them" is wrong in BOTH branches on those six, and #414 hit
@@ -248,6 +272,27 @@ export interface ProviderLabels {
   vacuumGlobalLabel: string;
   vacuumGlobalTitle: string;
   vacuumGlobalDesc: string;
+  /**
+   * The Operations tab's global Reindex card, in this engine's own terms.
+   *
+   * The analyze and vacuum cards have carried per-provider wording since #427; the
+   * reindex card stayed hardcoded to PostgreSQL's "Run Reindex" / "Rebuild Indexes" /
+   * "Reconstructs all indexes in the database." Three providers declare the `reindex`
+   * maintenance operation — Postgres, SQLite and Couchbase — and on Couchbase that
+   * copy is wrong the way the analyze copy was wrong for Redis: its reindex builds
+   * deferred GSI indexes, which is not a table reindex.
+   *
+   * Optional, unlike the `analyzeGlobal*` and `vacuumGlobal*` triads above, because
+   * `ProviderLabels` is published (`src/exports/types.ts`) and a required field added
+   * after the fact stops every external implementer compiling — the rule
+   * `supportsInlineRowEdit` records, and the one the newer `statementLanguage` and
+   * `slowQueriesEmptyState` follow. `OperationsTab` keeps the hardcoded strings as
+   * its fallback, which it needs anyway: `metadata` may carry capabilities with no
+   * labels at all.
+   */
+  reindexGlobalLabel?: string;
+  reindexGlobalTitle?: string;
+  reindexGlobalDesc?: string;
   /**
    * What a statement for this engine is WRITTEN IN, named for a model rather than
    * for a person, and declared only where the engine's own name misleads one.

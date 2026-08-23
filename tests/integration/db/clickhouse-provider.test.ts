@@ -414,6 +414,7 @@ describe("ClickHouseProvider metadata", () => {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      supportsTransactions: false,
       declaresForeignKeys: false,
       supportsMaintenance: true,
       maintenanceOperations: ["optimize", "analyze", "kill"],

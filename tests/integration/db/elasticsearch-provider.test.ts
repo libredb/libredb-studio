@@ -661,6 +661,7 @@ describe("ElasticsearchProvider metadata", () => {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      supportsTransactions: false,
       declaresForeignKeys: false,
       supportsMaintenance: false,
       maintenanceOperations: [],

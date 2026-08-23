@@ -521,6 +521,8 @@ export class ClickHouseProvider extends SQLBaseProvider {
       // `ALTER TABLE t UPDATE c = v WHERE ...`, an asynchronous mutation rather
       // than a statement the shared hook can emit, so the control is hidden here.
       supportsInlineRowEdit: false,
+      // Reached over stateless HTTP, and ClickHouse has no general transaction anyway.
+      supportsTransactions: false,
       // ClickHouse parses REFERENCES in a column definition and enforces nothing by
       // it, and `system.*` holds no constraint catalog to read one back from. So
       // there is no declared foreign key here in any sense a reader could use (#414).

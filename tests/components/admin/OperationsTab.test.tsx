@@ -378,6 +378,51 @@ describe("OperationsTab", () => {
     expect(queryByText("Removes dead rows and returns space to the OS.")).not.toBeNull();
   });
 
+  test("renders the provider's own global reindex wording (#U6)", async () => {
+    // Couchbase's `reindex` builds deferred GSI indexes for one keyspace, which the
+    // hardcoded PostgreSQL copy described in none of its three strings.
+    mockMetadata = {
+      capabilities: { supportsMaintenance: true, maintenanceOperations: ["reindex"] },
+      labels: {
+        reindexGlobalLabel: "Build Indexes",
+        reindexGlobalTitle: "Build Deferred GSI Indexes",
+        reindexGlobalDesc: "Runs BUILD INDEX for the deferred global secondary indexes of one collection.",
+      },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+
+    expect(queryByText("Build Indexes")).not.toBeNull();
+    expect(queryByText("Build Deferred GSI Indexes")).not.toBeNull();
+    expect(queryByText("Runs BUILD INDEX for the deferred global secondary indexes of one collection.")).not.toBeNull();
+
+    // The Postgres wording must be gone, not merely joined.
+    expect(queryByText("Run Reindex")).toBeNull();
+    expect(queryByText("Rebuild Indexes")).toBeNull();
+    expect(queryByText("Reconstructs all indexes in the database.")).toBeNull();
+  });
+
+  test("falls back to the generic reindex wording when the provider declares no triad", async () => {
+    // The triad is optional on the published `ProviderLabels`, and `metadata` can
+    // carry capabilities with no labels at all, so both cases keep the old strings.
+    mockMetadata = {
+      capabilities: { supportsMaintenance: true, maintenanceOperations: ["reindex"] },
+      labels: { analyzeGlobalLabel: "Run Analyze" },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { queryByText } = renderResult!;
+
+    expect(queryByText("Run Reindex")).not.toBeNull();
+    expect(queryByText("Rebuild Indexes")).not.toBeNull();
+    expect(queryByText("Reconstructs all indexes in the database.")).not.toBeNull();
+  });
+
   test("warning card present", async () => {
     let renderResult: ReturnType<typeof render>;
     await act(async () => {

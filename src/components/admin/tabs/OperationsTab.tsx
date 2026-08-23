@@ -329,8 +329,9 @@ export function OperationsTab() {
               </div>
             )}
 
-            {/* Reindex — ProviderLabels declares no reindexGlobal triad, so this
-                card stays generic; adding one is out of scope for #427. */}
+            {/* Reindex — the triad is OPTIONAL on ProviderLabels (only the three
+                providers that declare the `reindex` operation set it), so the
+                hardcoded strings below stay as the fallback (#U6). */}
             {canRun("reindex") && (
               <div className="p-4 rounded-xl border border-hairline bg-fill-subtle hover:bg-fill transition-colors">
                 <div className="flex items-start justify-between mb-3">
@@ -345,11 +346,13 @@ export function OperationsTab() {
                     disabled={!!actionLoading || !selectedConnection}
                   >
                     {actionLoading === "reindex-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
-                    Run Reindex
+                    {labels?.reindexGlobalLabel ?? "Run Reindex"}
                   </Button>
                 </div>
-                <h4 className="text-sm font-bold text-fg mb-1">Rebuild Indexes</h4>
-                <p className="text-xs text-fg-muted leading-relaxed">Reconstructs all indexes in the database.</p>
+                <h4 className="text-sm font-bold text-fg mb-1">{labels?.reindexGlobalTitle ?? "Rebuild Indexes"}</h4>
+                <p className="text-xs text-fg-muted leading-relaxed">
+                  {labels?.reindexGlobalDesc ?? "Reconstructs all indexes in the database."}
+                </p>
               </div>
             )}
 

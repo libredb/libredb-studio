@@ -114,9 +114,9 @@ DatabaseProvider (interface) → BaseDatabaseProvider → SQLBaseProvider → SQ
 `SQLiteProvider` inherits the shared SQL helpers (see
 [PostgreSQL doc §2.2](./postgres.md#22-what-sqlbaseprovider-provides)). It does **not** override
 `prepareQuery()`: SQLite uses standard `LIMIT`, so the base's `LIMIT` injection works. `getLabels()`
-is overridden for **one** field only — the slow-query empty state ([§9](#9-capabilities--labels)) —
-because the rest of the default SQL wording fits (*Vacuum Table* / *Analyze Table*, since SQLite has
-real `VACUUM`/`ANALYZE`).
+is overridden for **two** things only — the slow-query empty state and the global reindex wording
+([§9](#9-capabilities--labels)) — because the rest of the default SQL wording fits (*Vacuum Table* /
+*Analyze Table*, since SQLite has real `VACUUM`/`ANALYZE`).
 
 ### Dynamic driver load
 
@@ -185,6 +185,12 @@ took the **write** branch and returned an empty result with `changes: 0` for a q
 Unlike every networked SQL provider, SQLite exposes **no** `beginTransaction`/`commit`/`rollback`/
 `queryInTransaction`, **no** `cancelQuery`, and **no** pool/`getPoolStats`. It is a single embedded
 handle. (`POST /api/db/transaction` and `/api/db/cancel` are therefore not applicable to SQLite.)
+
+Since `docs/BACKLOG.md` U13 the client can see that: `supportsTransactions: false`
+([§9](#9-capabilities--labels)) is what withholds BEGIN/COMMIT/ROLLBACK and the auto-rolled-back
+SANDBOX toggle from the editor toolbar here. Before that flag existed the only gate was
+`isTransactionProvider(provider)` inside the route — a runtime shape check the browser cannot read —
+so the controls rendered on every connection and the route answered HTTP 400.
 
 ---
 
@@ -366,6 +372,7 @@ and `reindex` targets are quoted via `escapeIdentifier()`:
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core SQLite DML |
+| `supportsTransactions` | **`false`** — SQLite HAS `BEGIN`, but this provider holds no session across two requests, so `POST /api/db/transaction` refuses the call. The flag describes the provider's surface, not the engine, and the trio and SANDBOX toggle are withheld rather than offered and then failed (#U13) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; `PRAGMA foreign_key_list` reads them whether or not enforcement is on |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'check']` |
@@ -382,6 +389,17 @@ One field is overridden: `slowQueriesEmptyState` → *"SQLite keeps no statistic
 statements, so there is nothing to enable."* `getSlowQueries()` answers `[]` unconditionally
 ([§7](#7-monitoring--health)), so the monitoring Queries panel is always empty here, and its sentence
 was hardcoded to PostgreSQL's `pg_stat_statements` advice (`docs/BACKLOG.md` U12).
+
+Two overrides in total. The second is the Operations tab's global Reindex card, hardcoded to
+PostgreSQL's *"Reconstructs all indexes in the database."* until `docs/BACKLOG.md` U6. The global card
+sends no target, so `runMaintenance('reindex')` here runs a bare `REINDEX`
+([§8](#8-maintenance)), which rebuilds every index in the database **file**:
+
+| Field | Value |
+| --- | --- |
+| `reindexGlobalLabel` | *Run Reindex* |
+| `reindexGlobalTitle` | *Rebuild Indexes* |
+| `reindexGlobalDesc` | *Runs bare REINDEX, rebuilding every index in the database file.* |
 
 ---
 

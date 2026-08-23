@@ -558,6 +558,7 @@ If it appears in routes, components, or utilities — you're doing it wrong. Use
 | EXPLAIN | If `supportsExplain: true`, verify EXPLAIN button works |
 | Create Table | If `supportsCreateTable: true`, verify the + button appears |
 | Inline row edit | If `supportsInlineRowEdit: true`, verify the EDIT toggle appears and one edited row runs one statement the engine accepts |
+| Transactions | If `supportsTransactions: true`, verify BEGIN/COMMIT/ROLLBACK and SANDBOX appear in the toolbar and that a BEGIN succeeds; if `false`, verify all four are absent |
 | Maintenance | Open Database Maintenance, verify correct operations show |
 | AI Explain | If `supportsExplain: true`, open Visual EXPLAIN and verify the AI explanation streams |
 | Labels | Check all UI text uses your labels (entity names, actions, etc.) |
@@ -578,6 +579,7 @@ Every field and what it controls:
 | `supportsExternalQueryLimiting` | `boolean` | Whether route applies LIMIT to queries (SQL) or provider handles it (MongoDB) |
 | `supportsCreateTable` | `boolean` | "Create Table" button in SchemaExplorer |
 | `supportsInlineRowEdit` | `boolean?` | Whether the results grid offers inline row editing. `false` hides the EDIT toggle and every editable cell — set it where the engine has no `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` statement, which is what `use-inline-editing.ts` builds. Optional only because the interface is published and a required addition breaks external implementers; every provider here declares it, and an absent flag reads as unsupported |
+| `supportsTransactions` | `boolean?` | Whether THIS PROVIDER implements the interactive transaction session `POST /api/db/transaction` drives (`beginTransaction`/`commitTransaction`/`rollbackTransaction` over one held connection). `false` withholds the editor toolbar's BEGIN/COMMIT/ROLLBACK trio **and** the SANDBOX toggle, which auto-rolls-back through the same route. It is about the provider's surface, not the engine: SQLite has `BEGIN` and still declares `false`. Optional for the published-interface reason above; the UI gates on `=== true`, so an absent flag and an unresolved metadata fetch both read as no transactions (`docs/BACKLOG.md` U13) |
 | `declaresForeignKeys` | `boolean?` | Whether this engine has foreign keys in its model at all. `false` says an empty `TableSchema.foreignKeys` means "no such constraint exists here", not "this schema declares none" — set it on every engine without referential constraints. Optional for the published-interface reason above; consumers gate on `=== false`, so an absent flag reads as "may declare them" |
 | `tablesAreDerivedGroupings` | `boolean?` | Whether `getSchema()`'s rows are objects the engine holds, or groupings this server derived from a bounded scan. `true` on Redis and LibreDB only. Where it is true the schema explorer hides every menu item that *addresses* the row — `Profile Table`, `Generate Test Data`, and both per-row maintenance items, all of which name the row to a route that needs a real object — and keeps the ones that merely name it (`Select`, `Generate`, `Copy Name`, `Generate Code`). The agent layer states it to a plan run in one sentence. Consumers gate on `=== true`, so an absent flag reads as "ordinary objects" |
 | `supportsMaintenance` | `boolean` | Whether maintenance API accepts requests for this provider |
@@ -608,12 +610,19 @@ comment. Three surfaces read labels today, plus the agent's prompt layer:
 | `vacuumGlobalLabel` | Admin Operations tab, vacuum card's button text ("Run Vacuum") |
 | `vacuumGlobalTitle` | Admin Operations tab, vacuum card title ("Reclaim Space") |
 | `vacuumGlobalDesc` | Admin Operations tab, vacuum card description paragraph |
+| `reindexGlobalLabel` (optional) | Admin Operations tab, reindex card's button text. Absent = the hardcoded *"Run Reindex"* |
+| `reindexGlobalTitle` (optional) | Admin Operations tab, reindex card title. Absent = the hardcoded *"Rebuild Indexes"* |
+| `reindexGlobalDesc` (optional) | Admin Operations tab, reindex card description paragraph. Absent = the hardcoded *"Reconstructs all indexes in the database."* Declare the triad wherever that sentence is false — on Couchbase `reindex` is a deferred-GSI `BUILD INDEX`, not a table reindex (`docs/BACKLOG.md` U6) |
 | `statementLanguage` (optional) | The agent's plan contract (`src/lib/agent/investigation.ts`), stated verbatim to the model. No UI surface reads it. Declared only where the engine's own name misleads a model about what a "statement" is here |
 | `slowQueriesEmptyState` (optional) | Monitoring **Queries** tab, the "Slowest Queries" empty state. Absent = PostgreSQL's *"Enable pg_stat_statements extension to see query stats."*, which is what the component hardcoded for every engine until `docs/BACKLOG.md` U12. Declare it wherever that sentence is false, and the panel drops the `pg_stat_statements required` badge as well |
 
 The `*Global*` triads reach only the card, never the per-table button, and only where the card
-renders: the analyze card is gated on `analyze`, the vacuum card on the **literal** `vacuum`. There
-is no `reindexGlobal*` triad; that card is still hardcoded (`docs/BACKLOG.md` U6).
+renders: the analyze card is gated on `analyze`, the vacuum card on the **literal** `vacuum`, the
+reindex card on `reindex`. The `reindexGlobal*` triad is **optional** while the other two are
+required, because `ProviderLabels` is published (`src/exports/types.ts`) and a required field added
+after the fact stops every external implementer compiling; only the three providers that declare the
+`reindex` operation (Postgres, SQLite, Couchbase) set it, and the card keeps its old strings as the
+fallback.
 
 ### PreparedQuery
 

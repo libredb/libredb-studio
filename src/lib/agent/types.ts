@@ -547,8 +547,7 @@ export type AgentRunEvent =
   | (AgentRunEventBase & {
       /**
        * The one statement a PLAN run drafted, and what could be checked about it
-       * without running it (the plan-mode SQL-generator design of 2026-08-15, item 5;
-       * `docs/BACKLOG.md` B44).
+       * without running it (the plan-mode SQL-generator design of 2026-08-15, item 5).
        *
        * Not `statement-drafted`, and the difference is not cosmetic. That entry
        * belongs to a STEP: an agent run drafts through a tool, so its statement

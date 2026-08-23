@@ -226,6 +226,8 @@ export class OracleProvider extends SQLBaseProvider {
       supportsExplain: false,
       supportsConnectionString: true,
       supportsInlineRowEdit: true,
+      // Oracle is always in a transaction; the held connection commits or rolls back.
+      supportsTransactions: true,
       maintenanceOperations: ["analyze", "optimize", "kill"],
     };
   }

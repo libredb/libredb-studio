@@ -2115,7 +2115,7 @@ export async function runInvestigation(
     */
     /**
      * Records the statement a PLAN run drafted, when it drafted one (item 5 of the
-     * plan-mode SQL-generator design of 2026-08-15; `docs/BACKLOG.md` B44).
+     * plan-mode SQL-generator design of 2026-08-15).
      *
      * Here rather than in the rail, because the ledger is the only thing that outlives
      * the drive: #389's control reads SQL out of a markdown fence in the BROWSER, which

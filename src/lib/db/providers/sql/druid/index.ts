@@ -210,6 +210,8 @@ export class DruidProvider extends SQLBaseProvider {
       // rejected with `Unsupported SQL statement [UPDATE]`. Druid SQL has no
       // row-level DML at all - a datasource changes through ingestion.
       supportsInlineRowEdit: false,
+      // Druid SQL has no DML at all, so nothing to wrap.
+      supportsTransactions: false,
       // Druid SQL has no constraints — no primary key either, which is why
       // `isPrimary` is hardwired false in the introspection. A datasource cannot
       // reference another one, so an empty relations list is the engine and not the

@@ -552,6 +552,8 @@ describe("OracleProvider", () => {
       // `UPDATE t SET c = v WHERE pk = v` is core Oracle DML — the shape the inline
       // row editor builds (#269).
       expect(caps.supportsInlineRowEdit).toBe(true);
+      // One held connection carries the transaction, so the trio is offered (#U13).
+      expect(caps.supportsTransactions).toBe(true);
       // Inherited from the base capabilities: this engine declares foreign keys, so
       // an empty `foreignKeys` list is a fact about the schema or the role, never
       // about the engine (#414).

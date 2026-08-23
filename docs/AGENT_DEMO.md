@@ -188,10 +188,12 @@ than* `SELECT`. The relations read went through those views, so under exactly th
 above the graph was empty and case 1 answered *"There are no declared foreign key constraints between
 tables in the database"*, citing a snapshot that genuinely contained nothing. `composePostgresRelations`
 (`src/lib/agent/composed-sql.ts`) now reads `pg_constraint`, which asks only for `USAGE` on the schema,
-and answers all 18 rows as this role. What is still true and still worth not overclaiming: an EMPTY
+and answers all 18 rows as this role. What is still true and cannot be fixed by any read: an EMPTY
 relations read cannot tell "this database declares none" from "this role cannot see the ones it
-declares", and nothing yet makes a run say which it means (backlog **B44**, second half). So a run on a
-database that really has no foreign keys will still say so as if it had checked.
+declares". So the run is no longer allowed to choose — the relations block now states the limit of
+what it read and tells the model not to report that the database has no foreign keys. A database that
+really declares none is described the same way — as a graph this run cannot vouch for — which is the
+price of not stating the negative, and the cheaper of the two errors.
 
 **Run it from a production build** (`bun run build` then `bun run start`). In development React needs
 `eval`, which the CSP does not allow, so the login page does not hydrate (`docs/BACKLOG.md` B40).
@@ -235,7 +237,8 @@ have had to reconstruct from an ER diagram.
 Know why it worked, because it is not the reason it looks like. Under the documented role the
 relations graph handed to this run was **empty** (case 1), and the model reconstructed the path from
 column names alone. It got it right. It got it right *without* the evidence it was supposed to have,
-which is a good demo and a bad guarantee — one more reason B44 matters.
+which is a good demo and a bad guarantee: the run is now told to treat exactly this kind of join as
+inferred from names rather than declared.
 
 ### 3. Write me the query
 **Agent ·** `Write me a query for the ten highest-paid employees with their department name.` *(opens as Analyze, not Investigate)*
@@ -711,7 +714,8 @@ cannot assert something and leave you to trust it.
 
 And say the limit of that guarantee, because case 1 is standing right there: a citation proves the
 claim rests on something the run *read*. It does not prove the read was complete. An empty relations
-read is honestly cited and still supports a false negative (B44).
+read is honestly cited and would support a false negative, which is why the relations block refuses to
+state one.
 
 ---
 
@@ -741,7 +745,8 @@ in that result or it is refused. An answer must be a result of a query the run a
 or a profile cannot be presented as one. The verdict at the end of a run is computed from the run's
 ledger, not from the model's opinion of its own work. The counter-example is honest and worth
 volunteering: a citation binds a claim to what the run read, and cannot tell it that what it read was
-incomplete (B44).
+incomplete — so where the incompleteness is known in advance, as with an empty relations read, the
+grounding says so in words.
 
 **"Which databases?"** See the table at the top, and its #414 note. The short version: Operate works
 everywhere and was driven live on six engines including Redis, which has no SQL at all; the four SQL
@@ -763,7 +768,6 @@ would close it, so "not yet" means deferred with a reason, not overlooked.
 
 | Not yet | What happens today | Waiting on |
 | --- | --- | --- |
-| **Foreign keys under a least-privilege role** | The relations read comes back empty and the run reports that no foreign keys exist — a false negative it cannot tell apart from a true one | B44 — reading `pg_constraint` instead of the `information_schema` views, and declining to assert the negative from an empty read |
 | **A verdict that fits an optimization run** | Every Optimize run ends `unanswered`, however good its plans and index recommendation were | B45 — a plan artifact is not an empty result, the same exemption the Operate template already has |
 | **Follow-up questions** | Each run starts fresh, and neither the surface nor the model says so — ask "and how many of those?" and you get a confident answer to a different question | B36 — either carrying the previous run's objective and report into the next as fenced context, or run history |
 | **Causal questions** — "why are sales down?" | Answered from the schema alone, which cannot know which decomposition of a metric is the business one | A per-connection business note, held server-side; sketched in `docs/AGENT_ANALYST_DESIGN.md` §5 |

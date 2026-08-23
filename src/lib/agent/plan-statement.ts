@@ -1,7 +1,7 @@
 /**
  * The statement a plan run drafted: read out of its closing prose, and checked
  * before anything offers it (the plan-mode SQL-generator design of 2026-08-15,
- * work item 5; `docs/BACKLOG.md` B44).
+ * work item 5).
  *
  * Plan mode is toolless by construction, so its deliverable cannot arrive as a tool
  * call the way an agent run's `statement-drafted` does — the model's entire output is

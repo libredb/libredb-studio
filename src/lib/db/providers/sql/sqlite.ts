@@ -188,12 +188,16 @@ export class SQLiteProvider extends SQLBaseProvider {
       explainFormat: "sqlite-queryplan",
       supportsConnectionString: false,
       supportsInlineRowEdit: true,
+      // SQLite HAS transactions; this provider holds no session for one, so
+      // POST /api/db/transaction refuses the call and the controls stay hidden.
+      supportsTransactions: false,
       maintenanceOperations: ["vacuum", "analyze", "reindex", "check"],
     };
   }
 
   /**
-   * Only the slow-query empty state; every other label is the SQL default and right.
+   * The slow-query empty state and the global reindex wording; every other label is
+   * the SQL default and right.
    *
    * `getSlowQueries()` answers `[]` unconditionally, so the monitoring Queries panel
    * is ALWAYS empty here - and it used to tell the reader to install a PostgreSQL
@@ -203,6 +207,9 @@ export class SQLiteProvider extends SQLBaseProvider {
     return {
       ...super.getLabels(),
       slowQueriesEmptyState: "SQLite keeps no statistics about finished statements, so there is nothing to enable.",
+      reindexGlobalLabel: "Run Reindex",
+      reindexGlobalTitle: "Rebuild Indexes",
+      reindexGlobalDesc: "Runs bare REINDEX, rebuilding every index in the database file.",
     };
   }
 

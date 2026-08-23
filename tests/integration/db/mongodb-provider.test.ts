@@ -313,6 +313,9 @@ describe("MongoDBProvider", () => {
       // No SQL at all here: the query language is JSON commands, so the inline row
       // editor's `UPDATE ... SET` has nothing to run against (#269).
       expect(caps.supportsInlineRowEdit).toBe(false);
+      // Multi-document transactions need a client session this provider does not
+      // hold, so the trio and the sandbox toggle are withheld (#U13).
+      expect(caps.supportsTransactions).toBe(false);
       // MongoDB has no foreign key constraint, so an empty `foreignKeys` here is the
       // engine's model and not this database's shape (#414).
       expect(caps.declaresForeignKeys).toBe(false);

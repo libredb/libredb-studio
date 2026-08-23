@@ -279,6 +279,8 @@ describe("CouchbaseProvider metadata", () => {
       supportsExternalQueryLimiting: true,
       supportsCreateTable: false,
       supportsInlineRowEdit: false,
+      // The HTTP query service is stateless per request; no session spans two of them.
+      supportsTransactions: false,
       declaresForeignKeys: false,
       supportsMaintenance: true,
       maintenanceOperations: ["analyze", "reindex", "kill"],
@@ -314,6 +316,19 @@ describe("CouchbaseProvider metadata", () => {
     expect(labels.rowName).toBe("document");
     expect(labels.rowNamePlural).toBe("documents");
     expect(labels.analyzeGlobalDesc).toContain("Enterprise");
+  });
+
+  // The Operations tab's global Reindex card was hardcoded to PostgreSQL's "Run
+  // Reindex / Rebuild Indexes / Reconstructs all indexes in the database." Couchbase's
+  // `reindex` is `BUILD INDEX` over the DEFERRED GSI indexes of one keyspace
+  // (`buildDeferredIndexes()`), so none of those three strings described it (#U6).
+  test("names the deferred GSI build, not a table reindex, in the global reindex card", () => {
+    const labels = new CouchbaseProvider(makeConnection()).getLabels();
+
+    expect(labels.reindexGlobalLabel).toBe("Build Indexes");
+    expect(labels.reindexGlobalTitle).toContain("GSI");
+    expect(labels.reindexGlobalDesc).toContain("BUILD INDEX");
+    expect(labels.reindexGlobalDesc).not.toContain("REINDEX");
   });
 
   // Until #U12 the monitoring Queries panel told a Couchbase operator to install a

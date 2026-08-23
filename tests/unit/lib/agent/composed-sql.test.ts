@@ -151,7 +151,7 @@ describe("composeCatalogRead — the relation and index inventories (#329 T8)", 
   /**
    * The foreign-key read leaves `information_schema` for `pg_constraint`, and every
    * assertion below is a property measured on a live PostgreSQL 18 rather than a
-   * shape that reads well (`docs/BACKLOG.md` B8, B44):
+   * shape that reads well (`docs/BACKLOG.md` B8):
    *
    *  - the three `information_schema` constraint views are restricted to constraints
    *    on tables the role owns or holds a privilege on OTHER than `SELECT`, so the

@@ -445,6 +445,8 @@ abstract class SearchProvider extends SQLBaseProvider {
       // the inline editor's statement could only ever produce an error. False hides
       // the affordance instead of offering it (#269).
       supportsInlineRowEdit: false,
+      // Neither grammar has BEGIN; both are reached over stateless HTTP.
+      supportsTransactions: false,
       // The engine has no such constraint in its model: denormalization is the
       // modelling advice, `nested` and `join` are containment rather than reference,
       // and no DDL exists to declare one. So the empty `foreignKeys` the schema tree

@@ -425,6 +425,7 @@ validates the target parses as an integer SPID.
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core T-SQL DML |
+| `supportsTransactions` | `true` — the `mssql` package's `Transaction` over one held pool connection, so the trio and the SANDBOX toggle are offered (#U13) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; read from `sys.foreign_keys`, so an empty list is about the schema or the role, not the engine |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze', 'check', 'optimize', 'kill']` |

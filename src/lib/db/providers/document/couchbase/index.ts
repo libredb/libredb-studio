@@ -314,6 +314,8 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       // report success. Addressing a document needs `META(d).id` or `USE KEYS`, i.e.
       // per-dialect statement building, which is issue #279.
       supportsInlineRowEdit: false,
+      // The HTTP query service is stateless per request; no session spans two of them.
+      supportsTransactions: false,
       // SQL++ has no referential constraint: collections are schemaless, and the
       // columns this provider reports are inferred from a document sample rather than
       // declared. `getSchema()` returns `foreignKeys: []` because none are invented,
@@ -345,6 +347,13 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       vacuumGlobalLabel: "Compact",
       vacuumGlobalTitle: "Compact Storage",
       vacuumGlobalDesc: "Couchbase compacts its data files automatically; there is no manual equivalent to run here.",
+      // `reindex` here is BUILD INDEX over the deferred GSI indexes of ONE keyspace
+      // (`buildDeferredIndexes()`), not a table reindex, so the card's PostgreSQL
+      // wording was wrong in every word (#U6).
+      reindexGlobalLabel: "Build Indexes",
+      reindexGlobalTitle: "Build Deferred GSI Indexes",
+      reindexGlobalDesc:
+        "Runs BUILD INDEX for the deferred global secondary indexes of one collection; it needs a collection, so run it from the collection rather than here.",
       // `getSlowQueries()` reads system:completed_requests, which keeps only requests
       // over the query service's own threshold - a different fact from the PostgreSQL
       // extension the panel used to advertise (#U12).

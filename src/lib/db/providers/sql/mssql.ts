@@ -408,6 +408,8 @@ export class MSSQLProvider extends SQLBaseProvider {
       supportsExplain: false,
       supportsConnectionString: true,
       supportsInlineRowEdit: true,
+      // The mssql package's Transaction object over one held pool connection.
+      supportsTransactions: true,
       maintenanceOperations: ["analyze", "check", "optimize", "kill"],
     };
   }

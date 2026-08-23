@@ -530,6 +530,9 @@ describe("TrinoProvider metadata", () => {
 
     expect(capabilities.declaresForeignKeys).toBe(false);
     expect(capabilities.supportsInlineRowEdit).toBe(false);
+    // Trino has START TRANSACTION, but a transaction lives in an HTTP session header
+    // this provider does not carry between statements, so the trio is withheld (#U13).
+    expect(capabilities.supportsTransactions).toBe(false);
     // These rows are real tables, not groupings this server derived.
     expect(capabilities.tablesAreDerivedGroupings).toBeUndefined();
   });

@@ -925,6 +925,7 @@ difference — `OFFSET` — has no field in `ProviderCapabilities` to declare it
 | `supportsExternalQueryLimiting` | `true` | `LIMIT n` is correct here; the one form that is not is refused by `prepareQuery()` ([§5.5](#55-the-preparequery-override-there-is-no-second-page)) |
 | `supportsCreateTable` | **`false`** | Not in the grammar ([§5.6](#56-this-grammar-does-not-write)) |
 | `supportsInlineRowEdit` | **`false`** | `UPDATE` is not in the grammar, so the editor's statement could only ever produce an error (#269) |
+| `supportsTransactions` | **`false`** | `BEGIN` is not in the grammar and the surface is stateless HTTP; the trio and SANDBOX are withheld instead of answering HTTP 400 (#U13) |
 | `declaresForeignKeys` | **`false`** | The engine has no such constraint in its model, so the empty `foreignKeys` means "impossible here" rather than "none declared, or none visible to this role" — the distinction #414 was about |
 | `supportsMaintenance` | **`false`** | Nothing in `MaintenanceType` is SQL-reachable ([§8](#8-maintenance)) |
 | `maintenanceOperations` | `[]` | Consequence of the above |

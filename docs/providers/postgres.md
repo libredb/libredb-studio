@@ -435,6 +435,12 @@ the client is not returned to the pool until commit/rollback. Surfaced via `POST
 The auto-rollback timer is the key safety mechanism: a client that opens a transaction and
 disconnects without committing would otherwise hold locks indefinitely.
 
+`supportsTransactions: true` ([§10](#10-capabilities--labels)) is what tells the editor toolbar to
+offer BEGIN/COMMIT/ROLLBACK and the auto-rolled-back SANDBOX toggle at all. It is declared rather
+than inferred because the route's own gate is `isTransactionProvider(provider)`, a runtime shape
+check no client can read, so before `docs/BACKLOG.md` U13 those controls rendered on every
+connection — including the ten providers that answer HTTP 400.
+
 ---
 
 ## 9. Maintenance
@@ -468,6 +474,7 @@ Overrides the SQL base defaults:
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsCreateTable` | `true` |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core PostgreSQL DML |
+| `supportsTransactions` | `true` — `beginTransaction()` holds one pool client and runs `BEGIN` / `COMMIT` / `ROLLBACK` on it, so the editor's transaction trio and the auto-rolled-back SANDBOX toggle are offered here (#U13) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; an empty `foreignKeys` list is then a fact about the schema or the reading role, never about the engine |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'kill']` |
@@ -477,9 +484,22 @@ Overrides the SQL base defaults:
 
 ### Labels
 
-PostgreSQL uses the default SQL `getLabels()` from `BaseDatabaseProvider` (entity → *Table*,
-row → *row*, *Select Top 50*, *Vacuum Table*, *Analyze Table*, etc.) — no override needed, since
-the generic SQL wording already fits.
+PostgreSQL keeps the default SQL vocabulary from `BaseDatabaseProvider` (entity → *Table*,
+row → *row*, *Select Top 50*, *Vacuum Table*, *Analyze Table*, etc.) — the generic SQL wording
+already fits.
+
+`getLabels()` is overridden for **one** triad only: the Operations tab's global Reindex card, which
+was hardcoded to *"Run Reindex"* / *"Rebuild Indexes"* / *"Reconstructs all indexes in the database."*
+for every engine (`docs/BACKLOG.md` U6). That wording was written for this engine — the global card
+sends no target, so `runMaintenance('reindex')` here runs `REINDEX DATABASE`
+([§9](#9-maintenance)) — so declaring it changes nothing on PostgreSQL and lets the two
+other providers that offer `reindex` (SQLite, Couchbase) say what theirs does instead:
+
+| Field | Value |
+| --- | --- |
+| `reindexGlobalLabel` | *Run Reindex* |
+| `reindexGlobalTitle` | *Rebuild Indexes* |
+| `reindexGlobalDesc` | *Runs REINDEX DATABASE, reconstructing every index in the database.* |
 
 ---
 

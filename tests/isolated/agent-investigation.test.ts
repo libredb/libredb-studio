@@ -1429,17 +1429,16 @@ describe("planning mode runs no statement of the user's", () => {
       });
 
       /*
-        The relations block's empty sentence hedged between "that may be how the schema
-        is" and "the keys may be enforced by the application" — two claims about a
-        database that COULD declare a foreign key and did not. This engine cannot, and
-        the third sentence says so instead of inviting a reader to wonder about a schema
-        decision nobody made.
+        An engine that declares no foreign keys and a read that saw none are different
+        facts, and the block says which one it has. On an engine with no such construct
+        the other sentence — the one about what this reading was allowed to see — would
+        report a read limit where there was nothing to read, so it must not appear.
       */
       test("an engine that cannot declare a foreign key is not described as one that declared none", async () => {
         const { transcript } = await planOnProvider("json");
 
         expect(transcript).toContain("this engine does not declare foreign keys at all");
-        expect(transcript).not.toContain("That may be how the schema is");
+        expect(transcript).not.toContain("not the same as there being none");
       });
 
       /*
@@ -1758,8 +1757,8 @@ describe("planning mode runs no statement of the user's", () => {
      *
      * The relations half was missing when this fixture was first written, and the test
      * below passed for the wrong reason: with no foreign keys, `renderErDiagram`
-     * short-circuits to its "no table declares a foreign key" branch and its notice is
-     * never rendered at all — so an assertion that no tool is named certified a property
+     * short-circuits to its empty-read branch and its omission notice is never rendered
+     * at all — so an assertion that no tool is named certified a property
      * the code did not have. Found by review on #411.
      */
     const wideCatalog = async (sql: string): Promise<QueryResult> => {
@@ -2264,7 +2263,7 @@ describe("planning mode runs no statement of the user's", () => {
     "Apply to editor" control reads SQL out of a fence in the browser — it works when
     the model fences its SQL and silently offers nothing when it does not — so plan
     mode's entire deliverable was recorded nowhere and could be checked by nothing
-    (`docs/BACKLOG.md` B44).
+    at all.
 
     What is asserted here is the wiring and, as carefully, its limits: an unknown
     table is RECORDED and the statement is still offered, a write is MARKED and still

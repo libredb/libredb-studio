@@ -141,6 +141,28 @@ export default function Studio() {
       }
     : undefined;
 
+  // The transaction trio and the sandbox toggle are offered only where the provider
+  // declares it holds a transaction session (#U13). The server's gate is
+  // `isTransactionProvider(provider)` — a runtime shape check no client can read — so
+  // both shells used to supply all four unconditionally and POST /api/db/transaction
+  // answered 400 "Transaction control is not supported for this database type"
+  // (measured 2026-08-19 on OpenSearch, for both begin and rollback). Unknown hides
+  // them, like the row-edit gate above: metadata is also null when
+  // /api/db/provider-meta fails.
+  //
+  // Supplied as one bundle because SANDBOX auto-rolls-back through the same route,
+  // and because QueryToolbar's contract is that the three arrive together or not at
+  // all.
+  const canRunTransactions = metadata?.capabilities.supportsTransactions === true;
+  const transactionHandlers = canRunTransactions
+    ? {
+        onBeginTransaction: () => txn.handleTransaction("begin"),
+        onCommitTransaction: () => txn.handleTransaction("commit"),
+        onRollbackTransaction: () => txn.handleTransaction("rollback"),
+        onTogglePlayground: () => txn.setPlaygroundMode(!txn.playgroundMode),
+      }
+    : {};
+
   // === Cross-hook orchestration: connection-change effect ===
   useEffect(() => {
     if (conn.activeConnection) {
@@ -428,10 +450,7 @@ export default function Studio() {
               onClearQuery={() => tabMgr.updateCurrentTab({ query: "" })}
               onExecuteQuery={() => queryExec.executeQuery()}
               onCancelQuery={() => queryExec.cancelQuery()}
-              onBeginTransaction={() => txn.handleTransaction("begin")}
-              onCommitTransaction={() => txn.handleTransaction("commit")}
-              onRollbackTransaction={() => txn.handleTransaction("rollback")}
-              onTogglePlayground={() => txn.setPlaygroundMode(!txn.playgroundMode)}
+              {...transactionHandlers}
               onToggleEditing={onToggleEditing}
               onImport={() => setIsImportModalOpen(true)}
               onExplain={
@@ -560,10 +579,7 @@ export default function Studio() {
                           onSaveQuery={() => setIsSaveQueryModalOpen(true)}
                           onExecuteQuery={() => queryExec.executeQuery()}
                           onCancelQuery={() => queryExec.cancelQuery()}
-                          onBeginTransaction={() => txn.handleTransaction("begin")}
-                          onCommitTransaction={() => txn.handleTransaction("commit")}
-                          onRollbackTransaction={() => txn.handleTransaction("rollback")}
-                          onTogglePlayground={() => txn.setPlaygroundMode(!txn.playgroundMode)}
+                          {...transactionHandlers}
                           onToggleEditing={onToggleEditing}
                           onImport={() => setIsImportModalOpen(true)}
                         />

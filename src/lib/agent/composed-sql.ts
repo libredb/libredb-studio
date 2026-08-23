@@ -174,8 +174,10 @@ function composePostgresCatalog(selector: AgentCatalogSelector): string {
  * role `docs/AGENT_DEMO.md` tells operators to create holds `SELECT` and nothing
  * else, so those views answered NOTHING for it — measured on the seeded dvdrental as
  * `libredb_agent`: 0 rows where `pg_constraint WHERE contype = 'f'` holds 18, and a
- * run then reported that the database declares no foreign keys (`docs/BACKLOG.md`
- * B44). `pg_constraint` needs only `USAGE` on the schema, and answers all 18.
+ * run then reported that the database declares no foreign keys. `pg_constraint` needs
+ * only `USAGE` on the schema, and answers all 18. What the rewrite cannot reach is that
+ * ANY role can be narrower than its database, so the relations block declines to report
+ * an absence from an empty read at all — see `er-diagram.ts`.
  *
  * The same rewrite is what pairs a composite key. Neither view exposes an ordinal,
  * so `FOREIGN KEY (x, y) REFERENCES parents (a, b)` came back as the cross-product

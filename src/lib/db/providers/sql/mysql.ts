@@ -340,6 +340,8 @@ export class MySQLProvider extends SQLBaseProvider {
       explainFormat: "mysql-json",
       supportsConnectionString: true,
       supportsInlineRowEdit: true,
+      // The driver's own connection.beginTransaction() over one held connection.
+      supportsTransactions: true,
       maintenanceOperations: ["analyze", "optimize", "check", "kill"],
     };
   }

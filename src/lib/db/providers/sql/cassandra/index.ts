@@ -212,6 +212,8 @@ export class CassandraProvider extends SQLBaseProvider {
       // real table - is "Some partition key parts are missing: id". Editing a key
       // column is refused outright ("PRIMARY KEY part id found in SET part").
       supportsInlineRowEdit: false,
+      // CQL has no transaction; BATCH is not one.
+      supportsTransactions: false,
       // There is no referential constraint in the model at all: `ALTER TABLE … ADD
       // CONSTRAINT … FOREIGN KEY …` is a syntax error, because the clause does not
       // exist. An empty relations list is the engine's answer and not the schema's

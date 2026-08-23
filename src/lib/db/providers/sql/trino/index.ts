@@ -262,6 +262,9 @@ export class TrinoProvider extends SQLBaseProvider {
       // primary key for any table in any catalog, so there is no column that
       // identifies one row - an edit would silently rewrite every row that matches.
       supportsInlineRowEdit: false,
+      // Trino has START TRANSACTION, but a transaction lives in an HTTP session
+      // header this provider does not carry between statements.
+      supportsTransactions: false,
       // No `table_constraints`, no `key_column_usage`, no foreign keys in the model at
       // all. An empty relations list is the engine's answer and not the schema's
       // (#414).
