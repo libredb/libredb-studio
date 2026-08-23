@@ -19,8 +19,20 @@ import { expect, test, type Page } from "@playwright/test";
 /** Long by design: a plan turn on the slowest of the ten took 195 seconds when measured. */
 const RUN_TIMEOUT_MS = 300_000;
 
+/*
+  Opt-in, and CI is the reason.
+
+  This file drives real models through the real rail: it needs a local Ollama with the weights
+  pulled, and the model under test is whichever one the server was started with. CI has neither,
+  so every test here fails there for reasons that say nothing about the product — which is
+  exactly what happened on the first push, and it turned a green E2E job red.
+
+  `scripts/agent-model-e2e.sh` sets this when it is actually driving a sweep. Nothing else does.
+*/
+const ENABLED = process.env.AGENT_MODEL_E2E === "1";
+
 const EMAIL = process.env.E2E_EMAIL ?? "user@libredb.org";
-const PASSWORD = process.env.E2E_PASSWORD ?? "user12345";
+const PASSWORD = process.env.E2E_PASSWORD ?? "";
 
 /** The surfaces, and the question each was measured with, so the UI run matches the API one. */
 const SURFACES = [
@@ -33,9 +45,11 @@ const SURFACES = [
 
 async function login(page: Page): Promise<void> {
   await page.goto("/login");
-  await page.locator('input[type="email"]').fill(EMAIL);
-  await page.locator('input[type="password"]').fill(PASSWORD);
-  await page.locator('button[type="submit"]').click();
+  // `.first()`: the page carries more than one field of this type, and a bare type selector is a
+  // strict-mode violation rather than a choice between them.
+  await page.locator('input[type="email"]').first().fill(EMAIL);
+  await page.locator('input[type="password"]').first().fill(PASSWORD);
+  await page.locator('button[type="submit"]').first().click();
   await page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 30_000 });
 }
 
@@ -131,6 +145,10 @@ async function verdictOf(page: Page, runId: string): Promise<{ outcome: string; 
 }
 
 test.describe("the agent, driven through the rail a user clicks", () => {
+  // Skipped rather than absent: the file documents how the sweep is driven, and a reader looking
+  // for it should find it here rather than in a script's shell history.
+  test.skip(!ENABLED, "set AGENT_MODEL_E2E=1 with a local model server to drive this");
+
   /*
     Sequential, but not abandoned at the first loss.
 

@@ -66,7 +66,10 @@ do
     [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/db/health)" = "200" ] && break
   done
 
-  npx playwright test e2e/agent-models.spec.ts --project=chromium --reporter=line --workers=1 $HEADED 2>&1 |
+  AGENT_MODEL_E2E=1 \
+    E2E_EMAIL="$(grep -E '^USER_EMAIL=' .env.local | cut -d= -f2-)" \
+    E2E_PASSWORD="$(grep -E '^USER_PASSWORD=' .env.local | cut -d= -f2-)" \
+    npx playwright test e2e/agent-models.spec.ts --project=chromium --reporter=line --workers=1 $HEADED 2>&1 |
     sed "s/^/[$MODEL] /"
   echo "@@@@ $MODEL done"
 done
