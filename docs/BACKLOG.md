@@ -22,10 +22,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S1–S8 · 8
-- [Drivers and connections](#drivers-and-connections) — D1–D12, U17 · 8
+- [Drivers and connections](#drivers-and-connections) — D1–D16, U17 · 10
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X8, U2–U18 · 9
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X10, U2–U18 · 9
 - [Authentication and security headers](#authentication-and-security-headers) — AU2
 - [Tests](#tests) — T1–T3 · 2
 - [Dependencies](#dependencies) — P1–P5 · 5
@@ -185,31 +185,6 @@ Same lock, same fix as B49. Close the two together.
 **Done when:** testing a connection that resolves to an already-open single-writer file reuses the
 open provider, or the test is skipped with an honest message. Either way the modal must not present a
 lock conflict as a failed connection test.
-
-### D7. Three providers answer the performance panel with a fabricated cache hit ratio
-
-Three sites, all reaching the panel indistinguishable from a measurement:
-
-- **MySQL** — `mysql.ts:853` returns `cacheHitRatio: 99` from a `catch` commented "Fallback if
-  performance_schema is not available". Two more sites default the same way when the row is simply
-  absent: `mysql.ts:648` and `:826` both read `hitRows[0]?.hit_ratio || 99`.
-- **MongoDB** — the same literal in the same position (`document/mongodb.ts`, which at least logs first).
-- **LibreDB** — `embedded/libredb.ts:526` returns `cacheHitRatio: 100` unconditionally.
-
-Measured 2026-08-20 against a live OceanBase Community Edition 4.4.2.1 through the shipped `mysql`
-provider: the tenant has no `performance_schema` database at all (`ERROR 1049`). That `catch` is not
-an edge case there, it is the only path. The panel reports **99 percent cache hit, 0 queries per
-second, 0 buffer pool, 0 deadlocks** on every refresh, forever.
-
-This is the failure class #424 exists to refuse — "a missing panel is honest; a populated wrong one is
-not" — and it is worse here, because the engine is not the author of the number. We are.
-
-**#452 cannot reach this.** That PR taught the five monitoring tabs to render an omitted metric as
-unavailable rather than as zero. A fabricated `99` is not an absence, so there is nothing for a panel
-to detect.
-
-**Done when:** a provider that cannot measure the cache hit ratio reports it as unavailable, on all
-sites listed above.
 
 ### D8. The MySQL provider only uses the prepared protocol, and two engines lose panels to it
 
@@ -385,21 +360,84 @@ first-contact policy is written in `docs/providers/`-adjacent documentation the 
 
 ---
 
-### D12. A pasted `rediss://` URL lands on SSL mode `disable`, so the scheme is silently dropped
+---
 
-`src/lib/connection-string-parser.ts` reads a pasted Redis URL and does not carry its secure scheme
-into `config.ssl`: `rediss://host:6380` produces a connection whose mode is `disable`. Since the
-provider now honours that mode (it did not before 2026-08-23), the paste path is the one place left
-where a user asks for TLS and does not get it — and it looks like it worked, because the connection
-form fills in and saves.
+### D13. Oracle answers every non-SELECT with `rowCount: 0`, including the rows it just wrote
 
-The fix is named and one line: `withSSLMode()` in the same file (`:144`) is the existing precedent
-for a scheme that implies a mode; `postgresql://…?sslmode=` already goes through it.
+`oracle.ts:419` builds the envelope from `rows.length` and never reads `oracledb`'s own
+`result.rowsAffected`, so an `INSERT` that inserted a row, an `UPDATE` that changed one and a `DELETE`
+that removed one all report zero. Measured 2026-08-23 through `createDatabaseProvider({type:"oracle"})`
+against Oracle Free 23ai, with a following `SELECT` proving each statement took effect. Oracle is the
+only one of the five SQL providers that does this: postgres reports `rowCount ?? 0`, mssql
+`rowsAffected[0]`, sqlite `changes`, and mysql was fixed in the same pass that found this.
 
-Scope note: this is a different intake path from the SSL/TLS panel, which is why it was left out of
-the panel work rather than folded into it. `docs/providers/redis.md` records it as a known limitation.
+Milder than the MySQL defect it was found beside - nothing throws, the statement runs, the panel just
+says nothing happened. The user's own count is the only thing that contradicts it.
 
-**Done when:** a pasted `rediss://` URL arrives with mode `require` (or higher), with a parser test.
+**Done when:** a non-SELECT through the Oracle provider reports the affected-row count the driver
+returns, with a live run showing a non-zero count for an `INSERT`.
+
+---
+
+### D14. Three providers lost the buffer-pool gauge, because it was the cache hit ratio wearing a second name
+
+Removing the fabricated cache hit ratios exposed that `bufferPoolUsage` was not a second measurement.
+In Oracle and SQL Server it was literally assigned the ratio itself - the old tests even said "mirrors
+cacheHitRatio in Oracle impl" - so the Performance tab drew and rated one quantity as two independent
+gauges. In PostgreSQL it was `blks_hit / (blks_hit + blks_read)` from `pg_stat_database`, which is also
+a cache hit ratio and not pool occupancy, with a `: 100` fallback when both counters were 0. All three
+now omit the field, which the tab renders as unavailable.
+
+Real occupancy is reachable on each engine and none of the three is free: `pg_buffercache` is an
+extension not installed by default, `V$BUFFER_POOL_STATISTICS` needs the privilege the ratio already
+needs, and `sys.dm_os_buffer_descriptors` is a full descriptor scan on a large instance. So a gauge
+that reads a real pool has a cost the panel has never paid.
+
+**Done when:** each provider either measures pool occupancy for real, at a cost written down next to
+the query, or the field is dropped from `PerformanceMetrics` so no panel offers a gauge nothing fills.
+
+---
+
+### D15. SQLite's table size is `rowCount * 100`, and the storage panel adds it up
+
+`sqlite.ts` computes `tableSizeBytes = rowCount * 100` with the comment "Assume 100 bytes average per
+row". The StorageTab sums it into the *Data* figure it draws next to the database size, so every
+SQLite connection's storage breakdown is a guess presented as a measurement - the same class as the
+cache hit ratios removed on 2026-08-23, and left behind by that change for one reason: both
+`TableStats.tableSize` and `tableSizeBytes` are REQUIRED in `src/lib/db/types.ts`, so an honest absence
+needs a type change, and zeroing them silently re-bases the aggregate for every SQLite connection.
+
+`dbstat` is the real answer and it is not portable: `node:sqlite` has the virtual table
+(`SQLITE_ENABLE_DBSTAT_VTAB`) and `bun:sqlite` does not - measured 2026-08-23, `no such table: dbstat`
+on Bun 1.3.14 / SQLite 3.53.0 against a row from `node:sqlite` 3.51.2. So the per-driver answer
+differs, which is the decision this entry is waiting on.
+
+**Done when:** SQLite reports a table size it measured or reports none, the two fields allow the
+absence, and the storage panel's Data figure is verified against a real file on both drivers.
+
+---
+
+### D16. The TLS a connection string carries in its QUERY STRING is still dropped
+
+`rediss://` and `couchbases://` now reach the form as mode `require` (2026-08-23), which leaves the
+other half of the same intake: `parseGenericURL` drops the query string entirely, so
+`postgresql://host/db?sslmode=verify-full`, MySQL's `?ssl-mode=REQUIRED` and an ADO.NET
+`Encrypt=True;TrustServerCertificate=False` all arrive on the form's `disable` default. The user asked
+for TLS in the string they pasted and the form says plaintext.
+
+Not the same one-line shape as a scheme, which is why it was left out: a scheme implies one mode, a
+parameter carries a VALUE that needs mapping, and two of the values have no representation at all -
+Postgres's `prefer` and `allow` and MySQL's `PREFERRED` mean "encrypt if the server offers it", while
+`SSLMode` is `disable | require | verify-ca | verify-full`. Mapping `prefer` onto either end is a
+security decision, not a translation.
+
+Correcting the record: an earlier version of this entry's predecessor claimed
+"`postgresql://...?sslmode=` already goes through `withSSLMode`". It does not, and never did -
+`withSSLMode`'s only callers were ClickHouse's `http://` / `https://` until the Redis and Couchbase
+schemes joined them.
+
+**Done when:** a pasted string's TLS parameter reaches the form, and either `SSLMode` gains a
+representation for opportunistic TLS or the mapping's refusal to guess is recorded here.
 
 ## Value interpolation
 
@@ -479,44 +517,60 @@ it was not mixed into a correctness PR.
 its rows are recomputed and reordered. The rest need reading one at a time, to tell the stable lists
 (where an index key is fine) from the rest.
 
-### X7. The DDL export types a numeric or a timestamp column as TEXT, because the wire hands it a string
+### X9. What `columnTypes` still cannot name, measured
 
-Measured in the browser against the local `dvdrental` (2026-08-18):
-`SELECT rental_rate, last_update, film_id FROM film` exports as
-`CREATE TABLE … ("rental_rate" TEXT, "last_update" TEXT, "film_id" BIGINT)`.
+The four string-returning drivers fill `QueryResult.columnTypes` since 2026-08-23. Four bounds were
+measured while doing it, and each is a small residue rather than a defect:
 
-Nothing is wrong with the inference. It never sees a number: `pg` returns `numeric` as a string to
-keep its precision, the API serializes to JSON, and a `timestamp` is a string by the time the browser
-reads it. So a value-shaped guess can only recover integer, boolean and text, and the dialect
-spellings #422 added (`NUMBER(19)`, `BINARY_DOUBLE`, `DATETIME2`, …) apply to those three kinds.
+- **A user-defined type has no name.** Postgres's built-in OIDs are a generated static table (they are
+  compiled into the server and never reused), so an enum, a composite or an extension type falls
+  outside it. Measured by walking every table and view in `dvdrental`: 128 result columns, 125 named,
+  0 wrong, 3 absent - all three `mpaa_rating`. Resolving them needs a `pg_catalog.pg_type` round trip,
+  which three of the four call sites cannot make: `query()` releases its pooled client before
+  assembling the result, and `queryReadOnly()` promises EXACTLY ONE statement inside its
+  `BEGIN READ ONLY`. A per-connection OID cache filled on first sight is the shape that would work.
+- **MySQL cannot tell `POINT` from `GEOMETRY`.** Both arrive as code 255 with nothing else to separate
+  them; 38 of the 39 other columns match `information_schema.DATA_TYPE` exactly.
+- **`bit` is exported verbatim, and narrows.** `CREATE TABLE t (c bit)` is `bit(1)` on both Postgres
+  and MySQL, so the DDL export should complete it like the other unbounded families - except `pg`
+  hands a bit string back as the string `"1010"` while `mysql2` hands back a Buffer, so the same
+  declared name needs the text family on one engine and the binary family on the other. One name, two
+  answers, which is why it was left alone.
+- **The mssql transaction path declares types for columns `fields` does not list.** `queryInTransaction`
+  takes `fields` from `Object.keys(recordset[0])`, so a zero-row result has no fields while its
+  `recordset.columns` (which does carry the declaration, even for zero rows - measured) fills
+  `columnTypes`. Harmless today because all three consumers iterate `fields`; taking `fields` from
+  `columns` too would be the right fix and is a behaviour change of its own.
 
-The type is not lost, only unreported. `QueryResult.columnTypes` is the channel, and six provider
-families populate it today: ClickHouse, Druid, Trino, Cassandra and the two search engines. The gap is
-the drivers that hand back strings — `pg`, `mysql2`, `oracledb`, `mssql`.
+**Done when:** each bound is closed or judged settled, with the enum case the only one a user is
+likely to meet.
 
-Guessing from a string's SHAPE is not the fix and should not be attempted: it types a text column
-holding `2026-01-01` as a timestamp.
+### X10. Two providers stringify their bytes before the export can see them, so the binary literal never reaches them
 
-**Done when:** every provider fills `columnTypes` for the columns it declares — the provider triad's
-own work, one PR. It also lets the grid label a column without guessing
-(`ResultsGrid.declaredTypeOf` already reads it).
+The SQL export writes a real per-dialect binary literal since 2026-08-23, and it only reaches a value
+that arrives AS BYTES. Two providers normalise at the driver boundary first:
 
-### X8. The SQL INSERT and DDL exports still write a binary value as its JSON shape
+- `mysql.ts`'s `sanitizeRow` turns a `Buffer` into the string `` `0x${hex}` `` (an empty one into `""`).
+- `cassandra/driver-transport.ts:234` does the same, deliberately - §3.8 of `docs/providers/cassandra.md`
+  records it, because `JSON.stringify` on a `Buffer` gives the wire shape and the CQL literal is `0x…`.
 
-The grid, the row detail sheet and the CSV agree on `\x…` hex (2026-08-23), and `sqlValue` in
-`src/lib/export/result-export.ts` does not: a `bytea`/`BLOB` cell is still written as a quoted
-`{"type":"Buffer","data":[…]}` literal, so a replayed INSERT stores that text rather than the bytes.
+So on those two engines a binary cell is a TEXT value by the time any consumer sees it. Measured in
+the browser (2026-08-23, production build, `SELECT ... b FROM types` on MySQL 26.7.0): the grid shows
+`0x0102ab` where Postgres shows `\x0102ab`, and the SQL INSERT export writes `'0x0102ab'` - the
+eight-character string, not the three bytes. Replayed into a `BLOB` column that stores the text, which
+is the same defect the export just fixed for every other engine, entered one layer earlier.
 
-Not a one-liner, which is why it was left out of the value-rendering work: the hex literal is
-dialect-specific. `\x…` is Postgres, MySQL and SQL Server want `0x…`, and the SQL standard spelling
-is `X'…'`. The export already knows its target dialect for the DDL type names (#422), so the
-literal belongs next to that knowledge.
+It is also the only place the product spells the same value two ways.
 
-The JSON export is deliberately unchanged: the Buffer shape in a `.json` file is at least
-machine-recoverable.
+The fix is to let the bytes through and let `src/lib/export/binary.ts` render them, which is what
+Postgres already does - not to teach the export to recognise a `0x…` string, because that is
+shape-guessing a text column, which this file forbids elsewhere for good reason. The cost is a visible
+change on both engines (`0x…` becomes `\x…` in the grid, the row sheet and the CSV) plus the two docs
+that state the current spelling, and Cassandra's own reason for normalising has to be answered rather
+than reverted.
 
-**Done when:** each dialect the export offers writes a binary literal its own engine accepts, proven
-by replaying an exported file into that engine.
+**Done when:** a binary cell from MySQL and from Cassandra exports as its dialect's binary literal and
+replays into its own engine, with one spelling shown across every surface.
 
 ### U2. The rule that catches an arity change on a JSX handler is configured but not aimed at components
 

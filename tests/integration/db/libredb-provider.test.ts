@@ -506,16 +506,20 @@ describe("LibreDBProvider — monitoring", () => {
     const health = await provider.getHealth();
     expect(health.activeConnections).toBe(1);
     expect(health.databaseSize).toMatch(/\d/); // human-formatted, e.g. "12.0 KB"
-    expect(health.cacheHitRatio).toBe("100.0");
+    // The kernel publishes no cache statistics, so there is no ratio to report.
+    expect(health.cacheHitRatio).toBe("N/A");
     expect(health.slowQueries).toEqual([]);
     expect(health.activeSessions).toEqual([]);
     await provider.disconnect();
   });
 
-  test("getPerformanceMetrics reports a full cache hit ratio (in-process file)", async () => {
+  test("getPerformanceMetrics measures nothing, so it reports nothing", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
-    expect(await provider.getPerformanceMetrics()).toEqual({ cacheHitRatio: 100 });
+    // The embedded kernel's whole public surface is open/kv/doc/table/catalog: there
+    // is no counter of cache hits or misses anywhere in it, so the panel must show
+    // "Not measured" rather than the 100% this used to assert.
+    expect(await provider.getPerformanceMetrics()).toEqual({});
     await provider.disconnect();
   });
 

@@ -605,6 +605,28 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     };
   }
 
+  /**
+   * Only the readings the cluster actually published.
+   *
+   * Every field here is optional in `PerformanceMetrics` because "not measured"
+   * and "measured as zero" are different facts. This method used to erase that
+   * difference three times over: a `null` miss rate became a `cacheHitRatio` of
+   * 0, an absent `cmd_get`/`cmd_set` pair became 0 operations per second, and an
+   * unreadable `basicStats` became 0% quota used. The cache one is the worst of
+   * the three - `DEFAULT_THRESHOLDS` rates the ratio `direction: "below"` with
+   * `critical: 80`, so a bucket whose statistics the connected user may not read
+   * showed a red critical cache fault that nothing in the cluster reported. A
+   * missing panel is honest; a populated wrong one is not (#424).
+   *
+   * The absences are ordinary here rather than exotic: `degradeTo` turns an RBAC
+   * denial on `/pools/default/buckets/<bucket>/stats` into an empty sample set
+   * (`docs/providers/couchbase.md` §3.9), and a bucket that is not a Couchbase
+   * bucket publishes no `ep_*` series at all.
+   *
+   * A measured 0 is kept in every case: a cold cache with no misses really is at
+   * 100%, an idle bucket really is doing 0 operations, and an empty bucket really
+   * is using none of its quota.
+   */
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
     const transport = this.requireTransport();
 
@@ -613,15 +635,20 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       this.bucketSamples(transport),
     ]);
 
-    // The KV engine reports a miss rate, so the hit ratio is its complement.
-    // An unreadable source reports zero rather than a flattering 100.
+    // The KV engine reports a miss rate as a percentage, so the hit ratio is its
+    // complement; clamped because the series is a moving average and can overshoot.
     const missRate = lastSample(samples, "ep_cache_miss_rate");
-    const operations = (lastSample(samples, "cmd_get") ?? 0) + (lastSample(samples, "cmd_set") ?? 0);
+    // Sampled per-second counters. Either half may be absent on its own, so the
+    // sum exists when at least one was published - and not otherwise.
+    const gets = lastSample(samples, "cmd_get");
+    const sets = lastSample(samples, "cmd_set");
+    const operations = gets === null && sets === null ? null : (gets ?? 0) + (sets ?? 0);
+    const quotaUsed = bucketInfo.basicStats?.quotaPercentUsed;
 
     return {
-      cacheHitRatio: missRate === null ? 0 : round2(Math.max(0, Math.min(100, 100 - missRate))),
-      queriesPerSecond: round2(operations),
-      bufferPoolUsage: round2(bucketInfo.basicStats?.quotaPercentUsed ?? 0),
+      ...(missRate === null ? {} : { cacheHitRatio: round2(Math.max(0, Math.min(100, 100 - missRate))) }),
+      ...(operations === null ? {} : { queriesPerSecond: round2(operations) }),
+      ...(typeof quotaUsed === "number" ? { bufferPoolUsage: round2(quotaUsed) } : {}),
     };
   }
 
@@ -696,8 +723,9 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
         [] as CouchbaseRow[],
       ),
       // Per-index runtime statistics live under the index service's own bucket.
-      // Modern servers no longer publish them there, which is exactly why every
-      // value below falls back to zero instead of failing the listing.
+      // Modern servers no longer publish them there, which is exactly why a
+      // missing series must not fail the listing - but it must not become a
+      // reading either (see the size handling below).
       degradeTo<BucketStatsPayload>(
         () => transport.manage(`/pools/default/buckets/@index-${encodeURIComponent(this.bucket)}/stats`),
         {},
@@ -709,7 +737,11 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     return rows.map((row) => {
       const name = asString(row.index_name, "unknown");
       const isPrimary = row.is_primary === true;
-      const sizeBytes = lastSample(indexSamples, `index/${name}/data_size`) ?? 0;
+      // Absent, not zero: an index the service publishes no `data_size` for has an
+      // unknown size, and "0 B" read as an empty index - which the Storage tab then
+      // summed into its index total. `IndexStats.indexSizeBytes` is optional for
+      // exactly this, and `indexSize` carries the absence as the repo's "N/A".
+      const sizeBytes = lastSample(indexSamples, `index/${name}/data_size`);
 
       return {
         schemaName: asString(row.scope_name, "_default"),
@@ -720,8 +752,10 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
         // No secondary index enforces uniqueness; only the document key is unique.
         isUnique: isPrimary,
         isPrimary,
-        indexSize: formatBytes(sizeBytes),
-        indexSizeBytes: sizeBytes,
+        // "N/A" is the word every provider in this repo uses for a size it cannot
+        // read (sqlite.ts, mysql.ts), so no new spelling is introduced here.
+        indexSize: sizeBytes === null ? "N/A" : formatBytes(sizeBytes),
+        ...(sizeBytes === null ? {} : { indexSizeBytes: sizeBytes }),
         scans: lastSample(indexSamples, `index/${name}/num_requests`) ?? 0,
       };
     });

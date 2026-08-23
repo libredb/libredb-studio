@@ -332,7 +332,7 @@ cancellation, runs `conn.execute(sql, binds, { outFormat: OUT_FORMAT_OBJECT, aut
 and returns:
 
 ```ts
-{ rows, fields: metaData.map(m => m.name), rowCount: rows.length, executionTime }
+{ rows, fields: metaData.map(m => m.name), rowCount: rows.length, executionTime, columnTypes? }
 ```
 
 `rowCount` is `rows.length`. Non-`SELECT` statements (INSERT/UPDATE/DELETE/DDL) return no `rows`
@@ -358,6 +358,38 @@ currently configure `fetchAsString`/`fetchAsBuffer`/`fetchInfo`:
   is a real gap — see [Known limitations](#14-known-limitations--future-work).
 - **`NUMBER`** is returned as a JavaScript `number`; values beyond 2^53 (e.g. `NUMBER(38)` ids or
   high-precision decimals) **lose precision**. Fetching such columns as strings would preserve them.
+
+### 5.4 Declared column types
+
+Oracle is the one engine of the four whose driver hands over a NAME rather than a wire code:
+`result.metaData[].dbTypeName`. It is passed through into `QueryResult.columnTypes` verbatim
+([column-types.ts](../../src/lib/db/providers/sql/column-types.ts)), keyed by the column name in
+`fields`, by both `query()` and `queryInTransaction()`, and it is uppercase - the same spelling
+`ALL_TAB_COLUMNS.DATA_TYPE` uses, so a declared type reads like the schema tree's entry.
+
+Measured on Oracle Free 23ai over the probe table, verbatim from `oracledb`:
+
+| declared | `dbTypeName` | also reported |
+|---|---|---|
+| `NUMBER(19)` | `NUMBER` | `precision: 19, scale: 0` |
+| `NUMBER(10,2)` | `NUMBER` | `precision: 10, scale: 2` |
+| `BINARY_DOUBLE` | `BINARY_DOUBLE` | |
+| `VARCHAR2(40)` | `VARCHAR2` | `byteSize: 40` |
+| `CLOB` / `BLOB` | `CLOB` / `BLOB` | |
+| `TIMESTAMP` / `DATE` | `TIMESTAMP` / `DATE` | `precision: 6` on the timestamp |
+| `SYSTIMESTAMP` (computed) | `TIMESTAMP WITH TIME ZONE` | `precision: 6` |
+| `COUNT(*)` (computed) | `NUMBER` | `precision: 0, scale: 0` |
+| `1/3` (computed) | `NUMBER` | `precision: 0, scale: -127` |
+
+The precision and scale sit right beside the name and are deliberately **not** spelled into it. The
+last two rows are why: a computed column reports precision 0 or scale -127, and a `NUMBER(p,s)`
+built from those would claim something Oracle did not. `DATA_TYPE` is the type; the declaration
+channel carries the type.
+
+This is the only source of a type for a computed column or an ad-hoc projection - the schema tree has
+no catalog entry to answer with - and it is what stops the SQL-DDL export from guessing. Measured
+before this existed, the probe table's `NUMBER(10,2)` column exported as `BINARY_DOUBLE` and its
+`BLOB` as `VARCHAR2(4000)`, both inferred from a value.
 
 ---
 
@@ -401,14 +433,47 @@ sub-query is independently privilege-guarded ([§3.6](#36-privilege-resilient-mo
 
 | Method | Primary source | Notes / degradation |
 |--------|----------------|---------------------|
-| `getHealth()` | `V$SESSION`, `USER_SEGMENTS`, `V$SYSSTAT`, `V$SQL` | each block guarded → `N/A`/`0`/`[]` if no privilege |
+| `getHealth()` | `V$SESSION`, `USER_SEGMENTS`, `V$SYSSTAT`, `V$SQL` | each block guarded → `N/A`/`0`/`[]` if no privilege; `cacheHitRatio` is `N/A`, never `0%` ([§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)) |
 | `getOverview()` | `V$VERSION`, `V$INSTANCE`, `V$SESSION`, `V$PARAMETER`, `USER_SEGMENTS`, `USER_TABLES`/`USER_INDEXES` | each guarded |
-| `getPerformanceMetrics()` | `V$SYSSTAT` | **only** `cacheHitRatio` + `bufferPoolUsage` (no QPS/deadlocks); defaults to `100` if denied |
+| `getPerformanceMetrics()` | `V$SYSSTAT` | **only** `cacheHitRatio`, and it is **omitted** when `V$SYSSTAT` cannot be read (no QPS/deadlocks/buffer-pool) — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
 | `getSlowQueries()` | `V$SQL` (top-N by `ELAPSED_TIME`) | `sharedBlksHit`=`BUFFER_GETS`, `sharedBlksRead`=`DISK_READS`; `[]` on failure |
 | `getActiveSessions()` | `V$SESSION` ⋈ `V$SQL` | `pid` = `"SID,SERIAL#"`; wait class/event; `[]` on failure |
 | `getTableStats()` | `ALL_TABLES` + `USER_SEGMENTS` | sizes + `lastAnalyze`; no live/dead tuples, no bloat; `[]` on failure |
 | `getIndexStats()` | `ALL_INDEXES` + `USER_SEGMENTS` + `ALL_IND_COLUMNS` | **`scans` always `0`** (no usage counter exposed); `isPrimary` always `false`; `[]` on failure |
 | `getStorageStats()` | `DBA_DATA_FILES` → fallback `USER_SEGMENTS` | per-tablespace size; DBA view falls back to user segments without privilege |
+
+### 7.1 When the cache hit ratio is not measurable
+
+Two states, both ordinary:
+
+- **The connected user cannot read `V$SYSSTAT`.** Measured 2026-08-23 on Oracle Free 23ai against a
+  user granted only `CREATE SESSION`:
+
+  ```
+  ORA-00942: table or view "SYS"."V_$SYSSTAT" does not exist
+  ```
+
+- **The counter denominator is zero.** `NULLIF(..., 0)` guards the division, so the statement returns
+  one row whose single column is `NULL`. Measured 2026-08-23 on the same instance:
+
+  ```
+   HIT_RATIO
+  ----------
+  <NULL>
+  ```
+
+In both cases **`getHealth().cacheHitRatio` is `"N/A"` and `getPerformanceMetrics()` omits
+`cacheHitRatio`** (returning `{}` when nothing else was read), and the Overview and Performance tabs
+render "Not measured". A ratio measured as `0` is kept and shown as `0.0%`.
+
+`getHealth()` previously published `"0%"` for an unreadable ratio and `getPerformanceMetrics()`
+defaulted to `100`. The `0%` was worse than the `100`: the Overview card rates a low ratio "Needs
+tuning", so a least-privilege application user saw a cache fault Oracle never reported.
+
+`bufferPoolUsage` is **no longer reported**. It was assigned `cacheHitRatio` itself — the same number
+under a second name, which the Performance tab drew and rated as an independent gauge. Oracle does
+publish pool occupancy, in `V$BUFFER_POOL_STATISTICS`/`V$SGASTAT`, but this method does not query
+them.
 
 ---
 
@@ -591,8 +656,9 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 - **Row counts (`NUM_ROWS`) are optimizer estimates** populated by `DBMS_STATS`; they can be stale
   or `NULL` until stats are gathered.
 - **Monitoring depends on `V$` privileges.** A low-privilege app user silently gets `N/A`/`0`/`[]`
-  for the views it can't read. `getPerformanceMetrics()` reports only cache-hit ratio (no
-  QPS/deadlocks).
+  for the views it can't read. `getPerformanceMetrics()` reports only the cache-hit ratio (no QPS,
+  deadlocks, or buffer-pool usage), and **omits even that** when `V$SYSSTAT` is unreadable rather
+  than substituting a figure — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable).
 - **No two-phase schema loading** — `/api/db/schema/list` falls back to the full `getSchema()`.
 
 ---

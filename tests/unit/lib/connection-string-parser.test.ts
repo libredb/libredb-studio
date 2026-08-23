@@ -131,6 +131,16 @@ describe("parseConnectionString", () => {
       expect(result!.type).toBe("mongodb");
       expect(result!.database).toBeUndefined();
     });
+
+    // Deliberately NOT a mode, unlike rediss:// and couchbases://: the MongoDB driver
+    // gets the URI verbatim and applies `tls=true` for mongodb+srv itself, WITH chain
+    // verification. Handing it our `require` would set rejectUnauthorized:false and
+    // silently stop verifying an Atlas certificate the driver checks today.
+    test("leaves the TLS intent unset for mongodb+srv://, which the driver reads itself", () => {
+      const result = parseConnectionString("mongodb+srv://user:pass@cluster0.abcde.mongodb.net/appdb");
+      expect(result!.sslMode).toBeUndefined();
+      expect(result!.connectionString).toBe("mongodb+srv://user:pass@cluster0.abcde.mongodb.net/appdb");
+    });
   });
 
   // ── Redis ───────────────────────────────────────────────────────────────
@@ -158,6 +168,20 @@ describe("parseConnectionString", () => {
     test("uses default port 6379 when omitted", () => {
       const result = parseConnectionString("redis://host/0");
       expect(result!.port).toBe("6379");
+    });
+
+    // rediss:// IS the transport, exactly as https:// is for ClickHouse: ioredis only
+    // negotiates TLS when a `tls` option is present, and that option is built from
+    // `config.ssl`, so dropping the scheme sends plaintext to a TLS-only port and the
+    // paste fails with a bare "Connection is closed." (measured, redis.md 4.3).
+    test("carries the TLS intent of a rediss:// endpoint", () => {
+      expect(parseConnectionString("rediss://user:pass@tls-host:6380/1")!.sslMode).toBe("require");
+    });
+
+    // The plain scheme is an explicit plaintext choice, not an absent one, so pasting
+    // it must be able to clear a "require" the form is still holding.
+    test("carries the plaintext intent of a redis:// endpoint", () => {
+      expect(parseConnectionString("redis://redis-host:6379/0")!.sslMode).toBe("disable");
     });
   });
 
@@ -297,6 +321,20 @@ describe("parseConnectionString", () => {
       const result = parseConnectionString("couchbase:///travel");
       expect(result!.host).toBe("localhost");
       expect(result!.database).toBe("travel");
+    });
+
+    // The Couchbase provider is HTTP-only and picks its scheme from `config.ssl`
+    // (http-transport.ts buildTlsMaterial / `this.scheme = this.tls ? "https" : "http"`),
+    // never from the pasted string, so couchbases:// has to arrive as a mode or the
+    // request goes out as plain HTTP to the TLS management port 18091.
+    test("carries the TLS intent of a couchbases:// endpoint", () => {
+      expect(parseConnectionString("couchbases://user:pass@cb.abc123.cloud.couchbase.com/travel")!.sslMode).toBe(
+        "require",
+      );
+    });
+
+    test("carries the plaintext intent of a couchbase:// endpoint", () => {
+      expect(parseConnectionString("couchbase://user:pass@cb-host:8091/travel")!.sslMode).toBe("disable");
     });
 
     test("returns null for a malformed couchbase URL", () => {

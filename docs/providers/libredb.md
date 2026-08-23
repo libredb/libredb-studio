@@ -215,7 +215,8 @@ strings are returned as-is. This mirrors how the Redis provider handles structur
 Unlike Redis (`INFO`) or PostgreSQL (system catalogs), LibreDB has no server introspection API.
 Overview and storage stats derive entirely from `fs.statSync` (file size in bytes) and a schema
 scan (prefix group count). There are no sessions, slow queries, or index statistics — those
-methods return empty arrays.
+methods return empty arrays — and no cache statistics either, so there is no cache hit ratio to
+report ([§7.1](#71-there-is-no-cache-hit-ratio-and-there-never-will-be)).
 
 ---
 
@@ -466,9 +467,9 @@ There is no embedded stats API.
 
 | Method | Source | Returns |
 |--------|--------|---------|
-| `getHealth()` | `fs.statSync` | `activeConnections: 1`, file size as `databaseSize`, `cacheHitRatio: 100.0` |
+| `getHealth()` | `fs.statSync` | `activeConnections: 1`, file size as `databaseSize`, `cacheHitRatio: "N/A"` |
 | `getOverview()` | `fs.statSync` + schema scan | `version`, file size, prefix-group count as `tableCount`, `indexCount: 0` |
-| `getPerformanceMetrics()` | — | `cacheHitRatio: 100` |
+| `getPerformanceMetrics()` | — | `{}` — nothing is measurable here |
 | `getSlowQueries()` | — | `[]` (N/A) |
 | `getActiveSessions()` | — | `[]` (N/A — single embedded process) |
 | `getStorageStats()` | `fs.statSync` | one entry: file path + size |
@@ -483,10 +484,21 @@ The `[]` and the absent metrics above now reach the panels as absence rather tha
 know about, with statistics for none of them — so its *Tables* and *Size* cards read `N/A` and the
 list says *No table statistics available.* instead of summing `0` and `0 B`; the **Queries** tab's
 three cards read `N/A` for the same reason, an average over no statements not being `0.00ms`; and
-because `getPerformanceMetrics()` reports only `cacheHitRatio`, the *Buffer* and *Deadlocks* cards on
-the Overview and Performance tabs read `N/A` beside *Not measured* rather than `0%` and a `0` badged
-healthy. `cacheHitRatio: 100` is the one figure here that is stated rather than absent, and it keeps
-its gauge.
+because `getPerformanceMetrics()` returns an empty object, every card on the Overview and Performance
+tabs — *Cache Hit*, *Buffer*, *Deadlocks* — reads `N/A` beside *Not measured* rather than a
+percentage or a `0` badged healthy.
+
+### 7.1 There is no cache hit ratio, and there never will be
+
+`getPerformanceMetrics()` used to report `cacheHitRatio: 100` and `getHealth()` `"100.0"`. Neither
+was a reading. The embedded kernel's entire public surface is `open` / `kv` / `doc` / `table` /
+`catalog` (`@libredb/libredb` 0.2.2) with no statistics call of any kind, and the store the provider
+reads from is this process's own memory rather than a buffer pool with hits and misses — so there is
+no counter to read and nothing a ratio would be a ratio *of*. A number this provider invents is worse
+than a gap, because the panel cannot tell it apart from a measurement (the rule
+[#424](https://github.com/libredb/libredb-studio/issues/424) exists to enforce). Both sites now omit
+it, permanently: the *Cache Hit* card reads `N/A` / *Not measured*, and the agent's health tool
+reports the string `"N/A"`.
 
 ---
 

@@ -5,6 +5,7 @@
 
 import oracledb from "oracledb";
 import { SQLBaseProvider } from "./sql-base";
+import { oracleColumnTypes } from "./column-types";
 import {
   type DatabaseConnection,
   type TableSchema,
@@ -32,6 +33,7 @@ import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
+import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
 // ============================================================================
 // SQL Statements
@@ -417,6 +419,7 @@ export class OracleProvider extends SQLBaseProvider {
         fields,
         rowCount: rows.length,
         executionTime,
+        ...oracleColumnTypes(result.metaData),
       };
     });
   }
@@ -541,6 +544,7 @@ export class OracleProvider extends SQLBaseProvider {
         fields,
         rowCount: rows.length,
         executionTime,
+        ...oracleColumnTypes(result.metaData),
       };
     });
   }
@@ -669,7 +673,7 @@ export class OracleProvider extends SQLBaseProvider {
 
       let activeConnections = 0;
       let databaseSize = "N/A";
-      let cacheHitRatio = "N/A";
+      let cacheHitRatio: string = CACHE_HIT_RATIO_UNAVAILABLE;
       const slowQueries: SlowQuery[] = [];
       const activeSessions: ActiveSession[] = [];
 
@@ -698,13 +702,20 @@ export class OracleProvider extends SQLBaseProvider {
         /* ignore */
       }
 
-      // Cache hit ratio
+      // Cache hit ratio. `|| 0` used to publish "0%" for a reading Oracle never
+      // took, and the Overview card rates 0 as "Needs tuning" - so a user who
+      // simply cannot read V$SYSSTAT saw a cache fault. The two ways the reading
+      // goes absent, both measured 2026-08-23 on Oracle Free 23ai: a user granted
+      // only CREATE SESSION gets `ORA-00942: table or view "SYS"."V_$SYSSTAT" does
+      // not exist` (the catch below), and a zero counter denominator gives one row
+      // of `<NULL>` through NULLIF (measuredNumber).
       try {
         const cacheRes = await conn.execute(CACHE_HIT_RATIO_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
         const cacheRows = (cacheRes.rows || []) as Record<string, unknown>[];
-        cacheHitRatio = `${cacheRows[0]?.HIT_RATIO || 0}%`;
+        const ratio = measuredNumber(cacheRows[0]?.HIT_RATIO);
+        if (ratio !== undefined) cacheHitRatio = `${formatCacheHitRatio(ratio)}%`;
       } catch {
-        /* ignore */
+        /* V$SYSSTAT requires privileges; the initial "N/A" stands. */
       }
 
       // Slow queries
@@ -940,21 +951,24 @@ export class OracleProvider extends SQLBaseProvider {
     try {
       conn = await this.pool!.getConnection();
 
-      let cacheHitRatio = 100;
-      let bufferPoolUsage: number | undefined;
+      let cacheHitRatio: number | undefined;
 
       try {
         const cacheRes = await conn.execute(CACHE_HIT_RATIO_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
         const rows = (cacheRes.rows || []) as Record<string, unknown>[];
-        cacheHitRatio = Number(rows[0]?.HIT_RATIO || 100);
-        bufferPoolUsage = cacheHitRatio;
+        cacheHitRatio = measuredNumber(rows[0]?.HIT_RATIO);
       } catch {
-        /* ignore */
+        /* V$SYSSTAT requires privileges; nothing was measured, so nothing is reported. */
       }
 
       return {
-        cacheHitRatio,
-        bufferPoolUsage,
+        ...(cacheHitRatio === undefined ? {} : { cacheHitRatio }),
+        // bufferPoolUsage is gone rather than merely absent. It used to be assigned
+        // `cacheHitRatio` itself - the same number under a second name, which the
+        // Performance tab then drew as a separate gauge and rated separately. Oracle
+        // does publish buffer pool occupancy, but in V$BUFFER_POOL_STATISTICS /
+        // V$SGASTAT, which this method does not query; until it does there is
+        // nothing here to report.
       };
     } finally {
       if (conn) await conn.close();

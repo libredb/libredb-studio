@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
+import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 
 // ---------------------------------------------------------------------------
 // Mock oracledb BEFORE loading the provider
@@ -885,9 +886,42 @@ describe("OracleProvider", () => {
 
       expect(typeof health.activeConnections).toBe("number");
       expect(typeof health.databaseSize).toBe("string");
-      expect(typeof health.cacheHitRatio).toBe("string");
+      expect(health.cacheHitRatio).toBe("97.5%");
       expect(health.slowQueries).toBeArray();
       expect(health.activeSessions).toBeArray();
+    });
+
+    test("reports an unreadable cache hit ratio as unavailable, not as 0%", async () => {
+      // `${rows[0]?.HIT_RATIO || 0}%` produced "0%" for a NULL reading, which the
+      // Overview card rates "Needs tuning" - a fault Oracle never reported.
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("V$SYSSTAT")) {
+          return { rows: [{ HIT_RATIO: null }], metaData: [{ name: "HIT_RATIO" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      expect(health.cacheHitRatio).toBe(CACHE_HIT_RATIO_UNAVAILABLE);
+    });
+
+    test("keeps a measured cache hit ratio of zero in the health string", async () => {
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("V$SYSSTAT")) {
+          return { rows: [{ HIT_RATIO: 0 }], metaData: [{ name: "HIT_RATIO" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      expect(health.cacheHitRatio).toBe("0.0%");
+      expect(health.cacheHitRatio).not.toBe(CACHE_HIT_RATIO_UNAVAILABLE);
     });
 
     test("degrades gracefully when V$ views throw", async () => {
@@ -1234,19 +1268,22 @@ describe("OracleProvider", () => {
       await provider.connect();
       const metrics = await provider.getPerformanceMetrics();
 
-      expect(typeof metrics.cacheHitRatio).toBe("number");
-      expect(metrics.cacheHitRatio).toBeGreaterThanOrEqual(0);
-      expect(metrics.cacheHitRatio).toBeLessThanOrEqual(100);
       expect(metrics.cacheHitRatio).toBe(97.5);
-      // bufferPoolUsage mirrors cacheHitRatio in Oracle impl
-      expect(typeof metrics.bufferPoolUsage).toBe("number");
+      // Not a mirror of the cache hit ratio any more, and not reported at all:
+      // V$SYSSTAT publishes no buffer pool occupancy.
+      expect("bufferPoolUsage" in metrics).toBe(false);
     });
 
-    test("handles graceful degradation without DBA privs", async () => {
+    test("reports nothing when V$SYSSTAT is not readable, rather than a perfect cache", async () => {
+      // The ordinary case, not an exotic one. Measured 2026-08-23 on Oracle Free
+      // 23ai against a user granted only CREATE SESSION:
+      //   ORA-00942: table or view "SYS"."V_$SYSSTAT" does not exist
+      // This assertion used to read `toBe(100)` with the comment "Default
+      // fallback", so the suite protected the fabrication.
       mockExecuteFn = async (sql: string) => {
         const upper = sql.toUpperCase();
         if (upper.includes("V$SYSSTAT")) {
-          throw new Error("ORA-00942: table or view does not exist");
+          throw new Error('ORA-00942: table or view "SYS"."V_$SYSSTAT" does not exist');
         }
         return defaultExecute(sql);
       };
@@ -1254,9 +1291,45 @@ describe("OracleProvider", () => {
       await provider.connect();
       const metrics = await provider.getPerformanceMetrics();
 
-      // Should return default values when V$ views are inaccessible
-      expect(typeof metrics.cacheHitRatio).toBe("number");
-      expect(metrics.cacheHitRatio).toBe(100); // Default fallback
+      expect("cacheHitRatio" in metrics).toBe(false);
+      expect(metrics).toEqual({});
+    });
+
+    test("omits the ratio when V$SYSSTAT answers a NULL row", async () => {
+      // The counter denominator can be 0, which NULLIF turns into one row whose
+      // single column is NULL. Measured 2026-08-23 on Oracle Free 23ai:
+      //    HIT_RATIO
+      //   ----------
+      //   <NULL>
+      // `Number(null || 100)` read that as 100; `Number(null)` would read it as a
+      // red 0.
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("V$SYSSTAT")) {
+          return { rows: [{ HIT_RATIO: null }], metaData: [{ name: "HIT_RATIO" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const metrics = await provider.getPerformanceMetrics();
+
+      expect("cacheHitRatio" in metrics).toBe(false);
+    });
+
+    test("keeps a measured ratio of zero", async () => {
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("V$SYSSTAT")) {
+          return { rows: [{ HIT_RATIO: 0 }], metaData: [{ name: "HIT_RATIO" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const metrics = await provider.getPerformanceMetrics();
+
+      expect(metrics.cacheHitRatio).toBe(0);
     });
   });
 
@@ -1629,5 +1702,78 @@ describe("OracleProvider", () => {
       expect(mockInitOracleClientFn).toHaveBeenCalledTimes(1);
       expect(mockInitOracleClientFn).toHaveBeenCalledWith({ libDir: "/opt/oracle/instantclient" });
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Declared column types
+// ---------------------------------------------------------------------------
+
+/**
+ * `oracledb` is the one driver of the four that hands over a NAME: `metaData[].
+ * dbTypeName`, uppercase, the same word `ALL_TAB_COLUMNS.DATA_TYPE` uses. The names
+ * below are verbatim from Oracle Free 23ai over `r5_types`, plus the
+ * `TIMESTAMP WITH TIME ZONE` that `SYSTIMESTAMP` declares.
+ */
+describe("OracleProvider declared column types", () => {
+  let provider: InstanceType<typeof OracleProvider>;
+
+  beforeEach(() => {
+    mockConnCloseFn = async () => {};
+    mockBreakFn = async () => {};
+    mockPoolCloseFn = async () => {};
+    mockCreatePoolFn = async () => createMockPool();
+    provider = new OracleProvider(baseConfig);
+  });
+
+  afterEach(async () => {
+    if (provider?.isConnected()) await provider.disconnect();
+  });
+
+  test("query() passes dbTypeName through as Oracle's own spelling", async () => {
+    mockExecuteFn = async () => ({
+      rows: [{ PRICE: 19.99, TS: new Date("2026-08-23T17:46:34Z"), N: new Date("2026-08-23T17:46:34Z") }],
+      metaData: [
+        { name: "PRICE", dbTypeName: "NUMBER", precision: 10, scale: 2 },
+        { name: "TS", dbTypeName: "TIMESTAMP", precision: 6 },
+        { name: "N", dbTypeName: "TIMESTAMP WITH TIME ZONE", precision: 6 },
+      ],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT price, ts, SYSTIMESTAMP AS n FROM r5_types");
+
+    // Precision and scale sit right beside the name and are deliberately not spelled
+    // into it: `COUNT(*)` reports precision 0 and `1/3` scale -127, so a `NUMBER(p,s)`
+    // built from them would claim something the engine did not.
+    expect(result.columnTypes).toEqual({
+      PRICE: "NUMBER",
+      TS: "TIMESTAMP",
+      N: "TIMESTAMP WITH TIME ZONE",
+    });
+  });
+
+  test("the key is omitted entirely when the metadata names no type", async () => {
+    mockExecuteFn = async () => ({ rows: [], metaData: [{ name: "X" }] });
+
+    await provider.connect();
+    const result = await provider.query("SELECT x FROM r5_types");
+
+    expect(result.columnTypes).toBeUndefined();
+    expect(Object.hasOwn(result, "columnTypes")).toBe(false);
+  });
+
+  test("queryInTransaction() declares them too", async () => {
+    mockExecuteFn = async () => ({
+      rows: [{ B: null }],
+      metaData: [{ name: "B", dbTypeName: "BLOB" }],
+    });
+
+    await provider.connect();
+    await provider.beginTransaction();
+    const result = await provider.queryInTransaction("SELECT b FROM r5_types");
+
+    expect(result.columnTypes).toEqual({ B: "BLOB" });
+    await provider.rollbackTransaction();
   });
 });

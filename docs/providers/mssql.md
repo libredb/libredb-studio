@@ -314,7 +314,7 @@ connection always has discrete fields because the UI populates them.
 `@p1`, `@p2`, … via `request.input()`, runs the query, and returns:
 
 ```ts
-{ rows: recordset, fields, rowCount: rowsAffected[0] ?? recordset.length, executionTime }
+{ rows: recordset, fields, rowCount: rowsAffected[0] ?? recordset.length, executionTime, columnTypes? }
 ```
 
 Native `mssql` errors are normalised through `mapDatabaseError()` (see [§11](#11-error-handling)).
@@ -341,6 +341,40 @@ throw — it does **not** confirm the cancellation actually took effect. Exposed
   as the JSON shape a `Buffer` serializes to and is rendered as hex there (§7).
 - **Only the first result set is returned.** `query()` reads `result.recordset` (singular), so a
   multi-statement batch or a stored procedure returning several result sets surfaces just one.
+
+### 5.4 Declared column types
+
+`mssql` attaches a `columns` map to the recordset, and each entry's `type` carries a `declaration` -
+T-SQL's own lowercase spelling. That is passed through into `QueryResult.columnTypes`
+([column-types.ts](../../src/lib/db/providers/sql/column-types.ts)) by both `query()` and
+`queryInTransaction()`, keyed by the column name. `type` is a factory FUNCTION for some of the
+driver's types and a plain object for others; `declaration` is on both.
+
+Measured on SQL Server 2022 CU26 over the probe table:
+
+| declared | `type.name` | `type.declaration` |
+|---|---|---|
+| `BIGINT` | `BigInt` | `bigint` |
+| `DECIMAL(10,2)` | `Decimal` | `decimal` (with `precision: 10, scale: 2` beside it) |
+| `FLOAT` | `Float` | `float` |
+| `BIT` | `Bit` | `bit` |
+| `NVARCHAR(40)` | `NVarChar` | `nvarchar` (`length: 80` - bytes, not characters) |
+| `VARCHAR(MAX)` | `VarChar` | `varchar` (`length: 65535`, a sentinel rather than the real 2^31-1) |
+| `DATETIME2` / `DATE` | `DateTime2` / `Date` | `datetime2` / `date` |
+| `UNIQUEIDENTIFIER` | `UniqueIdentifier` | `uniqueidentifier` |
+| `VARBINARY(50)` | `VarBinary` | `varbinary` |
+
+`declaration` rather than `type.name`, because it is the word T-SQL uses:
+`INFORMATION_SCHEMA.COLUMNS.DATA_TYPE` answers `bigint`, not `BigInt`, for every one of those
+columns, so a declared type reads like the schema tree's entry. The length, precision and scale are
+left out of the name for the reason the `length` column above shows - they are reported in units that
+do not survive being spelled back (80 bytes for 40 characters, a sentinel for `MAX`).
+
+This is the only source of a type for a computed column or an ad-hoc projection. It matters here
+because `BIGINT` and `DECIMAL` reach the browser as strings (§5.3): measured before this existed, the
+probe table's `BIGINT` and `UNIQUEIDENTIFIER` columns both exported as `NVARCHAR(MAX)` and its
+`DECIMAL(10,2)` as `FLOAT`. Both execution paths fill it from the same column map - including
+`queryInTransaction()`, which had the map available all along and simply never read it.
 
 ---
 
@@ -382,14 +416,50 @@ in parallel. Each sub-query is independently privilege-guarded (DMVs need `VIEW 
 
 | Method | Primary source | Notes |
 |--------|----------------|-------|
-| `getHealth()` | `dm_exec_sessions`, `database_files`, `dm_os_performance_counters`, `dm_exec_query_stats` | connections, size, buffer-cache-hit %, top-5 slow queries, 10 sessions; each block guarded → `N/A`/`0`/`[]` |
+| `getHealth()` | `dm_exec_sessions`, `database_files`, `dm_os_performance_counters`, `dm_exec_query_stats` | connections, size, buffer-cache-hit % (`N/A`, never `0%`, when unreadable — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)), top-5 slow queries, 10 sessions; each block guarded → `N/A`/`0`/`[]` |
 | `getOverview()` | `@@VERSION`, `dm_os_sys_info`, `dm_exec_sessions`, `sys.configurations`, `database_files`, `sys.tables`/`indexes` | `user connections = 0` → reported as 32767 (unlimited) |
-| `getPerformanceMetrics()` | `dm_os_performance_counters` | **only** cache-hit ratio + buffer-pool usage (no QPS/deadlocks); defaults `100` |
+| `getPerformanceMetrics()` | `dm_os_performance_counters` | **only** the cache-hit ratio, and it is **omitted** when the DMV cannot be read (no QPS/deadlocks/buffer-pool) — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
 | `getSlowQueries()` | `dm_exec_query_stats` ⋈ `dm_exec_sql_text` | `sharedBlksHit`=logical reads, `sharedBlksRead`=physical reads; `[]` on failure |
 | `getActiveSessions()` | `dm_exec_sessions` ⋈ `dm_exec_requests` ⋈ `dm_exec_sql_text` | **`blocked` is real** (`blocking_session_id > 0`); wait types; `[]` on failure |
 | `getTableStats()` | `sys.tables`/`partitions`/`allocation_units` | sizes + `lastAnalyze` (`STATS_DATE`); no live/dead tuples; `[]` on failure |
 | `getIndexStats()` | `sys.indexes`/`allocation_units` + `dm_db_index_usage_stats` | **`scans` is real** (seeks+scans+lookups); `[]` on failure |
 | `getStorageStats()` | `sys.database_files` | per-file name/path/size; `[]` on failure |
+
+### 7.1 When the cache hit ratio is not measurable
+
+Two states, both ordinary:
+
+- **The login lacks the server-level grant.** Measured 2026-08-23 on SQL Server 2022 CU26 against a
+  login with nothing beyond `CONNECT`:
+
+  ```
+  Msg 300, Level 14, State 1, Line 1
+  VIEW SERVER PERFORMANCE STATE permission was denied on object 'server', database 'master'.
+  ```
+
+  This is also the Azure SQL Database case, where server-scoped DMVs are restricted.
+
+- **The counter base is zero.** `NULLIF(..., 0)` guards the division, so the query returns one row
+  whose single column is `NULL`. Measured 2026-08-23 on the same instance:
+
+  ```
+  hit_ratio
+  ---------
+       NULL
+  ```
+
+In both cases **`getHealth().cacheHitRatio` is `"N/A"` and `getPerformanceMetrics()` omits
+`cacheHitRatio`** (returning `{}`), and the Overview and Performance tabs render "Not measured". A
+ratio measured as `0` is kept and shown as `0.0%`.
+
+`getHealth()` previously published `"0%"` for an unreadable ratio and `getPerformanceMetrics()`
+defaulted to `100`. The `0%` was the worse of the two: the Overview card rates a low ratio "Needs
+tuning", so a least-privilege login saw a cache fault SQL Server never reported.
+
+`bufferPoolUsage` is **no longer reported**. It was assigned `cacheHitRatio` itself — the same number
+under a second name, drawn and rated as an independent gauge. SQL Server does publish pool occupancy,
+through `sys.dm_os_buffer_descriptors` against `max server memory`, but this method does not query it
+and that scan is not free.
 
 SQL Server is the only provider that reports **real blocked-session detection** (`blocking_session_id`;
 Postgres/Oracle/MySQL report `blocked: false`). For **index scan counts** it joins
@@ -573,7 +643,9 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 - **SQL authentication only** — Windows Integrated / Azure AD auth is not wired.
 - **No two-phase schema loading** — `/api/db/schema/list` falls back to the full `getSchema()`.
 - **DMV monitoring needs `VIEW SERVER STATE`**; a least-privilege user silently gets `N/A`/`0`/`[]`.
-  `getPerformanceMetrics()` reports only cache-hit ratio (no QPS/deadlocks).
+  `getPerformanceMetrics()` reports only the cache-hit ratio (no QPS, deadlocks, or buffer-pool
+  usage), and **omits even that** when `dm_os_performance_counters` is unreadable rather than
+  substituting a figure — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable).
 
 ---
 

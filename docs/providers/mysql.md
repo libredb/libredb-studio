@@ -133,9 +133,14 @@ on both `query()` and `queryInTransaction()`.
 
 Both query paths use `conn.execute(sql, params)` (mysql2 server-side prepared statements) rather than
 `query()`, so parameterized queries are bound by the server. `rowCount` is `rows.length` **only when
-the driver returns a row array** (i.e. `SELECT`); for non-`SELECT` statements (INSERT/UPDATE/DELETE)
-mysql2 returns a `ResultSetHeader` rather than an array, and the provider reports `rowCount: 0`
-(`Array.isArray(result.rows) ? result.rows.length : 0`) — affected-rows is not surfaced.
+the driver returns a row array** (i.e. `SELECT`); for a non-`SELECT` statement mysql2 returns a
+`ResultSetHeader` rather than an array, and the provider reports its `affectedRows` — see
+[§5.1](#51-execution) for the full envelope.
+
+This section used to say affected-rows was not surfaced and `rowCount` was reported as 0. That
+described the intent of one line; the line beside it called `.map` on the same header and threw, so
+what the user actually got for every DDL and DML statement was an error for work the server had
+already done.
 
 ### 3.5 No server-side query timeout
 
@@ -218,11 +223,43 @@ pooled connection, optionally records its `threadId` for cancellation, runs the 
 sanitizes binary values, and returns the standard envelope:
 
 ```ts
-{ rows, fields: string[], rowCount: rows.length, executionTime }
+{ rows, fields: string[], rowCount: rows.length, executionTime, columnTypes? }
 ```
 
 Native `mysql2` errors are normalised via `mapDatabaseError()` into the shared
 [`errors.ts`](../../src/lib/db/errors.ts) classes.
+
+**A statement that returns no result set** — every DDL statement, and `INSERT`/`UPDATE`/`DELETE` —
+answers a different envelope, because `mysql2` hands back a different thing. `execute`'s first return
+value is an array of rows only when the statement produced a result set; otherwise it is a
+`ResultSetHeader` OBJECT and the field packets arrive as `undefined`. Printed verbatim out of mysql2
+against mysql 26.7.0 for `INSERT INTO r5_hdr (note) VALUES ('a'),('b')`:
+
+```js
+{ fieldCount: 0, affectedRows: 2, insertId: 1,
+  info: "Records: 2  Duplicates: 0  Warnings: 0",
+  serverStatus: 2, warningStatus: 0, changedRows: 0 }
+```
+
+So the answer is no rows, no fields, no `columnTypes`, and the affected-row count in `rowCount`:
+
+```ts
+{ rows: [], fields: [], rowCount: header.affectedRows, executionTime }
+```
+
+That matches what the other SQL providers here already report for the same statements — SQL Server
+uses `rowsAffected[0]`, SQLite `changes`, PostgreSQL `pg`'s own `rowCount` — and `rowCount` is the
+number the results footer renders. `insertId`, `changedRows` and `warningStatus` are dropped:
+`QueryResult` models none of them. `affectedRows` is the **matched** count, so a no-op
+`UPDATE … SET note = note` reports 1 while `changedRows` is 0 — the same way SQL Server's
+`rowsAffected` counts.
+
+Until this was fixed, both this path and `queryInTransaction()` called `.map` on that header and threw
+`result.rows.map is not a function` — **after** the server had already applied the statement. Measured
+through `createDatabaseProvider({type:"mysql"})` on 2026-08-23: `DROP TABLE`, `CREATE TABLE`, `INSERT`,
+`UPDATE` and `DELETE` each failed, and a following `SELECT` returned the row the failed `INSERT` had
+written. Reporting a failure for work that landed is the answer that makes a user retry and
+double-apply it.
 
 ### 5.2 Automatic `LIMIT` injection
 
@@ -259,6 +296,47 @@ A query issued with a `queryId` records its connection `threadId`. `cancelQuery(
 to its caller as a `QueryCancelledError` (MySQL emits *"Query execution was interrupted"*, which
 `mapDatabaseError()` classifies as cancellation). Exposed via `POST /api/db/cancel`.
 
+### 5.4 Declared column types
+
+`mysql2` reports a column's type as a protocol type CODE plus flags, a charset number and a length -
+never a name. The codes are not one type each, so `QueryResult.columnTypes`
+([column-types.ts](../../src/lib/db/providers/sql/column-types.ts)) resolves them from all four
+pieces. Measured on MySQL 26.7.0 over a 40-column probe table, printed straight out of the driver:
+
+| declared | code | length | charset | flags | reported as |
+|---|---|---|---|---|---|
+| `BIGINT` | 8 | 20 | 63 | 0 | `bigint` |
+| `DECIMAL(10,2)` | 246 | 12 | 63 | 0 | `decimal` |
+| `TINYINT` / `TINYINT(1)` / `BOOLEAN` | 1 | 4 / 1 / 1 | 63 | 0 | `tinyint` |
+| `VARCHAR(40)` | 253 | 160 | 224 | 0 | `varchar` |
+| `VARBINARY(9)` | 253 | 9 | 63 | 128 | `varbinary` |
+| `CHAR(10)` / `BINARY(8)` | 254 | 40 / 8 | 224 / 63 | 0 / 128 | `char` / `binary` |
+| `ENUM('a','b')` / `SET('x','y')` | 254 | 4 / 12 | 224 | 256 / 2048 | `enum` / `set` |
+| `TEXT` / `BLOB` | 252 | 262140 / 65535 | 224 / 63 | 16 / 144 | `text` / `blob` |
+| `TINYTEXT` … `LONGTEXT` | 252 | 1020 / 262140 / 67108860 / 4294967295 | 224 | 16 | `tinytext` … `longtext` |
+| `JSON` | 245 | 4294967295 | 63 | 144 | `json` |
+| `GEOMETRY` / `POINT` | 255 | 4294967295 | 63 | 144 | `geometry` (both) |
+
+Two things that table settles, neither of which is guessable from the code alone:
+
+- **Charset 63 (`binary`) separates a character type from a byte type.** The BLOB flag is set for
+  `TEXT` as well as for `BLOB` and cannot do it.
+- **All four text tiers and all four blob tiers arrive as one code, 252.** Only the length tells them
+  apart, so the tier is read from its ceiling (a tier's byte capacity times the charset's maximum
+  bytes per character - 4 for utf8mb4 - and the tiers are 256x apart, so the ranges never overlap).
+
+What the names deliberately leave out: the length, precision or display width (`decimal`, not
+`decimal(10,2)`), the `unsigned` suffix, and the `point` subtype the protocol does not carry.
+Checked column by column against `information_schema.COLUMNS.DATA_TYPE` for the same 40-column
+table - the same source the schema tree shows - **38 of 39 match exactly**; the one difference is
+`POINT`, which arrives as code 255 with nothing to distinguish it from `GEOMETRY`.
+
+`columnTypes` is filled by `query()` and `queryInTransaction()`, and is **absent entirely** when no
+column declared a type. Its consumers are the results grid's column labels, the SQL-DDL export
+(which prefers a declared type over its own value-shaped guess) and the agent's state summary. This
+matters most for the types whose values arrive as strings: a `DECIMAL` reaches the browser as
+`"19.99"`, so before this the DDL export wrote it as `TEXT`.
+
 ---
 
 ## 6. Transactions
@@ -270,7 +348,7 @@ to the pool until commit/rollback). Surfaced via `POST /api/db/transaction`.
 | Method | Behaviour |
 |--------|-----------|
 | `beginTransaction()` | `pool.getConnection()` + `beginTransaction()`, arms a **5-minute auto-rollback** timer ([mysql.ts:41](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active. |
-| `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same binary sanitization). Throws if none active. |
+| `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same binary sanitization, and the same non-SELECT envelope as §5.1). Throws if none active. |
 | `commitTransaction()` / `rollbackTransaction()` | Ends it, clears the timer, releases the connection. Throws if none active. |
 | `expireTransaction()` | Timeout callback — auto-`rollback()` to prevent leaked locks. |
 | `isInTransaction()` | Current state. |
@@ -311,14 +389,22 @@ All monitoring reads from `SHOW STATUS`/`SHOW VARIABLES`, `information_schema`, 
 
 **Graceful degradation — note the *different* failure modes:**
 - `getHealth()` slow-queries: try/catch → a single placeholder row (*"Performance schema not available"*).
-- `getHealth()` cache-hit ratio: `formatCacheHitRatio()` → `"N/A"` when nothing was measured.
+- `getHealth()` cache-hit ratio: `formatCacheHitRatio()` → `"N/A"` when nothing was measured, and
+  `"N/A"` again — rather than a failed health read — when the ratio query THROWS. A tenant can be
+  missing the `performance_schema` *database* instead of merely having the schema off, and then the
+  query does not answer NULLs: measured 2026-08-20 on a live OceanBase Community Edition 4.4.2.1
+  tenant through this provider, and reproduced on `mysql:latest` as `ERROR 1049 (42000): Unknown
+  database '...'`. That one throw used to abort the whole of `getHealth()`, so the panel showed
+  nothing where one unavailable metric was the honest answer.
 - `getSlowQueries()`: try/catch → **empty array** `[]`.
 - `getPerformanceMetrics()`: **every field is omitted rather than defaulted.** A server with
   `performance_schema` OFF answers the `global_status` sub-selects with NULL instead of failing, so
   each reading is taken through `measuredNumber()` and a field with nothing behind it is left out of
   the object entirely. `deadlocks` comes from `SHOW STATUS`, which answers either way, so a `0` there
-  is a real measurement and is reported *where the server publishes one*. If `performance_schema` is
-  absent outright the whole method returns `{}`. This is the rule #448 and #452 settled: ABSENCE and
+  is a real measurement and is reported *where the server publishes one*. If the
+  `performance_schema` database is absent outright — the OceanBase case above, where every one of
+  these queries raises `ERROR 1049` — the whole method returns `{}` rather than the `cacheHitRatio:
+  99` it once did. This is the rule #448 and #452 settled: ABSENCE and
   ZERO are different inputs, and only the first is invisible to the panels.
 - `deadlocks` reads `Innodb_deadlocks`, which is **MariaDB's** status variable. MySQL does not publish
   it — measured as an empty `SHOW STATUS` result on both 8.0.46 and 26.7.0 — so the field is absent on
@@ -442,6 +528,11 @@ The `mysql2/promise` module is replaced with an in-process mock via `mock.module
 **before** the provider is imported — there is no live MySQL in the suite. The mock's pool/connection
 returns canned `[rows, fields]` tuples, exercising the same provider code paths as a real server.
 
+One mock shape is load-bearing: a non-SELECT must be mocked as a **`ResultSetHeader` object with
+`undefined` fields**, not as an array. An array-shaped mock is exactly what hid the
+`result.rows.map is not a function` defect described in [§5.1](#51-execution) — the whole suite was
+green while every DDL and DML statement failed against a real server.
+
 > ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide, so files mocking different drivers
 > cross-contaminate when they share a process. A **single file** is safe (one file = one process).
 > The full `bun run test` script runs the core group in **one** process and is load-order flaky, so
@@ -454,7 +545,9 @@ returns canned `[rows, fields]` tuples, exercising the same provider code paths 
 capabilities, `getSchema()` (columns/FKs/indexes, primary-key detection), health, maintenance (all
 types + kill validation), the full transaction lifecycle, `queryInTransaction`, query cancellation,
 overview, performance metrics, slow queries, active sessions, table/index/storage stats, every SSL
-branch, `prepareQuery`, and error mapping (`ER_ACCESS_DENIED`, `ECONNREFUSED`).
+branch, `prepareQuery`, error mapping (`ER_ACCESS_DENIED`, `ECONNREFUSED`), and the non-SELECT envelope
+(DDL, `INSERT`, `UPDATE`, `DELETE`, and the transaction path) driven from real `ResultSetHeader`
+literals.
 
 ### 12.3 Run it
 

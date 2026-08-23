@@ -5,6 +5,7 @@
 
 import mysql, { type Pool, type PoolConnection, type RowDataPacket, type FieldPacket } from "mysql2/promise";
 import { SQLBaseProvider } from "./sql-base";
+import { mysqlColumnTypes } from "./column-types";
 import {
   type DatabaseConnection,
   type TableSchema,
@@ -27,7 +28,7 @@ import {
 } from "../../types";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
-import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
+import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
 /**
  * mysql2 3.23 narrowed `execute`'s values parameter from `any` to a concrete
@@ -222,21 +223,6 @@ const SELF_IDENTIFYING_VERSION = /mariadb|tidb|vitess|oceanbase/i;
  */
 function labelServerVersion(version: string): string {
   return SELF_IDENTIFYING_VERSION.test(version) ? version : `MySQL ${version}`;
-}
-
-/**
- * A `performance_schema` reading, or `undefined` when there was nothing to read.
- *
- * MariaDB ships `performance_schema` OFF by default and the tables still exist,
- * so the metric queries are a bare `SELECT (subquery)` that answers one row of
- * NULLs rather than throwing. `parseInt(x || "0")` turned each of those NULLs
- * into a measurement nobody took, which is the fault #448 and #452 removed from
- * the panels; this keeps the provider from manufacturing one in the first place.
- */
-function measuredNumber(value: unknown): number | undefined {
-  if (value === null || value === undefined) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function round2(value: number): number {
@@ -495,6 +481,50 @@ export class MySQLProvider extends SQLBaseProvider {
     return sanitized;
   }
 
+  /**
+   * Build the query envelope from what mysql2 handed back.
+   *
+   * `execute`'s first return value is an ARRAY of rows only for a statement that
+   * produced a result set. For everything else - DDL, INSERT, UPDATE, DELETE - it
+   * is a `ResultSetHeader` object and `fields` is `undefined`. Measured verbatim
+   * against mysql 26.7.0 on 2026-08-23, `INSERT INTO r5_hdr (note) VALUES
+   * ('a'),('b')` answers
+   * `{fieldCount:0,affectedRows:2,insertId:1,info:"Records: 2  Duplicates: 0  Warnings: 0",serverStatus:2,warningStatus:0,changedRows:0}`.
+   *
+   * Calling `.map` on that object threw `result.rows.map is not a function` AFTER
+   * the server had already applied the statement, so every DDL and DML statement
+   * run from the editor reported a failure for work that had landed - the answer
+   * that makes a user retry and double-apply it.
+   *
+   * The empty-result answer follows what the other SQL providers here already do:
+   * no rows, no fields, and the affected-row count in `rowCount` (mssql reports
+   * `rowsAffected[0]`, sqlite `changes`, postgres `pg`'s own `rowCount`).
+   * `insertId`, `changedRows` and `warningStatus` are deliberately dropped:
+   * `QueryResult` models none of them, and `rowCount` is the field the results
+   * footer renders. `affectedRows` is the matched count, which is why a no-op
+   * UPDATE still reports 1 - matching mssql, whose `rowsAffected` counts the same
+   * way.
+   */
+  private buildQueryResult(rows: unknown, fields: FieldPacket[] | undefined, executionTime: number): QueryResult {
+    if (!Array.isArray(rows)) {
+      const header = rows as { affectedRows?: number };
+      return {
+        rows: [],
+        fields: [],
+        rowCount: header.affectedRows ?? 0,
+        executionTime,
+      };
+    }
+
+    return {
+      rows: (rows as unknown[]).map((row) => this.sanitizeRow(row as Record<string, unknown>)),
+      fields: fields?.map((f: FieldPacket) => f.name) ?? [],
+      ...mysqlColumnTypes(fields),
+      rowCount: rows.length,
+      executionTime,
+    };
+  }
+
   // Track running query thread IDs for cancellation
   private runningQueryThreadIds = new Map<string, number>();
 
@@ -519,12 +549,7 @@ export class MySQLProvider extends SQLBaseProvider {
         }
       });
 
-      return {
-        rows: (result.rows as unknown[]).map((row) => this.sanitizeRow(row as Record<string, unknown>)),
-        fields: result.fields?.map((f: FieldPacket) => f.name) ?? [],
-        rowCount: Array.isArray(result.rows) ? result.rows.length : 0,
-        executionTime,
-      };
+      return this.buildQueryResult(result.rows, result.fields, executionTime);
     });
   }
 
@@ -626,12 +651,7 @@ export class MySQLProvider extends SQLBaseProvider {
         }
       });
 
-      return {
-        rows: (result.rows as unknown[]).map((row) => this.sanitizeRow(row as Record<string, unknown>)),
-        fields: result.fields?.map((f: FieldPacket) => f.name) ?? [],
-        rowCount: Array.isArray(result.rows) ? result.rows.length : 0,
-        executionTime,
-      };
+      return this.buildQueryResult(result.rows, result.fields, executionTime);
     });
   }
 
@@ -716,8 +736,20 @@ export class MySQLProvider extends SQLBaseProvider {
       );
       const databaseSize = `${sizeRows[0]?.size_mb || 0} MB`;
 
-      const [hitRows] = await conn.execute<RowDataPacket[]>(BUFFER_CACHE_HIT_RATIO_SQL);
-      const cacheHitRatio = formatCacheHitRatio(measuredNumber(hitRows[0]?.hit_ratio));
+      // A tenant can be missing the performance_schema DATABASE rather than merely
+      // having the schema off, and then this query does not answer NULLs, it throws:
+      // measured 2026-08-20 on OceanBase Community Edition 4.4.2.1 through this
+      // provider, and reproduced on mysql:latest as
+      // `ERROR 1049 (42000): Unknown database 'performance_schema_absent'`. Uncaught,
+      // it took the whole health read down, so the panel showed nothing at all where
+      // one unavailable metric was the honest answer.
+      let cacheHitRatio = CACHE_HIT_RATIO_UNAVAILABLE;
+      try {
+        const [hitRows] = await conn.execute<RowDataPacket[]>(BUFFER_CACHE_HIT_RATIO_SQL);
+        cacheHitRatio = formatCacheHitRatio(measuredNumber(hitRows[0]?.hit_ratio));
+      } catch {
+        // Nothing to read, so nothing is reported.
+      }
 
       let slowQueries: SlowQuery[] = [];
       try {

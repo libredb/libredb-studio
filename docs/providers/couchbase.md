@@ -452,6 +452,11 @@ into discrete fields before the provider sees it:
 | `couchbases://cb.abc123.cloud.couchbase.com` | the host | `18091` | *(none — not invented)* |
 
 Only the **management** port is ever stored: `8091` for `couchbase://`, `18091` for `couchbases://`.
+The scheme also arrives as an SSL mode - `require` for `couchbases://`, `disable` for `couchbase://`
+- because the transport picks `https` vs `http` from `config.ssl` alone and never re-reads the
+pasted string ([§4.3](#43-tls)); without it a `couchbases://` paste posted plain HTTP to 18091.
+`require` and not a verifying mode for the reason §4.3 gives: a self-hosted cluster's certificate is
+self-signed, so only the SSL panel turns verification on.
 A connection that carries *only* a connection string has its hostname lifted out for the transport
 and nothing else — the URL's port is deliberately not used, because a `couchbase://` URL from an
 application config carries the KV port, not the management port, and discovery handles the rest
@@ -567,22 +572,46 @@ enforces uniqueness.
 
 ## 7. Monitoring & health
 
-Every method below degrades to empty/zero on a permission error
-([§3.9](#39-monitoring-degrades-to-empty-never-throws)).
+Every method below degrades to empty on a permission error
+([§3.9](#39-monitoring-degrades-to-empty-never-throws)) — **empty, not zero**: a denied read
+measures nothing, and a metric nobody measured is omitted rather than reported as `0`
+([§7.1](#71-an-unread-metric-is-absent-not-zero)).
 
 | Method | Source | Notes |
 |--------|--------|-------|
 | `getOverview()` | `/pools/default`, `/pools/default/buckets/<bucket>`, `system:keyspaces`, `system:indexes` | version and uptime from the first node; `activeConnections` from the `curr_connections` series |
-| `getPerformanceMetrics()` | bucket stats | cache hit ratio is `100 - ep_cache_miss_rate` (clamped 0..100); `queriesPerSecond` is `cmd_get + cmd_set`; buffer-pool usage is `quotaPercentUsed` |
+| `getPerformanceMetrics()` | bucket stats | cache hit ratio is `100 - ep_cache_miss_rate` (clamped 0..100); `queriesPerSecond` is `cmd_get + cmd_set`; buffer-pool usage is `quotaPercentUsed` — each is **omitted when its source published nothing** ([§7.1](#71-an-unread-metric-is-absent-not-zero)) |
 | `getSlowQueries()` | `system:completed_requests` ordered by `elapsedTime` | one row per recorded request, so `calls` is always 1 — these are individual requests, not aggregates |
 | `getActiveSessions()` | `system:active_requests` | request id, statement, user, remote address, state, elapsed |
 | `getTableStats()` | `/pools/default/buckets/<bucket>` | **bucket level only** — per-collection item counts need a `COUNT(*)` per collection, too expensive for a monitoring poll |
-| `getIndexStats()` | `system:indexes` + `/pools/default/buckets/@index-<bucket>/stats` | index name, scope, collection, keys, type; size and scan counts fall back to 0 because modern servers no longer publish them there |
+| `getIndexStats()` | `system:indexes` + `/pools/default/buckets/@index-<bucket>/stats` | index name, scope, collection, keys, type. Modern servers no longer publish per-index statistics there, so an unpublished size shows as `indexSize: "N/A"` with `indexSizeBytes` **omitted** (a `0 B` read as an empty index, and the Storage tab summed it); `scans` still falls back to `0`, because `IndexStats.scans` is a required field |
 | `getStorageStats()` | `/pools/default/buckets/<bucket>` | Data (`basicStats.diskUsed`) and RAM Quota (`quota.ram` with `quotaPercentUsed`) |
-| `getHealth()` | the four above, in parallel | connections, size, cache hit ratio, top 5 slow queries, top 10 sessions |
+| `getHealth()` | the four above, in parallel | connections, size, cache hit ratio (the string `N/A` when there is none — `formatCacheHitRatio` from `src/lib/monitoring-cache-ratio.ts`), top 5 slow queries, top 10 sessions |
 
 `maxConnections` in the overview is the documented KV default (65536): Couchbase advertises no
 connection ceiling over REST, so the denominator is a constant while the numerator stays measured.
+
+### 7.1 An unread metric is absent, not zero
+
+`PerformanceMetrics.cacheHitRatio`, `queriesPerSecond` and `bufferPoolUsage` are all optional, and
+this provider now omits each one whose source published nothing:
+
+| Field | Reported when | Omitted when |
+|-------|---------------|--------------|
+| `cacheHitRatio` | the `ep_cache_miss_rate` series has a numeric last sample | the series is absent — the stats endpoint was denied, or the bucket is not a Couchbase bucket and publishes no `ep_*` series at all |
+| `queriesPerSecond` | at least one of `cmd_get` / `cmd_set` was published (the other counts as 0) | neither was published |
+| `bufferPoolUsage` | `basicStats.quotaPercentUsed` is a number | `basicStats` is missing, i.e. the bucket endpoint was unreadable |
+
+A **measured** `0` is kept in every case: a bucket with no misses really is at a 100% hit ratio, an
+idle bucket really is doing 0 operations, and an empty bucket really is using none of its quota.
+
+The cache one is why this matters. `DEFAULT_THRESHOLDS` rates the ratio `direction: "below"` with
+`critical: 80`, so the previous `missRate === null ? 0` — a stand-in chosen to avoid "a flattering
+100" — made every bucket whose statistics the connected user may not read show a **red critical
+cache fault the cluster never reported**. Reading the KV stats needs a role many application users
+lack ([§3.9](#39-monitoring-degrades-to-empty-never-throws)), so that was the ordinary case, not an
+edge one. Omitted, the same panels render `N/A` / "Not measured" and score the card as healthy
+(`OverviewTab.tsx`, `PerformanceTab.tsx`).
 
 ---
 
@@ -847,15 +876,17 @@ Everything else:
   is reported as its own type, not expanded into dotted sub-fields.
 - **Table stats are bucket level.** Per-collection item counts would need a `COUNT(*)` per
   collection on every monitoring poll.
-- **Index size and scan counts are usually 0.** Modern servers no longer publish per-index series
-  under `@index-<bucket>`, and the provider does not guess.
+- **Index size is usually unknown and scan counts are usually 0.** Modern servers no longer publish
+  per-index series under `@index-<bucket>`, and the provider does not guess: an unpublished size is
+  `N/A` with no byte count, while `scans` reports `0` only because the field is required.
 - **One bucket per connection.** Multi-bucket browsing from a single connection is out of scope;
   `getSchemaList()` and every monitoring read are scoped to `config.database`.
 - **Analytics/Columnar, Full-Text Search, Eventing and Capella management APIs** (allowed-IP
   administration, cluster provisioning) are not covered.
 - **Monitoring needs privileges.** Without the Query System Catalog role, slow queries and active
-  sessions are `[]` and index statistics fall back to zero — by design
-  ([§3.9](#39-monitoring-degrades-to-empty-never-throws)).
+  sessions are `[]`, index scan counts read `0`, and the performance metrics whose sources are denied
+  are omitted rather than reported as zeroes — by design
+  ([§3.9](#39-monitoring-degrades-to-empty-never-throws), [§7.1](#71-an-unread-metric-is-absent-not-zero)).
 
 ---
 

@@ -8,6 +8,7 @@ import { EventEmitter } from "node:events";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { ConnectionError, DatabaseConfigError, ExecutionProfileError } from "@/lib/db/errors";
+import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 
 // ============================================================================
 // Mock pg BEFORE importing the provider
@@ -18,7 +19,9 @@ let mockQueryFn: (
   params?: unknown[],
 ) => Promise<{
   rows: unknown[];
-  fields?: { name: string }[];
+  // `dataTypeID` is a pg_type OID and the ONLY thing pg says about a column's type:
+  // there is no name on the wire at all.
+  fields?: { name: string; dataTypeID?: number }[];
   rowCount?: number;
 }>;
 
@@ -299,20 +302,24 @@ function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { na
     });
   }
 
+  // getPerformanceMetrics: pg_statio_user_tables (cache_hit_ratio only).
+  // Checked BEFORE the getHealth branch below, not after: both statements sum
+  // heap_blks_read, so a heap_blks_read test matches this query too and this
+  // branch was unreachable - which is why getPerformanceMetrics() was asserted
+  // against a fabricated 100 instead of against 98.75.
+  if (normalized.includes("pg_statio_user_tables") && normalized.includes("cache_hit_ratio")) {
+    return Promise.resolve({
+      rows: [{ cache_hit_ratio: "98.75" }],
+      fields: [{ name: "cache_hit_ratio" }],
+      rowCount: 1,
+    });
+  }
+
   // getHealth: pg_statio_user_tables (cache ratio with heap_read + heap_hit)
   if (normalized.includes("pg_statio_user_tables") && normalized.includes("heap_blks_read")) {
     return Promise.resolve({
       rows: [{ ratio: 99.5, heap_read: "100", heap_hit: "9900" }],
       fields: [{ name: "ratio" }, { name: "heap_read" }, { name: "heap_hit" }],
-      rowCount: 1,
-    });
-  }
-
-  // getPerformanceMetrics: pg_statio_user_tables (cache_hit_ratio only)
-  if (normalized.includes("pg_statio_user_tables") && normalized.includes("cache_hit_ratio")) {
-    return Promise.resolve({
-      rows: [{ cache_hit_ratio: "98.75" }],
-      fields: [{ name: "cache_hit_ratio" }],
       rowCount: 1,
     });
   }
@@ -1231,6 +1238,49 @@ describe("PostgresProvider", () => {
       expect(Array.isArray(health.activeSessions)).toBe(true);
     });
 
+    test("reports an unmeasurable cache hit ratio as unavailable, not as 100%", async () => {
+      // pg_statio_user_tables aggregates to NULL on a database with no user tables.
+      // Measured 2026-08-23 against postgres:18 on a freshly created database:
+      //   heap_read | heap_hit | raw_ratio | coalesced
+      //  -----------+----------+-----------+-----------
+      //             |          |           |       100
+      // The 100 was ours, produced by a COALESCE in our own SQL.
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_statio_user_tables")) {
+          return { rows: [{ ratio: null, heap_read: null, heap_hit: null }], fields: [], rowCount: 1 };
+        }
+        return originalMock(sql, params);
+      };
+
+      const health = await provider.getHealth();
+      expect(health.cacheHitRatio).toBe(CACHE_HIT_RATIO_UNAVAILABLE);
+      mockQueryFn = originalMock;
+    });
+
+    test("keeps a measured cache hit ratio of zero, which is a cold cache and not an absence", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_statio_user_tables")) {
+          return { rows: [{ ratio: "0.0", heap_read: "500", heap_hit: "0" }], fields: [], rowCount: 1 };
+        }
+        return originalMock(sql, params);
+      };
+
+      const health = await provider.getHealth();
+      expect(health.cacheHitRatio).toBe("0.0%");
+      expect(health.cacheHitRatio).not.toBe(CACHE_HIT_RATIO_UNAVAILABLE);
+      mockQueryFn = originalMock;
+    });
+
     test("pg_stat_statements fallback when extension is not enabled", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
@@ -1417,8 +1467,9 @@ describe("PostgresProvider", () => {
       await provider.connect();
       const metrics = await provider.getPerformanceMetrics();
 
-      expect(typeof metrics.cacheHitRatio).toBe("number");
-      expect(typeof metrics.bufferPoolUsage).toBe("number");
+      expect(metrics.cacheHitRatio).toBe(98.75);
+      // Not a metric PostgreSQL publishes; see the note in getPerformanceMetrics().
+      expect("bufferPoolUsage" in metrics).toBe(false);
       expect(typeof metrics.deadlocks).toBe("number");
       expect(metrics.deadlocks).toBe(3);
       expect(typeof metrics.checkpointWriteTime).toBe("string");
@@ -1440,6 +1491,91 @@ describe("PostgresProvider", () => {
 
       const metrics = await provider.getPerformanceMetrics();
       expect(metrics.checkpointWriteTime).toBe("N/A");
+    });
+
+    test("omits the cache hit ratio when pg_statio_user_tables has nothing to divide", async () => {
+      // A table nothing has read yet, measured 2026-08-23 on postgres:18:
+      //   hit | read | raw_ratio
+      //  -----+------+-----------
+      //     0 |    0 |
+      // NULLIF turns 0/0 into NULL, so the honest answer is no reading at all.
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_statio_user_tables")) {
+          return { rows: [{ cache_hit_ratio: null }], fields: [], rowCount: 1 };
+        }
+        return originalMock(sql, params);
+      };
+
+      const metrics = await provider.getPerformanceMetrics();
+      expect("cacheHitRatio" in metrics).toBe(false);
+      mockQueryFn = originalMock;
+    });
+
+    test("keeps a measured cache hit ratio of zero", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_statio_user_tables")) {
+          return { rows: [{ cache_hit_ratio: "0.00" }], fields: [], rowCount: 1 };
+        }
+        return originalMock(sql, params);
+      };
+
+      const metrics = await provider.getPerformanceMetrics();
+      expect(metrics.cacheHitRatio).toBe(0);
+      mockQueryFn = originalMock;
+    });
+
+    test("omits the deadlock count when pg_stat_database has no row for the database", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_stat_database")) {
+          return { rows: [], fields: [], rowCount: 0 };
+        }
+        return originalMock(sql, params);
+      };
+
+      const metrics = await provider.getPerformanceMetrics();
+      expect("deadlocks" in metrics).toBe(false);
+      mockQueryFn = originalMock;
+    });
+
+    test("reports an absent checkpoint reading as N/A rather than as zero seconds", async () => {
+      // pg_stat_bgwriter still exists on PostgreSQL 17+ but the two checkpoint
+      // columns moved to pg_stat_checkpointer, so the query throws there and the
+      // catch already answers "N/A". This is the other shape: the view answers,
+      // and both columns are NULL.
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        const normalized = sql.trim().toLowerCase();
+        if (normalized.includes("pg_stat_bgwriter")) {
+          return {
+            rows: [{ checkpoint_write_time: null, checkpoint_sync_time: null }],
+            fields: [],
+            rowCount: 1,
+          };
+        }
+        return originalMock(sql, params);
+      };
+
+      const metrics = await provider.getPerformanceMetrics();
+      expect(metrics.checkpointWriteTime).toBe("N/A");
+      mockQueryFn = originalMock;
     });
   });
 
@@ -2519,5 +2655,140 @@ describe("PostgresProvider", () => {
         "DISCARD ALL",
       ]);
     });
+  });
+});
+
+// ============================================================================
+// Declared column types
+// ============================================================================
+
+describe("PostgresProvider declared column types", () => {
+  /**
+   * The OIDs and the names are both measured: `SELECT * FROM r5_types` on PostgreSQL
+   * 18.4 reports exactly these `dataTypeID`s, and `format_type(oid, NULL)` spells them
+   * exactly like this. The value arms matter as much as the type arms - `4.99` and the
+   * timestamp are STRINGS on the wire, which is why nothing value-shaped could have
+   * recovered `numeric` or `timestamp without time zone`.
+   */
+  test("query() reports what pg's OIDs declare", async () => {
+    mockQueryFn = () =>
+      Promise.resolve({
+        rows: [{ price: "4.99", ts: "2013-05-26 14:50:58.951", id: "133" }],
+        fields: [
+          { name: "price", dataTypeID: 1700 },
+          { name: "ts", dataTypeID: 1114 },
+          { name: "id", dataTypeID: 20 },
+        ],
+        rowCount: 1,
+      });
+
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    const result = await provider.query("SELECT price, ts, id FROM r5_types");
+
+    expect(result.columnTypes).toEqual({
+      price: "numeric",
+      ts: "timestamp without time zone",
+      id: "bigint",
+    });
+    await provider.disconnect();
+  });
+
+  test("a user-defined OID is absent rather than wrongly named", async () => {
+    // dvdrental's `film.rating` is the enum `mpaa_rating`, OID 16504 in that database.
+    mockQueryFn = () =>
+      Promise.resolve({
+        rows: [{ rating: "NC-17", film_id: 133 }],
+        fields: [
+          { name: "rating", dataTypeID: 16504 },
+          { name: "film_id", dataTypeID: 23 },
+        ],
+        rowCount: 1,
+      });
+
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    const result = await provider.query("SELECT rating, film_id FROM film");
+
+    expect(result.columnTypes).toEqual({ film_id: "integer" });
+    expect(Object.hasOwn(result.columnTypes!, "rating")).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("the key is omitted entirely when no column declared a type", async () => {
+    mockQueryFn = () => Promise.resolve({ rows: [], fields: [], rowCount: 0 });
+
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    const result = await provider.query("CREATE TABLE t (a int)");
+
+    expect(result.columnTypes).toBeUndefined();
+    expect(Object.hasOwn(result, "columnTypes")).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("queryInTransaction() declares them too", async () => {
+    mockQueryFn = (sql) =>
+      Promise.resolve(
+        sql === "BEGIN"
+          ? { rows: [], fields: [], rowCount: 0 }
+          : { rows: [{ d: "2026-08-23" }], fields: [{ name: "d", dataTypeID: 1082 }], rowCount: 1 },
+      );
+
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    await provider.beginTransaction();
+    const result = await provider.queryInTransaction("SELECT d FROM r5_types");
+
+    expect(result.columnTypes).toEqual({ d: "date" });
+    await provider.rollbackTransaction();
+    await provider.disconnect();
+  });
+
+  test("queryReadOnly() declares them without a catalog round trip", async () => {
+    // The profile promises EXACTLY ONE statement inside BEGIN READ ONLY, so the
+    // statements it sends are asserted here alongside the types: a lookup added for a
+    // column label would show up in this list.
+    const sent: string[] = [];
+    mockQueryFn = (arg) => {
+      // The profile sends its one statement on the extended protocol, which means a
+      // QueryConfig OBJECT rather than a string (`queryMode: "extended"`).
+      const sql = typeof arg === "string" ? arg : (arg as unknown as { text: string }).text;
+      sent.push(sql);
+      return Promise.resolve(
+        sql === "SELECT price FROM r5_types"
+          ? { rows: [{ price: "4.99" }], fields: [{ name: "price", dataTypeID: 1700 }], rowCount: 1 }
+          : {
+              rows: [
+                {
+                  is_superuser: false,
+                  reads_server_files: false,
+                  writes_server_files: false,
+                  executes_programs: false,
+                },
+              ],
+              fields: [],
+              rowCount: 1,
+            },
+      );
+    };
+
+    const provider = new PostgresProvider(makePgConfig(), {}, { readOnly: true });
+    await provider.connect();
+    const result = await provider.queryReadOnly("SELECT price FROM r5_types", {
+      statementTimeoutMs: 4500,
+      maxResultRows: 10,
+      maxResultBytes: 10_000,
+    } as ReadOnlyStatementBudget);
+
+    expect(result.columnTypes).toEqual({ price: "numeric" });
+    expect(sent.slice(-5)).toEqual([
+      "BEGIN READ ONLY",
+      "SET LOCAL statement_timeout = 4500",
+      "SELECT price FROM r5_types",
+      "ROLLBACK",
+      "DISCARD ALL",
+    ]);
+    await provider.disconnect();
   });
 });

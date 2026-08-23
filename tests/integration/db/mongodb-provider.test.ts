@@ -93,6 +93,29 @@ const createMockCollection = (name = "users") => ({
 
 const mockCommandResults: Record<string, unknown> = {};
 
+/**
+ * What `serverStatus` answers, as a function rather than a literal: the metric
+ * paths have to be driven on a server that publishes NO `wiredTiger` section
+ * (mongos, the in-memory storage engine, an API-compatible service) and on one
+ * where the command fails outright. Both used to reach the panel as a cache hit
+ * ratio of 99%.
+ */
+const defaultServerStatus = () => ({
+  connections: { current: 5, available: 95 },
+  uptime: 86400,
+  wiredTiger: {
+    cache: {
+      "pages read into cache": 10,
+      "pages requested from the cache": 1000,
+      "bytes currently in the cache": 5000000,
+      "maximum bytes configured": 10000000,
+    },
+  },
+  opcounters: { query: 100, insert: 50, update: 30, delete: 20 },
+});
+
+let mockServerStatus: () => Record<string, unknown> = defaultServerStatus;
+
 const createMockDb = () => ({
   command: async (cmd: Record<string, unknown>) => {
     if (cmd.ping) return { ok: 1 };
@@ -116,19 +139,7 @@ const createMockDb = () => ({
     objects: 100,
   }),
   admin: () => ({
-    serverStatus: async () => ({
-      connections: { current: 5, available: 95 },
-      uptime: 86400,
-      wiredTiger: {
-        cache: {
-          "pages read into cache": 10,
-          "pages requested from the cache": 1000,
-          "bytes currently in the cache": 5000000,
-          "maximum bytes configured": 10000000,
-        },
-      },
-      opcounters: { query: 100, insert: 50, update: 30, delete: 20 },
-    }),
+    serverStatus: async () => mockServerStatus(),
     command: async (cmd: Record<string, unknown>) => {
       if (cmd.currentOp) return { inprog: mockCurrentOps };
       if (cmd.buildInfo) return { version: "7.0.0" };
@@ -234,6 +245,7 @@ describe("MongoDBProvider", () => {
       { name: "orders", type: "collection" },
     ];
     mockCurrentOps = [];
+    mockServerStatus = defaultServerStatus;
     provider = new MongoDBProvider({ ...baseConfig });
   });
 
@@ -710,7 +722,36 @@ describe("MongoDBProvider", () => {
       const health = await provider.getHealth();
       expect(health.activeConnections).toBe(5);
       expect(typeof health.databaseSize).toBe("string");
-      expect(typeof health.cacheHitRatio).toBe("string");
+      // 10 of 1000 requested pages came from disk: a measured 99.0%.
+      expect(health.cacheHitRatio).toBe("99.0%");
+    });
+
+    test("a server with no wiredTiger section reports the cache hit ratio as unavailable", async () => {
+      mockServerStatus = () => ({ connections: { current: 5, available: 95 }, uptime: 86400 });
+      const health = await provider.getHealth();
+      expect(health.cacheHitRatio).toBe("N/A");
+    });
+
+    test("a cache nothing has been requested from yet reports the ratio as unavailable", async () => {
+      mockServerStatus = () => ({
+        connections: { current: 5, available: 95 },
+        uptime: 86400,
+        wiredTiger: { cache: { "pages read into cache": 0, "pages requested from the cache": 0 } },
+      });
+      const health = await provider.getHealth();
+      // No requests means no hits and no misses - there is no ratio, not a 100%.
+      expect(health.cacheHitRatio).toBe("N/A");
+    });
+
+    test("a cache that served nothing from memory reports a measured zero", async () => {
+      mockServerStatus = () => ({
+        connections: { current: 5, available: 95 },
+        uptime: 86400,
+        wiredTiger: { cache: { "pages read into cache": 400, "pages requested from the cache": 400 } },
+      });
+      const health = await provider.getHealth();
+      // A cold cache measures 0 and that is a measurement, not an absence.
+      expect(health.cacheHitRatio).toBe("0.0%");
     });
 
     test("maps in-progress operations to active sessions", async () => {
@@ -788,6 +829,28 @@ describe("MongoDBProvider", () => {
       expect(typeof overview.tableCount).toBe("number");
       expect(typeof overview.indexCount).toBe("number");
     });
+
+    test("connections.available present makes the limit the sum, and a 0 available is a real zero", async () => {
+      const overview = await provider.getOverview();
+      expect(overview.maxConnections).toBe(100);
+
+      mockServerStatus = () => ({ connections: { current: 5, available: 0 }, uptime: 1 });
+      // A pool with nothing left is a limit of 5, not the fabricated 100.
+      expect((await provider.getOverview()).maxConnections).toBe(5);
+    });
+
+    test("a server publishing no connection headroom publishes no limit", async () => {
+      mockServerStatus = () => ({ connections: { current: 5 }, uptime: 1 });
+      // 0 is how every provider spells "no limit published"; 100 was invented.
+      expect((await provider.getOverview()).maxConnections).toBe(0);
+    });
+
+    test("a failing serverStatus publishes no connection limit either", async () => {
+      mockServerStatus = () => {
+        throw new Error("not authorized on admin to execute command { serverStatus: 1 }");
+      };
+      expect((await provider.getOverview()).maxConnections).toBe(0);
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -801,8 +864,50 @@ describe("MongoDBProvider", () => {
 
     test("returns cache hit ratio and connection pool metrics", async () => {
       const metrics = await provider.getPerformanceMetrics();
-      expect(typeof metrics.cacheHitRatio).toBe("number");
-      expect(metrics.cacheHitRatio).toBeGreaterThanOrEqual(0);
+      expect(metrics.cacheHitRatio).toBe(99);
+      expect(metrics.bufferPoolUsage).toBe(50);
+    });
+
+    test("omits the cache metrics on a server with no wiredTiger section", async () => {
+      mockServerStatus = () => ({ uptime: 100, opcounters: { query: 100 } });
+      const metrics = await provider.getPerformanceMetrics();
+      expect("cacheHitRatio" in metrics).toBe(false);
+      expect("bufferPoolUsage" in metrics).toBe(false);
+      // What IS measurable still arrives: 100 ops over 100 seconds.
+      expect(metrics.queriesPerSecond).toBe(1);
+    });
+
+    test("omits the ratio when nothing has been requested from the cache", async () => {
+      mockServerStatus = () => ({
+        uptime: 100,
+        wiredTiger: { cache: { "pages read into cache": 0, "pages requested from the cache": 0 } },
+      });
+      expect("cacheHitRatio" in (await provider.getPerformanceMetrics())).toBe(false);
+    });
+
+    test("reports a measured zero rather than dropping it", async () => {
+      mockServerStatus = () => ({
+        uptime: 100,
+        wiredTiger: {
+          cache: {
+            "pages read into cache": 400,
+            "pages requested from the cache": 400,
+            "bytes currently in the cache": 0,
+            "maximum bytes configured": 10,
+          },
+        },
+      });
+      const metrics = await provider.getPerformanceMetrics();
+      expect(metrics.cacheHitRatio).toBe(0);
+      expect(metrics.bufferPoolUsage).toBe(0);
+    });
+
+    test("measures nothing and reports nothing when serverStatus fails", async () => {
+      mockServerStatus = () => {
+        throw new Error("not authorized on admin to execute command { serverStatus: 1 }");
+      };
+      // The whole point of the change: this used to answer the panel with 99% cache hit.
+      expect(await provider.getPerformanceMetrics()).toEqual({});
     });
   });
 

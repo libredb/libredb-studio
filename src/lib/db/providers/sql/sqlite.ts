@@ -41,6 +41,7 @@ import {
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
 import { loadSQLiteDriver, type SQLiteDatabase } from "./sqlite-driver";
+import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -597,7 +598,9 @@ export class SQLiteProvider extends SQLBaseProvider {
     return {
       activeConnections: 1,
       databaseSize,
-      cacheHitRatio: "N/A",
+      // Same word as the performance panel's absent ratio, and now the same
+      // constant, so the two cannot drift apart.
+      cacheHitRatio: CACHE_HIT_RATIO_UNAVAILABLE,
       slowQueries: [
         {
           query: `Integrity: ${isHealthy ? "OK" : "FAILED"}`,
@@ -726,29 +729,44 @@ export class SQLiteProvider extends SQLBaseProvider {
     };
   }
 
+  /**
+   * Only what SQLite can actually be asked, which is no cache hit ratio at all.
+   *
+   * SQLite's hit and miss counters live behind the C API
+   * (`sqlite3_db_status()` with `SQLITE_DBSTATUS_CACHE_HIT` / `CACHE_MISS`), and
+   * neither driver this provider can load surfaces them. Measured 2026-08-23 by
+   * walking the prototype chain of a live handle: `bun:sqlite` 1.3.14 offers
+   * `clearQueryCache, close, exec, fileControl, filename, handle, inTransaction,
+   * loadExtension, prepare, query, run, serialize, transaction`, and
+   * `node:sqlite` on Node 24.14.0 offers `aggregate, applyChangeset, close,
+   * createSession, createTagStore, enableDefensive, enableLoadExtension, exec,
+   * function, isOpen, isTransaction, loadExtension, location, open, prepare,
+   * setAuthorizer`. No status call on either, and nothing SQL-reachable stands
+   * in: `PRAGMA cache_hit` and `PRAGMA cache_miss` are not pragmas (SQLite
+   * answers an unknown pragma with zero rows rather than an error, so they
+   * *look* like empty readings), `PRAGMA stats` returned `[]` on both drivers,
+   * and `PRAGMA cache_size` is the configured page budget - `-2000`, the 2 MiB
+   * default, on both.
+   *
+   * That budget is what the old code turned into a ratio: it reported 95%
+   * whenever `PRAGMA cache_size` came back truthy, which it always does, and 99%
+   * otherwise. Both numbers were this provider's invention, and the panel rated
+   * them "Excellent". A missing panel is honest; a populated wrong one is not
+   * (#424), so the field is omitted - permanently, not pending a better query.
+   */
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
     this.ensureConnected();
 
-    let cacheHitRatio = 99;
-
-    try {
-      // Get cache stats
-      const cacheStmt = this.db!.prepare("PRAGMA cache_size");
-      const cacheResult = cacheStmt.get() as { cache_size: number };
-
-      // SQLite doesn't provide detailed cache hit stats, estimate high ratio
-      if (cacheResult?.cache_size) {
-        cacheHitRatio = 95; // Reasonable estimate for in-memory cache
-      }
-    } catch {
-      // Ignore
-    }
-
     return {
-      cacheHitRatio,
-      // SQLite doesn't provide these metrics
-      queriesPerSecond: undefined,
-      bufferPoolUsage: undefined,
+      // `cacheHitRatio`, `queriesPerSecond` and `bufferPoolUsage` are all absent:
+      // SQLite keeps no statement counter and no server-side buffer pool whose
+      // usage could be read, so the monitoring tabs show "Not measured" for each.
+      //
+      // `deadlocks` is different, and stays. It is a statement about the engine
+      // rather than a reading that failed: SQLite serializes writers behind a
+      // single write lock and has no lock-wait graph to deadlock in - a second
+      // writer is refused with SQLITE_BUSY instead - so there are no deadlocks to
+      // count and 0 is the true count.
       deadlocks: 0,
     };
   }
@@ -840,8 +858,13 @@ export class SQLiteProvider extends SQLBaseProvider {
         columns: indexCols.map((c) => c.name),
         isUnique: indexMeta?.unique === 1,
         isPrimary: false, // SQLite auto-creates rowid, explicit PKs are shown differently
+        // SQLite publishes no per-index size: `dbstat` would give page counts but it
+        // is a compile-time option, present on node:sqlite (ENABLE_DBSTAT_VTAB) and
+        // absent on bun:sqlite ("no such table: dbstat", measured 2026-08-23), so it
+        // cannot be relied on. The size string already said so; the companion byte
+        // count said 0, and the Storage tab summed those zeroes into an index total
+        // that read as "every index is empty". The field is optional for this case.
         indexSize: "N/A",
-        indexSizeBytes: 0,
         scans: 0, // SQLite doesn't track index usage
       });
     }

@@ -11,12 +11,18 @@ export interface ParsedConnection {
   /**
    * TLS the scheme asked for, when the fields alone could not express it.
    *
-   * Only set by schemes that ARE the transport, currently `https://` for
-   * ClickHouse: dropping it would leave the form on its "disable" default and the
-   * provider would post plaintext HTTP to a TLS port, which fails with a bare
-   * "fetch failed" and nothing pointing at the scheme. Schemes that carry TLS in
-   * their own connection string (`couchbases://`, `mongodb+srv://`) keep using
-   * `connectionString` instead, because the provider re-reads the scheme there.
+   * Set by every scheme that IS the transport - `https://` for ClickHouse,
+   * `rediss://`, `couchbases://` - and by their plaintext twins, because a paste
+   * overwrites rather than merges. Dropping it leaves the form on its "disable"
+   * default and the provider then speaks plaintext to a TLS port, which fails with a
+   * bare "fetch failed" / "Connection is closed." and nothing pointing at the scheme.
+   *
+   * `mongodb+srv://` is the one secure scheme deliberately left unset: the driver gets
+   * the URI verbatim and turns TLS on itself, WITH chain verification, so handing it
+   * our `require` (rejectUnauthorized:false, see the mode note below) would stop an
+   * Atlas certificate being verified. Couchbase used to be excused on the same
+   * "the provider re-reads the scheme" grounds, which was simply untrue: its transport
+   * is HTTP-only and derives http vs https from `config.ssl` alone.
    */
   sslMode?: SSLMode;
 }
@@ -86,9 +92,20 @@ export function parseConnectionString(input: string): ParsedConnection | null {
     return parseGenericURL(trimmed, "mysql", "3306");
   }
 
-  // Redis
-  if (trimmed.startsWith("redis://") || trimmed.startsWith("rediss://")) {
-    return parseGenericURL(trimmed, "redis", "6379");
+  // Redis - `rediss://` IS TLS (the secure form in Redis's own URI convention,
+  // the one `redis-cli --tls` and every client library reads that way) and ioredis only
+  // negotiates it when a `tls` option is present, which the provider builds from
+  // `config.ssl` alone. `require` rather than a verifying mode: it maps to
+  // `rejectUnauthorized: false`, and a self-hosted Redis presents a self-signed
+  // certificate by default, so a verifying mode would refuse the ordinary
+  // `--tls-port` deployment. A paste therefore encrypts but never silently claims to
+  // have checked a chain; the panel is where verification is chosen. The plain scheme
+  // is the explicit plaintext twin, so it clears a mode the form is still holding.
+  if (trimmed.startsWith("rediss://")) {
+    return withSSLMode(parseGenericURL(trimmed, "redis", "6379"), "require");
+  }
+  if (trimmed.startsWith("redis://")) {
+    return withSSLMode(parseGenericURL(trimmed, "redis", "6379"), "disable");
   }
 
   // Oracle
@@ -101,12 +118,18 @@ export function parseConnectionString(input: string): ParsedConnection | null {
     return parseGenericURL(trimmed, "mssql", "1433");
   }
 
-  // Couchbase — the TLS scheme is checked first, it is not a prefix of the plain one
+  // Couchbase — the TLS scheme is checked first, it is not a prefix of the plain one.
+  // The mode travels for the same reason as ClickHouse's: this provider talks HTTP,
+  // and `CouchbaseHttpTransport` picks `https` vs `http` from `config.ssl`, never from
+  // the pasted string it also stores. Without the mode a `couchbases://` paste posts
+  // plain HTTP to 18091. `require` for the same reason as Redis: Capella's certificate
+  // is CA-signed, a self-hosted cluster's is not, and only the panel should turn
+  // verification on.
   if (trimmed.startsWith("couchbases://")) {
-    return parseCouchbaseString(trimmed, "18091");
+    return withSSLMode(parseCouchbaseString(trimmed, "18091"), "require");
   }
   if (trimmed.startsWith("couchbase://")) {
-    return parseCouchbaseString(trimmed, "8091");
+    return withSSLMode(parseCouchbaseString(trimmed, "8091"), "disable");
   }
 
   // ClickHouse — the HTTP endpoint IS the connection target, so a bare http(s) URL is

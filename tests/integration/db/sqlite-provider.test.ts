@@ -17,6 +17,7 @@ import { resolveSQLiteDriverName } from "@/lib/db/providers/sql/sqlite-driver";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { ConnectionError, DatabaseConfigError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 
 // ============================================================================
 // Helpers
@@ -367,7 +368,9 @@ describe("SQLiteProvider", () => {
       const health = await provider.getHealth();
       expect(health.activeConnections).toBe(1);
       expect(typeof health.databaseSize).toBe("string");
-      expect(typeof health.cacheHitRatio).toBe("string");
+      // Not "100" and not "95": the health card says the ratio is unmeasurable
+      // here in the same word every other provider uses for it.
+      expect(health.cacheHitRatio).toBe(CACHE_HIT_RATIO_UNAVAILABLE);
       expect(Array.isArray(health.slowQueries)).toBe(true);
       expect(Array.isArray(health.activeSessions)).toBe(true);
 
@@ -502,14 +505,41 @@ describe("SQLiteProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("getPerformanceMetrics()", () => {
-    test("returns cacheHitRatio as a number", async () => {
+    // The previous assertion here was `typeof perf.cacheHitRatio === "number"`,
+    // which is exactly what pinned the invented figure in place: the provider
+    // read `PRAGMA cache_size` (a configuration value, `-2000` by default) and
+    // answered the panel with 95% whenever it was truthy. Neither driver exposes
+    // SQLite's cache counters, so the field must be absent, not plausible.
+    test("omits cacheHitRatio: neither driver can read SQLite's cache counters", async () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       await provider.connect();
 
       const perf = await provider.getPerformanceMetrics();
-      expect(typeof perf.cacheHitRatio).toBe("number");
-      expect(perf.cacheHitRatio).toBeGreaterThanOrEqual(0);
+      expect("cacheHitRatio" in perf).toBe(false);
+      expect(perf.cacheHitRatio).toBeUndefined();
+    });
+
+    test("omits queriesPerSecond and bufferPoolUsage, and keeps the measured deadlock count", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      const perf = await provider.getPerformanceMetrics();
+      expect("queriesPerSecond" in perf).toBe(false);
+      expect("bufferPoolUsage" in perf).toBe(false);
+      // SQLite serializes writers behind one write lock and has no deadlock to
+      // count - a statement about the engine, not a reading that failed.
       expect(perf.deadlocks).toBe(0);
+    });
+
+    test("a working PRAGMA cache_size does not become a cache hit ratio", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      // The pragma the old code derived 95% from still answers; it is a page
+      // budget in KiB (negative) or pages (positive), never a hit count.
+      const cacheSize = await provider.query("PRAGMA cache_size");
+      expect(cacheSize.rows[0].cache_size).toBe(-2000);
+      expect((await provider.getPerformanceMetrics()).cacheHitRatio).toBeUndefined();
     });
   });
 
@@ -584,6 +614,14 @@ describe("SQLiteProvider", () => {
       const stats = await provider.getIndexStats();
       expect(stats).toBeArray();
       expect(stats.length).toBeGreaterThanOrEqual(2);
+
+      // The size string already said "N/A" while the byte count said 0, which the
+      // Storage tab summed into its index total as if every index were empty.
+      // `IndexStats.indexSizeBytes` is optional for exactly this case.
+      for (const entry of stats) {
+        expect(entry.indexSize).toBe("N/A");
+        expect("indexSizeBytes" in entry).toBe(false);
+      }
     });
   });
 

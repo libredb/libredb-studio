@@ -283,18 +283,44 @@ the collection underneath it.
 ## 7. Monitoring & health
 
 Rich, from `admin().serverStatus()`, `db.stats()`, `currentOp`, `$indexStats`, and the profiler.
-Every method is wrapped in try/catch and degrades to a sensible default on permission errors.
+Every method is wrapped in try/catch. Degradation reports the absence rather than filling it in — see
+[§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured).
 
 | Method | Source | Notes |
 |--------|--------|-------|
-| `getHealth()` | `serverStatus`, `dbStats`, `currentOp`, `system.profile` | connections, data size, WiredTiger cache-hit %, current ops; slow queries need the profiler (placeholder row if disabled) |
-| `getOverview()` | `serverStatus`, `buildInfo`, `dbStats`, `listCollections` | version, uptime, connections, collection/index counts |
-| `getPerformanceMetrics()` | `serverStatus` (WiredTiger + opcounters) | cache-hit %, **ops/sec** (`query`+`insert`+`update`+`delete` opcounters ÷ uptime — *total operations, not just queries*), buffer-pool % (cache bytes), `deadlocks: 0` |
+| `getHealth()` | `serverStatus`, `dbStats`, `currentOp`, `system.profile` | connections, data size, WiredTiger cache-hit % (`"N/A"` when unmeasurable, [§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured)), current ops; slow queries need the profiler (placeholder row if disabled) |
+| `getOverview()` | `serverStatus`, `buildInfo`, `dbStats`, `listCollections` | version, uptime, connections, collection/index counts. `maxConnections` is `connections.current + connections.available`, or `0` — the repo's spelling of *no limit published* — when the server publishes no headroom |
+| `getPerformanceMetrics()` | `serverStatus` (WiredTiger + opcounters) | cache-hit %, **ops/sec** (`query`+`insert`+`update`+`delete` opcounters ÷ uptime — *total operations, not just queries*), buffer-pool % (cache bytes), `deadlocks: 0`. **Every field is optional**: each one is present only if its reading was, and a failed `serverStatus` reports `{}` ([§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured)) |
 | `getSlowQueries()` | `system.profile` | per-op time/returned; **`[]` if the profiler isn't enabled** (`db.setProfilingLevel(1)`); sorted by `millis` (slowest) — note `getHealth()`'s slow-query block instead sorts by `ts` (most recent) and emits a placeholder row when disabled |
 | `getActiveSessions()` | `currentOp` | opid, ns, lock waits, duration — ⚠️ the **`user` field is populated from `op.client`** (the client `host:port`), **not** an authenticated user |
 | `getTableStats()` | `collStats` per collection | row count + data/index/total sizes, `totalIndexSize` carried as the byte figure `indexSizeBytes` and not only as formatted text |
 | `getIndexStats()` | `$indexStats` + `indexes()` | **real `scans`** (`accesses.ops`); `indexSize` `N/A`; **`indexType` only distinguishes `text` vs `btree`** — `hashed`/`2dsphere`/`2d`/wildcard/clustered are all mislabelled `btree` |
 | `getStorageStats()` | `dbStats` + WiredTiger | Data / Indexes / Storage / WiredTiger cache (with usage %) |
+
+### 7.1 What the panel shows when the cache cannot be measured
+
+The cache hit ratio is computed from `serverStatus.wiredTiger.cache` — `pages read into cache` over
+`pages requested from the cache`. Three things can make that unmeasurable, and none of them is a
+number:
+
+- the deployment publishes no `wiredTiger` section at all (`mongos`, the in-memory storage engine,
+  the wire-compatible services);
+- the section is there but `pages requested from the cache` is `0`, on a server that has served
+  nothing yet — no hits and no misses, which is not a perfect hit rate;
+- `serverStatus` fails outright, which is what an unprivileged user gets (`clusterMonitor` is the
+  role it wants).
+
+In all three the field is **omitted** from `getPerformanceMetrics()` and `getHealth()` reports the
+string `"N/A"`; the Overview and Performance tabs then render *Cache Hit* as `N/A` beside *Not
+measured*, and the card border stays neutral instead of being rated. `bufferPoolUsage` follows the
+same rule for the same section. A **measured** `0` — a genuinely cold cache — is kept and rendered as
+`0.0%`, because it is a fact the server reported.
+
+This replaces a hardcoded `cacheHitRatio: 99` that both the no-`wiredTiger` path and the failed-
+`serverStatus` path used to return: a figure the provider invented, indistinguishable at the panel
+from a measurement (the rule [#424](https://github.com/libredb/libredb-studio/issues/424) exists to
+enforce, and [#452](https://github.com/libredb/libredb-studio/pull/452) built the *unavailable*
+rendering for).
 
 ---
 
@@ -455,8 +481,9 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
 - **`collStats` is deprecated** in MongoDB 6.2+ (in favour of the `$collStats` aggregation stage);
   size/stats calls may warn or change on newer servers.
 - **Monitoring needs privileges.** `serverStatus`/`currentOp`/`$indexStats` and the profiler require
-  appropriate roles (`clusterMonitor`, etc.); without them fields degrade to `N/A`/`0`/`[]`, and slow
-  queries require the profiler to be enabled.
+  appropriate roles (`clusterMonitor`, etc.); without them the affected metrics are reported as
+  *unavailable* rather than as numbers ([§7.1](#71-what-the-panel-shows-when-the-cache-cannot-be-measured)),
+  and slow queries require the profiler to be enabled.
 - **`Binary` values are shown as a placeholder** (`<Binary: N bytes>`), not the raw bytes, and only
   a subset of BSON types are normalised (`Long`/`Timestamp`/`UUID`/`RegExp`/`Code`/`DBRef` render as
   generic objects).

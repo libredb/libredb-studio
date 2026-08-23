@@ -12,7 +12,14 @@ import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 // Mock mysql2/promise BEFORE importing the provider
 // ============================================================================
 
-let mockExecuteFn: (sql: string, params?: unknown[]) => Promise<[unknown[], unknown[]]>;
+/**
+ * The first tuple slot is `unknown`, not `unknown[]`: mysql2 hands back a
+ * `ResultSetHeader` OBJECT for a statement that returns no result set, and the
+ * second slot is `undefined` there. An array-shaped mock is exactly what hid
+ * the `result.rows.map is not a function` defect, so the mock type has to be
+ * able to express the header shape.
+ */
+let mockExecuteFn: (sql: string, params?: unknown[]) => Promise<[unknown, unknown[] | undefined]>;
 
 const mockConnection = {
   threadId: 42,
@@ -370,6 +377,31 @@ function perfSchemaDisabledMockExecute(sql: string): Promise<[unknown[], unknown
   return defaultMockExecute(sql);
 }
 
+/**
+ * What a server with no `performance_schema` DATABASE does - a different fact from
+ * the schema being merely OFF. Measured 2026-08-20 against a live OceanBase
+ * Community Edition 4.4.2.1 tenant through this provider, and reproduced against
+ * `mysql:latest` by naming a schema that is not there:
+ *
+ *   ERROR 1049 (42000) at line 1: Unknown database 'performance_schema_absent'
+ *
+ * The driver rejects rather than answering NULLs, so every reading that goes
+ * through `performance_schema` is a throw on that tenant - not an edge case there,
+ * the only path.
+ */
+function perfSchemaAbsentMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
+  const normalized = sql.trim().toLowerCase();
+
+  if (normalized.includes("performance_schema.")) {
+    const error = new Error("Unknown database 'performance_schema'") as Error & { code: string; errno: number };
+    error.code = "ER_BAD_DB_ERROR";
+    error.errno = 1049;
+    return Promise.reject(error);
+  }
+
+  return defaultMockExecute(sql);
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -592,6 +624,22 @@ describe("MySQLProvider", () => {
       const health = await provider.getHealth();
 
       expect(health.cacheHitRatio).toBe(CACHE_HIT_RATIO_UNAVAILABLE);
+    });
+
+    test("survives a tenant with no performance_schema database and reports the ratio as unavailable", async () => {
+      mockExecuteFn = perfSchemaAbsentMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      // The ratio query threw ERROR 1049, which used to take the whole health read
+      // down with it - the OceanBase tenant got no panel at all rather than a panel
+      // with one honest gap in it.
+      expect(health.cacheHitRatio).toBe(CACHE_HIT_RATIO_UNAVAILABLE);
+      expect(health.activeConnections).toBe(5);
+      expect(health.slowQueries[0].query).toBe("Performance schema not available");
+      expect(Array.isArray(health.activeSessions)).toBe(true);
     });
   });
 
@@ -845,6 +893,15 @@ describe("MySQLProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("getPerformanceMetrics()", () => {
+    test("reports nothing at all on a tenant with no performance_schema database", async () => {
+      mockExecuteFn = perfSchemaAbsentMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+
+      expect(await provider.getPerformanceMetrics()).toEqual({});
+    });
+
     test("returns cacheHitRatio, bufferPoolUsage, deadlocks, QPS", async () => {
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
@@ -1338,5 +1395,207 @@ describe("MySQLProvider", () => {
         expect(err.message).toContain("ECONNREFUSED");
       }
     });
+  });
+});
+
+// ============================================================================
+// Declared column types
+// ============================================================================
+
+/**
+ * Every field packet below is verbatim from a live server: `SELECT * FROM types` on
+ * MySQL 26.7.0, printed straight out of mysql2. That matters because the codes are
+ * shared - 252 is every text tier AND every blob tier, and only the charset (63 is
+ * `binary`) and the length tell them apart.
+ */
+describe("MySQLProvider declared column types", () => {
+  test("query() names what the field packets declare", async () => {
+    mockExecuteFn = () =>
+      Promise.resolve([
+        [{ id: 19, price: "19.99", body: "hello", b: null }],
+        [
+          { name: "id", columnType: 8, characterSet: 63, columnLength: 20, decimals: 0, flags: 0 },
+          { name: "price", columnType: 246, characterSet: 63, columnLength: 12, decimals: 2, flags: 0 },
+          { name: "body", columnType: 252, characterSet: 224, columnLength: 262140, decimals: 0, flags: 16 },
+          { name: "b", columnType: 252, characterSet: 63, columnLength: 65535, decimals: 0, flags: 144 },
+        ],
+      ]);
+
+    const provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("SELECT id, price, body, b FROM types");
+
+    // `price` was the reason for all this: a DECIMAL arrives as the string "19.99", so
+    // no value-shaped guess could ever have called it anything but text.
+    expect(result.columnTypes).toEqual({ id: "bigint", price: "decimal", body: "text", b: "blob" });
+    await provider.disconnect();
+  });
+
+  test("the key is omitted entirely when the statement declared no columns", async () => {
+    mockExecuteFn = () => Promise.resolve([[], []]);
+
+    const provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("SELECT id FROM types WHERE 1 = 0");
+
+    expect(result.columnTypes).toBeUndefined();
+    expect(Object.hasOwn(result, "columnTypes")).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("queryInTransaction() declares them too", async () => {
+    mockExecuteFn = () =>
+      Promise.resolve([
+        [{ ts: "2026-08-23 17:46:34" }],
+        [{ name: "ts", columnType: 7, characterSet: 63, columnLength: 19, decimals: 0, flags: 128 }],
+      ]);
+
+    const provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    await provider.beginTransaction();
+    const result = await provider.queryInTransaction("SELECT ts FROM types");
+
+    expect(result.columnTypes).toEqual({ ts: "timestamp" });
+    await provider.rollbackTransaction();
+    await provider.disconnect();
+  });
+});
+
+// ============================================================================
+// Non-SELECT statements (the ResultSetHeader shape)
+// ============================================================================
+/**
+ * Every DDL and DML statement threw `result.rows.map is not a function` before
+ * this block existed, AFTER the server had already applied it. Measured through
+ * `createDatabaseProvider({type:"mysql"})` against mysql 26.7.0 on 2026-08-23:
+ * DROP/CREATE/INSERT/UPDATE/DELETE and the transaction path all failed, and a
+ * following SELECT returned the row the failed INSERT had written.
+ *
+ * The header literals below are printed verbatim out of mysql2 3.15 against that
+ * same server - including `fields` arriving as `undefined`, which is why the
+ * second tuple slot is not an empty array here.
+ */
+function makeResultSetHeader(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    fieldCount: 0,
+    affectedRows: 0,
+    insertId: 0,
+    info: "",
+    serverStatus: 2,
+    warningStatus: 0,
+    changedRows: 0,
+    ...overrides,
+  };
+}
+
+describe("MySQLProvider non-SELECT statements", () => {
+  let provider: InstanceType<typeof MySQLProvider>;
+
+  afterEach(async () => {
+    try {
+      if (provider?.isConnected()) await provider.disconnect();
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
+
+  test("CREATE TABLE answers an empty result set, not a throw", async () => {
+    mockExecuteFn = () => Promise.resolve([makeResultSetHeader(), undefined]);
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("CREATE TABLE t (id INT PRIMARY KEY)");
+
+    expect(result.rows).toEqual([]);
+    expect(result.fields).toEqual([]);
+    expect(result.rowCount).toBe(0);
+    expect(result.columnTypes).toBeUndefined();
+    expect(typeof result.executionTime).toBe("number");
+  });
+
+  test("DROP TABLE IF EXISTS on an absent table answers zero rows", async () => {
+    // warningStatus 1 is what the live server returns for the absent-table note.
+    mockExecuteFn = () => Promise.resolve([makeResultSetHeader({ warningStatus: 1 }), undefined]);
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("DROP TABLE IF EXISTS gone");
+
+    expect(result.rows).toEqual([]);
+    expect(result.rowCount).toBe(0);
+  });
+
+  test("INSERT reports affectedRows as the rowCount", async () => {
+    mockExecuteFn = () =>
+      Promise.resolve([
+        makeResultSetHeader({ affectedRows: 2, insertId: 1, info: "Records: 2  Duplicates: 0  Warnings: 0" }),
+        undefined,
+      ]);
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("INSERT INTO t (note) VALUES ('a'),('b')");
+
+    expect(result.rows).toEqual([]);
+    expect(result.rowCount).toBe(2);
+  });
+
+  test("UPDATE reports affectedRows, not changedRows", async () => {
+    // The live server distinguishes them: a no-op UPDATE matches a row
+    // (affectedRows 1) while changing nothing (changedRows 0). `rowCount` is
+    // the matched count, which is what every other provider here reports.
+    mockExecuteFn = () =>
+      Promise.resolve([
+        makeResultSetHeader({ affectedRows: 1, changedRows: 0, info: "Rows matched: 1  Changed: 0  Warnings: 0" }),
+        undefined,
+      ]);
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("UPDATE t SET note = note WHERE id = 1");
+
+    expect(result.rowCount).toBe(1);
+  });
+
+  test("DELETE reports affectedRows as the rowCount", async () => {
+    mockExecuteFn = () => Promise.resolve([makeResultSetHeader({ affectedRows: 3 }), undefined]);
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("DELETE FROM t WHERE id < 4");
+
+    expect(result.rows).toEqual([]);
+    expect(result.rowCount).toBe(3);
+  });
+
+  test("queryInTransaction() answers the same envelope for a non-SELECT", async () => {
+    mockExecuteFn = () => Promise.resolve([makeResultSetHeader({ affectedRows: 1, insertId: 7 }), undefined]);
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    await provider.beginTransaction();
+    const result = await provider.queryInTransaction("INSERT INTO t (note) VALUES ('gamma')");
+
+    expect(result.rows).toEqual([]);
+    expect(result.fields).toEqual([]);
+    expect(result.rowCount).toBe(1);
+    expect(result.columnTypes).toBeUndefined();
+    await provider.rollbackTransaction();
+  });
+
+  test("a SELECT that returns an array is unaffected by the header branch", async () => {
+    mockExecuteFn = () =>
+      Promise.resolve([
+        [{ id: 1 }],
+        [{ name: "id", columnType: 3, characterSet: 63, columnLength: 11, decimals: 0, flags: 0 }],
+      ]);
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("SELECT id FROM t");
+
+    expect(result.rows).toEqual([{ id: 1 }]);
+    expect(result.rowCount).toBe(1);
+    expect(result.columnTypes).toEqual({ id: "int" });
   });
 });

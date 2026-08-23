@@ -99,7 +99,7 @@ everything that assumes a server. Read this as a **diff against the [PostgreSQL 
 | `EXPLAIN` | `true` | `true` (EXPLAIN QUERY PLAN) |
 | Connection string | `true` | `false` (path accepted in the field, but flagged unsupported) |
 | Schema scope | many schemas | single (`main`) |
-| Monitoring | rich `pg_stat_*` | minimal (PRAGMAs + file stats; many fields `N/A`/estimated) |
+| Monitoring | rich `pg_stat_*` | minimal (PRAGMAs + file stats; many fields `N/A`, no cache-hit ratio at all) |
 
 ---
 
@@ -333,12 +333,39 @@ Minimal by nature — SQLite keeps almost no server-style runtime statistics.
 |--------|--------|-------|
 | `getHealth()` | `fs.statSync` / page PRAGMAs, `PRAGMA integrity_check`, `PRAGMA journal_mode` | reports integrity + journal mode as info rows; `activeConnections: 1`, cache-hit `N/A` |
 | `getOverview()` | `sqlite_version()`, file size, `sqlite_master` counts | `uptime: N/A`, `maxConnections: 1` |
-| `getPerformanceMetrics()` | `PRAGMA cache_size` | cache-hit is an **estimate** (95/99); QPS/buffer-pool `undefined`; `deadlocks: 0` |
+| `getPerformanceMetrics()` | — | **no cache-hit ratio, no QPS, no buffer-pool usage** — all three are omitted, so both monitoring tabs show "N/A / Not measured" for them ([§7.1](#71-there-is-no-cache-hit-ratio-and-there-cannot-be)); only `deadlocks: 0` is reported, which is a fact about the engine |
 | `getSlowQueries()` | — | always `[]` (SQLite has no query stats) |
 | `getActiveSessions()` | — | the single current process session |
 | `getTableStats()` | `COUNT(*)` per table | **size is a rough estimate** (`rows × 100 bytes`) — SQLite gives no per-table size |
-| `getIndexStats()` | `PRAGMA index_list`/`index_info` | `scans` always `0` (no usage counter); `indexSize` `N/A` |
+| `getIndexStats()` | `PRAGMA index_list`/`index_info` | `scans` always `0` (no usage counter); `indexSize` is `N/A` and `indexSizeBytes` is **omitted** — SQLite publishes no per-index size, and a `0` was summed by the Storage tab as an empty index |
 | `getStorageStats()` | `fs.statSync` on the DB / `-wal` / `-shm` files | per-file sizes (on disk only) |
+
+### 7.1 There is no cache hit ratio, and there cannot be
+
+SQLite's page-cache hit and miss counters exist only behind the C API —
+`sqlite3_db_status()` with `SQLITE_DBSTATUS_CACHE_HIT` / `SQLITE_DBSTATUS_CACHE_MISS` — and **neither
+driver this provider can load exposes it**. Measured 2026-08-23 by walking a live handle's prototype
+chain:
+
+| Driver | Surface | Status call? |
+|--------|---------|--------------|
+| `bun:sqlite` (Bun 1.3.14, SQLite 3.53.0) | `clearQueryCache, close, exec, fileControl, filename, handle, inTransaction, loadExtension, prepare, query, run, serialize, transaction` | none |
+| `node:sqlite` (Node 24.14.0, SQLite 3.51.2) | `aggregate, applyChangeset, close, createSession, createTagStore, enableDefensive, enableLoadExtension, exec, function, isOpen, isTransaction, loadExtension, location, open, prepare, setAuthorizer` | none |
+
+Nothing SQL-reachable stands in either. On both drivers:
+
+| Attempt | Result |
+|---------|--------|
+| `PRAGMA cache_size` | `-2000` — the *configured* page budget (negative = KiB), not a hit count |
+| `PRAGMA cache_hit`, `PRAGMA cache_miss` | `[]` — these are not pragmas; SQLite answers an unknown pragma with zero rows rather than an error, so they *look* like empty readings |
+| `PRAGMA stats` | `[]` |
+| `SELECT * FROM dbstat` | `no such table: dbstat` under `bun:sqlite`; available under `node:sqlite` (`ENABLE_DBSTAT_VTAB`), but it reports page layout, not cache hits |
+
+So the field is **omitted permanently**, not pending a better query. Through 0.13.1 this provider
+reported `95` whenever `PRAGMA cache_size` came back truthy — which it always does — and `99`
+otherwise, and the Performance panel rated that invented figure "Excellent". A missing panel is
+honest; a populated wrong one is not: the number was this provider's, not SQLite's. `getHealth()`
+says the same thing in its own string field: `cacheHitRatio` is `N/A`.
 
 ---
 
@@ -655,8 +682,12 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
   API routes don't apply.
 - **No EXPLAIN plan metrics.** `EXPLAIN QUERY PLAN` returns step descriptions only — SQLite does not
   report per-node cost, row estimates, or timing data.
-- **Estimated/absent monitoring:** per-table size is `rows × 100 bytes` (a rough estimate); index
-  `scans` is always `0`; cache-hit ratio is a fixed estimate; slow queries are unavailable.
+- **Absent monitoring:** there is **no cache-hit ratio, no queries-per-second and no buffer-pool
+  usage** — the drivers expose no counters for them, so the panels say "Not measured"
+  ([§7.1](#71-there-is-no-cache-hit-ratio-and-there-cannot-be)); index `scans` is always `0` and
+  per-index size is `N/A`; slow queries are unavailable. Per-table size is still a rough estimate
+  (`rows × 100 bytes`) rather than an absence, because `TableStats.tableSizeBytes` is a required
+  field — making it optional is a change to the shared monitoring types, not to this provider.
 - **`:memory:` is ephemeral** — data is lost on disconnect; intended for trials/tests.
 - **Single schema (`main`)** — `ATTACH`ed databases are not surfaced.
 - **No path sandboxing (by design).** `getDatabasePath()` validates only that the path contains
