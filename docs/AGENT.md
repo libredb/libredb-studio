@@ -1555,11 +1555,21 @@ Analyze and Plan — five consecutive times, at the turn limit the product ships
 runs.
 
 **The table lives in [`docs/llms/README.md`](llms/README.md)**, with each model's page beside it,
-and this page deliberately does not repeat it. There used to be a copy here. Every one of its ten
-rows had drifted from the canonical figures — `gemma4:26b` read 46 s/180 s against a measured
-36 s/92 s, `qwen3:14b` read 39 s/151 s against 41 s/303 s — and all ten of its links pointed at a
-`docs/models/` directory that does not exist. Two homes for one measurement is what produced that,
-so there is one now.
+and this page deliberately does not repeat it. There used to be a copy here, and its links pointed
+at a `docs/models/` directory that does not exist.
+
+Its numbers differed from the published ones in every row, and the reason is worth stating because
+it is not the one first written here: they were a DIFFERENT SWEEP, not a drift. Running all 300
+runs back to back takes about three and a half hours, and a machine under that load is slower —
+one model scored 1/5 on a surface at 87 to 93 seconds a run and 5/5 an hour later at 36. The cells
+that sweep lost were re-measured rested, and the rested figures are the published ones. So
+`gemma4:26b` at 46 s/180 s and at 36 s/92 s are both real: the first is what it did during a
+back-to-back sweep, the second what it does rested.
+
+Two tables of the same thing is still the defect, because neither said which sweep it was and a
+reader had no way to tell — while [`methodology.md`](llms/methodology.md) had said all along that
+sustained load is part of the measurement. The condition was documented; it was simply not
+attached to the numbers. One home, and that page is where the conditions belong.
 
 Which model to run, what each needs that the others do not, and how to measure one these pages do
 not cover, are all under [`docs/llms/`](llms/README.md).
