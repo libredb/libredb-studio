@@ -11,6 +11,7 @@ import {
   AGENT_CITATION_RULE,
   AGENT_REPORT_RESERVE_NOTICE,
   type AgentToolResources,
+  PLAN_NO_REASONING_EFFORT,
   runInvestigation,
 } from "@/lib/agent/investigation";
 import type { AgentModel } from "@/lib/agent/model-adapter";
@@ -4743,4 +4744,85 @@ describe("a run is told to report only when it holds something to report from", 
     const declined = view?.record.events.find((event) => event.kind === "call-declined");
     expect(declined?.kind === "call-declined" && declined.detail).toContain("one of index, rewrite");
   });
+});
+
+describe("a model that thinks instead of answering is told not to", () => {
+  /*
+    `qwen3.5:4b` locks five surfaces at the defaults and lost the sixth to its own reasoning:
+    asked for one statement it returns 13 188 characters of thinking against 1 165 of content,
+    and the five plan runs spent 90, 170 and 179 seconds against a 90-second turn, each leaving
+    an empty ledger.
+
+    `reasoning_effort` is what the OpenAI-compatible endpoint the agent drives actually reads -
+    `think: false` is Ollama's own API and is ignored here, as is `enable_thinking`. The
+    in-prompt `/no_think` marker looked right on ONE run and did not reproduce: 38 s in the
+    system prompt, 51 s in the user message, and 1/5 in a real sweep.
+
+    A REQUEST FIELD, not a word in the prompt: nothing is spliced into what Studio says to a
+    model, and no cell's measured wording moves.
+  */
+  test.each(["ollama", "openai"] as const)(
+    "the field reaches a model configured as %s, because the adapter is the same one",
+    async (provider) => {
+      /*
+        BOTH providers, and ollama first, because that is where this broke. The options were
+        keyed by the provider's own name; the scripted model is `openai` by default, so a
+        single-provider test passed while every real ollama run sent nothing and timed out.
+      */
+      const b = boot(freshDataDir());
+      const run = await startRun(b, "planning");
+      const script = scriptedModel(answersProse("```sqlite\nSELECT 1\n```"));
+
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch, "https://api.openai.com/v1", "qwen3.5:4b", provider),
+        resources: b.resources,
+      });
+
+      expect(script.turns[0]?.body?.reasoning_effort).toBe(PLAN_NO_REASONING_EFFORT);
+    },
+  );
+
+  test("a model nobody measured thinking at is left thinking", async () => {
+    // Off by default: a drive-wide change here is how this repository has twice handed back
+    // cells it had already won.
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(answersProse("```sqlite\nSELECT 1\n```"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, "https://api.openai.com/v1", "gemma4:26b"),
+      resources: b.resources,
+    });
+
+    expect(script.turns[0]?.body?.reasoning_effort).toBeUndefined();
+  });
+
+  test.each(["native", "prompted"] as const)(
+    "an AGENT run of the same model is left alone, on the %s protocol",
+    async (protocol) => {
+      /*
+        BOTH protocols, and the prompted one is why this runs twice.
+
+        Gating on `tools === undefined` is true for a planning run AND for every turn of an
+        agent run that asks for its tools in prose - the path four of the twenty-five measured
+        models take, because none of them can emit `tool_calls`. So a setting documented as
+        PLAN ONLY would reach agent turns of exactly the models most likely to be running
+        locally, and a single-protocol test would pass anyway because `startRun` defaults to
+        `native`. It is gated on the run's MODE, which is what it was always about.
+      */
+      const b = boot(freshDataDir());
+      const run = await startRun(b, "agent", undefined, undefined, protocol);
+      const script = scriptedModel(answersProse("nothing to add"));
+
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch, "https://api.openai.com/v1", "qwen3.5:4b"),
+        resources: b.resources,
+      });
+
+      expect(script.turns[0]?.body?.reasoning_effort).toBeUndefined();
+    },
+  );
 });

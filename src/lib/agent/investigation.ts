@@ -63,6 +63,7 @@ import {
   presentReminderLimitFor,
   retriesEmptyTurn,
   retriesUnreadStop,
+  suppressesPlanReasoning,
   turnTimeoutMsFor,
   planStatementRetriesFor,
   reportReminderLimitFor,
@@ -2190,6 +2191,15 @@ function toolSetOf(definitions: readonly AgentToolDefinition[]): ToolSet | undef
 }
 
 /**
+ * What a plan turn asks for when this model's thinking is the thing that loses the cell.
+ *
+ * A REQUEST FIELD and not a word in the prompt, which is the whole reason it is acceptable:
+ * every planning rule above is wording a measured cell depends on, and nothing here touches
+ * it. The in-prompt `/no_think` marker was tried first and abandoned - see the model's entry.
+ */
+export const PLAN_NO_REASONING_EFFORT = "none";
+
+/**
  * One turn. The stream is read part by part rather than awaited as a result, for
  * the reason `capability-probe.ts` records: after a failed request the result
  * promises reject with the SDK's own wrapper, which hides the error this
@@ -2224,6 +2234,17 @@ async function takeTurn(
     run to reach one field would undo that.
   */
   workflow: AgentRunWorkflowType | undefined,
+  /*
+    The run's PERSISTED mode, and the reasoning switch below is gated on it rather than on the
+    tool set.
+
+    Gating on `tools === undefined` is wrong in a way a unit test does not show: `tools` is
+    undefined for a planning run AND for every turn of an agent run on the prompted protocol,
+    which four of the twenty-five measured models take because they cannot emit `tool_calls`.
+    A switch documented as PLAN ONLY would then reach agent turns of exactly the models most
+    likely to be running locally, and a single-protocol test would pass anyway.
+  */
+  mode: AgentRunMode,
 ): Promise<ModelTurn> {
   /*
     Sampling is per MODEL now, not one number for all 25 of them.
@@ -2241,6 +2262,15 @@ async function takeTurn(
     measured on; a model appears there only when a measurement forced it to.
   */
   const sampling = samplingFor(agentModel.modelId, workflow);
+  /*
+    Keyed `openai`, whatever this provider is called.
+
+    `provider-registry.ts` builds ollama, openai and custom through one `@ai-sdk/openai`
+    adapter, and that adapter reads its options under its OWN key. Keying them by the
+    provider's name passed the unit test - the scripted model is configured as `openai` - and
+    sent nothing at all on the first real ollama run, which then timed out at 94 seconds.
+  */
+  const quietPlan = mode !== "agent" && suppressesPlanReasoning(agentModel.modelId);
   const stream = streamText({
     model: agentModel.model,
     temperature: sampling.temperature,
@@ -2255,6 +2285,7 @@ async function takeTurn(
     instructions,
     messages: [...messages],
     ...(tools === undefined ? {} : { tools }),
+    ...(quietPlan ? { providerOptions: { openai: { reasoningEffort: PLAN_NO_REASONING_EFFORT } } } : {}),
     maxRetries: 0,
     // Real-time backstop for ONE call, sized by what the run has left. The
     // deadline object remains the authority — it is what the loop reads between
@@ -3043,6 +3074,7 @@ export async function runInvestigation(
         // the model, not the wiring.
         undefined,
         record.workflowType,
+        record.mode,
       );
       text = turn.text;
       if (turn.aborted) return conclude("failed", turnBudgetMs < remainingMs ? "model-timeout" : "deadline-exceeded");
