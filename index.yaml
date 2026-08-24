@@ -4,6 +4,75 @@ entries:
   - annotations:
       artifacthub.io/category: database
       artifacthub.io/changes: |
+        - "MySQL: reads no longer go through the prepared protocol unconditionally, which had broken statements MySQL itself only answers on the text protocol - CHECK TABLE and its relatives returned an error instead of a result"
+        - "Monitoring: one refused read no longer costs the whole dashboard - the seven panels degrade individually, so a permission the user lacks hides that panel rather than blanking the page, and two panels stop reporting a fabricated zero"
+        - "ScyllaDB connections could not be created at all, and an Oracle query touching a LOB column failed in full rather than returning its rows"
+        - "The query agent carries measured settings for ten models rather than one default, records which model drove a run and where its settings came from, and no longer scores a plan run as answered while handing back prose glued to its SQL"
+        - "Track app release 0.13.4 (appVersion bump; default image tag follows)"
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:0.13.4
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 0.13.4
+    created: "2026-08-24T20:39:49.70070409Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting fourteen engines
+      - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase,
+      ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache
+      Cassandra
+    digest: 7add61ff16c8a386f9dc6a5818373385c95a6d110b9f9d4836c8dcc7e063e137
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - couchbase
+    - clickhouse
+    - druid
+    - elasticsearch
+    - opensearch
+    - trino
+    - cassandra
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.49/libredb-studio-0.1.49.tgz
+    version: 0.1.49
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
         - "The query agent can be given settings for a model it has never measured, without a new release: agent.modelTuning mounts a JSON document of measured per-model settings and names it to the app"
         - "Give agent.modelTuning.existingConfigMap a ConfigMap you created from a file, or agent.modelTuning.document the same content inline; there is no separate enable flag, because naming a source is what enables it"
         - "A document that is missing, unreadable or off-schema is ignored and the settings the image ships with stand, so this cannot break a working agent - and GET /api/agent/config now tells an admin session which of the two happened"
@@ -2747,4 +2816,4 @@ entries:
     urls:
     - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
     version: 0.1.0
-generated: "2026-08-24T14:49:50.056484135Z"
+generated: "2026-08-24T20:39:49.694982582Z"
