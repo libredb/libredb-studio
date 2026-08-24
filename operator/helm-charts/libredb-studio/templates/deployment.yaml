@@ -219,6 +219,14 @@ spec:
             - name: LIBREDB_AGENT_ENABLED
               value: {{ get .Values.agent "enabled" | quote }}
             {{- end }}
+            {{- /* Where the mounted tuning document lands. Its own directory rather than
+                   /app/config, which the seed ConfigMap already claims: a second volume at
+                   the same mountPath would hide the first. Written before extraEnv so an
+                   extraEnv entry of the same name still wins, like the flag above. */}}
+            {{- if include "libredb-studio.agentTuningSet" . }}
+            - name: AGENT_MODEL_TUNING_PATH
+              value: "/app/model-tuning/{{ include "libredb-studio.agentTuningKey" . }}"
+            {{- end }}
             {{- /* The agent's ledger directory, set by the chart because the image a
                    default install pulls does not yet set it. image.tag defaults to
                    .Chart.AppVersion, and the Dockerfile's own
@@ -262,6 +270,11 @@ spec:
               mountPath: /app/config
               readOnly: true
             {{- end }}
+            {{- if include "libredb-studio.agentTuningSet" . }}
+            - name: agent-model-tuning
+              mountPath: /app/model-tuning
+              readOnly: true
+            {{- end }}
       volumes:
         - name: next-cache
           emptyDir: {}
@@ -287,6 +300,11 @@ spec:
         - name: seed-config
           configMap:
             name: {{ .Values.seedConnections.existingConfigMap | default (printf "%s-seed-connections" (include "libredb-studio.fullname" .)) }}
+        {{- end }}
+        {{- if include "libredb-studio.agentTuningSet" . }}
+        - name: agent-model-tuning
+          configMap:
+            name: {{ get (get .Values.agent "modelTuning") "existingConfigMap" | default (printf "%s-agent-model-tuning" (include "libredb-studio.fullname" .)) }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

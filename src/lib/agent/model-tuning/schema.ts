@@ -107,28 +107,82 @@ const modelSchema = z.strictObject({
   id: z.string().min(1),
   /** The runs that earned these settings, in the words of whoever measured them. */
   measured: z.string().min(1),
-  /** The file header this entry replaces: what the model is like, beyond any one setting. */
-  summary: z.array(z.string().min(1)),
+  /**
+   * What the model is like, beyond any one setting.
+   *
+   * For whoever READS the document, and Studio never reads it — the resolvers take settings and
+   * `measured`. Optional, because requiring it would make an operator write prose that nothing
+   * consumes before their measurement could take effect. The bundled entries carry it because the
+   * document is also a record, and a record with no narrative is a table of numbers.
+   */
+  summary: z.array(z.string().min(1)).optional(),
   settings: modelSettingsSchema,
   ...entryShape,
 });
 
+const measuredAgainstSchema = z.strictObject({
+  turnTimeoutMs: z.int().positive(),
+  protocol: z.string().min(1),
+  defaults: z.strictObject({
+    sampling: samplingSchema,
+    unreportedCallCeiling: z.int().positive(),
+    reportReminderLimit: countSchema,
+    planStatementRetries: countSchema,
+    presentReminderLimit: countSchema,
+    retryEmptyTurn: z.boolean(),
+    refusalExamples: z.boolean(),
+  }),
+});
+
 const documentSchema = z.strictObject({
   schemaVersion: z.literal(TUNING_SCHEMA_VERSION),
-  measuredAgainst: z.strictObject({
-    turnTimeoutMs: z.int().positive(),
-    protocol: z.string().min(1),
-    defaults: z.strictObject({
-      sampling: samplingSchema,
-      unreportedCallCeiling: z.int().positive(),
-      reportReminderLimit: countSchema,
-      planStatementRetries: countSchema,
-      presentReminderLimit: countSchema,
-      retryEmptyTurn: z.boolean(),
-      refusalExamples: z.boolean(),
-    }),
-  }),
+  measuredAgainst: measuredAgainstSchema,
   models: z.array(modelSchema),
+});
+
+/*
+  The same document, held to what a document from OUTSIDE Studio can reasonably promise.
+
+  Two relaxations, and both answer the same question: what happens to a mounted document when
+  Studio changes? Completeness and `strictObject` together mean that adding an eighth setting
+  refuses every document in the field WHOLE, so every model in it reverts to the defaults on an
+  upgrade that changed nothing about their measurements. "A model can be added without a Studio
+  release" and "Studio can gain a setting without breaking documents in the field" are the same
+  requirement from either end, and the strict schema only satisfies the first.
+
+  So: `settings` states what was measured and nothing more, and an unknown key is COLLECTED rather
+  than fatal. Collected, not swallowed — a misspelled `retryEmtpyTurn` doing nothing quietly is the
+  exact failure the strict schema exists to prevent, so it is reported through `ignoredKeys` and out
+  to `GET /api/agent/config`. What does not relax: every bound, `measured`, the id-uniqueness rule,
+  and the refusal of wording. A tolerant schema is not an unchecked one.
+
+  `looseObject` at the entry and settings level only. The document level stays strict because its
+  three keys are the shape itself rather than a list that grows.
+*/
+const operatorSettingsSchema = z.looseObject(settingsShape).partial();
+
+const operatorModelSchema = z.looseObject({
+  id: z.string().min(1),
+  measured: z.string().min(1),
+  summary: z.array(z.string().min(1)).optional(),
+  settings: operatorSettingsSchema,
+  /*
+    Named so that a LOOSE schema still refuses it.
+
+    `strictObject` refused wording as a side effect of refusing everything it did not declare.
+    Tolerating unknown keys takes that away, and wording is the one key that must not become a
+    tolerated unknown: it is prompt text pushed verbatim into a model's messages, so a document
+    that could carry it would let whoever wrote it decide what Studio says mid-run. Declaring it
+    as never keeps the refusal explicit rather than incidental.
+  */
+  notices: z.never().optional(),
+  ...entryShape,
+});
+
+const operatorDocumentSchema = z.strictObject({
+  schemaVersion: z.literal(TUNING_SCHEMA_VERSION),
+  measuredAgainst: measuredAgainstSchema,
+  models: z.array(operatorModelSchema),
 });
 
 type TuningDocument = z.infer<typeof documentSchema>;
@@ -154,76 +208,140 @@ export interface ModelTuning {
    * fault in the writing and not in the measurement, and a run is not the place to find out.
    */
   readonly undocumentedOverrides: readonly string[];
+  /**
+   * `"<model id>: <key>"` for every key an entry stated that this Studio does not implement.
+   *
+   * Always empty for the bundled document, which is `strictObject` and would have been refused.
+   * It exists for a document from outside, where an unknown key must neither refuse the whole file
+   * nor vanish: the first breaks every mounted document the day Studio gains a setting, and the
+   * second lets a misspelled `retryEmtpyTurn` do nothing quietly, which is what the strict schema
+   * was for. So it is reported, and `GET /api/agent/config` carries it to the operator.
+   */
+  readonly ignoredKeys: readonly string[];
 }
 
 /** Every setting a model may state, so the justification rule can walk them by name. */
 const SETTING_NAMES = Object.keys(settingsShape) as (keyof typeof settingsShape)[];
 
-function differsFromDefaults(
-  settings: z.infer<typeof modelSettingsSchema>,
-  defaults: TuningDocument["measuredAgainst"]["defaults"],
-): string[] {
+/** Everything an entry itself may say, for spotting a key misspelled outside `settings`. */
+const ENTRY_KEYS = new Set(["id", "measured", "summary", "settings", "rationale"]);
+
+type StatedSettings = Partial<z.infer<typeof modelSettingsSchema>>;
+type RecordedDefaults = TuningDocument["measuredAgainst"]["defaults"];
+
+/**
+ * One entry's settings as a profile: what it stated, and nothing it did not.
+ *
+ * Built by walking `SETTING_NAMES` rather than naming ten fields, so a setting added to
+ * `settingsShape` is carried through without a second edit here — the class of omission that would
+ * otherwise parse fine and silently never resolve. For a COMPLETE entry the result is exactly what
+ * the ten fields produced, which the pinned resolution table holds it to.
+ */
+function profileFor(measured: string, settings: StatedSettings): AgentModelProfile {
+  const stated: Record<string, unknown> = {};
+  for (const name of SETTING_NAMES) {
+    const value = settings[name];
+    if (value !== undefined) stated[name] = value;
+  }
+  return { measured, ...stated } as AgentModelProfile;
+}
+
+/** The settings this entry states that differ from the defaults the document records. */
+function differsFromDefaults(settings: StatedSettings, defaults: RecordedDefaults): string[] {
   const changed: string[] = [];
   for (const name of SETTING_NAMES) {
-    // These two have no default: stating either at all is a decision, so both always argue.
+    const stated = settings[name];
+    // Absent is not an override: it resolves to the compiled default, which needs no argument.
+    if (stated === undefined) continue;
+    // These two have no recorded default: stating either at all is a decision, so both argue.
     if (name === "turnTimeoutMs" || name === "perWorkflow") {
-      if (settings[name] !== undefined) changed.push(name);
+      changed.push(name);
       continue;
     }
     if (name === "sampling") {
-      const { temperature, topP } = settings.sampling;
+      const { temperature, topP } = stated as AgentSampling;
       if (temperature !== defaults.sampling.temperature || topP !== defaults.sampling.topP) changed.push(name);
       continue;
     }
-    if (settings[name] !== defaults[name]) changed.push(name);
+    if (stated !== defaults[name]) changed.push(name);
   }
   return changed;
 }
 
-/**
- * Reads a document, or throws.
- *
- * Pure: no filesystem, no environment, no caching. That is what lets the failures be tested
- * directly with bad literals rather than by shipping a corrupt file, and it is the seam a later
- * externally-supplied document arrives through — `origin` is already the label such an error
- * would need to name its source.
- */
-export function parseTuning(document: unknown, origin: string): ModelTuning {
-  const parsed = documentSchema.safeParse(document);
-  if (!parsed.success) {
-    const first = parsed.error.issues[0];
-    const where = first === undefined ? "unknown" : first.path.join(".");
-    throw new ModelTuningError(origin, `${where}: ${first?.message ?? "invalid"}`);
-  }
-  const doc = parsed.data;
+/** The shape both schemas produce, once their differing strictness has done its work. */
+interface ReadDocument {
+  readonly measuredAgainst: TuningDocument["measuredAgainst"];
+  readonly models: readonly {
+    readonly id: string;
+    readonly measured: string;
+    readonly settings: Record<string, unknown>;
+    readonly rationale: Record<string, unknown>;
+  }[];
+}
 
+/** Turns a validated document into the register, applying the rules that do not depend on origin. */
+function assemble(doc: ReadDocument, origin: string): ModelTuning {
   const models: Record<string, AgentModelProfile> = {};
   /** Collected rather than thrown on; see rule 2 in this file's header. */
   const unjustified: string[] = [];
+  const ignored: string[] = [];
+
   for (const entry of doc.models) {
     const key = entry.id.toLowerCase();
     // Rejected rather than last-wins: two spellings of one id is a document nobody can read,
     // and silently collapsing them would apply settings the other entry argues against.
     if (models[key] !== undefined) throw new ModelTuningError(origin, `models: ${entry.id} appears twice`);
 
-    models[key] = {
-      measured: entry.measured,
-      sampling: entry.settings.sampling as AgentSampling,
-      unreportedCallCeiling: entry.settings.unreportedCallCeiling,
-      reportReminderLimit: entry.settings.reportReminderLimit,
-      planStatementRetries: entry.settings.planStatementRetries,
-      presentReminderLimit: entry.settings.presentReminderLimit,
-      retryEmptyTurn: entry.settings.retryEmptyTurn,
-      refusalExamples: entry.settings.refusalExamples,
-      ...(entry.settings.turnTimeoutMs === undefined ? {} : { turnTimeoutMs: entry.settings.turnTimeoutMs }),
-      ...(entry.settings.perWorkflow === undefined ? {} : { perWorkflow: entry.settings.perWorkflow }),
-    };
+    const settings = entry.settings as StatedSettings;
+    models[key] = profileFor(entry.measured, settings);
     unjustified.push(
-      ...differsFromDefaults(entry.settings, doc.measuredAgainst.defaults)
+      ...differsFromDefaults(settings, doc.measuredAgainst.defaults)
         .filter((name) => entry.rationale[name] === undefined)
         .map((name) => `${entry.id}: ${name}`),
     );
+    for (const stated of Object.keys(entry.settings)) {
+      if (!SETTING_NAMES.includes(stated as keyof typeof settingsShape)) ignored.push(`${entry.id}: ${stated}`);
+    }
+    for (const stated of Object.keys(entry)) {
+      if (!ENTRY_KEYS.has(stated)) ignored.push(`${entry.id}: ${stated}`);
+    }
   }
 
-  return { models, measuredAgainst: doc.measuredAgainst, undocumentedOverrides: unjustified };
+  return {
+    models,
+    measuredAgainst: doc.measuredAgainst,
+    undocumentedOverrides: unjustified,
+    ignoredKeys: ignored,
+  };
+}
+
+function refuse(origin: string, error: z.ZodError): never {
+  const first = error.issues[0];
+  const where = first === undefined ? "unknown" : first.path.join(".");
+  throw new ModelTuningError(origin, `${where}: ${first?.message ?? "invalid"}`);
+}
+
+/**
+ * Reads Studio's own document, or throws.
+ *
+ * Pure: no filesystem, no environment, no caching. That is what lets the failures be tested
+ * directly with bad literals rather than by shipping a corrupt file.
+ */
+export function parseTuning(document: unknown, origin: string): ModelTuning {
+  const parsed = documentSchema.safeParse(document);
+  if (!parsed.success) refuse(origin, parsed.error);
+  return assemble(parsed.data as ReadDocument, origin);
+}
+
+/**
+ * Reads a document that arrived from outside Studio, or throws.
+ *
+ * Same assembly, looser contract — see the note above `operatorSettingsSchema` for which rules
+ * relax and why, and which do not. Its own function rather than a boolean on `parseTuning`, so a
+ * call site cannot pick the tolerant rules for Studio's own document by passing the wrong flag.
+ */
+export function parseOperatorTuning(document: unknown, origin: string): ModelTuning {
+  const parsed = operatorDocumentSchema.safeParse(document);
+  if (!parsed.success) refuse(origin, parsed.error);
+  return assemble(parsed.data as ReadDocument, origin);
 }

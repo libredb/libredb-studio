@@ -8,10 +8,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { activeTuning, operatorTuningStatus, resetTuning } from "@/lib/agent/model-tuning";
 import bundled from "@/lib/agent/model-tuning/measured-profiles.json";
-import { ModelTuningError, TUNING_SCHEMA_VERSION, parseTuning } from "@/lib/agent/model-tuning/schema";
+import {
+  ModelTuningError,
+  TUNING_SCHEMA_VERSION,
+  parseOperatorTuning,
+  parseTuning,
+} from "@/lib/agent/model-tuning/schema";
 import { ceilingFor, retriesEmptyTurn } from "@/lib/agent/models";
 import { BASELINE_NOTICES } from "@/lib/agent/models/notices";
 import {
@@ -185,6 +190,83 @@ describe("what the contract refuses", () => {
   });
 });
 
+describe("what a document from outside Studio is held to instead", () => {
+  /*
+    The bundled document and an operator's are checked by DIFFERENT rules, and the reason is that
+    they have different authors.
+
+    Completeness — every defaulted setting restated on every entry — is a discipline for the
+    document this repository writes: it is how a measurement survives a default moving. Applied to
+    a document somebody else wrote it stops being discipline and becomes a trap, because the set of
+    settings grows. The day Studio adds an eighth knob, every mounted document in the world states
+    seven, fails the contract, and is refused WHOLE — so every model in it silently reverts to the
+    defaults, on an upgrade that changed nothing about their measurements. "Studio can gain a
+    setting without breaking documents in the field" is the same requirement as "a model can be
+    added without a Studio release", seen from the other end.
+
+    So an operator's entry states what it measured and nothing more, and an unknown key is reported
+    rather than fatal. Reported matters: a misspelled `retryEmtpyTurn` must not quietly do nothing,
+    which is the whole argument for the strict schema in the first place.
+  */
+  test("an entry may state one setting, and the rest resolve to the defaults", () => {
+    const partial = {
+      models: [{ id: "some-model:9b", measured: "one surface, five runs", settings: { turnTimeoutMs: 120_000 } }],
+    };
+    const tuning = parseOperatorTuning(document(partial), "test");
+    expect(tuning.models["some-model:9b"]).toEqual({ measured: "one surface, five runs", turnTimeoutMs: 120_000 });
+  });
+
+  test("replacing a bundled entry with a partial one falls to the defaults, not to half the old one", () => {
+    // The whole-entry promise, seen through the tolerant schema: `gemma4:26b` ships a ceiling of
+    // 10, and an operator entry that does not mention the ceiling does not inherit it.
+    process.env[ENV] = writeDocument(
+      document({ models: [{ id: "gemma4:26b", measured: "re-measured here", settings: { retryEmptyTurn: true } }] }),
+    );
+    resetTuning();
+    expect(ceilingFor("gemma4:26b")).toBe(DEFAULT_UNREPORTED_CALL_CEILING);
+    expect(retriesEmptyTurn("gemma4:26b")).toBe(true);
+  });
+
+  test("a key this Studio does not implement is reported rather than refusing the document", () => {
+    const misspelled = {
+      models: [{ id: "some-model:9b", measured: "m", settings: { retryEmtpyTurn: true } }],
+    };
+    const tuning = parseOperatorTuning(document(misspelled), "test");
+    expect(tuning.models["some-model:9b"]).toBeDefined();
+    expect(tuning.ignoredKeys).toEqual(["some-model:9b: retryEmtpyTurn"]);
+  });
+
+  test("a key misspelled outside settings is reported too, not only one inside it", () => {
+    // `sumary` beside `settings` is the same mistake one level up, and the level is not something
+    // the person who made it was thinking about.
+    const misplaced = {
+      models: [{ id: "some-model:9b", measured: "m", settings: { retryEmptyTurn: true }, sumary: ["typo"] }],
+    };
+    expect(parseOperatorTuning(document(misplaced), "test").ignoredKeys).toEqual(["some-model:9b: sumary"]);
+  });
+
+  test("the bounds still hold, so a tolerant schema is not an unchecked one", () => {
+    const outOfRange = {
+      models: [{ id: "some-model:9b", measured: "m", settings: { turnTimeoutMs: 400_000 } }],
+    };
+    expect(() => parseOperatorTuning(document(outOfRange), "test")).toThrow(ModelTuningError);
+  });
+
+  test("wording is still refused, which is the one rule that does not relax", () => {
+    // Tolerance is about settings Studio may not know yet. Prompt text is not a setting Studio
+    // might add later: it is the thing a mounted document must never be able to say.
+    const withWording = { models: [{ id: "some-model:9b", measured: "m", notices: { ...BASELINE_NOTICES } }] };
+    expect(() => parseOperatorTuning(document(withWording), "test")).toThrow(ModelTuningError);
+  });
+
+  test("the bundled document is still held to completeness, so the discipline is not lost", () => {
+    // The other half of the split. If this ever passes, the rule that keeps ten measurements
+    // meaningful after a default moves has been quietly dropped for Studio's own document too.
+    const incomplete = { models: [{ id: "x:1b", measured: "m", settings: { retryEmptyTurn: true } }] };
+    expect(() => parseTuning(document(incomplete), "test")).toThrow(ModelTuningError);
+  });
+});
+
 describe("a document an operator supplies", () => {
   test("gives a model Studio never measured the settings somebody else measured", () => {
     /*
@@ -278,6 +360,21 @@ describe("a document an operator supplies", () => {
     const status = operatorTuningStatus();
     expect(status.state).toBe("applied");
     expect(status.state === "applied" && status.models).toBe(1);
+  });
+
+  test("reports a relative path as the absolute one it actually looked at", () => {
+    /*
+      The working directory is not the same thing in every place this ships — /app in the
+      container, wherever the user stood under `npx`, the checkout in development — so a relative
+      value is really a question about which directory, and the report is where that gets answered
+      rather than guessed. Resolved rather than refused: refusing adds a failure mode, and naming
+      the path it opened tells the operator everything refusing would have.
+    */
+    process.env[ENV] = "not-a-real-document.json";
+    resetTuning();
+    const status = operatorTuningStatus();
+    expect(status.state).toBe("ignored");
+    expect(status.state === "ignored" && status.path).toBe(resolve("not-a-real-document.json"));
   });
 
   test("reports nothing configured when no path was set", () => {

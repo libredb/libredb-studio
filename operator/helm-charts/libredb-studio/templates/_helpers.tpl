@@ -172,6 +172,30 @@ Absent, present-but-null and a key deleted by a user's `agent: null` all land on
 {{- end }}
 
 {{/*
+Whether the operator supplied a model-tuning document, from either source.
+
+One definition for four call sites - the ConfigMap, the env var, the volume and the mount - because
+the rule that either source counts is exactly the kind of condition that drifts when it is spelled
+out in each place. Naming a source is what enables the feature: there is no separate flag to leave
+inconsistent with it, so no values combination renders a pod that mounts a ConfigMap nobody created.
+*/}}
+{{- define "libredb-studio.agentTuningSet" -}}
+{{- $tuning := get (.Values.agent | default dict) "modelTuning" | default dict }}
+{{- if or (get $tuning "existingConfigMap") (get $tuning "document") }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
+The file name the tuning document is mounted under, and therefore the tail of the path the app is
+told to read. One definition so the ConfigMap key, the mount and the env var cannot disagree.
+*/}}
+{{- define "libredb-studio.agentTuningKey" -}}
+{{- $tuning := get (.Values.agent | default dict) "modelTuning" | default dict }}
+{{- get $tuning "configMapKey" | default "model-tuning.json" }}
+{{- end }}
+
+{{/*
 Whether an agent run could start in this deployment - the chart's own, deliberately
 conservative reading of the runtime's rule (a configured model plus a writable
 ledger). It answers "true" only for what this chart can see in its values:

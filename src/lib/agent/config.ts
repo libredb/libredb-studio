@@ -87,10 +87,17 @@ export const AGENT_MODEL_TUNING_ENV = "AGENT_MODEL_TUNING_PATH";
  * filled it in, and reading it as "load the file called ''" would turn an unconfigured install
  * into a warning on every boot. Whether the file parses is not decided here: see
  * `model-tuning/index.ts`, which ignores a document it cannot read and keeps the bundled one.
+ *
+ * Resolved to an absolute path, so a relative value is reported as the file that was actually
+ * opened. The working directory is a different place in each way this ships — `/app` in the
+ * container, wherever the user stood under `npx`, the checkout in development — so `models.json`
+ * is really a question about which directory, and the answer belongs in the diagnosis rather than
+ * in whoever is guessing. Resolved rather than refused: refusing would add a failure mode, and an
+ * absolute path in the report says everything the refusal would have.
  */
 export function agentModelTuningPath(): string | undefined {
   const raw = process.env[AGENT_MODEL_TUNING_ENV]?.trim();
-  return raw === undefined || raw === "" ? undefined : raw;
+  return raw === undefined || raw === "" ? undefined : path.resolve(raw);
 }
 
 /**

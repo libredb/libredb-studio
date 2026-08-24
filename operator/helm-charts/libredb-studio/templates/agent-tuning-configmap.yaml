@@ -1,0 +1,20 @@
+{{- /*
+The inline model-tuning document, when the operator supplied one here rather than pointing at a
+ConfigMap they already made.
+
+Rendered with `toJson` rather than `toYaml`: the app reads this file with `JSON.parse`, and YAML
+that happens to be valid JSON is a property of the values the operator typed rather than of this
+template. Converting makes the file the app expects whatever they typed.
+*/ -}}
+{{- $tuning := get (.Values.agent | default dict) "modelTuning" | default dict }}
+{{- if and (get $tuning "document") (not (get $tuning "existingConfigMap")) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "libredb-studio.fullname" . }}-agent-model-tuning
+  labels:
+    {{- include "libredb-studio.labels" . | nindent 4 }}
+data:
+  {{ include "libredb-studio.agentTuningKey" . }}: |
+    {{- get $tuning "document" | toJson | nindent 4 }}
+{{- end }}

@@ -261,6 +261,32 @@ so they count only when `secrets.llmApiKey` is also set.
 
 Full behaviour, the tool set and the honest limitations are in the project's `docs/AGENT.md`.
 
+### Giving the agent a model it has never measured
+
+The image carries a document recording what specific models were measured under — how long one of
+their turns may take, how many readings they may take before being asked to report, whether an empty
+turn is worth asking again. A model it does not name is driven with the defaults, which is the honest
+treatment of a model nobody has measured.
+
+Mounting a document is how a model somebody else measured gets those settings, with no new release
+and no code change:
+
+```bash
+kubectl create configmap my-tuning --from-file=model-tuning.json
+helm upgrade libredb libredb/libredb-studio --reuse-values \
+  --set agent.modelTuning.existingConfigMap=my-tuning
+```
+
+Entries are merged **per model and whole**: an entry replaces the shipped entry for that model
+rather than contributing one field to it, because half of one measurement beside half of another is
+a configuration nobody has ever run. A document that is missing, unreadable or off-schema is
+**ignored** and the shipped measurements stand, so this cannot break a working agent.
+
+That last property is also why it needs checking rather than assuming. `GET /api/agent/config`
+reports what became of the document to an **admin** session — `{"modelTuning":{"state":"applied",…}}`
+or `{"state":"ignored","reason":…}` — because a setting that fails open is one an operator can
+otherwise believe is in force for as long as they never look.
+
 ## Production Setup (Ingress + HA)
 
 ```bash
@@ -503,6 +529,9 @@ helm uninstall libredb
 | `config.storageProvider` | Storage: local, sqlite, postgres | `local` |
 | `config.llmProvider` | AI provider | `""` |
 | `agent.enabled` | Explicit off-switch for the agent runtime. Unset writes nothing and the app derives availability (a configured model plus a writable ledger); `false` writes `LIBREDB_AGENT_ENABLED=false`; `true` declines the off-switch but cannot conjure a model. Rendering fails when an agent could run above one replica | unset |
+| `agent.modelTuning.existingConfigMap` | A ConfigMap holding measured per-model settings to layer over the ones the image ships with. Naming a source is what enables the feature — there is no separate flag — and this one is the natural home for a document you were handed: `kubectl create configmap my-tuning --from-file=model-tuning.json`. Mounted read-only at `/app/model-tuning` and named to the app through `AGENT_MODEL_TUNING_PATH` | `""` |
+| `agent.modelTuning.document` | The same document inline, rendered into a ConfigMap by this chart and converted to JSON. For a short overlay; `existingConfigMap` wins when both are given | `{}` |
+| `agent.modelTuning.configMapKey` | The key the document sits under, which is also the file name it is mounted as | `model-tuning.json` |
 | `persistence.enabled` | Enable PVC | `false` |
 | `persistence.size` | PVC size | `1Gi` |
 | `persistence.emptyDirSizeLimit` | Cap the `/app/data` emptyDir used when persistence is off (e.g. `512Mi`); empty means unlimited | `""` |

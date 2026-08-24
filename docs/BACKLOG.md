@@ -2479,3 +2479,107 @@ shows). What is not intended is that a NEW run inherits it indefinitely.
 of the reading it reused, so a user who just added a collection is not silently planned against the
 database as it was.
 
+
+### B57. A tuning document is refused whole, which is the wrong granularity for a catalog
+
+`parseOperatorTuning` refuses a document that fails anywhere. The argument for that is real and is
+about MERGING — half of one measurement beside half of another is a configuration nobody has run —
+but it justifies whole-**entry** replacement, not whole-**document** rejection. A document holding
+fifty models loses all fifty to a typo in the thirty-seventh.
+
+That is tolerable while a document is a short overlay an operator wrote. It stops being tolerable if
+these are ever published as a catalog: the failure lands on everyone who mounted it, for a fault in
+one entry nobody using the other forty-nine cares about.
+
+The rule that actually matters survives per-entry validation intact — an entry is still taken whole
+or not at all — so the change is where the refusal is thrown, not what it protects.
+
+**Done when:** a document with one bad entry applies the rest, and the skipped entries are reported
+by id through `operatorTuningStatus()` the way `ignoredKeys` already is.
+
+### B58. No run records which tuning document drove it
+
+The product's whole claim about a model is that its settings were measured. A run's ledger records
+the model id and nothing about where its settings came from, so once a document can arrive from
+outside Studio, "measured" stops being checkable from the run: a support conversation cannot tell a
+run driven by the shipped measurements from one driven by an operator's file, or by an older version
+of that file.
+
+`operatorTuningStatus()` answers it for the SERVER, at the moment somebody asks. It does not answer
+it for a run somebody is reading afterwards, which is when the question is normally asked.
+
+**Done when:** a run records the origin of the tuning that drove it — bundled, or a path plus a
+digest of the document as read — so a finished run says what it was driven with.
+
+### B59. Per-model instructions have nowhere to go, and the mechanism that held them is gone
+
+Wording is measured, not constant: this repository twice changed a shared sentence, won several
+cells and lost others, and had to revert and hand back the wins. That is why per-model notices
+existed. They are gone — the document refuses wording, and nothing else can populate the field — so a
+sentence that helps one model can only be adopted by changing it for all ten.
+
+The refusal is right for what exists today: a document is unsigned prompt text, and one that could
+carry wording would let whoever wrote it decide what Studio says to a model mid-run. It is wrong as a
+permanent rule, and the two objections behind it come apart. Drift is solvable — accept a template
+over a closed placeholder vocabulary (`{{PLAN_NO_STATEMENT_MARKER}}`), refuse an unknown placeholder,
+and a copy cannot drift from the marker the verifier reads. Authorship is a provenance question, and
+provenance is a property of the SOURCE rather than of the field.
+
+**Done when:** wording can arrive from a source whose authorship is established, and cannot arrive
+from one whose authorship is not — with the trust tier stated as a decision rather than implied by
+which loader happened to read the file.
+
+### B60. `summary` is required reading for nobody
+
+Every bundled entry carries a `summary` array and Studio never reads it: the resolvers take the
+settings and `measured`. It is optional now, so it no longer forces an operator to write prose before
+their measurement can take effect, but the bundled copies remain — roughly half the document — and
+they duplicate the family pages under `docs/llms/`, which say the same things more tightly.
+
+Two ways to settle it, and the choice belongs to whoever wrote the prose: surface it somewhere a
+reader reaches (the rail, or a generated page), or move it to the family pages and let the document
+carry `measured` and `rationale` alone. What should not persist is a third copy that ships inside
+`.next/server` chunks and nothing renders.
+
+**Done when:** the narrative has one home, and the document carries what something reads.
+
+### B61. An operator's `measuredAgainst` is required, then discarded
+
+The document records the defaults and the turn limit its numbers were obtained under, and the
+bundled one is held to them by a test. `activeTuning` keeps `base.measuredAgainst` and drops the
+operator's, so an operator must write a block that is then ignored.
+
+The block is not decoration. Someone who measured their model at a 150 000 ms turn limit, mounted
+their entry, and runs Studio at 90 000 has settings resolving in an environment they were not
+measured in — which is precisely the mistake the recorded defaults exist to catch, going uncaught for
+the one document nobody here reviewed.
+
+**Done when:** an operator document whose recorded basis disagrees with what this build runs says so
+through `operatorTuningStatus()`, or the field is not asked for.
+
+### B62. `schemaVersion` has no migration path, and the first bump breaks every mounted document
+
+`z.literal(TUNING_SCHEMA_VERSION)` on both schemas. An older Studio refusing a newer document is
+correct and deliberate. A newer Studio refusing an OLDER one is not: the day this moves to 2, every
+document in the field is refused whole and every model in it silently reverts to the defaults.
+
+Deliberately not fixed here. With one version in existence, an accepted range has exactly one member,
+and a migration written before anything needs migrating is a guess about a shape nobody has seen. The
+tolerant operator schema removes the pressure — Studio can add settings without moving the version —
+so this is a decision to take at the first real bump, not before.
+
+**Done when:** the first `schemaVersion` change ships with a rule for reading documents written for
+the version before it, and the release notes say what an operator has to do.
+
+### B63. The tag-tolerance test asserts case folding, so the defect it names is unguarded
+
+`tests/unit/lib/agent/model-profiles.test.ts` has `a tag suffix does not hide a profile`, whose
+comment says Ollama names carry a tag and settings must not stop applying the day one changes. The
+assertion compares `qwen3:8b` with `QWEN3:8B` — case, not tag — and the register does NOT strip tags:
+`qwen3.8:latest` resolves and a bare `qwen3.8` does not. The pinned resolution table records that as
+a real defect; this test's name says the opposite, so the eventual fix will look already covered.
+
+Inherited rather than introduced by the tuning work: the name dates to `0b68d494`.
+
+**Done when:** the test name describes the case-folding it checks, and tag matching is either
+implemented with its own test or named as unimplemented in the same place.

@@ -28,7 +28,7 @@
 import { readFileSync } from "node:fs";
 import { logger } from "@/lib/logger";
 import { agentModelTuningPath } from "../config";
-import { type ModelTuning, parseTuning } from "./schema";
+import { type ModelTuning, parseOperatorTuning, parseTuning } from "./schema";
 import bundled from "./measured-profiles.json";
 
 /**
@@ -47,7 +47,17 @@ const BUNDLED_ORIGIN = "bundled";
  */
 export type OperatorTuningStatus =
   | { readonly state: "unset" }
-  | { readonly state: "applied"; readonly path: string; readonly models: number }
+  | {
+      readonly state: "applied";
+      readonly path: string;
+      readonly models: number;
+      /**
+       * Keys the document stated that this Studio does not implement — a misspelling, or a setting
+       * from a newer Studio. Reported because the document was applied around them: without this
+       * an operator's `retryEmtpyTurn` would do nothing and say nothing.
+       */
+      readonly ignoredKeys: readonly string[];
+    }
   | { readonly state: "ignored"; readonly path: string; readonly reason: string };
 
 let active: ModelTuning | null = null;
@@ -56,7 +66,8 @@ let operatorStatus: OperatorTuningStatus = { state: "unset" };
 /** The operator's document, or the reason it is not being used. Never throws. */
 function readOperatorDocument(path: string): { readonly doc: ModelTuning } | { readonly reason: string } {
   try {
-    return { doc: parseTuning(JSON.parse(readFileSync(path, "utf8")), path) };
+    // The tolerant contract, because this document has a different author: see `parseOperatorTuning`.
+    return { doc: parseOperatorTuning(JSON.parse(readFileSync(path, "utf8")), path) };
   } catch (error) {
     return { reason: error instanceof Error ? error.message : String(error) };
   }
@@ -97,12 +108,19 @@ export function activeTuning(): ModelTuning {
     models: { ...base.models, ...read.doc.models },
     measuredAgainst: base.measuredAgainst,
     undocumentedOverrides: [...base.undocumentedOverrides, ...read.doc.undocumentedOverrides],
+    ignoredKeys: read.doc.ignoredKeys,
   };
-  operatorStatus = { state: "applied", path, models: Object.keys(read.doc.models).length };
+  operatorStatus = {
+    state: "applied",
+    path,
+    models: Object.keys(read.doc.models).length,
+    ignoredKeys: read.doc.ignoredKeys,
+  };
   logger.info("Operator model tuning applied over the measurements Studio ships with", {
     route: "agent/model-tuning",
     path,
     models: operatorStatus.models,
+    ignoredKeys: read.doc.ignoredKeys.length,
   });
   return active;
 }

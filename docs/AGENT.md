@@ -2448,6 +2448,33 @@ as they are fixed, and a numeral here goes stale silently.
   design intent - a run reasons over the inventory its claims cite - is not the problem; a NEW run
   inheriting it indefinitely is, and B54's gap means the ledger cannot tell "held, hours old" from
   "captured just now".
+- **B57** — an operator's tuning document is refused WHOLE when any part of it fails. The argument
+  behind that is about merging (half of one measurement beside half of another is a configuration
+  nobody has run), and it justifies whole-**entry** replacement rather than whole-**document**
+  rejection: fifty models would be lost to a typo in the thirty-seventh.
+- **B58** — a run records the model it used and nothing about where that model's settings came from,
+  so once a document can arrive from outside Studio, "these settings were measured" is no longer
+  checkable from the run itself. `GET /api/agent/config` answers it for the server at the moment
+  somebody asks, which is not when the question is normally asked.
+- **B59** — per-model WORDING has nowhere to go. A sentence is a measured value here (twice a shared
+  change won cells and lost others, and had to be reverted whole), and the per-model override is
+  gone: the document refuses wording and nothing else can populate it. Refusing unsigned prompt text
+  is right; refusing it forever is a decision that has not been taken, and the two objections behind
+  it — marker drift and authorship — come apart.
+- **B60** — every bundled entry carries a `summary` that Studio never reads, duplicating the family
+  pages under `docs/llms/`. It is optional now, so it no longer stands between an operator and a
+  working measurement, but roughly half the shipped document is prose nothing renders.
+- **B61** — an operator document must state the defaults and turn limit it was measured against, and
+  that block is then discarded. Somebody who measured at 150 000 ms and runs at 90 000 gets settings
+  resolving in an environment they were never measured in, silently.
+- **B62** — `schemaVersion` is a literal on both schemas, so the first bump to 2 refuses every
+  document in the field and reverts every model in it to the defaults. Deliberately not fixed while
+  only one version exists: an accepted range with one member is a knob nothing turns, and the
+  tolerant operator schema removes the pressure by letting Studio add settings without moving it.
+- **B63** — `a tag suffix does not hide a profile` in `model-profiles.test.ts` asserts case folding,
+  not tag handling, while the register really does not strip tags (`qwen3.8:latest` resolves, a bare
+  `qwen3.8` does not). The pinned resolution table records the defect; that test's name says it is
+  already covered. Inherited from `0b68d494` rather than introduced by the tuning work.
 
 ## Related documentation
 
