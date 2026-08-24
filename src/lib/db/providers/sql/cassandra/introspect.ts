@@ -422,7 +422,12 @@ export async function getOverview(transport: CassandraTransport, keyspace: strin
     version: version === "" ? CASSANDRA_UNKNOWN_TEXT : `${CASSANDRA_PRODUCT} ${version}`,
     uptime: upFor < 0 ? CASSANDRA_UNKNOWN_TEXT : formatDuration(upFor),
     ...(startTime === undefined ? {} : { startTime }),
-    activeConnections: readCount(clients),
+    // OMITTED, not zeroed, when `clients` came back empty: a successful
+    // `SELECT COUNT(*)` always answers exactly one row (a table with nothing to
+    // count still reports `count: 0`), so no row at all is the signature of the
+    // degradation `readRows` catches - a denied grant or, on ScyllaDB, a
+    // `system_views` keyspace that does not exist. A real 0 keeps this key.
+    ...(clients.length === 0 ? {} : { activeConnections: readCount(clients) }),
     // Zero means "no ceiling published", which is the truth: Cassandra's
     // `native_transport_max_concurrent_connections` defaults to unlimited and is a
     // configuration reading rather than a live capacity. The Connections card treats
@@ -579,6 +584,9 @@ export async function getHealth(transport: CassandraTransport, keyspace: string)
   }));
 
   return {
+    // `HealthInfo.activeConnections` is optional too, so a denied grant or a
+    // build with no `system_views` keyspace stays an omission all the way to the
+    // agent's curated health reading rather than becoming a fabricated 0 here.
     activeConnections: overview.activeConnections,
     databaseSize: overview.databaseSize,
     cacheHitRatio:

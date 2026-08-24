@@ -399,7 +399,8 @@ describe("useConnectionForm", () => {
     ScyllaDB the health read asked for Cassandra's `system_views` keyspace, which the
     build does not have (measured 2026-08-24: `Keyspace system_views does not exist`,
     code 8704), and StarRocks and SingleStore fail health for reasons of their own
-    (BACKLOG D8). All three connect and run statements fine, and none of them could be
+    (the prepared-statement
+    protocol, fixed 2026-08-24). All three connect and run statements fine, and none of them could be
     created in the dialog at all.
 
     A connection that `connect()`s is usable, so the route now separates the two facts

@@ -745,6 +745,9 @@ export async function getHealth(runner: DruidQueryRunner): Promise<HealthInfo> {
   }));
 
   return {
+    // Both DatabaseOverview.activeConnections and HealthInfo.activeConnections
+    // are optional; this provider's overview never omits it, so the value just
+    // passes through unchanged.
     activeConnections: overview.activeConnections,
     databaseSize: overview.databaseSize,
     cacheHitRatio: DRUID_CACHE_HIT_RATIO_UNAVAILABLE,

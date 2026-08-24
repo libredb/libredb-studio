@@ -804,3 +804,62 @@ describe("buildResultExport — the bare names the remaining reachable dialects 
     }
   });
 });
+
+describe("buildResultExport — Cassandra DDL needs a PRIMARY KEY to run at all", () => {
+  // Measured on Cassandra 5.0.9: `CREATE TABLE probe.nopk (a text, b bigint)` is
+  // `InvalidRequest ... No PRIMARY KEY specifed for table 'probe.nopk' (exactly one
+  // required)`. A column list alone is not valid CQL, so the export must pick a key -
+  // the first column, since a result set does not know the real one - and say so
+  // loudly rather than hand back a statement that fails to parse.
+
+  test("appends a PRIMARY KEY on the first column and a warning comment above the statement", () => {
+    const file = buildResultExport(
+      "sql-ddl",
+      source({ rows: [{ id: 1, name: "Ada" }], fields: ["id", "name"], dialect: "cassandra" }),
+    );
+
+    expect(file.content).toBe(
+      "-- CQL requires exactly one PRIMARY KEY per table, and a result set carries no key of\n" +
+        "-- its own. This export chose the first column as a placeholder: confirm it is unique\n" +
+        "-- per row before running this statement.\n" +
+        'CREATE TABLE users (\n  "id" BIGINT,\n  "name" TEXT,\n  PRIMARY KEY ("id")\n);',
+    );
+  });
+
+  test("quotes the key column the same way the column list itself is quoted", () => {
+    const file = buildResultExport(
+      "sql-ddl",
+      source({ rows: [{ 'weird"col': 1, other: 2 }], fields: ['weird"col', "other"], dialect: "cassandra" }),
+    );
+
+    expect(file.content).toContain('PRIMARY KEY ("weird""col")');
+    expect(file.content).toContain('"weird""col" BIGINT');
+  });
+
+  test("does not add a PRIMARY KEY line for any other dialect", () => {
+    const file = buildResultExport("sql-ddl", source({ dialect: "postgres" }));
+
+    expect(file.content).not.toContain("PRIMARY KEY");
+    expect(file.content).not.toContain("-- CQL requires");
+  });
+
+  test("a zero-column Cassandra result still gets the plain no-columns comment, not the key note", () => {
+    const file = buildResultExport("sql-ddl", source({ rows: [], fields: [], dialect: "cassandra" }));
+
+    expect(file.content).toBe("-- No columns to export.");
+  });
+
+  test("the warning comment is closed by a trailing newline, never left open at EOF", () => {
+    const file = buildResultExport("sql-ddl", source({ dialect: "cassandra" }));
+    const lines = file.content.split("\n");
+    const lastCommentLineIndex = lines.findIndex((line) => line.startsWith("CREATE TABLE")) - 1;
+
+    // A CQL line comment runs to the next newline; one left open at EOF with no
+    // newline after it would swallow whatever followed. Every `--` line here is
+    // followed by a real newline, including the one right before the statement.
+    for (let i = 0; i <= lastCommentLineIndex; i++) {
+      expect(lines[i].startsWith("--")).toBe(true);
+    }
+    expect(file.content.endsWith(";")).toBe(true);
+  });
+});

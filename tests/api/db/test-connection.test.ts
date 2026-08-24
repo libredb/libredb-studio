@@ -213,7 +213,7 @@ describe("POST /api/db/test-connection", () => {
     while `getHealth()` throws `Keyspace system_views does not exist`, because ScyllaDB
     has no `system_views` keyspace. `handleConnect` gates the dialog's save on this
     response, so a `success: false` here meant no ScyllaDB connection could be created
-    at all - and StarRocks and SingleStore sit on the same gate (D8).
+    at all - and StarRocks and SingleStore sat on the same gate.
   */
   test("a health read that fails after a successful connect is a degraded success, not a failure", async () => {
     (mockProvider.getHealth as ReturnType<typeof mock>).mockImplementation(async () => {

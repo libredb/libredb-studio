@@ -45,8 +45,15 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
   // limit. Dividing by it produced NaN, which rendered as the literal "NaN% used"
   // and an NaN-width progress bar, so a usage share only exists when a limit does.
   const connectionLimit = overview?.maxConnections ?? 0;
+  // `overview.activeConnections` is optional: a provider that cannot measure
+  // it (ScyllaDB has no `system_views` keyspace; a Cassandra role can be denied the
+  // grant) omits the key rather than send a fabricated 0, so a share of the limit
+  // only exists when there is a count to divide.
+  const activeConnections = overview?.activeConnections;
   const connectionPercent =
-    overview && connectionLimit > 0 ? Math.round((overview.activeConnections / connectionLimit) * 100) : null;
+    activeConnections !== undefined && connectionLimit > 0
+      ? Math.round((activeConnections / connectionLimit) * 100)
+      : null;
 
   // Evaluate thresholds. No published limit cannot be near a limit, so it scores as
   // healthy rather than as the 0 that a missing reading would once have implied.
@@ -59,11 +66,14 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
     DEFAULT_THRESHOLDS.find((t) => t.metric === "cacheHitRatio")!,
   );
 
-  // Build chart data from history
-  const connectionHistory = history.map((h) => ({
-    timestamp: h.timestamp,
-    value: h.data.overview?.activeConnections ?? 0,
-  }));
+  // Build chart data from history. A sample with no published count is dropped
+  // rather than plotted as zero - the same rule PerformanceTab.tsx's `metricSeries`
+  // applies to the cache/buffer/deadlock trends, for the same reason: a missing
+  // reading is not a floor of zero.
+  const connectionHistory = history.flatMap((h) => {
+    const value = h.data.overview?.activeConnections;
+    return value === undefined ? [] : [{ timestamp: h.timestamp, value }];
+  });
 
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
@@ -93,13 +103,17 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
             <Zap strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-yellow-500" />
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">
-              {overview?.activeConnections ?? 0}
-              {connectionLimit > 0 && (
+            <div
+              className={`text-lg sm:text-2xl font-medium ${activeConnections === undefined ? "text-muted-foreground" : ""}`}
+            >
+              {activeConnections ?? "N/A"}
+              {activeConnections !== undefined && connectionLimit > 0 && (
                 <span className="text-xs sm:text-xs font-normal text-muted-foreground">/{connectionLimit}</span>
               )}
             </div>
-            {connectionPercent === null ? (
+            {activeConnections === undefined ? (
+              <p className="text-xs sm:text-xs text-muted-foreground mt-1">not published</p>
+            ) : connectionPercent === null ? (
               <p className="text-xs sm:text-xs text-muted-foreground mt-1">no limit published</p>
             ) : (
               <>

@@ -154,13 +154,93 @@ same — and it exports as `X''`, which replays to `LENGTH(b)` 0. A `NULL` stays
 One consequence worth stating: the JSON response now carries about four characters per byte instead
 of two, exactly as Postgres's does, so a very large single cell is no cheaper here than it is there.
 
-### 3.4 Prepared statements via `execute()`
+### 3.4 Which wire protocol a statement takes
 
-Both query paths use `conn.execute(sql, params)` (mysql2 server-side prepared statements) rather than
-`query()`, so parameterized queries are bound by the server. `rowCount` is `rows.length` **only when
-the driver returns a row array** (i.e. `SELECT`); for a non-`SELECT` statement mysql2 returns a
-`ResultSetHeader` rather than an array, and the provider reports its `affectedRows` — see
-[§5.1](#51-execution) for the full envelope.
+mysql2 speaks two protocols and this provider uses both. Every statement it issues goes through one
+module-local helper, `runStatement(queryable, sql, params?)`
+([mysql.ts](../../src/lib/db/providers/sql/mysql.ts)), which picks by a single fact:
+
+| Statement | Method | Protocol |
+|-----------|--------|----------|
+| carries parameters | `conn.execute(sql, params)` | binary, server-side prepared |
+| carries none (or an empty array) | `conn.query(sql)` | text |
+
+Parameterised statements are unchanged: the placeholders are what the prepared protocol is for, and
+binding is what keeps a value out of the SQL text. So `getSchema()` and every `information_schema`
+read that names the database stay prepared, while `SHOW STATUS`, `SHOW VARIABLES`, `SELECT VERSION()`,
+`SHOW BINARY LOGS`, the maintenance statement, `KILL`, and a parameterless statement from the editor —
+`EXPLAIN FORMAT=JSON …` among them — go over the text protocol.
+
+**Why.** Everything used to call `execute`, parameterless statements included, and three engines
+refuse whole statement classes on the prepared protocol with `This command is not supported in the
+prepared statement protocol yet`. Measured 2026-08-20 against a live SingleStore 9.1.1
+(`ghcr.io/singlestore-labs/singlestoredb-dev:0.2.82`), both ways over one connection:
+
+| Statement | `conn.execute` | `conn.query` |
+|---|---|---|
+| `SHOW STATUS LIKE 'Uptime'` | `ER_UNSUPPORTED_PS` | succeeds |
+| `SHOW VARIABLES LIKE 'max_connections'` | `ER_UNSUPPORTED_PS` | succeeds |
+| `EXPLAIN <select>` | `ER_UNSUPPORTED_PS` | succeeds |
+| `EXPLAIN JSON <select>` | `ER_UNSUPPORTED_PS` | succeeds |
+| `EXPLAIN FORMAT=JSON <select>` | `ER_PARSE_ERROR` | `ER_PARSE_ERROR` |
+| `OPTIMIZE TABLE customers` | `ER_UNSUPPORTED_PS` | succeeds |
+| `CHECK TABLE customers` | `ER_UNSUPPORTED_PS` | succeeds |
+| `ANALYZE TABLE customers` | succeeds | succeeds |
+| `SELECT VERSION()` | succeeds | succeeds |
+
+That cost SingleStore its Test Connection, health, overview, monitoring dashboard and two of its three
+maintenance actions; the registered StarRocks 3.3 row in [README.md](./README.md) records the same
+failure for its overview. It is not only those two: **MySQL 26.7.0 itself refuses `CHECK TABLE` on the
+prepared protocol** — measured 2026-08-24 on `mysql:latest`, `ER_UNSUPPORTED_PS` on `execute` and OK on
+`query`, while the other statements above worked either way. So one of this provider's own three
+maintenance actions was unavailable on the engine it is named for.
+
+**The Explain panel is NOT one of the recovered surfaces, and the row above is why.** `EXPLAIN
+FORMAT=JSON` is a parse error on SingleStore on BOTH protocols — re-measured 2026-08-24 on the same
+image — because SingleStore's grammar is `EXPLAIN JSON <select>`. The protocol was never what stopped
+it there. (An earlier note recorded `EXPLAIN FORMAT=JSON` as succeeding on the text protocol; the
+statement that succeeds is plain `EXPLAIN`.) Reaching a JSON plan on that engine needs a different
+statement, not a different protocol, and [`mysql-json.ts`](../../src/lib/explain/mysql-json.ts) builds
+one statement for every engine on this type id.
+
+**The read path is safe to move because the two protocols decode to the same JS shapes.** mysql2
+decodes text and binary rows on different code paths, so this was measured rather than assumed:
+2026-08-24 on MySQL 26.7.0, the same `SELECT *` over one connection both ways, across a probe table
+covering `TINYINT(1)`, `INT`, `BIGINT` past 2^53, `BIGINT UNSIGNED`, `DECIMAL(20,4)`, `FLOAT`,
+`DOUBLE`, `DATE`, `DATETIME`, `TIMESTAMP`, `TIME`, `YEAR`, `CHAR`, `VARCHAR`, `TEXT`, `BLOB`,
+`BIT(1)`, `BIT(8)`, `JSON`, `ENUM`, `SET` and NULLs:
+
+- every value identical by `typeof` and by `JSON.stringify` — including the `Buffer` for `BLOB` and
+  both `BIT` widths ([§3.3](#33-blob--binary-values-reach-every-surface-as-bytes)), the `Date` for the
+  three temporal types, the string for `DECIMAL` and `TIME`, the parsed object for `JSON`, and the
+  same `9007199254740992` for a `BIGINT` written as `9007199254740993`;
+- every `FieldPacket` identical in `columnType`, `flags`, `characterSet`, `columnLength` and
+  `decimals`, so `columnTypes` ([§5.4](#54-declared-column-types)) names the same types either way;
+- a statement with no result set answers the same `ResultSetHeader` object, which is what the envelope
+  below reads.
+
+**Measured after the change, through this provider.** 2026-08-24, `MySQLProvider` driven directly
+against three live servers:
+
+| Surface | MySQL 26.7.0 | SingleStore 9.1.1 | StarRocks 3.3 |
+|---|---|---|---|
+| `getHealth` (Test Connection, header badge) | ok | **recovered** | still fails — `Unknown table 'information_schema.PROCESSLIST'`, the engine's own gap, not the protocol |
+| `getOverview` | ok | **recovered** (reads MySQL 5.7.32, the wire version) | **recovered** (reads MySQL 5.1.0, the fictitious `version()`) |
+| `getPerformanceMetrics` | ok | answers `{}` — nothing measured rather than a fabricated number | answers `{}` |
+| `getStorageStats` | ok | **recovered** | **recovered** |
+| `getSchema`, table/index stats, editor query, transactions | ok | ok | ok |
+| maintenance `analyze` / `optimize` / `check` | all three ok (`check` **recovered**) | all three ok (`optimize`, `check` **recovered**) | n/a |
+| Explain (`EXPLAIN FORMAT=JSON`) | ok | still fails — `ER_PARSE_ERROR`, see above | not re-probed |
+
+One behaviour does differ, and only for a connection that opted into `multipleStatements=true` in its
+connection string: a `;`-separated statement is rejected by the prepared protocol and accepted by the
+text one, which then answers an array of result sets. That is the shape `CALL <procedure>()` already
+answers today on both protocols, so nothing new reaches the envelope; the app splits multi-statement
+input itself (`POST /api/db/multi-query`) and issues one statement per call.
+
+`rowCount` is `rows.length` **only when the driver returns a row array** (i.e. `SELECT`); for a
+non-`SELECT` statement mysql2 returns a `ResultSetHeader` rather than an array, and the provider
+reports its `affectedRows` — see [§5.1](#51-execution) for the full envelope.
 
 This section used to say affected-rows was not surfaced and `rowCount` was reported as 0. That
 described the intent of one line; the line beside it called `.map` on the same header and threw, so
@@ -244,8 +324,9 @@ discrete-fields form** (the `connectionString` path bypasses it entirely). Note 
 ### 5.1 Execution
 
 `query(sql, params?, queryId?)` ([mysql.ts:185](../../src/lib/db/providers/sql/mysql.ts)) acquires a
-pooled connection, optionally records its `threadId` for cancellation, runs the prepared statement,
-and returns the standard envelope with the driver's own values
+pooled connection, optionally records its `threadId` for cancellation, runs the statement over the
+protocol its parameters imply ([§3.4](#34-which-wire-protocol-a-statement-takes)), and returns the
+standard envelope with the driver's own values
 ([§3.3](#33-blob--binary-values-reach-every-surface-as-bytes)):
 
 ```ts
@@ -256,9 +337,10 @@ Native `mysql2` errors are normalised via `mapDatabaseError()` into the shared
 [`errors.ts`](../../src/lib/db/errors.ts) classes.
 
 **A statement that returns no result set** — every DDL statement, and `INSERT`/`UPDATE`/`DELETE` —
-answers a different envelope, because `mysql2` hands back a different thing. `execute`'s first return
+answers a different envelope, because `mysql2` hands back a different thing. The driver's first return
 value is an array of rows only when the statement produced a result set; otherwise it is a
-`ResultSetHeader` OBJECT and the field packets arrive as `undefined`. Printed verbatim out of mysql2
+`ResultSetHeader` OBJECT and the field packets arrive as `undefined` — the same both ways, measured on
+either protocol ([§3.4](#34-which-wire-protocol-a-statement-takes)). Printed verbatim out of mysql2
 against mysql 26.7.0 for `INSERT INTO r5_hdr (note) VALUES ('a'),('b')`:
 
 ```js
@@ -554,10 +636,18 @@ The `mysql2/promise` module is replaced with an in-process mock via `mock.module
 **before** the provider is imported — there is no live MySQL in the suite. The mock's pool/connection
 returns canned `[rows, fields]` tuples, exercising the same provider code paths as a real server.
 
-One mock shape is load-bearing: a non-SELECT must be mocked as a **`ResultSetHeader` object with
+Two mock shapes are load-bearing. A non-SELECT must be mocked as a **`ResultSetHeader` object with
 `undefined` fields**, not as an array. An array-shaped mock is exactly what hid the
 `result.rows.map is not a function` defect described in [§5.1](#51-execution) — the whole suite was
 green while every DDL and DML statement failed against a real server.
+
+And the mock connection answers **both `query` and `execute`**, recording which one each statement
+went through. A mock that only answered `execute` could not tell a statement routed to the text
+protocol from one left on the prepared protocol, which is what
+[§3.4](#34-which-wire-protocol-a-statement-takes) turns on: the `MySQLProvider wire protocol` block
+pins the method for `getHealth`, `getOverview`, `getPerformanceMetrics`, `getSchema`,
+`getStorageStats`, each maintenance statement, `cancelQuery`, the editor's own path (with and without
+parameters), the Explain statement `mysqlJsonStrategy` builds, and the transaction path.
 
 > ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide, so files mocking different drivers
 > cross-contaminate when they share a process. A **single file** is safe (one file = one process).
@@ -571,9 +661,9 @@ green while every DDL and DML statement failed against a real server.
 capabilities, `getSchema()` (columns/FKs/indexes, primary-key detection), health, maintenance (all
 types + kill validation), the full transaction lifecycle, `queryInTransaction`, query cancellation,
 overview, performance metrics, slow queries, active sessions, table/index/storage stats, every SSL
-branch, `prepareQuery`, error mapping (`ER_ACCESS_DENIED`, `ECONNREFUSED`), and the non-SELECT envelope
+branch, `prepareQuery`, error mapping (`ER_ACCESS_DENIED`, `ECONNREFUSED`), the non-SELECT envelope
 (DDL, `INSERT`, `UPDATE`, `DELETE`, and the transaction path) driven from real `ResultSetHeader`
-literals.
+literals, and the wire protocol each statement takes.
 
 ### 12.3 Run it
 

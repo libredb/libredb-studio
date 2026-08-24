@@ -805,6 +805,9 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     }));
 
     return {
+      // Both DatabaseOverview.activeConnections and HealthInfo.activeConnections
+      // are optional; this provider's overview never omits it, so the value just
+      // passes through unchanged.
       activeConnections: overview.activeConnections,
       databaseSize: overview.databaseSize,
       cacheHitRatio: formatCacheHitRatio(performance.cacheHitRatio),

@@ -74,6 +74,7 @@ import { inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
 import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import { asBytes, binaryText } from "@/lib/export/binary";
 import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
 import type { ColumnSchema, DatabaseConnection, QueryResult, TableSchema } from "@/lib/types";
 import {
@@ -1000,10 +1001,24 @@ function invalidEvidenceInput(): AgentToolOutcome & { kind: "unavailable" } {
  * `bigint` is replaced rather than left to `JSON.stringify`, which throws on one:
  * `node:sqlite` returns a BigInt for an INTEGER outside the safe range, and mysql2
  * can too, so this is a live shape rather than a defensive guess.
+ *
+ * A binary cell (`asBytes` recognises it — the wire-serialized `{type:"Buffer",…}`
+ * shape and a live `Uint8Array` both count) is replaced by `binaryText`, the same
+ * hex the grid, the row detail sheet and the CSV read. It is the FULL hex,
+ * not the grid's 32-byte `binaryPreview`: that cutoff exists because a compact
+ * grid cell has one line to lay out, a constraint the prompt does not share, and
+ * a model asked to reason about a value (compare it, quote it back) needs the
+ * whole thing rather than a head it cannot complete.
  */
 function renderRows(rows: readonly Record<string, unknown>[]): string {
   return rows
-    .map((row) => JSON.stringify(row, (_key, value) => (typeof value === "bigint" ? value.toString() : value)))
+    .map((row) =>
+      JSON.stringify(row, (_key, value) => {
+        if (typeof value === "bigint") return value.toString();
+        const bytes = asBytes(value);
+        return bytes === undefined ? value : binaryText(bytes);
+      }),
+    )
     .join("\n");
 }
 
@@ -1910,7 +1925,12 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
       const health = await provider.getHealth();
       return [
         {
-          activeConnections: health.activeConnections,
+          // `HealthInfo.activeConnections` is absent when the engine cannot measure
+          // it (ScyllaDB has no `system_views` keyspace; a denied Cassandra grant
+          // reads the same way). `null` here, the same convention this projection
+          // uses for every other optional reading above, tells the model the count
+          // is not published rather than reporting a fabricated 0.
+          activeConnections: health.activeConnections ?? null,
           databaseSize: health.databaseSize,
           cacheHitRatio: health.cacheHitRatio,
           slowQueryCount: health.slowQueries.length,

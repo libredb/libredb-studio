@@ -1055,7 +1055,11 @@ describe("getOverview", () => {
 
     const overview = await provider.getOverview();
 
-    expect(overview.activeConnections).toBe(0);
+    // The FIELD IS ABSENT rather than zero, the same shape `databaseSizeBytes` uses:
+    // a role denied the grant has nothing to report, and 0 is a headcount some
+    // engine actually took.
+    expect(overview.activeConnections).toBeUndefined();
+    expect("activeConnections" in overview).toBe(false);
     expect(overview.tableCount).toBe(4);
   });
 
@@ -1085,6 +1089,18 @@ describe("getOverview", () => {
     const { provider } = await connectedProvider(healthyReplies({ [CASSANDRA_CLIENT_COUNT_CQL]: broken }));
 
     await expect(provider.getOverview()).rejects.toThrow(QueryError);
+  });
+
+  test("a real count of zero is kept, not read as an absence", async () => {
+    // The distinction the fix has to get right in both directions: a row that says
+    // `count: 0` is a measurement (nobody is connected right now), not the empty
+    // result set a denied grant or an absent keyspace produces.
+    const { provider } = await connectedProvider(healthyReplies({ [CASSANDRA_CLIENT_COUNT_CQL]: countResult("0") }));
+
+    const overview = await provider.getOverview();
+
+    expect(overview.activeConnections).toBe(0);
+    expect("activeConnections" in overview).toBe(true);
   });
 });
 
@@ -1142,10 +1158,11 @@ describe("a server with no system_views keyspace", () => {
     expect(overview.version).toBe("Apache Cassandra 5.0.9");
     expect(overview.tableCount).toBe(4);
     expect(overview.indexCount).toBe(2);
-    // The one residue of the degradation, and it is the shape a denied role already
-    // had: `DatabaseOverview.activeConnections` is a required number, so there is no
-    // way to say "not published" here without widening the type.
-    expect(overview.activeConnections).toBe(0);
+    // No ScyllaDB build has a `system_views` keyspace at all, so this is the same
+    // absence as the denied-role case above rather than the fabricated 0 the field
+    // used to answer with.
+    expect(overview.activeConnections).toBeUndefined();
+    expect("activeConnections" in overview).toBe(false);
   });
 
   test("no cache ratio is claimed rather than a zero", async () => {
@@ -1370,6 +1387,33 @@ describe("getHealth", () => {
     const { provider } = await connectedProvider(healthyReplies({ [CASSANDRA_CACHE_CQL]: cold }));
 
     expect((await provider.getHealth()).cacheHitRatio).toBe(CASSANDRA_SIZE_UNAVAILABLE);
+  });
+
+  test("a denied connection count is omitted here too, not fabricated as zero", async () => {
+    // `HealthInfo.activeConnections` is optional now, same as `DatabaseOverview`'s.
+    // `getHealth` composes straight from the overview, so a denied grant stays an
+    // omission all the way to the agent's curated health reading.
+    const denied = responseError(
+      8448,
+      "User lowpriv has no SELECT permission on <table system_views.clients> or any of its parents",
+    );
+    const { provider } = await connectedProvider(healthyReplies({ [CASSANDRA_CLIENT_COUNT_CQL]: denied }));
+
+    const health = await provider.getHealth();
+
+    expect(health.activeConnections).toBeUndefined();
+  });
+
+  test("a real count of zero survives getHealth too, not read as an absence", async () => {
+    // Same distinction as getOverview's "a real count of zero" test, one seam
+    // further downstream: the `?? 0` this provider's getHealth used to carry would
+    // have made this pass by accident even after the fix regressed to a fabricated
+    // zero, so the absence case above and this one both have to hold.
+    const { provider } = await connectedProvider(healthyReplies({ [CASSANDRA_CLIENT_COUNT_CQL]: countResult("0") }));
+
+    const health = await provider.getHealth();
+
+    expect(health.activeConnections).toBe(0);
   });
 });
 

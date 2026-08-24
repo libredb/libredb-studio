@@ -855,6 +855,64 @@ describe("runReadQueryTool — the allowed path", () => {
     expect(outcome.modelText).toContain("9007199254740993");
   });
 
+  test("renders a Buffer-shaped binary column as hex, not its wire JSON", async () => {
+    // `JSON.stringify` on a serialized `Buffer` gives `{"type":"Buffer","data":[…]}` —
+    // four characters of digits per byte. The model should read the same hex the grid,
+    // the row sheet and the CSV read via `asBytes`/`binaryText`.
+    const wireBuffer = { type: "Buffer", data: [1, 2, 171] };
+    const h = harness({}, async () => queryResult({ rows: [{ payload: wireBuffer }], fields: ["payload"] }));
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT payload FROM blobs" });
+
+    expect(outcome.kind).toBe("completed");
+    expect(outcome.modelText).toContain("\\x0102ab");
+    expect(outcome.modelText).not.toContain('"type":"Buffer"');
+    expect(outcome.modelText).not.toContain('"data":[1,2,171]');
+  });
+
+  test("renders a live Uint8Array binary column as hex", async () => {
+    // The embeddable shell hands a live typed array rather than the wire shape;
+    // `asBytes` accepts both, so this must render identically.
+    const live = new Uint8Array([1, 2, 171]);
+    const h = harness({}, async () => queryResult({ rows: [{ payload: live }], fields: ["payload"] }));
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT payload FROM blobs" });
+
+    expect(outcome.kind).toBe("completed");
+    expect(outcome.modelText).toContain("\\x0102ab");
+  });
+
+  test("does not mistake a user document with a type field for a wire Buffer", async () => {
+    // A document shaped like `{type: "Buffer", data: [1, "two"]}` is a user's own
+    // row, not a serialized byte array — `asBytes` rejects it, so it must survive
+    // as ordinary JSON rather than being misread as bytes.
+    const document = { type: "Buffer", data: [1, "two"] };
+    const h = harness({}, async () => queryResult({ rows: [{ payload: document }], fields: ["payload"] }));
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT payload FROM docs" });
+
+    expect(outcome.kind).toBe("completed");
+    expect(outcome.modelText).toContain('"type":"Buffer"');
+    expect(outcome.modelText).toContain('"data":[1,"two"]');
+  });
+
+  test("renders the full hex of a binary value larger than the grid's 32-byte compact preview", async () => {
+    // The grid truncates a compact cell at 32 bytes because it has one line to work
+    // with; the model prompt has no such constraint, so it gets the whole value
+    // rather than the grid's "..." truncation.
+    const bytes = Array.from({ length: 40 }, (_, i) => i);
+    const h = harness({}, async () =>
+      queryResult({ rows: [{ payload: { type: "Buffer", data: bytes } }], fields: ["payload"] }),
+    );
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT payload FROM blobs" });
+
+    expect(outcome.kind).toBe("completed");
+    const fullHex = `\\x${bytes.map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+    expect(outcome.modelText).toContain(fullHex);
+    expect(outcome.modelText).not.toContain("...");
+  });
+
   test("accounts the statement against the run's budget", async () => {
     const h = harness();
 
@@ -2647,6 +2705,54 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
       activeConnections: 4,
       slowQueryCount: 0,
       activeSessionCount: 0,
+    });
+  });
+
+  test("health reports an unmeasurable connection count as null, never a fabricated 0", async () => {
+    // `HealthInfo.activeConnections` is absent when the engine cannot measure it
+    // (ScyllaDB has no `system_views` keyspace; a denied Cassandra grant reads the
+    // same way). The model must be told the count is not published, not shown 0.
+    const h = curatedHarness(
+      {},
+      {
+        getHealth: mock(async () => ({
+          databaseSize: "20 MB",
+          cacheHitRatio: "99.1",
+          slowQueries: [],
+          activeSessions: [],
+        })),
+      },
+    );
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "health" });
+
+    if (outcome.kind !== "completed") throw new Error("expected completed");
+    expect(h.artifacts.get(outcome.artifact.correlationId, 1_000)?.value.rows[0]).toMatchObject({
+      activeConnections: null,
+    });
+  });
+
+  test("health keeps a genuinely measured 0 connections as 0, not null", async () => {
+    // The vacuous-assertion trap: a fixture that never carries a real 0 lets an
+    // `?? null` seam pass forever even if it collapsed every falsy reading.
+    const h = curatedHarness(
+      {},
+      {
+        getHealth: mock(async () => ({
+          activeConnections: 0,
+          databaseSize: "20 MB",
+          cacheHitRatio: "99.1",
+          slowQueries: [],
+          activeSessions: [],
+        })),
+      },
+    );
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "health" });
+
+    if (outcome.kind !== "completed") throw new Error("expected completed");
+    expect(h.artifacts.get(outcome.artifact.correlationId, 1_000)?.value.rows[0]).toMatchObject({
+      activeConnections: 0,
     });
   });
 

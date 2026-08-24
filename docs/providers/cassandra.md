@@ -364,6 +364,20 @@ Cassandra is the engine where the old form did not silently corrupt but simply *
 other provider that stringified, stored the eight characters `0x0102ab` into a `BLOB` and reported
 success (`docs/providers/mysql.md` §3.3).
 
+**The DDL export now writes a runnable `CREATE TABLE`, keyed on the first column.** CQL refuses a
+`CREATE TABLE` that carries a column list and no key at all - measured 2026-08-24,
+`CREATE TABLE probe.nopk (a text, b bigint)` answers
+`No PRIMARY KEY specifed for table 'probe.nopk' (exactly one required)` - so the export's Cassandra
+output could not run at all, even after its type names became correct. It now appends
+`PRIMARY KEY (<first column>)` and puts a comment directly above the statement saying that CQL
+requires exactly one key, that a result set does not know the real one, and that the reader must
+confirm the chosen column is unique per row before running it. This is a placeholder, not a schema
+recovery: `getSchema()`'s tree reads the true partition and clustering keys off `system_schema`, while
+the export has only the grid in front of it and picks positionally. A wrong-but-loud key was chosen
+deliberately over a file that fails to parse. The identifier is quoted through the same
+`quoteIdentifier` the column list uses, and never interpolated into the comment prose, so a column
+name carrying `--` or a newline cannot break out of it.
+
 The other three rows keep their normalization, and each reason was re-measured rather than assumed:
 `Vector` stringifies to `{"0":1.5,"1":2.5,"2":3.5}`, a numeric-keyed object no reader and no module
 reconstructs; `Duration` to `{"months":1,"days":2,"nanoseconds":"10800000000000"}`, where `String()`
@@ -680,7 +694,7 @@ SELECT COUNT(*) AS count FROM system_schema.indexes WHERE keyspace_name = 'probe
 |---|---|
 | `version` | `Apache Cassandra 5.0.9` — the product name plus `release_version` |
 | `startTime` / `uptime` | `gossip_generation`, against the **server's** clock via `toTimestamp(now())` |
-| `activeConnections` | `system_views.clients` — degrades to 0 on a refused grant, and on a build with no `system_views` keyspace ([§3.6](#36-a-monitoring-surface-degrades-on-a-denial-and-on-one-absent-keyspace)). The 0 is the residue that section records: the field is a required number, so "not published" cannot be said here |
+| `activeConnections` | `system_views.clients` — **omitted**, not zeroed, on a refused grant and on a build with no `system_views` keyspace ([§3.6](#36-a-monitoring-surface-degrades-on-a-denial-and-on-one-absent-keyspace)). A successful `COUNT(*)` always answers exactly one row, so an empty result set is the signature of the degradation rather than a real zero (`DatabaseOverview.activeConnections` is optional as of 2026-08-24) |
 | `maxConnections` | `0` — "no ceiling published". Cassandra's connection limit defaults to unlimited and is a config reading, not a live capacity |
 | `databaseSize` | `N/A`; `databaseSizeBytes` **omitted**, not zeroed — [§3.2](#32-there-is-no-honest-row-count-and-no-honest-size) |
 | `tableCount` / `indexCount` | `system_schema` |
@@ -916,13 +930,13 @@ failure is still `success: false`, and a health read that fails *after* a succes
 `success: true, degraded: true` carrying the server's own sentence. `handleConnect` saves on that, but
 not silently: the first click reports what the server refused and saves nothing, and only a second
 click saves. This is not a Cassandra fix — StarRocks and SingleStore fail health for their own reason
-(**D8**) and were unsaveable on the same gate.
+(the prepared-statement protocol, fixed 2026-08-24) and were unsaveable on the same gate.
 
 Re-probed 2026-08-24, every surface separately, same method as the original pass:
 
 | Surface | ScyllaDB 2026.2.4, before | ScyllaDB 2026.2.4, after | Cassandra 5.0.9 control |
 |---|---|---|---|
-| `getOverview` | `Keyspace system_views does not exist` | `Apache Cassandra 3.0.8`, uptime `23.76m`, 3 tables, 1 index, **connections 0** | version 5.0.9, connections 1 |
+| `getOverview` | `Keyspace system_views does not exist` | `Apache Cassandra 3.0.8`, uptime `23.76m`, 3 tables, 1 index, **connections not published** | version 5.0.9, connections 1 |
 | `getPerformanceMetrics` | same error | `{}` — no cache ratio claimed | `{ cacheHitRatio: 88.24 }` |
 | `getActiveSessions` | same error | `[]` | 1 running statement |
 | `getHealth` | same error | answers; `cacheHitRatio` `N/A`, no sessions | answers with data |
@@ -940,12 +954,14 @@ day (`category` / `absentKeyspace()`):
 | `SELECT COUNT(*) FROM system_viewz.clients` | `invalid` / `"system_viewz"` → throws | `invalid` / `"system_viewz"` → throws |
 | `SELECT COUNT(*) FROM system_schema.tables` | OK | OK |
 
-**One number is still not honest, and it is recorded rather than fixed.** The overview's
-`activeConnections` reads **0** on a build with no `system_views` keyspace, because
-`DatabaseOverview.activeConnections` is a required `number`: there is no way to say "not published"
-without widening the type and the Connections card that renders it. It is the same 0 a
-permission-denied role has always produced, and it is the one figure here a reader could mistake for a
-measurement.
+**The one number that used to be dishonest here is fixed (2026-08-24), and the fix now reaches the agent
+too.** `DatabaseOverview.activeConnections` is optional, and this provider omits the key rather than
+send a fabricated 0 on a build with no `system_views` keyspace — the same omission a permission-denied
+role has always needed and, until that change, never got either. `OverviewTab` renders the absence as "not
+published" instead of "0 connections". `HealthInfo.activeConnections` is optional too now: `getHealth`
+composes it straight from the overview with no `?? 0` seam, so the omission survives to the agent's
+curated health reading (`src/lib/agent/tools.ts`), which reports it to the model as `null` rather than
+telling an LLM "0 connections" about a server it could not measure.
 
 What works:
 

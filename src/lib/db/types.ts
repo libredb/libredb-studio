@@ -61,7 +61,21 @@ export interface ActiveSession {
 }
 
 export interface HealthInfo {
-  activeConnections: number;
+  /**
+   * The count of connections currently open, or absent when the engine cannot
+   * measure it at all.
+   *
+   * Optional for the same reason `DatabaseOverview.activeConnections` is: absence
+   * and zero are different facts, and a provider that cannot read the figure must
+   * omit the key rather than send a fabricated 0. This is the field the agent's
+   * curated "health" reading forwards to the model (`src/lib/agent/tools.ts`), so a
+   * fabricated 0 here is not a display quirk - it is telling the model a fact about
+   * a server it could not measure. Most providers compose this straight from
+   * `DatabaseOverview.activeConnections`, which is where the absence already comes
+   * from (ScyllaDB has no `system_views` keyspace; a Cassandra role can be denied
+   * the grant); no `?? 0` fallback belongs at that seam.
+   */
+  activeConnections?: number;
   databaseSize: string;
   cacheHitRatio: string;
   slowQueries: SlowQuery[];
@@ -558,7 +572,26 @@ export interface DatabaseOverview {
   version: string;
   uptime: string;
   startTime?: Date;
-  activeConnections: number;
+  /**
+   * The count of connections currently open, or absent when the engine cannot
+   * measure it at all.
+   *
+   * Optional for the same reason `databaseSizeBytes` below is: absence and zero are
+   * different facts, and a provider that cannot read the figure must omit the key
+   * rather than send a fabricated 0. ScyllaDB is the case that forced this - the
+   * count lives in Cassandra's `system_views` keyspace, which ScyllaDB does not
+   * have - and a Cassandra role denied that same grant has answered a fabricated 0
+   * since the provider shipped (docs/BACKLOG.md D17). `HealthInfo.activeConnections`
+   * stays a required `number`: a provider composing it from this field falls back to
+   * `?? 0` at that one seam, the number this field has always answered with.
+   */
+  activeConnections?: number;
+  /**
+   * The published ceiling, where `0` MEANS "no limit published" rather than "no
+   * capacity" - unlike `activeConnections` above, `0` and absence are the SAME fact
+   * here, so this field stays a required number. See `OverviewTab.tsx`'s
+   * `connectionLimit`.
+   */
   maxConnections: number;
   databaseSize: string;
   /**

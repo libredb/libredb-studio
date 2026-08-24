@@ -412,7 +412,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         depends on its health surface answering. Three published engines
         were unsaveable on that gate alone - ScyllaDB, whose health read asks for a
         `system_views` keyspace the build does not have, plus StarRocks and SingleStore
-        (BACKLOG D8) - while the editor and the object browser worked in full.
+        (whose health reads died on the prepared-statement protocol until 2026-08-24) -
+        while the editor and the object browser worked in full.
 
         What the save may NOT become is silent. The first click reports what the server
         refused, in its own words, and saves nothing; only a second one saves. The

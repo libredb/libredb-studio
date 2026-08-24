@@ -8,6 +8,7 @@ import type { DatabaseConnection } from "@/lib/types";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes, binaryText } from "@/lib/export/binary";
+import { mysqlJsonStrategy } from "@/lib/explain/mysql-json";
 
 // ============================================================================
 // Mock mysql2/promise BEFORE importing the provider
@@ -22,9 +23,34 @@ import { asBytes, binaryText } from "@/lib/export/binary";
  */
 let mockExecuteFn: (sql: string, params?: unknown[]) => Promise<[unknown, unknown[] | undefined]>;
 
+/**
+ * Which mysql2 method each statement went through. The driver decodes the text
+ * (`query`) and binary prepared (`execute`) protocols on different code paths, and
+ * three engines refuse whole statement classes on the prepared one, so the mock
+ * answers BOTH methods and records the choice - a mock that only answered
+ * `execute` could not tell a routed statement from an unrouted one.
+ */
+type ProtocolCall = { method: "query" | "execute"; sql: string; params?: unknown[] };
+let protocolCalls: ProtocolCall[] = [];
+
+function recordCall(
+  method: "query" | "execute",
+  sql: string,
+  params?: unknown[],
+): Promise<[unknown, unknown[] | undefined]> {
+  protocolCalls.push({ method, sql, params });
+  return mockExecuteFn(sql, params);
+}
+
+/** The method the first statement matching `fragment` (case-insensitive) went through. */
+function methodFor(fragment: string): string | undefined {
+  return protocolCalls.find((c) => c.sql.toLowerCase().includes(fragment.toLowerCase()))?.method;
+}
+
 const mockConnection = {
   threadId: 42,
-  execute: (sql: string, params?: unknown[]) => mockExecuteFn(sql, params),
+  query: (sql: string, params?: unknown[]) => recordCall("query", sql, params),
+  execute: (sql: string, params?: unknown[]) => recordCall("execute", sql, params),
   release: () => {},
   beginTransaction: async () => {},
   commit: async () => {},
@@ -34,7 +60,8 @@ const mockConnection = {
 const mockPool = {
   getConnection: async () => mockConnection,
   end: async () => {},
-  execute: (sql: string, params?: unknown[]) => mockExecuteFn(sql, params),
+  query: (sql: string, params?: unknown[]) => recordCall("query", sql, params),
+  execute: (sql: string, params?: unknown[]) => recordCall("execute", sql, params),
 };
 
 mock.module("mysql2/promise", () => ({
@@ -1643,5 +1670,193 @@ describe("MySQLProvider non-SELECT statements", () => {
     expect(result.rows).toEqual([{ id: 1 }]);
     expect(result.rowCount).toBe(1);
     expect(result.columnTypes).toEqual({ id: "int" });
+  });
+});
+
+// ============================================================================
+// Wire protocol: text (`query`) vs binary prepared (`execute`)
+// ============================================================================
+/**
+ * Three engines refuse whole statement classes on mysql2's binary prepared
+ * protocol with `This command is not supported in the prepared statement protocol
+ * yet`: SingleStore 9.1.1 rejects `SHOW STATUS`, `SHOW VARIABLES`, `EXPLAIN`,
+ * `EXPLAIN JSON`, `OPTIMIZE TABLE` and `CHECK TABLE` there, StarRocks 3.3 loses its
+ * overview to the same cause, and MySQL 26.7.0 itself rejects `CHECK TABLE` - all
+ * measured 2026-08-24, both ways over one connection.
+ *
+ * So a statement with no parameters goes over the text protocol and a statement
+ * with parameters keeps the prepared one - the placeholders are what the prepared
+ * protocol is for, and nothing else changes about how a bind value reaches the
+ * server.
+ */
+describe("MySQLProvider wire protocol", () => {
+  let provider: InstanceType<typeof MySQLProvider>;
+
+  beforeEach(() => {
+    mockExecuteFn = defaultMockExecute;
+    protocolCalls = [];
+  });
+
+  afterEach(async () => {
+    try {
+      if (provider?.isConnected()) await provider.disconnect();
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
+
+  async function connected(): Promise<InstanceType<typeof MySQLProvider>> {
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    protocolCalls = [];
+    return provider;
+  }
+
+  test("getHealth sends its parameterless reads as text and its parameterised reads as prepared", async () => {
+    const p = await connected();
+    await p.getHealth();
+
+    expect(methodFor("show status like 'threads_connected'")).toBe("query");
+    // Every information_schema read here binds the database name.
+    expect(methodFor("information_schema.tables")).toBe("execute");
+    expect(methodFor("processlist")).toBe("execute");
+  });
+
+  test("getOverview sends SHOW STATUS, SHOW VARIABLES and VERSION() as text", async () => {
+    const p = await connected();
+    await p.getOverview();
+
+    expect(methodFor("version()")).toBe("query");
+    expect(methodFor("show status like 'uptime'")).toBe("query");
+    expect(methodFor("show variables like 'max_connections'")).toBe("query");
+    expect(methodFor("information_schema.tables")).toBe("execute");
+  });
+
+  test("getPerformanceMetrics sends every read as text", async () => {
+    const p = await connected();
+    await p.getPerformanceMetrics();
+
+    expect(protocolCalls.length).toBeGreaterThan(0);
+    expect(protocolCalls.every((c) => c.method === "query")).toBe(true);
+  });
+
+  test("the maintenance statement is text, and the table lookup behind it stays prepared", async () => {
+    const p = await connected();
+    await p.runMaintenance("check");
+
+    // The table list binds the database name; CHECK TABLE binds nothing and is the
+    // statement MySQL 26.7.0 itself refuses on the prepared protocol.
+    expect(methodFor("information_schema.tables")).toBe("execute");
+    expect(methodFor("check table")).toBe("query");
+  });
+
+  test("OPTIMIZE TABLE goes over the text protocol", async () => {
+    const p = await connected();
+    await p.runMaintenance("optimize");
+
+    expect(methodFor("optimize table")).toBe("query");
+  });
+
+  test("the maintenance KILL takes the text protocol too", async () => {
+    const p = await connected();
+    await p.runMaintenance("kill", "77");
+
+    expect(methodFor("kill 77")).toBe("query");
+  });
+
+  test("getSchema keeps its parameterised reads on the prepared protocol", async () => {
+    const p = await connected();
+    await p.getSchema();
+
+    expect(protocolCalls.length).toBeGreaterThan(0);
+    expect(protocolCalls.every((c) => c.method === "execute")).toBe(true);
+    expect(methodFor("information_schema.columns")).toBe("execute");
+    expect(methodFor("key_column_usage")).toBe("execute");
+    expect(methodFor("information_schema.statistics")).toBe("execute");
+  });
+
+  test("getStorageStats sends SHOW BINARY LOGS and SHOW VARIABLES as text", async () => {
+    const p = await connected();
+    await p.getStorageStats();
+
+    expect(methodFor("show binary logs")).toBe("query");
+    expect(methodFor("show variables like 'innodb_data_file_path'")).toBe("query");
+    expect(methodFor("information_schema.tables")).toBe("execute");
+  });
+
+  test("the editor's own query path is text without parameters and prepared with them", async () => {
+    const p = await connected();
+
+    await p.query("SELECT 1");
+    expect(protocolCalls).toEqual([{ method: "query", sql: "SELECT 1", params: undefined }]);
+
+    protocolCalls = [];
+    await p.query("SELECT * FROM users WHERE id = ?", [7]);
+    expect(protocolCalls).toEqual([{ method: "execute", sql: "SELECT * FROM users WHERE id = ?", params: [7] }]);
+  });
+
+  test("an empty parameter array is not a parameterised statement", async () => {
+    const p = await connected();
+    await p.query("SELECT 1", []);
+
+    expect(protocolCalls[0]?.method).toBe("query");
+    expect(protocolCalls[0]?.params).toBeUndefined();
+  });
+
+  test("the Explain panel's statement reaches the server over the text protocol", async () => {
+    const p = await connected();
+    // Verbatim what mysqlJsonStrategy.buildSql() produces. MySQL takes it either way;
+    // SingleStore refuses `EXPLAIN FORMAT=JSON` on both protocols (its grammar is
+    // `EXPLAIN JSON`), so what this pins is the route, not a recovered panel there.
+    const explainSql = mysqlJsonStrategy.buildSql("SELECT * FROM users", "estimate");
+    await p.query(explainSql as string);
+
+    expect(explainSql).toBe("EXPLAIN FORMAT=JSON SELECT * FROM users");
+    expect(methodFor("explain format=json")).toBe("query");
+  });
+
+  test("the transaction path picks the protocol the same way", async () => {
+    const p = await connected();
+    await p.beginTransaction();
+
+    await p.queryInTransaction("SELECT 1");
+    expect(protocolCalls.at(-1)).toEqual({ method: "query", sql: "SELECT 1", params: undefined });
+
+    await p.queryInTransaction("SELECT * FROM users WHERE id = ?", [7]);
+    expect(protocolCalls.at(-1)).toEqual({
+      method: "execute",
+      sql: "SELECT * FROM users WHERE id = ?",
+      params: [7],
+    });
+
+    await p.rollbackTransaction();
+  });
+
+  test("cancelQuery kills the running thread over the text protocol", async () => {
+    let releaseStatement: () => void = () => {};
+    let statementStarted: () => void = () => {};
+    const inFlight = new Promise<void>((resolve) => {
+      releaseStatement = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      statementStarted = resolve;
+    });
+
+    const p = await connected();
+    mockExecuteFn = async (sql: string) => {
+      if (sql.toLowerCase().includes("sleep")) {
+        statementStarted();
+        await inFlight;
+      }
+      return [[], []];
+    };
+
+    const running = p.query("SELECT SLEEP(5)", undefined, "q1");
+    await started;
+    expect(await p.cancelQuery("q1")).toBe(true);
+    releaseStatement();
+    await running;
+
+    expect(methodFor("kill query 42")).toBe("query");
   });
 });

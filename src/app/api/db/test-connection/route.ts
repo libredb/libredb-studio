@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
           not exist`, because ScyllaDB has no such keyspace. This route answered
           `success: false`, the dialog gates its save on that answer, and a ScyllaDB
           connection could not be created at all. StarRocks and SingleStore sit on the
-          same gate for reasons of their own (D8).
+          same gate for reasons of their own.
 
           So a health failure after a successful connect is reported as a degraded
           success, carrying the server's own sentence. `latency` is omitted with it: the

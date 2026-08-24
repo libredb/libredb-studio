@@ -1385,6 +1385,16 @@ error message all come from whoever can write to the database, so everything cro
 is fenced first: a header naming what the content is and where it came from, and a stated boundary
 the content cannot forge. This is the same firewall the maintainer loop applies to public issue text.
 
+**A binary cell reaches the model as hex, not as its wire JSON** (2026-08-24). A `bytea`, `BLOB` or
+`blob` value used to be put in the prompt by a plain `JSON.stringify`, so the model was handed
+`{"type":"Buffer","data":[1,2,171]}` — roughly four characters of context per byte of data, and a
+shape it had to interpret — while every other surface in the product showed `\x0102ab`. `renderRows`
+now reads the same `asBytes`/`binaryText` module the grid, the row detail sheet and the CSV read.
+Measured on a 160-byte value: 556 characters before, 322 after. The model gets the FULL hex rather
+than the grid's 32-byte compact-cell preview, because that cutoff exists for a one-line cell and a
+model asked to compare two values needs the whole one. `state-guard.ts` is unaffected either way:
+`RESULT_PAYLOAD_KEYS` refuses a raw result set wholesale, so no row value reaches run state.
+
 **A notation the server writes needs more than a fence** (`er-diagram.ts`). The relations block turns
 the inventory's foreign keys into a graph, and a fence around it says only where the server stopped
 talking — it does nothing about a table literally named `orders -> secrets`, which would produce a
@@ -2419,15 +2429,6 @@ as they are fixed, and a numeral here goes stale silently.
   design intent - a run reasons over the inventory its claims cite - is not the problem; a NEW run
   inheriting it indefinitely is, and B54's gap means the ledger cannot tell "held, hours old" from
   "captured just now".
-- **B57** — a binary cell reaches the model as its wire JSON. `renderRows` in
-  `src/lib/agent/tools.ts` stringifies result rows with a plain `JSON.stringify`, so a `bytea`, `BLOB`
-  or `blob` value is put in the prompt as `{"type":"Buffer","data":[1,2,171]}` where every other
-  surface in the product shows `\x0102ab`. Roughly four characters of context per byte of data, and a
-  shape the model has to interpret. Not a data loss and not new - Postgres `bytea` always went through
-  it this way - but MySQL and Cassandra joined it on 2026-08-24 when they stopped stringifying their
-  bytes in the provider, which is what brought it into view. `state-guard.ts` is unaffected:
-  `RESULT_PAYLOAD_KEYS` refuses a raw result set wholesale, so no row value reaches run state.
-
 ## Related documentation
 
 - [`docs/AGENT_GUIDE.md`](./AGENT_GUIDE.md) — the user guide: the rail's own vocabulary, the three

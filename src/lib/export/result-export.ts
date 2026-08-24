@@ -59,6 +59,18 @@ const NOTHING_TO_EXPORT = {
 } as const;
 
 /**
+ * Written above the Cassandra `CREATE TABLE` only, immediately before the statement.
+ *
+ * Every line is its own `--` comment closed by a real newline: a CQL line comment
+ * that reaches end of file with no trailing newline is left open, so this is never
+ * the last thing in the file without one — the statement always follows it.
+ */
+const CASSANDRA_PRIMARY_KEY_NOTE =
+  "-- CQL requires exactly one PRIMARY KEY per table, and a result set carries no key of\n" +
+  "-- its own. This export chose the first column as a placeholder: confirm it is unique\n" +
+  "-- per row before running this statement.\n";
+
+/**
  * The table name the SQL exports write, derived from the tab's title.
  *
  * Interpolated into the statement UNQUOTED, and that is deliberate: this name was
@@ -640,5 +652,16 @@ export function buildResultExport(format: ResultExportFormat, source: ResultExpo
   }
 
   const definitions = columns.map((column, index) => `  ${quotedColumns[index]} ${sqlTypeOf(column, rows, source)}`);
+  // Cassandra-only: measured on 5.0.9, a CQL `CREATE TABLE` with a column list and no
+  // key is `InvalidRequest ... No PRIMARY KEY specifed for table (exactly one
+  // required)`, so the plain column list every other dialect gets here cannot run at
+  // all. A result set does not know which column is the real key, so the first one is
+  // chosen as a placeholder - wrong often enough to be dangerous, but a wrong key that
+  // replays beats a file that fails to parse. The comment says so above the statement,
+  // rather than in the column list, so it survives being read on its own.
+  if (dialect === "cassandra") {
+    definitions.push(`  PRIMARY KEY (${quotedColumns[0]})`);
+    return sql(`${CASSANDRA_PRIMARY_KEY_NOTE}CREATE TABLE ${tableName} (\n${definitions.join(",\n")}\n);`);
+  }
   return sql(`CREATE TABLE ${tableName} (\n${definitions.join(",\n")}\n);`);
 }

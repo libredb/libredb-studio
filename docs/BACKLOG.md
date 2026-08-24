@@ -22,10 +22,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S1–S8 · 8
-- [Drivers and connections](#drivers-and-connections) — D1–D21, U17 · 12
+- [Drivers and connections](#drivers-and-connections) — D1–D22, U17 · 11
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X13, U2–U18 · 10
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U18 · 10
 - [Authentication and security headers](#authentication-and-security-headers) — AU2
 - [Tests](#tests) — T1–T3 · 2
 - [Dependencies](#dependencies) — P1–P5 · 5
@@ -36,7 +36,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C2–C10 · 9
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K2–K4 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A6 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B57 · 39
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B56 · 38
 
 ---
 
@@ -186,48 +186,6 @@ Same lock, same fix as B49. Close the two together.
 open provider, or the test is skipped with an honest message. Either way the modal must not present a
 lock conflict as a failed connection test.
 
-### D8. The MySQL provider only uses the prepared protocol, and two engines lose panels to it
-
-Every read in `src/lib/db/providers/sql/mysql.ts` goes through mysql2's `conn.execute` — the binary
-PREPARED protocol — and never `conn.query`. There is no site that chooses: `getHealth`, `getOverview`,
-`getPerformanceMetrics`, the maintenance statement and the editor's own query path all call `execute`,
-including for statements that carry no parameters.
-
-Measured 2026-08-20 against a live SingleStore 9.1.1
-(`ghcr.io/singlestore-labs/singlestoredb-dev:0.2.82`), both ways on one connection:
-
-| Statement | `conn.execute` | `conn.query` |
-|---|---|---|
-| `SHOW STATUS LIKE 'Uptime'` | fails | succeeds |
-| `SHOW VARIABLES LIKE 'max_connections'` | fails | succeeds |
-| `EXPLAIN FORMAT=JSON <select>` | fails | succeeds |
-| `EXPLAIN <select>` | fails | succeeds |
-| `OPTIMIZE TABLE orders` | fails | succeeds |
-| `CHECK TABLE orders` | fails | succeeds |
-| `ANALYZE TABLE orders` | succeeds | succeeds |
-
-Every failure is the same engine message: `This command is not supported in the prepared statement
-protocol yet`. The last row is the tell — `ANALYZE TABLE` is the one maintenance action that works on
-SingleStore, and the one statement in that list the prepared protocol accepts.
-
-The cost on SingleStore is **five of its six defects**: Test Connection, health, the overview, the
-monitoring dashboard and the Explain panel (whose statement `src/lib/explain/mysql-json.ts` builds as
-`EXPLAIN FORMAT=JSON` and runs down the same path). Two of three maintenance actions go with them.
-
-**Not SingleStore-only.** The registered StarRocks row in `docs/providers/README.md` records its
-overview and health failures on the prepared-statement protocol — same cause, different engine,
-written up there as that engine's own quirk. One change reaches both.
-
-**The recovery is plausible and unmeasured.** The probe showed those statements succeed on
-`conn.query`. It did not show the provider working that way: nothing was changed and no panel was
-re-run. So six surfaces and two maintenance actions are candidates for recovery, not promises.
-
-**Done when:** a parameterless statement the provider issues goes over the text protocol, and the
-SingleStore and StarRocks rows in `docs/providers/README.md` are re-probed against that build.
-
----
-
----
 ### U17. Four things the Cassandra provider declined to do
 
 The provider shipped in #424 Phase 4 with four bounded absences. None is a defect — each is the
@@ -359,29 +317,6 @@ representation for opportunistic TLS or the mapping's refusal to guess is record
 
 ---
 
-### D17. `DatabaseOverview.activeConnections` cannot say "not published", so an unmeasured count reads 0
-
-The overview card publishes a connection count as a required `number`. Two cases have nothing to put
-there and both answer `0`: ScyllaDB, whose count lives in the `system_views` keyspace it does not have
-(measured 2026-08-24 - every other number on that panel is real, and this one is the residue the
-degradation leaves), and a Cassandra role denied the same grant, which has answered `0` since the
-provider shipped. `OverviewTab` renders it beside *no limit published*, so a server with sessions open
-reads as a server with none.
-
-Same shape as the cache hit ratio removed on 2026-08-23 and the SQLite table size removed on
-2026-08-24: a required field is what forces the fabrication, and the fix is the type plus every
-consumer of the aggregate gating on the absence. `maxConnections` is the second half of the same card
-and has the same problem, with one difference worth keeping: `0` there already MEANS "no limit
-published" and is documented as such (`OverviewTab.tsx:47`), so the two halves need different answers.
-
-**Done when:** a provider that cannot measure the connection count reports none, the card says so, and
-the ScyllaDB row in `docs/providers/README.md` loses its "Connections reads `0` rather than `N/A`"
-caveat.
-
----
-
----
-
 ### D18. Two engines hand back a number that has already lost digits
 
 Measured 2026-08-24 against Oracle Free 23ai through the provider: `NUMBER(38,0)` holding
@@ -404,6 +339,36 @@ own pass over every consumer.
 
 **Done when:** a value one of these engines cannot represent as a JS number reaches the grid with its
 digits intact, and every consumer of a numeric cell has been checked against the new shape.
+
+---
+
+### D22. One failing read discards the whole monitoring dashboard
+
+`BaseDatabaseProvider.getMonitoringData` (`src/lib/db/base-provider.ts:110`) composes its four core
+reads with `Promise.all`, so ONE rejection throws all four away and `/api/db/monitoring` answers an
+error instead of the three panels that did answer.
+
+Measured in the browser 2026-08-24 on StarRocks 3.3, on the build that moved MySQL's parameterless
+statements to the text protocol: `getOverview()` and `getPerformanceMetrics()` both succeed through
+the provider, and the monitoring page still renders nothing but *Connection Error - Getting analyzing
+error. Detail message: Unknown table 'information_schema.PROCESSLIST'*. That message is
+`getActiveSessions()` - a table StarRocks does not have - and it costs the user the overview, the
+performance panel, the slow-query list, the tables, the indexes and the storage panel, all of which
+the engine can answer.
+
+This is the same shape as the health gate that made three engines unsaveable (fixed 2026-08-24) and
+the Cassandra degradation that keeps eight surfaces while one keyspace is missing: an aggregate that
+fails whole rather than in parts. The panels already know how to render an absence - the cache hit
+ratio, the buffer pool, the SQLite table size and the connection count all say so in place.
+
+Not free: `MonitoringData` declares `overview`, `performance`, `slowQueries` and `activeSessions` as
+required, so the change is `Promise.allSettled` plus an optional shape plus every consumer of those
+four fields gating on it, including the monitoring page's own error state (which must still show a
+failure when EVERY read fails, rather than an empty dashboard).
+
+**Done when:** a monitoring read that fails costs its own panel and nothing else, proven on StarRocks
+where `PROCESSLIST` is absent, and the engine's own sentence still reaches the user for the panel that
+failed.
 
 ---
 
@@ -606,21 +571,31 @@ Cassandra.
 
 ---
 
-### X13. Every Cassandra `CREATE TABLE` the export writes is rejected, because CQL requires a PRIMARY KEY
+### X14. SingleStore's Explain panel needs a different STATEMENT, not a different protocol
 
-Measured 2026-08-24: `CREATE TABLE probe.nopk (a text, b bigint)` is
-`InvalidRequest ... No PRIMARY KEY specifed for table 'probe.nopk' (exactly one required)`. The DDL
-export writes a column list and nothing else, so its Cassandra output cannot run at all - the type
-names became right on 2026-08-24 and the statement still needs a hand edit.
+D8 moved every parameterless statement onto MySQL's text protocol, and its own table claimed
+`EXPLAIN FORMAT=JSON` was one of the statements that recovers on SingleStore. Re-measured
+2026-08-24 on the same image (`ghcr.io/singlestore-labs/singlestoredb-dev:0.2.82`), both protocols on
+one connection: it is `ER_PARSE_ERROR` on BOTH. SingleStore's grammar is `EXPLAIN JSON <select>`,
+which does show the protocol split (`ER_UNSUPPORTED_PS` prepared, succeeds as text), and plain
+`EXPLAIN` splits the same way. So the panel's failure is a statement problem wearing a protocol
+problem's error message, and the D8 row that said otherwise was wrong.
 
-Which column should be the key is not something a result set knows. The candidates: the first column
-(wrong often enough to be dangerous), the columns the provider's own `getSchema()` reports as the
-partition key (right, and only available when the result came from one known table), or a placeholder
-line the user must edit, which at least fails loudly rather than silently choosing. A generated file that
-does not run is not automatically worse than one that runs against the wrong key.
+`src/lib/explain/mysql-json.ts` is one strategy per format (`registry` in
+`src/lib/explain/index.ts`), and the type-id it serves is `mysql`. Reaching a second spelling means
+either sniffing the engine inside the strategy - which this repo's provider rules forbid, no
+`=== 'singlestore'` equivalent exists and none should - or a capability the connection carries, which
+is the shape `ProviderCapabilities` already uses for exactly this kind of divergence.
 
-**Done when:** the Cassandra DDL either carries a key the schema justifies or says in the file what the
-reader has to supply, and the generated statement replays.
+The blast radius is one panel on one relative. StarRocks is a separate case again: its
+`EXPLAIN FORMAT='json'` does not parse either, recorded in `docs/providers/README.md` as that
+engine's own quirk.
+
+**Done when:** either the Explain statement is a capability the connection declares rather than a
+constant in one strategy, and SingleStore's panel renders a plan; or the panel is withheld on an
+engine whose grammar the strategy cannot express, and the README rows say which engines those are.
+
+---
 
 ### U2. The rule that catches an arity change on a JSX handler is configured but not aimed at components
 
@@ -1553,24 +1528,6 @@ or this entry is deleted with a note that the hand-serializer is preferred.
 ---
 
 ## Agent M2 deferrals (#329)
-
-### B57. The agent reads a binary cell as its wire JSON
-
-`renderRows` in `src/lib/agent/tools.ts` puts result rows into the model's prompt with a plain
-`JSON.stringify`, so a `bytea`, `BLOB` or `blob` value reaches the LLM as
-`{"type":"Buffer","data":[1,2,171]}` - four bytes of digits per byte of data, and a shape the model has
-to guess at. Every other surface in the product has read the same value as `\x0102ab` since
-2026-08-23; MySQL and Cassandra joined them on 2026-08-24, which is what brought this into view.
-
-Not new behaviour and not a data loss - the fix is one `asBytes`/`binaryText` call, the same module the
-grid, the row sheet and the CSV read. The reason it is worth doing is the token cost and the guessing:
-a 160-byte value spends about 640 characters of context saying nothing the hex would not say in 320.
-
-`src/lib/agent/state-guard.ts` is unaffected - `RESULT_PAYLOAD_KEYS` refuses a raw result set
-wholesale, so no row value reaches agent run state.
-
-**Done when:** a binary cell reaches the model as the hex every other surface shows, with a token
-count measured before and after.
 
 ### B1. A module-private credential map would be invisible to the agent state guard
 
