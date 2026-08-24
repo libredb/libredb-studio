@@ -112,8 +112,19 @@ const DIALECT_TYPES: Partial<Record<DatabaseType, Partial<Record<InferredKind, s
   mysql: { numeric: "DOUBLE", timestamp: "DATETIME" },
   // ClickHouse has no BLOB: its byte container IS `String`, which is a byte sequence
   // and not a text encoding, and `unhex` (the literal below) returns exactly that.
+  // Measured on 26.7.1, the other four standard spellings all resolve to a whole type
+  // (`TEXT` -> `String`, `BIGINT` -> `Int64`, `DOUBLE PRECISION` -> `Float64`,
+  // `TIMESTAMP` -> `DateTime`), so ClickHouse needs no row of its own for them.
   clickhouse: { binary: "String" },
-  trino: { binary: "VARBINARY" },
+  // `text` is `Unknown type 'text'` on Trino 476 — `VARCHAR` is the unbounded
+  // character type, and `DOUBLE PRECISION`, `BIGINT`, `BOOLEAN` and `TIMESTAMP` are
+  // all accepted as they are (measured, `DOUBLE PRECISION` is stored as `double`).
+  trino: { text: "VARCHAR", binary: "VARBINARY" },
+  // CQL has no `DOUBLE PRECISION`: measured on Cassandra 5.0.9, `CREATE TABLE … (c
+  // DOUBLE PRECISION)` is `SyntaxException: no viable alternative at input
+  // 'PRECISION'`, while `DOUBLE`, `TEXT`, `BIGINT`, `BOOLEAN`, `TIMESTAMP` and `BLOB`
+  // are all whole type names.
+  cassandra: { numeric: "DOUBLE" },
   oracle: {
     text: "VARCHAR2(4000)",
     integer: "NUMBER(19)",
@@ -237,31 +248,50 @@ const BARE_TYPE_FAMILY: Record<string, InferredKind> = {
  * The bare names each dialect DOES stand behind, so they are written through verbatim.
  *
  * Measured, one `CREATE TABLE probe (c <name>)` per name per engine — Postgres 18.4,
- * MySQL 26.7.0, Oracle Free 23ai, SQL Server 2022 CU26 — read back out of
- * `format_type`, `information_schema.COLUMNS.COLUMN_TYPE`, `USER_TAB_COLUMNS` and
- * `INFORMATION_SCHEMA.COLUMNS`. A name is here only when the engine both accepted it
- * and stored it unnarrowed: `character varying` on Postgres is unbounded, `text` and
- * `longtext` on MySQL are whole types already, `NUMBER` on Oracle is the full 38
- * digits, and `nvarchar` on SQL Server is NOT here because it came back as length 1.
+ * MySQL 26.7.0, Oracle Free 23ai, SQL Server 2022 CU26, SQLite through `bun:sqlite`,
+ * ClickHouse 26.7.1, Trino 476 and Cassandra 5.0.9 — read back out of `format_type`,
+ * `information_schema.COLUMNS.COLUMN_TYPE`, `USER_TAB_COLUMNS`,
+ * `INFORMATION_SCHEMA.COLUMNS`, `pragma_table_info`, `system.columns`,
+ * `information_schema.columns` and `system_schema.columns`. A name is here only when
+ * the engine both accepted it and stored it unnarrowed: `character varying` on
+ * Postgres is unbounded, `text` and `longtext` on MySQL are whole types already,
+ * `NUMBER` on Oracle is the full 38 digits, ClickHouse resolves every character and
+ * byte alias it knows to `String`, Cassandra's `decimal` is arbitrary-precision — and
+ * `nvarchar` on SQL Server is NOT here because it came back as length 1.
  *
- * Two entries are absences worth naming. MySQL's `varchar` is missing because MySQL
- * refuses it outright, unlike Postgres's, which is legal and unbounded. SQL Server's
- * `timestamp` is missing because it is not a moment in time at all: measured, `CREATE
- * TABLE t (c timestamp)` on 2022 CU26 creates a `rowversion`, which no INSERT may
- * name — so keeping a foreign engine's `timestamp` there would produce a file that
- * parses and then fails on its own INSERT.
+ * Absences worth naming, because each is a name that LOOKS portable:
  *
- * A dialect absent from this table has nothing completed, which keeps every other
- * engine exactly as it was: SQLite's column types are advisory affinities, and the six
- * wire formats that already fill `columnTypes` spell their own types out in full
- * (`Nullable(String)`, `array(varchar)`), so there is no bare name of THEIR OWN to
- * complete. A bare name that arrives from somewhere else still reaches those targets
- * verbatim - an Oracle result exported under a ClickHouse connection writes
- * `VARCHAR2` (measured) - and widening the rule is not the fix, because Trino's own
- * bare `varchar` is legal and unbounded and would become a `TEXT` it does not have.
- * Each remaining dialect needs its own measured row: BACKLOG X11.
+ * - MySQL's `varchar`, which MySQL refuses outright, unlike Postgres's.
+ * - SQL Server's `timestamp`, which is not a moment in time at all: measured, `CREATE
+ *   TABLE t (c timestamp)` on 2022 CU26 creates a `rowversion`, which no INSERT may
+ *   name — so keeping a foreign engine's `timestamp` there would produce a file that
+ *   parses and then fails on its own INSERT.
+ * - Trino's `char` and `decimal`, stored as `char(1)` and `decimal(38,0)`, and
+ *   ClickHouse's `decimal`, stored as `Decimal(10, 0)` — the MySQL narrowing again.
+ * - ClickHouse's `set`. MySQL's SET is a CHARACTER type; ClickHouse accepts the word
+ *   and stores `UInt64`, which is the widest silent mistranslation measured here.
+ * - SQLite's `enum`, `uniqueidentifier` and `rowid`. SQLite parses any type name, so
+ *   the narrowing is in the AFFINITY: these three match none of its keywords, so the
+ *   column is NUMERIC and `INSERT INTO p (c) VALUES ('007')` reads back as the integer
+ *   7 (measured), where the same insert into `varchar2` reads back as the text `007`.
+ *   `set` is not in SQLite's grammar as a type name at all (`near "set": syntax
+ *   error`).
+ *
+ * Trino is why a bare name cannot simply be re-spelled whenever the target is
+ * unmeasured: its own `varchar` is legal AND unbounded, and would have become a `TEXT`
+ * it answers `Unknown type 'text'` to.
+ *
+ * The map is total, for the reason `BINARY_LITERAL` below is: a new provider must not
+ * inherit a silently wrong answer. The seven dialects with NO row measured have an
+ * empty one — Druid takes no INSERT at all without the MSQ extension, the two search
+ * endpoints parse no CREATE TABLE, and the other four declare `queryLanguage: "json"`
+ * so no statement is ever built for them to read. Their file is by definition meant to
+ * run somewhere else, so every bare name in it is re-spelled portably rather than kept
+ * as one engine's private word.
  */
-const STANDS_ALONE: Partial<Record<DatabaseType, readonly string[]>> = {
+const NOTHING_STANDS_ALONE: readonly string[] = [];
+
+const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
   postgres: [
     "character varying",
     "varchar",
@@ -299,6 +329,81 @@ const STANDS_ALONE: Partial<Record<DatabaseType, readonly string[]>> = {
     "smalldatetime",
     "datetimeoffset",
   ],
+  // Every candidate name but the four listed in the note above: SQLite keeps a declared
+  // type as the exact string it was given (`pragma_table_info` answers `varchar2` for
+  // `varchar2`), so the spelling the source engine used is the one that survives.
+  sqlite: [
+    "character varying",
+    "varchar",
+    "varchar2",
+    "nvarchar",
+    "nvarchar2",
+    "character",
+    "char",
+    "nchar",
+    "text",
+    "ntext",
+    "tinytext",
+    "mediumtext",
+    "longtext",
+    "clob",
+    "nclob",
+    "binary",
+    "varbinary",
+    "raw",
+    "blob",
+    "tinyblob",
+    "mediumblob",
+    "longblob",
+    "bytea",
+    "image",
+    "numeric",
+    "decimal",
+    "number",
+    "binary_double",
+    "binary_float",
+    "money",
+    "timestamp",
+    "timestamp without time zone",
+    "timestamp with time zone",
+    "datetime",
+    "datetime2",
+    "smalldatetime",
+    "datetimeoffset",
+    "year",
+  ],
+  clickhouse: [
+    "character varying",
+    "varchar",
+    "varchar2",
+    "nvarchar",
+    "character",
+    "char",
+    "nchar",
+    "text",
+    "tinytext",
+    "mediumtext",
+    "longtext",
+    "clob",
+    "varbinary",
+    "blob",
+    "tinyblob",
+    "mediumblob",
+    "longblob",
+    "bytea",
+    "timestamp",
+    "datetime",
+    "year",
+  ],
+  trino: ["varchar", "varbinary", "timestamp", "timestamp without time zone", "timestamp with time zone"],
+  cassandra: ["varchar", "text", "blob", "decimal", "timestamp"],
+  druid: NOTHING_STANDS_ALONE,
+  elasticsearch: NOTHING_STANDS_ALONE,
+  opensearch: NOTHING_STANDS_ALONE,
+  mongodb: NOTHING_STANDS_ALONE,
+  redis: NOTHING_STANDS_ALONE,
+  libredb: NOTHING_STANDS_ALONE,
+  couchbase: NOTHING_STANDS_ALONE,
 };
 
 /**
@@ -324,8 +429,12 @@ const STANDS_ALONE: Partial<Record<DatabaseType, readonly string[]>> = {
  */
 function completeDeclaredType(declared: string, dialect: DatabaseType | undefined): string {
   if (declared.includes("(")) return declared;
-  const standsAlone = STANDS_ALONE[dialect as DatabaseType];
-  if (standsAlone === undefined) return declared;
+  // No dialect at all is not an unknown dialect: it means the file names no engine, so
+  // there is nothing standing behind ANY private spelling and the portable name is the
+  // only defensible one. It is also what this same export's value-shaped path already
+  // writes there, and what it wrote for a declared type before the measured rows above
+  // existed.
+  const standsAlone = dialect === undefined ? NOTHING_STANDS_ALONE : STANDS_ALONE[dialect];
   // `TIMESTAMP WITH TIME ZONE` from Oracle and `timestamp with time zone` from
   // Postgres are the same name, and a declared type is engine output rather than
   // something typed here, so neither the case nor the run of spaces is load-bearing.

@@ -336,7 +336,7 @@ Minimal by nature — SQLite keeps almost no server-style runtime statistics.
 | `getPerformanceMetrics()` | — | **no cache-hit ratio, no QPS, no buffer-pool usage** — all three are omitted, so both monitoring tabs show "N/A / Not measured" for them ([§7.1](#71-there-is-no-cache-hit-ratio-and-there-cannot-be)); only `deadlocks: 0` is reported, which is a fact about the engine |
 | `getSlowQueries()` | — | always `[]` (SQLite has no query stats) |
 | `getActiveSessions()` | — | the single current process session |
-| `getTableStats()` | `COUNT(*)` per table | **size is a rough estimate** (`rows × 100 bytes`) — SQLite gives no per-table size |
+| `getTableStats()` | `COUNT(*)` per table, `dbstat` for the bytes | size is **measured page bytes under `node:sqlite` and absent under `bun:sqlite`** — see [§7.2](#72-per-table-size-depends-on-which-driver-you-run) |
 | `getIndexStats()` | `PRAGMA index_list`/`index_info` | `scans` always `0` (no usage counter); `indexSize` is `N/A` and `indexSizeBytes` is **omitted** — SQLite publishes no per-index size, and a `0` was summed by the Storage tab as an empty index |
 | `getStorageStats()` | `fs.statSync` on the DB / `-wal` / `-shm` files | per-file sizes (on disk only) |
 
@@ -359,13 +359,54 @@ Nothing SQL-reachable stands in either. On both drivers:
 | `PRAGMA cache_size` | `-2000` — the *configured* page budget (negative = KiB), not a hit count |
 | `PRAGMA cache_hit`, `PRAGMA cache_miss` | `[]` — these are not pragmas; SQLite answers an unknown pragma with zero rows rather than an error, so they *look* like empty readings |
 | `PRAGMA stats` | `[]` |
-| `SELECT * FROM dbstat` | `no such table: dbstat` under `bun:sqlite`; available under `node:sqlite` (`ENABLE_DBSTAT_VTAB`), but it reports page layout, not cache hits |
+| `SELECT * FROM dbstat` | `no such table: dbstat` under `bun:sqlite`; available under `node:sqlite` (`ENABLE_DBSTAT_VTAB`), but it reports page layout, not cache hits — which is what [§7.2](#72-per-table-size-depends-on-which-driver-you-run) reads it for |
 
 So the field is **omitted permanently**, not pending a better query. Through 0.13.1 this provider
 reported `95` whenever `PRAGMA cache_size` came back truthy — which it always does — and `99`
 otherwise, and the Performance panel rated that invented figure "Excellent". A missing panel is
 honest; a populated wrong one is not: the number was this provider's, not SQLite's. `getHealth()`
 says the same thing in its own string field: `cacheHitRatio` is `N/A`.
+
+### 7.2 Per-table size depends on which driver you run
+
+SQLite has no catalog column for a table's size. The only source is `dbstat`, a virtual table that
+reports one row per b-tree page group, and it is behind the compile-time
+`SQLITE_ENABLE_DBSTAT_VTAB` option — which the two drivers do not agree on. Measured 2026-08-24 on
+the same seeded database (200 rows of 4 KB text in `big` with an index on it, 200 short rows in
+`small`, file 1,761,280 B):
+
+| Driver | `SELECT name, SUM(pgsize) FROM dbstat GROUP BY name` |
+|--------|------------------------------------------------------|
+| `bun:sqlite` (Bun 1.3.14, SQLite 3.53.0) | `no such table: dbstat` |
+| `node:sqlite` (Node 24.14.0, SQLite 3.51.2) | `big 823296`, `idx_big 929792`, `small 4096` |
+
+`LIBREDB_SQLITE_DRIVER` is what a user changes to move between them ([§2](#runtime--driver-selection)),
+so both answers ship, and the same connection reports different things depending on it — verbatim
+from `getTableStats()`:
+
+```
+# LIBREDB_SQLITE_DRIVER=node
+{"tableName":"big","rowCount":200,"tableSize":"804 KB","tableSizeBytes":823296,
+ "indexSize":"908 KB","indexSizeBytes":929792,"totalSize":"1.67 MB","totalSizeBytes":1753088}
+
+# bun:sqlite (the default under Bun)
+{"tableName":"big","rowCount":200,"totalSize":"N/A","totalSizeBytes":0}
+```
+
+Under `node:sqlite` an index's pages are added to **its table's** `indexSizeBytes`, implicit
+`sqlite_autoindex_*` ones included, because the Storage tab builds its index total from the
+per-table figure. Under `bun:sqlite` `tableSize` and `tableSizeBytes` are **omitted** — the Storage
+tab shows "N/A" for the Tables/Indexes cards and the breakdown, and "-" for each table's share,
+rather than a figure. `dbstat` is read once per `getTableStats()` call, since it scans the whole
+database file.
+
+Through 0.13.3 this was `rowCount * 100` — "Assume 100 bytes average per row" — and the Storage tab
+summed it into the Data figure it draws beside the measured database size. On the database above
+that estimate answered 20,000 B for both tables: 40× under for `big` (804 KB of pages) and 5× over
+for `small` (4 KB), a guess presented as a measurement. A `0` would have been the same
+fabrication in a different digit, which is why the fields are absent rather than zero.
+`totalSize`/`totalSizeBytes` remain required by `TableStats`, so they carry the same `"N/A"` / `0`
+placeholder `indexSize` already used, and every consumer gates on the absent `tableSizeBytes`.
 
 ---
 
@@ -685,9 +726,12 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 - **Absent monitoring:** there is **no cache-hit ratio, no queries-per-second and no buffer-pool
   usage** — the drivers expose no counters for them, so the panels say "Not measured"
   ([§7.1](#71-there-is-no-cache-hit-ratio-and-there-cannot-be)); index `scans` is always `0` and
-  per-index size is `N/A`; slow queries are unavailable. Per-table size is still a rough estimate
-  (`rows × 100 bytes`) rather than an absence, because `TableStats.tableSizeBytes` is a required
-  field — making it optional is a change to the shared monitoring types, not to this provider.
+  `getIndexStats()`'s per-index size is `N/A`; slow queries are unavailable.
+- **Per-table size only under `node:sqlite`.** `dbstat` is compiled into that driver and out of
+  `bun:sqlite`, so under Bun the byte fields are omitted rather than estimated
+  ([§7.2](#72-per-table-size-depends-on-which-driver-you-run)). `getIndexStats()` still reports
+  `indexSize: "N/A"` per index even where `dbstat` exists — the per-table index bytes it feeds the
+  Storage tab are measured, the per-index rows are not yet.
 - **`:memory:` is ephemeral** — data is lost on disconnect; intended for trials/tests.
 - **Single schema (`main`)** — `ATTACH`ed databases are not surfaced.
 - **No path sandboxing (by design).** `getDatabasePath()` validates only that the path contains

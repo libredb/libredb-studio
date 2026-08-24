@@ -88,6 +88,18 @@ async function main(): Promise<void> {
   report.version = overview.version;
   report.tableCount = overview.tableCount;
 
+  // Per-table sizes, which on this driver come from the dbstat virtual table.
+  const tableStats = await provider.getTableStats();
+  report.tableStats = tableStats.map((t) => ({
+    tableName: t.tableName,
+    rowCount: t.rowCount,
+    tableSize: t.tableSize ?? null,
+    tableSizeBytes: t.tableSizeBytes ?? null,
+    indexSizeBytes: t.indexSizeBytes ?? null,
+    totalSize: t.totalSize,
+    totalSizeBytes: t.totalSizeBytes,
+  }));
+
   const health = await provider.getHealth();
   report.integrity = health.slowQueries.find((q) => q.query.includes("Integrity"))?.query ?? null;
 

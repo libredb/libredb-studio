@@ -214,8 +214,16 @@ export function describeColumnType(type: CassandraColumnType): string {
  *
  * Three rules, and each is a measured trap rather than a preference:
  *
- * - A `Buffer` becomes `0x…`, the CQL blob literal. Its JSON form is a
- *   `{"type":"Buffer","data":[…]}` document.
+ * - A `Buffer` is handed on AS ITSELF. It used to become the CQL literal `0x…`,
+ *   because `{"type":"Buffer","data":[…]}` - the JSON form - was a document nobody
+ *   could read; `src/lib/export/binary.ts` now reads exactly that shape (#469), so
+ *   that reason has expired, and stringifying here was what kept a blob out of the
+ *   binary renderer, the row detail sheet, the CSV and the per-dialect binary literal
+ *   the SQL export writes. The grid spelled it `0x4c69…` while Postgres spelled the
+ *   same bytes `\x4c69…`, and the export wrote that text into a `blob` column
+ *   instead of the bytes. The CQL literal is still `0x…`, but the export builds
+ *   it from the bytes now (`BINARY_LITERAL` has cassandra as `zero-x`), which is what
+ *   keeps one spelling on the screen and the right one in the file.
  * - Anything whose exact value is longer than a double keeps its digits AS A
  *   STRING. `Long`, `Integer` and `BigDecimal` all stringify losslessly and all
  *   lose precision through `Number()`, and a `COUNT(*)` is a `Long` too.
@@ -231,7 +239,7 @@ export function normalizeCassandraValue(value: unknown): unknown {
   // `undefined` reads as null rather than being dropped: a column absent from a
   // row is absent, and a missing key would make the grid render no cell at all.
   if (value === undefined || value === null) return null;
-  if (Buffer.isBuffer(value)) return `0x${value.toString("hex")}`;
+  if (Buffer.isBuffer(value)) return value;
   if (value instanceof Date) return value;
   if (value instanceof types.Vector) return [...value].map(normalizeCassandraValue);
   if (value instanceof types.Tuple) return value.elements.map(normalizeCassandraValue);

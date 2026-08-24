@@ -2419,6 +2419,14 @@ as they are fixed, and a numeral here goes stale silently.
   design intent - a run reasons over the inventory its claims cite - is not the problem; a NEW run
   inheriting it indefinitely is, and B54's gap means the ledger cannot tell "held, hours old" from
   "captured just now".
+- **B57** — a binary cell reaches the model as its wire JSON. `renderRows` in
+  `src/lib/agent/tools.ts` stringifies result rows with a plain `JSON.stringify`, so a `bytea`, `BLOB`
+  or `blob` value is put in the prompt as `{"type":"Buffer","data":[1,2,171]}` where every other
+  surface in the product shows `\x0102ab`. Roughly four characters of context per byte of data, and a
+  shape the model has to interpret. Not a data loss and not new - Postgres `bytea` always went through
+  it this way - but MySQL and Cassandra joined it on 2026-08-24 when they stopped stringifying their
+  bytes in the provider, which is what brought it into view. `state-guard.ts` is unaffected:
+  `RESULT_PAYLOAD_KEYS` refuses a raw result set wholesale, so no row value reaches run state.
 
 ## Related documentation
 

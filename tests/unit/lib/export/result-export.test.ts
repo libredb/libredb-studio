@@ -631,13 +631,14 @@ describe("buildResultExport — a declared type that cannot stand alone", () => 
     );
   });
 
-  // Only the four dialects whose bare spellings were measured are completed. SQLite's
-  // column types are advisory affinities, and the wire formats of the other engines
-  // spell their own types out (`Nullable(String)`), so there is nothing to complete.
-  test("leaves a bare type alone for a dialect that was not measured", () => {
+  // `varchar` is one of the names SQLite and ClickHouse were measured to store
+  // unbounded (the measured rows below), so it goes through for those two; with no target
+  // dialect at all there is no engine standing behind any spelling, so the portable
+  // one is written instead.
+  test("keeps a bare type only where the target engine stands behind it", () => {
     expect(ddl({ c: "varchar" }, "sqlite")).toContain('"c" varchar');
     expect(ddl({ c: "varchar" }, "clickhouse")).toContain('"c" varchar');
-    expect(ddl({ c: "varchar" }, undefined)).toContain('"c" varchar');
+    expect(ddl({ c: "varchar" }, undefined)).toContain('"c" TEXT');
   });
 
   // The completion tables are looked up with `Object.hasOwn`: a column declared
@@ -646,5 +647,160 @@ describe("buildResultExport — a declared type that cannot stand alone", () => 
   test("does not read a family off the prototype chain", () => {
     expect(ddl({ c: "constructor" }, "mysql")).toContain("`c` constructor");
     expect(ddl({ c: "toString" }, "postgres")).toContain('"c" toString');
+  });
+});
+
+// A bare name reaching a dialect that never declared it: both shells pass
+// the ACTIVE connection's type beside the tab's own result, so querying Oracle and
+// switching to a ClickHouse connection before exporting wrote `VARCHAR2` and
+// `BINARY_DOUBLE` into a file that replays nowhere, and with no connection at all it
+// wrote them too (measured 2026-08-24, one Oracle result under each target). The four
+// rows below are the remaining dialects an engine could be measured on, one `CREATE
+// TABLE probe (c <name>)` per candidate name read back out of that engine's own
+// catalog — the same method the first four rows used.
+describe("buildResultExport — the bare names the remaining reachable dialects stand behind", () => {
+  const ddl = (columnTypes: Record<string, string>, dialect: Parameters<typeof buildResultExport>[1]["dialect"]) =>
+    buildResultExport("sql-ddl", source({ rows: [{ c: null }], fields: ["c"], dialect, columnTypes })).content;
+
+  // Measured through `bun:sqlite`: every candidate name parses except `set` (`near
+  // "set": syntax error`) and every one is stored verbatim in `pragma_table_info`, so
+  // a declared type survives a SQLite target as it was spelled.
+  test("keeps the names SQLite stores verbatim", () => {
+    for (const bare of ["varchar", "VARCHAR2", "CLOB", "longtext", "bytea", "NUMBER", "datetime2", "RAW"]) {
+      expect(ddl({ c: bare }, "sqlite")).toContain(`"c" ${bare}`);
+    }
+  });
+
+  // The three that do narrow, and they narrow silently — which is the SQL Server
+  // lesson. `enum`, `uniqueidentifier` and `rowid` match none of SQLite's affinity
+  // keywords, so the column gets NUMERIC affinity: measured, `INSERT INTO p (c)
+  // VALUES ('007')` into each of the three reads back as the INTEGER 7, where the
+  // same insert into a `varchar2` column reads back as the TEXT `007`.
+  test("re-spells the three SQLite names that convert a text value to a number", () => {
+    expect(ddl({ c: "enum" }, "sqlite")).toContain('"c" TEXT');
+    expect(ddl({ c: "uniqueidentifier" }, "sqlite")).toContain('"c" TEXT');
+    expect(ddl({ c: "rowid" }, "sqlite")).toContain('"c" TEXT');
+    // `set` is not in SQLite's grammar as a type name at all.
+    expect(ddl({ c: "set" }, "sqlite")).toContain('"c" TEXT');
+  });
+
+  // Measured on ClickHouse 26.7.1, read back out of `system.columns`: every character
+  // and byte alias it knows resolves to `String`, which is unbounded — and its alias
+  // set is wider than the defect report assumed, `VARCHAR2` and `CLOB` included, so those two
+  // columns of an Oracle result were never the defect there. `BINARY_DOUBLE` was.
+  test("keeps ClickHouse's own character and byte aliases", () => {
+    for (const bare of ["varchar", "VARCHAR2", "clob", "longtext", "blob", "bytea", "varbinary", "timestamp", "year"]) {
+      expect(ddl({ c: bare }, "clickhouse")).toContain(`"c" ${bare}`);
+    }
+  });
+
+  test("re-spells what ClickHouse does not know or would narrow", () => {
+    // `Unknown data type family: nvarchar2` / `: number` / `: binary_double`, each
+    // suggesting a name ClickHouse does have (`['NVARCHAR','VARCHAR2']`).
+    expect(ddl({ c: "NVARCHAR2" }, "clickhouse")).toContain('"c" TEXT');
+    expect(ddl({ c: "uniqueidentifier" }, "clickhouse")).toContain('"c" TEXT');
+    expect(ddl({ c: "BINARY_DOUBLE" }, "clickhouse")).toContain('"c" DOUBLE PRECISION');
+    expect(ddl({ c: "NUMBER" }, "clickhouse")).toContain('"c" DOUBLE PRECISION');
+    // Narrowings rather than refusals: `decimal` is stored as `Decimal(10, 0)`, which
+    // rounds every decimal the column existed for, and MySQL's `set` — a character
+    // type — is stored as `UInt64`, because ClickHouse's `SET` is something else
+    // entirely.
+    expect(ddl({ c: "decimal" }, "clickhouse")).toContain('"c" DOUBLE PRECISION');
+    expect(ddl({ c: "numeric" }, "clickhouse")).toContain('"c" DOUBLE PRECISION');
+    expect(ddl({ c: "set" }, "clickhouse")).toContain('"c" TEXT');
+  });
+
+  // The trap: Trino's own `varchar` is legal AND unbounded, so widening the
+  // rule to re-spell from the family whenever the target is unmeasured would have
+  // turned it into a `TEXT` Trino answers `Unknown type 'text'` to.
+  test("never turns Trino's own unbounded varchar into a TEXT it does not have", () => {
+    expect(ddl({ c: "varchar" }, "trino")).toContain('"c" varchar');
+    expect(ddl({ c: "varchar" }, "trino")).not.toContain("TEXT");
+  });
+
+  test("keeps the other Trino names measured to store unnarrowed", () => {
+    for (const bare of ["varbinary", "timestamp", "timestamp with time zone"]) {
+      expect(ddl({ c: bare }, "trino")).toContain(`"c" ${bare}`);
+    }
+  });
+
+  // Measured on Trino 476 through the memory connector: `text`, `clob`, `blob` and
+  // `varchar2` are all `Unknown type`, `char` is stored as `char(1)` and `decimal` as
+  // `decimal(38,0)` — the two narrowings. `VARCHAR`, not `TEXT`, is the spelling Trino
+  // takes for a text column (`stored=varchar`).
+  test("spells a name Trino does not have as Trino's own", () => {
+    expect(ddl({ c: "text" }, "trino")).toContain('"c" VARCHAR');
+    expect(ddl({ c: "VARCHAR2" }, "trino")).toContain('"c" VARCHAR');
+    expect(ddl({ c: "char" }, "trino")).toContain('"c" VARCHAR');
+    expect(ddl({ c: "CLOB" }, "trino")).toContain('"c" VARCHAR');
+    expect(ddl({ c: "blob" }, "trino")).toContain('"c" VARBINARY');
+    expect(ddl({ c: "decimal" }, "trino")).toContain('"c" DOUBLE PRECISION');
+  });
+
+  // Measured on Cassandra 5.0.9, read back out of `system_schema.columns`: exactly
+  // five of the candidate names are in CQL's grammar, and all five are unbounded —
+  // `varchar` is an alias stored as `text`, and `decimal` is arbitrary-precision.
+  test("keeps the five bare names Cassandra has", () => {
+    for (const bare of ["text", "varchar", "blob", "decimal", "timestamp"]) {
+      expect(ddl({ c: bare }, "cassandra")).toContain(`"c" ${bare}`);
+    }
+  });
+
+  // `DOUBLE PRECISION` is a SyntaxException in CQL (`no viable alternative at input
+  // 'PRECISION'`), so the standard spelling is the one thing a numeric column must NOT
+  // get here; `double` is the whole name.
+  test("spells a foreign name as CQL, whose numeric type is DOUBLE with no PRECISION", () => {
+    expect(ddl({ c: "VARCHAR2" }, "cassandra")).toContain('"c" TEXT');
+    expect(ddl({ c: "BINARY_DOUBLE" }, "cassandra")).toContain('"c" DOUBLE');
+    expect(ddl({ c: "BINARY_DOUBLE" }, "cassandra")).not.toContain("PRECISION");
+    expect(ddl({ c: "numeric" }, "cassandra")).toContain('"c" DOUBLE');
+    expect(ddl({ c: "datetime" }, "cassandra")).toContain('"c" TIMESTAMP');
+    expect(ddl({ c: "bytea" }, "cassandra")).toContain('"c" BLOB');
+  });
+
+  // A value-shaped guess reaches the same two tables, so the two rows above fix it in
+  // the same place: a Cassandra target used to get `DOUBLE PRECISION` for a decimal
+  // value and a Trino target `TEXT` for a string, neither of which parses.
+  test("spells an inferred column the same way", () => {
+    const row = (value: unknown) => ({ rows: [{ c: value }], fields: ["c"] });
+
+    expect(buildResultExport("sql-ddl", source({ ...row(4.99), dialect: "cassandra" })).content).toContain(
+      '"c" DOUBLE',
+    );
+    expect(buildResultExport("sql-ddl", source({ ...row("Ada"), dialect: "trino" })).content).toContain('"c" VARCHAR');
+  });
+
+  // No target dialect means the file is not addressed to any engine, so an Oracle-only
+  // spelling is definitionally wrong in it: the portable standard names are written
+  // instead, which is what the value-shaped path already produced there.
+  test("writes portable standard SQL when there is no target dialect", () => {
+    expect(ddl({ c: "VARCHAR2" }, undefined)).toContain('"c" TEXT');
+    expect(ddl({ c: "BINARY_DOUBLE" }, undefined)).toContain('"c" DOUBLE PRECISION');
+    expect(ddl({ c: "CLOB" }, undefined)).toContain('"c" TEXT');
+    expect(ddl({ c: "RAW" }, undefined)).toContain('"c" BLOB');
+    expect(ddl({ c: "datetime" }, undefined)).toContain('"c" TIMESTAMP');
+    expect(ddl({ c: "year" }, undefined)).toContain('"c" BIGINT');
+  });
+
+  // The seven dialects no row could be measured for: Druid takes no INSERT without the
+  // MSQ extension, the two search endpoints parse no CREATE TABLE, and the other four
+  // declare `queryLanguage: "json"` so no statement is ever built for them to read.
+  // A file for one of those is a file meant to run somewhere else, so it gets the same
+  // portable spelling as no dialect at all rather than a guessed row.
+  test("writes portable standard SQL for the dialects that parse no CREATE TABLE", () => {
+    // The identifier quoting differs per dialect and is not what this is about, so the
+    // assertion is on the type name alone.
+    for (const dialect of [
+      "druid",
+      "elasticsearch",
+      "opensearch",
+      "mongodb",
+      "redis",
+      "libredb",
+      "couchbase",
+    ] as const) {
+      expect(ddl({ c: "VARCHAR2" }, dialect)).toContain(" TEXT\n");
+      expect(ddl({ c: "BINARY_DOUBLE" }, dialect)).toContain(" DOUBLE PRECISION\n");
+    }
   });
 });

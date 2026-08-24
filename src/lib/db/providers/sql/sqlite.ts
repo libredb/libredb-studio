@@ -119,6 +119,25 @@ const STATS_TABLES_SQL = `
       ORDER BY name
     `;
 
+// Per-object page bytes. `dbstat` is a virtual table behind the compile-time
+// SQLITE_ENABLE_DBSTAT_VTAB option: node:sqlite carries it, bun:sqlite does not
+// ("no such table: dbstat", measured 2026-08-24 on Bun 1.3.14 / SQLite 3.53.0
+// against a working row from node:sqlite 3.51.2 / Node 24.14.0). It is the only
+// per-table size SQLite publishes at all - there is no catalog column for it - and
+// reading it costs a scan of the whole database file, which is acceptable on the
+// monitoring tab and is why nothing else calls it.
+const DBSTAT_SIZES_SQL = `
+      SELECT name, SUM(pgsize) AS bytes FROM dbstat GROUP BY name
+    `;
+
+// Every index and which table it belongs to. Deliberately NOT filtered by
+// `name NOT LIKE 'sqlite_%'` the way STATS_INDEXES_SQL is: an implicit
+// `sqlite_autoindex_*` occupies real pages and belongs in its table's index bytes,
+// even though it is not an index a user declared and so is not listed on its own.
+const DBSTAT_INDEX_OWNERS_SQL = `
+      SELECT name, tbl_name FROM sqlite_master WHERE type = 'index'
+    `;
+
 const STATS_INDEXES_SQL = `
       SELECT name, tbl_name FROM sqlite_master
       WHERE type = 'index' AND name NOT LIKE 'sqlite_%'
@@ -157,6 +176,93 @@ export function assertQueryOnlyEnabled(readback: unknown[]): void {
       "sqlite",
     );
   }
+}
+
+// ============================================================================
+// Per-table sizes (dbstat)
+// ============================================================================
+
+/** One table's measured page bytes, split between its own b-tree and its indexes. */
+export interface SQLiteTableSizeBytes {
+  tableSizeBytes: number;
+  indexSizeBytes: number;
+}
+
+/**
+ * Read per-object page bytes out of `dbstat`, or answer `null` when the driver has
+ * no such table.
+ *
+ * `null` is the whole point: the two SQLite drivers disagree about dbstat (see
+ * DBSTAT_SIZES_SQL), and `LIBREDB_SQLITE_DRIVER` lets a user switch between them, so
+ * both answers have to be right. What used to fill the gap was `rowCount * 100`
+ * ("Assume 100 bytes average per row") which the Storage tab summed into the Data
+ * figure it drew beside the measured database size.
+ *
+ * Takes the database handle as a parameter, and is exported, so that BOTH answers are
+ * testable in-process under Bun - whose driver can only ever produce the `null` one.
+ */
+export function readDbstatSizes(db: SQLiteDatabase): Map<string, SQLiteTableSizeBytes> | null {
+  let pages: { name: string; bytes: number }[];
+  try {
+    pages = db.prepare(DBSTAT_SIZES_SQL).all() as { name: string; bytes: number }[];
+  } catch {
+    return null;
+  }
+
+  const owners = db.prepare(DBSTAT_INDEX_OWNERS_SQL).all() as { name: string; tbl_name: string }[];
+  const bytesByObject = new Map(pages.map((page) => [page.name, Number(page.bytes) || 0]));
+  const indexNames = new Set(owners.map((owner) => owner.name));
+  const sizes = new Map<string, SQLiteTableSizeBytes>();
+
+  const entryFor = (tableName: string): SQLiteTableSizeBytes => {
+    const existing = sizes.get(tableName);
+    if (existing) return existing;
+    const created = { tableSizeBytes: 0, indexSizeBytes: 0 };
+    sizes.set(tableName, created);
+    return created;
+  };
+
+  // Indexes first, so an index's pages land on its table rather than on a name of
+  // their own - the Storage tab's index total is the per-TABLE figure.
+  for (const owner of owners) {
+    entryFor(owner.tbl_name).indexSizeBytes += bytesByObject.get(owner.name) ?? 0;
+  }
+  for (const [name, bytes] of bytesByObject) {
+    if (!indexNames.has(name)) entryFor(name).tableSizeBytes += bytes;
+  }
+
+  return sizes;
+}
+
+/**
+ * Build one table's stats row. `size` is `null` when this driver publishes no page
+ * bytes, and then the byte fields are OMITTED rather than zeroed: a 0 reads as an
+ * empty table on the Storage tab, which is the same fabrication the `rowCount * 100`
+ * estimate was. `totalSize`/`totalSizeBytes` are still required by `TableStats`, so
+ * they carry the "N/A" / 0 placeholder that `getIndexStats()` already uses for
+ * `indexSize` (#469) - the tab keys off the absent `tableSizeBytes` and draws neither.
+ *
+ * Exported for the same reason as readDbstatSizes: the populated branch is only ever
+ * reached under node:sqlite, and it is tested under Bun by being handed the sizes.
+ */
+export function buildTableStats(tableName: string, rowCount: number, size: SQLiteTableSizeBytes | null): TableStats {
+  if (!size) {
+    return { schemaName: "main", tableName, rowCount, totalSize: "N/A", totalSizeBytes: 0 };
+  }
+
+  const totalSizeBytes = size.tableSizeBytes + size.indexSizeBytes;
+
+  return {
+    schemaName: "main",
+    tableName,
+    rowCount,
+    tableSize: formatBytes(size.tableSizeBytes),
+    tableSizeBytes: size.tableSizeBytes,
+    indexSize: formatBytes(size.indexSizeBytes),
+    indexSizeBytes: size.indexSizeBytes,
+    totalSize: formatBytes(totalSizeBytes),
+    totalSizeBytes,
+  };
 }
 
 // ============================================================================
@@ -801,6 +907,8 @@ export class SQLiteProvider extends SQLBaseProvider {
     const tablesStmt = this.db!.prepare(STATS_TABLES_SQL);
     const tables = tablesStmt.all() as { name: string }[];
 
+    // One dbstat scan per call, not per table: it reads the whole database file.
+    const sizes = readDbstatSizes(this.db!);
     const stats: TableStats[] = [];
 
     for (const { name: tableName } of tables) {
@@ -809,25 +917,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       const countResult = countStmt.get() as { count: number };
       const rowCount = countResult?.count || 0;
 
-      // Estimate table size (SQLite doesn't provide per-table sizes)
-      // Use page count approximation
-      let tableSizeBytes = 0;
-      try {
-        // Rough estimate: rows * average row size
-        tableSizeBytes = rowCount * 100; // Assume 100 bytes average per row
-      } catch {
-        // Ignore
-      }
-
-      stats.push({
-        schemaName: "main",
-        tableName,
-        rowCount,
-        tableSize: formatBytes(tableSizeBytes),
-        tableSizeBytes,
-        totalSize: formatBytes(tableSizeBytes),
-        totalSizeBytes: tableSizeBytes,
-      });
+      stats.push(buildTableStats(tableName, rowCount, sizes?.get(tableName) ?? null));
     }
 
     return stats;

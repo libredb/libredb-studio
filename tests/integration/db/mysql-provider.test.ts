@@ -7,6 +7,7 @@ import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import type { DatabaseConnection } from "@/lib/types";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
+import { asBytes, binaryText } from "@/lib/export/binary";
 
 // ============================================================================
 // Mock mysql2/promise BEFORE importing the provider
@@ -501,6 +502,51 @@ describe("MySQLProvider", () => {
       const row = result.rows[0] as Record<string, unknown>;
       expect(row.id).toBe(1);
       expect(row.name).toBe("test");
+    });
+
+    /**
+     * A BLOB reaches every surface AS BYTES.
+     *
+     * The provider used to answer the string `0x0102ab` for these three bytes, so
+     * the grid showed `0x0102ab` where Postgres showed `\x0102ab` and the SQL export
+     * wrote `'0x0102ab'` - eight characters of text into a BLOB column, which is the
+     * defect #469 fixed for every other engine, entered one layer earlier. Measured
+     * against MySQL 26.7.0 before the change; see docs/providers/mysql.md §3.3.
+     */
+    describe("a binary value", () => {
+      async function queryBinary(value: unknown): Promise<unknown> {
+        provider = new MySQLProvider(makeMySQLConfig());
+        await provider.connect();
+        mockExecuteFn = () => Promise.resolve([[{ b: value }], [{ name: "b" }]]);
+        const result = await provider.query("SELECT b FROM types");
+        return (result.rows[0] as Record<string, unknown>).b;
+      }
+
+      test("is handed on as bytes, spelled the one way every surface spells it", async () => {
+        const bytes = asBytes(await queryBinary(Buffer.from("0102ab", "hex")));
+
+        expect(bytes).toEqual(new Uint8Array([1, 2, 171]));
+        expect(binaryText(bytes as Uint8Array)).toBe("\\x0102ab");
+      });
+
+      test("survives the JSON the API response is made of", async () => {
+        const overTheWire: unknown = JSON.parse(JSON.stringify(await queryBinary(Buffer.from("0102ab", "hex"))));
+
+        expect(binaryText(asBytes(overTheWire) as Uint8Array)).toBe("\\x0102ab");
+      });
+
+      test("is an empty byte string when empty, not the empty text one", async () => {
+        // This answered `""` before, which reads as a zero-length VARCHAR: an empty
+        // BLOB and an empty string are different values and were spelled alike.
+        const bytes = asBytes(await queryBinary(Buffer.alloc(0)));
+
+        expect(bytes).toEqual(new Uint8Array(0));
+        expect(binaryText(bytes as Uint8Array)).toBe("\\x");
+      });
+
+      test("stays null when the column is NULL", async () => {
+        expect(await queryBinary(null)).toBeNull();
+      });
     });
   });
 

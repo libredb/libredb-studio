@@ -22,10 +22,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S1–S8 · 8
-- [Drivers and connections](#drivers-and-connections) — D1–D16, U17 · 10
+- [Drivers and connections](#drivers-and-connections) — D1–D20, U17 · 11
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X11, U2–U18 · 10
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X13, U2–U18 · 10
 - [Authentication and security headers](#authentication-and-security-headers) — AU2
 - [Tests](#tests) — T1–T3 · 2
 - [Dependencies](#dependencies) — P1–P5 · 5
@@ -36,7 +36,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C2–C10 · 9
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K2–K4 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A6 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B56 · 38
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B57 · 39
 
 ---
 
@@ -226,56 +226,6 @@ re-run. So six surfaces and two maintenance actions are candidates for recovery,
 SingleStore and StarRocks rows in `docs/providers/README.md` are re-probed against that build.
 
 ---
-### D9. The Cassandra monitoring surfaces throw when `system_views` is absent, and a registered engine loses six of them
-
-Four reads in `src/lib/db/providers/sql/cassandra/introspect.ts` query Cassandra's `system_views`
-virtual tables with no path for that keyspace not existing: `getOverview` (371),
-`getPerformanceMetrics` (426), `getActiveSessions` (455) and `getHealth` (533). `getMonitoringData` is
-the fifth failure, because `base-provider.ts:99` aggregates those. Test Connection is the sixth:
-`POST /api/db/test-connection` calls `provider.getHealth()`
-(`src/app/api/db/test-connection/route.ts:33`).
-
-Measured 2026-08-21/22 against live `scylladb/scylla:2026.2.4` and `scylladb/scylla:2025.1` through
-`createDatabaseProvider({type:"cassandra"})`, surface by surface, with `cassandra:5.0.9` in the same
-pass. All thirteen surfaces this provider offers pass on 5.0.9 — thirteen because it offers neither
-cancellation nor `EXPLAIN`. On both ScyllaDB builds the same five fail with the same verbatim error,
-`Keyspace system_views does not exist`, and the other eight pass: `connect`, `query`, `getSchema`,
-`getSlowQueries`, `getTableStats`, `getIndexStats`, `getStorageStats`, `disconnect`. ScyllaDB has no
-`system_views` keyspace at all; `system.local`, `system_schema.*` and `system.size_estimates` all
-exist and answer.
-
-**The seventh failure is what makes this a blocker rather than a blemish, and only a browser pass
-found it.** `handleConnect` (`src/hooks/use-connection-form.ts:346`) gates the SAVE on that same
-request — `if (result.success) onConnect(conn)` — so Establish Connection refuses too and nothing is
-stored. A ScyllaDB connection cannot be created through the connection dialog at all; the browser
-pass reached the editor only through a seeded, admin-managed connection. **Not ScyllaDB-only:**
-StarRocks and SingleStore are registered relatives whose health surface also fails (D8), so the same
-gate applies to them by inspection — measured for ScyllaDB, inferred for those two, recorded in
-neither row.
-
-Two more surfaces were measured while there. The monitoring dashboard renders one *Connection Error*
-page reading `Keyspace system_views does not exist`, which the connection is not — the same
-mislabelling the Cloudberry row records. The header badge reads *Slow* with the title *Connection:
-degraded*, which is the failing health request rather than latency.
-
-**The provider does degrade a monitoring read to empty — but only on the wrong condition.** §3.6 of
-`docs/providers/cassandra.md` records the rule as measured: a monitoring read degrades on a
-`permission` denial (Cassandra error 8448) **and on nothing else**, deliberately, so that a typo in
-this provider's own CQL is not hidden by an empty panel. An absent keyspace is not a denial, so it
-propagates.
-
-**The recovery is plausible and unmeasured, and the difference matters.** Widening the degradation
-contract to cover an absent `system_views` would plausibly lift the ScyllaDB row in
-`src/lib/db/compatibility.ts` from `partial` to `full` and make the dialog work. Nothing was changed
-and no panel was re-run, so that is a candidate, not a result. It is also not free: it widens the
-condition §3.6 argues for narrowing, so a `system_views` typo in our own CQL must still surface as a
-failure rather than an empty panel.
-
-**Done when:** an absent `system_views` keyspace degrades those five reads the way a denial does, a
-`system_views` typo still fails loudly, the dialog can create a ScyllaDB connection — or the save
-stops being gated on health, which is the wider question and should be answered for StarRocks and
-SingleStore in the same pass — and the ScyllaDB row in `docs/providers/README.md` is re-probed
-against that build.
 
 ---
 ### U17. Four things the Cassandra provider declined to do
@@ -362,21 +312,6 @@ first-contact policy is written in `docs/providers/`-adjacent documentation the 
 
 ---
 
-### D13. Oracle answers every non-SELECT with `rowCount: 0`, including the rows it just wrote
-
-`oracle.ts:419` builds the envelope from `rows.length` and never reads `oracledb`'s own
-`result.rowsAffected`, so an `INSERT` that inserted a row, an `UPDATE` that changed one and a `DELETE`
-that removed one all report zero. Measured 2026-08-23 through `createDatabaseProvider({type:"oracle"})`
-against Oracle Free 23ai, with a following `SELECT` proving each statement took effect. Oracle is the
-only one of the five SQL providers that does this: postgres reports `rowCount ?? 0`, mssql
-`rowsAffected[0]`, sqlite `changes`, and mysql was fixed in the same pass that found this.
-
-Milder than the MySQL defect it was found beside - nothing throws, the statement runs, the panel just
-says nothing happened. The user's own count is the only thing that contradicts it.
-
-**Done when:** a non-SELECT through the Oracle provider reports the affected-row count the driver
-returns, with a live run showing a non-zero count for an `INSERT`.
-
 ---
 
 ### D14. Three providers lost the buffer-pool gauge, because it was the cache hit ratio wearing a second name
@@ -397,23 +332,6 @@ that reads a real pool has a cost the panel has never paid.
 the query, or the field is dropped from `PerformanceMetrics` so no panel offers a gauge nothing fills.
 
 ---
-
-### D15. SQLite's table size is `rowCount * 100`, and the storage panel adds it up
-
-`sqlite.ts` computes `tableSizeBytes = rowCount * 100` with the comment "Assume 100 bytes average per
-row". The StorageTab sums it into the *Data* figure it draws next to the database size, so every
-SQLite connection's storage breakdown is a guess presented as a measurement - the same class as the
-cache hit ratios removed on 2026-08-23, and left behind by that change for one reason: both
-`TableStats.tableSize` and `tableSizeBytes` are REQUIRED in `src/lib/db/types.ts`, so an honest absence
-needs a type change, and zeroing them silently re-bases the aggregate for every SQLite connection.
-
-`dbstat` is the real answer and it is not portable: `node:sqlite` has the virtual table
-(`SQLITE_ENABLE_DBSTAT_VTAB`) and `bun:sqlite` does not - measured 2026-08-23, `no such table: dbstat`
-on Bun 1.3.14 / SQLite 3.53.0 against a row from `node:sqlite` 3.51.2. So the per-driver answer
-differs, which is the decision this entry is waiting on.
-
-**Done when:** SQLite reports a table size it measured or reports none, the two fields allow the
-absence, and the storage panel's Data figure is verified against a real file on both drivers.
 
 ---
 
@@ -438,6 +356,96 @@ schemes joined them.
 
 **Done when:** a pasted string's TLS parameter reaches the form, and either `SSLMode` gains a
 representation for opportunistic TLS or the mapping's refusal to guess is recorded here.
+
+---
+
+### D17. `DatabaseOverview.activeConnections` cannot say "not published", so an unmeasured count reads 0
+
+The overview card publishes a connection count as a required `number`. Two cases have nothing to put
+there and both answer `0`: ScyllaDB, whose count lives in the `system_views` keyspace it does not have
+(measured 2026-08-24 - every other number on that panel is real, and this one is the residue the
+degradation leaves), and a Cassandra role denied the same grant, which has answered `0` since the
+provider shipped. `OverviewTab` renders it beside *no limit published*, so a server with sessions open
+reads as a server with none.
+
+Same shape as the cache hit ratio removed on 2026-08-23 and the SQLite table size removed on
+2026-08-24: a required field is what forces the fabrication, and the fix is the type plus every
+consumer of the aggregate gating on the absence. `maxConnections` is the second half of the same card
+and has the same problem, with one difference worth keeping: `0` there already MEANS "no limit
+published" and is documented as such (`OverviewTab.tsx:47`), so the two halves need different answers.
+
+**Done when:** a provider that cannot measure the connection count reports none, the card says so, and
+the ScyllaDB row in `docs/providers/README.md` loses its "Connections reads `0` rather than `N/A`"
+caveat.
+
+---
+
+---
+
+### D18. Two engines hand back a number that has already lost digits
+
+Measured 2026-08-24 against Oracle Free 23ai through the provider: `NUMBER(38,0)` holding
+`12345678901234567890123456789012345678` arrives as a JS `number` and serializes as
+`1.2345678901234568e+37`, and `NUMBER(20,4)` holding `1234567890123456.7891` arrives as
+`1234567890123456.8`. The grid, the CSV, the SQL export and the agent's summary all read that, so the
+digits are gone before any surface could show them - and nothing says so.
+
+`docs/providers/mssql.md` records the same class for `BIGINT`, `DECIMAL`/`NUMERIC` and `MONEY` beyond
+2^53. Postgres avoids it by returning `numeric` as a string, which is why the DDL export can only
+guess integer/boolean/text from a value there - the precision is kept and the type is what is missing.
+Trino and Cassandra keep theirs as strings too, deliberately (`docs/providers/cassandra.md` §3.8: a
+`bigint` reaching `Number()` becomes 9223372036854776000).
+
+So the fix has a precedent in this repo and it is not free: fetching Oracle `NUMBER` and SQL Server
+`DECIMAL` as strings changes every numeric cell those engines produce - grid alignment, the charts'
+axes, the agent's arithmetic, `ORDER BY` on a client-sorted column. It was deliberately left out of
+the LOB fix for exactly that reason: a LOB was unreadable, a number is wrong, and the second needs its
+own pass over every consumer.
+
+**Done when:** a value one of these engines cannot represent as a JS number reaches the grid with its
+digits intact, and every consumer of a numeric cell has been checked against the new shape.
+
+---
+
+### D19. Oracle's time and interval types lose or hide what they carry
+
+Measured 2026-08-24 over the same probe table:
+
+| Type | Value | Arrives as | On the wire |
+| --- | --- | --- | --- |
+| `TIMESTAMP WITH TIME ZONE` | `10:11:12.345678 +03:00` | `Date` | `"2026-08-24T07:11:12.345Z"` |
+| `TIMESTAMP WITH LOCAL TIME ZONE` | same | `Date` | `"2026-08-24T10:11:12.345Z"` |
+| `INTERVAL YEAR TO MONTH` | `3-7` | `IntervalYM` | `{"months":7,"years":3}` |
+| `INTERVAL DAY TO SECOND` | `5 6:7:8.9` | `IntervalDS` | `{"fseconds":900000000,"seconds":8,"minutes":7,"hours":6,"days":5}` |
+
+The two timestamps fold the stored offset into UTC and drop sub-millisecond precision - the column's
+whole point is the offset it kept, and `+03:00` is not recoverable from the answer. The two intervals
+are lossless but arrive as objects nothing reconstructs: neither reads as the Oracle literal a user
+typed, and neither replays through the SQL export.
+
+The Cassandra provider already answers this shape of question the way it should be answered - a
+`Duration` is normalised to its own CQL literal (`1mo2d3h`) at the driver boundary, and the reason is
+written down in `docs/providers/cassandra.md` §3.8.
+
+**Done when:** an Oracle interval reaches the grid as the literal Oracle would accept back, and a
+`TIMESTAMP WITH TIME ZONE` either keeps its offset or the doc says plainly that it cannot.
+
+---
+
+### D20. `oracledb` is declared `any`, so nothing in the Oracle provider is checked against the driver
+
+`src/types/db-drivers.d.ts` declares the whole `oracledb` module as `any`. So `oracledb.STRING`,
+`result.rowsAffected`, `metaData[].dbTypeName` and the `fetchTypeHandler` contract are all unchecked,
+and two changes on 2026-08-24 had to declare their own local structural types (`Result`,
+`FetchTypeHandler`) rather than import the driver's - which the driver does ship.
+
+Both defects fixed in the Oracle provider that day were shapes the type checker could have named: a
+non-SELECT answer with no `rows` array, and a LOB arriving as a stream. The tests could not see them
+either, because the mock was written against the same `any`.
+
+**Done when:** the Oracle provider compiles against `oracledb`'s own published types, or the reason it
+cannot is recorded here with what breaks.
+
 
 ## Value interpolation
 
@@ -545,66 +553,47 @@ measured while doing it, and each is a small residue rather than a defect:
 **Done when:** each bound is closed or judged settled, with the enum case the only one a user is
 likely to meet.
 
-### X10. Two providers stringify their bytes before the export can see them, so the binary literal never reaches them
+### X12. A declared type the export cannot map still reaches every target verbatim
 
-The SQL export writes a real per-dialect binary literal since 2026-08-23, and it only reaches a value
-that arrives AS BYTES. Two providers normalise at the driver boundary first:
+`completeDeclaredType` re-spells a bare declared type the target dialect does not stand behind, and it
+can only re-spell a name that is in `BARE_TYPE_FAMILY` - the four families whose parameters the wire
+drops. Everything else goes through as the declaring engine wrote it, which is fine for a target that
+happens to know the word and fatal for one that does not. Measured 2026-08-24, a Postgres result under
+each target after the stands-alone work landed:
 
-- `mysql.ts`'s `sanitizeRow` turns a `Buffer` into the string `` `0x${hex}` `` (an empty one into `""`).
-- `cassandra/driver-transport.ts:234` does the same, deliberately - §3.8 of `docs/providers/cassandra.md`
-  records it, because `JSON.stringify` on a `Buffer` gives the wire shape and the CQL literal is `0x…`.
-
-So on those two engines a binary cell is a TEXT value by the time any consumer sees it. Measured in
-the browser (2026-08-23, production build, `SELECT ... b FROM types` on MySQL 26.7.0): the grid shows
-`0x0102ab` where Postgres shows `\x0102ab`, and the SQL INSERT export writes `'0x0102ab'` - the
-eight-character string, not the three bytes. Replayed into a `BLOB` column that stores the text, which
-is the same defect the export just fixed for every other engine, entered one layer earlier.
-
-It is also the only place the product spells the same value two ways.
-
-The fix is to let the bytes through and let `src/lib/export/binary.ts` render them, which is what
-Postgres already does - not to teach the export to recognise a `0x…` string, because that is
-shape-guessing a text column, which this file forbids elsewhere for good reason. The cost is a visible
-change on both engines (`0x…` becomes `\x…` in the grid, the row sheet and the CSV) plus the two docs
-that state the current spelling, and Cassandra's own reason for normalising has to be answered rather
-than reverted.
-
-**Done when:** a binary cell from MySQL and from Cassandra exports as its dialect's binary literal and
-replays into its own engine, with one spelling shown across every surface.
-
-### X11. A foreign engine's type name still reaches a target dialect nobody measured
-
-The DDL export re-spells a bare declared type the target dialect does not stand behind, and it can
-only do that for the four dialects whose bare names were measured one `CREATE TABLE probe (c <name>)`
-at a time: postgres, mysql, oracle and mssql (`STANDS_ALONE` in
-`src/lib/export/result-export.ts`). A dialect absent from that table has nothing completed - which is
-right when the DECLARING engine is one of the six wire formats that spell their types out in full,
-and wrong when a bare name arrives from somewhere else.
-
-Measured 2026-08-24, an Oracle result exported under each target:
-
-| Target | `NAME` (Oracle `VARCHAR2`) | `DBL` (`BINARY_DOUBLE`) | `BODY` (`CLOB`) |
+| Declared | ClickHouse | Trino | Cassandra |
 | --- | --- | --- | --- |
-| postgres | `TEXT` | `DOUBLE PRECISION` | `TEXT` |
-| mysql | `TEXT` | `DOUBLE` | `TEXT` |
-| mssql | `NVARCHAR(MAX)` | `FLOAT` | `NVARCHAR(MAX)` |
-| clickhouse | **`VARCHAR2`** | **`BINARY_DOUBLE`** | **`CLOB`** |
-| *(no connection)* | **`VARCHAR2`** | **`BINARY_DOUBLE`** | **`CLOB`** |
+| `jsonb` | `Code: 50 ... Unknown data type family: jsonb. Maybe you meant: ['JSON']` | `Unknown type 'jsonb'` | refused |
+| `double precision` | resolves | resolves | `no viable alternative at input 'precision'` |
+| MySQL `json` | resolves | resolves | `mismatched input ',' expecting '.'` |
 
-The last two rows are files that replay nowhere. Reachable the same way the measured rows are: both
-shells pass the ACTIVE connection's type beside the tab's own result, so querying Oracle and then
-switching to a ClickHouse connection before exporting is enough. The no-connection row is the one
-that regressed - before the four node drivers declared anything, a value-shaped guess wrote
-`TEXT` / `DOUBLE PRECISION` there, which is portable, and an Oracle-only spelling is not.
+So the DDL for an ordinary Postgres table with a `jsonb` column replays into neither ClickHouse nor
+Trino. This is the "translation problem rather than this one" the module's own comment names: it needs a
+type-translation table (declared name x target dialect), not another stands-alone row, and the table has
+to answer what a target does when it has no equivalent at all - a JSON column into Cassandra is `text`,
+and calling that lossless would be a lie.
 
-**It cannot be fixed by widening the rule.** Re-spelling from the family whenever the target is
-unmeasured breaks Trino, whose own bare `varchar` is legal and unbounded and would become the `TEXT`
-Trino does not have. So each remaining dialect needs its own measured `STANDS_ALONE` row -
-clickhouse, trino, cassandra, sqlite, druid and the two search engines - which is a live container
-per engine, the same way the first four were done.
+**Done when:** a declared type the target cannot parse is either translated or refused with something a
+reader can act on, proven by replaying a `jsonb` and a `json` result into ClickHouse, Trino and
+Cassandra.
 
-**Done when:** every dialect the export offers has a measured stands-alone set (or a written reason
-it needs none), and an Oracle or MySQL result exported under each of them replays into that engine.
+---
+
+### X13. Every Cassandra `CREATE TABLE` the export writes is rejected, because CQL requires a PRIMARY KEY
+
+Measured 2026-08-24: `CREATE TABLE probe.nopk (a text, b bigint)` is
+`InvalidRequest ... No PRIMARY KEY specifed for table 'probe.nopk' (exactly one required)`. The DDL
+export writes a column list and nothing else, so its Cassandra output cannot run at all - the type
+names became right on 2026-08-24 and the statement still needs a hand edit.
+
+Which column should be the key is not something a result set knows. The candidates: the first column
+(wrong often enough to be dangerous), the columns the provider's own `getSchema()` reports as the
+partition key (right, and only available when the result came from one known table), or a placeholder
+line the user must edit, which at least fails loudly rather than silently choosing. A generated file that
+does not run is not automatically worse than one that runs against the wrong key.
+
+**Done when:** the Cassandra DDL either carries a key the schema justifies or says in the file what the
+reader has to supply, and the generated statement replays.
 
 ### U2. The rule that catches an arity change on a JSX handler is configured but not aimed at components
 
@@ -1537,6 +1526,24 @@ or this entry is deleted with a note that the hand-serializer is preferred.
 ---
 
 ## Agent M2 deferrals (#329)
+
+### B57. The agent reads a binary cell as its wire JSON
+
+`renderRows` in `src/lib/agent/tools.ts` puts result rows into the model's prompt with a plain
+`JSON.stringify`, so a `bytea`, `BLOB` or `blob` value reaches the LLM as
+`{"type":"Buffer","data":[1,2,171]}` - four bytes of digits per byte of data, and a shape the model has
+to guess at. Every other surface in the product has read the same value as `\x0102ab` since
+2026-08-23; MySQL and Cassandra joined them on 2026-08-24, which is what brought this into view.
+
+Not new behaviour and not a data loss - the fix is one `asBytes`/`binaryText` call, the same module the
+grid, the row sheet and the CSV read. The reason it is worth doing is the token cost and the guessing:
+a 160-byte value spends about 640 characters of context saying nothing the hex would not say in 320.
+
+`src/lib/agent/state-guard.ts` is unaffected - `RESULT_PAYLOAD_KEYS` refuses a raw result set
+wholesale, so no row value reaches agent run state.
+
+**Done when:** a binary cell reaches the model as the hex every other surface shows, with a token
+count measured before and after.
 
 ### B1. A module-private credential map would be invisible to the agent state guard
 

@@ -12,7 +12,12 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
-import { SQLiteProvider, assertQueryOnlyEnabled } from "@/lib/db/providers/sql/sqlite";
+import {
+  SQLiteProvider,
+  assertQueryOnlyEnabled,
+  buildTableStats,
+  readDbstatSizes,
+} from "@/lib/db/providers/sql/sqlite";
 import { resolveSQLiteDriverName } from "@/lib/db/providers/sql/sqlite-driver";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
@@ -595,6 +600,132 @@ describe("SQLiteProvider", () => {
       const usersStats = stats.find((s) => s.tableName === "users");
       expect(usersStats).toBeDefined();
       expect(typeof usersStats!.tableName).toBe("string");
+      expect(usersStats!.rowCount).toBe(2);
+    });
+
+    // The size used to be `rowCount * 100` ("Assume 100 bytes average per row"),
+    // and the Storage tab summed it into the Data figure it draws beside the measured
+    // database size. The real answer is `dbstat`, a compile-time virtual table that
+    // bun:sqlite does not carry - "no such table: dbstat", measured 2026-08-24 on Bun
+    // 1.3.14 / SQLite 3.53.0 against a working row from node:sqlite 3.51.2 - so under
+    // this driver there is no per-table size to report and the fields are omitted.
+    // A `0` would be the same fabrication in a different digit.
+    test("omits the size under bun:sqlite, where dbstat does not exist", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      await provider.query("CREATE TABLE wide (id INTEGER PRIMARY KEY, payload TEXT)");
+      await provider.query("INSERT INTO wide VALUES (1, 'x')");
+
+      const stats = await provider.getTableStats();
+      const wide = stats.find((s) => s.tableName === "wide")!;
+
+      expect(wide.rowCount).toBe(1);
+      expect(wide.tableSizeBytes).toBeUndefined();
+      expect(wide.tableSize).toBeUndefined();
+      expect(wide.indexSizeBytes).toBeUndefined();
+      // `totalSize`/`totalSizeBytes` are still required by the type, so they carry the
+      // same "N/A" placeholder `indexSize` uses in getIndexStats() (#469); the Storage
+      // tab keys off the ABSENT `tableSizeBytes` and draws neither.
+      expect(wide.totalSize).toBe("N/A");
+      expect(wide.totalSizeBytes).toBe(0);
+      // The guessed value, in case a regression reinstates the multiplication.
+      expect(wide.tableSizeBytes).not.toBe(100);
+    });
+
+    // The populated branch cannot be reached through the bun driver at all - it has no
+    // dbstat - so it is exercised by handing readDbstatSizes() a stand-in handle. The
+    // rows are the ones node:sqlite 3.51.2 actually returned for a seeded database
+    // (200 rows of 4 KB text in `big` with an index on it, 200 short rows in `small`):
+    //   dbstat -> big 823296, idx_big 929792, small 4096
+    // and the provider under LIBREDB_SQLITE_DRIVER=node reported exactly
+    // big 804 KB + 908 KB = 1.67 MB, small 4 KB + 0 B, both measured 2026-08-24.
+    test("aggregates dbstat page bytes per table, indexes onto their table", () => {
+      const dbstat = [
+        { name: "big", bytes: 823296 },
+        { name: "idx_big", bytes: 929792 },
+        { name: "small", bytes: 4096 },
+        { name: "sqlite_autoindex_small_1", bytes: 8192 },
+      ];
+      const owners = [
+        { name: "idx_big", tbl_name: "big" },
+        { name: "sqlite_autoindex_small_1", tbl_name: "small" },
+      ];
+      const fakeDb = {
+        exec: () => {},
+        close: () => {},
+        prepare: (sql: string) => ({
+          all: () => (sql.includes("dbstat") ? dbstat : owners),
+          get: () => null,
+          run: () => ({ changes: 0 }),
+        }),
+      };
+
+      const sizes = readDbstatSizes(fakeDb)!;
+
+      expect(sizes.get("big")).toEqual({ tableSizeBytes: 823296, indexSizeBytes: 929792 });
+      // An implicit sqlite_autoindex_* occupies real pages and is not a table of its
+      // own, so it counts as its table's index bytes and never as a row in the list.
+      expect(sizes.get("small")).toEqual({ tableSizeBytes: 4096, indexSizeBytes: 8192 });
+      expect(sizes.has("idx_big")).toBe(false);
+      expect(sizes.has("sqlite_autoindex_small_1")).toBe(false);
+    });
+
+    test("readDbstatSizes answers null when the driver has no dbstat", () => {
+      const fakeDb = {
+        exec: () => {},
+        close: () => {},
+        prepare: () => {
+          throw new Error("no such table: dbstat");
+        },
+      };
+
+      expect(readDbstatSizes(fakeDb)).toBeNull();
+    });
+
+    test("buildTableStats states the measured bytes when it has them", () => {
+      const stats = buildTableStats("big", 200, { tableSizeBytes: 823296, indexSizeBytes: 929792 });
+
+      expect(stats).toEqual({
+        schemaName: "main",
+        tableName: "big",
+        rowCount: 200,
+        tableSize: "804 KB",
+        tableSizeBytes: 823296,
+        indexSize: "908 KB",
+        indexSizeBytes: 929792,
+        totalSize: "1.67 MB",
+        totalSizeBytes: 1753088,
+      });
+    });
+
+    test("buildTableStats omits every byte field when it has none", () => {
+      const stats = buildTableStats("wide", 1, null);
+
+      expect(stats).toEqual({
+        schemaName: "main",
+        tableName: "wide",
+        rowCount: 1,
+        totalSize: "N/A",
+        totalSizeBytes: 0,
+      });
+      expect(Object.hasOwn(stats, "tableSizeBytes")).toBe(false);
+      expect(Object.hasOwn(stats, "tableSize")).toBe(false);
+    });
+
+    // The absence is per call, not per row: every table in the list loses its byte
+    // fields together, so the Storage tab's `every()` gate sees a uniform answer
+    // rather than a partial one.
+    test("omits the size for every table in the list, not just the first", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+
+      await provider.query("CREATE TABLE a (id INTEGER)");
+      await provider.query("CREATE TABLE b (id INTEGER)");
+
+      const stats = await provider.getTableStats();
+      expect(stats.map((s) => s.tableName).sort()).toEqual(["a", "b"]);
+      expect(stats.every((s) => s.tableSizeBytes === undefined)).toBe(true);
     });
   });
 
@@ -1302,6 +1433,34 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
     expect(users.indexes).toContain("idx_users_email");
     const books = schema.find((t) => t.name === "books")!;
     expect(books.foreignKeys).toEqual([{ columnName: "user_id", referencedTable: "users", referencedColumn: "id" }]);
+
+    // Per-table sizes: node:sqlite is compiled WITH the dbstat virtual table
+    // (SQLITE_ENABLE_DBSTAT_VTAB), so the size here is measured page bytes rather
+    // than the `rowCount * 100` guess this driver also used to answer.
+    // Everything dbstat reports is a whole number of pages, so a page-aligned
+    // figure is what separates a measurement from the old estimate (100 bytes for
+    // the harness's one-row `users` table).
+    const tableStats = report.tableStats as Array<{
+      tableName: string;
+      rowCount: number;
+      tableSizeBytes: number | null;
+      indexSizeBytes: number | null;
+      totalSizeBytes: number;
+      totalSize: string;
+    }>;
+    const usersStats = tableStats.find((t) => t.tableName === "users")!;
+    expect(usersStats.tableSizeBytes).toBeGreaterThan(0);
+    expect(usersStats.tableSizeBytes! % 4096).toBe(0);
+    expect(usersStats.tableSizeBytes).not.toBe(100);
+    // `users` carries idx_users_email, so its index bytes are measured too and the
+    // total is the sum - which is what the Storage tab's Indexes card adds up.
+    expect(usersStats.indexSizeBytes).toBeGreaterThan(0);
+    expect(usersStats.totalSizeBytes).toBe(usersStats.tableSizeBytes! + usersStats.indexSizeBytes!);
+    expect(usersStats.totalSize).not.toBe("N/A");
+    // `books` has no index at all: 0 index bytes is a measurement here, not an absence.
+    const booksStats = tableStats.find((t) => t.tableName === "books")!;
+    expect(booksStats.indexSizeBytes).toBe(0);
+    expect(booksStats.totalSizeBytes).toBe(booksStats.tableSizeBytes!);
 
     // Maintenance + monitoring
     expect(report.maintenanceCheck).toEqual({ success: true, message: "ok" });

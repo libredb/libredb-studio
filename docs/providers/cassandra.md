@@ -253,7 +253,7 @@ them apart. Splitting it finer would mean sniffing that sentence, which this rep
 retried and **succeeded**; the raw 4608 only appears under `FallthroughRetryPolicy`. The provider does
 not change the retry policy, and no test depends on a retry outcome.
 
-### 3.6 A denied monitoring surface is the ordinary case, and only a denial degrades
+### 3.6 A monitoring surface degrades on a denial, and on one absent keyspace
 
 Measured with a least-privilege role (`GRANT SELECT` on one table):
 
@@ -265,9 +265,41 @@ Measured with a least-privilege role (`GRANT SELECT` on one table):
 | `system_views.caches`, `system_views.queries` | 8448, refused |
 | `system.size_estimates` | **0 rows, no error** |
 
-Two things follow. Every monitoring read degrades to empty on `permission` **and on nothing else** —
-notably not on `invalid`, which is also what a typo in this provider's own CQL would produce, and an
-empty panel that hides that hides it forever.
+Two things follow. Every monitoring read degrades to empty on `permission`, and — since 2026-08-24, for the
+one case below — on an **absent optional keyspace**. Nothing else: notably not an `invalid` naming a
+table or a column, which is what a typo in this provider's own CQL produces, and an empty panel that
+hides that hides it forever.
+
+#### The second condition, and why it needs a name list
+
+ScyllaDB has no `system_views` keyspace at all ([§11](#11-scylladb-is-a-partial-relative-one-absent-keyspace-cost-five-surfaces-until-d9)),
+so the three virtual-table reads are refused by a server that is otherwise healthy. That is a fact
+about the build, not about this provider's CQL — but the protocol does not say so. Measured 2026-08-24
+through `cassandra-driver` 4.9.0, all four of these arrive as `ResponseError` with **code 8704** and
+with the driver's own `keyspace` and `table` properties **`undefined`**:
+
+| Sent | Server | Message | `absentKeyspace()` |
+|---|---|---|---|
+| `system_views.clients` | ScyllaDB 2026.2.4 | `Keyspace system_views does not exist` | `system_views` |
+| `system_views.cliets` | Cassandra 5.0.9 | `table cliets does not exist` | `null` |
+| `system_views.caches`, wrong column | Cassandra 5.0.9 | `Undefined column name hit_ratioo in table system_views.caches` | `null` |
+| `system_viewz.clients` | Cassandra 5.0.9 | `keyspace system_viewz does not exist` | `system_viewz` |
+
+So there is no structured discriminator and the sentence is all there is. Two things keep the reading
+narrow. `CassandraTransportError.absentKeyspace()` reports the **name** the server refused rather than
+a boolean — only the first and last rows are keyspace-shaped at all, and the case difference between
+them (`Keyspace` / `keyspace`) is the servers', not a normalisation. And `introspect.ts` holds an
+**allowlist of the keyspaces this provider knows are optional**, which is `system_views` and nothing
+else. That is what separates the first row from the last: `system_viewz` is a typo in this file and
+still fails loudly, and `system_schema` is not on the list at all, because it is readable on every
+measured build and even by a least-privilege role, so a server refusing the whole of it is a fault the
+tree must not hide.
+
+One case the allowlist cannot separate, recorded rather than papered over: on a build with **no**
+`system_views` keyspace, a typo in a `system_views` table name is refused with the keyspace message
+too (measured — all three ScyllaDB rows above answer the same sentence), so it would degrade there.
+The typo is caught on the engine that has the keyspace, which is the one this provider is developed
+against.
 
 And a security note worth stating plainly: **the object browser lists tables a restricted user cannot
 read.** `system_schema` is world-readable, so the tree shows every table in the keyspace while the
@@ -295,17 +327,51 @@ on. `USING TIMEOUT` — the per-statement server-side deadline — is **not in 5
 
 ### 3.8 Values are normalized once, at the driver boundary
 
-Four traps, all measured, all silent:
+Four traps, all measured, all silent. Three are still normalized here; the first is now handed on
+untouched, and the sub-section below says why that is the same decision rather than a reversal:
 
 | CQL type | Arrives as | `JSON.stringify` gives | Reported as |
 |---|---|---|---|
-| `blob` | `Buffer` | `{"type":"Buffer","data":[76,105,…]}` | `0x4c69627265444200c3bf6279746573` |
+| `blob` | `Buffer` | `{"type":"Buffer","data":[76,105,…]}` | the `Buffer` itself — see below |
 | `vector<float,3>` | `Vector` | `{"0":1.5,"1":2.5,"2":3.5}` | `[1.5, 2.5, 3.5]` |
 | `bigint` / `decimal` / `varint` | `Long` / `BigDecimal` / `Integer` | the exact digits | the exact digits, as a **string** |
 | `duration` | `Duration` | `{"months":1,"days":2,"nanoseconds":"10800000000000"}` | `1mo2d3h` (its CQL literal) |
 
 `Number()` on the third row is the silent one: the bigint maximum becomes `9223372036854776000` and a
 20-digit decimal loses its last four digits. `COUNT(*)` is a `Long` too.
+
+#### The `blob` row changed, and why the other three did not
+
+**A `blob` is now spelled `\x4c69…` everywhere, not `0x4c69…`.** This row used to read
+`0x4c69627265444200c3bf6279746573`: the value was stringified into its CQL literal here, at the
+driver boundary, precisely *because* `JSON.stringify` on a `Buffer` gives the wire shape in the third
+column. That reason has expired — `src/lib/export/binary.ts` (#469) reads exactly that shape, and it
+is how a Postgres `bytea` reaches the binary cell renderer, the row detail sheet, the CSV and the
+per-dialect binary literal the SQL export writes. Stringifying first was what kept a `blob` out of all
+four, so the `Buffer` is handed on as itself and the grid now shows the same `\x…` for these bytes
+that every other engine shows. The CQL literal is still `0x…`; the export builds it from the bytes.
+
+Measured against Apache Cassandra 5.0.9 on 2026-08-24 — three rows in `probe.x10_blob (k int, c
+blob)` holding `0x0102ab`, the empty blob `0x` and `null`, exported as `INSERT`s and replayed into the
+same table:
+
+| | grid / CSV | exported INSERT | replayed |
+|---|---|---|---|
+| before | `0x0102ab` | `VALUES (1, '0x0102ab')` | **refused**: `Invalid STRING constant (0x0102ab) for "c" of type blob` — both binary rows lost, only the `null` row landed |
+| after | `\x0102ab` | `VALUES (1, 0x0102ab)` | all three rows back byte for byte, the empty blob (`0x`, shown `\x`) and the `null` included |
+
+Cassandra is the engine where the old form did not silently corrupt but simply *refused* — MySQL, the
+other provider that stringified, stored the eight characters `0x0102ab` into a `BLOB` and reported
+success (`docs/providers/mysql.md` §3.3).
+
+The other three rows keep their normalization, and each reason was re-measured rather than assumed:
+`Vector` stringifies to `{"0":1.5,"1":2.5,"2":3.5}`, a numeric-keyed object no reader and no module
+reconstructs; `Duration` to `{"months":1,"days":2,"nanoseconds":"10800000000000"}`, where `String()`
+gives the CQL literal `1mo2d3h`. `Long`, `BigDecimal` and `Integer` are the one partial case worth
+naming: each defines `toJSON`, so `JSON.stringify` alone already answers `"9223372036854775807"` —
+the HTTP path would survive without this line. The in-process path would not: the embeddable
+workspace and the agent's tools read a provider's rows directly, and there the live class instance
+would reach the grid as an object. Normalizing once, at the boundary, is what makes both paths agree.
 
 `timestamp` is left as a `Date`, because the grid already formats those. `time` becomes a string
 because it carries nanoseconds a `Date` cannot hold. `set` arrives as an Array, `map` and a UDT as
@@ -614,7 +680,7 @@ SELECT COUNT(*) AS count FROM system_schema.indexes WHERE keyspace_name = 'probe
 |---|---|
 | `version` | `Apache Cassandra 5.0.9` — the product name plus `release_version` |
 | `startTime` / `uptime` | `gossip_generation`, against the **server's** clock via `toTimestamp(now())` |
-| `activeConnections` | `system_views.clients` — degrades to 0 on a refused grant |
+| `activeConnections` | `system_views.clients` — degrades to 0 on a refused grant, and on a build with no `system_views` keyspace ([§3.6](#36-a-monitoring-surface-degrades-on-a-denial-and-on-one-absent-keyspace)). The 0 is the residue that section records: the field is a required number, so "not published" cannot be said here |
 | `maxConnections` | `0` — "no ceiling published". Cassandra's connection limit defaults to unlimited and is a config reading, not a live capacity |
 | `databaseSize` | `N/A`; `databaseSizeBytes` **omitted**, not zeroed — [§3.2](#32-there-is-no-honest-row-count-and-no-honest-size) |
 | `tableCount` / `indexCount` | `system_schema` |
@@ -780,7 +846,7 @@ docker compose -f database-compose.yml exec cassandra cqlsh -e "
 
 Then connect with host `localhost`, port `9042`, keyspace `probe`, local data centre `datacenter1`.
 
-For the ScyllaDB pass ([§11](#11-scylladb-is-a-partial-relative-one-absent-keyspace-costs-five-surfaces))
+For the ScyllaDB pass ([§11](#11-scylladb-is-a-partial-relative-one-absent-keyspace-cost-five-surfaces-until-d9))
 the service is `scylla` on host port `9142`, and the keyspace has to be created with
 `replication = {'class':'NetworkTopologyStrategy','datacenter1':1}` — the 2026.2 line refuses
 `SimpleStrategy` outright with `ConfigurationException: SimpleStrategy doesn't support tablet
@@ -789,10 +855,12 @@ than the ~206 s the Cassandra image needs.
 
 ---
 
-## 11. ScyllaDB is a `partial` relative: one absent keyspace costs five surfaces
+## 11. ScyllaDB is a `partial` relative: one absent keyspace cost five surfaces until 2026-08-24
 
-ScyllaDB speaks the CQL wire protocol and this driver connects to it, and a live gate-4 probe now
-says what that buys. Every one of the thirteen surfaces this provider offers was called separately
+ScyllaDB speaks the CQL wire protocol and this driver connects to it, and a live gate-4 probe says
+what that buys. The pass below ran on 2026-08-21/22 and was re-run on 2026-08-24 after the degradation change
+what five of the surfaces do; both readings are recorded here, because the difference between them is
+the interesting part. Every one of the thirteen surfaces this provider offers was called separately
 through `createDatabaseProvider({ type: "cassandra" })` against `scylladb/scylla:2026.2.4` (build
 `2026.2.4-0.20260810.e54224b8cebb`) and, in the same pass, against `cassandra:5.0.9` as the baseline.
 `scylladb/scylla:2025.1` (build `2025.1.14-0.20260612.103b84070f3b`) was probed too and behaved
@@ -801,38 +869,85 @@ and only these two builds, on a single-node container.
 
 **The whole delta is one cause: ScyllaDB has no `system_views` keyspace at all.** `system.local`,
 `system_schema.*` and `system.size_estimates` all exist and answer; `system_views.clients`,
-`.queries`, `.caches`, `.system_logs` and `.disk_usage` do not exist to be denied. Five surfaces fail
-on it, each with the same verbatim error `Keyspace system_views does not exist`: `getOverview`,
+`.queries`, `.caches`, `.system_logs` and `.disk_usage` do not exist to be denied. Five surfaces
+FAILED on it, each with the same verbatim error `Keyspace system_views does not exist`: `getOverview`,
 `getPerformanceMetrics`, `getActiveSessions`, `getHealth` and `getMonitoringData`. On the 5.0.9
-baseline all thirteen pass.
+baseline all thirteen passed.
 
 Thirteen rather than the fifteen the [compatibility table](./README.md#wire-compatible-engines)
 counts, because two of the fifteen do not exist on this provider at all for either engine:
 cancellation is not implemented ([§3.7](#37-there-is-no-cancellation-so-none-is-offered)) and
-`supportsExplain` is false ([§5.6](#56-there-is-no-explain-and-tracing-is-not-a-plan)). Eight answer,
-five fail, and that closes.
+`supportsExplain` is false ([§5.6](#56-there-is-no-explain-and-tracing-is-not-a-plan)).
 
-**Test Connection is the sixth casualty, and it is the one a user meets first.** `POST
+**Test Connection was the sixth casualty, and it was the one a user meets first.** `POST
 /api/db/test-connection` calls `provider.getHealth()`
-([`src/app/api/db/test-connection/route.ts:33`](../../src/app/api/db/test-connection/route.ts)), so
-the dialog reports a failure for a connection whose statements run cleanly.
+([`src/app/api/db/test-connection/route.ts`](../../src/app/api/db/test-connection/route.ts)), so the
+dialog reported a failure for a connection whose statements run cleanly.
 
-**And it is worse than a failing test button, which only a browser pass showed.** `handleConnect` in
-[`src/hooks/use-connection-form.ts:346`](../../src/hooks/use-connection-form.ts) gates the SAVE on the
-same request — `if (result.success) onConnect(conn)` — so **Establish Connection refuses too and
-nothing is stored**. A ScyllaDB connection cannot be created through the dialog at all today; the
+**And it was worse than a failing test button, which only a browser pass showed.** `handleConnect` in
+[`src/hooks/use-connection-form.ts`](../../src/hooks/use-connection-form.ts) gated the SAVE on the
+same request — `if (result.success) onConnect(conn)` — so **Establish Connection refused too and
+nothing was stored**. A ScyllaDB connection could not be created through the dialog at all; the
 browser pass behind this section reached the editor through a seeded, admin-managed connection
-instead. Two other published relatives sit on the same gate, StarRocks and SingleStore, whose health
-surface also fails; that neither row records it is the U14 lesson again — a gate-4 pass on the
+instead. Two other published relatives sat on the same gate, StarRocks and SingleStore, whose health
+surface also fails; that neither row recorded it is the U14 lesson again — a gate-4 pass on the
 provider's own boundary does not read the product surfaces the provider feeds.
 
-What the failure looks like on the two surfaces that show it: the monitoring dashboard renders a
+What the failure looked like on the two surfaces that showed it: the monitoring dashboard rendered a
 single **Connection Error** page reading `Keyspace system_views does not exist`, which the connection
-is not (the same mislabelling the Cloudberry row records), and the header badge reads **Slow** with
+is not (the same mislabelling the Cloudberry row records), and the header badge read **Slow** with
 the title *Connection: degraded* rather than Online — the badge follows the health request, not
 latency.
 
-What does work:
+### 11.1 What the degradation change did, and what it deliberately did not
+
+Two changes, and the second is not about Cassandra at all.
+
+**The five reads degrade.** A monitoring read now answers empty when the server says the keyspace it
+reads from does not exist AND that keyspace is one this provider knows is optional, which is
+`system_views` and nothing else. The discriminator, the four measured error spellings it rests on and
+the case it cannot separate are all in
+[§3.6](#36-a-monitoring-surface-degrades-on-a-denial-and-on-one-absent-keyspace).
+
+**The dialog's save no longer depends on the health surface.** A connection that `connect()`s is
+usable — every provider's `connect()` reaches the server and is refused by a wrong host, port,
+credential or database — so `POST /api/db/test-connection` now separates the two facts: a connect
+failure is still `success: false`, and a health read that fails *after* a successful connect answers
+`success: true, degraded: true` carrying the server's own sentence. `handleConnect` saves on that, but
+not silently: the first click reports what the server refused and saves nothing, and only a second
+click saves. This is not a Cassandra fix — StarRocks and SingleStore fail health for their own reason
+(**D8**) and were unsaveable on the same gate.
+
+Re-probed 2026-08-24, every surface separately, same method as the original pass:
+
+| Surface | ScyllaDB 2026.2.4, before | ScyllaDB 2026.2.4, after | Cassandra 5.0.9 control |
+|---|---|---|---|
+| `getOverview` | `Keyspace system_views does not exist` | `Apache Cassandra 3.0.8`, uptime `23.76m`, 3 tables, 1 index, **connections 0** | version 5.0.9, connections 1 |
+| `getPerformanceMetrics` | same error | `{}` — no cache ratio claimed | `{ cacheHitRatio: 88.24 }` |
+| `getActiveSessions` | same error | `[]` | 1 running statement |
+| `getHealth` | same error | answers; `cacheHitRatio` `N/A`, no sessions | answers with data |
+| `getMonitoringData` | same error | answers | answers with data |
+| the other eight | pass | pass | pass |
+
+And the discriminator itself, measured through the real transport against both servers on the same
+day (`category` / `absentKeyspace()`):
+
+| Statement | Cassandra 5.0.9 | ScyllaDB 2026.2.4 |
+|---|---|---|
+| `SELECT COUNT(*) FROM system_views.clients` | OK | `invalid` / `"system_views"` → degrades |
+| `SELECT COUNT(*) FROM system_views.cliets` | `invalid` / `null` → throws | `invalid` / `"system_views"` |
+| `SELECT hit_ratioo FROM system_views.caches` | `invalid` / `null` → throws | `invalid` / `"system_views"` |
+| `SELECT COUNT(*) FROM system_viewz.clients` | `invalid` / `"system_viewz"` → throws | `invalid` / `"system_viewz"` → throws |
+| `SELECT COUNT(*) FROM system_schema.tables` | OK | OK |
+
+**One number is still not honest, and it is recorded rather than fixed.** The overview's
+`activeConnections` reads **0** on a build with no `system_views` keyspace, because
+`DatabaseOverview.activeConnections` is a required `number`: there is no way to say "not published"
+without widening the type and the Connections card that renders it. It is the same 0 a
+permission-denied role has always produced, and it is the one figure here a reader could mistake for a
+measurement.
+
+What works:
 
 - `connect`, `query`, `getSchema`, `disconnect` — the editor and the object browser in full, columns
   and index metadata included.
@@ -843,7 +958,9 @@ What does work:
   fabricated zero.
 - All **18 CQL types round-tripped byte-identically** to the 5.0.9 baseline, compared field by field:
   `bigint` 9007199254740993 as a string, `decimal` 1.25, `duration` `3h20m`, `varint`
-  123456789012345678901234567890, `blob` `0x00ff`, `inet`, `date`, `time` `12:00:00.123456789`,
+  123456789012345678901234567890, `blob` `0x00ff` (the stored value; both engines now report it as
+  bytes rather than as that literal, [§3.8](#38-values-are-normalized-once-at-the-driver-boundary)),
+  `inet`, `date`, `time` `12:00:00.123456789`,
   list/set/map, uuid, timestamp.
 - Error **classes** are identical although the server's wording is not: a missing table is
   `unconfigured table no_such_table` here against Cassandra's `table no_such_table does not exist`,
@@ -852,24 +969,24 @@ What does work:
   `classifyCassandraError` reads the driver's error code and not the message text
   ([§3.5](#35-the-error-class-is-almost-always-the-same-one-so-the-classifier-reads-innererrors)).
 
-Two differences a reader will see on screen. The object browser lists **one extra table per secondary
-index**: ScyllaDB backs an index with a view that `system_schema.tables` reports, so the probe
-keyspace of 3 user tables and 1 index lists 4 objects, the extra being
-`customers_country_idx_index`; Cassandra listed 3 for the same schema. And no version is displayed
-anywhere, because the panel carrying it is one of the five that fail — were that fixed it would read
-Apache Cassandra **3.0.8**, the compatibility number `system.local.release_version` publishes, not
-ScyllaDB 2026.2.4, which lives in `system.versions` where this provider does not look.
+Two differences a reader will see on screen. The object browser lists **one extra object per secondary
+index, and the tree and the overview disagree about it**: ScyllaDB backs an index with a materialized
+view, so `customers_country_idx_index` appears in `system_schema.views` — which the tree reads — and
+NOT in `system_schema.tables`, which the overview's table count reads. Measured 2026-08-24 on a
+`probe` keyspace of 3 user tables and 1 index: the tree lists 4 objects and `tableCount` says 3. (The earlier pass
+recorded this as a `system_schema.tables` row; that was wrong, and the two-catalog split is why the
+two panels disagree.) Cassandra lists neither. And the version now IS displayed, because the panel
+carrying it answers: it reads Apache Cassandra **3.0.8**, the compatibility number
+`system.local.release_version` publishes, not ScyllaDB 2026.2.4, which lives in `system.versions`
+where this provider does not look.
 
 Of the three doubts this section used to raise, two held and one was wrong. `system_views` is indeed
 absent, and the version string is indeed not `release_version`-shaped. But **`gossip_generation`
 exists on ScyllaDB and answers** — that doubt was unfounded.
 
-The tier is therefore `partial`. Not `full`, because five surfaces plus Test Connection throw. Not
-`query-only`, because the object browser, the column metadata and the index metadata all work —
-which is what separates this from Materialize and RisingWave, which have none of it.
-
-**What is not done here.** The five surfaces could degrade to empty instead of throwing when
-`system_views` is absent, which would plausibly lift ScyllaDB to `full`. That is a change to the
-degradation contract in [§3.6](#36-a-denied-monitoring-surface-is-the-ordinary-case-and-only-a-denial-degrades),
-which degrades on a *denial* and deliberately on nothing else — an absent keyspace is not a denial.
-It is filed as **D9** in [`docs/BACKLOG.md`](../BACKLOG.md), not decided in this PR.
+The tier stays `partial`, and the reason has moved rather than gone. Not `full`, because five of the
+thirteen surfaces answer with nothing: the monitoring dashboard here carries a version, an uptime and
+two counts against Cassandra's full set, and `full` in this table means every surface *answered*, not
+every surface returned. Not `query-only` either, because the object browser, the column metadata and
+the index metadata all work — which is what separates this from Materialize and RisingWave, which have
+none of it.

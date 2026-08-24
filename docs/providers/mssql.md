@@ -337,8 +337,9 @@ throw — it does **not** confirm the cancellation actually took effect. Exposed
   `number`s and can **lose precision** beyond 2^53 / at high scale (the same class of issue as
   Oracle's `NUMBER`). Fetching them as strings would preserve fidelity.
 - **Binary** (`VARBINARY`/`IMAGE`/`rowversion`) comes back as a Node `Buffer` and is **not**
-  sanitized to a hex string (contrast the MySQL provider's `sanitizeRow`), so it reaches the client
-  as the JSON shape a `Buffer` serializes to and is rendered as hex there (§7).
+  stringified by the provider, so it reaches the client as the JSON shape a `Buffer` serializes to and
+  is rendered as hex there (§7). Every provider answers this way since 2026-08-24, when MySQL and
+  Cassandra stopped spelling their bytes `0x…` in the provider.
 - **Only the first result set is returned.** `query()` reads `result.recordset` (singular), so a
   multi-statement batch or a stored procedure returning several result sets surfaces just one.
 

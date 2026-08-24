@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
+import { asBytes } from "@/lib/export/binary";
 
 // ---------------------------------------------------------------------------
 // Mock oracledb BEFORE loading the provider
@@ -17,8 +18,15 @@ const mockInitOracleClientFn = mock((_opts?: Record<string, unknown>) => undefin
 // observable nowhere else: the pool is where they are stated and it exposes neither.
 let lastPoolAttrs: Record<string, unknown> = {};
 
+// The options the last execute() received. `fetchTypeHandler` is observable
+// nowhere else: it is a per-call option and the provider keeps no copy.
+let lastExecuteOpts: Record<string, unknown> = {};
+
 const createMockConnection = () => ({
-  execute: (sql: string, params?: unknown[], opts?: unknown) => mockExecuteFn(sql, params, opts),
+  execute: (sql: string, params?: unknown[], opts?: unknown) => {
+    lastExecuteOpts = (opts ?? {}) as Record<string, unknown>;
+    return mockExecuteFn(sql, params, opts);
+  },
   close: () => mockConnCloseFn(),
   break: () => mockBreakFn(),
   commit: async () => {},
@@ -32,9 +40,31 @@ const createMockPool = () => ({
   connectionsInUse: 2,
 });
 
+// The type constants a fetch-type handler is written against. They were absent
+// until 2026-08-24: the mock answered every column with a plain JS value, so no test
+// could produce the `Lob` stream object oracledb really returns for a CLOB,
+// NCLOB or BLOB - which is exactly why nothing caught that a LOB cell reached
+// the product as an unserialisable stream. The numbers are the identities that
+// matter here, not oracledb's own values: the provider only ever compares a
+// column's `dbType` against these same references.
+const DB_TYPE_CLOB = { num: 112, name: "DB_TYPE_CLOB" };
+const DB_TYPE_NCLOB = { num: 1112, name: "DB_TYPE_NCLOB" };
+const DB_TYPE_BLOB = { num: 113, name: "DB_TYPE_BLOB" };
+const DB_TYPE_VARCHAR = { num: 1, name: "DB_TYPE_VARCHAR" };
+const DB_TYPE_RAW = { num: 23, name: "DB_TYPE_RAW" };
+const STRING = 2001;
+const BUFFER = 2005;
+
 mock.module("oracledb", () => {
   const oracledbMock = {
     OUT_FORMAT_OBJECT: 4002,
+    DB_TYPE_CLOB,
+    DB_TYPE_NCLOB,
+    DB_TYPE_BLOB,
+    DB_TYPE_VARCHAR,
+    DB_TYPE_RAW,
+    STRING,
+    BUFFER,
     initOracleClient: mockInitOracleClientFn,
     outFormat: 0,
     autoCommit: false,
@@ -603,6 +633,70 @@ describe("OracleProvider", () => {
       expect(typeof result.executionTime).toBe("number");
     });
 
+    // oracledb answers a non-SELECT with no `rows` array at all and its own
+    // `rowsAffected`; the envelope used to be built from `rows.length`, so every
+    // INSERT, UPDATE and DELETE reported 0 for work it had done. Measured through
+    // `createDatabaseProvider({type:"oracle"})` against Oracle Free 23ai on
+    // 2026-08-24 (rowsAffected 1 / 3 / 4 / 0 for the shapes below), with an
+    // interleaved SELECT proving each statement had landed.
+    test("reports the driver's rowsAffected for an INSERT", async () => {
+      await provider.connect();
+      mockExecuteFn = async () => ({ rowsAffected: 1 });
+
+      const result = await provider.query("INSERT INTO r5_types VALUES (1)");
+      expect(result.rowCount).toBe(1);
+      expect(result.rows).toEqual([]);
+      expect(result.fields).toEqual([]);
+      expect(result.columnTypes).toBeUndefined();
+    });
+
+    test("reports the driver's rowsAffected for a multi-row INSERT ... SELECT", async () => {
+      await provider.connect();
+      mockExecuteFn = async () => ({ rowsAffected: 3 });
+
+      const result = await provider.query("INSERT INTO r5_types SELECT * FROM src");
+      expect(result.rowCount).toBe(3);
+    });
+
+    test("reports the driver's rowsAffected for an UPDATE", async () => {
+      await provider.connect();
+      mockExecuteFn = async () => ({ rowsAffected: 4 });
+
+      const result = await provider.query("UPDATE r5_types SET note = 'z'");
+      expect(result.rowCount).toBe(4);
+    });
+
+    test("reports 0 for a DELETE that matched nothing", async () => {
+      await provider.connect();
+      mockExecuteFn = async () => ({ rowsAffected: 0 });
+
+      const result = await provider.query("DELETE FROM r5_types WHERE id = 4242");
+      expect(result.rowCount).toBe(0);
+    });
+
+    // A PL/SQL block and DDL both leave `rowsAffected` unset or 0 on the wire
+    // (measured: `BEGIN NULL; END;` -> undefined, CREATE TABLE / TRUNCATE -> 0), so
+    // the envelope has to say 0 rather than NaN or undefined.
+    test("reports 0 when the driver states no rowsAffected at all", async () => {
+      await provider.connect();
+      mockExecuteFn = async () => ({});
+
+      const result = await provider.query("BEGIN NULL; END;");
+      expect(result.rowCount).toBe(0);
+      expect(result.rows).toEqual([]);
+    });
+
+    // An empty SELECT still carries a `rows` array, which is what separates it from
+    // a DML answer - it must stay on the rows path and keep its column names.
+    test("an empty SELECT keeps its fields and reports 0", async () => {
+      await provider.connect();
+      mockExecuteFn = async () => ({ rows: [], metaData: [{ name: "ID" }] });
+
+      const result = await provider.query("SELECT id FROM r5_types WHERE 1 = 0");
+      expect(result.rowCount).toBe(0);
+      expect(result.fields).toEqual(["ID"]);
+    });
+
     test("ignores connection close errors after execution", async () => {
       await provider.connect();
       mockConnCloseFn = async () => {
@@ -611,6 +705,104 @@ describe("OracleProvider", () => {
 
       const result = await provider.query("SELECT * FROM DUAL");
       expect(result.rows.length).toBeGreaterThan(0);
+    });
+
+    // LOB columns. Without a fetch type handler oracledb answers a CLOB, an
+    // NCLOB and a BLOB with a `Lob` stream object, and the row cannot be
+    // serialised at all - measured on 2026-08-24 through
+    // `createDatabaseProvider({type:"oracle"})` against Oracle Free 23ai with
+    // oracledb 6.10.0 Thin: every one of the four LOB columns of `r6_lob` came
+    // back with `constructor.name === "Lob"`, and `JSON.stringify` of the row
+    // threw `TypeError: Converting circular structure to JSON ... starting at
+    // object with constructor 'NVPair'` under Node 24.14.0 and
+    // `TypeError: JSON.stringify cannot serialize cyclic structures` under Bun
+    // 1.3.14. So `NextResponse.json` in `POST /api/db/query` could not answer at
+    // all: the whole SELECT failed, not just the cell.
+    describe("LOB columns", () => {
+      function handler(): (meta: { dbType: unknown; name: string }) => unknown {
+        return lastExecuteOpts.fetchTypeHandler as (meta: { dbType: unknown; name: string }) => unknown;
+      }
+
+      test("query() hands the driver a fetch type handler", async () => {
+        await provider.connect();
+        await provider.query("SELECT c, b FROM r6_lob");
+        expect(typeof lastExecuteOpts.fetchTypeHandler).toBe("function");
+      });
+
+      test("a CLOB and an NCLOB are fetched as a string", async () => {
+        await provider.connect();
+        await provider.query("SELECT c, nc FROM r6_lob");
+        expect(handler()({ dbType: DB_TYPE_CLOB, name: "C" })).toEqual({ type: STRING });
+        expect(handler()({ dbType: DB_TYPE_NCLOB, name: "NC" })).toEqual({ type: STRING });
+      });
+
+      test("a BLOB is fetched as a Buffer", async () => {
+        await provider.connect();
+        await provider.query("SELECT b FROM r6_lob");
+        expect(handler()({ dbType: DB_TYPE_BLOB, name: "B" })).toEqual({ type: BUFFER });
+      });
+
+      // Every other column keeps the driver's own default. A handler that returned
+      // a type for a non-LOB column would silently restate types the product never
+      // asked it to touch - RAW already arrives as a Buffer, VARCHAR2 as a string.
+      test("no other column type is redirected", async () => {
+        await provider.connect();
+        await provider.query("SELECT name, r FROM r6_lob");
+        expect(handler()({ dbType: DB_TYPE_VARCHAR, name: "NAME" })).toBeUndefined();
+        expect(handler()({ dbType: DB_TYPE_RAW, name: "R" })).toBeUndefined();
+      });
+
+      test("queryInTransaction() hands the driver the same handler", async () => {
+        await provider.connect();
+        await provider.beginTransaction();
+        await provider.queryInTransaction("SELECT c FROM r6_lob");
+        expect(handler()({ dbType: DB_TYPE_CLOB, name: "C" })).toEqual({ type: STRING });
+        await provider.rollbackTransaction();
+      });
+
+      // The handler is deliberately per-call rather than the process-wide
+      // `oracledb.fetchAsString` / `fetchAsBuffer` globals, so the reads that never
+      // select a LOB are left exactly as they were. `getSchema` is the one that
+      // would notice: it reads ALL_TAB_COLUMNS.DATA_DEFAULT, a LONG.
+      test("getSchema() is left alone", async () => {
+        await provider.connect();
+        await provider.getSchema();
+        expect(lastExecuteOpts.fetchTypeHandler).toBeUndefined();
+      });
+
+      // What the fetched values then are, end to end: a CLOB is a plain string and
+      // a BLOB is a Buffer, so a BLOB joins the shared byte contract that the grid,
+      // the row detail sheet and the CSV all read a binary cell through
+      // (`asBytes` in src/lib/export/binary.ts), in both the live shape and the
+      // shape it serialises to over HTTP.
+      test("the fetched values are serialisable and a BLOB is bytes", async () => {
+        await provider.connect();
+        mockExecuteFn = async () => ({
+          rows: [{ C: "the quick brown fox", B: Buffer.from([0xde, 0xad, 0xbe, 0xef, 0x01, 0x02]) }],
+          metaData: [{ name: "C" }, { name: "B" }],
+        });
+
+        const result = await provider.query("SELECT c, b FROM r6_lob");
+        const row = result.rows[0] as Record<string, unknown>;
+        expect(row.C).toBe("the quick brown fox");
+        expect(asBytes(row.B)).toEqual(Uint8Array.from([0xde, 0xad, 0xbe, 0xef, 0x01, 0x02]));
+
+        const overWire = JSON.parse(JSON.stringify(result.rows)) as Record<string, unknown>[];
+        expect(overWire[0].C).toBe("the quick brown fox");
+        expect(asBytes(overWire[0].B)).toEqual(Uint8Array.from([0xde, 0xad, 0xbe, 0xef, 0x01, 0x02]));
+      });
+
+      // A NULL LOB stays null rather than becoming an empty string or an empty
+      // buffer: measured, row 2 of `r6_lob` came back with `C === null` and
+      // `B === null` once the handler was in place.
+      test("a NULL LOB stays null", async () => {
+        await provider.connect();
+        mockExecuteFn = async () => ({ rows: [{ C: null, B: null }], metaData: [{ name: "C" }, { name: "B" }] });
+
+        const result = await provider.query("SELECT c, b FROM r6_lob WHERE id = 2");
+        expect((result.rows[0] as Record<string, unknown>).C).toBeNull();
+        expect(asBytes((result.rows[0] as Record<string, unknown>).B)).toBeUndefined();
+      });
     });
   });
 
@@ -1107,6 +1299,22 @@ describe("OracleProvider", () => {
 
       await provider.rollbackTransaction();
       expect(provider.isInTransaction()).toBe(false);
+    });
+
+    // The same defect on the held connection. `rowsAffected` is per statement,
+    // so the count is the statement's own and the commit adds nothing to it.
+    test("queryInTransaction reports the driver's rowsAffected for a DML statement", async () => {
+      await provider.connect();
+      await provider.beginTransaction();
+      mockExecuteFn = async () => ({ rowsAffected: 2 });
+
+      const result = await provider.queryInTransaction("UPDATE r5_types SET note = 't'");
+      expect(result.rowCount).toBe(2);
+      expect(result.rows).toEqual([]);
+      expect(result.fields).toEqual([]);
+
+      mockExecuteFn = async (sql: string) => defaultExecute(sql);
+      await provider.rollbackTransaction();
     });
 
     test("beginTransaction while a transaction is active throws QueryError", async () => {

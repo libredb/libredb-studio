@@ -328,16 +328,41 @@ the derived image above is the supported path.
 
 `query(sql, params?, queryId?)` ([oracle.ts:162](../../src/lib/db/providers/sql/oracle.ts)) checks
 out a pooled connection, optionally stores the **connection object** under `queryId` for
-cancellation, runs `conn.execute(sql, binds, { outFormat: OUT_FORMAT_OBJECT, autoCommit: true })`,
+cancellation, runs `conn.execute(sql, binds, { outFormat: OUT_FORMAT_OBJECT, autoCommit: true, fetchTypeHandler })`
+([§5.3](#53-what-each-oracle-type-arrives-as) says what the handler is for),
 and returns:
 
 ```ts
 { rows, fields: metaData.map(m => m.name), rowCount: rows.length, executionTime, columnTypes? }
 ```
 
-`rowCount` is `rows.length`. Non-`SELECT` statements (INSERT/UPDATE/DELETE/DDL) return no `rows`
-array, so `rows` defaults to `[]` and **`rowCount` is `0`** — Oracle's `rowsAffected` is not
-surfaced. Bind parameters use Oracle's `:1`-style placeholders (`getPlaceholder()` from the base).
+A `SELECT` answers with a `rows` array and `rowCount` is `rows.length`. A non-`SELECT`
+(INSERT/UPDATE/DELETE/DDL/PL/SQL) carries **no `rows` array at all**, and that absence is what
+selects the other branch of `buildQueryResult()`: the grid is empty (`rows: []`, `fields: []`, no
+`columnTypes`, because there is no metadata to state them from) and **`rowCount` is the driver's own
+`result.rowsAffected`**, `0` when the driver states none. Same shape as the MySQL provider's
+`buildQueryResult()` (#469).
+
+Until 2026-08-24 the count was `rows.length` on both branches, so every statement that wrote
+something reported `0` for work it had done. Measured 2026-08-24 through
+`createDatabaseProvider({type:"oracle"})` against Oracle Free 23ai, with an interleaved `SELECT`
+proving each statement had landed:
+
+| statement | `rowsAffected` on the wire | `rowCount` before | after |
+|---|---|---|---|
+| `CREATE TABLE d13_probe (…)` | `0` | 0 | 0 |
+| `INSERT INTO d13_probe VALUES (1, 'a')` | `1` | **0** | 1 |
+| `INSERT INTO d13_probe SELECT … ROWNUM <= 3` | `3` | **0** | 3 |
+| `UPDATE d13_probe SET note = 'z'` (4 rows) | `4` | **0** | 4 |
+| `DELETE FROM d13_probe WHERE id = 9` (3 rows) | `3` | **0** | 3 |
+| `DELETE FROM d13_probe WHERE id = 4242` | `0` | 0 | 0 |
+| `BEGIN NULL; END;` | *unset* | 0 | 0 |
+| `TRUNCATE TABLE d13_probe` | `0` | 0 | 0 |
+
+`autoCommit: true` on the call is load-bearing, not decoration: `oracledb.autoCommit` defaults to
+`false`, and measured without it the `INSERT` still reported `rowsAffected: 1` while a second
+session saw `COUNT(*) = 0`, and the row was gone for good once the writing connection went back to
+the pool. Bind parameters use Oracle's `:1`-style placeholders (`getPlaceholder()` from the base).
 Native errors are normalised through `mapDatabaseError()` (see [§11](#11-error-handling)).
 
 ### 5.2 Query cancellation
@@ -347,17 +372,97 @@ A query issued with a `queryId` stores its connection in a `Map`. `cancelQuery(q
 interrupting the in-flight OCI call — and returns `true` on success (it does not verify a query was
 actually running). Exposed via `POST /api/db/cancel`.
 
-### 5.3 Data-type handling (LOBs & NUMBER) ⚠️
+### 5.3 What each Oracle type arrives as
 
-node-oracledb returns several Oracle types as non-primitive values, and the provider does **not**
-currently configure `fetchAsString`/`fetchAsBuffer`/`fetchInfo`:
+Every row below was measured on 2026-08-24 through `createDatabaseProvider({type:"oracle"})` against
+**Oracle Free 23ai** with **oracledb 6.10.0 in Thin mode**, over a probe table holding one populated
+row and one all-`NULL` row. The `JSON.stringify` column is what `POST /api/db/query` puts on the wire,
+and therefore what the grid, the row detail sheet, the CSV, the SQL export and the agent's result
+summary all read.
 
-- **`CLOB`/`NCLOB`/`BLOB`** are returned as `Lob` **stream objects**, not strings/buffers — so a
-  result row containing a LOB column does not serialize cleanly into the JSON grid. (Contrast the
-  MySQL provider's `sanitizeRow` Buffer→hex conversion.) Oracle schemas commonly use LOBs, so this
-  is a real gap — see [Known limitations](#14-known-limitations--future-work).
-- **`NUMBER`** is returned as a JavaScript `number`; values beyond 2^53 (e.g. `NUMBER(38)` ids or
-  high-precision decimals) **lose precision**. Fetching such columns as strings would preserve them.
+| Oracle type | Arrives as | `JSON.stringify` gives | Reported as |
+|---|---|---|---|
+| `CLOB` / `NCLOB` | `string` (see below) | `"the quick brown fox"` | the text |
+| `BLOB` | `Buffer` (see below) | `{"type":"Buffer","data":[222,173,190,239,1,2]}` | `\xdeadbeef0102` |
+| `RAW` | `Buffer` | `{"type":"Buffer","data":[10,11,12]}` | `\x0a0b0c` |
+| `NUMBER` | `number` | `1.2345678901234568e+37` — **digits lost** | the double, see below |
+| `BINARY_DOUBLE` | `number` | `3.5` | the number |
+| `TIMESTAMP` / `DATE` | `Date` | `"2026-08-23T17:46:46.422Z"` | the formatted date |
+| `TIMESTAMP WITH TIME ZONE` | `Date` | `"2026-08-24T07:11:12.345Z"` — offset folded to UTC, sub-ms dropped | the formatted date |
+| `TIMESTAMP WITH LOCAL TIME ZONE` | `Date` | `"2026-08-24T10:11:12.345Z"` | the formatted date |
+| `INTERVAL YEAR TO MONTH` | `IntervalYM` | `{"months":7,"years":3}` | that object, as JSON |
+| `INTERVAL DAY TO SECOND` | `IntervalDS` | `{"fseconds":900000000,"seconds":8,"minutes":7,"hours":6,"days":5}` | that object, as JSON |
+| `XMLTYPE` | `string` | `"<r>\n  <a>1</a>\n</r>\n"` | the serialized document |
+| `JSON` | plain object | `{"k":[1,2]}` | that object, as JSON |
+| any of the above, `NULL` | `null` | `null` | empty |
+
+#### A LOB used to fail the whole query, not just the cell
+
+`query()` and `queryInTransaction()` pass a per-call **`fetchTypeHandler`**
+([oracle.ts](../../src/lib/db/providers/sql/oracle.ts)) that maps `CLOB` and `NCLOB` to
+`oracledb.STRING` and `BLOB` to `oracledb.BUFFER`. Every other column keeps the driver's own default:
+`RAW` is already a `Buffer` and `VARCHAR2` already a string, and restating them would put this
+provider in charge of types it has no reason to touch.
+
+Without it oracledb answers a LOB with a **`Lob` stream object**, and the row cannot be serialized at
+all. Measured over four LOB columns, each arriving with `constructor.name === "Lob"`:
+
+```
+TypeError: Converting circular structure to JSON
+    --> starting at object with constructor 'NVPair'
+    |     property 'list' -> object with constructor 'Array'
+    |     index 0 -> object with constructor 'NVPair'
+    --- property 'parent' closes the circle          (Node 24.14.0)
+
+TypeError: JSON.stringify cannot serialize cyclic structures   (Bun 1.3.14)
+```
+
+`POST /api/db/query` builds its answer with `NextResponse.json`, so **the whole SELECT failed** —
+no grid, no CSV, no export, nothing for the agent to summarize. The in-process path
+(`StudioWorkspace`, the agent's tools) got further and was worse: the cell classified as JSON and the
+export wrote the stream's internals, measured verbatim as
+
+```
+INSERT INTO r6_lob ("ID", "C", "B") VALUES (1, '{"_events":{"finish":[null]},"_readableState":{...
+```
+
+A `BLOB` as a `Buffer` needs nothing further: `asBytes` in
+[`src/lib/export/binary.ts`](../../src/lib/export/binary.ts) accepts both a live `Uint8Array` and the
+`{"type":"Buffer","data":[…]}` JSON it serializes to, which is the same contract a Postgres `bytea`
+and a MySQL `BLOB` already reach the binary cell renderer, the row detail sheet, the CSV and the SQL
+export's binary literal through. Verified by exporting a row and replaying it into Oracle itself:
+
+```
+SOURCE   {"ID":1,"C":"the quick brown fox","NC":"ncl-value-unicode-café","B":{"type":"Buffer","data":[222,173,190,239,1,2]}}
+EXPORT   INSERT INTO r6_replay ("ID", "C", "NC", "B") VALUES (1, 'the quick brown fox', 'ncl-value-unicode-café', HEXTORAW('deadbeef0102'));
+REPLAYED {"ID":1,"C":"the quick brown fox","NC":"ncl-value-unicode-café","B":{"type":"Buffer","data":[222,173,190,239,1,2]}}
+```
+
+**A LOB is fetched whole, with no length cap.** That is the same contract every other provider here
+already has for a large value — a Postgres `text`/`bytea` and a MySQL `BLOB` arrive whole too, and
+`DEFAULT_QUERY_LIMIT` bounds the row count, not the cell. A cap was considered and rejected: a
+truncated `CLOB` looks exactly like a complete one in the grid, and the SQL export would write the
+truncation into the target as though it were the value. The cost is linear and measured — a
+16,384,000-character `CLOB` fetched as a string took **66 ms** and serialized to **16.4 MB** of JSON
+in **18 ms** — and the ceiling is the runtime's own and fails loudly: a string past V8's
+536,870,888-character maximum throws `RangeError: Invalid string length`, which reaches the user as a
+failed query rather than as a value that has quietly lost its tail.
+
+The handler is deliberately **per-call**, not the process-wide `oracledb.fetchAsString` /
+`fetchAsBuffer` globals: those would also change every schema and monitoring read (`getSchema` reads
+`ALL_TAB_COLUMNS.DATA_DEFAULT`, a `LONG`), and they outlive the provider — the embeddable library
+surface runs inside a host application that may have its own oracledb consumers.
+
+#### `NUMBER` still loses digits, and that is a separate defect
+
+`NUMBER` arrives as a JS double and the loss is silent: measured,
+`12345678901234567890123456789012345678` (a `NUMBER(38,0)`) came back as `1.2345678901234568e+37`,
+and `NUMBER(20,4)` `1234567890123456.7891` as `1234567890123456.8`. Fetching `NUMBER` as a string
+would keep the digits — the way `docs/providers/cassandra.md` §3.8 keeps a `bigint`'s — but it is
+**not** part of that change: it changes every numeric cell Oracle produces, including the ones the grid
+right-aligns and the agent arithmetics over, so it is tracked separately rather than smuggled in with
+the LOB fix. The two `INTERVAL` types and `JSON` are lossless as objects and are also left as they
+are; `XMLTYPE` needs nothing, it is already a string.
 
 ### 5.4 Declared column types
 
@@ -403,7 +508,7 @@ Surfaced via `POST /api/db/transaction`.
 | Method | Behaviour |
 |--------|-----------|
 | `beginTransaction()` | Checks out a connection, marks active. Throws if one is active. |
-| `queryInTransaction(sql, params?)` | Runs on that connection with `autoCommit: false`. Throws if none active. |
+| `queryInTransaction(sql, params?)` | Runs on that connection with `autoCommit: false`, through the same `buildQueryResult()` — so a DML statement reports its own `rowsAffected` here too. Throws if none active. |
 | `commitTransaction()` / `rollbackTransaction()` | `commit()`/`rollback()`, then closes the connection. Throws if none active. |
 | `isInTransaction()` | Current state. |
 
@@ -558,6 +663,14 @@ The `oracledb` module is replaced with an in-process mock via `mock.module('orac
 the provider is imported — there is no live Oracle in the suite. The mock pool/connection returns
 canned `{ rows, metaData }` results, exercising the same code paths as the real driver.
 
+**The mock is why this went unnoticed for as long as it did.** It answered every column with a plain
+JS value, so no test could produce the `Lob` stream object oracledb really returns for a `CLOB`, an
+`NCLOB` or a `BLOB` — a defect that made the whole query fail against a real Oracle was invisible to
+a suite that never saw the driver's own value shape. The mock now carries the `DB_TYPE_*` / `STRING`
+/ `BUFFER` identities a fetch type handler is written against, and records the options each
+`execute()` received, so the handler itself is asserted over each type; the value shapes it produces
+are pinned from live measurements ([§5.3](#53-what-each-oracle-type-arrives-as)).
+
 > ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide; files mocking different drivers
 > cross-contaminate in a shared process. A **single file** is safe (one file = one process). The
 > full `bun run test` script runs the core group in **one** process and is load-order flaky, so
@@ -570,7 +683,9 @@ The suite covers: validation, connect/disconnect, query, capabilities, **labels 
 **`prepareQuery` FETCH FIRST / OFFSET-FETCH**, `getSchema` (columns/PKs/FKs/indexes grouping),
 health, maintenance (analyze/optimize/kill), pool stats, the transaction lifecycle, query
 cancellation (`break()`), overview, performance metrics, slow queries, active sessions,
-table/index/storage stats, error mapping, and **every `ssl.mode` branch** (the TCPS switch, the
+table/index/storage stats, **the LOB fetch type handler** (per type, plus that `getSchema` is left
+alone and that a `BLOB` reaches `asBytes` in both its live and its serialized shape), error mapping,
+and **every `ssl.mode` branch** (the TCPS switch, the
 DN-match flag, the concatenated `walletContent`, and a pasted connect string keeping its own
 protocol) asserted against the attributes `createPool` received.
 
@@ -615,12 +730,23 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 
 ## 14. Known limitations & future work
 
-- **CLOB/BLOB columns don't render.** No `fetchAsString`/`fetchAsBuffer` is configured, so LOB
-  columns come back as `Lob` stream objects rather than text/bytes ([§5.3](#53-data-type-handling-lobs--number)).
-  *Future:* set `oracledb.fetchAsString = [oracledb.CLOB]` / `fetchAsBuffer = [oracledb.BLOB]` (or
-  per-query `fetchInfo`), and stream genuinely large LOBs instead of buffering.
-- **Large `NUMBER` precision loss** — returned as a JS `number`; `NUMBER` values beyond 2^53 should
-  be fetched as strings to stay exact.
+- **A LOB is fetched whole.** `CLOB`/`NCLOB`/`BLOB` are read into a string or a `Buffer` in one
+  piece rather than streamed, so a single very large cell is held in memory and then in the JSON
+  response. Measured: 16 MB of `CLOB` costs 66 ms and 16.4 MB of JSON; V8 refuses a string past
+  536,870,888 characters with `RangeError: Invalid string length`. Bounding it was rejected on
+  purpose — a truncated value looks complete in the grid and would be written into the target by the
+  SQL export ([§5.3](#53-what-each-oracle-type-arrives-as)). *Future:* if a real workload hits
+  the ceiling, stream the cell to the download rather than truncating it in the row.
+- **Large `NUMBER` loses digits, silently.** Returned as a JS double: a `NUMBER(38,0)` measured as
+  `1.2345678901234568e+37` and a `NUMBER(20,4)` as `1234567890123456.8`. Fetching `NUMBER` as a
+  string would keep them exact, at the cost of changing every numeric cell Oracle produces — which
+  is why it was left out of the LOB change rather than bundled with it ([§5.3](#53-what-each-oracle-type-arrives-as)).
+- **`INTERVAL YEAR TO MONTH` and `INTERVAL DAY TO SECOND` show as JSON objects**
+  (`{"months":7,"years":3}`), not as their Oracle literals. Lossless, but not what an Oracle user
+  reads. *Future:* normalize to the literal the way the Cassandra provider does for `duration`.
+- **`TIMESTAMP WITH TIME ZONE` arrives as a `Date`**, so the stated offset is folded into UTC and
+  sub-millisecond precision is dropped (`+03:00 10:11:12.345678` measured as
+  `"2026-08-24T07:11:12.345Z"`).
 - **`NJS-138` (pre-12.1 server) is a non-retryable configuration error, not a transient one.**
   `mapDatabaseError()` maps it to `DatabaseConfigError` instead of the generic retryable
   `ConnectionError` every other `connect()` failure produces — see [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir)

@@ -390,6 +390,163 @@ describe("useConnectionForm", () => {
     expect(result.current.testResult!.success).toBe(false);
   });
 
+  /*
+    ── A connectable server whose health surface does not answer ──
+
+    `handleConnect` used to save only `if (result.success)`, and the route answered
+    `success: false` whenever `provider.getHealth()` threw for ANY reason. That is one
+    gate serving two different facts, and three published engines fell through it: on
+    ScyllaDB the health read asked for Cassandra's `system_views` keyspace, which the
+    build does not have (measured 2026-08-24: `Keyspace system_views does not exist`,
+    code 8704), and StarRocks and SingleStore fail health for reasons of their own
+    (BACKLOG D8). All three connect and run statements fine, and none of them could be
+    created in the dialog at all.
+
+    A connection that `connect()`s is usable, so the route now separates the two facts
+    and the save follows the connect. It is NOT silent: the first click reports what the
+    server refused and saves nothing, and only a second click saves - which is why both
+    arms are asserted here.
+  */
+  const DEGRADED_BODY = {
+    success: true,
+    degraded: true,
+    message: "Connected, but this server answered no health data: Keyspace system_views does not exist",
+  };
+
+  test("a health surface that does not answer no longer refuses the save outright", async () => {
+    mockGlobalFetch({ "/api/db/test-connection": { ok: true, json: DEGRADED_BODY } });
+
+    const onConnect = mock(() => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect }));
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    // Nothing saved yet - but the user is told what was found, in the server's words.
+    expect(onConnect).not.toHaveBeenCalled();
+    expect(result.current.testResult!.message).toContain("Keyspace system_views does not exist");
+    expect(result.current.testResult!.message).toContain("again");
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+  });
+
+  test("the sentence names the button that is actually on screen", async () => {
+    // The dialog renders "Save Changes" when editing and "Establish Connection" when
+    // creating; telling the user to click a button that is not there is worse than
+    // telling them to click none.
+    mockGlobalFetch({ "/api/db/test-connection": { ok: true, json: DEGRADED_BODY } });
+
+    const existing: DatabaseConnection = {
+      id: "edit-degraded",
+      name: "Scylla ring",
+      type: "cassandra",
+      host: "127.0.0.1",
+      port: 9042,
+      database: "probe",
+      createdAt: new Date(0),
+    };
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, editConnection: existing }));
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(result.current.testResult!.message).toContain("Click Save Changes again");
+  });
+
+  test("a hard connect failure is still refused however many times it is clicked", async () => {
+    // The distinction the fix rests on: `success: false` is a connection that does not
+    // exist, and no number of clicks may save one.
+    mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: false, error: "ECONNREFUSED" } },
+    });
+
+    const onConnect = mock(() => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect }));
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).not.toHaveBeenCalled();
+    expect(result.current.testResult!.success).toBe(false);
+  });
+
+  test("Test Connection reports the degradation rather than a bare success", async () => {
+    mockGlobalFetch({ "/api/db/test-connection": { ok: true, json: DEGRADED_BODY } });
+
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    // It connected, so the result is a success - and the sentence says what is missing
+    // instead of the "Connected successfully" that hid it.
+    expect(result.current.testResult!.success).toBe(true);
+    expect(result.current.testResult!.message).toContain("no health data");
+  });
+
+  test("closing the dialog withdraws the acknowledgement", async () => {
+    // Otherwise a second connection typed into the same reopened dialog would be saved
+    // on its first click, having reported nothing.
+    mockGlobalFetch({ "/api/db/test-connection": { ok: true, json: DEGRADED_BODY } });
+
+    const onConnect = mock(() => {});
+    const { result, rerender } = renderHook(
+      (props: { isOpen: boolean }) => useConnectionForm({ ...defaultProps, onConnect, isOpen: props.isOpen }),
+      { initialProps: { isOpen: true } },
+    );
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).not.toHaveBeenCalled();
+
+    act(() => {
+      rerender({ isOpen: false });
+    });
+    act(() => {
+      rerender({ isOpen: true });
+    });
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).not.toHaveBeenCalled();
+  });
+
+  test("the platform adapter carries the same two facts", async () => {
+    // The embedded surface passes `onTestConnection` instead of reaching the route, and
+    // a fix that only reached the fetch path would leave the platform dialog refusing.
+    const onTestConnection = mock(async () => ({ success: true, degraded: true, error: "no monitoring here" }));
+    const onConnect = mock(() => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, onConnect, onTestConnection: onTestConnection as never }),
+    );
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).not.toHaveBeenCalled();
+    expect(result.current.testResult!.message).toContain("no monitoring here");
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+  });
+
   // ── handlePasteConnectionString parses and fills form ──────────────────────
 
   test("handlePasteConnectionString parses and fills form fields", () => {

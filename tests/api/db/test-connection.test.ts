@@ -206,6 +206,80 @@ describe("POST /api/db/test-connection", () => {
     expect(data.code).toBe("INTERNAL_ERROR");
   });
 
+  /*
+    A connect that succeeded and a health read that did not are two different facts,
+    and this route used to publish one word for both. Measured 2026-08-24
+    against scylladb/scylla:2026.2.4: `connect`, `query` and `getSchema` all answer
+    while `getHealth()` throws `Keyspace system_views does not exist`, because ScyllaDB
+    has no `system_views` keyspace. `handleConnect` gates the dialog's save on this
+    response, so a `success: false` here meant no ScyllaDB connection could be created
+    at all - and StarRocks and SingleStore sit on the same gate (D8).
+  */
+  test("a health read that fails after a successful connect is a degraded success, not a failure", async () => {
+    (mockProvider.getHealth as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new Error("Keyspace system_views does not exist");
+    });
+
+    const req = createMockRequest("/api/db/test-connection", {
+      method: "POST",
+      body: validConnection,
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{
+      success: boolean;
+      degraded?: boolean;
+      message: string;
+      latency?: number;
+    }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.degraded).toBe(true);
+    // The server's own sentence: it is the only thing that names the surface.
+    expect(data.message).toContain("Keyspace system_views does not exist");
+    // No latency, because the read it would have measured did not complete.
+    expect(data.latency).toBeUndefined();
+  });
+
+  test("a connect that fails is still a failure, degraded by nothing", async () => {
+    // The distinction the change rests on: a health read cannot excuse a connection
+    // that does not exist.
+    (mockProvider.connect as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new Error("ECONNREFUSED");
+    });
+
+    const req = createMockRequest("/api/db/test-connection", {
+      method: "POST",
+      body: validConnection,
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ success?: boolean; degraded?: boolean; error: string }>(res);
+
+    expect(res.status).toBe(500);
+    expect(data.degraded).toBeUndefined();
+    expect(data.error).toBe("ECONNREFUSED");
+  });
+
+  test("a health read that rejects with a non-Error still names what it threw", async () => {
+    // A driver that rejects with a string would otherwise report "[object Object]" or
+    // an empty sentence, which tells the user nothing about what to change.
+    (mockProvider.getHealth as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw "no monitoring endpoint";
+    });
+
+    const req = createMockRequest("/api/db/test-connection", {
+      method: "POST",
+      body: validConnection,
+    });
+
+    const data = await parseResponseJSON<{ success: boolean; message: string }>(await POST(req as never));
+
+    expect(data.success).toBe(true);
+    expect(data.message).toContain("no monitoring endpoint");
+  });
+
   test("calls connect and disconnect on successful test", async () => {
     const req = createMockRequest("/api/db/test-connection", {
       method: "POST",

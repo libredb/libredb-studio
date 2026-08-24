@@ -217,22 +217,54 @@ function round2(value: number): number {
 }
 
 /**
- * One read, or no rows when the connected role may not perform it.
+ * The keyspaces a monitoring read may find missing on a wire-compatible build.
  *
- * `permission` and nothing else, which is the measured shape of the problem: a
- * least-privilege role reads all of `system_schema` and is refused
- * `system_views.clients` with code 8448, so a denied monitoring surface is the
- * ORDINARY case for a restricted user and must not break the connection. Every other
- * failure propagates - including `invalid`, which is what a typo in one of the
- * statements above would produce.
+ * `system_views` and nothing else. It is Cassandra's virtual-table keyspace, added in
+ * 4.0, and ScyllaDB does not have it at all: measured 2026-08-24 against
+ * scylladb/scylla:2026.2.4, every one of the three reads above answers
+ * `Keyspace system_views does not exist` (8704) while `system.local`,
+ * `system_schema.*` and `system.size_estimates` all answer normally.
+ *
+ * An allowlist rather than "any absent keyspace", because the discriminator is text
+ * and text is all the server gives ([`transport.ts`](./transport.ts) records the four
+ * measured spellings). `system_schema` is deliberately NOT here: it is readable on
+ * every measured build and even by a least-privilege role, so a server refusing the
+ * whole keyspace is a fault the tree must not hide. `system_viewz` - the shape of a
+ * typo in this file - is not here either, which is the point of naming names.
+ */
+const CASSANDRA_OPTIONAL_KEYSPACES = new Set(["system_views"]);
+
+/**
+ * One read, or no rows when this server cannot answer it at all.
+ *
+ * Two conditions, and both are narrow on purpose - an empty panel that hides a typo
+ * in the statements above hides it forever:
+ *
+ * 1. `permission`, the measured shape of a restricted role: it reads all of
+ *    `system_schema` and is refused `system_views.clients` with code 8448, so a denied
+ *    monitoring surface is the ORDINARY case rather than a broken connection.
+ * 2. An `invalid` naming an ABSENT KEYSPACE this provider knows is optional - which is
+ *    every ScyllaDB build. A fact about the server, not about the CQL:
+ *    the same code 8704 carrying a missing table, a missing column or a misspelled
+ *    keyspace still propagates, because none of those three name an optional keyspace.
+ *
+ * Everything else propagates, exactly as before.
  */
 async function readRows(transport: CassandraTransport, cql: string): Promise<CassandraRow[]> {
   try {
     return (await transport.execute(cql)).rows;
   } catch (error) {
-    if (error instanceof CassandraTransportError && error.isMonitoringUnavailable()) return [];
+    if (error instanceof CassandraTransportError && isDegradable(error)) return [];
     throw error;
   }
+}
+
+/** Whether this failure is one of the two a monitoring panel may answer empty for. */
+function isDegradable(error: CassandraTransportError): boolean {
+  if (error.isMonitoringUnavailable()) return true;
+  const absent = error.absentKeyspace();
+
+  return absent !== null && CASSANDRA_OPTIONAL_KEYSPACES.has(absent.toLowerCase());
 }
 
 // ============================================================================

@@ -42,7 +42,7 @@ which is the SQL reference implementation. The headline differences:
 | Query timeout | `statement_timeout` from `queryTimeout` | **Not wired** — no server-side query timeout |
 | Pool config honored | `min`/`max`/`idleTimeout`/`acquireTimeout` | **`max` only** (`connectionLimit`) |
 | Queries-per-second metric | `undefined` (needs sampling) | Reported (`Queries`/`Uptime`) |
-| BLOB/binary values | driver-native | sanitized to `0x…` hex strings |
+| BLOB/binary values | driver-native | driver-native ([§3.3](#33-blob--binary-values-reach-every-surface-as-bytes)) |
 
 ### 1.1 MariaDB and the other MySQL-protocol engines
 
@@ -122,12 +122,37 @@ Every introspection query is parameterized with `TABLE_SCHEMA = ?` bound to `con
 "schemas" *are* databases, so the provider only ever sees the connected database, and table display
 names are bare (no `schema.table` prefixing). There is no cross-schema FK resolution to worry about.
 
-### 3.3 BLOB / binary values sanitized to hex
+### 3.3 BLOB / binary values reach every surface AS BYTES
 
-`sanitizeRow()` ([mysql.ts:170](../../src/lib/db/providers/sql/mysql.ts)) walks every result row and
-converts `Buffer` values to `0x<hex>` strings (empty buffers → `''`). MySQL returns `BLOB`/`BINARY`
-columns as Node `Buffer`s; without this they would not serialize cleanly to the JSON grid. This runs
-on both `query()` and `queryInTransaction()`.
+**The spelling changed on 2026-08-24.** A `BLOB`/`BINARY` value used to reach the grid as the text
+`0x0102ab`; it now reads `\x0102ab`, on every surface — the cell, the row detail sheet and the CSV —
+and that is the whole point of the change: one value must not be spelled two ways depending on which
+engine it came from.
+
+`sanitizeRow()` walked every result row and turned each `Buffer` into a `0x<hex>` string (an empty
+one into `''`). Its reason was real when it was written — the JSON a `Buffer` serializes to,
+`{"type":"Buffer","data":[…]}`, is unreadable — and it expired when `src/lib/export/binary.ts`
+(#469) started reading that exact shape. From then on the string was the only thing standing between
+a MySQL BLOB and the treatment a Postgres `bytea` already got: the binary cell renderer, the detail
+sheet, the CSV, and the per-dialect binary literal the SQL export writes. So the driver's rows are
+now handed on unchanged, `Buffer` values included, on both `query()` and `queryInTransaction()`.
+
+Measured on MySQL 26.7.0 (2026-08-24), replaying this export's own `INSERT` for the three bytes
+`0102AB` in `r5.types.b` back into a `BLOB` column and reading `HEX()`:
+
+| | grid / CSV | exported INSERT | replayed, `HEX(b)` / `LENGTH(b)` |
+|---|---|---|---|
+| before | `0x0102ab` | `VALUES (1, '0x0102ab')` | `3078303130326162` / 8 — the ASCII of `0x0102ab` |
+| after | `\x0102ab` | `VALUES (1, X'0102ab')` | `0102AB` / 3 |
+
+The before row is the defect: it stored eight characters of text where three bytes belonged, and it
+stored them *successfully*. An empty `BLOB` reads `\x` rather than the empty string it used to
+report — an empty byte string and a zero-length `VARCHAR` are different values and were spelled the
+same — and it exports as `X''`, which replays to `LENGTH(b)` 0. A `NULL` stays `NULL` and exports as
+`NULL`.
+
+One consequence worth stating: the JSON response now carries about four characters per byte instead
+of two, exactly as Postgres's does, so a very large single cell is no cheaper here than it is there.
 
 ### 3.4 Prepared statements via `execute()`
 
@@ -220,7 +245,8 @@ discrete-fields form** (the `connectionString` path bypasses it entirely). Note 
 
 `query(sql, params?, queryId?)` ([mysql.ts:185](../../src/lib/db/providers/sql/mysql.ts)) acquires a
 pooled connection, optionally records its `threadId` for cancellation, runs the prepared statement,
-sanitizes binary values, and returns the standard envelope:
+and returns the standard envelope with the driver's own values
+([§3.3](#33-blob--binary-values-reach-every-surface-as-bytes)):
 
 ```ts
 { rows, fields: string[], rowCount: rows.length, executionTime, columnTypes? }
@@ -348,7 +374,7 @@ to the pool until commit/rollback). Surfaced via `POST /api/db/transaction`.
 | Method | Behaviour |
 |--------|-----------|
 | `beginTransaction()` | `pool.getConnection()` + `beginTransaction()`, arms a **5-minute auto-rollback** timer ([mysql.ts:41](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active. |
-| `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same binary sanitization, and the same non-SELECT envelope as §5.1). Throws if none active. |
+| `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same non-SELECT envelope as §5.1). Throws if none active. |
 | `commitTransaction()` / `rollbackTransaction()` | Ends it, clears the timer, releases the connection. Throws if none active. |
 | `expireTransaction()` | Timeout callback — auto-`rollback()` to prevent leaked locks. |
 | `isInTransaction()` | Current state. |

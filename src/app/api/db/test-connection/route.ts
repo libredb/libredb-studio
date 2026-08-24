@@ -34,11 +34,43 @@ export async function POST(req: NextRequest) {
       let provider = null;
       try {
         provider = await createDatabaseProvider(effective, { queryTimeout: 10000 });
+        // The connection itself: every provider's connect() reaches the server and is
+        // refused by a wrong host, port, credential or database - the SQL ones borrow a
+        // pooled client, and the HTTP ones send a probe statement. So a connect that
+        // returns is the fact this route exists to establish.
         await provider.connect();
 
-        // Run a lightweight query to verify the connection actually works
+        /*
+          The health read is a SECOND fact, and conflating the two is the defect this
+          replaced: `getHealth()` is the richest surface a provider has, so a failure
+          here is worth telling the user about - but it is not the connection.
+
+          Measured 2026-08-24 against scylladb/scylla:2026.2.4: eight of the Cassandra
+          provider's surfaces answer and `getHealth()` threw `Keyspace system_views does
+          not exist`, because ScyllaDB has no such keyspace. This route answered
+          `success: false`, the dialog gates its save on that answer, and a ScyllaDB
+          connection could not be created at all. StarRocks and SingleStore sit on the
+          same gate for reasons of their own (D8).
+
+          So a health failure after a successful connect is reported as a degraded
+          success, carrying the server's own sentence. `latency` is omitted with it: the
+          elapsed time of a read that failed is not a round trip.
+        */
         const startTime = Date.now();
-        await provider.getHealth();
+        try {
+          await provider.getHealth();
+        } catch (healthError) {
+          await provider.disconnect();
+          provider = null;
+
+          return NextResponse.json({
+            success: true,
+            degraded: true,
+            message: `Connected, but this server answered no health data: ${
+              healthError instanceof Error ? healthError.message : String(healthError)
+            }`,
+          });
+        }
         const latency = Date.now() - startTime;
 
         await provider.disconnect();

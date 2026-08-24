@@ -469,18 +469,6 @@ export class MySQLProvider extends SQLBaseProvider {
   // Query Execution
   // ============================================================================
 
-  private sanitizeRow(row: Record<string, unknown>): Record<string, unknown> {
-    const sanitized: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(row)) {
-      if (Buffer.isBuffer(value)) {
-        sanitized[key] = value.length === 0 ? "" : `0x${value.toString("hex")}`;
-      } else {
-        sanitized[key] = value;
-      }
-    }
-    return sanitized;
-  }
-
   /**
    * Build the query envelope from what mysql2 handed back.
    *
@@ -517,7 +505,17 @@ export class MySQLProvider extends SQLBaseProvider {
     }
 
     return {
-      rows: (rows as unknown[]).map((row) => this.sanitizeRow(row as Record<string, unknown>)),
+      // The driver's rows are handed on UNCHANGED, binary values included.
+      // A `sanitizeRow` used to walk every row and turn a `Buffer` into the string
+      // `0x<hex>` (and an empty one into `""`), because the JSON a Buffer serializes
+      // to - `{"type":"Buffer","data":[…]}` - was unreadable. `src/lib/export/binary.ts`
+      // now READS that exact shape (#469), which is how Postgres's `bytea` reaches the
+      // grid, the row sheet, the CSV and the SQL export, so the string was the only
+      // thing standing between a MySQL BLOB and the same treatment: the grid showed
+      // `0x0102ab` where Postgres showed `\x0102ab`, and the export wrote the eight
+      // characters `'0x0102ab'` into a BLOB column rather than the three bytes.
+      // Measured against MySQL 26.7.0 on 2026-08-24; see docs/providers/mysql.md §3.3.
+      rows: rows as Record<string, unknown>[],
       fields: fields?.map((f: FieldPacket) => f.name) ?? [],
       ...mysqlColumnTypes(fields),
       rowCount: rows.length,
