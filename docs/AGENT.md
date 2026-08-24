@@ -1552,24 +1552,18 @@ denial cannot be re-fed to the model as though the SQL were malformed.
 
 Ten models run every agent surface. Each cleared all six — Investigate, Optimize, Assess, Operate,
 Analyze and Plan — five consecutive times, at the turn limit the product ships, which is 30 of 30
-runs. Each has a page of its own with its measured durations and whatever it needs that the others
-do not.
+runs.
 
-| Model | Served through | Median run | Slowest run |
-| --- | --- | --- | --- |
-| [`gemini-3.5-flash-lite`](models/gemini-3-5-flash-lite.md) | Gemini API | 10 s | 24 s |
-| [`granite4.1:8b`](models/granite4-1-8b.md) | Ollama | 10 s | 21 s |
-| [`ornith:9b`](models/ornith-9b.md) | Ollama | 25 s | 82 s |
-| [`qwen3.5:9b`](models/qwen3-5-9b.md) | Ollama | 25 s | 98 s |
-| [`granite4.1:30b`](models/granite4-1-30b.md) | Ollama | 26 s | 46 s |
-| [`qwen3:8b`](models/qwen3-8b.md) | Ollama | 32 s | 132 s |
-| [`qwen3:14b`](models/qwen3-14b.md) | Ollama | 39 s | 151 s |
-| [`gemma4:26b`](models/gemma4-26b.md) | Ollama | 46 s | 180 s |
-| [`qwen3.8:latest`](models/qwen3-8-latest.md) | Ollama | 62 s | 347 s |
-| [`qwen3:4b`](models/qwen3-4b.md) | Ollama | 75 s | 139 s |
+**The table lives in [`docs/llms/README.md`](llms/README.md)**, with each model's page beside it,
+and this page deliberately does not repeat it. There used to be a copy here. Every one of its ten
+rows had drifted from the canonical figures — `gemma4:26b` read 46 s/180 s against a measured
+36 s/92 s, `qwen3:14b` read 39 s/151 s against 41 s/303 s — and all ten of its links pointed at a
+`docs/models/` directory that does not exist. Two homes for one measurement is what produced that,
+so there is one now.
 
-The durations are from one machine and are comparable with each other rather than portable: every
-figure was taken the same way, on the same database, through the same six surfaces.
+Which model to run, what each needs that the others do not, and how to measure one these pages do
+not cover, are all under [`docs/llms/`](llms/README.md).
+
 
 Nothing prevents another model from being configured — the capability probe below decides what any
 given endpoint can do, and there is no allow-list in the code. What the ten have is a measurement.

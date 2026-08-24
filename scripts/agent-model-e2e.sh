@@ -39,6 +39,10 @@ restore() {
 }
 trap restore EXIT
 
+# Models whose sweep did not pass, collected rather than exited on: an hour of measurement is
+# worth finishing, and one model's failure is not a reason to stop asking about the other nine.
+FAILED=""
+
 for MODEL in "${MODELS[@]}"
 do
   echo "======== $MODEL ========"
@@ -71,6 +75,18 @@ do
     E2E_PASSWORD="$(grep -E '^USER_PASSWORD=' .env.local | cut -d= -f2-)" \
     npx playwright test e2e/agent-models.spec.ts --project=chromium --reporter=line --workers=1 $HEADED 2>&1 |
     sed "s/^/[$MODEL] /"
-  echo "@@@@ $MODEL done"
+  # Read IMMEDIATELY after the pipeline, because $? here is sed's and sed always succeeds.
+  # Without this a model could fail its whole sweep while the script printed "done" and exited 0,
+  # so anything reading the exit status - a wrapper, CI, or the next person - was told a sweep
+  # passed that had not. The prefix is worth keeping, so the status is captured rather than the
+  # pipe removed.
+  STATUS=${PIPESTATUS[0]}
+  [ "$STATUS" -eq 0 ] || FAILED="$FAILED $MODEL"
+  echo "@@@@ $MODEL done (exit $STATUS)"
 done
+if [ -n "$FAILED" ]; then
+  # Named rather than counted: the question after an hour-long sweep is WHICH model to look at.
+  echo "@@@@ FAILED:$FAILED"
+  exit 1
+fi
 echo "@@@@ done"

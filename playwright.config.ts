@@ -26,10 +26,16 @@ export default defineConfig({
     baseURL: `http://localhost:${port}`,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
-    // Kept for every test rather than only for failures, because the agent specs are the ones
-    // somebody watches: a model sweep runs for over an hour and the question afterwards is what
-    // the rail actually did, which a passing run answers as usefully as a failing one.
-    video: "retain-on-failure",
+    // Kept for every test DURING A MODEL SWEEP, and only then. The agent specs are the ones
+    // somebody watches: a sweep runs for over an hour and the question afterwards is what the
+    // rail actually did, which a passing run answers as usefully as a failing one — so
+    // `retain-on-failure`, which deletes exactly those videos, is the wrong setting there.
+    //
+    // Scoped to the sweep's own variable rather than turned on globally, because `use` reaches
+    // every project and every run: `on` here would have CI keeping a video of every passing test
+    // in every job, which nobody watches and every artifact pays for. The comment used to claim
+    // the first sentence while the value did the opposite; the two now agree.
+    video: process.env.AGENT_MODEL_E2E ? "on" : "retain-on-failure",
     // Watchable when asked for. Unset in CI and in an ordinary run, so nothing slows down by
     // default; `PWSLOWMO=350` puts a beat between actions when somebody is watching the sweep.
     launchOptions: { slowMo: Number(process.env.PWSLOWMO ?? 0) },
