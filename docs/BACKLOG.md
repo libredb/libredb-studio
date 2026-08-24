@@ -22,7 +22,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S1–S8 · 8
-- [Drivers and connections](#drivers-and-connections) — D1–D20, U17 · 11
+- [Drivers and connections](#drivers-and-connections) — D1–D21, U17 · 12
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X13, U2–U18 · 10
@@ -445,6 +445,33 @@ either, because the mock was written against the same `any`.
 
 **Done when:** the Oracle provider compiles against `oracledb`'s own published types, or the reason it
 cannot is recorded here with what breaks.
+
+
+---
+
+### D21. The Cassandra degradation discriminator is a message match, and a structural one exists
+
+`CassandraTransportError.absentKeyspace()` reads the refused keyspace's NAME out of the server's
+sentence: `/^keyspace '?([A-Za-z0-9_]+)'? does not exist$/i`. That was the narrowest answer available on
+2026-08-24 - measured, all four cases (absent keyspace, table typo, column typo, keyspace typo) arrive
+as protocol code 8704 with the driver's own `keyspace` and `table` properties `undefined` on both
+Cassandra 5.0.9 and ScyllaDB 2026.2.4, so there was nothing structured to key on.
+
+There is a structural fact available that the provider does not read: whether `system_views` exists in
+`system_schema.keyspaces` at all. Asked once per connection, it replaces the text match with a property
+of the server - degrade a `system_views` read on a build that has no such keyspace, and let everything
+else throw. Behaviour would be identical on both measured engines, including the one case the allowlist
+cannot separate (a table typo INSIDE `system_views` on a build that has no `system_views`), which is
+documented in `docs/providers/cassandra.md` §3.6.
+
+What the current form risks: a future build that rephrases the sentence stops matching, and the five
+monitoring reads throw again. That is a bounded regression rather than a lockout - the connection dialog
+no longer gates its save on the health read, so the connection is still creatable and the failure
+reaches the user as the server's own sentence - and the four measured spellings are pinned by tests, so
+a rephrase shows up as a failing test rather than as silence. Raised by an external review of #472.
+
+**Done when:** the degradation keys on a keyspace that is measurably absent rather than on the wording
+of a refusal, with the cost of the extra read stated, and the four spellings kept as a regression pin.
 
 
 ## Value interpolation

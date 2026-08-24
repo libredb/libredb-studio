@@ -198,6 +198,13 @@ export class CassandraTransportError extends Error {
     // fault entirely, and matching their text would be sniffing sentences for no gain.
     if (this.category !== "invalid") return null;
 
+    // A message match, because there is nothing structured to read - and it is load
+    // bearing, so the belt matters: a future build that rephrases this stops matching
+    // and the five monitoring reads throw again, which now degrades the panel rather
+    // than locking the dialog (the save no longer gates on the health read). The four
+    // measured spellings are pinned by tests, so a rephrase fails a test rather than
+    // going quiet. The structural alternative - asking `system_schema.keyspaces`
+    // whether `system_views` exists at all - is BACKLOG D21.
     return /^keyspace '?([A-Za-z0-9_]+)'? does not exist$/i.exec(this.message.trim())?.[1] ?? null;
   }
 }
