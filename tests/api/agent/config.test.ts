@@ -24,7 +24,8 @@ import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { AGENT_ENABLED_ENV, AGENT_WORLD_TARGET_ENV } from "@/lib/agent/config";
+import { AGENT_ENABLED_ENV, AGENT_MODEL_TUNING_ENV, AGENT_WORLD_TARGET_ENV } from "@/lib/agent/config";
+import { resetTuning } from "@/lib/agent/model-tuning";
 import * as realAuth from "@/lib/auth";
 import { parseResponseJSON } from "../../helpers/mock-next";
 
@@ -48,6 +49,7 @@ const { GET } = await import("@/app/api/agent/config/route");
 const ENV_KEYS = [
   AGENT_ENABLED_ENV,
   AGENT_WORLD_TARGET_ENV,
+  AGENT_MODEL_TUNING_ENV,
   "WORKFLOW_LOCAL_DATA_DIR",
   "LLM_PROVIDER",
   "LLM_API_KEY",
@@ -76,6 +78,9 @@ afterEach(() => {
     else process.env[key] = originalEnv[key];
   }
   fs.rmSync(ledgerDir, { recursive: true, force: true });
+  // The tuning document is memoised for the process, so a case that mounted one would otherwise
+  // leave it in force for whatever runs next.
+  resetTuning();
 });
 
 /** A model configuration that validates without reaching anything. */
@@ -240,5 +245,61 @@ describe("GET /api/agent/config", () => {
     expect(body.enabled).toBe(false);
     expect(body.reason).toBe("UNSANCTIONED_WORLD_TARGET");
     expect(String(body.detail)).toContain(AGENT_WORLD_TARGET_ENV);
+  });
+});
+
+/**
+ * What became of `AGENT_MODEL_TUNING_PATH`, which is the one thing about the agent's
+ * configuration that fails OPEN.
+ *
+ * Every other misconfiguration here makes the rail disappear, so the operator finds out by
+ * looking. A tuning document that cannot be read is different: the agent runs, the rail renders,
+ * and the settings the operator mounted are simply not the ones in force. Nothing about the
+ * running system says so, which makes it the case this route exists for.
+ *
+ * Admin-only, under the rule this route already states for `detail`: the status names an absolute
+ * server filesystem path and a parser message, and the person who acts on that is the operator.
+ */
+describe("GET /api/agent/config, on the operator's tuning document", () => {
+  const writeTuning = (body: string): string => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "libredb-tuning-route-")), "models.json");
+    fs.writeFileSync(file, body);
+    return file;
+  };
+
+  test("tells an admin the document was ignored, and why", async () => {
+    asAdmin();
+    configureModel();
+    const file = writeTuning("{ not json");
+    process.env[AGENT_MODEL_TUNING_ENV] = file;
+    resetTuning();
+
+    const body = await parseResponseJSON<Record<string, unknown>>(await GET());
+
+    expect(body.modelTuning).toMatchObject({ state: "ignored", path: file });
+    expect(String((body.modelTuning as Record<string, unknown>).reason)).toContain("JSON");
+  });
+
+  test("tells an admin when nothing was configured, so silence is not read as a fault", async () => {
+    asAdmin();
+    configureModel();
+    resetTuning();
+
+    const body = await parseResponseJSON<Record<string, unknown>>(await GET());
+
+    expect(body.modelTuning).toEqual({ state: "unset" });
+  });
+
+  test("withholds it from a session that cannot act on it", async () => {
+    // The same rule as `detail`, and withheld as a whole rather than field by field: a path is
+    // server topology, and a rule re-audited per field is one that leaks the next field somebody
+    // adds.
+    configureModel();
+    process.env[AGENT_MODEL_TUNING_ENV] = writeTuning("{ not json");
+    resetTuning();
+
+    const body = await parseResponseJSON<Record<string, unknown>>(await GET());
+
+    expect(body).not.toHaveProperty("modelTuning");
   });
 });

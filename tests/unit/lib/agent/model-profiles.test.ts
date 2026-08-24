@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   modelProfiles,
   ceilingFor,
-  noticesFor,
   presentReminderLimitFor,
   retriesEmptyTurn,
   turnTimeoutMsFor,
@@ -10,7 +9,6 @@ import {
   reportReminderLimitFor,
   samplingFor,
 } from "@/lib/agent/models";
-import { BASELINE_NOTICES } from "@/lib/agent/models/notices";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 
 /**
@@ -173,42 +171,6 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(presentReminderLimitFor("qwen3:8b")).toBe(1);
     expect(presentReminderLimitFor("gemma4:26b")).toBe(1);
     expect(presentReminderLimitFor("some-model-released-tomorrow:70b")).toBe(1);
-  });
-
-  test("every model carries its own copy of every sentence, and they start identical", () => {
-    /*
-      The isolation this directory is FOR, applied to wording as well as to numbers — and this
-      assertion is weaker than it used to be, deliberately.
-
-      A sentence is read by a model and acted on by that model, so a wording that recovers one
-      run can be the wording another gives up on — a measured value, not a constant. Twice a
-      shared value was changed here, won several cells and lost others, and the only move left
-      was to revert and hand back the wins. Every profile therefore used to carry its own copy of
-      all three sentences, and this test asserted the copy existed.
-
-      The copies are gone, because the settings are data now and wording must not be. It
-      interpolates `PLAN_NO_STATEMENT_MARKER`, which a literal copy would silently drift from;
-      and the document is shaped to be supplied from outside Studio, where carrying prompt text
-      would hand whoever writes it a say in what Studio tells a model mid-run.
-
-      So the protection moved rather than disappeared, and it is worth being precise about what
-      is left. Every measured model resolves to the baseline — asserted here — and the pinned
-      digests in `model-resolution-table.test.ts` hold the exact bytes, so editing a shared
-      sentence turns THAT test red rather than quietly re-taking cells. What is no longer
-      structurally impossible is a deliberate edit applying to all ten at once; what is still
-      impossible is doing it without a test saying so.
-    */
-    for (const name of Object.keys(modelProfiles())) {
-      expect(noticesFor(name), `${name} is sent something other than what it was measured with`).toEqual(
-        BASELINE_NOTICES,
-      );
-    }
-  });
-
-  test("a model nobody has measured is given the baseline wording", () => {
-    // The one place the baseline is still read at run time, and the honest treatment of a
-    // model with no file: it is sent what everything else was measured with.
-    expect(noticesFor("some-model-released-tomorrow:70b")).toEqual(BASELINE_NOTICES);
   });
 
   test("every profile states what measured it", () => {

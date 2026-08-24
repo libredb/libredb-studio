@@ -9,10 +9,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { activeTuning, providerTier, resetTuning } from "@/lib/agent/model-tuning";
+import { activeTuning, operatorTuningStatus, resetTuning } from "@/lib/agent/model-tuning";
 import bundled from "@/lib/agent/model-tuning/measured-profiles.json";
 import { ModelTuningError, TUNING_SCHEMA_VERSION, parseTuning } from "@/lib/agent/model-tuning/schema";
-import { ceilingFor, retriesEmptyTurn, samplingFor } from "@/lib/agent/models";
+import { ceilingFor, retriesEmptyTurn } from "@/lib/agent/models";
 import { BASELINE_NOTICES } from "@/lib/agent/models/notices";
 import {
   DEFAULT_PLAN_STATEMENT_RETRIES,
@@ -60,7 +60,6 @@ const document = (overrides: Record<string, unknown> = {}): Record<string, unkno
       refusalExamples: false,
     },
   },
-  providers: [],
   models: [ENTRY],
   ...overrides,
 });
@@ -154,7 +153,6 @@ describe("what the contract refuses", () => {
       "a turn limit longer than the shortest run",
       { models: [{ ...ENTRY, settings: { ...COMPLETE, turnTimeoutMs: 400_000 } }] },
     ],
-    ["a provider tier for a provider that does not exist", { providers: [{ id: "olama", settings: {} }] }],
     [
       "an entry that states none of its settings",
       { models: [{ id: "x:1b", measured: "m", summary: [], settings: {} }] },
@@ -171,16 +169,6 @@ describe("what the contract refuses", () => {
     expect(() => parseTuning(document(twice), "test")).toThrow(/appears twice/);
   });
 
-  test("refuses one provider tier stated twice", () => {
-    const twice = {
-      providers: [
-        { id: "ollama", settings: {} },
-        { id: "ollama", settings: {} },
-      ],
-    };
-    expect(() => parseTuning(document(twice), "test")).toThrow(/appears twice/);
-  });
-
   test("names the document it refused, so an operator knows which file to fix", () => {
     expect(() => parseTuning({}, "/etc/libredb/models.json")).toThrow(/\/etc\/libredb\/models\.json/);
   });
@@ -194,109 +182,6 @@ describe("what the contract refuses", () => {
     const tuning = parseTuning(document(unexplained), "test");
     expect(tuning.models["some-model:9b"]?.retryEmptyTurn).toBe(true);
     expect(tuning.undocumentedOverrides).toEqual(["some-model:9b: retryEmptyTurn"]);
-  });
-});
-
-describe("the three layers", () => {
-  test("a provider tier reaches a model nobody has measured", () => {
-    // Requirement (c), and the only place it can be exercised: the ten measured models all have
-    // entries of their own, and every shipped tier is empty.
-    const withTier = {
-      providers: [
-        {
-          id: "ollama",
-          settings: { unreportedCallCeiling: 7 },
-          rationale: { unreportedCallCeiling: ["measured across this provider"] },
-        },
-      ],
-    };
-    const tuning = parseTuning(document(withTier), "test");
-    expect(tuning.providers.ollama?.unreportedCallCeiling).toBe(7);
-  });
-
-  test("a model's own measurement beats its provider's tier", () => {
-    // The order is the contract. A tier that won would overwrite the thing it was meant to
-    // stand in for.
-    const both = {
-      providers: [
-        { id: "ollama", settings: { unreportedCallCeiling: 7 }, rationale: { unreportedCallCeiling: ["tier"] } },
-      ],
-      models: [
-        {
-          ...ENTRY,
-          settings: { ...COMPLETE, unreportedCallCeiling: 9 },
-          rationale: { unreportedCallCeiling: ["model"] },
-        },
-      ],
-    };
-    const tuning = parseTuning(document(both), "test");
-    expect(tuning.models["some-model:9b"]?.unreportedCallCeiling).toBe(9);
-    expect(tuning.providers.ollama?.unreportedCallCeiling).toBe(7);
-  });
-
-  test("a model's own sampling beats a tier's value for the same surface", () => {
-    /*
-      Asserted through the RESOLVER, not through the parsed document, because that is where this
-      went wrong. The first version of `samplingFor` chose one surface value — the model's if it
-      had one, otherwise the tier's — and spread it last, so a tier's per-surface value landed on
-      top of a model's own general sampling. The document-level test above would not have caught
-      it: both entries parse correctly, and it is the merge that inverts them.
-    */
-    process.env[ENV] = writeDocument(
-      document({
-        providers: [
-          {
-            id: "ollama",
-            settings: { perWorkflow: { investigation: { temperature: 1.9, topP: 0.3 } } },
-            rationale: { perWorkflow: ["a tier value, to be beaten by a model's own"] },
-          },
-        ],
-        models: [],
-      }),
-    );
-    resetTuning();
-    // `qwen3:8b` states no per-surface value for investigation, so the tier is the only other
-    // candidate — and its own measured sampling must still win.
-    expect(samplingFor("qwen3:8b", "investigation", "ollama")).toEqual({ temperature: 0, topP: 1 });
-    // Its own per-surface value stands where it has one.
-    expect(samplingFor("qwen3:8b", "query-optimization", "ollama")).toEqual({ temperature: 0.8, topP: 0.9 });
-  });
-
-  test("a tier's sampling does reach a model that has no entry at all", () => {
-    // The other half: the tier is not inert, it is outranked. A model nobody measured takes it.
-    process.env[ENV] = writeDocument(
-      document({
-        providers: [
-          {
-            id: "ollama",
-            settings: { sampling: { temperature: 0.4, topP: 0.7 } },
-            rationale: { sampling: ["measured across this provider"] },
-          },
-        ],
-        models: [],
-      }),
-    );
-    resetTuning();
-    expect(samplingFor("some-model-released-tomorrow:70b", "investigation", "ollama")).toEqual({
-      temperature: 0.4,
-      topP: 0.7,
-    });
-  });
-
-  test("no tier is claimed for a run whose provider nobody passed", () => {
-    expect(providerTier(undefined)).toEqual({});
-  });
-
-  test("the shipped tiers are empty, so no measured model resolves differently for it", () => {
-    // Said out loud because it is the honest state: the mechanism ships, the values do not.
-    // Across the ten, no setting is shared by all models of any provider.
-    expect(activeTuning().providers).toEqual({});
-    for (const provider of ["ollama", "openai", "gemini", "custom"] as const) {
-      expect(ceilingFor("qwen3:8b", provider)).toBe(ceilingFor("qwen3:8b"));
-      expect(samplingFor("qwen3:8b", "query-optimization", provider)).toEqual(
-        samplingFor("qwen3:8b", "query-optimization"),
-      );
-    }
   });
 });
 
@@ -360,6 +245,44 @@ describe("a document an operator supplies", () => {
     resetTuning();
     expect(ceilingFor("gemma4:26b")).toBe(10);
     expect(Object.keys(activeTuning().models)).toHaveLength(10);
+  });
+
+  test("reports that it ignored a document, naming the file and the reason", () => {
+    /*
+      The other half of "ignored, loudly", and the half nothing checked.
+
+      Fail-open is only safe when the operator can find out it happened: they set a path, the
+      settings they mounted are not in force, and until this existed a log line was the only thing
+      that said so — unasserted, so deleting it left the suite green.
+
+      Asserted as a VALUE rather than by spying on the logger, and that was forced rather than
+      preferred. `tests/api/db/disconnect.test.ts` calls `mock.module("@/lib/logger", ...)`, which
+      bun applies process-wide and which swaps the module for whoever imports it next, so a test
+      file and the module under test can end up holding two different logger objects: spying either
+      one passes alone and fails in the full suite. A status the loader returns is the same fact
+      without the ordering, and `/api/agent/config` needs it anyway — a warning in a container log
+      is not a diagnosis an operator can reach.
+    */
+    const path = writeDocument("{ not json");
+    process.env[ENV] = path;
+    resetTuning();
+    const status = operatorTuningStatus();
+    expect(status.state).toBe("ignored");
+    expect(status.state === "ignored" && status.path).toBe(path);
+    expect(status.state === "ignored" && status.reason).toContain("JSON");
+  });
+
+  test("reports the document it applied, and how many models it carried", () => {
+    process.env[ENV] = writeDocument(document());
+    resetTuning();
+    const status = operatorTuningStatus();
+    expect(status.state).toBe("applied");
+    expect(status.state === "applied" && status.models).toBe(1);
+  });
+
+  test("reports nothing configured when no path was set", () => {
+    resetTuning();
+    expect(operatorTuningStatus().state).toBe("unset");
   });
 
   test("is ignored when it breaks the contract, not partially applied", () => {

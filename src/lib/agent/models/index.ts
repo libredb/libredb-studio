@@ -1,11 +1,11 @@
 /**
  * Per-model settings for the agent loop: this is where a run asks what it was measured with.
  *
- * The settings themselves are DATA now — `../model-tuning/measured-profiles.json`, which used to
- * be ten TypeScript modules. Nothing about the discipline changed in moving them, and one part
- * of it got stronger: those modules wrote `sampling: DEFAULT_SAMPLING`, a live reference, so
- * each one's promise that a later change to the defaults could not reach its measurement was
- * false. The document states the number, so the promise holds.
+ * The settings themselves are DATA — `../model-tuning/measured-profiles.json`, which used to be
+ * ten TypeScript modules. Nothing about the discipline changed in moving them, and one part of it
+ * got stronger: those modules wrote `sampling: DEFAULT_SAMPLING`, a live reference, so each one's
+ * promise that a later change to the defaults could not reach its measurement was false. The
+ * document states the number, so the promise holds.
  *
  * The discipline itself is unchanged and worth restating. EVERY measured model has an entry,
  * including the ones the defaults already suit, because a shared value is what has twice cost
@@ -14,30 +14,27 @@
  * the settings a model's numbers were obtained under, so the numbers still mean something after
  * the defaults move, and `measured` carries those numbers.
  *
- * THREE LAYERS, later winning, which is what a run resolves through:
+ * TWO LAYERS, later winning, which is what a run resolves through:
  *
- *     compiled defaults  ->  the provider's tier  ->  the model's own entry
+ *     compiled defaults  ->  the model's own entry
  *
- * The provider tier is what a model NOBODY has measured inherits — settings that hold for
- * everything reaching a given provider rather than for one set of weights. It ships empty,
- * because across the ten measured models no setting is shared by all models of any provider:
- * the overrides do not cluster that way. So the tier is a mechanism today and not a value, and
- * an unmeasured model still resolves exactly to the defaults, which is the honest treatment of
- * a model nobody has measured.
+ * There was briefly a third, between them: a per-PROVIDER tier, for settings that hold for
+ * everything reaching one provider rather than for one set of weights. It is gone, and the reason
+ * it is gone is the reason it should not come back until a measurement asks for it. Across the ten
+ * measured models NO setting is shared by all models of any provider — the overrides do not
+ * cluster that way — so the tier had a schema, a resolver, a merge order and tests, and no data.
+ * A layer that always resolves to nothing is worse than a missing one: it reads as working. When a
+ * measurement does cluster by provider, the layer is a small change to `resolve` below and a key
+ * in the document; that is a better trade than carrying it empty until then.
  *
- * `provider` is optional on every resolver below. That is not shyness about the argument: it is
- * what lets `tests/unit/lib/agent/model-resolution-table.test.ts` — written against the ten
- * modules, before any of this moved — keep proving that none of these answers changed, without
- * being edited into agreement with the code it is checking.
+ * A model nobody has measured therefore resolves exactly to the compiled defaults, which is the
+ * honest treatment of a model nobody has measured.
  */
 
-import type { LLMProviderType } from "@/lib/llm/types";
-import { activeTuning, providerTier } from "../model-tuning";
+import { activeTuning } from "../model-tuning";
 import type { AgentRunWorkflowType } from "../types";
-import { BASELINE_NOTICES } from "./notices";
 import {
   type AgentModelProfile,
-  type AgentNotices,
   type AgentSampling,
   DEFAULT_PLAN_STATEMENT_RETRIES,
   DEFAULT_REPORT_REMINDER_LIMIT,
@@ -62,24 +59,20 @@ export function modelProfiles(): Readonly<Record<string, AgentModelProfile>> {
   return activeTuning().models;
 }
 
-/** One model's own entry, or nothing — the layer a provider tier sits under. */
+/** One model's own entry, or nothing. */
 function entryFor(modelId: string): AgentModelProfile | undefined {
   return activeTuning().models[modelId.toLowerCase()];
 }
 
 /**
- * One setting, resolved through the three layers.
+ * One setting, or nothing when this model states none.
  *
- * Written once rather than repeated in nine resolvers, because the ORDER is the contract: a
- * provider tier that beat a model's own measurement would be the bug this whole arrangement
- * exists to make impossible.
+ * Written once rather than repeated in nine resolvers so that each resolver below is only the
+ * default it falls back to. It is also the one place a layer between the defaults and a model's
+ * own entry would be added, which is why it stays a function over a direct lookup.
  */
-function resolve<K extends keyof AgentModelProfile>(
-  modelId: string,
-  provider: LLMProviderType | undefined,
-  key: K,
-): AgentModelProfile[K] | undefined {
-  return entryFor(modelId)?.[key] ?? (providerTier(provider)[key] as AgentModelProfile[K] | undefined);
+function resolve<K extends keyof AgentModelProfile>(modelId: string, key: K): AgentModelProfile[K] | undefined {
+  return entryFor(modelId)?.[key];
 }
 
 /**
@@ -88,8 +81,8 @@ function resolve<K extends keyof AgentModelProfile>(
  * Separate from `samplingFor` because it is not sampling: the two answer to different parts of
  * the loop, and a caller wanting one has no business resolving the other.
  */
-export function ceilingFor(modelId: string, provider?: LLMProviderType): number {
-  return resolve(modelId, provider, "unreportedCallCeiling") ?? DEFAULT_UNREPORTED_CALL_CEILING;
+export function ceilingFor(modelId: string): number {
+  return resolve(modelId, "unreportedCallCeiling") ?? DEFAULT_UNREPORTED_CALL_CEILING;
 }
 
 /**
@@ -98,8 +91,8 @@ export function ceilingFor(modelId: string, provider?: LLMProviderType): number 
  * Its own resolver for the same reason `ceilingFor` is: the drive asks about one thing at a
  * time, and a function that answered two questions would be called where only one was wanted.
  */
-export function reportReminderLimitFor(modelId: string, provider?: LLMProviderType): number {
-  return resolve(modelId, provider, "reportReminderLimit") ?? DEFAULT_REPORT_REMINDER_LIMIT;
+export function reportReminderLimitFor(modelId: string): number {
+  return resolve(modelId, "reportReminderLimit") ?? DEFAULT_REPORT_REMINDER_LIMIT;
 }
 
 /**
@@ -108,8 +101,8 @@ export function reportReminderLimitFor(modelId: string, provider?: LLMProviderTy
  * Zero unless a profile says otherwise, so introducing the mechanism changed no run of any
  * model but the one whose ledgers asked for it.
  */
-export function planStatementRetriesFor(modelId: string, provider?: LLMProviderType): number {
-  return resolve(modelId, provider, "planStatementRetries") ?? DEFAULT_PLAN_STATEMENT_RETRIES;
+export function planStatementRetriesFor(modelId: string): number {
+  return resolve(modelId, "planStatementRetries") ?? DEFAULT_PLAN_STATEMENT_RETRIES;
 }
 
 /**
@@ -118,8 +111,8 @@ export function planStatementRetriesFor(modelId: string, provider?: LLMProviderT
  * False everywhere but the model measured returning nothing with its readings already taken,
  * so introducing the retry changed no other model's turn count.
  */
-export function retriesEmptyTurn(modelId: string, provider?: LLMProviderType): boolean {
-  return resolve(modelId, provider, "retryEmptyTurn") ?? DEFAULT_RETRY_EMPTY_TURN;
+export function retriesEmptyTurn(modelId: string): boolean {
+  return resolve(modelId, "retryEmptyTurn") ?? DEFAULT_RETRY_EMPTY_TURN;
 }
 
 /**
@@ -129,8 +122,8 @@ export function retriesEmptyTurn(modelId: string, provider?: LLMProviderType): b
  * the product's setting, which the drive already reads, and returning it from this function
  * would put the same number in two places for a resolver to disagree with later.
  */
-export function turnTimeoutMsFor(modelId: string, provider?: LLMProviderType): number | undefined {
-  return resolve(modelId, provider, "turnTimeoutMs");
+export function turnTimeoutMsFor(modelId: string): number | undefined {
+  return resolve(modelId, "turnTimeoutMs");
 }
 
 /**
@@ -138,27 +131,8 @@ export function turnTimeoutMsFor(modelId: string, provider?: LLMProviderType): n
  *
  * One everywhere but the model measured reporting straight through the first telling.
  */
-export function presentReminderLimitFor(modelId: string, provider?: LLMProviderType): number {
-  return resolve(modelId, provider, "presentReminderLimit") ?? DEFAULT_PRESENT_REMINDER_LIMIT;
-}
-
-/**
- * Every sentence this model is told.
- *
- * The WORDING stays in code — `notices.ts` — and no entry in the document carries any. Two
- * reasons, and the second is why it is a rule rather than a convenience: `planStatement`
- * interpolates `PLAN_NO_STATEMENT_MARKER`, so a copy in data would drift from the marker the
- * verifier looks for; and the document is shaped to be supplied from outside Studio, where
- * carrying prompt text would mean whoever writes it decides what Studio says to a model.
- *
- * The merge stays, so a measured per-model wording still has somewhere to go — it would arrive
- * as an override in code, beside the baseline it differs from. The ten measured models all
- * resolve to the baseline today, and the pinned table records their digests, so an edit to a
- * shared sentence turns a test red instead of quietly re-taking cells this repository has
- * already won twice.
- */
-export function noticesFor(modelId: string, provider?: LLMProviderType): AgentNotices {
-  return { ...BASELINE_NOTICES, ...resolve(modelId, provider, "notices") };
+export function presentReminderLimitFor(modelId: string): number {
+  return resolve(modelId, "presentReminderLimit") ?? DEFAULT_PRESENT_REMINDER_LIMIT;
 }
 
 /**
@@ -167,36 +141,16 @@ export function noticesFor(modelId: string, provider?: LLMProviderType): AgentNo
  * The tool layer asks by model id rather than being handed a flag, so a tool that refuses does
  * not need the drive to tell it who it is refusing.
  */
-export function offersRefusalExamples(modelId: string, provider?: LLMProviderType): boolean {
-  return resolve(modelId, provider, "refusalExamples") ?? DEFAULT_REFUSAL_EXAMPLES;
+export function offersRefusalExamples(modelId: string): boolean {
+  return resolve(modelId, "refusalExamples") ?? DEFAULT_REFUSAL_EXAMPLES;
 }
 
 /**
  * The sampling for one model on one surface: the default, then the model's own value, then its
  * value for this surface. Later wins, and every layer is optional.
  */
-export function samplingFor(
-  modelId: string,
-  workflow: AgentRunWorkflowType | undefined,
-  provider?: LLMProviderType,
-): AgentSampling {
-  const tier = providerTier(provider);
+export function samplingFor(modelId: string, workflow: AgentRunWorkflowType | undefined): AgentSampling {
   const own = entryFor(modelId);
-  /*
-    Each source's surface value sits with that source, and NOT collapsed into one `surface`
-    picked before the spread.
-
-    The collapsed form is wrong and was written here first: `own?.perWorkflow?.[w] ??
-    tier.perWorkflow?.[w]` spread last means that a model stating no value for this surface gets
-    the TIER's — spread after its own general sampling, so a provider's per-surface guess beats a
-    model's own measurement. That is the one thing this file's contract says must be impossible,
-    and it is the only merge that does not go through `resolve`.
-
-    Latent rather than live when it was found: no call site passes `provider` yet and every
-    shipped tier is empty. Fixed anyway, and pinned below, because "wrong but unreachable" is how
-    a defect waits for the commit that reaches it.
-  */
-  const tierSurface = workflow === undefined ? undefined : tier.perWorkflow?.[workflow];
   const ownSurface = workflow === undefined ? undefined : own?.perWorkflow?.[workflow];
-  return { ...DEFAULT_SAMPLING, ...tier.sampling, ...tierSurface, ...own?.sampling, ...ownSurface };
+  return { ...DEFAULT_SAMPLING, ...own?.sampling, ...ownSurface };
 }

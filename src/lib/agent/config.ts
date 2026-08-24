@@ -69,7 +69,8 @@ export const AGENT_WORLD_TARGET_ENV = "WORKFLOW_TARGET_WORLD";
  */
 const AGENT_TURN_TIMEOUT_ENV = "AGENT_MODEL_TURN_TIMEOUT_MS";
 
-const AGENT_MODEL_TUNING_ENV = "AGENT_MODEL_TUNING_PATH";
+/** Exported like the other variable names this file owns, so a test names it rather than spelling it. */
+export const AGENT_MODEL_TUNING_ENV = "AGENT_MODEL_TUNING_PATH";
 
 /**
  * A file of measured per-model settings to layer over the ones Studio ships with, if any.

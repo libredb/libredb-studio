@@ -24,7 +24,6 @@ import { createHash } from "node:crypto";
 import {
   modelProfiles,
   ceilingFor,
-  noticesFor,
   offersRefusalExamples,
   planStatementRetriesFor,
   presentReminderLimitFor,
@@ -33,6 +32,7 @@ import {
   samplingFor,
   turnTimeoutMsFor,
 } from "@/lib/agent/models";
+import { BASELINE_NOTICES } from "@/lib/agent/models/notices";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 
 const WORKFLOWS: readonly AgentRunWorkflowType[] = [
@@ -227,21 +227,26 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
   });
 });
 
-describe("the sentences each model is told", () => {
+describe("the sentences every run is told", () => {
   /*
-    All ten resolve to the SAME three sentences today: every file spreads `BASELINE_NOTICES`
-    without changing a word, so the per-model wording exists as a mechanism and is unexercised.
-    Digests rather than the paragraphs themselves, because this is an identity check and a test
-    holding three copies of the prose would have to be edited whenever the prose is — which is
-    exactly the coupling the mechanism was built to remove.
+    Not per model, and that is the whole finding of this block.
+
+    Every measured model resolves to the same three sentences: the per-model copies that once
+    lived in the ten modules are gone, wording is the one thing the document may not carry, and
+    `models/notices.ts` is now the only source. So a table row-by-row would assert the same three
+    constants ten times over — nothing is lost by asserting them once.
+
+    Digests rather than the paragraphs, because this is an identity check: a test holding three
+    copies of the prose would have to be edited whenever the prose is, which would make it agree
+    with any change instead of catching one. Editing a sentence in `notices.ts` changes what all
+    ten measured models are told, and this is the test that says so out loud.
   */
   const digest = (text: string): string => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
-  test.each(RESOLVED)("$id is told the baseline wording, byte for byte", (row) => {
-    const notices = noticesFor(row.id);
-    expect(digest(notices.reportReminder)).toBe("3f81f86d6e78daf2");
-    expect(digest(notices.planStatement)).toBe("ab274977ed206fb4");
-    expect(digest(notices.presentBeforeReport)).toBe("739fb327bf394f6c");
+  test("are the baseline wording, byte for byte", () => {
+    expect(digest(BASELINE_NOTICES.reportReminder)).toBe("3f81f86d6e78daf2");
+    expect(digest(BASELINE_NOTICES.planStatement)).toBe("ab274977ed206fb4");
+    expect(digest(BASELINE_NOTICES.presentBeforeReport)).toBe("739fb327bf394f6c");
   });
 });
 

@@ -8,24 +8,26 @@
  *
  * The operator layer is the point of the whole exercise. A model nobody here has measured can be
  * given the settings somebody else measured, by mounting a file — no Studio release, no code
- * change, no settings screen. It is a file path rather than a URL deliberately: it works in an
- * air-gapped install, it needs no cache or fetch-failure story, and it matches how this product
- * is configured everywhere else.
+ * change, no settings screen. It is a file path rather than a URL deliberately: it needs no cache
+ * and no story about what a run should do while a fetch is in flight, and it matches how this
+ * product is configured everywhere else.
  *
  * MERGED PER MODEL, WHOLE ENTRY, NEVER PER FIELD ACROSS SOURCES. An operator entry for
  * `qwen3:8b` replaces the bundled entry for `qwen3:8b` entirely; it does not contribute one
  * field to it. Half of one measurement beside half of another is a configuration nobody has ever
  * run, and it would resolve without anybody being able to say what it was.
  *
- * A BAD OPERATOR DOCUMENT IS IGNORED, LOUDLY. It is refused whole, the reason is logged, and the
- * bundled document stands — which is a measured configuration, where a half-applied one is not.
- * `../config.ts` states the same policy for its own variable: a mistyped setting must not take
- * the runtime down.
+ * A BAD OPERATOR DOCUMENT IS IGNORED, AND SAYS SO. It is refused whole, the bundled document
+ * stands — which is a measured configuration, where a half-applied one is not — and the reason is
+ * both logged AND returned by `operatorTuningStatus()`. Two surfaces because they answer to
+ * different people: the log is for whoever is tailing it at the moment it happens, and the status
+ * is for the operator who mounted a file, sees the shipped behaviour instead, and has to find out
+ * why. `../config.ts` states the same fail-open policy for its own variable: a mistyped setting
+ * must not take the runtime down. Fail-open with no diagnosis is just a setting that does nothing.
  */
 import { readFileSync } from "node:fs";
 import { logger } from "@/lib/logger";
 import { agentModelTuningPath } from "../config";
-import type { AgentModelProfile } from "../models/profile";
 import { type ModelTuning, parseTuning } from "./schema";
 import bundled from "./measured-profiles.json";
 
@@ -37,19 +39,26 @@ import bundled from "./measured-profiles.json";
  */
 const BUNDLED_ORIGIN = "bundled";
 
-let active: ModelTuning | null = null;
+/**
+ * What became of the operator's document, for whoever has to explain a run.
+ *
+ * A discriminated union rather than a state string beside optional fields, so a caller cannot read
+ * a `reason` off a document that was applied, or a model count off one that was not.
+ */
+export type OperatorTuningStatus =
+  | { readonly state: "unset" }
+  | { readonly state: "applied"; readonly path: string; readonly models: number }
+  | { readonly state: "ignored"; readonly path: string; readonly reason: string };
 
-/** Reads the operator's document, or explains why it is not being used and returns null. */
-function readOperatorDocument(path: string): ModelTuning | null {
+let active: ModelTuning | null = null;
+let operatorStatus: OperatorTuningStatus = { state: "unset" };
+
+/** The operator's document, or the reason it is not being used. Never throws. */
+function readOperatorDocument(path: string): { readonly doc: ModelTuning } | { readonly reason: string } {
   try {
-    return parseTuning(JSON.parse(readFileSync(path, "utf8")), path);
+    return { doc: parseTuning(JSON.parse(readFileSync(path, "utf8")), path) };
   } catch (error) {
-    logger.warn("Operator model tuning ignored; the measurements Studio ships with still stand", {
-      route: "agent/model-tuning",
-      path,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
+    return { reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -65,40 +74,53 @@ export function activeTuning(): ModelTuning {
 
   const base = parseTuning(bundled, BUNDLED_ORIGIN);
   const path = agentModelTuningPath();
-  const operator = path === undefined ? null : readOperatorDocument(path);
-  if (operator === null) {
+  if (path === undefined) {
+    operatorStatus = { state: "unset" };
+    active = base;
+    return active;
+  }
+
+  const read = readOperatorDocument(path);
+  if ("reason" in read) {
+    operatorStatus = { state: "ignored", path, reason: read.reason };
+    logger.warn("Operator model tuning ignored; the measurements Studio ships with still stand", {
+      route: "agent/model-tuning",
+      path,
+      error: read.reason,
+    });
     active = base;
     return active;
   }
 
   active = {
-    // Whole entries, later wins. `providers` merges the same way, one tier at a time.
-    models: { ...base.models, ...operator.models },
-    providers: { ...base.providers, ...operator.providers },
+    // Whole entries, later wins.
+    models: { ...base.models, ...read.doc.models },
     measuredAgainst: base.measuredAgainst,
-    undocumentedOverrides: [...base.undocumentedOverrides, ...operator.undocumentedOverrides],
+    undocumentedOverrides: [...base.undocumentedOverrides, ...read.doc.undocumentedOverrides],
   };
+  operatorStatus = { state: "applied", path, models: Object.keys(read.doc.models).length };
   logger.info("Operator model tuning applied over the measurements Studio ships with", {
     route: "agent/model-tuning",
     path,
-    models: Object.keys(operator.models).length,
+    models: operatorStatus.models,
   });
   return active;
+}
+
+/**
+ * What became of the operator's document.
+ *
+ * Resolves the tuning first, because the status is a by-product of reading it: a caller asking
+ * before any run has needed a profile would otherwise be told "unset" about a document that is
+ * about to be applied.
+ */
+export function operatorTuningStatus(): OperatorTuningStatus {
+  activeTuning();
+  return operatorStatus;
 }
 
 /** Drops the memo so a test can change the environment and read the result. */
 export function resetTuning(): void {
   active = null;
-}
-
-/**
- * What one model inherits before its own entry is applied: its provider's tier, or nothing.
- *
- * Separate from `activeTuning` because the resolvers ask about one model at a time, and because
- * this is the layer requirement (c) is about — a model with no entry of its own still gets the
- * settings its provider was measured with.
- */
-export function providerTier(provider: string | undefined): Partial<AgentModelProfile> {
-  if (provider === undefined) return {};
-  return activeTuning().providers[provider] ?? {};
+  operatorStatus = { state: "unset" };
 }

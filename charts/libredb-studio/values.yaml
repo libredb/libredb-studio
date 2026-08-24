@@ -165,6 +165,32 @@ agent:
   # --set-string is needed.
   enabled: null
 
+  # -- Measured per-model settings, layered over the ones the image ships with.
+  #
+  # The image carries a document recording what specific models were measured under -
+  # turn limit, how many readings before a model is asked to report, whether an empty
+  # turn is asked again - and a model it does not name is driven with the defaults.
+  # This is how a model the image has never measured gets settings somebody else
+  # measured, with no new release and no code change.
+  #
+  # There is deliberately no `enabled` flag: naming a source IS enabling it, so there
+  # is no combination that renders a pod mounting a ConfigMap nobody created. Give
+  # either `existingConfigMap` (the natural home for a document you were handed:
+  # `kubectl create configmap my-tuning --from-file=model-tuning.json`) or `document`
+  # (inline, for a short overlay). Setting both uses the existing ConfigMap.
+  #
+  # A document that is missing, unreadable or off-schema is IGNORED and the shipped
+  # measurements stand - so this cannot break a working agent. It is also the reason
+  # `GET /api/agent/config` reports what became of it to an admin session: fail-open is
+  # only safe when the operator can find out it happened.
+  modelTuning:
+    # -- Inline JSON document, rendered into a ConfigMap by this chart
+    document: {}
+    # -- An existing ConfigMap holding the document, instead of the inline one
+    existingConfigMap: ""
+    # -- Key within the ConfigMap that holds the document
+    configMapKey: "model-tuning.json"
+
 # =============================================================================
 # Persistence — PVC for SQLite storage mode
 # =============================================================================

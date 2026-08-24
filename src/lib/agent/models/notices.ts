@@ -1,18 +1,23 @@
 /**
- * The baseline wording of every sentence the drive says to a run.
+ * The wording of every sentence the drive says to a run, and the ONLY source of it.
  *
- * Here, beside the model files, rather than in `investigation.ts` where these used to live —
- * because a model file has to be able to state the wording IT was measured with, and it cannot
- * import the drive that imports it.
+ * Read that literally, because this file used to say the opposite and the opposite is now false.
+ * Each measured model once carried its own copy of these three sentences in its own module, so a
+ * change here reached none of them. The modules are gone, the settings are data, and wording is
+ * the one thing the document may not carry — so every run of every model is told exactly what is
+ * written below. EDITING A SENTENCE HERE CHANGES WHAT ALL TEN MEASURED MODELS ARE TOLD.
  *
- * What this file is NOT is the source the drive reads. Every measured model carries its own
- * copy in its own file, so changing a sentence here changes nothing for any of them; it is the
- * text a generated file is written from, and the text a model nobody has measured is given.
+ * That is a real cost, and it is why the digests are pinned in
+ * `tests/unit/lib/agent/model-resolution-table.test.ts`: an edit here turns that test red and asks
+ * whether the models were re-measured. Twice this repository changed a shared sentence, won several
+ * cells and lost others, and had nothing to do but revert the whole change and hand back the wins.
+ * A wording is read by a model and acted on by that model, which makes it a measured value and not
+ * a constant — so the red test is the point, not an obstacle.
  *
- * Why the copies exist at all, in one line: a wording is read by a model and acted on by that
- * model, so it is a measured value and not a constant. Twice this repository changed a shared
- * sentence, won several cells and lost others, and had nothing to do but revert the whole
- * change and hand back the wins. A per-model sentence keeps the wins where they landed.
+ * Wording stays in code rather than travelling in the document for two reasons. `planStatement`
+ * interpolates `PLAN_NO_STATEMENT_MARKER`, so a literal copy in data would drift from the marker
+ * the verifier looks for; and the document is shaped to be supplied from outside Studio, where
+ * carrying prompt text would let whoever writes it decide what Studio says to a model mid-run.
  */
 
 import { PLAN_NO_STATEMENT_MARKER } from "../plan-draft";

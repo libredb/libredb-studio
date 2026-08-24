@@ -35,7 +35,6 @@
  *    is a combination nobody has ever measured.
  */
 import { z } from "zod";
-import type { LLMProviderType } from "@/lib/llm/types";
 import type { AgentRunWorkflowType } from "../types";
 import type { AgentModelProfile, AgentSampling } from "../models/profile";
 
@@ -49,8 +48,6 @@ const WORKFLOWS = [
   "operations",
   "data-analysis",
 ] as const satisfies readonly AgentRunWorkflowType[];
-
-const PROVIDERS = ["gemini", "openai", "ollama", "custom"] as const satisfies readonly LLMProviderType[];
 
 const samplingSchema = z.strictObject({
   temperature: z.number().min(0).max(2),
@@ -95,8 +92,6 @@ const settingsShape = {
 } as const;
 
 const modelSettingsSchema = z.strictObject(settingsShape);
-/** A provider's layer states only what it has measured, which today is nothing. */
-const providerSettingsSchema = z.strictObject(settingsShape).partial();
 
 const rationaleSchema = z.partialRecord(
   z.enum(Object.keys(settingsShape) as [string, ...string[]]),
@@ -107,12 +102,6 @@ const entryShape = {
   /** Prose that argues for a setting, under that setting's own name. */
   rationale: rationaleSchema.default({}),
 } as const;
-
-const providerSchema = z.strictObject({
-  id: z.enum(PROVIDERS),
-  settings: providerSettingsSchema,
-  ...entryShape,
-});
 
 const modelSchema = z.strictObject({
   id: z.string().min(1),
@@ -139,7 +128,6 @@ const documentSchema = z.strictObject({
       refusalExamples: z.boolean(),
     }),
   }),
-  providers: z.array(providerSchema),
   models: z.array(modelSchema),
 });
 
@@ -156,8 +144,6 @@ export class ModelTuningError extends Error {
 export interface ModelTuning {
   /** Every model, keyed by LOWER-CASED id: the same weights answer to more than one spelling. */
   readonly models: Readonly<Record<string, AgentModelProfile>>;
-  /** What a model with no entry of its own inherits, by the provider driving it. */
-  readonly providers: Readonly<Record<string, Partial<AgentModelProfile>>>;
   /** The defaults the document was written against, for the test that keeps them honest. */
   readonly measuredAgainst: TuningDocument["measuredAgainst"];
   /**
@@ -239,11 +225,5 @@ export function parseTuning(document: unknown, origin: string): ModelTuning {
     );
   }
 
-  const providers: Record<string, Partial<AgentModelProfile>> = {};
-  for (const entry of doc.providers) {
-    if (providers[entry.id] !== undefined) throw new ModelTuningError(origin, `providers: ${entry.id} appears twice`);
-    providers[entry.id] = entry.settings;
-  }
-
-  return { models, providers, measuredAgainst: doc.measuredAgainst, undocumentedOverrides: unjustified };
+  return { models, measuredAgainst: doc.measuredAgainst, undocumentedOverrides: unjustified };
 }

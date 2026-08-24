@@ -67,6 +67,31 @@ Note these, because a number without them cannot be compared:
 Then add a row to the model's page, or a new page under the family folder if the
 family is not covered. Sizes are rows inside a version page, not separate files.
 
+## Making it take effect
+
+A page records a measurement; it does not change how the model is driven. If yours
+needed something the defaults do not give it — a longer turn, a lower call ceiling,
+an empty turn asked again — that goes in a **model-tuning document**, and you do not
+need a Studio release to use one:
+
+* write the settings as a JSON entry for your model, in the shape of
+  `src/lib/agent/model-tuning/measured-profiles.json`
+* point `AGENT_MODEL_TUNING_PATH` at the file and restart (on Kubernetes, set
+  `agent.modelTuning.existingConfigMap` and the chart mounts it)
+* check `GET /api/agent/config` as an admin: it reports `applied`, or `ignored` with
+  the reason. A document that does not parse is ignored and the shipped settings
+  stand, so this step is how you find out which happened
+
+Two rules the document keeps, both for the same reason a measurement is worth
+anything at all. An entry replaces the shipped entry for that model **whole** rather
+than contributing one field to it, because half of one measurement beside half of
+another is a configuration nobody has run. And a setting that differs from the
+recorded defaults should say why, in prose, under that setting's own name — a number
+with no argument behind it cannot be told apart from a guess.
+
+What a document may **not** carry is wording. The sentences the agent says to a model
+live in Studio, so a mounted file cannot change what it is told mid-run.
+
 ## Five consecutive runs, not one
 
 One run per cell was the old method here and it was the weakest thing about it. These models are

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolveAgentAvailability } from "@/lib/agent/config";
+import { operatorTuningStatus } from "@/lib/agent/model-tuning";
 import { getSession } from "@/lib/auth";
 
 /**
@@ -83,11 +84,24 @@ export async function GET() {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
+  const isAdmin = session.role === "admin";
   const availability = await resolveAgentAvailability();
+  /*
+    Reported on BOTH answers, because it is the one part of the agent's configuration that fails
+    open: every other misconfiguration takes the rail away, so an operator finds out by looking,
+    while a tuning document that cannot be read leaves a working agent running settings nobody
+    chose. The enabled answer is exactly where that needs saying.
+
+    Admin-only, under the rule this route already states for `detail`: the status names an absolute
+    server path and a parser message. Withheld as a whole rather than field by field, for the same
+    reason given there. Cheap on repeat: the document is memoised for the process, so this adds at
+    most one file read per process rather than one per call.
+  */
+  const modelTuning = isAdmin ? { modelTuning: operatorTuningStatus() } : {};
   if (availability.available) {
-    return NextResponse.json({ enabled: true, ledgerVerified: availability.ledgerVerified });
+    return NextResponse.json({ enabled: true, ledgerVerified: availability.ledgerVerified, ...modelTuning });
   }
 
-  const detail = session.role === "admin" ? availability.detail : WITHHELD_DETAIL;
-  return NextResponse.json({ enabled: false, reason: availability.reason, detail });
+  const detail = isAdmin ? availability.detail : WITHHELD_DETAIL;
+  return NextResponse.json({ enabled: false, reason: availability.reason, detail, ...modelTuning });
 }

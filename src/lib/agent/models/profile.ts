@@ -1,9 +1,9 @@
 /**
- * The shape a per-model file may declare, and the rule every one of them obeys.
+ * The shape one entry of `../model-tuning/measured-profiles.json` resolves to, and the compiled
+ * defaults every entry is read against.
  *
- * Separate from `index.ts` so a model file imports the contract without importing the
- * registry that lists it — otherwise every profile would depend on every other profile
- * through the barrel, and adding one would be a change to all of them.
+ * Separate from `index.ts` so the document's schema can import the contract without importing the
+ * resolvers that read it.
  */
 
 import type { AgentRunWorkflowType } from "../types";
@@ -20,9 +20,9 @@ export interface AgentModelProfile {
    *
    * Required, and a test refuses a profile whose measurement is too short to be one. An
    * override with no measurement behind it cannot be told apart from a guess, and a
-   * directory of per-model settings is exactly where guesses would accumulate unnoticed:
-   * each one looks local and harmless, and together they become a configuration nobody can
-   * justify or delete.
+   * document of per-model settings is exactly where guesses would accumulate unnoticed: each one
+   * looks local and harmless, and together they become a configuration nobody can justify or
+   * delete.
    */
   readonly measured: string;
   /** Sampling for this model on every surface, where it differs from the default. */
@@ -103,19 +103,6 @@ export interface AgentModelProfile {
   readonly turnTimeoutMs?: number;
 
   /**
-   * Every sentence this model is told, when it is told anything.
-   *
-   * Here for the reason the numbers above are here, and the reason is not symmetry. A message
-   * is read by a model and acted on by that model, so a wording that recovers one run can be
-   * the wording another model gives up on — which makes it a measured value, not a constant.
-   *
-   * The alternative was measured too, twice, and it is why this field exists: a shared wording
-   * changed for everyone wins some cells and loses others, and the only move left is to revert
-   * the whole change and give back the wins. With the sentence per model, the models it helped
-   * keep it and the models it hurt keep what they had.
-   */
-  readonly notices?: Partial<AgentNotices>;
-  /**
    * Whether a refused call is handed a worked example built from this run's ledger.
    *
    * OFF by default for the same reason. Measured on one model, where it collapsed a loop of
@@ -128,10 +115,10 @@ export interface AgentModelProfile {
 }
 
 /**
- * The four sentences the drive says to a run, each at the one moment it can still be acted on.
+ * The three sentences the drive says to a run, each at the one moment it can still be acted on.
  *
- * Named by what the run is missing rather than by which tool was refused, because that is what
- * a reader of a model file needs to decide whether the wording fits their model.
+ * Named by what the run is missing rather than by which tool was refused, because that is what a
+ * reader deciding whether a wording fits needs to know.
  */
 export interface AgentNotices {
   /** A run that used its tools and then narrated instead of calling `compose_report`. */
@@ -146,7 +133,7 @@ export interface AgentNotices {
  * The general ceiling, which is what every locked cell was measured against.
  *
  * Twelve is deliberately generous: it is a backstop against a run that is looping rather than
- * a budget for a run that is working, and a model that needs it lower says so in its own file
+ * a budget for a run that is working, and a model that needs it lower says so in its own entry
  * rather than lowering it for everyone.
  */
 export const DEFAULT_UNREPORTED_CALL_CEILING = 12;
@@ -156,7 +143,7 @@ export const DEFAULT_UNREPORTED_CALL_CEILING = 12;
  *
  * A reminder costs a turn out of a fixed run budget, so a second one is not free: it is time
  * taken from a run that might have used it to read. A model that needs two says so in its own
- * file, where the cost lands on that model's runs alone.
+ * entry, where the cost lands on that model's runs alone.
  */
 export const DEFAULT_REPORT_REMINDER_LIMIT = 1;
 
@@ -194,6 +181,6 @@ export const DEFAULT_PRESENT_REMINDER_LIMIT = 1;
  * Choosing a tool and filling in its arguments is a structural task; there is nothing a
  * sample is meant to explore, and a report wants the most likely sentence rather than a
  * surprising one. Where that reasoning fails for a particular model it fails measurably, and
- * that model's own file says so.
+ * that model's own entry says so.
  */
 export const DEFAULT_SAMPLING: AgentSampling = Object.freeze({ temperature: 0, topP: 1 });

@@ -16,7 +16,6 @@
       "refusalExamples": false
     }
   },
-  "providers": [],
   "models": [
     {
       "id": "gemini-3.5-flash-lite",

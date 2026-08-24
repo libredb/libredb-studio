@@ -389,3 +389,136 @@ describe("the chart no longer states the pre-T5 default", () => {
     expect(read("docs/AGENT.md")).not.toMatch(/it still states the pre-T5\s+default/);
   });
 });
+
+/**
+ * The chart's `agent.modelTuning` block: how a Kubernetes install gets settings for a model the
+ * image has never measured.
+ *
+ * The reason this is a chart concern at all is that `AGENT_MODEL_TUNING_PATH` names a FILE, and
+ * the pod runs with `readOnlyRootFilesystem: true` and mounts exactly three writable paths plus
+ * the optional seed ConfigMap. Setting the variable through `extraEnv` therefore points the app at
+ * a path nothing can put a file at — the feature reads as configurable and is not. So the chart
+ * carries the document the way it already carries seed connections: a ConfigMap, a read-only mount,
+ * and the variable derived from both so the three cannot disagree.
+ *
+ * Naming a source is what enables it. There is deliberately no `agent.modelTuning.enabled`, which
+ * is the one difference from `seedConnections` — that block needs a template `fail` guard precisely
+ * because a flag can be true with no source behind it, and a flag that can only be wrong is worth
+ * not having.
+ */
+describe("the chart mounts an operator's model-tuning document", () => {
+  const MOUNT_DIR = "/app/model-tuning";
+  const DOCUMENT = { schemaVersion: 1, models: [] };
+
+  interface Mount {
+    name: string;
+    mountPath: string;
+    readOnly?: boolean;
+  }
+  interface Volume {
+    name: string;
+    configMap?: { name: string };
+  }
+
+  function render(args: string[] = []): {
+    env: EnvVar[];
+    mounts: Mount[];
+    volumes: Volume[];
+    configMaps: Array<{ metadata: { name: string }; data: Record<string, string> }>;
+  } {
+    const run = helmTemplate(args);
+    if (run.exitCode !== 0) throw new Error(`helm template failed (exit ${run.exitCode}): ${run.stderr}`);
+    const docs = parseAllDocuments(run.stdout).map((doc) => doc.toJSON() as { kind?: string });
+    const deployment = docs.find((doc) => doc?.kind === "Deployment") as {
+      spec: {
+        template: {
+          spec: { containers: Array<{ env?: EnvVar[]; volumeMounts?: Mount[] }>; volumes?: Volume[] };
+        };
+      };
+    };
+    const container = deployment.spec.template.spec.containers[0];
+    return {
+      env: container.env ?? [],
+      mounts: container.volumeMounts ?? [],
+      volumes: deployment.spec.template.spec.volumes ?? [],
+      configMaps: docs.filter((doc) => doc?.kind === "ConfigMap") as Array<{
+        metadata: { name: string };
+        data: Record<string, string>;
+      }>,
+    };
+  }
+
+  test("a default render mounts nothing and names no document", () => {
+    const { env, mounts, volumes } = render();
+    expect(named(env, "AGENT_MODEL_TUNING_PATH")).toBeUndefined();
+    expect(mounts.some((mount) => mount.mountPath === MOUNT_DIR)).toBe(false);
+    expect(volumes.some((volume) => volume.name === "agent-model-tuning")).toBe(false);
+  });
+
+  test("an existing ConfigMap is mounted read-only and named to the app", () => {
+    const { env, mounts, volumes } = render(["--set", "agent.modelTuning.existingConfigMap=my-tuning"]);
+
+    expect(named(env, "AGENT_MODEL_TUNING_PATH")?.value).toBe(`${MOUNT_DIR}/model-tuning.json`);
+    expect(mounts).toContainEqual({ name: "agent-model-tuning", mountPath: MOUNT_DIR, readOnly: true });
+    expect(volumes).toContainEqual({ name: "agent-model-tuning", configMap: { name: "my-tuning" } });
+  });
+
+  test("an inline document is rendered as JSON the app can parse", () => {
+    // `toJson` rather than `toYaml`: the app reads the file with `JSON.parse`, and whether the
+    // operator's values happened to be JSON-shaped YAML is not something this chart should depend
+    // on. Asserted by parsing, because "looks like JSON" is what a string test would check.
+    const { configMaps, volumes } = render(["--set-json", `agent.modelTuning.document=${JSON.stringify(DOCUMENT)}`]);
+
+    const mounted = configMaps.find((map) => map.metadata.name.endsWith("-agent-model-tuning"));
+    expect(mounted).toBeDefined();
+    expect(JSON.parse(mounted?.data["model-tuning.json"] ?? "")).toEqual(DOCUMENT);
+    expect(volumes).toContainEqual({
+      name: "agent-model-tuning",
+      configMap: { name: "release-under-test-libredb-studio-agent-model-tuning" },
+    });
+  });
+
+  test("an existing ConfigMap wins over an inline document rather than both being rendered", () => {
+    // Two sources for one file is a mistake the operator should be able to make harmlessly. The
+    // one they created by hand is the one they can see, so it wins, and the chart renders no
+    // second ConfigMap for the document it is not using.
+    const { volumes, configMaps } = render([
+      "--set",
+      "agent.modelTuning.existingConfigMap=my-tuning",
+      "--set-json",
+      `agent.modelTuning.document=${JSON.stringify(DOCUMENT)}`,
+    ]);
+
+    expect(volumes).toContainEqual({ name: "agent-model-tuning", configMap: { name: "my-tuning" } });
+    expect(configMaps.some((map) => map.metadata.name.endsWith("-agent-model-tuning"))).toBe(false);
+  });
+
+  test("the key names both the mounted file and the path the app is given", () => {
+    const { env, configMaps } = render([
+      "--set",
+      "agent.modelTuning.configMapKey=measured.json",
+      "--set-json",
+      `agent.modelTuning.document=${JSON.stringify(DOCUMENT)}`,
+    ]);
+
+    expect(named(env, "AGENT_MODEL_TUNING_PATH")?.value).toBe(`${MOUNT_DIR}/measured.json`);
+    const mounted = configMaps.find((map) => map.metadata.name.endsWith("-agent-model-tuning"));
+    expect(Object.keys(mounted?.data ?? {})).toEqual(["measured.json"]);
+  });
+
+  test("the path is written before extraEnv, so an operator can still point it elsewhere", () => {
+    // The same rule the ledger directory follows above: the chart's value is a default, not a
+    // decision taken away from whoever runs it.
+    const env = render([
+      "--set",
+      "agent.modelTuning.existingConfigMap=my-tuning",
+      "--set",
+      "extraEnv[0].name=AGENT_MODEL_TUNING_PATH",
+      "--set",
+      "extraEnv[0].value=/app/data/mine.json",
+    ]).env;
+
+    const written = env.filter((entry) => entry.name === "AGENT_MODEL_TUNING_PATH");
+    expect(written.at(-1)?.value).toBe("/app/data/mine.json");
+  });
+});

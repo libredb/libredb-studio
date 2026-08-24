@@ -56,9 +56,9 @@ import {
   reusableSnapshot,
 } from "./context-snapshot";
 import { agentModelTurnTimeoutMs } from "./config";
+import { BASELINE_NOTICES } from "./models/notices";
 import {
   ceilingFor,
-  noticesFor,
   presentReminderLimitFor,
   retriesEmptyTurn,
   turnTimeoutMsFor,
@@ -2864,7 +2864,7 @@ export async function runInvestigation(
       // reading; see `AGENT_NARROWED_EXTRA_TOOLS`.
       narrowed = true;
       messages.push(...assistant);
-      messages.push({ role: "user", content: notice(noticesFor(model.modelId).reportReminder) });
+      messages.push({ role: "user", content: notice(BASELINE_NOTICES.reportReminder) });
       await service.recordEvent(runId, { kind: "guidance-issued", notice: "report-reminder" });
       return true;
     };
@@ -2889,7 +2889,7 @@ export async function runInvestigation(
       if (text.length === 0 || readPlanStatement(text, context.connection.type).kind !== "absent") return false;
       planStatementAsks += 1;
       messages.push(...assistant);
-      messages.push({ role: "user", content: notice(noticesFor(model.modelId).planStatement) });
+      messages.push({ role: "user", content: notice(BASELINE_NOTICES.planStatement) });
       await service.recordEvent(runId, { kind: "guidance-issued", notice: "plan-statement" });
       return true;
     };
@@ -3143,7 +3143,7 @@ export async function runInvestigation(
         narrowedAtEvent = (await service.resume(runId)).record.events.length;
         if (reportReminders === 0) {
           reportReminders += 1;
-          messages.push({ role: "user", content: notice(noticesFor(model.modelId).reportReminder) });
+          messages.push({ role: "user", content: notice(BASELINE_NOTICES.reportReminder) });
           await service.recordEvent(runId, { kind: "guidance-issued", notice: "report-reminder" });
         }
       }
@@ -3220,7 +3220,7 @@ export async function runInvestigation(
           */
           if (hasReading && !presented) {
             // This model's own wording, from its own file.
-            const text = noticesFor(model.modelId).presentBeforeReport;
+            const text = BASELINE_NOTICES.presentBeforeReport;
             presentReminders += 1;
             await holdCall(call.toolName, text);
             messages.push(prompted ? promptedResultMessage(call, notice(text)) : toolResultMessage(call, text));
