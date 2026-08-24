@@ -255,13 +255,19 @@ describe("what each model records about the runs that earned its settings", () =
     `measured` is not a resolver's output, so nothing else here would notice it changing. Five
     of the ten share a digest, and that is not a copy-paste: they scored identically — 6/6
     locked, 30/30 — so the sentence that states it is the same sentence.
+
+    Two digests were edited by hand rather than regenerated, which is what this table is for.
+    `granite4.1:8b` and `ornith:9b` recorded pre-override numbers under the words "at these
+    settings", so the field whose job is to justify a setting was arguing against it: the 24/30
+    and 25/30 are what the DEFAULTS produced, which is why the settings exist, and both models
+    lock 6/6 at 30/30 with them.
   */
   const MEASURED_DIGESTS: Readonly<Record<string, string>> = {
     "gemini-3.5-flash-lite": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",
     "gemma4:26b": "d8124e9d5b0929364129274fd4f80dea2640773147fdfd834cf2c68a5a08dd76",
     "granite4.1:30b": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",
-    "granite4.1:8b": "0b4e97dd11c616dbd8882e1e8fe5582f55144a27337baa8b84611183109c06a8",
-    "ornith:9b": "78ea7b7cf7d303ee8bc6a0bd035e93beb218f237fd27ef6349979323a4e76999",
+    "granite4.1:8b": "a3eea21447a81fbe058e3c18a0f7194c357e5d5f22db9acfe13e6139d9198874",
+    "ornith:9b": "4e14e79cb5fd6572748df90786778ce72280c2bae79a27b5f8636d4eac1dbee7",
     "qwen3.5:9b": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",
     "qwen3.8:latest": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",
     "qwen3:14b": "b1a344db5ee6b5f78780925657fee571eae510a7b8507bcb8badabaf01718aa3",

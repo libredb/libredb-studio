@@ -46,7 +46,6 @@ const COMPLETE = {
 const ENTRY = {
   id: "some-model:9b",
   measured: "five surfaces, five runs each",
-  summary: [] as string[],
   settings: COMPLETE,
 };
 
@@ -161,10 +160,7 @@ describe("what the contract refuses", () => {
       "a turn limit longer than the shortest run",
       { models: [{ ...ENTRY, settings: { ...COMPLETE, turnTimeoutMs: 400_000 } }] },
     ],
-    [
-      "an entry that states none of its settings",
-      { models: [{ id: "x:1b", measured: "m", summary: [], settings: {} }] },
-    ],
+    ["an entry that states none of its settings", { models: [{ id: "x:1b", measured: "m", settings: {} }] }],
     ["an empty measurement", { models: [{ ...ENTRY, measured: "" }] }],
   ])("refuses %s", (_name, overrides) => {
     expect(() => parseTuning(document(overrides), "test")).toThrow(ModelTuningError);

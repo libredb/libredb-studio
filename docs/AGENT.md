@@ -2465,9 +2465,6 @@ as they are fixed, and a numeral here goes stale silently.
   gone: the document refuses wording and nothing else can populate it. Refusing unsigned prompt text
   is right; refusing it forever is a decision that has not been taken, and the two objections behind
   it — marker drift and authorship — come apart.
-- **B60** — every bundled entry carries a `summary` that Studio never reads, duplicating the family
-  pages under `docs/llms/`. It is optional now, so it no longer stands between an operator and a
-  working measurement, but roughly half the shipped document is prose nothing renders.
 - **B62** — `schemaVersion` is a literal on both schemas, so the first bump to 2 refuses every
   document in the field and reverts every model in it to the defaults. Deliberately not fixed while
   only one version exists: an accepted range with one member is a knob nothing turns, and the

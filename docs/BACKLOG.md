@@ -2551,20 +2551,6 @@ provenance is a property of the SOURCE rather than of the field.
 from one whose authorship is not — with the trust tier stated as a decision rather than implied by
 which loader happened to read the file.
 
-### B60. `summary` is required reading for nobody
-
-Every bundled entry carries a `summary` array and Studio never reads it: the resolvers take the
-settings and `measured`. It is optional now, so it no longer forces an operator to write prose before
-their measurement can take effect, but the bundled copies remain — roughly half the document — and
-they duplicate the family pages under `docs/llms/`, which say the same things more tightly.
-
-Two ways to settle it, and the choice belongs to whoever wrote the prose: surface it somewhere a
-reader reaches (the rail, or a generated page), or move it to the family pages and let the document
-carry `measured` and `rationale` alone. What should not persist is a third copy that ships inside
-`.next/server` chunks and nothing renders.
-
-**Done when:** the narrative has one home, and the document carries what something reads.
-
 ### B62. `schemaVersion` has no migration path, and the first bump breaks every mounted document
 
 `z.literal(TUNING_SCHEMA_VERSION)` on both schemas. An older Studio refusing a newer document is

@@ -20,14 +20,6 @@
     {
       "id": "gemini-3.5-flash-lite",
       "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
-      "summary": [
-        "`gemini-3.5-flash-lite` — measured at the defaults, and pinned to them.",
-        "6 of 6 modes locked, 30 of 30 runs passed.",
-        "Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5",
-        "Every mode is locked.",
-        "The one HOSTED model in this directory, and the only reason that is worth saying here is that its numbers were obtained the same way as the nine local ones — same six surfaces, same five consecutive passes per surface, same shipped turn limit — so the ten are one table and not two.",
-        "Nothing here differs from the default, and that is exactly why the file exists. The default is a shared value, and a shared value is what has twice cost this repository a locked cell: pinning sampling to 0 won five cells and lost one, and reordering a workflow's rules won nothing and lost one. Those numbers above were obtained at temperature 0, top_p 1, and a ceiling of 12 unreported calls. Writing them here means a later change to the defaults cannot silently invalidate them — this model keeps what it was measured with until a new measurement says otherwise."
-      ],
       "settings": {
         "sampling": {
           "temperature": 0,
@@ -51,15 +43,6 @@
     {
       "id": "gemma4:26b",
       "measured": "database-assessment, fifteen runs across three configurations: 4/5 at the defaults, 3/5 with an unreported-call ceiling of 9 (never fired, every run made 8 calls), 2/5 with two report reminders (calls rose from 8 to 11 and two runs hit the deadline). The losing runs gather evidence and then produce a turn with neither a call nor a report. The second reminder does reach the model and it goes back to reading rather than filing, so the cause is not a forgotten call or a shortage of turns. Call count does not separate winners from losers either: a run that reported in 26 seconds made 11 calls, as many as one that reported nothing. Its other five surfaces lock 5/5 at these defaults. Measured again at 4/5 once the stopping turn became readable: the losing run profiled nine tables, ran two queries, then returned an EMPTY completion — no call, no text — at eleven calls, one under the general ceiling. Its ceiling is 10 on that reading.",
-      "summary": [
-        "`gemma4:26b` — at the defaults, after two overrides were measured and deleted.",
-        "Five surfaces lock 5/5. `database-assessment` has been measured fifteen times and the losing runs all end the same shape: profile tables, count things, then a turn with neither a tool call nor a report, and the drive concludes `model-stopped` with `no-report` unmet.",
-        "Two fixes were tried on that reading and both are gone, because both were measured:",
-        "defaults 4/5 ceiling of 9 calls 3/5 — every run made 8 calls, so it never fired two report reminders 2/5 — calls rose 8 to 11 and two runs hit the deadline",
-        "The second one is the informative failure. The extra reminder does reach the model: it goes back to work and profiles more tables. It does not report. So the model is not forgetting to file, and it is not short of turns — it is spending the turn it was given on more reading, and on two runs that spending cost the run its deadline.",
-        "Neither call count separates the winners from the losers, which is what rules out narrowing: the run that reported in 26 seconds made 11 calls, exactly as many as the run that reported nothing. A ceiling low enough to catch a loser would catch a winner with it.",
-        "So this file pins the defaults and the numbers stay recorded. What is still unread is the text of the stopping turn — the ledger records calls and settlements, not what the model said when it made no call — and that is what the next attempt here needs before it changes anything."
-      ],
       "settings": {
         "sampling": {
           "temperature": 0,
@@ -89,13 +72,6 @@
     {
       "id": "granite4.1:30b",
       "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
-      "summary": [
-        "`granite4.1:30b` — measured at the defaults, and pinned to them.",
-        "6 of 6 modes locked, 30 of 30 runs passed.",
-        "Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5",
-        "Every mode is locked.",
-        "Nothing here differs from the default, and that is exactly why the file exists. The default is a shared value, and a shared value is what has twice cost this repository a locked cell: pinning sampling to 0 won five cells and lost one, and reordering a workflow's rules won nothing and lost one. Those numbers above were obtained at temperature 0, top_p 1, and a ceiling of 12 unreported calls. Writing them here means a later change to the defaults cannot silently invalidate them — this model keeps what it was measured with until a new measurement says otherwise."
-      ],
       "settings": {
         "sampling": {
           "temperature": 0,
@@ -112,14 +88,7 @@
     },
     {
       "id": "granite4.1:8b",
-      "measured": "3/6 modes locked, 24/30 runs passed at these settings. Investigate 3/5 · Optimize 2/5 · Assess 5/5 · Operate 4/5 · Analyze 5/5 · Plan 5/5.",
-      "summary": [
-        "`granite4.1:8b` — measured at the defaults, and pinned to them.",
-        "3 of 6 modes locked, 24 of 30 runs passed.",
-        "Investigate 3/5 · Optimize 2/5 · Assess 5/5 · Operate 4/5 · Analyze 5/5 · Plan 5/5",
-        "Still open: Investigate, Optimize, Operate.",
-        "Nothing here differs from the default, and that is exactly why the file exists. The default is a shared value, and a shared value is what has twice cost this repository a locked cell: pinning sampling to 0 won five cells and lost one, and reordering a workflow's rules won nothing and lost one. Those numbers above were obtained at temperature 0, top_p 1, and a ceiling of 12 unreported calls. Writing them here means a later change to the defaults cannot silently invalidate them — this model keeps what it was measured with until a new measurement says otherwise."
-      ],
+      "measured": "3/6 modes locked, 24/30 runs passed AT THE DEFAULTS. Investigate 3/5 · Optimize 2/5 · Assess 5/5 · Operate 4/5 · Analyze 5/5 · Plan 5/5. Those are the numbers these settings were added for rather than the numbers they produced: with the worked refusal examples and the empty-turn retry the model locks 6/6 and passes 30/30, every surface 5/5.",
       "settings": {
         "sampling": {
           "temperature": 0,
@@ -145,14 +114,7 @@
     },
     {
       "id": "ornith:9b",
-      "measured": "2/6 modes locked, 25/30 runs passed at these settings. Investigate 4/5 · Optimize 3/5 · Assess 4/5 · Operate 5/5 · Analyze 5/5 · Plan 4/5.",
-      "summary": [
-        "`ornith:9b` — measured at the defaults, and pinned to them.",
-        "2 of 6 modes locked, 25 of 30 runs passed.",
-        "Investigate 4/5 · Optimize 3/5 · Assess 4/5 · Operate 5/5 · Analyze 5/5 · Plan 4/5",
-        "Still open: Investigate, Optimize, Assess, Plan.",
-        "Nothing here differs from the default, and that is exactly why the file exists. The default is a shared value, and a shared value is what has twice cost this repository a locked cell: pinning sampling to 0 won five cells and lost one, and reordering a workflow's rules won nothing and lost one. Those numbers above were obtained at temperature 0, top_p 1, and a ceiling of 12 unreported calls. Writing them here means a later change to the defaults cannot silently invalidate them — this model keeps what it was measured with until a new measurement says otherwise."
-      ],
+      "measured": "2/6 modes locked, 25/30 runs passed on an EARLIER ROUND. Investigate 4/5 · Optimize 3/5 · Assess 4/5 · Operate 5/5 · Analyze 5/5 · Plan 4/5. The plan cell is what the extra turn below was added for. What moved the other four is not recorded here and is not claimed: what is known is that the model now locks 6/6 and passes 30/30, every surface 5/5.",
       "settings": {
         "sampling": {
           "temperature": 0,
@@ -175,13 +137,6 @@
     {
       "id": "qwen3.5:9b",
       "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
-      "summary": [
-        "`qwen3.5:9b` — measured at the defaults, and pinned to them.",
-        "6 of 6 modes locked, 30 of 30 runs passed.",
-        "Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5",
-        "Every mode is locked.",
-        "Nothing here differs from the default, and that is exactly why the file exists. The default is a shared value, and a shared value is what has twice cost this repository a locked cell: pinning sampling to 0 won five cells and lost one, and reordering a workflow's rules won nothing and lost one. Those numbers above were obtained at temperature 0, top_p 1, and a ceiling of 12 unreported calls. Writing them here means a later change to the defaults cannot silently invalidate them — this model keeps what it was measured with until a new measurement says otherwise."
-      ],
       "settings": {
         "sampling": {
           "temperature": 0,
@@ -209,13 +164,6 @@
     {
       "id": "qwen3.8:latest",
       "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
-      "summary": [
-        "`qwen3.8:latest` — measured at the defaults, and pinned to them.",
-        "6 of 6 modes locked, 30 of 30 runs passed.",
-        "Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5",
-        "Every mode is locked.",
-        "Nothing here differs from the default, and that is exactly why the file exists. The default is a shared value, and a shared value is what has twice cost this repository a locked cell: pinning sampling to 0 won five cells and lost one, and reordering a workflow's rules won nothing and lost one. Those numbers above were obtained at temperature 0, top_p 1, and a ceiling of 12 unreported calls. Writing them here means a later change to the defaults cannot silently invalidate them — this model keeps what it was measured with until a new measurement says otherwise."
-      ],
       "settings": {
         "sampling": {
           "temperature": 0,
@@ -233,10 +181,6 @@
     {
       "id": "qwen3:14b",
       "measured": "5/6 modes locked, 29/30 runs passed. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 4/5. The single loss is no-statement on plan: the run described all eight tables, both join tables and the key each relation travels on, then stopped without a fenced statement or the NO STATEMENT refusal that plan mode scores. Its other four plan runs fenced a statement, so it gets one extra turn to be asked for the deliverable — a planning run costs 15 seconds, and no other model is offered it.",
-      "summary": [
-        "`qwen3:14b` — one extra plan turn, to ask for the deliverable it skipped.",
-        "Five surfaces lock 5/5. `plan` is 4 of 5 and loses on one shortfall, `no-statement`, and the losing run is not a bad plan. It lists all eight tables with their columns, names both join tables, says which key every relation travels on, and marks the two column-less tables as views. It answers the objective completely."
-      ],
       "settings": {
         "sampling": {
           "temperature": 0,
@@ -260,13 +204,6 @@
     {
       "id": "qwen3:4b",
       "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
-      "summary": [
-        "`qwen3:4b` — measured at the defaults, and pinned to them.",
-        "6 of 6 modes locked, 30 of 30 runs passed.",
-        "Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5",
-        "Every mode is locked.",
-        "Nothing here differs from the default, and that is exactly why the file exists. The default is a shared value, and a shared value is what has twice cost this repository a locked cell: pinning sampling to 0 won five cells and lost one, and reordering a workflow's rules won nothing and lost one. Those numbers above were obtained at temperature 0, top_p 1, and a ceiling of 12 unreported calls. Writing them here means a later change to the defaults cannot silently invalidate them — this model keeps what it was measured with until a new measurement says otherwise."
-      ],
       "settings": {
         "sampling": {
           "temperature": 0,
@@ -284,10 +221,6 @@
     {
       "id": "qwen3:8b",
       "measured": "query-optimization: 3/5 at temperature 0.8, then 1/5 and 0/5 at temperature 0. All 15 ledgers on that surface read: opening with inspect_plan answers 3/3, opening with inspect_schema answers 1/12, and at temperature 0 it opens with inspect_schema 10 times out of 10. Its other five surfaces lock 5/5 deterministically, so the override is scoped to this one cell and not to the model.",
-      "summary": [
-        "`qwen3:8b` — five surfaces deterministic, `query-optimization` sampled.",
-        "The first model to earn a file of its own, and the measurement that gave it one is the reason this directory exists at all."
-      ],
       "settings": {
         "sampling": {
           "temperature": 0,

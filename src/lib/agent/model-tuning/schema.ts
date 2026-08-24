@@ -107,15 +107,6 @@ const modelSchema = z.strictObject({
   id: z.string().min(1),
   /** The runs that earned these settings, in the words of whoever measured them. */
   measured: z.string().min(1),
-  /**
-   * What the model is like, beyond any one setting.
-   *
-   * For whoever READS the document, and Studio never reads it — the resolvers take settings and
-   * `measured`. Optional, because requiring it would make an operator write prose that nothing
-   * consumes before their measurement could take effect. The bundled entries carry it because the
-   * document is also a record, and a record with no narrative is a table of numbers.
-   */
-  summary: z.array(z.string().min(1)).optional(),
   settings: modelSettingsSchema,
   ...entryShape,
 });
@@ -164,7 +155,6 @@ const operatorSettingsSchema = z.looseObject(settingsShape).partial();
 const operatorModelSchema = z.looseObject({
   id: z.string().min(1),
   measured: z.string().min(1),
-  summary: z.array(z.string().min(1)).optional(),
   settings: operatorSettingsSchema,
   /*
     Named so that a LOOSE schema still refuses it.
@@ -269,7 +259,7 @@ export interface ModelTuning {
 const SETTING_NAMES = Object.keys(settingsShape) as (keyof typeof settingsShape)[];
 
 /** Everything an entry itself may say, for spotting a key misspelled outside `settings`. */
-const ENTRY_KEYS = new Set(["id", "measured", "summary", "settings", "rationale"]);
+const ENTRY_KEYS = new Set(["id", "measured", "settings", "rationale"]);
 
 type StatedSettings = Partial<z.infer<typeof modelSettingsSchema>>;
 type RecordedDefaults = TuningDocument["measuredAgainst"]["defaults"];
