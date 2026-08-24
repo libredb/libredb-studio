@@ -30,7 +30,7 @@ None of it is a GitHub issue.
 - [Tests](#tests) — T1–T3 · 2
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC1–DOC3 · 3
-- [Release pipeline](#release-pipeline) — REL1–REL2 · 2
+- [Release pipeline](#release-pipeline) — REL1–REL3 · 3
 - [Chart configuration surface](#chart-configuration-surface) — N1–N3 · 3
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H13 · 10
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C2–C10 · 9
@@ -921,6 +921,40 @@ label and that jammy-arm64 carries `libwebkit2gtk-4.1-dev`, not a blind flip on 
 **Done when:** the arm64 matrix entry builds on `ubuntu-22.04-arm`, the resulting AppImage is
 verified to load on a glibc 2.35 or 2.36 arm64 root filesystem, and the `not.toContain("latest")`
 assertion in the portability test is joined by an explicit arm64 label assertion.
+
+---
+
+### REL3. The Chocolatey package is not trusted, so every release waits on a human moderator
+
+The community repository human-reviews **every new version** before approval; only *trusted
+packages* skip that step, and the moderation team's own published figure for the wait is "a few days
+to a few weeks". Until a version is approved it stays unlisted, so a release can publish everywhere
+else while `choco install libredb-studio` still serves the previous version. The drift table shows
+this honestly — the pin reads the feed's approved version — and the release run degrades to a warning
+rather than a failure, so nothing here is broken. It is latency, and it is the only channel that has
+any.
+
+Two routes to trusted status are documented, and LibreDB already qualifies on the first: *"You write
+the underlying software that the package installs"*. But it is granted by hand — *"a manual change by
+a moderator... does not happen immediately even if you are the software author"* — and in most cases
+only *"after a few versions have been approved by moderators without any changes being required"*.
+As of 0.9.59 (approved 2026-08-24 by `flcdrg`) there is exactly one such approval, and the two
+guideline notes that submission raised were fixed in the templates by #208, so the next few should be
+clean.
+
+Not done now because asking after a single approval is asking early, and there is no form to submit:
+the route is the Chocolatey Community Hub `#community-maintainers` channel, or the site-admin contact
+form, identifying ourselves as the software vendor.
+
+The lag also has a second-order cost worth watching: `push.chocolatey.org` answers `403` when a
+package has *"too many existing versions in moderation"*, and the cap is not documented anywhere
+public (the gallery is closed source). A release cadence faster than the queue drains will find it.
+The push step tolerates that failure, but the affected version then needs a manual back-version push
+once the queue clears.
+
+**Done when:** the package carries trusted status — observable as a version reaching `Approved` in
+the feed within minutes of a push, with no human reviewer recorded — or a decision is written down
+that the moderation lag is accepted permanently and this entry is deleted.
 
 ---
 

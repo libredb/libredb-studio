@@ -1261,23 +1261,82 @@ jobs:
             packaging/chocolatey/tools/chocolateyinstall.ps1.tmpl \
             dist/SHA256SUMS "$VERSION" pkg/choco/tools/chocolateyinstall.ps1
 
-      - name: Pack and push with the official choco container
+      - name: Pack with the official choco container
+        # Packing is this repository's own work - a broken template or a
+        # missing file is our bug, so this step stays blocking. It also runs
+        # without CHOCO_API_KEY in its environment: the key is only needed by
+        # the push below, and a container that never sees it cannot leak it.
         if: steps.choco.outputs.enabled == 'true'
         env:
-          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
           VERSION: ${{ needs.guard.outputs.version }}
         run: |
           # The image's `choco` wrapper already runs the Mono build with
           # --allow-unofficial; do not pass it again. Pinned by immutable
           # digest (the tag is readability only): a mutable latest-linux
           # would hand CHOCO_API_KEY to whatever the tag points at.
-          docker run --rm -v "$PWD/pkg/choco:/wd" -w /wd -e CHOCO_API_KEY -e VERSION \
+          docker run --rm -v "$PWD/pkg/choco:/wd" -w /wd -e VERSION \
             chocolatey/choco:v2.7.3-linux@sha256:ae878c6e550ed7bd0adfb958f2f54b3aadab585d6a9386ad9e23a1aae06bee3d sh -c '
               set -eu
               choco pack
+            '
+
+      - name: Push to the community repository
+        # Deliberately non-blocking. push.chocolatey.org answers 403 for
+        # reasons that are about ITS queue and not about this release:
+        # "package has a version in moderation and no approved versions" (what
+        # failed the 0.9.60 and 0.9.61 runs) and "package has too many
+        # existing versions in moderation" - and every new version waits for a
+        # human moderator, "a few days to a few weeks", until the package is
+        # granted trusted status. A release that published correctly must not
+        # go red because that queue is deep; the step below reports it instead.
+        id: push
+        continue-on-error: true
+        if: steps.choco.outputs.enabled == 'true'
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          docker run --rm -v "$PWD/pkg/choco:/wd" -w /wd -e CHOCO_API_KEY -e VERSION \
+            chocolatey/choco:v2.7.3-linux@sha256:ae878c6e550ed7bd0adfb958f2f54b3aadab585d6a9386ad9e23a1aae06bee3d sh -c '
+              set -eu
               choco push "libredb-studio.${VERSION}.nupkg" \
                 --source https://push.chocolatey.org/ --api-key="$CHOCO_API_KEY"
             '
+
+      - name: Report the community feed's moderation status
+        # A successful push means "accepted into moderation", not "published":
+        # the version stays unlisted until a moderator approves it, so the
+        # listed feed keeps serving the previous one (measured: a feed-wide
+        # `$filter=IsApproved eq false` returns nothing, while `eq true`
+        # returns rows). The exact-version entity is the one public read that
+        # can answer for a version the feed does not list, so it is what turns
+        # "pushed" into something a human can check without maintainer access.
+        # Informational only - never fails the run, and skipped when the pack
+        # step did not get far enough to push anything.
+        if: always() && steps.choco.outputs.enabled == 'true' && steps.push.outcome != 'skipped'
+        continue-on-error: true
+        env:
+          PUSH_OUTCOME: ${{ steps.push.outcome }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          feed="https://community.chocolatey.org/api/v2/Packages(Id='libredb-studio',Version='${VERSION}')"
+          # `|| true`: the default shell is `bash -e`, and an unreachable feed
+          # or an absent entity must degrade to "not visible yet", not kill the
+          # step before it can print the warning below.
+          status=$(curl -sS --max-time 30 "$feed" | grep -o '<d:PackageStatus>[^<]*' | head -1 | cut -d'>' -f2) || true
+          {
+            echo "### Chocolatey"
+            echo ""
+            echo "- push outcome: \`${PUSH_OUTCOME}\`"
+            echo "- community feed status for ${VERSION}: \`${status:-not visible yet}\`"
+            echo ""
+            echo "\`Approved\` means it is installable now; anything else means it is queued for"
+            echo "human moderation and \`choco install libredb-studio\` still serves the previous"
+            echo "version. See [DISTRIBUTION.md](https://github.com/libredb/libredb-studio/blob/main/docs/DISTRIBUTION.md#windows-winget--chocolatey--portable-zip)."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PUSH_OUTCOME" != "success" ]; then
+            echo "::warning::choco push for ${VERSION} did not succeed (outcome: ${PUSH_OUTCOME}). A 403 here is normally the moderation queue - too many unapproved versions - and not a fault in this release, which published correctly. Push the back version by hand once the queue drains."
+          fi
 
   winget:
     name: Submit winget update PR

@@ -791,7 +791,9 @@ channels:
       # moderator flcdrg. Until then push.chocolatey.org answered 403 for EVERY
       # version while an account's first submission is unapproved, which failed
       # the 0.9.60 and 0.9.61 release runs after the releases themselves had
-      # published fine.
+      # published fine. The push step is non-blocking now (a 403 for a deep
+      # moderation queue reports as a warning), so this flag no longer needs to
+      # carry that job alone.
       ci_enabled: true
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/114
@@ -805,7 +807,10 @@ channels:
         feed publishes no floating "latest" document, so the pin filters the OData package list to
         IsLatestVersion - one document, one match, whatever the published version count. It reads
         0.9.59 until the next release publishes through the now-enabled job, which is real lag and
-        not a broken pin.
+        not a broken pin. The feed lists APPROVED versions only, so a drift row here means the
+        version is waiting on human moderation rather than that the push failed; the release run's
+        job summary reports the push outcome and that version's PackageStatus. Trusted status is
+        what removes the wait - docs/BACKLOG.md REL3.
 
   - id: flathub
     name: Flathub community catalog (org.libredb.Studio)

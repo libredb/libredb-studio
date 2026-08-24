@@ -755,6 +755,15 @@ choco install libredb-studio
 libredb-studio
 ```
 
+> **Organizations:** from **2027-01-01** Chocolatey's Terms of Service restrict *using* the
+> community repository to manage organizational fleets — pull the package into an internal
+> NuGet-compatible repository (Nexus, Artifactory, ProGet) or a proxy that caches the community
+> repository upstream, and install from there
+> ([policy update](https://blog.chocolatey.org/2026/06/updated-tos/)). The restriction is on
+> consumption, not publication: it does not touch this repository's ability to publish, personal
+> use stays permitted, and `choco install libredb-studio` is unchanged when it resolves from an
+> internal mirror. winget carries no equivalent restriction.
+
 Open http://127.0.0.1:3000 and log in with the printed credentials. Both packages install the
 same standalone zip: the server payload, a bundled private Node.js runtime (`node\node.exe`),
 and the `libredb-studio.exe` launcher — nothing else to install.
@@ -1255,11 +1264,52 @@ repo's Actions secrets. The FIRST listing in each community catalog is a one-tim
    set `links.first_pr`, and add a measurable pin where one exists. **Chocolatey is measured by a
    `remote_file` pin** on the community OData feed filtered to `IsLatestVersion`, which is what
    makes a single-match regex possible there: the feed enumerates every published version, so an
-   unfiltered listing would yield as many disagreeing matches as there are versions.
+   unfiltered listing would yield as many disagreeing matches as there are versions. Note what that
+   pin measures: the feed lists approved versions only, so a Chocolatey `DRIFT` row means the
+   version is still in moderation, not that the push failed.
    **winget is measured by a probe, not a regex pin** (`pin.strategy: probe`, `winget-max-version`):
    it publishes no floating "latest" document — the winget-pkgs contents listing enumerates every
    published version — so the checker takes the highest version enumerated there. A regex pin
    cannot express that, because it requires all matches in a source to agree.
+
+### Chocolatey moderation, and why its push step cannot fail a release
+
+`choco push` publishes nothing by itself. The community repository is a moderated feed: **every new
+version is human-reviewed before approval** — only *trusted packages* skip that — and the moderation
+team's own figure for the wait is "a few days to a few weeks"
+([moderation](https://docs.chocolatey.org/en-us/community-repository/moderation/),
+[Behind the Curtain](https://blog.chocolatey.org/2025/06/ccr-moderation-behind-the-curtain/)).
+An unapproved version stays unlisted, so `choco install libredb-studio` keeps serving the previous
+one until a moderator clicks approve.
+
+This is the one structural difference from winget. There is no PR to open and nothing manual per
+release — the community repository takes a `.nupkg` over an API and the `chocolatey` job pushes it —
+but what follows the push is a volunteer's queue, not an automated merge. Two consequences are
+encoded in the release path:
+
+- **The push step is `continue-on-error`; `choco pack` is not.** `push.chocolatey.org` answers `403`
+  for causes that belong to that queue rather than to this repository: *"package has a version in
+  moderation and no approved versions"* (what failed the 0.9.60 and 0.9.61 runs) and *"package has
+  too many existing versions in moderation"*
+  ([common errors](https://docs.chocolatey.org/en-us/community-repository/maintainers/common-errors/)),
+  the second of which becomes reachable whenever releases outpace the queue. A release that
+  published correctly must not go red for that. A pack failure is our own broken template, so it
+  still fails the run. `tests/unit/release-chocolatey.test.ts` locks both halves.
+- **The run's job summary carries a "Chocolatey" section** with the push outcome and what the feed
+  says about that exact version. It reads
+  `Packages(Id='libredb-studio',Version='<version>')` — the only public read that answers for a
+  version the feed does not list yet, since a feed-wide `$filter=IsApproved eq false` returns
+  nothing while `eq true` returns rows.
+
+**Trusted status is the fix, and it is a human decision.** The FAQ names two routes to it — *"You
+write the underlying software that the package installs"* and a track record of clean submissions —
+and is equally clear that switching a package to trusted *"is a manual change by a moderator. It is
+not an automated process, and does not happen immediately even if you are the software author"*, in
+most cases only *"after a few versions have been approved by moderators without any changes being
+required"*. LibreDB qualifies on the first route and has one clean approval (0.9.59). After two or
+three more, ask on the Chocolatey Community Hub (`#community-maintainers`) as the software vendor —
+tracked as REL3 in [`docs/BACKLOG.md`](BACKLOG.md). A trusted package skips human review entirely,
+and the channel then behaves the way winget does today.
 
 ### Channel inventory and drift check
 
