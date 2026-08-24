@@ -726,27 +726,29 @@ The win32-x64 standalone zip is built and attached to every
 **winget is live**: the first listing
 ([microsoft/winget-pkgs#402985](https://github.com/microsoft/winget-pkgs/pull/402985)) merged on
 2026-07-31, so `winget install LibreDB.Studio` resolves from the community repository and every
-release now submits its update PR automatically. The first Chocolatey push is still in community
-moderation (see the [first-listing checklist](#windows-first-listing-checklist) — track
+release now submits its update PR automatically. **Chocolatey is live as well**: the first push
+(0.9.59) was approved by a community moderator on 2026-08-24, so `choco install libredb-studio`
+resolves from the community repository and every release packs and pushes automatically (track
 [issue #114](https://github.com/libredb/libredb-studio/issues/114)).
 
-> **Chocolatey stays switched off in the inventory until its moderation clears**
-> (`update.ci_enabled: false` in [`distribution/channels.yaml`](../distribution/channels.yaml) —
-> see [Turning a channel's automation off](#turning-a-channels-automation-off)). Chocolatey is the
+> **Chocolatey was switched off in the inventory until its moderation cleared**
+> (`update.ci_enabled` in [`distribution/channels.yaml`](../distribution/channels.yaml) — see
+> [Turning a channel's automation off](#turning-a-channels-automation-off)). Chocolatey is the
 > reason the switch exists: `push.chocolatey.org` answers `403 Forbidden` for *every* version
 > while an account's first submission is unapproved, which failed the 0.9.60 and 0.9.61 release
-> runs even though both releases published correctly. **To re-enable:** set `ci_enabled: true` and
-> flip `status` to `live` in the same edit — exactly what winget got once its listing merged. The
-> next release publishes the channel; do not re-dispatch `release-artifacts` for an
-> already-published version to backfill the feed, because its asset steps would fight the
-> immutable release — push a back version by hand (the same choco container the job uses for
-> Chocolatey; the [manual manifest recipe](#windows-first-listing-checklist) for winget).
+> runs even though both releases published correctly. The 2026-08-24 approval set
+> `ci_enabled: true` and `status: live` in a single edit — exactly what winget got once its
+> listing merged. The community feed serves 0.9.59 until the next release publishes through the
+> re-enabled job; do not re-dispatch `release-artifacts` for an already-published version to
+> backfill the feed, because its asset steps would fight the immutable release — push a back
+> version by hand (the same choco container the job uses for Chocolatey; the [manual manifest
+> recipe](#windows-first-listing-checklist) for winget).
 
 ```powershell
 # winget
 winget install LibreDB.Studio
 
-# Chocolatey (after the first push clears community moderation)
+# Chocolatey
 choco install libredb-studio
 
 # Then, from any terminal - first run prints the generated admin credentials
@@ -1214,10 +1216,13 @@ and Chocolatey is secret-gated and ready — both `CHOCO_API_KEY` (API key of th
 account on community.chocolatey.org) and `WINGETCREATE_GITHUB_TOKEN` are configured in the
 repo's Actions secrets. The FIRST listing in each community catalog is a one-time human step
 (same pattern as the Snap Store name registration). Both first submissions were made with
-0.9.59: **winget merged on 2026-07-31** and is `live` with `ci_enabled: true`, while the
-Chocolatey push is still in moderation.
+0.9.59, and both are done: **winget merged on 2026-07-31** and **Chocolatey was approved on
+2026-08-24**; each is `live` with `ci_enabled: true`.
 
-1. **Chocolatey** — the release's chocolatey job packs and pushes automatically. The first push
+1. **Chocolatey** — DONE: the 0.9.59 push was approved by moderator `flcdrg` on 2026-08-24 and
+   the package is listed at
+   [community.chocolatey.org/packages/libredb-studio](https://community.chocolatey.org/packages/libredb-studio).
+   The release's chocolatey job packs and pushes every version automatically. The first push
    enters [human moderation](https://docs.chocolatey.org/en-us/community-repository/moderation/);
    while a version sits in the moderation queue, pushing further versions can be rejected —
    if a release-time push fails during that window, re-run the job after approval.
@@ -1247,7 +1252,10 @@ Chocolatey push is still in moderation.
    <version>` for an update. Upstream's validation pipeline downloads the `InstallerUrl` and
    verifies `InstallerSha256`, so the release must already be published.
 3. After each catalog goes live: flip its `distribution/channels.yaml` entry to `status: live`,
-   set `links.first_pr`, and add a measurable pin where one exists (Chocolatey community API).
+   set `links.first_pr`, and add a measurable pin where one exists. **Chocolatey is measured by a
+   `remote_file` pin** on the community OData feed filtered to `IsLatestVersion`, which is what
+   makes a single-match regex possible there: the feed enumerates every published version, so an
+   unfiltered listing would yield as many disagreeing matches as there are versions.
    **winget is measured by a probe, not a regex pin** (`pin.strategy: probe`, `winget-max-version`):
    it publishes no floating "latest" document — the winget-pkgs contents listing enumerates every
    published version — so the checker takes the highest version enumerated there. A regex pin
@@ -1397,6 +1405,9 @@ anything. `update.ci_enabled` in `channels.yaml` is the switch:
       ci_enabled: false   # 403 for every version while the first push is in moderation
 ```
 
+That is the state `chocolatey` carried from 0.9.60 until its approval on 2026-08-24; it is kept
+here as the worked example because it is the case the switch was built for.
+
 The release workflow reads it (`distribution-check.mjs --ci-outputs` in the `channels` job, whose
 outputs each channel's availability step consults), so **the edit is the whole switch** — no
 secret to delete, no workflow change, and the decision is reviewable in a diff next to the
@@ -1418,11 +1429,11 @@ Three deliberate constraints:
   the optional channels skip while the release publishes normally. A forgotten re-enable surfaces
   in the weekly drift table rather than in a broken release.
 
-Do not confuse it with `status`: `status` describes the channel's listing (`chocolatey` is
-`pending` because its first push has not cleared moderation, while the zip it points at is built
-and required on every release), whereas `ci_enabled` describes only whether release CI may
-publish it. The two move together when a listing lands — `winget` went `pending`/`false` to
-`live`/`true` in a single edit once #402985 merged. A channel whose listing will never happen is
+Do not confuse it with `status`: `status` describes the channel's listing (`chocolatey` was
+`pending` while its first push sat in moderation, even though the zip it points at was built and
+required on every release), whereas `ci_enabled` describes only whether release CI may publish
+it. The two move together when a listing lands — `winget` went `pending`/`false` to `live`/`true`
+in a single edit once #402985 merged, and `chocolatey` did the same on its 2026-08-24 approval. A channel whose listing will never happen is
 `deprecated`, not `pending` — `flathub` is the worked example.
 
 **Adding a channel** = one new entry in `channels.yaml` (copy a neighbour of the same tier; the
@@ -1478,10 +1489,10 @@ deliverable (`pin.strategy: local_file` for the version-pinned `fly.toml`; `none
 - **Website install docs**: the libredb-website documentation must be updated with the new
   channels (npx, Homebrew, .deb/.rpm, Snap) — a cross-repo step and part of issue #111's
   "README and website docs" acceptance criterion (and implicitly of #110/#112/#113).
-- **Windows first listings**: winget is done —
+- **Windows first listings — done.** winget:
   [microsoft/winget-pkgs#402985](https://github.com/microsoft/winget-pkgs/pull/402985) merged on
-  2026-07-31 and the channel is `live` with release-CI updates enabled. Only the Chocolatey first
-  push is still outstanding (human moderation), per the
+  2026-07-31. Chocolatey: the 0.9.59 push cleared human moderation on 2026-08-24. Both channels
+  are `live` with release-CI updates enabled, per the
   [Windows first-listing checklist](#windows-first-listing-checklist) —
   tracked in [issue #114](https://github.com/libredb/libredb-studio/issues/114).
 - **Flathub submission — closed, not shipping.**

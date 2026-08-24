@@ -34,16 +34,16 @@ channel count.
 
 ## Coverage snapshot
 
-**33 channels · 24 live · 8 pending · 1 deprecated**
+**33 channels · 25 live · 7 pending · 1 deprecated**
 
-Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 4 · Kubernetes 2 · Cloud 10**
+Live channels by platform: **Linux 7 · macOS 3 · Windows 4 · Container 4 · Kubernetes 2 · Cloud 10**
 
 | Category | Live | Pending | Deprecated |
 | --- | ---: | ---: | ---: |
 | Registries & releases | 2 | 0 | 0 |
 | Containers | 2 | 0 | 0 |
 | Kubernetes & operators | 2 | 1 | 0 |
-| Package managers | 4 | 1 | 1 |
+| Package managers | 5 | 0 | 1 |
 | OS / desktop packages | 2 | 1 | 0 |
 | PaaS catalogs (listed) | 8 | 4 | 0 |
 | Deploy recipes | 3 | 0 | 0 |
@@ -64,11 +64,11 @@ Live channels by platform: **Linux 7 · macOS 3 · Windows 3 · Container 4 · K
 | [Helm chart](https://artifacthub.io/packages/helm/libredb-studio/libredb-studio) | Kubernetes & operators | Kubernetes | live | Automated, every release | [HELM_CHART.md](HELM_CHART.md) |
 | [Rancher Partner Charts](https://www.suse.com/pcsc/viewVersionPage?versionID=26969) | Kubernetes & operators | Kubernetes | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [OperatorHub / OpenShift](https://github.com/redhat-openshift-ecosystem/community-operators-prod) | Kubernetes & operators | Kubernetes | pending | Manual, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [Chocolatey](https://community.chocolatey.org/packages/libredb-studio) | Package managers | Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [FlatPark (Flatpak)](https://flatpark.org/) | Package managers | Linux | live | Manual, every release | [packaging/flatpark/README.md](../packaging/flatpark/README.md) |
 | [Homebrew tap](https://github.com/libredb/homebrew-tap) | Package managers | Linux, macOS | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Snap Store](https://snapcraft.io/libredb-studio) | Package managers | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [winget](https://github.com/microsoft/winget-pkgs/tree/master/manifests/l/LibreDB/Studio) | Package managers | Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| [Chocolatey](https://community.chocolatey.org/packages/libredb-studio) | Package managers | Windows | pending | Automated (paused), every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | Flathub | Package managers | Linux | deprecated | — | [packaging/flatpak/README.md](../packaging/flatpak/README.md) |
 | [Desktop app (AppImage, .deb)](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [desktop/README.md](../desktop/README.md) |
 | [Linux .deb / .rpm](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |

@@ -778,7 +778,7 @@ channels:
   - id: chocolatey
     name: Chocolatey community repository (libredb-studio)
     short_name: Chocolatey
-    status: pending
+    status: live
     category: package-managers
     platforms: [windows]
     runtime: channel_supplied
@@ -787,19 +787,25 @@ channels:
     update:
       method: ci_publish
       sla: every_release
-      # push.chocolatey.org answers 403 for EVERY version while an account's
-      # first submission is unapproved, which failed the 0.9.60 and 0.9.61
-      # release runs after the releases themselves had published fine.
-      ci_enabled: false
+      # Enabled on 2026-08-24, when the first submission (0.9.59) was approved by
+      # moderator flcdrg. Until then push.chocolatey.org answered 403 for EVERY
+      # version while an account's first submission is unapproved, which failed
+      # the 0.9.60 and 0.9.61 release runs after the releases themselves had
+      # published fine.
+      ci_enabled: true
     links:
       tracking_issue: https://github.com/libredb/libredb-studio/issues/114
       catalog: https://community.chocolatey.org/packages/libredb-studio
       docs: docs/DISTRIBUTION.md
     pin:
-      strategy: none
-      note: win32 zip ships in every release since 0.9.59. CI packs and pushes via the choco
-        container (CHOCO_API_KEY gate) once ci_enabled is flipped; the first push (0.9.59) is in
-        human moderation. When approved, set ci_enabled true, flip to live, add a community-API pin.
+      strategy: remote_file
+      url: https://community.chocolatey.org/api/v2/Packages()?%24filter=Id%20eq%20%27libredb-studio%27%20and%20IsLatestVersion
+      extract: '<d:Version>(\d+\.\d+\.\d+)</d:Version>'
+      note: Listed since 0.9.59 (choco install libredb-studio), approved 2026-08-24. The community
+        feed publishes no floating "latest" document, so the pin filters the OData package list to
+        IsLatestVersion - one document, one match, whatever the published version count. It reads
+        0.9.59 until the next release publishes through the now-enabled job, which is real lag and
+        not a broken pin.
 
   - id: flathub
     name: Flathub community catalog (org.libredb.Studio)
