@@ -163,7 +163,13 @@ Monitoring never hard-fails on a missing optional feature:
   currently-running queries when the extension isn't installed, whereas `getHealth()`'s lighter
   slow-query block returns a single placeholder row (`pg_stat_statements extension not enabled`).
 - WAL size (`getStorageStats`) and `pg_stat_bgwriter` checkpoint times are superuser/version-gated;
-  failures are swallowed and the field is simply omitted or reported as `N/A`.
+  failures are swallowed and the field is simply omitted or reported as `N/A`. PostgreSQL 17 moved
+  `checkpoint_write_time`/`checkpoint_sync_time` from `pg_stat_bgwriter` to `pg_stat_checkpointer`,
+  so on 17+ the query throws and `checkpointWriteTime` is `"N/A"` — measured 2026-08-23 through this
+  provider against `postgres:18`. It is never `"0.0s"` for an unread counter.
+- A metric the statistics views did not publish is **omitted rather than defaulted**
+  ([§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)); `deadlocks` is absent when
+  `pg_stat_database` has no row for the database, rather than reported as zero deadlocks.
 
 ### 3.6 Safe maintenance targets
 
@@ -269,7 +275,7 @@ acquires a pooled client, optionally records its backend PID for cancellation, r
 (optionally parameterized — `$1`, `$2`, …) statement, and returns the standard envelope:
 
 ```ts
-{ rows, fields: string[], rowCount, executionTime }
+{ rows, fields: string[], rowCount, executionTime, columnTypes? }
 ```
 
 Native `pg` errors are normalised through `mapDatabaseError()` into the shared
@@ -374,6 +380,57 @@ A query issued with a `queryId` records its backend PID in a `Map`. `cancelQuery
 `pg_cancel_backend(pid)` on a fresh pooled client, returning whether the cancel signalled. Exposed
 via `POST /api/db/cancel`.
 
+### 5.4 Declared column types
+
+`pg` says exactly one thing about a column's type: `field.dataTypeID`, a `pg_type` OID. There is no
+name on the wire, and no value-shaped guess can supply one — `numeric` arrives as the **string**
+`"4.99"` so that its precision survives, `bigint` arrives as a string for the same reason, and a
+`timestamp` is a string by the time the browser has read the JSON. Measured against the local
+dvdrental before this existed, `SELECT rental_rate, last_update, film_id FROM film` exported as
+`("rental_rate" TEXT, "last_update" TIMESTAMP, "film_id" BIGINT)`: a `numeric` typed as text, and an
+`integer` widened. Guessing from the string's SHAPE is not the answer either — it would type a text
+column holding `2026-01-01` as a timestamp.
+
+So the OID is resolved to a name and reported in `QueryResult.columnTypes`, keyed by the name in
+`fields` ([column-types.ts](../../src/lib/db/providers/sql/column-types.ts)). All three execution
+paths do it: `query()`, `queryInTransaction()` and the agent's `queryReadOnly()`.
+
+- **A static table, not a catalog lookup.** The built-in OIDs are compiled into the server
+  (`pg_type.dat`) and are never reused, so a generated table is correct on every version — a newer
+  server can only add OIDs it does not know. A lookup would also need a round trip that three of the
+  four call sites cannot make: `query()` releases its pooled client before the result is assembled,
+  and `queryReadOnly()` promises EXACTLY ONE statement inside `BEGIN READ ONLY` (§12) — a catalog
+  `SELECT` smuggled in beside it would break that promise for a column label.
+- **`format_type` supplies the spelling**, because it is what PostgreSQL itself prints: OID 20 is
+  `bigint`, not the internal `int8` that `pg`'s own `types.builtins` is keyed by. The table's
+  generating query is in the module's header comment.
+- **A user-defined OID (>= 16384) is absent rather than wrong.** An enum, a composite or an
+  extension type gets its OID per database, so no static table can name it. Measured by running
+  `SELECT *` through `pg` over every table and view in dvdrental — 128 result columns — 125 are
+  named, 0 wrongly, and 3 are absent: the `mpaa_rating` enum in `film` and the two views over it.
+  Arrays are named (`text[]`). A **domain** does not reach that case at all: `film.release_year` is
+  the domain `year` (OID 16516) in `pg_attribute`, and `pg` reports the column as OID 23 — its base
+  type — so the result says `integer`, which is what the wire carries.
+
+| `dataTypeID` | reported as |
+|---|---|
+| 20 / 23 / 21 | `bigint` / `integer` / `smallint` |
+| 1700 | `numeric` |
+| 701 | `double precision` |
+| 16 | `boolean` |
+| 1043 / 25 / 1042 | `character varying` / `text` / `character` |
+| 1114 / 1184 / 1082 | `timestamp without time zone` / `timestamp with time zone` / `date` |
+| 114 / 3802 | `json` / `jsonb` |
+| 2950 / 17 | `uuid` / `bytea` |
+| 1009 | `text[]` |
+| >= 16384 | *absent* |
+
+The names are the base type's, without the type modifier: `character varying`, not
+`character varying(40)`. That is what `information_schema.columns.data_type` — the same source the
+schema tree shows — answers for the same column, and the modifier is not on the wire in a form worth
+reconstructing. `columnTypes` is consumed by the results grid's column labels, by the SQL-DDL export
+(which prefers a declared type over its value-shaped guess) and by the agent's state summary.
+
 ---
 
 ## 6. Schema introspection
@@ -403,9 +460,9 @@ base) fans these out in parallel.
 
 | Method | Primary source | Notes |
 |--------|----------------|-------|
-| `getHealth()` | `pg_stat_activity`, `pg_database_size`, `pg_statio_user_tables`, `pg_stat_statements` | connections, size, cache-hit %, top-5 slow queries (single placeholder row if the extension is absent), 10 sessions |
+| `getHealth()` | `pg_stat_activity`, `pg_database_size`, `pg_statio_user_tables`, `pg_stat_statements` | connections, size, cache-hit % (`N/A` when unmeasurable — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable)), top-5 slow queries (single placeholder row if the extension is absent), 10 sessions |
 | `getOverview()` | `version()`, `pg_postmaster_start_time()`, `pg_settings`, `pg_database_size`, `pg_tables`/`pg_indexes` | version, uptime, conns, max_conns, size, table/index counts |
-| `getPerformanceMetrics()` | `pg_statio_user_tables`, `pg_stat_database`, `pg_stat_bgwriter` | cache-hit %, buffer-pool %, deadlocks, checkpoint write time (gated) |
+| `getPerformanceMetrics()` | `pg_statio_user_tables`, `pg_stat_database`, `pg_stat_bgwriter` | cache-hit % (omitted when unmeasurable), deadlocks, checkpoint write time (gated, `N/A`); **no buffer-pool %** — see [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
 | `getSlowQueries()` | `pg_stat_statements` → fallback `pg_stat_activity` | detailed per-statement stats; fallback shows live active queries |
 | `getActiveSessions()` | `pg_stat_activity` | pid, user, state, query, wait events, duration; excludes own backend |
 | `getTableStats()` | `pg_stat_user_tables` + size functions | live/dead tuples, sizes, last (auto)vacuum/analyze, bloat ratio |
@@ -415,6 +472,38 @@ base) fans these out in parallel.
 
 `getTableStats()` / `getIndexStats()` accept an optional `{ schema }` filter; with none they cover
 all user schemas.
+
+### 7.1 When the cache hit ratio is not measurable
+
+The ratio comes from `pg_statio_user_tables`, and there are two ordinary states in which that view
+has nothing to divide:
+
+- **A database with no user tables.** The aggregate is `NULL`, not zero. Measured 2026-08-23 on
+  `postgres:18`, on a freshly created database:
+
+  ```
+   heap_read | heap_hit | raw_ratio
+  -----------+----------+-----------
+             |          |
+  ```
+
+- **A table nothing has read yet.** `heap_blks_hit` and `heap_blks_read` are both `0`, so the ratio
+  is `0/0` — a division by zero, which `NULLIF(..., 0)` turns into the same `NULL`.
+
+In both cases **`getHealth().cacheHitRatio` is `"N/A"` and `getPerformanceMetrics().cacheHitRatio`
+is absent from the object**, and the Overview and Performance tabs render "Not measured" rather
+than a figure. A ratio that *is* measured as `0` is kept and shown as `0.0%`: a cold cache is a real
+reading, and the one the panel most needs to show.
+
+Both SQL statements used to wrap the `NULL` in `COALESCE(..., 100)`, so an unmeasured database
+reported a perfect cache; the panels rated it "Excellent". A missing panel is honest; a populated
+wrong one is not.
+
+`bufferPoolUsage` is **not reported at all**. It used to be `blks_hit / (blks_hit + blks_read)` from
+`pg_stat_database` — which is a cache hit ratio, not pool occupancy, so the Performance tab drew the
+same quantity twice with one of the two mislabelled, and substituted `100` when both counters were
+`0`. PostgreSQL publishes no buffer-pool occupancy without the `pg_buffercache` extension, which is
+not installed by default and whose scan locks `shared_buffers`.
 
 ---
 

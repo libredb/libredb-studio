@@ -15,6 +15,23 @@
 </p>
 
 <p align="center">
+  Listed by the PostgreSQL project:
+  <a href="https://www.postgresql.org/about/news/libredb-studio-an-open-source-self-hosted-sql-ide-for-postgresql-in-the-browser-3368/">News</a>
+  ·
+  <a href="https://www.postgresql.org/download/products/1/">Software Catalogue</a>
+  ·
+  <a href="https://wiki.postgresql.org/wiki/Community_Guide_to_PostgreSQL_GUI_Tools#LibreDB_Studio">Community Guide to GUI Tools</a>
+</p>
+<p align="center">
+  Also listed in official
+  <a href="https://redis.io/docs/latest/develop/tools/#libredb-studio">Redis</a>,
+  <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>
+  and
+  <a href="https://druid.apache.org/libraries">Apache Druid</a>
+  docs
+</p>
+
+<p align="center">
   <img src="public/screenshots/hero-demo.gif" alt="Opening a table, running a join, charting the result and reading the ER diagram in LibreDB Studio" width="100%" />
 </p>
 

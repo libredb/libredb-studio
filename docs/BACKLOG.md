@@ -22,10 +22,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S1–S8 · 8
-- [Drivers and connections](#drivers-and-connections) — D1–D12, U17 · 8
+- [Drivers and connections](#drivers-and-connections) — D1–D22, U17 · 11
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X8, U2–U18 · 9
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U18 · 10
 - [Authentication and security headers](#authentication-and-security-headers) — AU2
 - [Tests](#tests) — T1–T3 · 2
 - [Dependencies](#dependencies) — P1–P5 · 5
@@ -186,123 +186,6 @@ Same lock, same fix as B49. Close the two together.
 open provider, or the test is skipped with an honest message. Either way the modal must not present a
 lock conflict as a failed connection test.
 
-### D7. Three providers answer the performance panel with a fabricated cache hit ratio
-
-Three sites, all reaching the panel indistinguishable from a measurement:
-
-- **MySQL** — `mysql.ts:853` returns `cacheHitRatio: 99` from a `catch` commented "Fallback if
-  performance_schema is not available". Two more sites default the same way when the row is simply
-  absent: `mysql.ts:648` and `:826` both read `hitRows[0]?.hit_ratio || 99`.
-- **MongoDB** — the same literal in the same position (`document/mongodb.ts`, which at least logs first).
-- **LibreDB** — `embedded/libredb.ts:526` returns `cacheHitRatio: 100` unconditionally.
-
-Measured 2026-08-20 against a live OceanBase Community Edition 4.4.2.1 through the shipped `mysql`
-provider: the tenant has no `performance_schema` database at all (`ERROR 1049`). That `catch` is not
-an edge case there, it is the only path. The panel reports **99 percent cache hit, 0 queries per
-second, 0 buffer pool, 0 deadlocks** on every refresh, forever.
-
-This is the failure class #424 exists to refuse — "a missing panel is honest; a populated wrong one is
-not" — and it is worse here, because the engine is not the author of the number. We are.
-
-**#452 cannot reach this.** That PR taught the five monitoring tabs to render an omitted metric as
-unavailable rather than as zero. A fabricated `99` is not an absence, so there is nothing for a panel
-to detect.
-
-**Done when:** a provider that cannot measure the cache hit ratio reports it as unavailable, on all
-sites listed above.
-
-### D8. The MySQL provider only uses the prepared protocol, and two engines lose panels to it
-
-Every read in `src/lib/db/providers/sql/mysql.ts` goes through mysql2's `conn.execute` — the binary
-PREPARED protocol — and never `conn.query`. There is no site that chooses: `getHealth`, `getOverview`,
-`getPerformanceMetrics`, the maintenance statement and the editor's own query path all call `execute`,
-including for statements that carry no parameters.
-
-Measured 2026-08-20 against a live SingleStore 9.1.1
-(`ghcr.io/singlestore-labs/singlestoredb-dev:0.2.82`), both ways on one connection:
-
-| Statement | `conn.execute` | `conn.query` |
-|---|---|---|
-| `SHOW STATUS LIKE 'Uptime'` | fails | succeeds |
-| `SHOW VARIABLES LIKE 'max_connections'` | fails | succeeds |
-| `EXPLAIN FORMAT=JSON <select>` | fails | succeeds |
-| `EXPLAIN <select>` | fails | succeeds |
-| `OPTIMIZE TABLE orders` | fails | succeeds |
-| `CHECK TABLE orders` | fails | succeeds |
-| `ANALYZE TABLE orders` | succeeds | succeeds |
-
-Every failure is the same engine message: `This command is not supported in the prepared statement
-protocol yet`. The last row is the tell — `ANALYZE TABLE` is the one maintenance action that works on
-SingleStore, and the one statement in that list the prepared protocol accepts.
-
-The cost on SingleStore is **five of its six defects**: Test Connection, health, the overview, the
-monitoring dashboard and the Explain panel (whose statement `src/lib/explain/mysql-json.ts` builds as
-`EXPLAIN FORMAT=JSON` and runs down the same path). Two of three maintenance actions go with them.
-
-**Not SingleStore-only.** The registered StarRocks row in `docs/providers/README.md` records its
-overview and health failures on the prepared-statement protocol — same cause, different engine,
-written up there as that engine's own quirk. One change reaches both.
-
-**The recovery is plausible and unmeasured.** The probe showed those statements succeed on
-`conn.query`. It did not show the provider working that way: nothing was changed and no panel was
-re-run. So six surfaces and two maintenance actions are candidates for recovery, not promises.
-
-**Done when:** a parameterless statement the provider issues goes over the text protocol, and the
-SingleStore and StarRocks rows in `docs/providers/README.md` are re-probed against that build.
-
----
-### D9. The Cassandra monitoring surfaces throw when `system_views` is absent, and a registered engine loses six of them
-
-Four reads in `src/lib/db/providers/sql/cassandra/introspect.ts` query Cassandra's `system_views`
-virtual tables with no path for that keyspace not existing: `getOverview` (371),
-`getPerformanceMetrics` (426), `getActiveSessions` (455) and `getHealth` (533). `getMonitoringData` is
-the fifth failure, because `base-provider.ts:99` aggregates those. Test Connection is the sixth:
-`POST /api/db/test-connection` calls `provider.getHealth()`
-(`src/app/api/db/test-connection/route.ts:33`).
-
-Measured 2026-08-21/22 against live `scylladb/scylla:2026.2.4` and `scylladb/scylla:2025.1` through
-`createDatabaseProvider({type:"cassandra"})`, surface by surface, with `cassandra:5.0.9` in the same
-pass. All thirteen surfaces this provider offers pass on 5.0.9 — thirteen because it offers neither
-cancellation nor `EXPLAIN`. On both ScyllaDB builds the same five fail with the same verbatim error,
-`Keyspace system_views does not exist`, and the other eight pass: `connect`, `query`, `getSchema`,
-`getSlowQueries`, `getTableStats`, `getIndexStats`, `getStorageStats`, `disconnect`. ScyllaDB has no
-`system_views` keyspace at all; `system.local`, `system_schema.*` and `system.size_estimates` all
-exist and answer.
-
-**The seventh failure is what makes this a blocker rather than a blemish, and only a browser pass
-found it.** `handleConnect` (`src/hooks/use-connection-form.ts:346`) gates the SAVE on that same
-request — `if (result.success) onConnect(conn)` — so Establish Connection refuses too and nothing is
-stored. A ScyllaDB connection cannot be created through the connection dialog at all; the browser
-pass reached the editor only through a seeded, admin-managed connection. **Not ScyllaDB-only:**
-StarRocks and SingleStore are registered relatives whose health surface also fails (D8), so the same
-gate applies to them by inspection — measured for ScyllaDB, inferred for those two, recorded in
-neither row.
-
-Two more surfaces were measured while there. The monitoring dashboard renders one *Connection Error*
-page reading `Keyspace system_views does not exist`, which the connection is not — the same
-mislabelling the Cloudberry row records. The header badge reads *Slow* with the title *Connection:
-degraded*, which is the failing health request rather than latency.
-
-**The provider does degrade a monitoring read to empty — but only on the wrong condition.** §3.6 of
-`docs/providers/cassandra.md` records the rule as measured: a monitoring read degrades on a
-`permission` denial (Cassandra error 8448) **and on nothing else**, deliberately, so that a typo in
-this provider's own CQL is not hidden by an empty panel. An absent keyspace is not a denial, so it
-propagates.
-
-**The recovery is plausible and unmeasured, and the difference matters.** Widening the degradation
-contract to cover an absent `system_views` would plausibly lift the ScyllaDB row in
-`src/lib/db/compatibility.ts` from `partial` to `full` and make the dialog work. Nothing was changed
-and no panel was re-run, so that is a candidate, not a result. It is also not free: it widens the
-condition §3.6 argues for narrowing, so a `system_views` typo in our own CQL must still surface as a
-failure rather than an empty panel.
-
-**Done when:** an absent `system_views` keyspace degrades those five reads the way a denial does, a
-`system_views` typo still fails loudly, the dialog can create a ScyllaDB connection — or the save
-stops being gated on health, which is the wider question and should be answered for StarRocks and
-SingleStore in the same pass — and the ScyllaDB row in `docs/providers/README.md` is re-probed
-against that build.
-
----
 ### U17. Four things the Cassandra provider declined to do
 
 The provider shipped in #424 Phase 4 with four bounded absences. None is a defect — each is the
@@ -385,21 +268,176 @@ first-contact policy is written in `docs/providers/`-adjacent documentation the 
 
 ---
 
-### D12. A pasted `rediss://` URL lands on SSL mode `disable`, so the scheme is silently dropped
+---
 
-`src/lib/connection-string-parser.ts` reads a pasted Redis URL and does not carry its secure scheme
-into `config.ssl`: `rediss://host:6380` produces a connection whose mode is `disable`. Since the
-provider now honours that mode (it did not before 2026-08-23), the paste path is the one place left
-where a user asks for TLS and does not get it — and it looks like it worked, because the connection
-form fills in and saves.
+---
 
-The fix is named and one line: `withSSLMode()` in the same file (`:144`) is the existing precedent
-for a scheme that implies a mode; `postgresql://…?sslmode=` already goes through it.
+### D14. Three providers lost the buffer-pool gauge, because it was the cache hit ratio wearing a second name
 
-Scope note: this is a different intake path from the SSL/TLS panel, which is why it was left out of
-the panel work rather than folded into it. `docs/providers/redis.md` records it as a known limitation.
+Removing the fabricated cache hit ratios exposed that `bufferPoolUsage` was not a second measurement.
+In Oracle and SQL Server it was literally assigned the ratio itself - the old tests even said "mirrors
+cacheHitRatio in Oracle impl" - so the Performance tab drew and rated one quantity as two independent
+gauges. In PostgreSQL it was `blks_hit / (blks_hit + blks_read)` from `pg_stat_database`, which is also
+a cache hit ratio and not pool occupancy, with a `: 100` fallback when both counters were 0. All three
+now omit the field, which the tab renders as unavailable.
 
-**Done when:** a pasted `rediss://` URL arrives with mode `require` (or higher), with a parser test.
+Real occupancy is reachable on each engine and none of the three is free: `pg_buffercache` is an
+extension not installed by default, `V$BUFFER_POOL_STATISTICS` needs the privilege the ratio already
+needs, and `sys.dm_os_buffer_descriptors` is a full descriptor scan on a large instance. So a gauge
+that reads a real pool has a cost the panel has never paid.
+
+**Done when:** each provider either measures pool occupancy for real, at a cost written down next to
+the query, or the field is dropped from `PerformanceMetrics` so no panel offers a gauge nothing fills.
+
+---
+
+---
+
+### D16. The TLS a connection string carries in its QUERY STRING is still dropped
+
+`rediss://` and `couchbases://` now reach the form as mode `require` (2026-08-23), which leaves the
+other half of the same intake: `parseGenericURL` drops the query string entirely, so
+`postgresql://host/db?sslmode=verify-full`, MySQL's `?ssl-mode=REQUIRED` and an ADO.NET
+`Encrypt=True;TrustServerCertificate=False` all arrive on the form's `disable` default. The user asked
+for TLS in the string they pasted and the form says plaintext.
+
+Not the same one-line shape as a scheme, which is why it was left out: a scheme implies one mode, a
+parameter carries a VALUE that needs mapping, and two of the values have no representation at all -
+Postgres's `prefer` and `allow` and MySQL's `PREFERRED` mean "encrypt if the server offers it", while
+`SSLMode` is `disable | require | verify-ca | verify-full`. Mapping `prefer` onto either end is a
+security decision, not a translation.
+
+Correcting the record: an earlier version of this entry's predecessor claimed
+"`postgresql://...?sslmode=` already goes through `withSSLMode`". It does not, and never did -
+`withSSLMode`'s only callers were ClickHouse's `http://` / `https://` until the Redis and Couchbase
+schemes joined them.
+
+**Done when:** a pasted string's TLS parameter reaches the form, and either `SSLMode` gains a
+representation for opportunistic TLS or the mapping's refusal to guess is recorded here.
+
+---
+
+### D18. Two engines hand back a number that has already lost digits
+
+Measured 2026-08-24 against Oracle Free 23ai through the provider: `NUMBER(38,0)` holding
+`12345678901234567890123456789012345678` arrives as a JS `number` and serializes as
+`1.2345678901234568e+37`, and `NUMBER(20,4)` holding `1234567890123456.7891` arrives as
+`1234567890123456.8`. The grid, the CSV, the SQL export and the agent's summary all read that, so the
+digits are gone before any surface could show them - and nothing says so.
+
+`docs/providers/mssql.md` records the same class for `BIGINT`, `DECIMAL`/`NUMERIC` and `MONEY` beyond
+2^53. Postgres avoids it by returning `numeric` as a string, which is why the DDL export can only
+guess integer/boolean/text from a value there - the precision is kept and the type is what is missing.
+Trino and Cassandra keep theirs as strings too, deliberately (`docs/providers/cassandra.md` §3.8: a
+`bigint` reaching `Number()` becomes 9223372036854776000).
+
+So the fix has a precedent in this repo and it is not free: fetching Oracle `NUMBER` and SQL Server
+`DECIMAL` as strings changes every numeric cell those engines produce - grid alignment, the charts'
+axes, the agent's arithmetic, `ORDER BY` on a client-sorted column. It was deliberately left out of
+the LOB fix for exactly that reason: a LOB was unreadable, a number is wrong, and the second needs its
+own pass over every consumer.
+
+**Done when:** a value one of these engines cannot represent as a JS number reaches the grid with its
+digits intact, and every consumer of a numeric cell has been checked against the new shape.
+
+---
+
+### D22. One failing read discards the whole monitoring dashboard
+
+`BaseDatabaseProvider.getMonitoringData` (`src/lib/db/base-provider.ts:110`) composes its four core
+reads with `Promise.all`, so ONE rejection throws all four away and `/api/db/monitoring` answers an
+error instead of the three panels that did answer.
+
+Measured in the browser 2026-08-24 on StarRocks 3.3, on the build that moved MySQL's parameterless
+statements to the text protocol: `getOverview()` and `getPerformanceMetrics()` both succeed through
+the provider, and the monitoring page still renders nothing but *Connection Error - Getting analyzing
+error. Detail message: Unknown table 'information_schema.PROCESSLIST'*. That message is
+`getActiveSessions()` - a table StarRocks does not have - and it costs the user the overview, the
+performance panel, the slow-query list, the tables, the indexes and the storage panel, all of which
+the engine can answer.
+
+This is the same shape as the health gate that made three engines unsaveable (fixed 2026-08-24) and
+the Cassandra degradation that keeps eight surfaces while one keyspace is missing: an aggregate that
+fails whole rather than in parts. The panels already know how to render an absence - the cache hit
+ratio, the buffer pool, the SQLite table size and the connection count all say so in place.
+
+Not free: `MonitoringData` declares `overview`, `performance`, `slowQueries` and `activeSessions` as
+required, so the change is `Promise.allSettled` plus an optional shape plus every consumer of those
+four fields gating on it, including the monitoring page's own error state (which must still show a
+failure when EVERY read fails, rather than an empty dashboard).
+
+**Done when:** a monitoring read that fails costs its own panel and nothing else, proven on StarRocks
+where `PROCESSLIST` is absent, and the engine's own sentence still reaches the user for the panel that
+failed.
+
+---
+
+### D19. Oracle's time and interval types lose or hide what they carry
+
+Measured 2026-08-24 over the same probe table:
+
+| Type | Value | Arrives as | On the wire |
+| --- | --- | --- | --- |
+| `TIMESTAMP WITH TIME ZONE` | `10:11:12.345678 +03:00` | `Date` | `"2026-08-24T07:11:12.345Z"` |
+| `TIMESTAMP WITH LOCAL TIME ZONE` | same | `Date` | `"2026-08-24T10:11:12.345Z"` |
+| `INTERVAL YEAR TO MONTH` | `3-7` | `IntervalYM` | `{"months":7,"years":3}` |
+| `INTERVAL DAY TO SECOND` | `5 6:7:8.9` | `IntervalDS` | `{"fseconds":900000000,"seconds":8,"minutes":7,"hours":6,"days":5}` |
+
+The two timestamps fold the stored offset into UTC and drop sub-millisecond precision - the column's
+whole point is the offset it kept, and `+03:00` is not recoverable from the answer. The two intervals
+are lossless but arrive as objects nothing reconstructs: neither reads as the Oracle literal a user
+typed, and neither replays through the SQL export.
+
+The Cassandra provider already answers this shape of question the way it should be answered - a
+`Duration` is normalised to its own CQL literal (`1mo2d3h`) at the driver boundary, and the reason is
+written down in `docs/providers/cassandra.md` §3.8.
+
+**Done when:** an Oracle interval reaches the grid as the literal Oracle would accept back, and a
+`TIMESTAMP WITH TIME ZONE` either keeps its offset or the doc says plainly that it cannot.
+
+---
+
+### D20. `oracledb` is declared `any`, so nothing in the Oracle provider is checked against the driver
+
+`src/types/db-drivers.d.ts` declares the whole `oracledb` module as `any`. So `oracledb.STRING`,
+`result.rowsAffected`, `metaData[].dbTypeName` and the `fetchTypeHandler` contract are all unchecked,
+and two changes on 2026-08-24 had to declare their own local structural types (`Result`,
+`FetchTypeHandler`) rather than import the driver's - which the driver does ship.
+
+Both defects fixed in the Oracle provider that day were shapes the type checker could have named: a
+non-SELECT answer with no `rows` array, and a LOB arriving as a stream. The tests could not see them
+either, because the mock was written against the same `any`.
+
+**Done when:** the Oracle provider compiles against `oracledb`'s own published types, or the reason it
+cannot is recorded here with what breaks.
+
+
+---
+
+### D21. The Cassandra degradation discriminator is a message match, and a structural one exists
+
+`CassandraTransportError.absentKeyspace()` reads the refused keyspace's NAME out of the server's
+sentence: `/^keyspace '?([A-Za-z0-9_]+)'? does not exist$/i`. That was the narrowest answer available on
+2026-08-24 - measured, all four cases (absent keyspace, table typo, column typo, keyspace typo) arrive
+as protocol code 8704 with the driver's own `keyspace` and `table` properties `undefined` on both
+Cassandra 5.0.9 and ScyllaDB 2026.2.4, so there was nothing structured to key on.
+
+There is a structural fact available that the provider does not read: whether `system_views` exists in
+`system_schema.keyspaces` at all. Asked once per connection, it replaces the text match with a property
+of the server - degrade a `system_views` read on a build that has no such keyspace, and let everything
+else throw. Behaviour would be identical on both measured engines, including the one case the allowlist
+cannot separate (a table typo INSIDE `system_views` on a build that has no `system_views`), which is
+documented in `docs/providers/cassandra.md` §3.6.
+
+What the current form risks: a future build that rephrases the sentence stops matching, and the five
+monitoring reads throw again. That is a bounded regression rather than a lockout - the connection dialog
+no longer gates its save on the health read, so the connection is still creatable and the failure
+reaches the user as the server's own sentence - and the four measured spellings are pinned by tests, so
+a rephrase shows up as a failing test rather than as silence. Raised by an external review of #472.
+
+**Done when:** the degradation keys on a keyspace that is measurably absent rather than on the wording
+of a refusal, with the cost of the extra read stated, and the four spellings kept as a regression pin.
+
 
 ## Value interpolation
 
@@ -479,44 +517,85 @@ it was not mixed into a correctness PR.
 its rows are recomputed and reordered. The rest need reading one at a time, to tell the stable lists
 (where an index key is fine) from the rest.
 
-### X7. The DDL export types a numeric or a timestamp column as TEXT, because the wire hands it a string
+### X9. What `columnTypes` still cannot name, measured
 
-Measured in the browser against the local `dvdrental` (2026-08-18):
-`SELECT rental_rate, last_update, film_id FROM film` exports as
-`CREATE TABLE … ("rental_rate" TEXT, "last_update" TEXT, "film_id" BIGINT)`.
+The four string-returning drivers fill `QueryResult.columnTypes` since 2026-08-23. Four bounds were
+measured while doing it, and each is a small residue rather than a defect:
 
-Nothing is wrong with the inference. It never sees a number: `pg` returns `numeric` as a string to
-keep its precision, the API serializes to JSON, and a `timestamp` is a string by the time the browser
-reads it. So a value-shaped guess can only recover integer, boolean and text, and the dialect
-spellings #422 added (`NUMBER(19)`, `BINARY_DOUBLE`, `DATETIME2`, …) apply to those three kinds.
+- **A user-defined type has no name.** Postgres's built-in OIDs are a generated static table (they are
+  compiled into the server and never reused), so an enum, a composite or an extension type falls
+  outside it. Measured by walking every table and view in `dvdrental`: 128 result columns, 125 named,
+  0 wrong, 3 absent - all three `mpaa_rating`. Resolving them needs a `pg_catalog.pg_type` round trip,
+  which three of the four call sites cannot make: `query()` releases its pooled client before
+  assembling the result, and `queryReadOnly()` promises EXACTLY ONE statement inside its
+  `BEGIN READ ONLY`. A per-connection OID cache filled on first sight is the shape that would work.
+- **MySQL cannot tell `POINT` from `GEOMETRY`.** Both arrive as code 255 with nothing else to separate
+  them; 38 of the 39 other columns match `information_schema.DATA_TYPE` exactly.
+- **`bit` is exported verbatim, and narrows.** `CREATE TABLE t (c bit)` is `bit(1)` on both Postgres
+  and MySQL, so the DDL export should complete it like the other unbounded families - except `pg`
+  hands a bit string back as the string `"1010"` while `mysql2` hands back a Buffer, so the same
+  declared name needs the text family on one engine and the binary family on the other. One name, two
+  answers, which is why it was left alone.
+- **The mssql transaction path declares types for columns `fields` does not list.** `queryInTransaction`
+  takes `fields` from `Object.keys(recordset[0])`, so a zero-row result has no fields while its
+  `recordset.columns` (which does carry the declaration, even for zero rows - measured) fills
+  `columnTypes`. Harmless today because all three consumers iterate `fields`; taking `fields` from
+  `columns` too would be the right fix and is a behaviour change of its own.
 
-The type is not lost, only unreported. `QueryResult.columnTypes` is the channel, and six provider
-families populate it today: ClickHouse, Druid, Trino, Cassandra and the two search engines. The gap is
-the drivers that hand back strings — `pg`, `mysql2`, `oracledb`, `mssql`.
+**Done when:** each bound is closed or judged settled, with the enum case the only one a user is
+likely to meet.
 
-Guessing from a string's SHAPE is not the fix and should not be attempted: it types a text column
-holding `2026-01-01` as a timestamp.
+### X12. A declared type the export cannot map still reaches every target verbatim
 
-**Done when:** every provider fills `columnTypes` for the columns it declares — the provider triad's
-own work, one PR. It also lets the grid label a column without guessing
-(`ResultsGrid.declaredTypeOf` already reads it).
+`completeDeclaredType` re-spells a bare declared type the target dialect does not stand behind, and it
+can only re-spell a name that is in `BARE_TYPE_FAMILY` - the four families whose parameters the wire
+drops. Everything else goes through as the declaring engine wrote it, which is fine for a target that
+happens to know the word and fatal for one that does not. Measured 2026-08-24, a Postgres result under
+each target after the stands-alone work landed:
 
-### X8. The SQL INSERT and DDL exports still write a binary value as its JSON shape
+| Declared | ClickHouse | Trino | Cassandra |
+| --- | --- | --- | --- |
+| `jsonb` | `Code: 50 ... Unknown data type family: jsonb. Maybe you meant: ['JSON']` | `Unknown type 'jsonb'` | refused |
+| `double precision` | resolves | resolves | `no viable alternative at input 'precision'` |
+| MySQL `json` | resolves | resolves | `mismatched input ',' expecting '.'` |
 
-The grid, the row detail sheet and the CSV agree on `\x…` hex (2026-08-23), and `sqlValue` in
-`src/lib/export/result-export.ts` does not: a `bytea`/`BLOB` cell is still written as a quoted
-`{"type":"Buffer","data":[…]}` literal, so a replayed INSERT stores that text rather than the bytes.
+So the DDL for an ordinary Postgres table with a `jsonb` column replays into neither ClickHouse nor
+Trino. This is the "translation problem rather than this one" the module's own comment names: it needs a
+type-translation table (declared name x target dialect), not another stands-alone row, and the table has
+to answer what a target does when it has no equivalent at all - a JSON column into Cassandra is `text`,
+and calling that lossless would be a lie.
 
-Not a one-liner, which is why it was left out of the value-rendering work: the hex literal is
-dialect-specific. `\x…` is Postgres, MySQL and SQL Server want `0x…`, and the SQL standard spelling
-is `X'…'`. The export already knows its target dialect for the DDL type names (#422), so the
-literal belongs next to that knowledge.
+**Done when:** a declared type the target cannot parse is either translated or refused with something a
+reader can act on, proven by replaying a `jsonb` and a `json` result into ClickHouse, Trino and
+Cassandra.
 
-The JSON export is deliberately unchanged: the Buffer shape in a `.json` file is at least
-machine-recoverable.
+---
 
-**Done when:** each dialect the export offers writes a binary literal its own engine accepts, proven
-by replaying an exported file into that engine.
+### X14. SingleStore's Explain panel needs a different STATEMENT, not a different protocol
+
+D8 moved every parameterless statement onto MySQL's text protocol, and its own table claimed
+`EXPLAIN FORMAT=JSON` was one of the statements that recovers on SingleStore. Re-measured
+2026-08-24 on the same image (`ghcr.io/singlestore-labs/singlestoredb-dev:0.2.82`), both protocols on
+one connection: it is `ER_PARSE_ERROR` on BOTH. SingleStore's grammar is `EXPLAIN JSON <select>`,
+which does show the protocol split (`ER_UNSUPPORTED_PS` prepared, succeeds as text), and plain
+`EXPLAIN` splits the same way. So the panel's failure is a statement problem wearing a protocol
+problem's error message, and the D8 row that said otherwise was wrong.
+
+`src/lib/explain/mysql-json.ts` is one strategy per format (`registry` in
+`src/lib/explain/index.ts`), and the type-id it serves is `mysql`. Reaching a second spelling means
+either sniffing the engine inside the strategy - which this repo's provider rules forbid, no
+`=== 'singlestore'` equivalent exists and none should - or a capability the connection carries, which
+is the shape `ProviderCapabilities` already uses for exactly this kind of divergence.
+
+The blast radius is one panel on one relative. StarRocks is a separate case again: its
+`EXPLAIN FORMAT='json'` does not parse either, recorded in `docs/providers/README.md` as that
+engine's own quirk.
+
+**Done when:** either the Explain statement is a capability the connection declares rather than a
+constant in one strategy, and SingleStore's panel renders a plan; or the panel is withheld on an
+engine whose grammar the strategy cannot express, and the README rows say which engines those are.
+
+---
 
 ### U2. The rule that catches an arity change on a JSX handler is configured but not aimed at components
 

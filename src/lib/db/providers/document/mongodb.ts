@@ -30,6 +30,7 @@ import {
 } from "../../types";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
+import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
 // ============================================================================
 // Types
@@ -96,6 +97,40 @@ const MAX_NESTED_FIELD_DEPTH = 3;
  * the inventory an agent run is given.
  */
 const MAX_INFERRED_FIELDS = 200;
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/**
+ * The WiredTiger cache hit ratio, or `undefined` when there is nothing to compute
+ * one from.
+ *
+ * Two different absences, and neither is a number: a deployment can publish no
+ * `wiredTiger` section at all (mongos, the in-memory storage engine, the
+ * wire-compatible services), and a freshly opened one publishes the section with a
+ * request count of 0, where there are no hits and no misses rather than perfect
+ * hits. Both used to reach the panel as 99% - a figure this provider invented, not
+ * one the server ever reported (#424, and the rule #448/#452 settled).
+ */
+function wiredTigerCacheHitRatio(cache: Document | undefined): number | undefined {
+  const requested = measuredNumber(cache?.["pages requested from the cache"]);
+  const read = measuredNumber(cache?.["pages read into cache"]);
+  if (requested === undefined || read === undefined || requested === 0) return undefined;
+  return round2(Math.max(0, Math.min(100, (1 - read / requested) * 100)));
+}
+
+/**
+ * How much of the configured WiredTiger cache currently holds data, or `undefined`
+ * when the section is absent. A measured 0 is kept: an untouched cache really does
+ * hold nothing.
+ */
+function wiredTigerCacheUsage(cache: Document | undefined): number | undefined {
+  const bytes = measuredNumber(cache?.["bytes currently in the cache"]);
+  const maxBytes = measuredNumber(cache?.["maximum bytes configured"]);
+  if (bytes === undefined || maxBytes === undefined || maxBytes === 0) return undefined;
+  return round2(Math.max(0, Math.min(100, (bytes / maxBytes) * 100)));
+}
 
 // Maintenance operations runMaintenance() accepts; validated the same way.
 const SUPPORTED_MAINTENANCE_TYPES: ReadonlySet<MaintenanceType> = new Set([
@@ -747,17 +782,15 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         });
       }
 
+      const healthCacheHitRatio = wiredTigerCacheHitRatio(serverStatus.wiredTiger?.cache);
+
       return {
         activeConnections: serverStatus.connections?.current || 0,
         databaseSize: formatBytes(dbStats.dataSize || 0),
-        cacheHitRatio: serverStatus.wiredTiger?.cache
-          ? `${(
-              (1 -
-                (serverStatus.wiredTiger.cache["pages read into cache"] || 0) /
-                  Math.max(1, serverStatus.wiredTiger.cache["pages requested from the cache"] || 1)) *
-                100
-            ).toFixed(1)}%`
-          : "N/A",
+        cacheHitRatio:
+          healthCacheHitRatio === undefined
+            ? CACHE_HIT_RATIO_UNAVAILABLE
+            : `${formatCacheHitRatio(healthCacheHitRatio)}%`,
         slowQueries,
         activeSessions,
       };
@@ -877,6 +910,15 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       // Get collection count
       const collections = await this.db!.listCollections().toArray();
 
+      // The limit is what the server has plus what it is still willing to hand out.
+      // A truthiness test read an exhausted pool (`available: 0`) as "not published"
+      // and substituted 100 - a limit no server stated, which the Overview card then
+      // divided the live connection count by. 0 is how every provider in this repo
+      // spells "no limit published", and the card renders it as exactly that.
+      const current = measuredNumber(serverStatus.connections?.current);
+      const available = measuredNumber(serverStatus.connections?.available);
+      const maxConnections = current === undefined || available === undefined ? undefined : current + available;
+
       // Get index count
       let indexCount = 0;
       for (const coll of collections) {
@@ -893,9 +935,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         uptime,
         startTime: new Date(Date.now() - uptimeSeconds * 1000),
         activeConnections: serverStatus.connections?.current || 0,
-        maxConnections: serverStatus.connections?.available
-          ? serverStatus.connections.current + serverStatus.connections.available
-          : 100,
+        maxConnections: maxConnections ?? 0,
         databaseSize: formatBytes(dbStats.dataSize || 0),
         databaseSizeBytes: dbStats.dataSize || 0,
         tableCount: collections.length,
@@ -907,7 +947,8 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         version: "MongoDB Unknown",
         uptime: "N/A",
         activeConnections: 0,
-        maxConnections: 100,
+        // Nothing was read, so no limit is published (see the success path above).
+        maxConnections: 0,
         databaseSize: "N/A",
         databaseSizeBytes: 0,
         tableCount: 0,
@@ -922,43 +963,39 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     try {
       const serverStatus = await this.db!.admin().serverStatus();
 
-      // Calculate cache hit ratio from WiredTiger
-      let cacheHitRatio = 99;
-      if (serverStatus.wiredTiger?.cache) {
-        const pagesRead = serverStatus.wiredTiger.cache["pages read into cache"] || 0;
-        const pagesRequested = serverStatus.wiredTiger.cache["pages requested from the cache"] || 1;
-        cacheHitRatio = Math.max(0, Math.min(100, (1 - pagesRead / Math.max(1, pagesRequested)) * 100));
-      }
+      // Every reading below is optional on purpose: a metric nobody measured must
+      // stay absent rather than arrive as a number the panels would then rate.
+      const cache = serverStatus.wiredTiger?.cache;
+      const cacheHitRatio = wiredTigerCacheHitRatio(cache);
+      const bufferPoolUsage = wiredTigerCacheUsage(cache);
 
-      // Calculate queries per second from opcounters
-      const opcounters = serverStatus.opcounters || {};
-      const uptimeSeconds = serverStatus.uptime || 1;
+      // Queries per second from opcounters. A server that publishes no opcounters
+      // has not counted zero operations, it has counted nothing.
+      const opcounters = serverStatus.opcounters;
+      const uptimeSeconds = measuredNumber(serverStatus.uptime);
       const totalOps =
-        (opcounters.query || 0) + (opcounters.insert || 0) + (opcounters.update || 0) + (opcounters.delete || 0);
-      const queriesPerSecond = totalOps / uptimeSeconds;
-
-      // Get buffer pool usage (WiredTiger cache usage)
-      let bufferPoolUsage = 0;
-      if (serverStatus.wiredTiger?.cache) {
-        const bytesInCache = serverStatus.wiredTiger.cache["bytes currently in the cache"] || 0;
-        const maxCacheBytes = serverStatus.wiredTiger.cache["maximum bytes configured"] || 1;
-        bufferPoolUsage = (bytesInCache / maxCacheBytes) * 100;
-      }
+        opcounters === undefined
+          ? undefined
+          : (measuredNumber(opcounters.query) ?? 0) +
+            (measuredNumber(opcounters.insert) ?? 0) +
+            (measuredNumber(opcounters.update) ?? 0) +
+            (measuredNumber(opcounters.delete) ?? 0);
 
       return {
-        cacheHitRatio: Math.round(cacheHitRatio * 100) / 100,
-        queriesPerSecond: Math.round(queriesPerSecond * 100) / 100,
-        bufferPoolUsage: Math.round(bufferPoolUsage * 100) / 100,
-        deadlocks: 0, // MongoDB doesn't have traditional deadlocks
+        ...(cacheHitRatio === undefined ? {} : { cacheHitRatio }),
+        ...(totalOps === undefined || !uptimeSeconds ? {} : { queriesPerSecond: round2(totalOps / uptimeSeconds) }),
+        ...(bufferPoolUsage === undefined ? {} : { bufferPoolUsage }),
+        // MongoDB has no deadlocks to count: WiredTiger aborts and retries a write
+        // conflict instead of holding two waiters. The 0 is a statement about the
+        // engine, and it is only made when serverStatus answered at all.
+        deadlocks: 0,
       };
     } catch (error) {
       this.logError("getPerformanceMetrics", error);
-      return {
-        cacheHitRatio: 99,
-        queriesPerSecond: 0,
-        bufferPoolUsage: 0,
-        deadlocks: 0,
-      };
+      // serverStatus failed - an unprivileged user, a proxied deployment - so
+      // nothing was measured and nothing is reported. This branch used to answer
+      // the panel with a 99% cache hit ratio and three zeroes.
+      return {};
     }
   }
 

@@ -253,6 +253,12 @@ recognise `redis://` and `rediss://` URLs and **decomposes** them into `host` / 
 `6379`) / `password` / `database` before they reach the provider. So a user can paste a
 `redis://:pw@host:6379/0` URL into the modal, but the provider never sees the raw string.
 
+Because the raw string is dropped, the scheme's TLS intent has to travel as a field: the parser
+returns `sslMode: 'require'` for `rediss://` and `sslMode: 'disable'` for `redis://`, which the
+connection form applies to the SSL panel ([§4.3](#43-ssl--tls)). Both arms are explicit on purpose -
+a paste overwrites the form rather than merging into it, so pasting a plaintext URL clears a
+`require` left over from a previous edit.
+
 ### 4.3 SSL / TLS
 
 `buildTLSOptions()` ([`redis.ts:156`](../../src/lib/db/providers/keyvalue/redis.ts)) maps
@@ -275,9 +281,19 @@ plaintext port exists): `disable` is refused with *"Connection is closed."* and 
 1ms. Both arms matter — before the mode reached the driver, `require` failed the same way `disable`
 does, so the pair is what distinguishes a wired path from a documented shape.
 
-> The paste-parser recognises `rediss://` but does **not** carry the secure scheme into the form
-> ([§4.2](#42-connection-string-nuance)), so a pasted `rediss://` URL still needs a mode picked in
-> the SSL panel.
+> A pasted `rediss://` URL arrives with `mode: 'require'` and a `redis://` one with `disable`
+> ([§4.2](#42-connection-string-nuance)), so the scheme picks the mode and the panel is only needed
+> to go *further* than `require` - a verifying mode, or certificate material. `require` rather than
+> `verify-full` because that is what the ordinary `--tls-port` deployment can satisfy: a paste
+> encrypts, and never silently claims to have checked a chain.
+>
+> Measured through the parser and the provider together on 2026-08-23, against
+> `redis:latest --port 0 --tls-port 6390` with a self-signed certificate:
+>
+> ```text
+> rediss://localhost:6390 -> sslMode require | connected, PING = [{"result":"PONG"}] | 14ms
+> redis://localhost:6390  -> sslMode disable | FAILED: Failed to connect to Redis: Connection is closed.
+> ```
 
 ---
 
@@ -671,11 +687,11 @@ request/response contract.
 
 ## 13. Known limitations & future work
 
-- **A pasted `rediss://` URL does not select TLS by itself.** `connect()` now reads `config.ssl`
-  ([§4.3](#43-ssl--tls)), but the connection-string parser drops the secure scheme when it decomposes
-  the URL into `host`/`port`/`password`/`database`, so a `rediss://` paste still lands with the SSL
-  panel on `disable`. *Future:* have the parser carry `sslMode: 'require'` for `rediss://`, the way
-  it already does for `https://` ClickHouse endpoints.
+- **A pasted `rediss://` URL selects `require`, not a verifying mode.** The parser carries the
+  scheme as `sslMode` ([§4.2](#42-connection-string-nuance)), so the paste is encrypted, but nothing
+  in a `rediss://` URL says whose certificate to trust - and the ordinary self-hosted `--tls-port`
+  node presents a self-signed one, which a verifying mode would refuse. Verification therefore stays
+  an explicit choice in the SSL panel; the URL alone never turns it on.
 - **No Cluster / Sentinel support.** Only a single standalone node is supported.
 - **`SCAN` is capped at 1000 keys** for schema discovery — prefixes that only appear beyond the cap
   won't show as "tables". This is a deliberate bound, not a bug.

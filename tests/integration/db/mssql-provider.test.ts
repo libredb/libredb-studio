@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { EventEmitter } from "node:events";
+import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 
 // ---------------------------------------------------------------------------
 // Mock mssql BEFORE importing the provider
@@ -1115,9 +1116,41 @@ describe("MSSQLProvider", () => {
 
       expect(typeof health.activeConnections).toBe("number");
       expect(typeof health.databaseSize).toBe("string");
-      expect(typeof health.cacheHitRatio).toBe("string");
+      expect(health.cacheHitRatio).toBe("99.5%");
       expect(health.slowQueries).toBeArray();
       expect(health.activeSessions).toBeArray();
+    });
+
+    test("reports an unreadable cache hit ratio as unavailable, not as 0%", async () => {
+      // `${recordset[0]?.hit_ratio || 0}%` published "0%" for a NULL, and the
+      // Overview card rates 0 as "Needs tuning" - a fault SQL Server never
+      // reported.
+      mockQueryFn = async (sql: string) => {
+        if (sql.toUpperCase().includes("SYS.DM_OS_PERFORMANCE_COUNTERS")) {
+          return { recordset: [{ hit_ratio: null }], rowsAffected: [1] };
+        }
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      expect(health.cacheHitRatio).toBe(CACHE_HIT_RATIO_UNAVAILABLE);
+    });
+
+    test("keeps a measured cache hit ratio of zero in the health string", async () => {
+      mockQueryFn = async (sql: string) => {
+        if (sql.toUpperCase().includes("SYS.DM_OS_PERFORMANCE_COUNTERS")) {
+          return { recordset: [{ hit_ratio: 0 }], rowsAffected: [1] };
+        }
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      expect(health.cacheHitRatio).toBe("0.0%");
+      expect(health.cacheHitRatio).not.toBe(CACHE_HIT_RATIO_UNAVAILABLE);
     });
   });
 
@@ -1338,12 +1371,60 @@ describe("MSSQLProvider", () => {
       await provider.connect();
       const metrics = await provider.getPerformanceMetrics();
 
-      expect(typeof metrics.cacheHitRatio).toBe("number");
-      expect(metrics.cacheHitRatio).toBeGreaterThanOrEqual(0);
-      expect(metrics.cacheHitRatio).toBeLessThanOrEqual(100);
       expect(metrics.cacheHitRatio).toBe(99.5);
-      // bufferPoolUsage mirrors cacheHitRatio in MSSQL impl
-      expect(typeof metrics.bufferPoolUsage).toBe("number");
+      // No longer a second copy of the cache hit ratio under another name.
+      expect("bufferPoolUsage" in metrics).toBe(false);
+    });
+
+    test("reports nothing when the DMV is not readable, rather than a perfect cache", async () => {
+      // Measured 2026-08-23 on SQL Server 2022 CU26 against a login with no
+      // server-level grant beyond CONNECT:
+      //   Msg 300, Level 14, State 1 ... VIEW SERVER PERFORMANCE STATE permission
+      //   was denied on object 'server', database 'master'.
+      mockQueryFn = async (sql: string) => {
+        if (sql.toUpperCase().includes("SYS.DM_OS_PERFORMANCE_COUNTERS")) {
+          throw new Error("VIEW SERVER PERFORMANCE STATE permission was denied on object 'server'");
+        }
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      const metrics = await provider.getPerformanceMetrics();
+
+      expect("cacheHitRatio" in metrics).toBe(false);
+      expect(metrics).toEqual({});
+    });
+
+    test("omits the ratio when the counter base is zero and the DMV answers NULL", async () => {
+      // Measured 2026-08-23 on SQL Server 2022 CU26 by forcing the NULLIF branch:
+      //   hit_ratio
+      //   ---------
+      //        NULL
+      mockQueryFn = async (sql: string) => {
+        if (sql.toUpperCase().includes("SYS.DM_OS_PERFORMANCE_COUNTERS")) {
+          return { recordset: [{ hit_ratio: null }], rowsAffected: [1] };
+        }
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      const metrics = await provider.getPerformanceMetrics();
+
+      expect("cacheHitRatio" in metrics).toBe(false);
+    });
+
+    test("keeps a measured ratio of zero", async () => {
+      mockQueryFn = async (sql: string) => {
+        if (sql.toUpperCase().includes("SYS.DM_OS_PERFORMANCE_COUNTERS")) {
+          return { recordset: [{ hit_ratio: 0 }], rowsAffected: [1] };
+        }
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      const metrics = await provider.getPerformanceMetrics();
+
+      expect(metrics.cacheHitRatio).toBe(0);
     });
   });
 
@@ -1506,5 +1587,98 @@ describe("MSSQLProvider", () => {
         expect(err.message).toContain("Database not found");
       }
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Declared column types
+// ---------------------------------------------------------------------------
+
+/**
+ * `mssql` attaches a `columns` map to the recordset ARRAY, and each entry's `type`
+ * carries `declaration` - T-SQL's own lowercase spelling, the same word
+ * `INFORMATION_SCHEMA.COLUMNS.DATA_TYPE` uses. The declarations below are verbatim
+ * from SQL Server 2022 CU26 over `types`.
+ *
+ * `type` is a factory FUNCTION for some of the driver's types and a plain object for
+ * others, so both forms appear here.
+ */
+describe("MSSQLProvider declared column types", () => {
+  let provider: MSSQLProvider;
+
+  /** A recordset the way `mssql` builds one: an array with a `columns` map on it. */
+  function withColumns(
+    rows: Record<string, unknown>[],
+    columns: Record<string, { declaration: string } | (() => unknown)>,
+  ) {
+    const recordset = rows as Record<string, unknown>[] & { columns: unknown };
+    recordset.columns = Object.fromEntries(Object.entries(columns).map(([name, type]) => [name, { name, type }]));
+    return recordset;
+  }
+
+  beforeEach(() => {
+    capturedInputs = [];
+    cancelShouldThrow = false;
+    provider = new MSSQLProvider(baseConfig);
+  });
+
+  afterEach(async () => {
+    try {
+      await provider.disconnect();
+    } catch {
+      /* ignore */
+    }
+  });
+
+  test("query() reports the declaration each column metadata carries", async () => {
+    const nvarcharFactory = Object.assign(() => ({}), { declaration: "nvarchar" });
+    mockQueryFn = async () => ({
+      recordset: withColumns([{ id: "19", price: "19.99", dt: new Date(), name: "x" }], {
+        id: { declaration: "bigint" },
+        price: { declaration: "decimal" },
+        dt: { declaration: "datetime2" },
+        name: nvarcharFactory,
+      }),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT id, price, dt, name FROM types");
+
+    // `id` and `price` both arrive as STRINGS from tedious - which is exactly why the
+    // value-shaped guess called them NVARCHAR(MAX) and FLOAT before this.
+    expect(result.columnTypes).toEqual({
+      id: "bigint",
+      price: "decimal",
+      dt: "datetime2",
+      name: "nvarchar",
+    });
+  });
+
+  test("the key is omitted entirely when the recordset carries no column map", async () => {
+    mockQueryFn = async () => ({ recordset: [{ a: 1 }], rowsAffected: [1] });
+
+    await provider.connect();
+    const result = await provider.query("SELECT 1 AS a");
+
+    expect(result.columnTypes).toBeUndefined();
+    expect(Object.hasOwn(result, "columnTypes")).toBe(false);
+  });
+
+  test("queryInTransaction() declares them too, from the same column map", async () => {
+    // Measured against a live server: a request made on a Transaction DOES carry
+    // `recordset.columns`, including for a zero-row result - this path had simply
+    // never read it.
+    mockQueryFn = async () => ({
+      recordset: withColumns([], { u: { declaration: "uniqueidentifier" } }),
+      rowsAffected: [0],
+    });
+
+    await provider.connect();
+    await provider.beginTransaction();
+    const result = await provider.queryInTransaction("SELECT u FROM types WHERE 1 = 0");
+
+    expect(result.columnTypes).toEqual({ u: "uniqueidentifier" });
+    await provider.rollbackTransaction();
   });
 });

@@ -3,7 +3,7 @@ name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting fourteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra
 type: application
 version: 0.1.48
-appVersion: "0.13.2"
+appVersion: "0.13.3"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -39,14 +39,18 @@ annotations:
   artifacthub.io/category: database
   artifacthub.io/license: MIT
   artifacthub.io/prerelease: "false"
-  # False: 0.1.48 changes no dependency and no security behaviour. Its content is a
-  # new optional ConfigMap and a read-only mount, and appVersion does not move. The
-  # app-level security fixes remain recorded on 0.1.37, the chart version that first
-  # shipped them; the adm-zip pin note belongs to 0.1.44 and is unchanged.
+  # False: what 0.1.48 ADDS is a new optional ConfigMap and a read-only mount - no
+  # dependency moves and no security behaviour changes with it. The appVersion it
+  # carries, 0.13.3, is the one 0.1.47 already published, and 0.13.3's transport fixes
+  # (a rediss:// or couchbases:// URL landing on SSL mode disable, and Couchbase posting
+  # plain HTTP to the TLS management port) are recorded there with this flag set - which
+  # is where an operator looking for them will find them. The app-level security fixes of
+  # earlier releases remain recorded on 0.1.37, the chart version that first shipped
+  # them; the adm-zip pin note belongs to 0.1.44, unchanged.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:0.13.2
+      image: ghcr.io/libredb/libredb-studio:0.13.3
       platforms:
         - linux/amd64
         - linux/arm64

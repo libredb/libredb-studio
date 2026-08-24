@@ -36,7 +36,9 @@ import {
   mapDatabaseError,
 } from "../../errors";
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
+import { postgresColumnTypes } from "./column-types";
 import { formatBytes } from "../../utils/pool-manager";
+import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
 // ============================================================================
 // Type Definitions
@@ -244,14 +246,24 @@ const SCHEMA_RELATIONS_SQL = `
 // ============================================================================
 
 // getHealth: buffer cache hit ratio across user tables.
+//
+// No COALESCE, deliberately. `NULLIF(..., 0)` is here because the denominator can
+// genuinely be zero, and the statement used to wrap the resulting NULL in
+// `COALESCE(..., 100)` - so a database PostgreSQL had measured nothing about
+// reported a perfect cache. Measured 2026-08-23 on postgres:18, a database with no
+// user tables:
+//
+//   heap_read | heap_hit | raw_ratio | coalesced
+//  -----------+----------+-----------+-----------
+//             |          |           |       100
+//
+// and a table nothing has read yet gives `0 / NULLIF(0, 0)`, the same NULL. The
+// NULL now travels to TypeScript, which reports it as unavailable (#424).
 const HEALTH_CACHE_HIT_SQL = `
         SELECT
           sum(heap_blks_read) as heap_read,
           sum(heap_blks_hit)  as heap_hit,
-          COALESCE(
-            ROUND((sum(heap_blks_hit) * 100.0 / NULLIF(sum(heap_blks_hit) + sum(heap_blks_read), 0)), 1),
-            100
-          ) as ratio
+          ROUND((sum(heap_blks_hit) * 100.0 / NULLIF(sum(heap_blks_hit) + sum(heap_blks_read), 0)), 1) as ratio
         FROM pg_statio_user_tables;
       `;
 
@@ -318,13 +330,11 @@ const OVERVIEW_COUNTS_SQL = `
           (SELECT count(*) FROM pg_indexes WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')) as index_count
       `;
 
-// getPerformanceMetrics: buffer cache hit ratio.
+// getPerformanceMetrics: buffer cache hit ratio. NULL when there is nothing to
+// divide, for the reasons and with the measurement given at HEALTH_CACHE_HIT_SQL.
 const PERF_CACHE_HIT_SQL = `
         SELECT
-          COALESCE(
-            ROUND(sum(heap_blks_hit) * 100.0 / NULLIF(sum(heap_blks_hit) + sum(heap_blks_read), 0), 2),
-            100
-          ) as cache_hit_ratio
+          ROUND(sum(heap_blks_hit) * 100.0 / NULLIF(sum(heap_blks_hit) + sum(heap_blks_read), 0), 2) as cache_hit_ratio
         FROM pg_statio_user_tables
       `;
 
@@ -836,6 +846,7 @@ export class PostgresProvider extends SQLBaseProvider {
       return {
         rows: result.rows,
         fields: result.fields?.map((f) => f.name) ?? [],
+        ...postgresColumnTypes(result.fields),
         rowCount: result.rowCount ?? 0,
         executionTime,
       };
@@ -952,6 +963,7 @@ export class PostgresProvider extends SQLBaseProvider {
       return {
         rows: result.rows,
         fields: result.fields?.map((f) => f.name) ?? [],
+        ...postgresColumnTypes(result.fields),
         rowCount: result.rowCount ?? 0,
         executionTime,
       };
@@ -1044,6 +1056,7 @@ export class PostgresProvider extends SQLBaseProvider {
       return {
         rows: result.rows,
         fields: result.fields?.map((f) => f.name) ?? [],
+        ...postgresColumnTypes(result.fields),
         rowCount: result.rowCount ?? 0,
         executionTime,
       };
@@ -1195,6 +1208,9 @@ export class PostgresProvider extends SQLBaseProvider {
       const sizeRes = await client.query("SELECT pg_size_pretty(pg_database_size($1))", [this.config.database]);
 
       const cacheRes = await client.query(HEALTH_CACHE_HIT_SQL);
+      // A NULL ratio used to arrive here as the SQL's own invented 100; unguarded,
+      // it would now arrive as the string "null%".
+      const healthCacheHitRatio = measuredNumber(cacheRes.rows[0]?.ratio);
 
       let slowQueries: SlowQuery[] = [];
       try {
@@ -1222,7 +1238,10 @@ export class PostgresProvider extends SQLBaseProvider {
       return {
         activeConnections: parseInt(connRes.rows[0].count),
         databaseSize: sizeRes.rows[0].pg_size_pretty,
-        cacheHitRatio: `${cacheRes.rows[0].ratio}%`,
+        cacheHitRatio:
+          healthCacheHitRatio === undefined
+            ? CACHE_HIT_RATIO_UNAVAILABLE
+            : `${formatCacheHitRatio(healthCacheHitRatio)}%`,
         slowQueries,
         activeSessions,
       };
@@ -1379,34 +1398,55 @@ export class PostgresProvider extends SQLBaseProvider {
     try {
       // Get cache hit ratio
       const cacheRes = await client.query(PERF_CACHE_HIT_SQL);
+      const cacheHitRatio = measuredNumber(cacheRes.rows[0]?.cache_hit_ratio);
 
       // Get transaction stats
       const txRes = await client.query(PERF_TRANSACTION_STATS_SQL, [this.config.database]);
 
       // Get checkpoint stats (optional - columns may not exist in older PG versions)
-      let checkpointWriteTime = "0";
+      // "N/A" from the start rather than "0", so an unread counter never leaves
+      // here looking like a checkpoint that took no time.
+      let checkpointWriteTime = "N/A";
       try {
         const checkpointRes = await client.query(PERF_CHECKPOINT_SQL);
-        const checkpointRow = checkpointRes.rows[0] || {};
-        const writeTime = parseFloat(checkpointRow.checkpoint_write_time || "0");
-        const syncTime = parseFloat(checkpointRow.checkpoint_sync_time || "0");
-        checkpointWriteTime = `${((writeTime + syncTime) / 1000).toFixed(1)}s`;
+        const checkpointRow = checkpointRes.rows[0];
+        const writeTime = measuredNumber(checkpointRow?.checkpoint_write_time);
+        const syncTime = measuredNumber(checkpointRow?.checkpoint_sync_time);
+        // Either half alone is a reading; neither is not. PostgreSQL 17 moved both
+        // columns from pg_stat_bgwriter to pg_stat_checkpointer, so on 17+ the query
+        // throws and the catch below answers - measured 2026-08-23 through this
+        // provider against postgres:18, which reported checkpointWriteTime "N/A".
+        if (writeTime !== undefined || syncTime !== undefined) {
+          checkpointWriteTime = `${(((writeTime ?? 0) + (syncTime ?? 0)) / 1000).toFixed(1)}s`;
+        }
       } catch {
-        // checkpoint_write_time doesn't exist in older PostgreSQL versions
+        // The columns do not exist on this server (17+), or the view is not readable.
         checkpointWriteTime = "N/A";
       }
 
-      const txRow = txRes.rows[0] || {};
-      const blksHit = parseInt(txRow.blks_hit || "0");
-      const blksRead = parseInt(txRow.blks_read || "0");
-      const bufferPoolUsage = blksHit + blksRead > 0 ? Math.round((blksHit / (blksHit + blksRead)) * 100) : 100;
+      // No `|| "0"` here: pg_stat_database answers no row at all for a database it
+      // has no entry for, and a deadlock count of 0 is a claim ("this database has
+      // deadlocked zero times") rather than the absence of a reading.
+      const txRow = txRes.rows[0];
+      const deadlocks = measuredNumber(txRow?.deadlocks);
 
       return {
-        cacheHitRatio: parseFloat(cacheRes.rows[0].cache_hit_ratio || "100"),
-        transactionsPerSecond: undefined, // Would need time-based sampling
-        queriesPerSecond: undefined, // Would need time-based sampling
-        bufferPoolUsage,
-        deadlocks: parseInt(txRow.deadlocks || "0"),
+        // `|| "100"` was two bugs in one operator: it invented a perfect cache for a
+        // NULL, and it also discarded a measured 0 - a cold cache reading 0% is a
+        // measurement, and the one the panel most needs to show.
+        ...(cacheHitRatio === undefined ? {} : { cacheHitRatio }),
+        // transactionsPerSecond / queriesPerSecond would need time-based sampling,
+        // which this call does not do, so they stay absent.
+        //
+        // bufferPoolUsage is absent too, and that is a removal rather than a gap:
+        // this method used to report `blks_hit / (blks_hit + blks_read)` from
+        // pg_stat_database under that name, which is a cache hit ratio and not pool
+        // occupancy - so the Performance tab showed the same quantity twice, once
+        // mislabelled, and substituted 100 when both counters were 0. PostgreSQL
+        // publishes no buffer pool occupancy without the pg_buffercache extension
+        // (not installed by default, and scanning it locks shared_buffers), so there
+        // is nothing honest to put here.
+        ...(deadlocks === undefined ? {} : { deadlocks }),
         checkpointWriteTime,
       };
     } finally {

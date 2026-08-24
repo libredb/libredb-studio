@@ -862,3 +862,42 @@ channels:
         ours, which is why there is no pin here. Sequencing question settled 2026-07-30 - FlatPark
         asks that an app not already be on Flathub, and the Flathub submission was declined, so
         this is now the only Flatpak channel and there is nothing to revisit.
+
+  - id: appimagehub
+    name: AppImageHub catalog (appimage.github.io)
+    short_name: AppImageHub
+    status: pending
+    category: os-desktop
+    platforms: [linux]
+    runtime: channel_supplied
+    tier: 4
+    kind: curated-catalog
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      first_pr: https://github.com/AppImage/appimage.github.io/pull/3861
+      catalog: https://appimage.github.io/LibreDB_Studio/
+      get: https://github.com/libredb/libredb-studio/releases/latest
+      docs: desktop/README.md
+    pin:
+      strategy: none
+      note: One line in the catalog's data/LibreDB_Studio naming this repository - their worker reads
+        the releases API, takes the first AppImage asset matching x64 and re-reads it on every
+        catalog rebuild, so no release bumps anything here and there is no served version to pin.
+        What the listing depends on instead is the x64 AppImage staying startable for someone other
+        than its builder - the review CI runs it under firejail --appimage on ubuntu-22.04 and fails
+        the submission when no window appears, which is exactly what caught the 0770 AppRun.wrapped
+        mode and the GLIBC_2.38 floor that 0.13.2 and 0.13.3 fixed. Both are now gated in the build
+        (tests/unit/desktop-appimage-portability.test.ts, scripts/check-appimage-perms.mjs). The
+        catalog is what appimagehub.com and the stores consuming its feed read - AppImage Pool, Zap.
+        The repository URL is the form their README asks for, and measured over a 200-entry sample of
+        their data/ directory it is what two thirds of the GitHub-hosted entries use (99 repository
+        roots, 51 direct AppImage URLs, 50 non-GitHub hosts). It is also the only form that stays
+        current - worker.sh resolves the releases API only when the URL has no "download" in it, so a
+        direct asset URL freezes the listing at the version it names, which 47 of those 51 do (the
+        Arduino IDE entry still points at 2.0.0-rc6). One consequence of the resolving form to keep
+        in mind - the worker takes the newest release carrying a matching AppImage asset, prereleases
+        included, so a prerelease with a desktop asset would become the listed download. Drafts
+        cannot - their token has no read on this repository. Chart releases are skipped because they
+        carry no AppImage, and linux-arm64 matches none of the asset patterns.

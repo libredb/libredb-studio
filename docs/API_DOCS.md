@@ -586,7 +586,9 @@ statement. Five things differ from the other SQL providers:
   bytes), and neither is a number this API will pass on. See
   [`docs/providers/cassandra.md`](providers/cassandra.md#32-there-is-no-honest-row-count-and-no-honest-size).
 - `columnTypes` are the wire's declared CQL types (`int`, `bigint`, `list<int>`, `map<varchar, int>`,
-  `duration`, `vector<float, 3>`). A `blob` is rendered as `0x…`, a `bigint`/`decimal`/`varint` as its
+  `duration`, `vector<float, 3>`). A `blob` reaches the client as the JSON shape a `Buffer`
+  serializes to and is rendered `\x…` there, the same as every other engine's binary value since
+  2026-08-24; a `bigint`/`decimal`/`varint` arrives as its
   exact digits in a string (`Number()` would round them), a `vector` as an array of numbers and a
   `duration` as its CQL literal (`1mo2d3h`).
 - A write answers no columns and no row count: the protocol reports neither, so `rowCount` is 0

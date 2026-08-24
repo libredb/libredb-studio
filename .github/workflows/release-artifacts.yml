@@ -912,11 +912,13 @@ jobs:
 
       - name: Install Tauri Linux build dependencies
         # patchelf is required by linuxdeploy (the AppImage bundler Tauri drives)
-        # and is NOT preinstalled on the runner images.
+        # and is NOT preinstalled on the runner images. squashfs-tools is what
+        # repacks the image when the bundler leaves a file mode only its builder
+        # can use - see the permission audit in scripts/build-desktop-appimage.sh.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf file
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf file squashfs-tools
 
       - name: Download linux tarball
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

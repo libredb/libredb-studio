@@ -91,6 +91,63 @@ describe("OverviewTab", () => {
     expect(container.textContent).not.toContain("3/0");
   });
 
+  // `DatabaseOverview.activeConnections` is optional: ScyllaDB has no
+  // `system_views` keyspace to read it from, and a Cassandra role denied that grant
+  // has nothing to report either. The fixture DELETES the key rather than setting it
+  // to `undefined` in place, so a rendering check that only tested "unknown" would
+  // still fail here if it read the key some other way.
+  test("reports unmeasured active connections as not published instead of a fabricated 0", () => {
+    const base = makeData();
+    const overview = { ...base.overview } as Record<string, unknown>;
+    delete overview.activeConnections;
+    const data = { ...base, overview } as unknown as MonitoringData;
+
+    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    const card = queryByText("Connections")!.closest('[data-slot="card"]')!;
+
+    expect(card.textContent).toContain("N/A");
+    expect(card.textContent).toContain("not published");
+    // No fabricated measurement: no denominator, no bar, no usage percentage.
+    expect(card.textContent).not.toContain("/100");
+    expect(card.textContent).not.toContain("% used");
+    expect(card.querySelectorAll('[data-slot="progress"]').length).toBe(0);
+    // Absence is not a fault: nothing red or yellow on the card.
+    expect(card.className).not.toContain("red");
+    expect(card.className).not.toContain("yellow");
+  });
+
+  // The other half of the same distinction, pinned so the two inputs cannot be
+  // collapsed again: an engine that measured zero open connections keeps today's
+  // rendering, denominator and usage share included.
+  test("keeps a measured zero active connection count rendering as a real zero", () => {
+    const base = makeData();
+    const data = { ...base, overview: { ...base.overview, activeConnections: 0 } } as MonitoringData;
+
+    const { queryByText } = render(<OverviewTab data={data} loading={false} />);
+    const card = queryByText("Connections")!.closest('[data-slot="card"]')!;
+
+    expect(card.textContent).toContain("0/100");
+    expect(card.textContent).toContain("0% used");
+    expect(card.textContent).not.toContain("not published");
+  });
+
+  // Same rule as the cache/buffer/deadlock trends in PerformanceTab: a missing
+  // reading is dropped from the series rather than plotted as a floor of zero.
+  test("drops a history sample with no published connection count from the trend", () => {
+    const base = makeData();
+    const overview = { ...base.overview } as Record<string, unknown>;
+    delete overview.activeConnections;
+    const history = [
+      { timestamp: new Date("2026-02-15T12:00:00Z"), data: { ...base, overview } },
+      { timestamp: new Date("2026-02-15T12:01:00Z"), data: { ...base, overview } },
+    ] as unknown as TimeSeriesPoint<MonitoringData>[];
+
+    const { queryByText } = render(<OverviewTab data={base} loading={false} history={history} />);
+
+    // Both samples were dropped, so there is nothing to chart.
+    expect(queryByText("Connection Trend")).toBeNull();
+  });
+
   // Absence must not be displayed as a measured 0%, and must not be scored as the
   // critical cache fault that a real 0 would be.
   test("withholds the cache ratio card's percentage and rating when the engine cannot measure one", () => {

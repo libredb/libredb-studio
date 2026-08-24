@@ -26,6 +26,7 @@ interface MatrixEntry {
 }
 interface Job {
   strategy?: { matrix?: { include?: MatrixEntry[] } };
+  steps?: { name?: string; run?: string }[];
 }
 
 const workflow = (name: string): { jobs: Record<string, Job> } =>
@@ -33,9 +34,13 @@ const workflow = (name: string): { jobs: Record<string, Job> } =>
     jobs: Record<string, Job>;
   };
 
-const desktopMatrix = workflow("release-artifacts.yml").jobs["desktop-appimage"]?.strategy?.matrix?.include ?? [];
-const smokeMatrix = workflow("flatpak-smoke.yml").jobs.appimage?.strategy?.matrix?.include ?? [];
+const desktopJob = workflow("release-artifacts.yml").jobs["desktop-appimage"];
+const smokeJob = workflow("flatpak-smoke.yml").jobs.appimage;
+const desktopMatrix = desktopJob?.strategy?.matrix?.include ?? [];
+const smokeMatrix = smokeJob?.strategy?.matrix?.include ?? [];
 const x64Runner = (matrix: MatrixEntry[]): string | undefined => matrix.find((entry) => entry.arch === "x64")?.runner;
+const aptStep = (job: Job | undefined): string =>
+  job?.steps?.find((step) => step.run?.includes("apt-get install"))?.run ?? "";
 
 describe("release-artifacts.yml desktop-appimage glibc floor", () => {
   test("builds every architecture on a pinned runner image, never a floating label", () => {
@@ -61,5 +66,14 @@ describe("release-artifacts.yml desktop-appimage glibc floor", () => {
     // release gate.
     expect(smokeMatrix.length).toBeGreaterThan(0);
     expect(x64Runner(smokeMatrix)).toBe(x64Runner(desktopMatrix));
+  });
+
+  test("both AppImage builds install the tool the permission repack needs", () => {
+    // Without squashfs-tools the repack in scripts/build-desktop-appimage.sh
+    // cannot run, and the job fails on the release commit rather than on a PR.
+    // Neither runner image preinstalls it.
+    for (const run of [aptStep(desktopJob), aptStep(smokeJob)]) {
+      expect(run).toContain("squashfs-tools");
+    }
   });
 });

@@ -37,11 +37,12 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   clickhouse: true,
   druid: true,
   trino: true,
-  // Apache Cassandra (#424 Phase 4). ScyllaDB speaks the same CQL wire and is now
+  // Apache Cassandra (#424 Phase 4). ScyllaDB speaks the same CQL wire and is
   // recorded as a relative below: the gate-4 probe ran on 2026-08-21/22 and measured
   // eight of this provider's thirteen surfaces answering, with the five that read
   // Cassandra's `system_views` virtual tables failing because ScyllaDB has no such
-  // keyspace.
+  // keyspace. All thirteen answer since 2026-08-24 - re-probed then - but the five
+  // answer EMPTY, which is why the tier below is still `partial`.
   cassandra: true,
   // Two ids served by ONE provider module (`providers/sql/search/`), which is the
   // first time "shipped" here does not mean one provider file per id. They are still
@@ -386,16 +387,16 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     tier: "partial",
     probedVersion: "ScyllaDB 2026.2.4-0.20260810.e54224b8cebb (advertises Cassandra 3.0.8)",
     caveats: [
-      "Test Connection fails, and so do the overview, health, performance-metrics, active-session and monitoring panels: all six read Cassandra's system_views virtual tables, and ScyllaDB has no system_views keyspace at all.",
-      "The connection dialog cannot create one, which is the first thing a user meets: Establish Connection is gated on the same Test Connection call, so it refuses with that error and nothing is saved. Until that changes a ScyllaDB connection has to arrive as a seeded or admin-managed one, which is how the browser pass here reached the editor at all.",
-      'The monitoring dashboard is one error page rather than blank panels, and it names the wrong culprit: it reads "Connection Error - Keyspace system_views does not exist", which the connection is not. The header badge reads Slow rather than Online for the same failing health request, and that is not latency either.',
+      "Every surface answers since 2026-08-24, but five answer EMPTY: the connection count, the cache hit ratio and the active-session list all read Cassandra's system_views virtual tables, which ScyllaDB does not have, so they degrade the way a denied grant does instead of failing the connection.",
+      'Connections reads 0 rather than N/A on the monitoring dashboard, and that zero is the one number here the server did not measure: there is no field on the overview to say "not published", so a build with no system_views keyspace reports the same 0 a permission-denied role does.',
+      "The overview, health, performance-metrics, active-session and monitoring surfaces used to throw, and Test Connection with them; the connection dialog gates its save on that request, so before 2026-08-24 a ScyllaDB connection could not be created in the dialog at all and had to arrive as a seeded or admin-managed one.",
       "The SQL editor and the object browser work in full: statements run, and every one of 18 CQL types read back byte-identically to Apache Cassandra 5.0.9 probed in the same pass.",
-      "No version is displayed anywhere, because the panel carrying it is one of the unavailable ones. Were it fixed it would read Apache Cassandra 3.0.8 - the compatibility number system.local publishes - not ScyllaDB 2026.2.4, which lives in system.versions where the provider does not look.",
-      "The object browser lists one extra table per secondary index: ScyllaDB backs an index with a view that system_schema.tables reports, so a keyspace with 3 tables and 1 index lists 4 objects (customers_country_idx_index). Cassandra listed 3 for the same schema.",
+      "The version reads Apache Cassandra 3.0.8 - the compatibility number system.local publishes - not ScyllaDB 2026.2.4, which lives in system.versions where the provider does not look. Uptime is real: gossip_generation exists here and answers.",
+      "The object browser lists one extra object per secondary index, and the tree and the overview disagree about it: ScyllaDB backs an index with a MATERIALIZED VIEW, so customers_country_idx_index appears in system_schema.views and the tree lists it, while the Tables count comes from system_schema.tables and does not (measured: 4 objects in the tree against tableCount 3). Cassandra lists neither.",
       'Error classes are identical to Cassandra even though the server\'s wording is not - a missing table is "unconfigured table" rather than "table ... does not exist" - because the provider classifies on the driver\'s error code rather than on the message text.',
       "Row counts and sizes are blank for the same reason as on Cassandra, and the panels read N/A rather than a fabricated zero.",
       'Creating a keyspace needs NetworkTopologyStrategy on the 2026.2 line: SimpleStrategy is refused outright with "SimpleStrategy doesn\'t support tablet replication", so the setup recipe in the Cassandra provider doc does not run unchanged.',
-      "ScyllaDB 2025.1.14-0.20260612.103b84070f3b was probed in the same pass and behaved identically on every surface, so this entry describes both the 2025.1 and the 2026.2 line - but only these two builds, and only a single-node container.",
+      "ScyllaDB 2025.1.14-0.20260612.103b84070f3b was probed in the 2026-08-21/22 pass and behaved identically on every surface, including the same verbatim refusal the fix keys on, so this entry describes both the 2025.1 and the 2026.2 line - but only these two builds, only a single-node container, and only 2026.2.4 was re-probed after the fix.",
     ],
   },
 ];

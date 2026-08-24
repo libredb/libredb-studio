@@ -720,15 +720,63 @@ describe("CouchbaseProvider monitoring", () => {
     expect(performance.bufferPoolUsage).toBe(14.6);
   });
 
-  test("getPerformanceMetrics reports zero rather than a perfect score when denied", async () => {
+  // This test used to be named "reports zero rather than a perfect score when
+  // denied" and asserted three zeroes - it is what protected the fabrication. A
+  // denied stats read measures nothing, and 0 is not nothing: the cache-ratio
+  // threshold rates 0% as red-critical, so the panel invented an incident on a
+  // healthy cluster whose statistics the user simply may not read.
+  test("getPerformanceMetrics omits every metric when the stats read is denied", async () => {
     const provider = await connectProvider();
     stubManage(`/pools/default/buckets/${BUCKET}`, {}, 403);
 
     const performance = await provider.getPerformanceMetrics();
 
-    expect(performance.cacheHitRatio).toBe(0);
+    expect("cacheHitRatio" in performance).toBe(false);
+    expect("queriesPerSecond" in performance).toBe(false);
+    expect("bufferPoolUsage" in performance).toBe(false);
+  });
+
+  test("getPerformanceMetrics keeps a measured zero, which is a real reading", async () => {
+    const provider = await connectProvider();
+    // A cluster nobody has touched: no misses (so a perfect hit ratio), no
+    // operations in the last sample, and an empty quota.
+    // Bucket info first: `stubManage` unshifts and the matcher is a substring, so
+    // the narrower `/stats` stub has to be registered last to win.
+    stubManage(`/pools/default/buckets/${BUCKET}`, { ...BUCKET_INFO, basicStats: { quotaPercentUsed: 0 } });
+    stubManage(`/pools/default/buckets/${BUCKET}/stats`, {
+      op: { samples: { ep_cache_miss_rate: [0, 0, 0], cmd_get: [0], cmd_set: [0] } },
+    });
+
+    const performance = await provider.getPerformanceMetrics();
+
+    expect(performance.cacheHitRatio).toBe(100);
     expect(performance.queriesPerSecond).toBe(0);
     expect(performance.bufferPoolUsage).toBe(0);
+  });
+
+  test("getPerformanceMetrics omits only what the sample set is missing", async () => {
+    const provider = await connectProvider();
+    // A bucket whose KV series are absent (a memcached bucket publishes no `ep_*`
+    // stats at all) while the quota the bucket endpoint reports is still readable.
+    stubManage(`/pools/default/buckets/${BUCKET}/stats`, { op: { samples: { curr_connections: [55] } } });
+
+    const performance = await provider.getPerformanceMetrics();
+
+    expect("cacheHitRatio" in performance).toBe(false);
+    expect("queriesPerSecond" in performance).toBe(false);
+    expect(performance.bufferPoolUsage).toBe(14.6);
+  });
+
+  test("getPerformanceMetrics counts a half-published operation pair", async () => {
+    const provider = await connectProvider();
+    stubManage(`/pools/default/buckets/${BUCKET}/stats`, {
+      op: { samples: { ep_cache_miss_rate: [1.5], cmd_get: [7] } },
+    });
+
+    const performance = await provider.getPerformanceMetrics();
+
+    expect(performance.cacheHitRatio).toBe(98.5);
+    expect(performance.queriesPerSecond).toBe(7);
   });
 
   test("getSlowQueries reads system:completed_requests", async () => {
@@ -807,8 +855,9 @@ describe("CouchbaseProvider monitoring", () => {
       columns: [],
       isUnique: true,
       isPrimary: true,
-      indexSize: "0 B",
-      indexSizeBytes: 0,
+      // The index service publishes no `data_size` series for this index, and
+      // "0 B" claimed an empty index where nothing was measured at all.
+      indexSize: "N/A",
       scans: 0,
     });
     expect(stats[1].columns).toEqual(["city"]);
@@ -871,7 +920,9 @@ describe("CouchbaseProvider monitoring", () => {
     expect(data.tables).toEqual([]);
     expect(data.indexes).toEqual([]);
     expect(data.storage).toEqual([]);
-    expect(data.performance.cacheHitRatio).toBe(0);
+    // Nothing was readable, so the panel is told there is no ratio and renders
+    // "Not measured" instead of a red 0%.
+    expect("cacheHitRatio" in data.performance).toBe(false);
   });
 });
 

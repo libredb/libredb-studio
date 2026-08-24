@@ -5,6 +5,7 @@
 
 import mssql from "mssql";
 import { SQLBaseProvider } from "./sql-base";
+import { mssqlColumnTypes } from "./column-types";
 import {
   type DatabaseConnection,
   type TableSchema,
@@ -33,6 +34,7 @@ import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../uti
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
+import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
 // Row shape used to group foreign keys per table in getSchema().
 type ForeignKeyInfo = { columnName: string; referencedTable: string; referencedColumn: string };
@@ -605,6 +607,7 @@ export class MSSQLProvider extends SQLBaseProvider {
         fields,
         rowCount: result.rowsAffected?.[0] ?? recordset.length,
         executionTime,
+        ...mssqlColumnTypes(recordset.columns),
       };
     });
   }
@@ -769,6 +772,7 @@ export class MSSQLProvider extends SQLBaseProvider {
         fields,
         rowCount: result.rowsAffected?.[0] ?? recordset.length,
         executionTime,
+        ...mssqlColumnTypes(recordset.columns),
       };
     });
   }
@@ -880,7 +884,7 @@ export class MSSQLProvider extends SQLBaseProvider {
     try {
       let activeConnections = 0;
       let databaseSize = "N/A";
-      let cacheHitRatio = "N/A";
+      let cacheHitRatio: string = CACHE_HIT_RATIO_UNAVAILABLE;
       const slowQueries: SlowQuery[] = [];
       const activeSessions: ActiveSession[] = [];
 
@@ -903,12 +907,18 @@ export class MSSQLProvider extends SQLBaseProvider {
         /* ignore */
       }
 
-      // Cache hit ratio
+      // Cache hit ratio. `|| 0` used to publish "0%" for a reading SQL Server never
+      // gave, and the Overview card rates 0 as "Needs tuning". Both absences are
+      // ordinary and both were measured 2026-08-23 on SQL Server 2022 CU26: a login
+      // with only CONNECT gets `Msg 300 ... VIEW SERVER PERFORMANCE STATE permission
+      // was denied on object 'server', database 'master'` (the catch below), and a
+      // zero counter base gives one `NULL` row through NULLIF (measuredNumber).
       try {
         const cacheRes = await this.pool!.request().query(BUFFER_CACHE_HIT_RATIO_SQL);
-        cacheHitRatio = `${cacheRes.recordset[0]?.hit_ratio || 0}%`;
+        const ratio = measuredNumber(cacheRes.recordset[0]?.hit_ratio);
+        if (ratio !== undefined) cacheHitRatio = `${formatCacheHitRatio(ratio)}%`;
       } catch {
-        /* ignore */
+        /* The DMV needs VIEW SERVER PERFORMANCE STATE; the initial "N/A" stands. */
       }
 
       // Slow queries
@@ -1115,20 +1125,23 @@ export class MSSQLProvider extends SQLBaseProvider {
     this.ensureConnected();
 
     try {
-      let cacheHitRatio = 100;
-      let bufferPoolUsage: number | undefined;
+      let cacheHitRatio: number | undefined;
 
       try {
         const cacheRes = await this.pool!.request().query(BUFFER_CACHE_HIT_RATIO_SQL);
-        cacheHitRatio = Number(cacheRes.recordset[0]?.hit_ratio || 100);
-        bufferPoolUsage = cacheHitRatio;
+        cacheHitRatio = measuredNumber(cacheRes.recordset[0]?.hit_ratio);
       } catch {
-        /* ignore */
+        /* DMV permissions; nothing was measured, so nothing is reported. */
       }
 
       return {
-        cacheHitRatio,
-        bufferPoolUsage,
+        ...(cacheHitRatio === undefined ? {} : { cacheHitRatio }),
+        // bufferPoolUsage is gone rather than merely absent. It used to be assigned
+        // `cacheHitRatio` itself - the same number under a second name, drawn and
+        // rated as a separate gauge. SQL Server does publish pool occupancy, through
+        // sys.dm_os_buffer_descriptors against max server memory, but this method
+        // does not query it and that scan is not free; until it does there is nothing
+        // here to report.
       };
     } catch (error) {
       throw mapDatabaseError(error, "mssql");

@@ -7,16 +7,50 @@ import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import type { DatabaseConnection } from "@/lib/types";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
+import { asBytes, binaryText } from "@/lib/export/binary";
+import { mysqlJsonStrategy } from "@/lib/explain/mysql-json";
 
 // ============================================================================
 // Mock mysql2/promise BEFORE importing the provider
 // ============================================================================
 
-let mockExecuteFn: (sql: string, params?: unknown[]) => Promise<[unknown[], unknown[]]>;
+/**
+ * The first tuple slot is `unknown`, not `unknown[]`: mysql2 hands back a
+ * `ResultSetHeader` OBJECT for a statement that returns no result set, and the
+ * second slot is `undefined` there. An array-shaped mock is exactly what hid
+ * the `result.rows.map is not a function` defect, so the mock type has to be
+ * able to express the header shape.
+ */
+let mockExecuteFn: (sql: string, params?: unknown[]) => Promise<[unknown, unknown[] | undefined]>;
+
+/**
+ * Which mysql2 method each statement went through. The driver decodes the text
+ * (`query`) and binary prepared (`execute`) protocols on different code paths, and
+ * three engines refuse whole statement classes on the prepared one, so the mock
+ * answers BOTH methods and records the choice - a mock that only answered
+ * `execute` could not tell a routed statement from an unrouted one.
+ */
+type ProtocolCall = { method: "query" | "execute"; sql: string; params?: unknown[] };
+let protocolCalls: ProtocolCall[] = [];
+
+function recordCall(
+  method: "query" | "execute",
+  sql: string,
+  params?: unknown[],
+): Promise<[unknown, unknown[] | undefined]> {
+  protocolCalls.push({ method, sql, params });
+  return mockExecuteFn(sql, params);
+}
+
+/** The method the first statement matching `fragment` (case-insensitive) went through. */
+function methodFor(fragment: string): string | undefined {
+  return protocolCalls.find((c) => c.sql.toLowerCase().includes(fragment.toLowerCase()))?.method;
+}
 
 const mockConnection = {
   threadId: 42,
-  execute: (sql: string, params?: unknown[]) => mockExecuteFn(sql, params),
+  query: (sql: string, params?: unknown[]) => recordCall("query", sql, params),
+  execute: (sql: string, params?: unknown[]) => recordCall("execute", sql, params),
   release: () => {},
   beginTransaction: async () => {},
   commit: async () => {},
@@ -26,7 +60,8 @@ const mockConnection = {
 const mockPool = {
   getConnection: async () => mockConnection,
   end: async () => {},
-  execute: (sql: string, params?: unknown[]) => mockExecuteFn(sql, params),
+  query: (sql: string, params?: unknown[]) => recordCall("query", sql, params),
+  execute: (sql: string, params?: unknown[]) => recordCall("execute", sql, params),
 };
 
 mock.module("mysql2/promise", () => ({
@@ -370,6 +405,31 @@ function perfSchemaDisabledMockExecute(sql: string): Promise<[unknown[], unknown
   return defaultMockExecute(sql);
 }
 
+/**
+ * What a server with no `performance_schema` DATABASE does - a different fact from
+ * the schema being merely OFF. Measured 2026-08-20 against a live OceanBase
+ * Community Edition 4.4.2.1 tenant through this provider, and reproduced against
+ * `mysql:latest` by naming a schema that is not there:
+ *
+ *   ERROR 1049 (42000) at line 1: Unknown database 'performance_schema_absent'
+ *
+ * The driver rejects rather than answering NULLs, so every reading that goes
+ * through `performance_schema` is a throw on that tenant - not an edge case there,
+ * the only path.
+ */
+function perfSchemaAbsentMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
+  const normalized = sql.trim().toLowerCase();
+
+  if (normalized.includes("performance_schema.")) {
+    const error = new Error("Unknown database 'performance_schema'") as Error & { code: string; errno: number };
+    error.code = "ER_BAD_DB_ERROR";
+    error.errno = 1049;
+    return Promise.reject(error);
+  }
+
+  return defaultMockExecute(sql);
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -469,6 +529,51 @@ describe("MySQLProvider", () => {
       const row = result.rows[0] as Record<string, unknown>;
       expect(row.id).toBe(1);
       expect(row.name).toBe("test");
+    });
+
+    /**
+     * A BLOB reaches every surface AS BYTES.
+     *
+     * The provider used to answer the string `0x0102ab` for these three bytes, so
+     * the grid showed `0x0102ab` where Postgres showed `\x0102ab` and the SQL export
+     * wrote `'0x0102ab'` - eight characters of text into a BLOB column, which is the
+     * defect #469 fixed for every other engine, entered one layer earlier. Measured
+     * against MySQL 26.7.0 before the change; see docs/providers/mysql.md §3.3.
+     */
+    describe("a binary value", () => {
+      async function queryBinary(value: unknown): Promise<unknown> {
+        provider = new MySQLProvider(makeMySQLConfig());
+        await provider.connect();
+        mockExecuteFn = () => Promise.resolve([[{ b: value }], [{ name: "b" }]]);
+        const result = await provider.query("SELECT b FROM types");
+        return (result.rows[0] as Record<string, unknown>).b;
+      }
+
+      test("is handed on as bytes, spelled the one way every surface spells it", async () => {
+        const bytes = asBytes(await queryBinary(Buffer.from("0102ab", "hex")));
+
+        expect(bytes).toEqual(new Uint8Array([1, 2, 171]));
+        expect(binaryText(bytes as Uint8Array)).toBe("\\x0102ab");
+      });
+
+      test("survives the JSON the API response is made of", async () => {
+        const overTheWire: unknown = JSON.parse(JSON.stringify(await queryBinary(Buffer.from("0102ab", "hex"))));
+
+        expect(binaryText(asBytes(overTheWire) as Uint8Array)).toBe("\\x0102ab");
+      });
+
+      test("is an empty byte string when empty, not the empty text one", async () => {
+        // This answered `""` before, which reads as a zero-length VARCHAR: an empty
+        // BLOB and an empty string are different values and were spelled alike.
+        const bytes = asBytes(await queryBinary(Buffer.alloc(0)));
+
+        expect(bytes).toEqual(new Uint8Array(0));
+        expect(binaryText(bytes as Uint8Array)).toBe("\\x");
+      });
+
+      test("stays null when the column is NULL", async () => {
+        expect(await queryBinary(null)).toBeNull();
+      });
     });
   });
 
@@ -592,6 +697,22 @@ describe("MySQLProvider", () => {
       const health = await provider.getHealth();
 
       expect(health.cacheHitRatio).toBe(CACHE_HIT_RATIO_UNAVAILABLE);
+    });
+
+    test("survives a tenant with no performance_schema database and reports the ratio as unavailable", async () => {
+      mockExecuteFn = perfSchemaAbsentMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      // The ratio query threw ERROR 1049, which used to take the whole health read
+      // down with it - the OceanBase tenant got no panel at all rather than a panel
+      // with one honest gap in it.
+      expect(health.cacheHitRatio).toBe(CACHE_HIT_RATIO_UNAVAILABLE);
+      expect(health.activeConnections).toBe(5);
+      expect(health.slowQueries[0].query).toBe("Performance schema not available");
+      expect(Array.isArray(health.activeSessions)).toBe(true);
     });
   });
 
@@ -845,6 +966,15 @@ describe("MySQLProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("getPerformanceMetrics()", () => {
+    test("reports nothing at all on a tenant with no performance_schema database", async () => {
+      mockExecuteFn = perfSchemaAbsentMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+
+      expect(await provider.getPerformanceMetrics()).toEqual({});
+    });
+
     test("returns cacheHitRatio, bufferPoolUsage, deadlocks, QPS", async () => {
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
@@ -1338,5 +1468,395 @@ describe("MySQLProvider", () => {
         expect(err.message).toContain("ECONNREFUSED");
       }
     });
+  });
+});
+
+// ============================================================================
+// Declared column types
+// ============================================================================
+
+/**
+ * Every field packet below is verbatim from a live server: `SELECT * FROM types` on
+ * MySQL 26.7.0, printed straight out of mysql2. That matters because the codes are
+ * shared - 252 is every text tier AND every blob tier, and only the charset (63 is
+ * `binary`) and the length tell them apart.
+ */
+describe("MySQLProvider declared column types", () => {
+  test("query() names what the field packets declare", async () => {
+    mockExecuteFn = () =>
+      Promise.resolve([
+        [{ id: 19, price: "19.99", body: "hello", b: null }],
+        [
+          { name: "id", columnType: 8, characterSet: 63, columnLength: 20, decimals: 0, flags: 0 },
+          { name: "price", columnType: 246, characterSet: 63, columnLength: 12, decimals: 2, flags: 0 },
+          { name: "body", columnType: 252, characterSet: 224, columnLength: 262140, decimals: 0, flags: 16 },
+          { name: "b", columnType: 252, characterSet: 63, columnLength: 65535, decimals: 0, flags: 144 },
+        ],
+      ]);
+
+    const provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("SELECT id, price, body, b FROM types");
+
+    // `price` was the reason for all this: a DECIMAL arrives as the string "19.99", so
+    // no value-shaped guess could ever have called it anything but text.
+    expect(result.columnTypes).toEqual({ id: "bigint", price: "decimal", body: "text", b: "blob" });
+    await provider.disconnect();
+  });
+
+  test("the key is omitted entirely when the statement declared no columns", async () => {
+    mockExecuteFn = () => Promise.resolve([[], []]);
+
+    const provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("SELECT id FROM types WHERE 1 = 0");
+
+    expect(result.columnTypes).toBeUndefined();
+    expect(Object.hasOwn(result, "columnTypes")).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("queryInTransaction() declares them too", async () => {
+    mockExecuteFn = () =>
+      Promise.resolve([
+        [{ ts: "2026-08-23 17:46:34" }],
+        [{ name: "ts", columnType: 7, characterSet: 63, columnLength: 19, decimals: 0, flags: 128 }],
+      ]);
+
+    const provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    await provider.beginTransaction();
+    const result = await provider.queryInTransaction("SELECT ts FROM types");
+
+    expect(result.columnTypes).toEqual({ ts: "timestamp" });
+    await provider.rollbackTransaction();
+    await provider.disconnect();
+  });
+});
+
+// ============================================================================
+// Non-SELECT statements (the ResultSetHeader shape)
+// ============================================================================
+/**
+ * Every DDL and DML statement threw `result.rows.map is not a function` before
+ * this block existed, AFTER the server had already applied it. Measured through
+ * `createDatabaseProvider({type:"mysql"})` against mysql 26.7.0 on 2026-08-23:
+ * DROP/CREATE/INSERT/UPDATE/DELETE and the transaction path all failed, and a
+ * following SELECT returned the row the failed INSERT had written.
+ *
+ * The header literals below are printed verbatim out of mysql2 3.15 against that
+ * same server - including `fields` arriving as `undefined`, which is why the
+ * second tuple slot is not an empty array here.
+ */
+function makeResultSetHeader(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    fieldCount: 0,
+    affectedRows: 0,
+    insertId: 0,
+    info: "",
+    serverStatus: 2,
+    warningStatus: 0,
+    changedRows: 0,
+    ...overrides,
+  };
+}
+
+describe("MySQLProvider non-SELECT statements", () => {
+  let provider: InstanceType<typeof MySQLProvider>;
+
+  afterEach(async () => {
+    try {
+      if (provider?.isConnected()) await provider.disconnect();
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
+
+  test("CREATE TABLE answers an empty result set, not a throw", async () => {
+    mockExecuteFn = () => Promise.resolve([makeResultSetHeader(), undefined]);
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("CREATE TABLE t (id INT PRIMARY KEY)");
+
+    expect(result.rows).toEqual([]);
+    expect(result.fields).toEqual([]);
+    expect(result.rowCount).toBe(0);
+    expect(result.columnTypes).toBeUndefined();
+    expect(typeof result.executionTime).toBe("number");
+  });
+
+  test("DROP TABLE IF EXISTS on an absent table answers zero rows", async () => {
+    // warningStatus 1 is what the live server returns for the absent-table note.
+    mockExecuteFn = () => Promise.resolve([makeResultSetHeader({ warningStatus: 1 }), undefined]);
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("DROP TABLE IF EXISTS gone");
+
+    expect(result.rows).toEqual([]);
+    expect(result.rowCount).toBe(0);
+  });
+
+  test("INSERT reports affectedRows as the rowCount", async () => {
+    mockExecuteFn = () =>
+      Promise.resolve([
+        makeResultSetHeader({ affectedRows: 2, insertId: 1, info: "Records: 2  Duplicates: 0  Warnings: 0" }),
+        undefined,
+      ]);
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("INSERT INTO t (note) VALUES ('a'),('b')");
+
+    expect(result.rows).toEqual([]);
+    expect(result.rowCount).toBe(2);
+  });
+
+  test("UPDATE reports affectedRows, not changedRows", async () => {
+    // The live server distinguishes them: a no-op UPDATE matches a row
+    // (affectedRows 1) while changing nothing (changedRows 0). `rowCount` is
+    // the matched count, which is what every other provider here reports.
+    mockExecuteFn = () =>
+      Promise.resolve([
+        makeResultSetHeader({ affectedRows: 1, changedRows: 0, info: "Rows matched: 1  Changed: 0  Warnings: 0" }),
+        undefined,
+      ]);
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("UPDATE t SET note = note WHERE id = 1");
+
+    expect(result.rowCount).toBe(1);
+  });
+
+  test("DELETE reports affectedRows as the rowCount", async () => {
+    mockExecuteFn = () => Promise.resolve([makeResultSetHeader({ affectedRows: 3 }), undefined]);
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("DELETE FROM t WHERE id < 4");
+
+    expect(result.rows).toEqual([]);
+    expect(result.rowCount).toBe(3);
+  });
+
+  test("queryInTransaction() answers the same envelope for a non-SELECT", async () => {
+    mockExecuteFn = () => Promise.resolve([makeResultSetHeader({ affectedRows: 1, insertId: 7 }), undefined]);
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    await provider.beginTransaction();
+    const result = await provider.queryInTransaction("INSERT INTO t (note) VALUES ('gamma')");
+
+    expect(result.rows).toEqual([]);
+    expect(result.fields).toEqual([]);
+    expect(result.rowCount).toBe(1);
+    expect(result.columnTypes).toBeUndefined();
+    await provider.rollbackTransaction();
+  });
+
+  test("a SELECT that returns an array is unaffected by the header branch", async () => {
+    mockExecuteFn = () =>
+      Promise.resolve([
+        [{ id: 1 }],
+        [{ name: "id", columnType: 3, characterSet: 63, columnLength: 11, decimals: 0, flags: 0 }],
+      ]);
+
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    const result = await provider.query("SELECT id FROM t");
+
+    expect(result.rows).toEqual([{ id: 1 }]);
+    expect(result.rowCount).toBe(1);
+    expect(result.columnTypes).toEqual({ id: "int" });
+  });
+});
+
+// ============================================================================
+// Wire protocol: text (`query`) vs binary prepared (`execute`)
+// ============================================================================
+/**
+ * Three engines refuse whole statement classes on mysql2's binary prepared
+ * protocol with `This command is not supported in the prepared statement protocol
+ * yet`: SingleStore 9.1.1 rejects `SHOW STATUS`, `SHOW VARIABLES`, `EXPLAIN`,
+ * `EXPLAIN JSON`, `OPTIMIZE TABLE` and `CHECK TABLE` there, StarRocks 3.3 loses its
+ * overview to the same cause, and MySQL 26.7.0 itself rejects `CHECK TABLE` - all
+ * measured 2026-08-24, both ways over one connection.
+ *
+ * So a statement with no parameters goes over the text protocol and a statement
+ * with parameters keeps the prepared one - the placeholders are what the prepared
+ * protocol is for, and nothing else changes about how a bind value reaches the
+ * server.
+ */
+describe("MySQLProvider wire protocol", () => {
+  let provider: InstanceType<typeof MySQLProvider>;
+
+  beforeEach(() => {
+    mockExecuteFn = defaultMockExecute;
+    protocolCalls = [];
+  });
+
+  afterEach(async () => {
+    try {
+      if (provider?.isConnected()) await provider.disconnect();
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
+
+  async function connected(): Promise<InstanceType<typeof MySQLProvider>> {
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    protocolCalls = [];
+    return provider;
+  }
+
+  test("getHealth sends its parameterless reads as text and its parameterised reads as prepared", async () => {
+    const p = await connected();
+    await p.getHealth();
+
+    expect(methodFor("show status like 'threads_connected'")).toBe("query");
+    // Every information_schema read here binds the database name.
+    expect(methodFor("information_schema.tables")).toBe("execute");
+    expect(methodFor("processlist")).toBe("execute");
+  });
+
+  test("getOverview sends SHOW STATUS, SHOW VARIABLES and VERSION() as text", async () => {
+    const p = await connected();
+    await p.getOverview();
+
+    expect(methodFor("version()")).toBe("query");
+    expect(methodFor("show status like 'uptime'")).toBe("query");
+    expect(methodFor("show variables like 'max_connections'")).toBe("query");
+    expect(methodFor("information_schema.tables")).toBe("execute");
+  });
+
+  test("getPerformanceMetrics sends every read as text", async () => {
+    const p = await connected();
+    await p.getPerformanceMetrics();
+
+    expect(protocolCalls.length).toBeGreaterThan(0);
+    expect(protocolCalls.every((c) => c.method === "query")).toBe(true);
+  });
+
+  test("the maintenance statement is text, and the table lookup behind it stays prepared", async () => {
+    const p = await connected();
+    await p.runMaintenance("check");
+
+    // The table list binds the database name; CHECK TABLE binds nothing and is the
+    // statement MySQL 26.7.0 itself refuses on the prepared protocol.
+    expect(methodFor("information_schema.tables")).toBe("execute");
+    expect(methodFor("check table")).toBe("query");
+  });
+
+  test("OPTIMIZE TABLE goes over the text protocol", async () => {
+    const p = await connected();
+    await p.runMaintenance("optimize");
+
+    expect(methodFor("optimize table")).toBe("query");
+  });
+
+  test("the maintenance KILL takes the text protocol too", async () => {
+    const p = await connected();
+    await p.runMaintenance("kill", "77");
+
+    expect(methodFor("kill 77")).toBe("query");
+  });
+
+  test("getSchema keeps its parameterised reads on the prepared protocol", async () => {
+    const p = await connected();
+    await p.getSchema();
+
+    expect(protocolCalls.length).toBeGreaterThan(0);
+    expect(protocolCalls.every((c) => c.method === "execute")).toBe(true);
+    expect(methodFor("information_schema.columns")).toBe("execute");
+    expect(methodFor("key_column_usage")).toBe("execute");
+    expect(methodFor("information_schema.statistics")).toBe("execute");
+  });
+
+  test("getStorageStats sends SHOW BINARY LOGS and SHOW VARIABLES as text", async () => {
+    const p = await connected();
+    await p.getStorageStats();
+
+    expect(methodFor("show binary logs")).toBe("query");
+    expect(methodFor("show variables like 'innodb_data_file_path'")).toBe("query");
+    expect(methodFor("information_schema.tables")).toBe("execute");
+  });
+
+  test("the editor's own query path is text without parameters and prepared with them", async () => {
+    const p = await connected();
+
+    await p.query("SELECT 1");
+    expect(protocolCalls).toEqual([{ method: "query", sql: "SELECT 1", params: undefined }]);
+
+    protocolCalls = [];
+    await p.query("SELECT * FROM users WHERE id = ?", [7]);
+    expect(protocolCalls).toEqual([{ method: "execute", sql: "SELECT * FROM users WHERE id = ?", params: [7] }]);
+  });
+
+  test("an empty parameter array is not a parameterised statement", async () => {
+    const p = await connected();
+    await p.query("SELECT 1", []);
+
+    expect(protocolCalls[0]?.method).toBe("query");
+    expect(protocolCalls[0]?.params).toBeUndefined();
+  });
+
+  test("the Explain panel's statement reaches the server over the text protocol", async () => {
+    const p = await connected();
+    // Verbatim what mysqlJsonStrategy.buildSql() produces. MySQL takes it either way;
+    // SingleStore refuses `EXPLAIN FORMAT=JSON` on both protocols (its grammar is
+    // `EXPLAIN JSON`), so what this pins is the route, not a recovered panel there.
+    const explainSql = mysqlJsonStrategy.buildSql("SELECT * FROM users", "estimate");
+    await p.query(explainSql as string);
+
+    expect(explainSql).toBe("EXPLAIN FORMAT=JSON SELECT * FROM users");
+    expect(methodFor("explain format=json")).toBe("query");
+  });
+
+  test("the transaction path picks the protocol the same way", async () => {
+    const p = await connected();
+    await p.beginTransaction();
+
+    await p.queryInTransaction("SELECT 1");
+    expect(protocolCalls.at(-1)).toEqual({ method: "query", sql: "SELECT 1", params: undefined });
+
+    await p.queryInTransaction("SELECT * FROM users WHERE id = ?", [7]);
+    expect(protocolCalls.at(-1)).toEqual({
+      method: "execute",
+      sql: "SELECT * FROM users WHERE id = ?",
+      params: [7],
+    });
+
+    await p.rollbackTransaction();
+  });
+
+  test("cancelQuery kills the running thread over the text protocol", async () => {
+    let releaseStatement: () => void = () => {};
+    let statementStarted: () => void = () => {};
+    const inFlight = new Promise<void>((resolve) => {
+      releaseStatement = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      statementStarted = resolve;
+    });
+
+    const p = await connected();
+    mockExecuteFn = async (sql: string) => {
+      if (sql.toLowerCase().includes("sleep")) {
+        statementStarted();
+        await inFlight;
+      }
+      return [[], []];
+    };
+
+    const running = p.query("SELECT SLEEP(5)", undefined, "q1");
+    await started;
+    expect(await p.cancelQuery("q1")).toBe(true);
+    releaseStatement();
+    await running;
+
+    expect(methodFor("kill query 42")).toBe("query");
   });
 });

@@ -198,6 +198,60 @@ describe("StorageTab", () => {
     expect(queryAllByText("2.00 GB").length).toBe(1); // the DB Size card, and nothing else
   });
 
+  test("a partial table-size sum is not published as the Data figure", () => {
+    // SQLite used to answer `tableSizeBytes = rowCount * 100` ("Assume 100 bytes
+    // average per row") and this tab summed that guess into the Tables/Data figure it
+    // draws beside the measured database size. With the guess gone, a provider may
+    // report a table it has no byte figure for, and summing the rest as 0 publishes a
+    // number no engine reported. The fixture keeps `orders` at 500 MB and strips
+    // `users`, so a regression to `?? 0` renders "500.00 MB" as the table total -
+    // visible here rather than only against a server.
+    const base = makeMonitoringData();
+    const partial = {
+      ...base,
+      tables: (base.tables ?? []).map((t, i) => {
+        if (i === 0) return { ...t };
+        const copy = { ...t };
+        delete (copy as { tableSizeBytes?: number }).tableSizeBytes;
+        return copy;
+      }),
+    } as MonitoringData;
+
+    const { queryAllByText } = render(<StorageTab data={partial} loading={false} />);
+
+    expect(queryAllByText("500.00 MB").length).toBe(0);
+    // Tables card, the breakdown's Tables row, and the remainder that cannot be
+    // computed without them - plus the % under the card is not drawn at all.
+    expect(queryAllByText("N/A").length).toBe(3);
+    expect(queryAllByText("24.4%").length).toBe(0); // 500 MB of 2 GB
+  });
+
+  test("an engine with no per-table bytes at all keeps its table list and drops the figures", () => {
+    // The sqlite provider under bun:sqlite: `dbstat` is compiled out there ("no such
+    // table: dbstat", measured 2026-08-24 on Bun 1.3.14 / SQLite 3.53.0), so it omits
+    // `tableSize`/`tableSizeBytes` and says "N/A" for the total. The table names and
+    // row counts are still real, so the list must stay - only the byte columns go.
+    const base = makeMonitoringData();
+    const noBytes = {
+      ...base,
+      tables: (base.tables ?? []).map((t) => {
+        const copy = { ...t, totalSize: "N/A", totalSizeBytes: 0 };
+        delete (copy as { tableSize?: string }).tableSize;
+        delete (copy as { tableSizeBytes?: number }).tableSizeBytes;
+        return copy;
+      }),
+    } as MonitoringData;
+
+    const { queryByText, queryAllByText } = render(<StorageTab data={noBytes} loading={false} />);
+
+    expect(queryByText("orders")).not.toBeNull();
+    expect(queryByText("users")).not.toBeNull();
+    // No "0.0%" share is drawn for either table, and no "0 B" total.
+    expect(queryAllByText("0.0%").length).toBe(0);
+    expect(queryAllByText("0 B").length).toBe(0);
+    expect(queryAllByText("-").length).toBe(2); // the two % cells
+  });
+
   test("a table reported without an index size does not turn the totals into a measurement", () => {
     // MySQL keeps per-index bytes in `mysql.innodb_index_stats`: a user granted only its own
     // database is denied that table, and a MyISAM table has no row there (both measured

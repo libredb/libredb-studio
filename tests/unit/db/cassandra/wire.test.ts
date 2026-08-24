@@ -11,8 +11,10 @@
  * The three traps this pins, each measured:
  *
  * 1. A `blob` arrives as a Buffer, and `JSON.stringify` turns it into
- *    `{"type":"Buffer","data":[76,105,…]}` - a shape nobody can read and nobody can
- *    paste back into CQL.
+ *    `{"type":"Buffer","data":[76,105,…]}`. That shape is no longer unreadable: it is
+ *    exactly what `src/lib/export/binary.ts` reads (#469), so the Buffer is handed on
+ *    as itself and the bytes reach the binary renderer, the CSV and the SQL export.
+ *    Stringifying it here used to be the fix and had become the defect.
  * 2. `duration` AND `vector<float,3>` both arrive with `type.code === 0` (custom)
  *    and a Java class name in `type.info`, so a type map keyed on the code alone
  *    labels two different types the same word ("custom", which is what the driver's
@@ -34,6 +36,7 @@ import {
   toCassandraResult,
 } from "@/lib/db/providers/sql/cassandra/driver-transport";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
+import { asBytes, binaryText } from "@/lib/export/binary";
 import type { DatabaseConnection } from "@/lib/types";
 
 function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
@@ -51,16 +54,45 @@ function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseCo
 }
 
 describe("normalizeCassandraValue", () => {
-  test("a blob becomes the CQL hex literal, not a Buffer document", () => {
+  test("a blob is handed on AS BYTES, for the one module that reads them", () => {
     // The exact bytes of `probe.type_matrix.c_blob`, whose JSON.stringify was
     // captured as {"type":"Buffer","data":[76,105,98,114,101,68,66,0,195,191,…]}.
     const blob = Buffer.from("4c69627265444200c3bf6279746573", "hex");
 
-    expect(normalizeCassandraValue(blob)).toBe("0x4c69627265444200c3bf6279746573");
+    // This used to answer the string `0x4c69…`, because that JSON shape was
+    // unreadable. It is now exactly the shape `asBytes` reads (#469), so the
+    // bytes survive the wire and every surface spells them the same way.
+    const normalized = normalizeCassandraValue(blob);
+    expect(asBytes(normalized)).toEqual(new Uint8Array(blob));
+    expect(binaryText(asBytes(normalized) as Uint8Array)).toBe("\\x4c69627265444200c3bf6279746573");
   });
 
-  test("an empty blob is still a hex literal rather than an empty string", () => {
-    expect(normalizeCassandraValue(Buffer.alloc(0))).toBe("0x");
+  test("the bytes survive the JSON the API response is made of", () => {
+    const blob = Buffer.from("0102ab", "hex");
+
+    // The HTTP path is the one the browser uses, so the round trip is the claim.
+    const overTheWire: unknown = JSON.parse(JSON.stringify(normalizeCassandraValue(blob)));
+
+    expect(binaryText(asBytes(overTheWire) as Uint8Array)).toBe("\\x0102ab");
+  });
+
+  test("an empty blob is an empty byte string, not an empty text one", () => {
+    const normalized = normalizeCassandraValue(Buffer.alloc(0));
+
+    expect(asBytes(normalized)).toEqual(new Uint8Array(0));
+    expect(binaryText(asBytes(normalized) as Uint8Array)).toBe("\\x");
+  });
+
+  test("a null blob stays null", () => {
+    expect(normalizeCassandraValue(null)).toBeNull();
+  });
+
+  test("a blob inside a container is handed on as bytes too", () => {
+    // A container is walked, so the rule has to hold one level down as well:
+    // `map<text, blob>` is where a stringified byte value would hide.
+    const normalized = normalizeCassandraValue({ payload: Buffer.from("ab", "hex") }) as Record<string, unknown>;
+
+    expect(asBytes(normalized.payload)).toEqual(new Uint8Array([171]));
   });
 
   test.each([

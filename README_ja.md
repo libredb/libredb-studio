@@ -15,6 +15,21 @@
 </p>
 
 <p align="center">
+  PostgreSQL プロジェクトに掲載：
+  <a href="https://www.postgresql.org/about/news/libredb-studio-an-open-source-self-hosted-sql-ide-for-postgresql-in-the-browser-3368/">News</a>
+  ·
+  <a href="https://www.postgresql.org/download/products/1/">Software Catalogue</a>
+  ·
+  <a href="https://wiki.postgresql.org/wiki/Community_Guide_to_PostgreSQL_GUI_Tools#LibreDB_Studio">Community Guide to GUI Tools</a>
+</p>
+<p align="center">
+  <a href="https://redis.io/docs/latest/develop/tools/#libredb-studio">Redis</a>、
+  <a href="https://clickhouse.com/docs/integrations/connectors/tools/gui#libredb-studio">ClickHouse</a>、
+  <a href="https://druid.apache.org/libraries">Apache Druid</a>
+  の公式ドキュメントにも掲載
+</p>
+
+<p align="center">
   <img src="public/screenshots/hero-demo.gif" alt="LibreDB Studio" width="100%" />
 </p>
 

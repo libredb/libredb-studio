@@ -5,6 +5,7 @@
 
 import oracledb from "oracledb";
 import { SQLBaseProvider } from "./sql-base";
+import { oracleColumnTypes, type OracleColumnMetadata } from "./column-types";
 import {
   type DatabaseConnection,
   type TableSchema,
@@ -32,6 +33,7 @@ import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
+import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
 // ============================================================================
 // SQL Statements
@@ -163,6 +165,72 @@ const STORAGE_USER_SEGMENTS_SQL = `SELECT TABLESPACE_NAME AS NAME,
              FROM USER_SEGMENTS
              GROUP BY TABLESPACE_NAME
              ORDER BY SUM(BYTES) DESC`;
+
+// ============================================================================
+// Value shapes
+// ============================================================================
+
+/**
+ * The metadata oracledb hands a fetch type handler, and what one may answer.
+ *
+ * Written out here because the repo declares the whole `oracledb` module as `any`
+ * (src/types/db-drivers.d.ts) - the driver ships no typings - so nothing in this
+ * file is checked against the driver's real surface. Naming the two shapes locally
+ * at least makes the handler itself checked.
+ */
+type OracleFetchMetaData = { readonly dbType: unknown; readonly name: string };
+type OracleFetchType = { readonly type: unknown } | undefined;
+
+/**
+ * Fetch a LOB as its value instead of as a stream.
+ *
+ * By default oracledb answers a CLOB, an NCLOB and a BLOB with a `Lob` object -
+ * a readable stream - and nothing downstream of the provider can read one.
+ * Measured on 2026-08-24 against Oracle Free 23ai (oracledb 6.10.0, Thin) through
+ * `createDatabaseProvider({type:"oracle"})`: all four LOB columns of a probe table
+ * arrived as `Lob`, and serialising the row threw rather than producing a value -
+ * `TypeError: Converting circular structure to JSON ... starting at object with
+ * constructor 'NVPair'` under Node 24.14.0, `TypeError: JSON.stringify cannot
+ * serialize cyclic structures` under Bun 1.3.14. `POST /api/db/query` builds its
+ * answer with `NextResponse.json`, so a SELECT touching a LOB failed whole: the
+ * grid, the CSV, the SQL export, the row detail sheet and the agent's summary all
+ * had no row to read, not merely an unreadable cell.
+ *
+ * A BLOB becomes a `Buffer`, which is the shape the product's shared binary
+ * contract already accepts (`asBytes` in src/lib/export/binary.ts takes both a
+ * live `Uint8Array` and the `{type:"Buffer",data:[...]}` JSON it serialises to), so
+ * a BLOB cell renders, previews and exports exactly like a Postgres `bytea` and a
+ * MySQL `BLOB` with no further work.
+ *
+ * This is a per-call option rather than the process-wide `oracledb.fetchAsString` /
+ * `fetchAsBuffer` globals on purpose: those would also change every schema and
+ * monitoring read, and they outlive this provider - the embeddable library surface
+ * runs inside a host application that may have its own oracledb consumers.
+ *
+ * The value is fetched whole, with no length cap, which is the same contract every
+ * other provider here already has for a large value: Postgres `text`/`bytea` and
+ * MySQL `BLOB` arrive whole too, and `DEFAULT_QUERY_LIMIT` bounds the row count,
+ * not the cell. A cap was considered and rejected because a truncated CLOB looks
+ * like a complete one in the grid and would be written into the target by the SQL
+ * export - a silent corruption in place of a readable value. The cost is linear and
+ * measured: a 16,384,000-character CLOB fetched as a string took 66 ms and
+ * serialised to 16.4 MB of JSON in 18 ms. The ceiling is the runtime's own and it
+ * fails loudly: a string longer than V8's 536,870,888-character maximum throws
+ * `RangeError: Invalid string length`, which reaches the user as a failed query
+ * rather than as a value that has quietly lost its tail.
+ */
+const lobFetchTypeHandler = (metaData: OracleFetchMetaData): OracleFetchType => {
+  if (metaData.dbType === oracledb.DB_TYPE_CLOB || metaData.dbType === oracledb.DB_TYPE_NCLOB) {
+    return { type: oracledb.STRING };
+  }
+  if (metaData.dbType === oracledb.DB_TYPE_BLOB) {
+    return { type: oracledb.BUFFER };
+  }
+  // Every other column keeps the driver's default: RAW already arrives as a
+  // Buffer and VARCHAR2 as a string, and restating them here would put this
+  // module in charge of types it has no reason to touch.
+  return undefined;
+};
 
 // ============================================================================
 // Oracle Provider
@@ -375,6 +443,47 @@ export class OracleProvider extends SQLBaseProvider {
   // Query Execution
   // ============================================================================
 
+  /**
+   * Build the result envelope from one oracledb `Result`.
+   *
+   * oracledb answers a SELECT with a `rows` array and a non-SELECT with no `rows` at
+   * all plus its own `rowsAffected` - so the row count of a DML statement is only
+   * readable there. Measured 2026-08-24 against Oracle Free 23ai through
+   * `createDatabaseProvider({type:"oracle"})`: `INSERT` of one row -> rowsAffected 1,
+   * `INSERT ... SELECT` of three -> 3, `UPDATE` touching four -> 4, a `DELETE` that
+   * matched nothing -> 0, `CREATE TABLE` and `TRUNCATE` -> 0, a PL/SQL block ->
+   * undefined. Building the count from `rows.length` instead reported 0 for every one
+   * of them while the statement had in fact been applied, which is the answer
+   * that makes a user retry and double-apply it.
+   *
+   * Same shape as `buildQueryResult` in mysql.ts (#469): the non-rows branch answers
+   * with an empty grid and the engine's own count, and states no column types because
+   * there is no metadata to state them from.
+   */
+  private buildQueryResult(
+    result: { rows?: unknown[]; rowsAffected?: number; metaData?: readonly OracleColumnMetadata[] },
+    executionTime: number,
+  ): QueryResult {
+    if (!result.rows) {
+      return {
+        rows: [],
+        fields: [],
+        rowCount: result.rowsAffected ?? 0,
+        executionTime,
+      };
+    }
+
+    const rows = result.rows as Record<string, unknown>[];
+
+    return {
+      rows,
+      fields: result.metaData?.map((m: { name: string }) => m.name) ?? [],
+      rowCount: rows.length,
+      executionTime,
+      ...oracleColumnTypes(result.metaData),
+    };
+  }
+
   public async query(sql: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     this.ensureConnected();
 
@@ -392,6 +501,7 @@ export class OracleProvider extends SQLBaseProvider {
           const res = await conn.execute(sql, bindParams, {
             outFormat: oracledb.OUT_FORMAT_OBJECT,
             autoCommit: true,
+            fetchTypeHandler: lobFetchTypeHandler,
           });
 
           return res;
@@ -409,15 +519,7 @@ export class OracleProvider extends SQLBaseProvider {
         }
       });
 
-      const rows = (result.rows || []) as Record<string, unknown>[];
-      const fields = result.metaData?.map((m: { name: string }) => m.name) ?? [];
-
-      return {
-        rows,
-        fields,
-        rowCount: rows.length,
-        executionTime,
-      };
+      return this.buildQueryResult(result, executionTime);
     });
   }
 
@@ -527,21 +629,14 @@ export class OracleProvider extends SQLBaseProvider {
           return await this.txConn!.execute(sql, params || [], {
             outFormat: oracledb.OUT_FORMAT_OBJECT,
             autoCommit: false,
+            fetchTypeHandler: lobFetchTypeHandler,
           });
         } catch (error) {
           throw mapDatabaseError(error, "oracle", sql);
         }
       });
 
-      const rows = (result.rows || []) as Record<string, unknown>[];
-      const fields = result.metaData?.map((m: { name: string }) => m.name) ?? [];
-
-      return {
-        rows,
-        fields,
-        rowCount: rows.length,
-        executionTime,
-      };
+      return this.buildQueryResult(result, executionTime);
     });
   }
 
@@ -669,7 +764,7 @@ export class OracleProvider extends SQLBaseProvider {
 
       let activeConnections = 0;
       let databaseSize = "N/A";
-      let cacheHitRatio = "N/A";
+      let cacheHitRatio: string = CACHE_HIT_RATIO_UNAVAILABLE;
       const slowQueries: SlowQuery[] = [];
       const activeSessions: ActiveSession[] = [];
 
@@ -698,13 +793,20 @@ export class OracleProvider extends SQLBaseProvider {
         /* ignore */
       }
 
-      // Cache hit ratio
+      // Cache hit ratio. `|| 0` used to publish "0%" for a reading Oracle never
+      // took, and the Overview card rates 0 as "Needs tuning" - so a user who
+      // simply cannot read V$SYSSTAT saw a cache fault. The two ways the reading
+      // goes absent, both measured 2026-08-23 on Oracle Free 23ai: a user granted
+      // only CREATE SESSION gets `ORA-00942: table or view "SYS"."V_$SYSSTAT" does
+      // not exist` (the catch below), and a zero counter denominator gives one row
+      // of `<NULL>` through NULLIF (measuredNumber).
       try {
         const cacheRes = await conn.execute(CACHE_HIT_RATIO_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
         const cacheRows = (cacheRes.rows || []) as Record<string, unknown>[];
-        cacheHitRatio = `${cacheRows[0]?.HIT_RATIO || 0}%`;
+        const ratio = measuredNumber(cacheRows[0]?.HIT_RATIO);
+        if (ratio !== undefined) cacheHitRatio = `${formatCacheHitRatio(ratio)}%`;
       } catch {
-        /* ignore */
+        /* V$SYSSTAT requires privileges; the initial "N/A" stands. */
       }
 
       // Slow queries
@@ -940,21 +1042,24 @@ export class OracleProvider extends SQLBaseProvider {
     try {
       conn = await this.pool!.getConnection();
 
-      let cacheHitRatio = 100;
-      let bufferPoolUsage: number | undefined;
+      let cacheHitRatio: number | undefined;
 
       try {
         const cacheRes = await conn.execute(CACHE_HIT_RATIO_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
         const rows = (cacheRes.rows || []) as Record<string, unknown>[];
-        cacheHitRatio = Number(rows[0]?.HIT_RATIO || 100);
-        bufferPoolUsage = cacheHitRatio;
+        cacheHitRatio = measuredNumber(rows[0]?.HIT_RATIO);
       } catch {
-        /* ignore */
+        /* V$SYSSTAT requires privileges; nothing was measured, so nothing is reported. */
       }
 
       return {
-        cacheHitRatio,
-        bufferPoolUsage,
+        ...(cacheHitRatio === undefined ? {} : { cacheHitRatio }),
+        // bufferPoolUsage is gone rather than merely absent. It used to be assigned
+        // `cacheHitRatio` itself - the same number under a second name, which the
+        // Performance tab then drew as a separate gauge and rated separately. Oracle
+        // does publish buffer pool occupancy, but in V$BUFFER_POOL_STATISTICS /
+        // V$SGASTAT, which this method does not query; until it does there is
+        // nothing here to report.
       };
     } finally {
       if (conn) await conn.close();

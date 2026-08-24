@@ -5,6 +5,7 @@
 
 import mysql, { type Pool, type PoolConnection, type RowDataPacket, type FieldPacket } from "mysql2/promise";
 import { SQLBaseProvider } from "./sql-base";
+import { mysqlColumnTypes } from "./column-types";
 import {
   type DatabaseConnection,
   type TableSchema,
@@ -27,7 +28,7 @@ import {
 } from "../../types";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
-import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
+import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
 /**
  * mysql2 3.23 narrowed `execute`'s values parameter from `any` to a concrete
@@ -49,6 +50,60 @@ import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
  */
 type ExecuteParams = Parameters<PoolConnection["execute"]>[1];
 const asExecuteParams = (params?: unknown[]): ExecuteParams => params as ExecuteParams;
+
+/**
+ * Anything this provider can issue a statement over: the pool, a pooled
+ * connection, and the connection a transaction holds. All three are used.
+ */
+type MySQLQueryable = Pick<PoolConnection, "query" | "execute">;
+
+/**
+ * Every statement this provider issues goes through here, and the protocol is
+ * chosen by one fact: whether the statement carries parameters.
+ *
+ * mysql2 offers two: `query` speaks MySQL's TEXT protocol, `execute` the BINARY
+ * PREPARED one. Everything here used to call `execute`, parameterless statements
+ * included, and three engines refuse whole statement classes on that protocol
+ * with `This command is not supported in the prepared statement protocol yet`:
+ *
+ * - SingleStore 9.1.1 (`ghcr.io/singlestore-labs/singlestoredb-dev:0.2.82`),
+ *   measured 2026-08-24 both ways over one connection: `SHOW STATUS`,
+ *   `SHOW VARIABLES`, `EXPLAIN`, `EXPLAIN JSON`, `OPTIMIZE TABLE` and
+ *   `CHECK TABLE` all fail prepared with `ER_UNSUPPORTED_PS` and all succeed as
+ *   text. `EXPLAIN FORMAT=JSON` is NOT in that list: it is `ER_PARSE_ERROR` on
+ *   both protocols there, because SingleStore's grammar is `EXPLAIN JSON`, so the
+ *   Explain panel is not something this helper recovers.
+ * - StarRocks 3.3, whose overview this recovers (measured through the provider,
+ *   2026-08-24); its health still fails on a missing
+ *   `information_schema.PROCESSLIST`, which is the engine's gap, not the protocol.
+ * - MySQL 26.7.0 itself refuses `CHECK TABLE` prepared - measured 2026-08-24 on
+ *   `mysql:latest` - so one maintenance action was unavailable on the engine this
+ *   provider is named for.
+ *
+ * A parameterised statement keeps `execute`: the placeholders are what the
+ * prepared protocol is for, and binding is what keeps a value out of the SQL text.
+ * An empty array carries no parameter and is nothing to bind, so it takes the text
+ * path with the parameterless statements.
+ *
+ * Moving the read path across is safe because the two protocols decode to the same
+ * JS shapes. Measured 2026-08-24 on MySQL 26.7.0 over one connection, the same
+ * SELECT both ways across TINYINT(1), INT, BIGINT past 2^53, BIGINT UNSIGNED,
+ * DECIMAL, FLOAT, DOUBLE, DATE, DATETIME, TIMESTAMP, TIME, YEAR, CHAR, VARCHAR,
+ * TEXT, BLOB, BIT(1), BIT(8), JSON, ENUM, SET and NULLs: every value identical by
+ * `typeof` and by `JSON.stringify`, every `FieldPacket` identical in `columnType`,
+ * `flags`, `characterSet`, `columnLength` and `decimals` - so `columnTypes` names
+ * the same types - and a non-result-set statement answers the same
+ * `ResultSetHeader`, which is what `buildQueryResult` reads. See
+ * `docs/providers/mysql.md` section 3.4.
+ */
+const runStatement = <T extends RowDataPacket[] = RowDataPacket[]>(
+  queryable: MySQLQueryable,
+  sql: string,
+  params?: unknown[],
+): Promise<[T, FieldPacket[]]> =>
+  params === undefined || params.length === 0
+    ? queryable.query<T>(sql)
+    : queryable.execute<T>(sql, asExecuteParams(params));
 
 // ============================================================================
 // SQL Statements
@@ -222,21 +277,6 @@ const SELF_IDENTIFYING_VERSION = /mariadb|tidb|vitess|oceanbase/i;
  */
 function labelServerVersion(version: string): string {
   return SELF_IDENTIFYING_VERSION.test(version) ? version : `MySQL ${version}`;
-}
-
-/**
- * A `performance_schema` reading, or `undefined` when there was nothing to read.
- *
- * MariaDB ships `performance_schema` OFF by default and the tables still exist,
- * so the metric queries are a bare `SELECT (subquery)` that answers one row of
- * NULLs rather than throwing. `parseInt(x || "0")` turned each of those NULLs
- * into a measurement nobody took, which is the fault #448 and #452 removed from
- * the panels; this keeps the provider from manufacturing one in the first place.
- */
-function measuredNumber(value: unknown): number | undefined {
-  if (value === null || value === undefined) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function round2(value: number): number {
@@ -483,16 +523,58 @@ export class MySQLProvider extends SQLBaseProvider {
   // Query Execution
   // ============================================================================
 
-  private sanitizeRow(row: Record<string, unknown>): Record<string, unknown> {
-    const sanitized: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(row)) {
-      if (Buffer.isBuffer(value)) {
-        sanitized[key] = value.length === 0 ? "" : `0x${value.toString("hex")}`;
-      } else {
-        sanitized[key] = value;
-      }
+  /**
+   * Build the query envelope from what mysql2 handed back.
+   *
+   * `execute`'s first return value is an ARRAY of rows only for a statement that
+   * produced a result set. For everything else - DDL, INSERT, UPDATE, DELETE - it
+   * is a `ResultSetHeader` object and `fields` is `undefined`. Measured verbatim
+   * against mysql 26.7.0 on 2026-08-23, `INSERT INTO r5_hdr (note) VALUES
+   * ('a'),('b')` answers
+   * `{fieldCount:0,affectedRows:2,insertId:1,info:"Records: 2  Duplicates: 0  Warnings: 0",serverStatus:2,warningStatus:0,changedRows:0}`.
+   *
+   * Calling `.map` on that object threw `result.rows.map is not a function` AFTER
+   * the server had already applied the statement, so every DDL and DML statement
+   * run from the editor reported a failure for work that had landed - the answer
+   * that makes a user retry and double-apply it.
+   *
+   * The empty-result answer follows what the other SQL providers here already do:
+   * no rows, no fields, and the affected-row count in `rowCount` (mssql reports
+   * `rowsAffected[0]`, sqlite `changes`, postgres `pg`'s own `rowCount`).
+   * `insertId`, `changedRows` and `warningStatus` are deliberately dropped:
+   * `QueryResult` models none of them, and `rowCount` is the field the results
+   * footer renders. `affectedRows` is the matched count, which is why a no-op
+   * UPDATE still reports 1 - matching mssql, whose `rowsAffected` counts the same
+   * way.
+   */
+  private buildQueryResult(rows: unknown, fields: FieldPacket[] | undefined, executionTime: number): QueryResult {
+    if (!Array.isArray(rows)) {
+      const header = rows as { affectedRows?: number };
+      return {
+        rows: [],
+        fields: [],
+        rowCount: header.affectedRows ?? 0,
+        executionTime,
+      };
     }
-    return sanitized;
+
+    return {
+      // The driver's rows are handed on UNCHANGED, binary values included.
+      // A `sanitizeRow` used to walk every row and turn a `Buffer` into the string
+      // `0x<hex>` (and an empty one into `""`), because the JSON a Buffer serializes
+      // to - `{"type":"Buffer","data":[…]}` - was unreadable. `src/lib/export/binary.ts`
+      // now READS that exact shape (#469), which is how Postgres's `bytea` reaches the
+      // grid, the row sheet, the CSV and the SQL export, so the string was the only
+      // thing standing between a MySQL BLOB and the same treatment: the grid showed
+      // `0x0102ab` where Postgres showed `\x0102ab`, and the export wrote the eight
+      // characters `'0x0102ab'` into a BLOB column rather than the three bytes.
+      // Measured against MySQL 26.7.0 on 2026-08-24; see docs/providers/mysql.md §3.3.
+      rows: rows as Record<string, unknown>[],
+      fields: fields?.map((f: FieldPacket) => f.name) ?? [],
+      ...mysqlColumnTypes(fields),
+      rowCount: rows.length,
+      executionTime,
+    };
   }
 
   // Track running query thread IDs for cancellation
@@ -509,7 +591,7 @@ export class MySQLProvider extends SQLBaseProvider {
           if (queryId) {
             this.runningQueryThreadIds.set(queryId, conn.threadId);
           }
-          const [rows, fields] = await conn.execute<RowDataPacket[]>(sql, asExecuteParams(params));
+          const [rows, fields] = await runStatement(conn, sql, params);
           return { rows, fields };
         } catch (error) {
           throw mapDatabaseError(error, "mysql", sql);
@@ -519,12 +601,7 @@ export class MySQLProvider extends SQLBaseProvider {
         }
       });
 
-      return {
-        rows: (result.rows as unknown[]).map((row) => this.sanitizeRow(row as Record<string, unknown>)),
-        fields: result.fields?.map((f: FieldPacket) => f.name) ?? [],
-        rowCount: Array.isArray(result.rows) ? result.rows.length : 0,
-        executionTime,
-      };
+      return this.buildQueryResult(result.rows, result.fields, executionTime);
     });
   }
 
@@ -533,7 +610,7 @@ export class MySQLProvider extends SQLBaseProvider {
     if (!threadId) return false;
 
     try {
-      await this.pool!.execute(`KILL QUERY ${threadId}`);
+      await runStatement(this.pool!, `KILL QUERY ${threadId}`);
       return true;
     } catch (error) {
       console.error("[MySQL] Failed to cancel query:", error);
@@ -619,19 +696,14 @@ export class MySQLProvider extends SQLBaseProvider {
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
-          const [rows, fields] = await this.txConn!.execute<RowDataPacket[]>(sql, asExecuteParams(params));
+          const [rows, fields] = await runStatement(this.txConn!, sql, params);
           return { rows, fields };
         } catch (error) {
           throw mapDatabaseError(error, "mysql", sql);
         }
       });
 
-      return {
-        rows: (result.rows as unknown[]).map((row) => this.sanitizeRow(row as Record<string, unknown>)),
-        fields: result.fields?.map((f: FieldPacket) => f.name) ?? [],
-        rowCount: Array.isArray(result.rows) ? result.rows.length : 0,
-        executionTime,
-      };
+      return this.buildQueryResult(result.rows, result.fields, executionTime);
     });
   }
 
@@ -644,10 +716,7 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [tablesRows] = await conn.execute<RowDataPacket[]>(
-        SCHEMA_TABLES_SQL,
-        asExecuteParams([this.config.database]),
-      );
+      const [tablesRows] = await runStatement(conn, SCHEMA_TABLES_SQL, [this.config.database]);
 
       const schemas: TableSchema[] = [];
 
@@ -656,17 +725,11 @@ export class MySQLProvider extends SQLBaseProvider {
         const rowCount = parseInt(row.row_count || "0");
         const sizeBytes = parseInt(row.total_size || "0");
 
-        const [columnsRows] = await conn.execute<RowDataPacket[]>(SCHEMA_COLUMNS_SQL, [
-          this.config.database,
-          tableName,
-        ]);
+        const [columnsRows] = await runStatement(conn, SCHEMA_COLUMNS_SQL, [this.config.database, tableName]);
 
-        const [fkRows] = await conn.execute<RowDataPacket[]>(SCHEMA_FOREIGN_KEYS_SQL, [
-          this.config.database,
-          tableName,
-        ]);
+        const [fkRows] = await runStatement(conn, SCHEMA_FOREIGN_KEYS_SQL, [this.config.database, tableName]);
 
-        const [indexRows] = await conn.execute<RowDataPacket[]>(SCHEMA_INDEXES_SQL, [this.config.database, tableName]);
+        const [indexRows] = await runStatement(conn, SCHEMA_INDEXES_SQL, [this.config.database, tableName]);
 
         schemas.push({
           name: tableName,
@@ -707,24 +770,30 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [connRows] = await conn.execute<RowDataPacket[]>("SHOW STATUS LIKE 'Threads_connected'");
+      const [connRows] = await runStatement(conn, "SHOW STATUS LIKE 'Threads_connected'");
       const activeConnections = parseInt(connRows[0]?.Value || "0");
 
-      const [sizeRows] = await conn.execute<RowDataPacket[]>(
-        DATABASE_SIZE_MB_SQL,
-        asExecuteParams([this.config.database]),
-      );
+      const [sizeRows] = await runStatement(conn, DATABASE_SIZE_MB_SQL, [this.config.database]);
       const databaseSize = `${sizeRows[0]?.size_mb || 0} MB`;
 
-      const [hitRows] = await conn.execute<RowDataPacket[]>(BUFFER_CACHE_HIT_RATIO_SQL);
-      const cacheHitRatio = formatCacheHitRatio(measuredNumber(hitRows[0]?.hit_ratio));
+      // A tenant can be missing the performance_schema DATABASE rather than merely
+      // having the schema off, and then this query does not answer NULLs, it throws:
+      // measured 2026-08-20 on OceanBase Community Edition 4.4.2.1 through this
+      // provider, and reproduced on mysql:latest as
+      // `ERROR 1049 (42000): Unknown database 'performance_schema_absent'`. Uncaught,
+      // it took the whole health read down, so the panel showed nothing at all where
+      // one unavailable metric was the honest answer.
+      let cacheHitRatio = CACHE_HIT_RATIO_UNAVAILABLE;
+      try {
+        const [hitRows] = await runStatement(conn, BUFFER_CACHE_HIT_RATIO_SQL);
+        cacheHitRatio = formatCacheHitRatio(measuredNumber(hitRows[0]?.hit_ratio));
+      } catch {
+        // Nothing to read, so nothing is reported.
+      }
 
       let slowQueries: SlowQuery[] = [];
       try {
-        const [slowRows] = await conn.execute<RowDataPacket[]>(
-          HEALTH_SLOW_QUERIES_SQL,
-          asExecuteParams([this.config.database]),
-        );
+        const [slowRows] = await runStatement(conn, HEALTH_SLOW_QUERIES_SQL, [this.config.database]);
         slowQueries = slowRows.map((r) => ({
           query: r.query || "",
           calls: parseInt(r.calls || "0"),
@@ -734,10 +803,7 @@ export class MySQLProvider extends SQLBaseProvider {
         slowQueries = [{ query: "Performance schema not available", calls: 0, avgTime: "N/A" }];
       }
 
-      const [sessionRows] = await conn.execute<RowDataPacket[]>(
-        HEALTH_ACTIVE_SESSIONS_SQL,
-        asExecuteParams([this.config.database]),
-      );
+      const [sessionRows] = await runStatement(conn, HEALTH_ACTIVE_SESSIONS_SQL, [this.config.database]);
 
       const activeSessions: ActiveSession[] = sessionRows.map((r) => ({
         pid: r.pid,
@@ -808,7 +874,7 @@ export class MySQLProvider extends SQLBaseProvider {
           throw new QueryError(`Unsupported maintenance type for MySQL: ${type}`, "mysql");
         }
 
-        await conn.execute(sql);
+        await runStatement(conn, sql);
         return { success: true };
       } finally {
         conn.release();
@@ -823,7 +889,7 @@ export class MySQLProvider extends SQLBaseProvider {
   }
 
   private async getAllTablesForMaintenance(conn: PoolConnection): Promise<string> {
-    const [rows] = await conn.execute<RowDataPacket[]>(MAINTENANCE_TABLES_SQL, asExecuteParams([this.config.database]));
+    const [rows] = await runStatement(conn, MAINTENANCE_TABLES_SQL, [this.config.database]);
 
     return rows.map((r) => this.escapeIdentifier(r.TABLE_NAME)).join(", ");
   }
@@ -838,39 +904,30 @@ export class MySQLProvider extends SQLBaseProvider {
     const conn = await this.pool!.getConnection();
     try {
       // Get version
-      const [versionRows] = await conn.execute<RowDataPacket[]>("SELECT VERSION() as version");
+      const [versionRows] = await runStatement(conn, "SELECT VERSION() as version");
       const version = versionRows[0]?.version || "Unknown";
 
       // Get uptime
-      const [uptimeRows] = await conn.execute<RowDataPacket[]>("SHOW STATUS LIKE 'Uptime'");
+      const [uptimeRows] = await runStatement(conn, "SHOW STATUS LIKE 'Uptime'");
       const uptimeSeconds = parseInt(uptimeRows[0]?.Value || "0");
       const uptime = this.formatUptimeString(uptimeSeconds);
 
       // Get active connections
-      const [connRows] = await conn.execute<RowDataPacket[]>("SHOW STATUS LIKE 'Threads_connected'");
+      const [connRows] = await runStatement(conn, "SHOW STATUS LIKE 'Threads_connected'");
       const activeConnections = parseInt(connRows[0]?.Value || "0");
 
       // Get max connections
-      const [maxConnRows] = await conn.execute<RowDataPacket[]>("SHOW VARIABLES LIKE 'max_connections'");
+      const [maxConnRows] = await runStatement(conn, "SHOW VARIABLES LIKE 'max_connections'");
       const maxConnections = parseInt(maxConnRows[0]?.Value || "151");
 
       // Get database size
-      const [sizeRows] = await conn.execute<RowDataPacket[]>(
-        OVERVIEW_DATABASE_SIZE_SQL,
-        asExecuteParams([this.config.database]),
-      );
+      const [sizeRows] = await runStatement(conn, OVERVIEW_DATABASE_SIZE_SQL, [this.config.database]);
       const databaseSizeBytes = parseInt(sizeRows[0]?.size_bytes || "0");
 
       // Get table and index count
-      const [countRows] = await conn.execute<RowDataPacket[]>(
-        OVERVIEW_OBJECT_COUNTS_SQL,
-        asExecuteParams([this.config.database]),
-      );
+      const [countRows] = await runStatement(conn, OVERVIEW_OBJECT_COUNTS_SQL, [this.config.database]);
 
-      const [tableCountRows] = await conn.execute<RowDataPacket[]>(
-        OVERVIEW_TABLE_COUNT_SQL,
-        asExecuteParams([this.config.database]),
-      );
+      const [tableCountRows] = await runStatement(conn, OVERVIEW_TABLE_COUNT_SQL, [this.config.database]);
 
       return {
         version: labelServerVersion(version),
@@ -899,22 +956,22 @@ export class MySQLProvider extends SQLBaseProvider {
       // as a number the panels would rate (#424, and the rule #448/#452 settled).
 
       // Calculate cache hit ratio from InnoDB buffer pool
-      const [hitRows] = await conn.execute<RowDataPacket[]>(BUFFER_CACHE_HIT_RATIO_SQL);
+      const [hitRows] = await runStatement(conn, BUFFER_CACHE_HIT_RATIO_SQL);
       const hitRatio = measuredNumber(hitRows[0]?.hit_ratio);
 
       // Get buffer pool usage
-      const [poolRows] = await conn.execute<RowDataPacket[]>(BUFFER_POOL_PAGES_SQL);
+      const [poolRows] = await runStatement(conn, BUFFER_POOL_PAGES_SQL);
       const dataPages = measuredNumber(poolRows[0]?.data_pages);
       const totalPages = measuredNumber(poolRows[0]?.total_pages);
 
       // Get queries per second
-      const [qpsRows] = await conn.execute<RowDataPacket[]>(QUERIES_PER_SECOND_SQL);
+      const [qpsRows] = await runStatement(conn, QUERIES_PER_SECOND_SQL);
       const queries = measuredNumber(qpsRows[0]?.queries);
       const uptime = measuredNumber(qpsRows[0]?.uptime);
 
       // Get deadlocks. SHOW STATUS answers this with or without performance_schema,
       // so a 0 here is a measurement and is reported as one.
-      const [deadlockRows] = await conn.execute<RowDataPacket[]>("SHOW STATUS LIKE 'Innodb_deadlocks'");
+      const [deadlockRows] = await runStatement(conn, "SHOW STATUS LIKE 'Innodb_deadlocks'");
       const deadlocks = measuredNumber(deadlockRows[0]?.Value);
 
       return {
@@ -938,10 +995,9 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [rows] = await conn.execute<RowDataPacket[]>(
-        `${SLOW_QUERIES_BODY_SQL} LIMIT ${Number(limit)};`,
-        asExecuteParams([this.config.database]),
-      );
+      const [rows] = await runStatement(conn, `${SLOW_QUERIES_BODY_SQL} LIMIT ${Number(limit)};`, [
+        this.config.database,
+      ]);
 
       return rows.map((r) => ({
         queryId: r.query_id || undefined,
@@ -967,10 +1023,9 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [rows] = await conn.execute<RowDataPacket[]>(
-        `${ACTIVE_SESSIONS_BODY_SQL} LIMIT ${Number(limit)};`,
-        asExecuteParams([this.config.database]),
-      );
+      const [rows] = await runStatement(conn, `${ACTIVE_SESSIONS_BODY_SQL} LIMIT ${Number(limit)};`, [
+        this.config.database,
+      ]);
 
       return rows.map((r) => {
         const durationSeconds = parseInt(r.duration_seconds || "0");
@@ -996,7 +1051,7 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [rows] = await conn.execute<RowDataPacket[]>(TABLE_STATS_SQL, asExecuteParams([schema]));
+      const [rows] = await runStatement(conn, TABLE_STATS_SQL, [schema]);
 
       return rows.map((r) => {
         const tableSizeBytes = parseInt(r.table_size_bytes || "0");
@@ -1033,7 +1088,7 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [rows] = await conn.execute<RowDataPacket[]>(INDEX_STATS_SQL, asExecuteParams([schema]));
+      const [rows] = await runStatement(conn, INDEX_STATS_SQL, [schema]);
 
       // Vitess answers information_schema.STATISTICS with the physical shard database
       // (`vt_probe_0`) even though the filter above named the keyspace, so the size lookup asks
@@ -1042,7 +1097,7 @@ export class MySQLProvider extends SQLBaseProvider {
 
       const indexSizes: Record<string, number> = {};
       try {
-        const [sizeRows] = await conn.execute<RowDataPacket[]>(INDEX_SIZES_SQL, asExecuteParams([physicalSchema]));
+        const [sizeRows] = await runStatement(conn, INDEX_SIZES_SQL, [physicalSchema]);
 
         for (const row of sizeRows) {
           indexSizes[`${row.database_name}/${row.table_name}/${row.index_name}`] = parseInt(row.size_bytes || "0");
@@ -1084,7 +1139,7 @@ export class MySQLProvider extends SQLBaseProvider {
       const stats: StorageStats[] = [];
 
       // Get database size
-      const [dbRows] = await conn.execute<RowDataPacket[]>(STORAGE_STATS_SQL, asExecuteParams([this.config.database]));
+      const [dbRows] = await runStatement(conn, STORAGE_STATS_SQL, [this.config.database]);
 
       if (dbRows.length > 0) {
         const sizeBytes = parseInt(dbRows[0].size_bytes || "0");
@@ -1098,7 +1153,7 @@ export class MySQLProvider extends SQLBaseProvider {
 
       // Get binary log size if available
       try {
-        const [binlogRows] = await conn.execute<RowDataPacket[]>("SHOW BINARY LOGS");
+        const [binlogRows] = await runStatement(conn, "SHOW BINARY LOGS");
         const binlogSize = binlogRows.reduce((sum, r) => sum + parseInt(r.File_size || "0"), 0);
         if (binlogSize > 0) {
           stats.push({
@@ -1113,7 +1168,7 @@ export class MySQLProvider extends SQLBaseProvider {
 
       // Get InnoDB data file size
       try {
-        const [innodbRows] = await conn.execute<RowDataPacket[]>("SHOW VARIABLES LIKE 'innodb_data_file_path'");
+        const [innodbRows] = await runStatement(conn, "SHOW VARIABLES LIKE 'innodb_data_file_path'");
         if (innodbRows.length > 0) {
           stats.push({
             name: "InnoDB",
