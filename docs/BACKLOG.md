@@ -2579,3 +2579,26 @@ so this is a decision to take at the first real bump, not before.
 **Done when:** the first `schemaVersion` change ships with a rule for reading documents written for
 the version before it, and the release notes say what an operator has to do.
 
+
+### B64. An unfenced plan statement with no terminator still carries prose into the SQL
+
+`unfencedStatement` now makes two cuts: the blank line, then the SQL splitter. The splitter is
+what closed the demonstrated case — `SELECT 1;` followed by "This query returns one row." on the
+next line came back as one statement with the prose inside it, and `plan-statement-drafted` is
+recorded on `kind === "statement"` alone while `verifyPlanningGoal` reads that event as the run
+having ANSWERED. So a run was scored answered while its deliverable would not run.
+
+With NO terminator the splitter has nothing to cut on and returns the whole candidate, so the
+blank line is the only signal left. A model that writes `SELECT 1` without a semicolon and
+explains itself on the next line still gets its prose through, and is still scored answered.
+
+Narrower than the fixed case and not demonstrated on a real run, which is why it is pinned as it
+behaves (`tests/unit/lib/agent/plan-statement.test.ts`) rather than guessed at. The wider fix is
+not another line rule: it is gating the event on validation, which the reader's own header
+already names as the thing it deliberately does not do. That is a change to plan mode's pass
+bar — cells that pass today because a statement was drafted would have to be re-measured — so it
+belongs to whoever owns the measurement rather than to a defect fix.
+
+**Done when:** either the reader ends an unterminated statement without a blank line, or the
+verifier stops treating a drafted statement as an answer on its own — with the cells that moves
+re-measured either way.

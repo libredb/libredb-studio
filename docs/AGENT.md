@@ -2479,6 +2479,12 @@ as they are fixed, and a numeral here goes stale silently.
   only one version exists: an accepted range with one member is a knob nothing turns, and the
   tolerant operator schema removes the pressure by letting Studio add settings without moving it.
 
+- **B64** — an unfenced plan statement with NO terminator still carries prose into the SQL. The
+  splitter closed the demonstrated case (a statement, then its explanation on the next line, came
+  back as one statement with the prose in it) but has nothing to cut on without a semicolon, so
+  the blank line remains the only signal there. It matters because `plan-statement-drafted` is
+  recorded on the reader's verdict alone and the goal verifier reads that event as ANSWERED, so
+  the run is scored answered while its deliverable would not run.
 
 ## Related documentation
 
