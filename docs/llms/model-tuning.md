@@ -44,12 +44,12 @@ around those keys rather than because of them.
 
 ## The shape
 
-Three top-level keys.
+Three top-level keys, one of them optional.
 
 ```jsonc
 {
   "schemaVersion": 1,          // must match this Studio's version
-  "measuredAgainst": { … },    // what your numbers were obtained under
+  "measuredAgainst": { … },    // OPTIONAL: what your numbers were obtained under
   "models": [ … ]              // one entry per model
 }
 ```
@@ -57,6 +57,12 @@ Three top-level keys.
 **`measuredAgainst`** records the environment the measurement was taken in: `turnTimeoutMs`, a
 `protocol` sentence in your own words, and the `defaults` your Studio was running. State the
 defaults you know about; ones you omit are simply not compared against.
+
+It is **optional**, and Studio does not read it — the settings in force come from the entries, and
+Studio's own recorded basis is the one it compares against. Write it anyway if the document is
+going to outlive the conversation you wrote it in: a number with no record of what it was measured
+under cannot be compared with anyone else's, which is the whole argument of
+[`methodology.md`](methodology.md).
 
 **Each entry in `models`** needs an `id` and a `measured` sentence, and states the settings it
 measured — only those. `rationale` is prose arguing for a setting, under that setting's own name;

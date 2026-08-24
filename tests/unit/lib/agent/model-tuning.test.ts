@@ -103,7 +103,10 @@ describe("the document Studio ships with", () => {
       models were re-measured — not an agent that refuses to start, and not ten entries silently
       reclassified as undocumented overrides.
     */
-    expect(parseTuning(bundled, "test").measuredAgainst.defaults).toEqual({
+    // `?.` because an OPERATOR document may record no basis; Studio's own always does, and the
+    // strict schema is what guarantees it — so an undefined here would fail this assertion loudly
+    // rather than pass as "nothing to compare".
+    expect(parseTuning(bundled, "test").measuredAgainst?.defaults).toEqual({
       sampling: DEFAULT_SAMPLING,
       unreportedCallCeiling: DEFAULT_UNREPORTED_CALL_CEILING,
       reportReminderLimit: DEFAULT_REPORT_REMINDER_LIMIT,
@@ -306,6 +309,31 @@ describe("what a document from outside Studio is held to instead", () => {
     expect(() => parseTuning(document(strayDefault), "test")).toThrow(ModelTuningError);
     const strayRationale = { models: [{ ...ENTRY, rationale: { notASetting: ["because"] } }] };
     expect(() => parseTuning(document(strayRationale), "test")).toThrow(ModelTuningError);
+  });
+
+  test("need not record a basis at all, because Studio never reads the operator's", () => {
+    /*
+      `activeTuning` keeps the BUNDLED `measuredAgainst` and drops this one, so requiring it made
+      an operator write a block nothing reads — and, worse, write it CORRECTLY: `turnTimeoutMs`
+      had to be a positive integer and `protocol` a non-empty string, so a blank protocol refused
+      the whole document and put every model in it back on the defaults. A refusal path with
+      nothing behind it.
+
+      Studio's own document still records its basis, and still must: that is what
+      `undocumentedOverrides` is compared against and what keeps ten measurements meaningful after
+      a compiled default moves. The asymmetry is the point — the discipline belongs to the document
+      this repository writes.
+    */
+    const withoutBasis = {
+      schemaVersion: TUNING_SCHEMA_VERSION,
+      models: [{ id: "some-model:9b", measured: "m", settings: { retryEmptyTurn: true } }],
+    };
+    const tuning = parseOperatorTuning(withoutBasis, "test");
+    expect(tuning.models["some-model:9b"]?.retryEmptyTurn).toBe(true);
+    expect(tuning.measuredAgainst).toBeUndefined();
+    expect(tuning.undocumentedOverrides).toEqual([]);
+    // And Studio's own document is still held to it.
+    expect(() => parseTuning(withoutBasis, "test")).toThrow(ModelTuningError);
   });
 
   test("the bounds still hold, so a tolerant schema is not an unchecked one", () => {

@@ -2565,20 +2565,6 @@ carry `measured` and `rationale` alone. What should not persist is a third copy 
 
 **Done when:** the narrative has one home, and the document carries what something reads.
 
-### B61. An operator's `measuredAgainst` is required, then discarded
-
-The document records the defaults and the turn limit its numbers were obtained under, and the
-bundled one is held to them by a test. `activeTuning` keeps `base.measuredAgainst` and drops the
-operator's, so an operator must write a block that is then ignored.
-
-The block is not decoration. Someone who measured their model at a 150 000 ms turn limit, mounted
-their entry, and runs Studio at 90 000 has settings resolving in an environment they were not
-measured in — which is precisely the mistake the recorded defaults exist to catch, going uncaught for
-the one document nobody here reviewed.
-
-**Done when:** an operator document whose recorded basis disagrees with what this build runs says so
-through `operatorTuningStatus()`, or the field is not asked for.
-
 ### B62. `schemaVersion` has no migration path, and the first bump breaks every mounted document
 
 `z.literal(TUNING_SCHEMA_VERSION)` on both schemas. An older Studio refusing a newer document is

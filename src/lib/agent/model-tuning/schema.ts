@@ -209,7 +209,19 @@ const operatorMeasuredAgainstSchema = z.looseObject({
 
 const operatorDocumentSchema = z.strictObject({
   schemaVersion: z.literal(TUNING_SCHEMA_VERSION),
-  measuredAgainst: operatorMeasuredAgainstSchema,
+  /*
+    OPTIONAL here and required on Studio's own document, and the asymmetry is the whole point.
+
+    `activeTuning` keeps the bundled basis and drops this one, so requiring it made an operator
+    write a block nothing reads — and write it correctly, since a blank `protocol` or a missing
+    `turnTimeoutMs` refused the document whole and put every model in it back on the defaults. A
+    refusal path with nothing behind it is worse than an absent field.
+
+    Studio's own document still records its basis and still must: that is what
+    `undocumentedOverrides` is measured against, and what keeps ten measurements meaningful after
+    a compiled default moves. The discipline belongs to the document this repository writes.
+  */
+  measuredAgainst: operatorMeasuredAgainstSchema.optional(),
   models: z.array(operatorModelSchema),
 });
 
@@ -226,8 +238,13 @@ export class ModelTuningError extends Error {
 export interface ModelTuning {
   /** Every model, keyed by LOWER-CASED id: the same weights answer to more than one spelling. */
   readonly models: Readonly<Record<string, AgentModelProfile>>;
-  /** The basis the document was written against, for the test that keeps it honest. */
-  readonly measuredAgainst: RecordedBasis;
+  /**
+   * The basis the document was written against, for the test that keeps it honest.
+   *
+   * Absent for an operator document that did not record one — which it need not, since nothing
+   * reads it. Always present on Studio's own, where the schema requires it.
+   */
+  readonly measuredAgainst: RecordedBasis | undefined;
   /**
    * `"<model id>: <setting>"` for every value that differs from the recorded defaults and argues
    * for itself nowhere. Empty for the document this repository ships, and a test says so.
@@ -315,7 +332,7 @@ function differsFromDefaults(settings: StatedSettings, defaults: Partial<Recorde
 
 /** The shape both schemas produce, once their differing strictness has done its work. */
 interface ReadDocument {
-  readonly measuredAgainst: RecordedBasis;
+  readonly measuredAgainst: RecordedBasis | undefined;
   readonly models: readonly {
     readonly id: string;
     readonly measured: string;
@@ -340,7 +357,8 @@ function assemble(doc: ReadDocument, origin: string): ModelTuning {
     const settings = entry.settings as StatedSettings;
     models[key] = profileFor(entry.measured, settings);
     unjustified.push(
-      ...differsFromDefaults(settings, doc.measuredAgainst.defaults)
+      // No recorded basis means nothing to compare against, so nothing is called an override.
+      ...differsFromDefaults(settings, doc.measuredAgainst?.defaults ?? {})
         .filter((name) => entry.rationale[name] === undefined)
         .map((name) => `${entry.id}: ${name}`),
     );
