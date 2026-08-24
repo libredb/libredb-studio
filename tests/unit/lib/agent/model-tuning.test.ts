@@ -467,6 +467,18 @@ describe("a document an operator supplies", () => {
     expect(operatorTuningStatus().state).toBe("unset");
   });
 
+  test("is ignored when the file is empty, which a ConfigMap key with no value renders", () => {
+    // Not a hypothetical shape: `agent.modelTuning.document` left at `{}` in a values file, or a
+    // key an operator created and has not filled in yet, both arrive as zero bytes. `JSON.parse`
+    // refuses it and the reason says so, rather than the empty document resolving to "no models"
+    // and silently replacing nothing while reporting success.
+    process.env[ENV] = writeDocument("");
+    resetTuning();
+    const status = operatorTuningStatus();
+    expect(status.state).toBe("ignored");
+    expect(ceilingFor("gemma4:26b")).toBe(10);
+  });
+
   test("is ignored when it breaks the contract, not partially applied", () => {
     process.env[ENV] = writeDocument(document({ schemaVersion: 99 }));
     resetTuning();

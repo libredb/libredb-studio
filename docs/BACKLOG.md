@@ -2593,15 +2593,3 @@ so this is a decision to take at the first real bump, not before.
 **Done when:** the first `schemaVersion` change ships with a rule for reading documents written for
 the version before it, and the release notes say what an operator has to do.
 
-### B63. The tag-tolerance test asserts case folding, so the defect it names is unguarded
-
-`tests/unit/lib/agent/model-profiles.test.ts` has `a tag suffix does not hide a profile`, whose
-comment says Ollama names carry a tag and settings must not stop applying the day one changes. The
-assertion compares `qwen3:8b` with `QWEN3:8B` — case, not tag — and the register does NOT strip tags:
-`qwen3.8:latest` resolves and a bare `qwen3.8` does not. The pinned resolution table records that as
-a real defect; this test's name says the opposite, so the eventual fix will look already covered.
-
-Inherited rather than introduced by the tuning work: the name dates to `0b68d494`.
-
-**Done when:** the test name describes the case-folding it checks, and tag matching is either
-implemented with its own test or named as unimplemented in the same place.

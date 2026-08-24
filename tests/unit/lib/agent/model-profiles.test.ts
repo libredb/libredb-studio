@@ -63,11 +63,26 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(samplingFor("qwen3:8b", "investigation")).toEqual({ temperature: 0, topP: 1 });
   });
 
-  test("a tag suffix does not hide a profile", () => {
-    // Ollama names carry a tag and the same weights answer to more than one of them
-    // (`qwen3.8` and `qwen3.8:latest`). A profile keyed on the exact string would silently
-    // stop applying the day a tag changed.
+  test("a model id is matched case-insensitively, and its TAG is not stripped", () => {
+    /*
+      Two facts, and the second is the one the old name got wrong. This used to be called "a tag
+      suffix does not hide a profile" and its comment described tag tolerance, while the assertion
+      compared two CASINGS of the same tagged id. The register lower-cases and does nothing else,
+      so a name promising tag handling covered none of it and made the eventual fix look shipped.
+
+      The second assertion pins the gap rather than papering over it: a bare `qwen3.8` does not
+      find `qwen3.8:latest`, so somebody running an untagged pull is driven with the defaults. It
+      is recorded here, in the place a reader looks, instead of only in the register's docblock —
+      and it is a pin rather than a wish, so implementing tag matching turns this red and asks for
+      the measurement that should come with it.
+    */
     expect(samplingFor("qwen3:8b", "query-optimization")).toEqual(samplingFor("QWEN3:8B", "query-optimization"));
+    // Asserted on the REGISTER rather than on a resolved value: the first version of this line
+    // compared two `samplingFor` answers, which are equal for this model because its entry states
+    // no per-surface sampling — a pass that says nothing about tags. Presence in the register is
+    // the fact.
+    expect(modelProfiles()["qwen3.8:latest"]).toBeDefined();
+    expect(modelProfiles()["qwen3.8"]).toBeUndefined();
   });
 
   test("the unreported-call ceiling moves only where a ledger showed it firing", () => {

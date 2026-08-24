@@ -2481,10 +2481,7 @@ as they are fixed, and a numeral here goes stale silently.
   document in the field and reverts every model in it to the defaults. Deliberately not fixed while
   only one version exists: an accepted range with one member is a knob nothing turns, and the
   tolerant operator schema removes the pressure by letting Studio add settings without moving it.
-- **B63** — `a tag suffix does not hide a profile` in `model-profiles.test.ts` asserts case folding,
-  not tag handling, while the register really does not strip tags (`qwen3.8:latest` resolves, a bare
-  `qwen3.8` does not). The pinned resolution table records the defect; that test's name says it is
-  already covered. Inherited from `0b68d494` rather than introduced by the tuning work.
+
 
 ## Related documentation
 
