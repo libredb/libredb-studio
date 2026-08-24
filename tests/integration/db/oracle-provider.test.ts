@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import type oracledb from "oracledb";
 import { ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
@@ -47,11 +48,19 @@ const createMockPool = () => ({
 // the product as an unserialisable stream. The numbers are the identities that
 // matter here, not oracledb's own values: the provider only ever compares a
 // column's `dbType` against these same references.
-const DB_TYPE_CLOB = { num: 112, name: "DB_TYPE_CLOB" };
-const DB_TYPE_NCLOB = { num: 1112, name: "DB_TYPE_NCLOB" };
-const DB_TYPE_BLOB = { num: 113, name: "DB_TYPE_BLOB" };
-const DB_TYPE_VARCHAR = { num: 1, name: "DB_TYPE_VARCHAR" };
-const DB_TYPE_RAW = { num: 23, name: "DB_TYPE_RAW" };
+//
+// They are typed as the driver's own `DbType` (src/types/db-drivers.d.ts): oracledb
+// 6.10.0 ships no declarations at all - no `types` field, no `.d.ts` anywhere in the
+// package - so that hand-written declaration is what the provider is checked against,
+// and typing the mock against the same names is what keeps the two from drifting.
+const DB_TYPE_CLOB: oracledb.DbType = { num: 112, name: "DB_TYPE_CLOB" };
+const DB_TYPE_NCLOB: oracledb.DbType = { num: 1112, name: "DB_TYPE_NCLOB" };
+const DB_TYPE_BLOB: oracledb.DbType = { num: 113, name: "DB_TYPE_BLOB" };
+const DB_TYPE_VARCHAR: oracledb.DbType = { num: 1, name: "DB_TYPE_VARCHAR" };
+const DB_TYPE_RAW: oracledb.DbType = { num: 23, name: "DB_TYPE_RAW" };
+// The two INTERVAL identities, as the driver numbers them (measured: 2016 and 2015).
+const DB_TYPE_INTERVAL_YM: oracledb.DbType = { num: 2016, name: "DB_TYPE_INTERVAL_YM" };
+const DB_TYPE_INTERVAL_DS: oracledb.DbType = { num: 2015, name: "DB_TYPE_INTERVAL_DS" };
 const STRING = 2001;
 const BUFFER = 2005;
 
@@ -63,6 +72,8 @@ mock.module("oracledb", () => {
     DB_TYPE_BLOB,
     DB_TYPE_VARCHAR,
     DB_TYPE_RAW,
+    DB_TYPE_INTERVAL_YM,
+    DB_TYPE_INTERVAL_DS,
     STRING,
     BUFFER,
     initOracleClient: mockInitOracleClientFn,
@@ -802,6 +813,130 @@ describe("OracleProvider", () => {
         const result = await provider.query("SELECT c, b FROM r6_lob WHERE id = 2");
         expect((result.rows[0] as Record<string, unknown>).C).toBeNull();
         expect(asBytes((result.rows[0] as Record<string, unknown>).B)).toBeUndefined();
+      });
+    });
+
+    // INTERVAL columns. oracledb answers them with its own `IntervalYM` /
+    // `IntervalDS` objects, which no surface here reconstructs and which Oracle
+    // refuses back. Measured 2026-08-24 against Oracle Free 23ai (oracledb 6.10.0,
+    // Thin) over `d19_probe`: `INTERVAL '3-7' YEAR TO MONTH` arrived as
+    // `{"months":7,"years":3}` and `INTERVAL '5 6:7:8.9' DAY TO SECOND` as
+    // `{"fseconds":900000000,"seconds":8,"minutes":7,"hours":6,"days":5}`. The
+    // literals below were all replayed into a live table and read back identical
+    // (docs/providers/oracle.md 5.5).
+    describe("INTERVAL columns", () => {
+      const ymMeta = [
+        { name: "IYM", dbType: DB_TYPE_INTERVAL_YM, dbTypeName: "INTERVAL YEAR TO MONTH" },
+        { name: "K", dbType: DB_TYPE_VARCHAR, dbTypeName: "VARCHAR2" },
+      ];
+      const dsMeta = [{ name: "IDS", dbType: DB_TYPE_INTERVAL_DS, dbTypeName: "INTERVAL DAY TO SECOND" }];
+
+      async function ym(value: unknown): Promise<unknown> {
+        mockExecuteFn = async () => ({ rows: [{ IYM: value, K: "keep" }], metaData: ymMeta });
+        const result = await provider.query("SELECT iym, k FROM d19_probe");
+        return (result.rows[0] as Record<string, unknown>).IYM;
+      }
+
+      async function ds(value: unknown): Promise<unknown> {
+        mockExecuteFn = async () => ({ rows: [{ IDS: value }], metaData: dsMeta });
+        const result = await provider.query("SELECT ids FROM d19_probe");
+        return (result.rows[0] as Record<string, unknown>).IDS;
+      }
+
+      beforeEach(async () => {
+        await provider.connect();
+      });
+
+      test("an INTERVAL YEAR TO MONTH reads as the literal Oracle takes back", async () => {
+        expect(await ym({ years: 3, months: 7 })).toBe("+03-07");
+      });
+
+      // Both fields carry the sign - measured, `INTERVAL '-3-7' YEAR TO MONTH`
+      // arrives as `{"months":-7,"years":-3}`.
+      test("a negative INTERVAL YEAR TO MONTH keeps one leading sign", async () => {
+        expect(await ym({ years: -3, months: -7 })).toBe("-03-07");
+      });
+
+      test("a zero INTERVAL YEAR TO MONTH is spelled, not dropped", async () => {
+        expect(await ym({ years: 0, months: 0 })).toBe("+00-00");
+      });
+
+      // Years past the two-digit default are not truncated: `INTERVAL '123456789-11'
+      // YEAR(9) TO MONTH` arrived as `{"months":11,"years":123456789}` and Oracle
+      // took `+123456789-11` back into the same column.
+      test("a nine-digit year count keeps all its digits", async () => {
+        expect(await ym({ years: 123456789, months: 11 })).toBe("+123456789-11");
+      });
+
+      test("an INTERVAL DAY TO SECOND reads as the literal Oracle takes back", async () => {
+        expect(await ds({ days: 5, hours: 6, minutes: 7, seconds: 8, fseconds: 900000000 })).toBe("+05 06:07:08.9");
+      });
+
+      test("a negative INTERVAL DAY TO SECOND keeps one leading sign", async () => {
+        expect(await ds({ days: -5, hours: -6, minutes: -7, seconds: -8, fseconds: -900000000 })).toBe(
+          "-05 06:07:08.9",
+        );
+      });
+
+      // A whole-second interval gets no fractional part at all: `INTERVAL '9 8:7:6'
+      // DAY TO SECOND` arrived with `fseconds: 0`, and `+09 08:07:06` replays.
+      test("a whole-second interval carries no fraction", async () => {
+        expect(await ds({ days: 9, hours: 8, minutes: 7, seconds: 6, fseconds: 0 })).toBe("+09 08:07:06");
+      });
+
+      // `fseconds` is NANOseconds: the full nine digits are kept, which is what a
+      // SECOND(9) column can hold and what a `Date` never could.
+      test("nanosecond precision survives", async () => {
+        expect(await ds({ days: 123456789, hours: 23, minutes: 59, seconds: 59, fseconds: 123456789 })).toBe(
+          "+123456789 23:59:59.123456789",
+        );
+      });
+
+      test("a NULL interval stays null", async () => {
+        expect(await ym(null)).toBeNull();
+        expect(await ds(null)).toBeNull();
+      });
+
+      // The declared type still names the Oracle type, so the SQL export writes
+      // `INTERVAL YEAR TO MONTH` in its CREATE TABLE and the literal in its INSERT.
+      test("the declared column type is unchanged", async () => {
+        mockExecuteFn = async () => ({ rows: [{ IYM: { years: 3, months: 7 }, K: "keep" }], metaData: ymMeta });
+        const result = await provider.query("SELECT iym, k FROM d19_probe");
+        expect(result.columnTypes).toEqual({ IYM: "INTERVAL YEAR TO MONTH", K: "VARCHAR2" });
+        expect((result.rows[0] as Record<string, unknown>).K).toBe("keep");
+      });
+
+      test("the literal survives the HTTP boundary as itself", async () => {
+        mockExecuteFn = async () => ({ rows: [{ IYM: { years: 3, months: 7 }, K: "keep" }], metaData: ymMeta });
+        const result = await provider.query("SELECT iym, k FROM d19_probe");
+        const overWire = JSON.parse(JSON.stringify(result.rows)) as Record<string, unknown>[];
+        expect(overWire[0].IYM).toBe("+03-07");
+      });
+
+      test("queryInTransaction() normalises the same way", async () => {
+        await provider.beginTransaction();
+        mockExecuteFn = async () => ({
+          rows: [{ IDS: { days: 1, hours: 2, minutes: 3, seconds: 4, fseconds: 0 } }],
+          metaData: dsMeta,
+        });
+        const result = await provider.queryInTransaction("SELECT ids FROM d19_probe");
+        expect((result.rows[0] as Record<string, unknown>).IDS).toBe("+01 02:03:04");
+        await provider.rollbackTransaction();
+      });
+
+      // A result with no interval column is handed on as the driver built it - the
+      // same array, not a copy - so the common query pays nothing for this.
+      test("a result with no interval column is not rewritten", async () => {
+        const rows = [{ ID: 1, NAME: "a" }];
+        mockExecuteFn = async () => ({
+          rows,
+          metaData: [
+            { name: "ID", dbTypeName: "NUMBER" },
+            { name: "NAME", dbTypeName: "VARCHAR2" },
+          ],
+        });
+        const result = await provider.query("SELECT id, name FROM r5_types");
+        expect(result.rows).toBe(rows);
       });
     });
   });

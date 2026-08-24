@@ -5,7 +5,7 @@
 
 import oracledb from "oracledb";
 import { SQLBaseProvider } from "./sql-base";
-import { oracleColumnTypes, type OracleColumnMetadata } from "./column-types";
+import { oracleColumnTypes } from "./column-types";
 import {
   type DatabaseConnection,
   type TableSchema,
@@ -171,17 +171,6 @@ const STORAGE_USER_SEGMENTS_SQL = `SELECT TABLESPACE_NAME AS NAME,
 // ============================================================================
 
 /**
- * The metadata oracledb hands a fetch type handler, and what one may answer.
- *
- * Written out here because the repo declares the whole `oracledb` module as `any`
- * (src/types/db-drivers.d.ts) - the driver ships no typings - so nothing in this
- * file is checked against the driver's real surface. Naming the two shapes locally
- * at least makes the handler itself checked.
- */
-type OracleFetchMetaData = { readonly dbType: unknown; readonly name: string };
-type OracleFetchType = { readonly type: unknown } | undefined;
-
-/**
  * Fetch a LOB as its value instead of as a stream.
  *
  * By default oracledb answers a CLOB, an NCLOB and a BLOB with a `Lob` object -
@@ -219,7 +208,7 @@ type OracleFetchType = { readonly type: unknown } | undefined;
  * `RangeError: Invalid string length`, which reaches the user as a failed query
  * rather than as a value that has quietly lost its tail.
  */
-const lobFetchTypeHandler = (metaData: OracleFetchMetaData): OracleFetchType => {
+const lobFetchTypeHandler: oracledb.FetchTypeHandler = (metaData) => {
   if (metaData.dbType === oracledb.DB_TYPE_CLOB || metaData.dbType === oracledb.DB_TYPE_NCLOB) {
     return { type: oracledb.STRING };
   }
@@ -230,6 +219,93 @@ const lobFetchTypeHandler = (metaData: OracleFetchMetaData): OracleFetchType => 
   // Buffer and VARCHAR2 as a string, and restating them here would put this
   // module in charge of types it has no reason to touch.
   return undefined;
+};
+
+/** Two digits minimum, which is the width Oracle's own default precision prints. */
+const pad2 = (value: number): string => String(Math.abs(value)).padStart(2, "0");
+
+/** One leading sign for the whole interval: every field of a negative one is negative. */
+const intervalSign = (fields: readonly number[]): string => (fields.some((field) => field < 0) ? "-" : "+");
+
+/**
+ * `INTERVAL YEAR TO MONTH` as the literal Oracle accepts back: `+03-07`.
+ *
+ * Years are NOT capped at two digits - `INTERVAL '123456789-11' YEAR(9) TO MONTH`
+ * round-trips as `+123456789-11` - so the padding is a minimum, not a width.
+ */
+const formatIntervalYM = (value: oracledb.IntervalYM): string =>
+  `${intervalSign([value.years, value.months])}${pad2(value.years)}-${pad2(value.months)}`;
+
+/**
+ * `INTERVAL DAY TO SECOND` as the literal Oracle accepts back: `+05 06:07:08.9`.
+ *
+ * `fseconds` is NANOseconds, so the fraction is nine digits with the trailing zeros
+ * trimmed - lossless for a `SECOND(9)` column, and no fraction at all for a
+ * whole-second interval (`+09 08:07:06`).
+ */
+const formatIntervalDS = (value: oracledb.IntervalDS): string => {
+  const sign = intervalSign([value.days, value.hours, value.minutes, value.seconds, value.fseconds]);
+  const fraction = String(Math.abs(value.fseconds)).padStart(9, "0").replace(/0+$/, "");
+  const clock = `${pad2(value.hours)}:${pad2(value.minutes)}:${pad2(value.seconds)}`;
+  return `${sign}${pad2(value.days)} ${clock}${fraction === "" ? "" : `.${fraction}`}`;
+};
+
+/** How one column's interval values are spelled, paired with the column's name. */
+type IntervalColumn = readonly [name: string, format: (value: unknown) => string];
+
+/**
+ * Oracle's two interval types, normalised to their own literals at the driver
+ * boundary - the decision `docs/providers/cassandra.md` 3.8 already took for a CQL
+ * `duration`, for the same reason and with the same shape.
+ *
+ * Measured 2026-08-24 against Oracle Free 23ai (oracledb 6.10.0, Thin): the driver
+ * answers `INTERVAL '3-7' YEAR TO MONTH` with `{"months":7,"years":3}` and
+ * `INTERVAL '5 6:7:8.9' DAY TO SECOND` with
+ * `{"fseconds":900000000,"seconds":8,"minutes":7,"hours":6,"days":5}`. Both are
+ * lossless and both are unreadable: nothing in the product reconstructs either
+ * object, the grid shows a JSON blob where a duration belongs, and the SQL export
+ * writes that blob into an INTERVAL column - which Oracle refuses
+ * (`ORA-01867: the interval is invalid`), so the row is lost rather than wrong.
+ *
+ * A fetch type handler cannot do this instead: asking the driver for either type as a
+ * string is refused outright - `NJS-119: conversion from type DB_TYPE_INTERVAL_YM to
+ * type DB_TYPE_VARCHAR is not supported`, and `oracledb.fetchAsString` answers
+ * `NJS-021: invalid type for conversion specified` for both. The literal has to be
+ * composed here.
+ *
+ * Driven by `metaData[].dbType` rather than by the value's class: the columns are
+ * known once per result, so a query with no interval column does no per-cell work at
+ * all and keeps the driver's own rows array.
+ */
+const intervalColumns = (metaData: readonly oracledb.Metadata[] | undefined): IntervalColumn[] => {
+  const columns: IntervalColumn[] = [];
+  for (const column of metaData ?? []) {
+    if (column.dbType === oracledb.DB_TYPE_INTERVAL_YM) {
+      columns.push([column.name, (value) => formatIntervalYM(value as oracledb.IntervalYM)]);
+    }
+    if (column.dbType === oracledb.DB_TYPE_INTERVAL_DS) {
+      columns.push([column.name, (value) => formatIntervalDS(value as oracledb.IntervalDS)]);
+    }
+  }
+  return columns;
+};
+
+const normalizeIntervals = (
+  rows: Record<string, unknown>[],
+  metaData: readonly oracledb.Metadata[] | undefined,
+): Record<string, unknown>[] => {
+  const columns = intervalColumns(metaData);
+  if (columns.length === 0) return rows;
+
+  return rows.map((row) => {
+    const normalized = { ...row };
+    for (const [name, format] of columns) {
+      const value = normalized[name];
+      // A NULL interval stays null: the column is absent from the row, not zero.
+      if (value !== null && value !== undefined) normalized[name] = format(value);
+    }
+    return normalized;
+  });
 };
 
 // ============================================================================
@@ -460,10 +536,7 @@ export class OracleProvider extends SQLBaseProvider {
    * with an empty grid and the engine's own count, and states no column types because
    * there is no metadata to state them from.
    */
-  private buildQueryResult(
-    result: { rows?: unknown[]; rowsAffected?: number; metaData?: readonly OracleColumnMetadata[] },
-    executionTime: number,
-  ): QueryResult {
+  private buildQueryResult(result: oracledb.Result, executionTime: number): QueryResult {
     if (!result.rows) {
       return {
         rows: [],
@@ -473,11 +546,11 @@ export class OracleProvider extends SQLBaseProvider {
       };
     }
 
-    const rows = result.rows as Record<string, unknown>[];
+    const rows = normalizeIntervals(result.rows as Record<string, unknown>[], result.metaData);
 
     return {
       rows,
-      fields: result.metaData?.map((m: { name: string }) => m.name) ?? [],
+      fields: result.metaData?.map((m) => m.name) ?? [],
       rowCount: rows.length,
       executionTime,
       ...oracleColumnTypes(result.metaData),

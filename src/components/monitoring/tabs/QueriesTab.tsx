@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import type { MonitoringData, ProviderLabels } from "@/lib/db/types";
+import { PanelUnavailable } from "../PanelUnavailable";
 
 interface QueriesTabProps {
   data: MonitoringData | null;
@@ -32,6 +33,15 @@ export function QueriesTab({ data, loading, labels }: QueriesTabProps) {
   }
 
   const slowQueries = data?.slowQueries ?? [];
+
+  // A panel whose read failed is absent from the payload with its own message under
+  // `errors`, and that is a different fact from an empty answer: rendering it as data
+  // would claim a measurement the engine refused to make. The whole-dashboard error state
+  // is not right either - the other panels answered - so this panel alone carries the
+  // engine's own sentence. See MonitoringData in src/lib/db/types.ts.
+  // The badge below promises a PostgreSQL extension for an empty list; a refused read is
+  // not an empty list, so the failure sentence replaces the table and suppresses the badge.
+  const slowQueriesUnavailable = data?.slowQueries === undefined ? data?.errors?.slowQueries : undefined;
 
   const sortedQueries = [...slowQueries].sort((a, b) => {
     const aVal = a[sortField] ?? 0;
@@ -130,7 +140,7 @@ export function QueriesTab({ data, loading, labels }: QueriesTabProps) {
                 category, so an engine with its own answer would need a second label to
                 fill it; it is dropped there instead, and the sentence carries the
                 answer. Absent label = today's wording, so `postgres` is unchanged. */}
-            {slowQueries.length === 0 && !labels?.slowQueriesEmptyState && (
+            {slowQueries.length === 0 && !slowQueriesUnavailable && !labels?.slowQueriesEmptyState && (
               <Badge variant="secondary" className="ml-2 text-xs sm:text-xs">
                 pg_stat_statements required
               </Badge>
@@ -138,7 +148,9 @@ export function QueriesTab({ data, loading, labels }: QueriesTabProps) {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0 sm:p-4 sm:pt-0">
-          {slowQueries.length === 0 ? (
+          {slowQueriesUnavailable ? (
+            <PanelUnavailable message={slowQueriesUnavailable} />
+          ) : slowQueries.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Search strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
               <p className="text-xs">No query statistics available.</p>

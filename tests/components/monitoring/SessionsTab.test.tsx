@@ -178,3 +178,85 @@ describe("SessionsTab", () => {
     expect(queryAllByText("-").length).toBeGreaterThan(0);
   });
 });
+
+// One failing read costs its own panel, and the engine's own sentence reaches the user (2026-08-24).
+describe("a refused activeSessions read", () => {
+  // Scoped here as well as in the block above: bun:test registers a hook on the
+  // enclosing describe only, so without this the first render in this block leaks into
+  // the second and the control arm queries the previous test's DOM.
+  afterEach(() => {
+    cleanup();
+  });
+
+  const STARROCKS = "Unknown table 'information_schema.PROCESSLIST'.";
+
+  function refused(): MonitoringData {
+    const rest: MonitoringData = makeData();
+    delete rest.activeSessions;
+    return { ...rest, errors: { activeSessions: STARROCKS } };
+  }
+
+  test("shows the engine's own sentence instead of the empty-state copy", () => {
+    const { getByTestId, queryByText } = render(
+      <SessionsTab data={refused()} loading={false} onKillSession={mock(async () => true)} />,
+    );
+
+    expect(getByTestId("panel-unavailable-message").textContent).toBe(STARROCKS);
+    expect(queryByText("No active sessions found.")).toBeNull();
+  });
+
+  test("an engine that answers no sessions still gets the empty state, not a failure", () => {
+    const data = { ...makeData(), activeSessions: [] };
+    const { queryByTestId, queryByText } = render(
+      <SessionsTab data={data} loading={false} onKillSession={mock(async () => true)} />,
+    );
+
+    expect(queryByTestId("panel-unavailable")).toBeNull();
+    expect(queryByText("No active sessions found.")).not.toBeNull();
+  });
+});
+
+// Found in the browser on 2026-08-24 against StarRocks 3.3: the panel carried the
+// engine's sentence while the four summary cards above it still read 0, and the card
+// title still said "Sessions (0)". A refused read is not four zeros.
+describe("the session summary never counts a refused read as zero", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const REFUSAL = "Getting analyzing error. Detail message: Unknown table 'information_schema.PROCESSLIST'.";
+
+  function refusedData(): MonitoringData {
+    const rest: MonitoringData = makeData();
+    delete rest.activeSessions;
+    return { ...rest, errors: { activeSessions: REFUSAL } } as MonitoringData;
+  }
+
+  test("the four summary cards read N/A", () => {
+    const { getByTestId } = render(
+      <SessionsTab data={refusedData()} loading={false} onKillSession={async () => true} />,
+    );
+
+    expect(getByTestId("session-stat-active").textContent).toBe("N/A");
+    expect(getByTestId("session-stat-idle").textContent).toBe("N/A");
+    expect(getByTestId("session-stat-in-tx").textContent).toBe("N/A");
+    expect(getByTestId("session-stat-wait").textContent).toBe("N/A");
+  });
+
+  test("the card title names no count it does not have", () => {
+    const { getByText } = render(<SessionsTab data={refusedData()} loading={false} onKillSession={async () => true} />);
+
+    expect(getByText("Sessions")).not.toBeNull();
+  });
+
+  test("an answered empty list still reads 0, because no sessions is a measurement", () => {
+    const data = { ...makeData(), activeSessions: [] } as MonitoringData;
+    const { getByTestId, getByText } = render(
+      <SessionsTab data={data} loading={false} onKillSession={async () => true} />,
+    );
+
+    expect(getByTestId("session-stat-active").textContent).toBe("0");
+    expect(getByTestId("session-stat-wait").textContent).toBe("0");
+    expect(getByText("Sessions (0)")).not.toBeNull();
+  });
+});

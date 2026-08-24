@@ -598,7 +598,7 @@ describe("useMonitoringData", () => {
       expect(result.current.data).not.toBeNull();
     });
 
-    expect(result.current.data!.overview.startTime).toBeInstanceOf(Date);
+    expect(result.current.data!.overview!.startTime).toBeInstanceOf(Date);
   });
 
   // ── Response without overview.startTime (no crash) ─────────────────────

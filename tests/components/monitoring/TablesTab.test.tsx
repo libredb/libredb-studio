@@ -388,3 +388,37 @@ describe("TablesTab", () => {
     expect(queryByText("Never")).not.toBeNull();
   });
 });
+
+// A refused getTableStats read costs the table list only (2026-08-24).
+describe("a refused tables read", () => {
+  // Scoped here as well as in the block above: bun:test registers a hook on the
+  // enclosing describe only, so without this the first render in this block leaks into
+  // the second and the control arm queries the previous test's DOM.
+  afterEach(() => {
+    cleanup();
+  });
+
+  const REFUSAL = "Getting analyzing error. Detail message: Unknown table 'information_schema.TABLES'.";
+
+  test('shows the engine\'s own sentence instead of "No tables found."', () => {
+    const rest: MonitoringData = makeData();
+    delete rest.tables;
+    const data = { ...rest, errors: { tables: REFUSAL } } as MonitoringData;
+    const { getByTestId, queryByText } = render(
+      <TablesTab data={data} loading={false} onRunMaintenance={mock(async () => true)} />,
+    );
+
+    expect(getByTestId("panel-unavailable-message").textContent).toBe(REFUSAL);
+    expect(queryByText("No tables found.")).toBeNull();
+  });
+
+  test("an answered empty table list keeps the empty state", () => {
+    const data = { ...makeData(), tables: [] } as MonitoringData;
+    const { queryByTestId, queryByText } = render(
+      <TablesTab data={data} loading={false} onRunMaintenance={mock(async () => true)} />,
+    );
+
+    expect(queryByTestId("panel-unavailable")).toBeNull();
+    expect(queryByText("No table statistics available.")).not.toBeNull();
+  });
+});

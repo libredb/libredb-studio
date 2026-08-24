@@ -746,13 +746,36 @@ export interface StorageStats {
  */
 export interface MonitoringData {
   timestamp: Date;
-  overview: DatabaseOverview;
-  performance: PerformanceMetrics;
-  slowQueries: SlowQueryStats[];
-  activeSessions: ActiveSessionDetails[];
+  /**
+   * Every panel is optional, and ABSENCE is not ZERO here - the same distinction the
+   * `activeConnections` comment above draws for a single field, applied to a whole panel.
+   * `getMonitoringData` reads the seven panels independently, so one read failing costs
+   * only its own panel: the field it would have filled is left absent and its own message
+   * is recorded under `errors`. An absent panel means "this engine could not answer",
+   * which is a different fact from an empty array or a zero - StarRocks 3.3 has no
+   * `information_schema.PROCESSLIST`, so `activeSessions` is absent there while an idle
+   * PostgreSQL answers `[]`. Rendering the first as the second would claim a measurement
+   * the engine refused to make (the very error QueriesTab.tsx:68 documents for
+   * `slowQueries`). A consumer therefore gates on the field being present, and shows the
+   * `errors` entry in place of that panel.
+   */
+  overview?: DatabaseOverview;
+  performance?: PerformanceMetrics;
+  slowQueries?: SlowQueryStats[];
+  activeSessions?: ActiveSessionDetails[];
   tables?: TableStats[];
   indexes?: IndexStats[];
   storage?: StorageStats[];
+  /**
+   * Per-panel failure messages, keyed by the panel whose read rejected. The value is the
+   * ENGINE's own sentence (`Error.message`, not a generic stand-in), because it is the only
+   * text that tells the user what the database actually refused. Absence of a panel plus its
+   * entry here is how a partial read is reported; a panel that is absent with no entry here
+   * was simply not requested (`includeTables` and friends).
+   */
+  errors?: Partial<
+    Record<"overview" | "performance" | "slowQueries" | "activeSessions" | "tables" | "indexes" | "storage", string>
+  >;
 }
 
 /**

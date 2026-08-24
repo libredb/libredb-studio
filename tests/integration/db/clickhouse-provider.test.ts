@@ -1481,8 +1481,8 @@ describe("ClickHouseProvider monitoring", () => {
     expect(data.tables).toEqual([]);
     expect(data.indexes).toEqual([]);
     expect(data.storage).toEqual([]);
-    expect(data.performance.cacheHitRatio).toBe(0);
-    expect(data.overview.version).toBe("unknown");
+    expect(data.performance?.cacheHitRatio).toBe(0);
+    expect(data.overview?.version).toBe("unknown");
   });
 
   test("a monitoring failure that is not a denial propagates, so no panel hides a bug", async () => {

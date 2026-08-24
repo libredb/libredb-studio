@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { MonitoringData } from "@/lib/db/types";
+import { PanelUnavailable } from "../PanelUnavailable";
 
 interface StorageTabProps {
   data: MonitoringData | null;
@@ -22,6 +23,13 @@ export function StorageTab({ data, loading }: StorageTabProps) {
   const overview = data?.overview;
   const storage = data?.storage ?? [];
   const tables = data?.tables ?? [];
+
+  // A panel whose read failed is absent from the payload with its own message under
+  // `errors`, and that is a different fact from an empty answer: rendering it as data
+  // would claim a measurement the engine refused to make. The whole-dashboard error state
+  // is not right either - the other panels answered - so this panel alone carries the
+  // engine's own sentence. See MonitoringData in src/lib/db/types.ts.
+  const storageUnavailable = data?.storage === undefined ? data?.errors?.storage : undefined;
 
   // Calculate totals
   //
@@ -196,7 +204,9 @@ export function StorageTab({ data, loading }: StorageTabProps) {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0 sm:p-4 sm:pt-0">
-          {storage.length === 0 ? (
+          {storageUnavailable ? (
+            <PanelUnavailable message={storageUnavailable} />
+          ) : storage.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <FolderOpen strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
               <p className="text-xs">No tablespace information available.</p>

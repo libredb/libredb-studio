@@ -52,6 +52,7 @@ import {
   CASSANDRA_RUNNING_QUERY_CQL,
   CASSANDRA_SIZE_UNAVAILABLE,
   CASSANDRA_UNKNOWN_TEXT,
+  CASSANDRA_VIRTUAL_KEYSPACE_CQL,
   cassandraColumnListCql,
   cassandraIndexCountCql,
   cassandraIndexListCql,
@@ -298,6 +299,21 @@ function countResult(count: string) {
   return result(declare(["count", BIGINT]), [{ count: types.Long.fromString(count) }]);
 }
 
+/**
+ * `system_virtual_schema.keyspaces`, verbatim from 5.0.9 - the whole answer, two rows.
+ *
+ * This is the keyspace catalog the virtual tables live in, and it is NOT
+ * `system_schema.keyspaces`: measured 2026-08-24, `SELECT keyspace_name FROM
+ * system_schema.keyspaces` on 5.0.9 answers exactly `["probe", "system",
+ * "system_auth", "system_distributed", "system_schema", "system_traces"]` - no
+ * `system_views` in it - so keying the degradation on that catalog would have emptied
+ * all five panels on the engine that answers them.
+ */
+const VIRTUAL_KEYSPACE_LIST = result(declare(["keyspace_name", TEXT]), [
+  { keyspace_name: "system_views" },
+  { keyspace_name: "system_virtual_schema" },
+]);
+
 /** `system_views.caches`, all three rows, hit_ratio as the server reported it. */
 const CACHE_RESULT = result(declare(["name", TEXT], ["hit_ratio", DOUBLE]), [
   { name: "counters", hit_ratio: null },
@@ -363,6 +379,7 @@ function fakeSession(replies: Record<string, Reply>): CassandraSession & { asked
 function healthyReplies(overrides: Record<string, Reply> = {}): Record<string, Reply> {
   return {
     [CASSANDRA_IDENTITY_CQL]: IDENTITY_RESULT,
+    [CASSANDRA_VIRTUAL_KEYSPACE_CQL]: VIRTUAL_KEYSPACE_LIST,
     [cassandraTableListCql(KEYSPACE)]: TABLE_LIST,
     [cassandraViewListCql(KEYSPACE)]: VIEW_LIST,
     [cassandraColumnListCql(KEYSPACE)]: COLUMN_LIST,
@@ -540,7 +557,10 @@ describe("connect", () => {
     const { provider, session } = await connectedProvider();
 
     expect(provider.isConnected()).toBe(true);
-    expect(session.asked).toEqual([CASSANDRA_IDENTITY_CQL]);
+    // Two statements and no more: the identity read that proves the session can carry
+    // one, then the virtual-keyspace catalog the monitoring degradation keys on. The
+    // second is the whole cost of that discriminator, paid once per connection.
+    expect(session.asked).toEqual([CASSANDRA_IDENTITY_CQL, CASSANDRA_VIRTUAL_KEYSPACE_CQL]);
     expect((await provider.getOverview()).version).toBe("Apache Cassandra 5.0.9");
   });
 
@@ -1129,23 +1149,37 @@ describe("getOverview", () => {
              ResponseError code=8704 "keyspace system_viewz does not exist"
 
   So the ONE protocol code carries all four cases and the driver's `keyspace` and
-  `table` properties are `undefined` on both builds - there is no structured
-  discriminator. What separates them is the server's own sentence shape plus the
-  keyspace it names: a whole-keyspace refusal names a keyspace this provider knows is
-  optional (`system_views`), while every typo either names something else
-  (`system_viewz`) or is not keyspace-shaped at all. Hence both arms below, and the
-  fourth case is why the allowlist is not "any absent keyspace".
+  `table` properties are `undefined` on both builds - the REFUSAL carries no
+  structured discriminator. Those four spellings are pinned below as a regression pin,
+  but nothing keys on them any more: since 2026-08-24 the degradation keys on a structural
+  fact asked once per connection instead - whether `system_virtual_schema.keyspaces`
+  lists `system_views`. Measured the same day through the same transport:
+
+    5.0.9    SELECT keyspace_name FROM system_virtual_schema.keyspaces
+             -> ["system_views", "system_virtual_schema"]
+    scylla   SELECT keyspace_name FROM system_virtual_schema.keyspaces
+             ResponseError code=8704 "Keyspace system_virtual_schema does not exist"
+
+  A refused probe is itself the answer - a build with no virtual-schema catalog has no
+  virtual tables to read - and the code, not the sentence, is what is read. The
+  consequence is stronger than a caught error: on such a build the three
+  `system_views` statements are NEVER SENT, which the `asked` list below asserts.
 */
 
 /** The refusal ScyllaDB answers every `system_views` read with, verbatim. */
 const NO_SYSTEM_VIEWS = responseError(8704, "Keyspace system_views does not exist");
 
+/** The refusal ScyllaDB answers the PROBE with, verbatim - it has no virtual-schema catalog either. */
+const NO_VIRTUAL_SCHEMA = responseError(8704, "Keyspace system_virtual_schema does not exist");
+
 /** What a whole ScyllaDB session sees: `system.local` and `system_schema` answer, `system_views` does not. */
-function scyllaReplies(): Record<string, Reply> {
+function scyllaReplies(overrides: Record<string, Reply> = {}): Record<string, Reply> {
   return healthyReplies({
+    [CASSANDRA_VIRTUAL_KEYSPACE_CQL]: NO_VIRTUAL_SCHEMA,
     [CASSANDRA_CLIENT_COUNT_CQL]: NO_SYSTEM_VIEWS,
     [CASSANDRA_CACHE_CQL]: NO_SYSTEM_VIEWS,
     [CASSANDRA_RUNNING_QUERY_CQL]: NO_SYSTEM_VIEWS,
+    ...overrides,
   });
 }
 
@@ -1196,7 +1230,7 @@ describe("a server with no system_views keyspace", () => {
 
     const data = await provider.getMonitoringData();
 
-    expect(data.overview.version).toBe("Apache Cassandra 5.0.9");
+    expect(data.overview?.version).toBe("Apache Cassandra 5.0.9");
     expect(data.performance).toEqual({});
     expect(data.activeSessions).toEqual([]);
   });
@@ -1237,6 +1271,80 @@ describe("a server with no system_views keyspace", () => {
     const { provider } = await connectedProvider(healthyReplies({ [cassandraTableCountCql(KEYSPACE)]: absent }));
 
     await expect(provider.getOverview()).rejects.toThrow(QueryError);
+  });
+
+  test("the three system_views statements are never sent at all", async () => {
+    // The point of keying on the catalog rather than on the refusal: a build that has
+    // no virtual tables is not asked for them, so the three round trips per
+    // monitoring refresh are not spent either. The replies above would THROW if they
+    // were reached.
+    const { provider, session } = await connectedProvider(scyllaReplies());
+
+    await provider.getOverview();
+    await provider.getPerformanceMetrics();
+    await provider.getActiveSessions();
+
+    expect(session.asked).not.toContain(CASSANDRA_CLIENT_COUNT_CQL);
+    expect(session.asked).not.toContain(CASSANDRA_CACHE_CQL);
+    expect(session.asked).not.toContain(CASSANDRA_RUNNING_QUERY_CQL);
+    // The reads that do NOT need the virtual keyspace still go out.
+    expect(session.asked).toContain(cassandraTableCountCql(KEYSPACE));
+  });
+
+  test("the probe costs one statement per connection, not one per read", async () => {
+    // The whole cost of the structural discriminator, stated as a number: ONE extra
+    // statement at connect time (measured 1.5 ms against 5.0.9), whatever a session
+    // then reads.
+    const { provider, session } = await connectedProvider();
+
+    await provider.getOverview();
+    await provider.getPerformanceMetrics();
+    await provider.getActiveSessions();
+    await provider.getHealth();
+
+    expect(session.asked.filter((cql) => cql === CASSANDRA_VIRTUAL_KEYSPACE_CQL)).toEqual([
+      CASSANDRA_VIRTUAL_KEYSPACE_CQL,
+    ]);
+  });
+
+  test("a build whose virtual catalog answers WITHOUT system_views degrades too", async () => {
+    // The catalog is read for the name, not for the fact that it answered: a relative
+    // that publishes `system_virtual_schema` but not `system_views` is the same
+    // absence as ScyllaDB's, and nothing about it is text.
+    const withoutViews = result(declare(["keyspace_name", TEXT]), [{ keyspace_name: "system_virtual_schema" }]);
+    const { provider, session } = await connectedProvider(
+      scyllaReplies({ [CASSANDRA_VIRTUAL_KEYSPACE_CQL]: withoutViews }),
+    );
+
+    expect(await provider.getPerformanceMetrics()).toEqual({});
+    expect(session.asked).not.toContain(CASSANDRA_CACHE_CQL);
+  });
+
+  test("a role that may not read the virtual catalog gets empty panels, not a broken connection", async () => {
+    // 8448 on the probe, which is the measured shape of a least-privilege role
+    // (§3.6): it cannot establish that the virtual tables are there, and the panels it
+    // would be refused anyway answer empty - the same outcome the per-read permission
+    // arm has always given.
+    const denied = responseError(
+      8448,
+      "User lowpriv has no SELECT permission on <table system_virtual_schema.keyspaces> or any of its parents",
+    );
+    const { provider } = await connectedProvider(scyllaReplies({ [CASSANDRA_VIRTUAL_KEYSPACE_CQL]: denied }));
+
+    expect(await provider.getPerformanceMetrics()).toEqual({});
+  });
+
+  test("a probe that fails for an unrelated reason leaves the reads exactly as they were", async () => {
+    // A client-side timeout says nothing about which keyspaces exist, so the probe
+    // does not get to claim an absence from it: the reads are still sent, and their
+    // own failure is still the one the caller sees. The probe never fails a connect.
+    const timeout = new CassandraTransportError("The host did not reply before timeout 1 ms", "client-timeout", null);
+    const { provider, session } = await connectedProvider(
+      healthyReplies({ [CASSANDRA_VIRTUAL_KEYSPACE_CQL]: timeout }),
+    );
+
+    expect(await provider.getPerformanceMetrics()).toEqual({ cacheHitRatio: 83.05 });
+    expect(session.asked).toContain(CASSANDRA_CACHE_CQL);
   });
 });
 
@@ -1423,8 +1531,8 @@ describe("getMonitoringData", () => {
 
     const data = await provider.getMonitoringData({ includeTables: true, includeIndexes: true, includeStorage: true });
 
-    expect(data.overview.version).toBe("Apache Cassandra 5.0.9");
-    expect(data.performance.cacheHitRatio).toBe(83.05);
+    expect(data.overview?.version).toBe("Apache Cassandra 5.0.9");
+    expect(data.performance?.cacheHitRatio).toBe(83.05);
     expect(data.tables).toEqual([]);
   });
 });

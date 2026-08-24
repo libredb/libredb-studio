@@ -922,7 +922,7 @@ describe("CouchbaseProvider monitoring", () => {
     expect(data.storage).toEqual([]);
     // Nothing was readable, so the panel is told there is no ratio and renders
     // "Not measured" instead of a red 0%.
-    expect("cacheHitRatio" in data.performance).toBe(false);
+    expect("cacheHitRatio" in data.performance!).toBe(false);
   });
 });
 

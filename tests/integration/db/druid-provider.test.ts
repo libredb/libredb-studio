@@ -1622,7 +1622,7 @@ describe("DruidProvider monitoring", () => {
 
     const data = await provider.getMonitoringData();
 
-    expect(data.overview.version).toBe("unknown");
+    expect(data.overview?.version).toBe("unknown");
     expect(data.performance).toEqual({});
     expect(data.slowQueries).toEqual([]);
     expect(data.activeSessions).toEqual([]);
@@ -1637,7 +1637,7 @@ describe("DruidProvider monitoring", () => {
 
     const data = await provider.getMonitoringData();
 
-    expect(data.overview.version).toBe("37.0.0");
+    expect(data.overview?.version).toBe("37.0.0");
     expect(data.activeSessions).toHaveLength(2);
     expect(data.tables).toHaveLength(2);
     expect(data.storage).toHaveLength(1);

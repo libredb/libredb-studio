@@ -1402,4 +1402,62 @@ describe("OperationsTab", () => {
 
     expect(container.querySelectorAll('[data-selected="true"]').length).toBe(0);
   });
+
+  // =========================================================================
+  // A refused monitoring read costs its own panel, and the engine's own
+  // sentence reaches the user in place of the empty-state copy.
+  // =========================================================================
+
+  test("a refused activeSessions read shows the engine's own sentence", async () => {
+    monitoringOverride = {
+      data: { tables: defaultTables, errors: { activeSessions: "Unknown table 'information_schema.PROCESSLIST'." } },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { getByTestId } = renderResult!;
+
+    expect(getByTestId("operations-sessions-empty").textContent).toBe(
+      "Unknown table 'information_schema.PROCESSLIST'.",
+    );
+    // The card title must not publish a count it does not have either.
+    expect(renderResult!.getByText("Sessions")).not.toBeNull();
+  });
+
+  test("an answered empty session list keeps the empty-state copy", async () => {
+    monitoringOverride = { data: { activeSessions: [], tables: defaultTables } };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { getByTestId } = renderResult!;
+
+    expect(getByTestId("operations-sessions-empty").textContent).toBe("No active sessions found.");
+  });
+
+  test("a refused tables read shows the engine's own sentence", async () => {
+    monitoringOverride = {
+      data: { activeSessions: defaultSessions, errors: { tables: "permission denied for relation pg_class" } },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { getByTestId } = renderResult!;
+
+    expect(getByTestId("operations-tables-empty").textContent).toBe("permission denied for relation pg_class");
+    expect(renderResult!.getByText("Tables")).not.toBeNull();
+  });
+
+  test("an answered empty table list keeps the empty-state copy", async () => {
+    monitoringOverride = { data: { activeSessions: defaultSessions, tables: [] } };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { getByTestId } = renderResult!;
+
+    expect(getByTestId("operations-tables-empty").textContent).toBe("No tables found.");
+  });
 });

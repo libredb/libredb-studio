@@ -134,7 +134,7 @@ describe("QueriesTab", () => {
     const data = {
       ...makeData(),
       slowQueries: [
-        ...makeData().slowQueries,
+        ...makeData().slowQueries!,
         { queryId: "q4", query: "SELECT count(*) FROM logs", calls: 2500000, totalTime: 500000, avgTime: 0.2, rows: 1 },
       ],
     } as MonitoringData;
@@ -176,5 +176,40 @@ describe("QueriesTab", () => {
     expect(queryAllByText("0.00ms").length).toBe(3);
     expect(queryAllByText("0").length).toBe(4);
     expect(queryByText("No query statistics available.")).toBeNull();
+  });
+});
+
+// A refused slowQueries read is not an empty list, so it must not be told to
+// install a PostgreSQL extension.
+describe("a refused slowQueries read", () => {
+  // Scoped here as well as in the block above: bun:test registers a hook on the
+  // enclosing describe only, so without this the first render in this block leaks into
+  // the second and the control arm queries the previous test's DOM.
+  afterEach(() => {
+    cleanup();
+  });
+
+  const REFUSAL = "Unknown table 'information_schema.STATEMENTS_SUMMARY'.";
+
+  function refused(): MonitoringData {
+    const rest: MonitoringData = makeData();
+    delete rest.slowQueries;
+    return { ...rest, errors: { slowQueries: REFUSAL } };
+  }
+
+  test("shows the engine's own sentence and drops the extension advice", () => {
+    const { getByTestId, queryByText } = render(<QueriesTab data={refused()} loading={false} />);
+
+    expect(getByTestId("panel-unavailable-message").textContent).toBe(REFUSAL);
+    expect(queryByText("pg_stat_statements required")).toBeNull();
+    expect(queryByText("No query statistics available.")).toBeNull();
+  });
+
+  test("an empty list keeps the extension advice", () => {
+    const data = { ...makeData(), slowQueries: [] };
+    const { queryByTestId, queryByText } = render(<QueriesTab data={data} loading={false} />);
+
+    expect(queryByTestId("panel-unavailable")).toBeNull();
+    expect(queryByText("pg_stat_statements required")).not.toBeNull();
   });
 });

@@ -11,6 +11,7 @@ import type { TimeSeriesPoint } from "@/lib/time-series-buffer";
 import { evaluateThreshold, getThresholdColor, DEFAULT_THRESHOLDS } from "@/lib/monitoring-thresholds";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { MetricChart } from "./MetricChart";
+import { PanelUnavailable } from "../PanelUnavailable";
 
 /**
  * The spelling every card in this panel uses for a figure the engine never reported.
@@ -97,6 +98,19 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
   }
 
   const performance = data?.performance;
+
+  // A panel whose read failed is absent from the payload with its own message under
+  // `errors`, and that is a different fact from an empty answer: rendering it as data
+  // would claim a measurement the engine refused to make. The whole-dashboard error state
+  // is not right either - the other panels answered - so this panel alone carries the
+  // engine's own sentence. See MonitoringData in src/lib/db/types.ts.
+  if (performance === undefined && data?.errors?.performance) {
+    return (
+      <div className="p-3 sm:p-6">
+        <PanelUnavailable message={data.errors.performance} />
+      </div>
+    );
+  }
 
   const getHealthStatus = (ratio: number) => {
     if (ratio >= 95) return { label: "Excellent", color: "text-green-500", bg: "bg-green-500" };
