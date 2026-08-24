@@ -75,6 +75,15 @@ export type OperatorTuningStatus =
   | { readonly state: "ignored"; readonly path: string; readonly reason: string };
 
 let active: ModelTuning | null = null;
+/**
+ * The model ids the operator's document supplied, lower-cased.
+ *
+ * Kept because provenance is a question about ONE model: a document that names `mistral-small:24b`
+ * did not drive a run on `gemini-3.5-flash-lite`, and saying it did names a file that never touched
+ * the run. `activeTuning` merges the two maps and forgets which side each entry came from, so the
+ * keys are recorded as they are merged.
+ */
+let operatorModels: ReadonlySet<string> = new Set();
 let operatorStatus: OperatorTuningStatus = { state: "unset" };
 
 /** The operator's document with the digest of what was read, or the reason it is not used. Never throws. */
@@ -82,12 +91,16 @@ function readOperatorDocument(
   path: string,
 ): { readonly doc: ModelTuning; readonly digest: string } | { readonly reason: string } {
   try {
-    const text = readFileSync(path, "utf8");
+    // Read as BYTES and hashed as bytes. `readFileSync(path, "utf8")` decodes, and decoding is
+    // lossy: invalid UTF-8 inside an otherwise parseable document becomes U+FFFD, so two different
+    // files can re-encode to one string and hash the same. A digest that cannot tell two files
+    // apart is not doing the job the path was recorded for.
+    const bytes = readFileSync(path);
     // The tolerant contract, because this document has a different author: see `parseOperatorTuning`.
-    const doc = parseOperatorTuning(JSON.parse(text), path);
+    const doc = parseOperatorTuning(JSON.parse(bytes.toString("utf8")), path);
     // Hashed here rather than by the caller, because THESE are the bytes that were parsed: a
     // second read to hash could get a different file, which is the one thing a digest must rule out.
-    return { doc, digest: createHash("sha256").update(text).digest("hex") };
+    return { doc, digest: createHash("sha256").update(bytes).digest("hex") };
   } catch (error) {
     return { reason: error instanceof Error ? error.message : String(error) };
   }
@@ -123,6 +136,7 @@ export function activeTuning(): ModelTuning {
     return active;
   }
 
+  operatorModels = new Set(Object.keys(read.doc.models));
   active = {
     // Whole entries, later wins.
     models: { ...base.models, ...read.doc.models },
@@ -171,15 +185,21 @@ export function operatorTuningStatus(): OperatorTuningStatus {
  * shipped settings because nobody configured a document and one driven by them because the
  * operator's could not be read behave identically and mean opposite things.
  */
-export function tuningProvenance(): AgentRunTuningProvenance {
+export function tuningProvenance(modelId: string): AgentRunTuningProvenance {
   const status = operatorTuningStatus();
   if (status.state === "unset") return { origin: "bundled" };
-  if (status.state === "ignored") return { origin: "operator-ignored", path: status.path };
-  return { origin: "operator", path: status.path, digest: status.digest };
+  if (status.state === "ignored") return { origin: "operator-ignored" };
+  // Applied, but silent about this model: the run was driven by the shipped settings, and saying
+  // otherwise would attribute it to a document that contributed nothing to it. Lower-cased because
+  // that is how the register is keyed, and a provenance that disagreed with the resolver about
+  // which entry applies would be worse than none.
+  if (!operatorModels.has(modelId.toLowerCase())) return { origin: "bundled" };
+  return { origin: "operator", digest: status.digest };
 }
 
 /** Drops the memo so a test can change the environment and read the result. */
 export function resetTuning(): void {
   active = null;
   operatorStatus = { state: "unset" };
+  operatorModels = new Set();
 }

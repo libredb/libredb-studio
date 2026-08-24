@@ -79,6 +79,30 @@ describe("a drive that dies mid-run leaves a run another process can finish", ()
     expect(resumed.statements).toEqual([]);
   });
 
+  test("each stretch of a resumed run records what drove IT, not what drove the first", async () => {
+    const run = await open();
+
+    await expect(run.drive([callsTool("run_read_query", { sql: FIRST, rationale: "count" })])).rejects.toThrow(
+      /died before turn/,
+    );
+
+    // The resume names a DIFFERENT model, which is the case the entry exists for: an
+    // operator changed the configuration between the crash and the restart, and a run
+    // recorded once at its start would attribute the whole of it to the model it opened
+    // on. Driven through `driveModel` rather than `drive` because the model id is what
+    // is under test here and only that entry point lets a drive choose one.
+    const resumed = await run.driveModel(
+      await modelOver(scriptedModel(reportOn()).fetch, "https://api.openai.com/v1", "gpt-4o-nano"),
+    );
+    expect(resumed.status).toBe("succeeded");
+
+    const drivers = (await run.events()).filter((event) => event.kind === "driver-resolved");
+    // Two, in the order they drove, naming what each ran on. One entry — the shape a
+    // once-per-run regression would leave — cannot satisfy this, and neither can two
+    // that both name the opening model.
+    expect(drivers.map((event) => event.modelId)).toEqual(["gpt-4o-mini", "gpt-4o-nano"]);
+  });
+
   test("a resumed run is told what it established, without being handed the rows again", async () => {
     const run = await open();
 

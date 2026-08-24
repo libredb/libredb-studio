@@ -44,17 +44,6 @@
 import type { Role } from "@/lib/auth";
 import type { LLMProviderType } from "@/lib/llm/types";
 
-/**
- * Where the settings that drove a run came from.
- *
- * A named type rather than an inline union because two places need the same shape: the ledger
- * event that records it, and `model-tuning`'s projection from its own status onto it. Spelled
- * twice, the two would drift, and the drift would be invisible — both sides would still compile.
- */
-export type AgentRunTuningProvenance =
-  | { readonly origin: "bundled" }
-  | { readonly origin: "operator"; readonly path: string; readonly digest: string }
-  | { readonly origin: "operator-ignored"; readonly path: string };
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
 import type { AgentChartSpec, DatabaseType, TableSchema } from "@/lib/types";
@@ -64,6 +53,29 @@ import type { AgentInventoryNoun } from "./inventory-noun";
 import type { PlanStatementIdentifiers } from "./plan-statement";
 import type { AgentPlanSummary } from "./plan-summary";
 import type { AgentTableProfile } from "./table-profile";
+
+/**
+ * Where the settings that drove a run came from — for THIS model, not for the server.
+ *
+ * A named type rather than an inline union because two places need the same shape: the ledger
+ * event that records it, and `model-tuning`'s projection from its own status onto it. Spelled
+ * twice, the two would drift, and the drift would be invisible — both sides would still compile.
+ *
+ * `operator` means the operator's document supplied THIS model's entry. A document that was applied
+ * but says nothing about the model a run used did not drive that run, and reads `bundled`.
+ *
+ * NO PATH, and that is a boundary rather than an omission. This event is part of the run record,
+ * and `GET /api/agent/runs/[runId]` serves that record — with its events — to the run's OWNER, who
+ * is an ordinary user: `agent-run-access.ts` matches on `actor.sessionId` and asks for no role. An
+ * absolute server path here would be topology handed to every user who starts a run, and hiding it
+ * in the rail would not help, because the API is where it would leak. The digest identifies WHICH
+ * version drove the run without saying where the file lives, and which file that is belongs to
+ * `GET /api/agent/config`, which is admin-only and says so.
+ */
+export type AgentRunTuningProvenance =
+  | { readonly origin: "bundled" }
+  | { readonly origin: "operator"; readonly digest: string }
+  | { readonly origin: "operator-ignored" };
 
 /**
  * Which surface a run drives. Planning is TOOLLESS — the model is handed no tool at
@@ -514,6 +526,9 @@ export type AgentRunEvent =
        * A run driven by the shipped settings because nobody configured a document, and one driven
        * by them because the operator's could not be read, behave identically and mean opposite
        * things — the second is a misconfiguration nobody has noticed yet.
+       *
+       * Per MODEL: see `AgentRunTuningProvenance` for why a document that was applied can still
+       * read `bundled` here, and for why no path is carried.
        */
       readonly tuning: AgentRunTuningProvenance;
     })

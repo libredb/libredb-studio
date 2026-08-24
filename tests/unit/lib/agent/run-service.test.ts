@@ -276,14 +276,14 @@ describe("AgentRunService — what drove the run", () => {
     await h.service.recordDriver(runId, {
       modelId: "qwen3:8b",
       provider: "ollama",
-      tuning: { origin: "operator", path: "/etc/libredb/model-tuning.json", digest: "a".repeat(64) },
+      tuning: { origin: "operator", digest: "a".repeat(64) },
     });
 
     expect((await h.store.read(runId))?.record.events.at(-1)).toEqual({
       kind: "driver-resolved",
       modelId: "qwen3:8b",
       provider: "ollama",
-      tuning: { origin: "operator", path: "/etc/libredb/model-tuning.json", digest: "a".repeat(64) },
+      tuning: { origin: "operator", digest: "a".repeat(64) },
       atMs: 1_700_000_500_000,
     });
   });
@@ -320,11 +320,11 @@ describe("AgentRunService — what drove the run", () => {
     await h.service.recordDriver(runId, {
       modelId: "qwen3:4b",
       provider: "ollama",
-      tuning: { origin: "operator-ignored", path: "/etc/libredb/broken.json" },
+      tuning: { origin: "operator-ignored" },
     });
 
     expect((await h.store.read(runId))?.record.events.at(-1)).toMatchObject({
-      tuning: { origin: "operator-ignored", path: "/etc/libredb/broken.json" },
+      tuning: { origin: "operator-ignored" },
     });
   });
 

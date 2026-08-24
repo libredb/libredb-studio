@@ -79,7 +79,7 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
     atMs: 1,
     modelId: "qwen3:8b",
     provider: "ollama",
-    tuning: { origin: "operator", path: "/etc/libredb/model-tuning.json", digest: "f".repeat(64) },
+    tuning: { origin: "operator", digest: "f".repeat(64) },
   },
   // A call the server turned back, carrying the verifier's own name for what was missing.
   // `shortfall` is optional because the purpose-written notices answer conditions the

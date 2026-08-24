@@ -2407,7 +2407,7 @@ export async function runInvestigation(
     await service.recordDriver(runId, {
       modelId: model.modelId,
       provider: model.provider,
-      tuning: tuningProvenance(),
+      tuning: tuningProvenance(model.modelId),
     });
 
     // Read from the record and not from a module constant: the turn ceiling is one of

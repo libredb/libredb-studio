@@ -33,7 +33,7 @@ session, says which happened:
 
 ```jsonc
 { "modelTuning": { "state": "applied",  "path": "/etc/libredb/model-tuning.json",
-                   "models": 1, "ignoredKeys": [] } }
+                   "models": 1, "ignoredKeys": [], "digest": "9f2c…" } }
 { "modelTuning": { "state": "ignored",  "path": "...", "reason": "models.0.settings.turnTimeoutMs: ..." } }
 { "modelTuning": { "state": "unset" } }
 ```
@@ -41,6 +41,25 @@ session, says which happened:
 `ignoredKeys` is the one to read on a successful load: it lists what your document said that this
 Studio does not implement — a misspelling, or a setting from a newer Studio. The entry was applied
 around those keys rather than because of them.
+
+`digest` is SHA-256 of the document's bytes as they were read, and it is the same value a run
+records. The path says which file drove a run; only the digest says which VERSION of it, and a
+finished run that cannot be told apart from one driven by that path after somebody edited it is
+most of what recording the path was for. So: read the digest here, compare it against the one on
+the run you are explaining, and a mismatch tells you the file changed between them.
+
+## What a run records
+
+Each stretch of a run writes a `driver-resolved` entry naming the model, its provider, and where
+its settings came from — `bundled`, `operator` with the digest above, or `operator-ignored`.
+
+PER MODEL, not per document. A document that names `qwen3:8b` did not drive a run on
+`gemini-3.5-flash-lite`; that run records `bundled`, because the shipped measurements are what
+drove it. Mounting a document does not make it the provenance of everything the server runs.
+
+PER DRIVE, not per run. A run resumed after you changed the configuration ran on two things, and
+its ledger holds two entries that may disagree — which is the fact worth finding, not a
+contradiction to reconcile.
 
 ## The shape
 

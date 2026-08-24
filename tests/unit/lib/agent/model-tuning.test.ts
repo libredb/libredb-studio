@@ -506,33 +506,43 @@ describe("a document an operator supplies", () => {
     expect(status.state === "ignored" && status.path).toBe(resolve("not-a-real-document.json"));
   });
 
-  test("projects the three states onto what a run records, and loses nothing on the way", () => {
+  test("says operator ONLY for a model the operator's document actually supplied", () => {
     /*
-      The projection a run's ledger is written from. It lives beside the status rather than in the
-      drive because in the drive it would be four lines nothing could test without driving a model.
+      The provenance answers "what drove THIS run", not "what was configured on this server", and
+      the two come apart the moment a document names a model the run is not using.
 
-      All three cases asserted together, because the value of the third is exactly that it is not
-      the first: a run driven by the shipped settings because nobody configured a document and one
-      driven by them because the operator's could not be read behave identically and mean opposite
-      things.
+      Demonstrated by accident before it was fixed: a live check mounted a document for
+      `mistral-small:24b` — chosen precisely so it would not change the running model — drove
+      `gemini-3.5-flash-lite`, and the ledger recorded `operator` with that document's digest while
+      gemini's settings had come from the bundled one. The event named a file that had not touched
+      the run.
+
+      Lower-cased on the way in, because that is how the register is keyed and a provenance that
+      disagreed with the resolver about which entry applies would be worse than no provenance.
     */
+    const body = JSON.stringify(
+      document({ models: [{ id: "Some-Model:9B", measured: "m", settings: { retryEmptyTurn: true } }] }),
+    );
+    process.env[ENV] = writeDocument(body);
     resetTuning();
-    expect(tuningProvenance()).toEqual({ origin: "bundled" });
 
-    const body = JSON.stringify(document());
-    const good = writeDocument(body);
-    process.env[ENV] = good;
-    resetTuning();
-    expect(tuningProvenance()).toEqual({
+    expect(tuningProvenance("some-model:9b")).toEqual({
       origin: "operator",
-      path: good,
       digest: createHash("sha256").update(body).digest("hex"),
     });
+    // Applied, but silent about this model — so this model was driven by the shipped settings.
+    expect(tuningProvenance("gemini-3.5-flash-lite")).toEqual({ origin: "bundled" });
+  });
 
-    const bad = writeDocument("{ not json");
-    process.env[ENV] = bad;
+  test("projects the other two states onto what a run records", () => {
     resetTuning();
-    expect(tuningProvenance()).toEqual({ origin: "operator-ignored", path: bad });
+    expect(tuningProvenance("qwen3:8b")).toEqual({ origin: "bundled" });
+
+    process.env[ENV] = writeDocument("{ not json");
+    resetTuning();
+    // No path: the ledger is readable by any owner of the run, and a server filesystem path is
+    // not theirs to read. Which file it was belongs to `GET /api/agent/config`, which is admin-only.
+    expect(tuningProvenance("qwen3:8b")).toEqual({ origin: "operator-ignored" });
   });
 
   test("reports nothing configured when no path was set", () => {

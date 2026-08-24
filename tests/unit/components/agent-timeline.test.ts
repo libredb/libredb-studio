@@ -197,11 +197,10 @@ describe("foldLedgerEntries", () => {
       running several local models it is the first thing they want to know about a run they are
       reading back, and the ledger now carries it.
 
-      NOT SHOWN: the tuning provenance the same event carries. A mounted document's path is server
-      topology and its digest is an auditing detail — they answer "which settings drove this" for
-      whoever deploys the server, and that reader has `GET /api/agent/config`. A filesystem path
-      rendered into a user's timeline is a leak, and this asserts the absence rather than trusting
-      the mapping to keep omitting it.
+      NOT SHOWN: the tuning provenance the same event carries. Its digest is an auditing detail —
+      it answers "which settings drove this" for whoever deploys the server, and that reader has
+      `GET /api/agent/config`. Asserted as an absence rather than trusted to the mapping, which is
+      how the path would have been caught had it stayed on the event at all.
     */
     const view = foldLedgerEntries([
       OPENED,
@@ -213,7 +212,7 @@ describe("foldLedgerEntries", () => {
           atMs: 3,
           modelId: "qwen3:8b",
           provider: "ollama",
-          tuning: { origin: "operator", path: "/etc/libredb/model-tuning.json", digest: "c".repeat(64) },
+          tuning: { origin: "operator", digest: "c".repeat(64) },
         },
       }),
     ]);
@@ -222,9 +221,11 @@ describe("foldLedgerEntries", () => {
     expect(driver?.headline).toBe("Driven by qwen3:8b");
     expect(driver?.chrome).toBe(true);
     expect(driver?.tone).toBe("neutral");
-    const rendered = JSON.stringify(view.items);
-    expect(rendered).not.toContain("/etc/libredb/model-tuning.json");
-    expect(rendered).not.toContain("c".repeat(64));
+    // The digest is the whole of what the event carries about the document now — the path was
+    // removed from the event itself, because this record is served to the run's owner and a
+    // server path is not theirs. The rail still must not print the digest: it identifies a
+    // deployment's configuration and answers a question the user did not ask.
+    expect(JSON.stringify(view.items)).not.toContain("c".repeat(64));
   });
 
   test("the model's closing prose becomes an entry of its own", () => {
