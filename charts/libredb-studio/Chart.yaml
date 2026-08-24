@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting fourteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra
 type: application
-version: 0.1.46
+version: 0.1.48
 appVersion: "0.13.2"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -39,11 +39,10 @@ annotations:
   artifacthub.io/category: database
   artifacthub.io/license: MIT
   artifacthub.io/prerelease: "false"
-  # False: 0.13.2 changes no dependency and no security behaviour. Its content is
-  # the Linux desktop AppImage's glibc floor and provider correctness, neither of
-  # which reaches the chart or the image. The app-level security fixes remain
-  # recorded on 0.1.37, the chart version that first shipped them; the adm-zip pin
-  # note belongs to 0.1.44 and is unchanged.
+  # False: 0.1.48 changes no dependency and no security behaviour. Its content is a
+  # new optional ConfigMap and a read-only mount, and appVersion does not move. The
+  # app-level security fixes remain recorded on 0.1.37, the chart version that first
+  # shipped them; the adm-zip pin note belongs to 0.1.44 and is unchanged.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
@@ -59,16 +58,10 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "The Linux desktop AppImage could not start at all on Ubuntu 22.04, Debian 12 or an enterprise distribution of that generation: built on a newer image, it required GLIBC_2.38 in every bundled GTK and WebKit library, so the loader refused every shared object and no window ever opened"
-    - "The x64 AppImage is now built on the oldest still-supported LTS and a test refuses a floating runner label on that job, because no release gate can see a glibc floor that only older machines hit"
-    - "MariaDB is named as MariaDB - the overview published every MariaDB server as MySQL, an assertion the server never made - and an unmeasured cache hit ratio is no longer reported as 99%"
-    - "Trino returned every bigint past 2^53 silently rounded, because the client protocol sends it as an unquoted JSON number"
-    - "The two connection routes outside the provider caches never opened the SSH tunnel and reached the raw database host instead"
-    - "MongoDB: the ordinary host and port deployment could not be connected to at all, authSource was dropped, and distinct queries and their errors were handled wrongly"
-    - "The query agent's foreign-key read came back empty under the least-privilege PostgreSQL role the documentation prescribes; it now reads pg_constraint"
-    - "Eight engines offered a transaction control the engine rejects with HTTP 400, because transaction support was assumed rather than declared per provider"
-    - "Chart 0.1.46 changes no template: its content is the appVersion move to 0.13.2"
-    - "Track app release 0.13.2 (appVersion bump; default image tag follows)"
+    - "The query agent can be given settings for a model it has never measured, without a new release: agent.modelTuning mounts a JSON document of measured per-model settings and names it to the app"
+    - "Give agent.modelTuning.existingConfigMap a ConfigMap you created from a file, or agent.modelTuning.document the same content inline; there is no separate enable flag, because naming a source is what enables it"
+    - "A document that is missing, unreadable or off-schema is ignored and the settings the image ships with stand, so this cannot break a working agent - and GET /api/agent/config now tells an admin session which of the two happened"
+    - "Until this version the setting existed but could not be used on Kubernetes: it names a file, and the pod runs with a read-only root filesystem and nowhere to put one"
 dependencies:
   - name: postgresql
     version: "16.x.x"
