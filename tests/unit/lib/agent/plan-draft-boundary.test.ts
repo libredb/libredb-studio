@@ -38,11 +38,41 @@ const specifiers = (source: string): readonly string[] =>
  * away from not being — and admitting a module because of where it sits is the same
  * reasoning that admitted the guard.
  */
-const ALLOWED: ReadonlySet<string> = new Set(["@/lib/sql/fence-tags", "@/lib/types"]);
+const ALLOWED: ReadonlySet<string> = new Set([
+  "@/lib/sql/fence-tags",
+  "@/lib/types",
+  /*
+    Added when the unfenced reader stopped cutting statements at a blank line and started cutting
+    them where the SQL ends, which needs a scanner that knows about strings, comments and
+    dollar-quoting.
+
+    Admitted on the ONE ground this file accepts: it imports nothing at all, which the test below
+    asserts rather than this comment claiming. That matters more here than "it is pure today",
+    because the lesson recorded above is precisely that direct imports were inspected and the
+    transitive cost is what the policy measures — and a specifier list for THIS file cannot see a
+    dependency the splitter gains later.
+  */
+  "@/lib/sql/statement-splitter",
+]);
 
 describe("the plan-draft reader stays reachable from a browser", () => {
   test("it imports nothing outside the allowed set", () => {
     expect(specifiers(SOURCE).filter((specifier) => !ALLOWED.has(specifier))).toEqual([]);
+  });
+
+  test("the splitter it now reaches imports nothing, so admitting it costs nothing transitively", () => {
+    /*
+      The half the allowlist cannot check. This file reads `plan-draft.ts`'s own specifiers, so a
+      dependency added to `statement-splitter.ts` would leave that list unchanged and this
+      boundary green while the browser pays for it — which is the exact shape of the zod incident
+      the header describes.
+
+      Zero imports is a stronger property than "pure": it cannot acquire a transitive cost without
+      this assertion going red first.
+    */
+    const splitter = fs.readFileSync(path.join(process.cwd(), "src/lib/sql/statement-splitter.ts"), "utf8");
+
+    expect(specifiers(splitter)).toEqual([]);
   });
 
   test("it does not reach the statement guard, which is where zod enters", () => {

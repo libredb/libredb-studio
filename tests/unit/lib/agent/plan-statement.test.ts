@@ -554,3 +554,71 @@ describe("a statement the model wrote without a fence", () => {
     expect(readPlanStatement(text, "sqlite").kind).toBe("refusal");
   });
 });
+
+describe("an unfenced statement ends where the SQL ends, not where the prose leaves a gap", () => {
+  /*
+    The gap the blank-line rule left, and it is not a formatting nicety: `plan-statement-drafted`
+    is recorded whenever this reader returns a statement, with validation riding along rather
+    than gating it, and `verifyPlanningGoal` treats that event as the run having ANSWERED. So a
+    reader that hands back prose glued to a statement scores the run answered while the user is
+    handed something no engine will run.
+
+    `unfencedStatement` guarded the START — a sentence about a select is not a select — and
+    nothing guarded the END. A model that writes its statement and explains it on the very next
+    line, which is the shape these models are asked for, walks straight through: the opener is a
+    real SELECT and the explanation is not a blank line.
+
+    Cut with the SQL splitter this repository already has, which knows where a statement ends
+    because it tracks strings, comments and dollar-quoting. Whitespace does not.
+  */
+  test("prose on the line after the statement is not carried into the SQL", () => {
+    const draft = readPlanStatement("SELECT 1;\nThis query returns one row.", "sqlite");
+
+    if (draft.kind !== "statement") throw new Error("expected a statement");
+    expect(draft.sql).toBe("SELECT 1;");
+  });
+
+  test("a statement that spans lines is still read whole", () => {
+    // The case the unfenced reader exists for: no fence, and the SQL wraps. Cutting at the
+    // first newline would break it, which is why the fix is the splitter and not a line rule.
+    const wrapped = "SELECT name\nFROM film\nWHERE rating = 'PG';\nThat is the list.";
+
+    const draft = readPlanStatement(wrapped, "sqlite");
+
+    if (draft.kind !== "statement") throw new Error("expected a statement");
+    expect(draft.sql).toBe("SELECT name\nFROM film\nWHERE rating = 'PG';");
+  });
+
+  test("a semicolon inside a string does not end the statement early", () => {
+    // What a whitespace rule and a naive split both get wrong, and the splitter does not.
+    const quoted = "SELECT 'a;b' AS pair;\nThe literal contains a semicolon.";
+
+    const draft = readPlanStatement(quoted, "sqlite");
+
+    if (draft.kind !== "statement") throw new Error("expected a statement");
+    expect(draft.sql).toBe("SELECT 'a;b' AS pair;");
+  });
+
+  test("two statements on one line cost the first its terminator, and that is the whole cost", () => {
+    // No line to cut at, so the splitter's own text is the only answer left. Pinned because the
+    // implementation comment promises exactly this and a promise nothing checks is a wish.
+    const draft = readPlanStatement("SELECT 1; SELECT 2;", "sqlite");
+
+    if (draft.kind !== "statement") throw new Error("expected a statement");
+    expect(draft.sql).toBe("SELECT 1");
+  });
+
+  test("an unterminated statement still falls back to the blank line", () => {
+    /*
+      Deliberately unchanged, and recorded rather than fixed. With no terminator the splitter has
+      nothing to cut on and returns the whole text, so the blank line is the only signal left —
+      which means prose on the next line still gets through when the model omits the semicolon.
+      Narrower than the case above and not demonstrated on a real run, so it is pinned as it
+      behaves rather than guessed at.
+    */
+    const draft = readPlanStatement("SELECT 1\nstill part of it\n\nProse after the gap.", "sqlite");
+
+    if (draft.kind !== "statement") throw new Error("expected a statement");
+    expect(draft.sql).toBe("SELECT 1\nstill part of it");
+  });
+});
