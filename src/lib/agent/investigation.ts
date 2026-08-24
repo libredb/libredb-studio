@@ -62,6 +62,7 @@ import {
   ceilingFor,
   presentReminderLimitFor,
   retriesEmptyTurn,
+  retriesUnreadStop,
   turnTimeoutMsFor,
   planStatementRetriesFor,
   reportReminderLimitFor,
@@ -2505,6 +2506,8 @@ export async function runInvestigation(
     let narrowedAtEvent = Number.POSITIVE_INFINITY;
     /** Whether this drive has already re-asked an empty turn; see `retryEmptyTurn`. */
     let emptyTurnRetried = false;
+    /** Whether this drive has already answered a stop that read nothing; see `retryUnreadStop`. */
+    let unreadStopRetried = false;
     const priorProgress = describePriorProgress(record);
     if (priorProgress !== null) messages.push({ role: "user", content: priorProgress });
 
@@ -3148,6 +3151,41 @@ export async function runInvestigation(
             // rather than a transcript.
             text: turn.text.trim().slice(0, 2_000),
           });
+        }
+        /*
+          The stop that asked a question. Measured on `nemotron3:33b`, which ended a
+          query-optimization run ten seconds in by asking the user to paste the statement it
+          was sent to diagnose — holding, at that moment, the two instruments that would have
+          found it. There is no user on the other end of a run, so the question is a stop.
+
+          `remindToReport` above cannot serve it: it is gated on `anyToolCalled`, correctly,
+          because a run that read nothing has nothing to file. This sentence is the other half
+          — not "file what you found" but "go and find it", naming the instruments.
+
+          Granted only where the run has lost anyway. `compose_report` is one of the tools
+          `anyToolCalled` counts, so a run reaching here with it false composed no report and
+          has already earned `no-report`; the turn cannot cost a pass. Once, and only for a
+          model whose ledger asked twice.
+        */
+        if (
+          record.mode === "agent" &&
+          !anyToolCalled &&
+          !unreadStopRetried &&
+          turns < maxTurns &&
+          resources.deadline.remainingMs() > 0 &&
+          // The sentence NAMES `inspect_schema`, so it may only reach a run that holds it.
+          // `operations` is the one agent set built on a different four, because the
+          // read-class tools need `queryReadOnly`, which only two providers implement. Told to
+          // call a tool it has not got, a run calls it, is answered "there is no such tool",
+          // and spends the very turn this retry bought: the #350/#356 defect, paid for once.
+          holdsTool("inspect_schema") &&
+          retriesUnreadStop(model.modelId)
+        ) {
+          unreadStopRetried = true;
+          messages.push(...turn.assistantMessages);
+          messages.push({ role: "user", content: notice(BASELINE_NOTICES.unreadStop) });
+          await service.recordEvent(runId, { kind: "guidance-issued", notice: "unread-stop" });
+          return null;
         }
         return conclude("succeeded", "model-stopped");
       }

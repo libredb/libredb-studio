@@ -84,6 +84,7 @@ const settingsShape = {
   planStatementRetries: countSchema,
   presentReminderLimit: countSchema,
   retryEmptyTurn: z.boolean(),
+  retryUnreadStop: z.boolean(),
   refusalExamples: z.boolean(),
   /** Absent means the product's own limit, which the environment can still move. */
   turnTimeoutMs: z.int().min(1_000).max(179_999).optional(),
@@ -121,6 +122,7 @@ const measuredAgainstSchema = z.strictObject({
     planStatementRetries: countSchema,
     presentReminderLimit: countSchema,
     retryEmptyTurn: z.boolean(),
+    retryUnreadStop: z.boolean(),
     refusalExamples: z.boolean(),
   }),
 });

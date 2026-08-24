@@ -3089,6 +3089,99 @@ describe("a run reserves its last turns for its report", () => {
   });
 });
 
+describe("a run that stops having read nothing is told to read it itself", () => {
+  /*
+    A distinct loss from the one below, and the reminder there cannot reach it: that notice
+    is for a run that CALLED its tools and then narrated, and it is gated on exactly that
+    (`if (!anyToolCalled) return false`). The run measured here called nothing at all. It
+    read the objective, stopped after ten seconds, and asked the user for the statement it
+    had been sent to diagnose — while holding the instruments that would have found it.
+
+    Free to retry, and that is why it may exist. `compose_report` is itself one of the run's
+    tools, so a run that called nothing composed no report and its verdict is already
+    `no-report`. The extra turn is spent on a run that has lost; it cannot turn a pass into
+    a failure, only a failure into another attempt.
+
+    Per-model all the same, and off by default: the ten models locked at 300/300 were
+    measured without it, and a drive-wide change is how this repository has twice handed
+    back cells it had already won.
+  */
+  const asksTheUser = answersProse("Could you please share the exact SQL statement you are running?");
+
+  test("the model is told which instrument to call, and gets the turn back", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(asksTheUser, answersProse("Understood."));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, "https://api.openai.com/v1", "nemotron3:33b"),
+      resources: b.resources,
+    });
+
+    expect(script.turns.length).toBe(2);
+    // Names the instrument, not the rule: the measured defect class here is a model told
+    // WHAT it did wrong and never WHAT to call instead.
+    expect(script.turns[1]?.transcript).toContain("inspect_schema");
+  });
+
+  test("a model that was not measured needing it is left alone", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(asksTheUser, answersProse("Understood."));
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(script.turns.length).toBe(1);
+    expect(result.stopReason).toBe("model-stopped");
+  });
+
+  test("an operations run is not told to call the two instruments it does not hold", async () => {
+    /*
+      The sentence NAMES `inspect_schema` and `inspect_plan`, and `operations` is the one agent
+      set built on a different three - `inspect_operations`, `recommend_change`,
+      `compose_report` - because the read-class tools need `queryReadOnly`, which only two
+      providers implement.
+
+      So the retry is gated on the run actually holding what the sentence names. Told to call a
+      tool it has not got, a run calls it, is answered "there is no such tool", and spends the
+      very turn this retry bought: the #350/#356 defect, already paid for once. The three tests
+      above use the default workflow, which is the one where the sentence happens to be true.
+    */
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent", "operations");
+    const script = scriptedModel(asksTheUser, answersProse("Understood."));
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, "https://api.openai.com/v1", "nemotron3:33b"),
+      resources: b.resources,
+    });
+
+    expect(script.turns.length).toBe(1);
+    expect(result.stopReason).toBe("model-stopped");
+  });
+
+  test("it is spent once, so a run that stops again is not asked a third time", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(asksTheUser, asksTheUser, answersProse("Understood."));
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, "https://api.openai.com/v1", "nemotron3:33b"),
+      resources: b.resources,
+    });
+
+    expect(script.turns.length).toBe(2);
+    expect(result.stopReason).toBe("model-stopped");
+  });
+});
+
 describe("a run that used its tools and then narrated is reminded once", () => {
   /*
     The `no-report` shortfall, measured on three models: each called this run's tools,

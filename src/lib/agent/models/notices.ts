@@ -44,4 +44,9 @@ export const BASELINE_NOTICES: AgentNotices = Object.freeze({
     "This run answers by PRESENTING a result, and nothing has been presented yet: a report on its own is scored as having answered nothing.",
     "Your compose_report call was not run. Call present_answer first, with the artifact id of the result that answers the objective, and then call compose_report.",
   ].join(" "),
+  unreadStop: [
+    "You have stopped without reading anything, and there is nobody to reply to you: this run has no correspondent, so a request for information ends it with nothing established.",
+    "Read it yourself. Call inspect_schema for the tables and their columns, and inspect_plan for how a statement will run, then call compose_report with what you found.",
+    CITATION_RULE,
+  ].join(" "),
 });

@@ -78,6 +78,28 @@ export interface AgentModelProfile {
    */
   readonly retryEmptyTurn?: boolean;
   /**
+   * Whether a run that stopped WITHOUT CALLING ANYTHING is told to read the database itself.
+   *
+   * A different loss from the empty turn above, and from the report reminder: this model says
+   * something, and what it says is a request. `nemotron3:33b` lost query-optimization to it
+   * twice — once recorded in its own file as "asking for the SQL of the statement it was sent
+   * to diagnose", then again ten seconds into a later run, asking the user to paste the
+   * statement while holding `inspect_schema` and `inspect_plan`. There is nobody to answer: a
+   * run has no correspondent, so the question is a stop dressed as a turn.
+   *
+   * `remindToReport` cannot reach it. That notice tells a run to file what it established and
+   * is gated on `anyToolCalled` for good reason — a run that read nothing has nothing to file.
+   * The sentence this one needs is the other half: not "report what you found" but "find it".
+   *
+   * Free, which is the whole safety argument. `compose_report` is one of the run's tools, so a
+   * run that called nothing composed no report and has already earned `no-report`; the turn is
+   * spent on a run that has lost. It cannot cost a pass, only recover a failure.
+   *
+   * Off by default even so. The ten models locked at 300/300 were measured without it, and a
+   * drive-wide change is twice how this repository has handed back cells it had won.
+   */
+  readonly retryUnreadStop?: boolean;
+  /**
    * How many times a report may be held to ask for the answer that belongs beside it.
    *
    * One is enough for a model that forgot. One evaluated model did not forget: held once
@@ -127,6 +149,8 @@ export interface AgentNotices {
   readonly planStatement: string;
   /** An answer-presenting run about to report a result it read but never presented. */
   readonly presentBeforeReport: string;
+  /** A run that stopped without calling anything, having asked for what it could have read. */
+  readonly unreadStop: string;
 }
 
 /**
@@ -166,6 +190,16 @@ export const DEFAULT_REFUSAL_EXAMPLES = false;
  * the work already done earns the retry.
  */
 export const DEFAULT_RETRY_EMPTY_TURN = false;
+
+/**
+ * A run that stops having called nothing keeps its ending, unless a model's ledger asked.
+ *
+ * Off despite being free to grant — the turn is spent on a run whose verdict is already
+ * `no-report` — because "free" is an argument about cost, not about wording. The sentence sent
+ * is read by the model and acted on by it, so it is a measured value like every other, and it
+ * belongs to the models measured with it rather than to all of them at once.
+ */
+export const DEFAULT_RETRY_UNREAD_STOP = false;
 
 /**
  * One, which is what every locked answer-presenting cell was measured against.
