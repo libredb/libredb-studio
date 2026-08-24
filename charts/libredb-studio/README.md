@@ -287,6 +287,9 @@ reports what became of the document to an **admin** session — `{"modelTuning":
 or `{"state":"ignored","reason":…}` — because a setting that fails open is one an operator can
 otherwise believe is in force for as long as they never look.
 
+The document's contract — every setting and its bounds, what happens to a key this build does not
+implement, and a complete example to start from — is in the project's `docs/llms/model-tuning.md`.
+
 ## Production Setup (Ingress + HA)
 
 ```bash

@@ -39,6 +39,7 @@ the same model.
 | Configuring one — local or hosted | [`setup.md`](setup.md) |
 | How these numbers were produced, and where they stop being safe | [`methodology.md`](methodology.md) |
 | Measuring a model these pages do not cover | [`testing-your-own.md`](testing-your-own.md) |
+| Giving a model settings Studio has never measured | [`model-tuning.md`](model-tuning.md) |
 
 ## What was measured
 

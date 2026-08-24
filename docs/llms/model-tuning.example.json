@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "measuredAgainst": {
+    "turnTimeoutMs": 90000,
+    "protocol": "six surfaces, five consecutive passing runs each, on a Ryzen 7 with 64 GB",
+    "defaults": {
+      "sampling": { "temperature": 0, "topP": 1 },
+      "unreportedCallCeiling": 12,
+      "reportReminderLimit": 1,
+      "planStatementRetries": 0,
+      "presentReminderLimit": 1,
+      "retryEmptyTurn": false,
+      "refusalExamples": false
+    }
+  },
+  "models": [
+    {
+      "id": "mistral-small:24b",
+      "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
+      "settings": {
+        "turnTimeoutMs": 140000
+      },
+      "rationale": {
+        "turnTimeoutMs": [
+          "Its plan turn is bimodal: 31 seconds when it lands and 96 to 112 when it does not, so at the shipped 90 the cell scored 2/5 on which side of the line one turn fell.",
+          "Its other five surfaces clear the shipped limit comfortably, which is why this is per-model rather than a reason to move the default for everyone."
+        ]
+      }
+    }
+  ]
+}

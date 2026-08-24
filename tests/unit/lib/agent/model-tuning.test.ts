@@ -6,7 +6,7 @@
  * also how a document that arrives from somewhere else will be checked.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { activeTuning, operatorTuningStatus, resetTuning } from "@/lib/agent/model-tuning";
@@ -327,6 +327,28 @@ describe("what a document from outside Studio is held to instead", () => {
     // meaningful after a default moves has been quietly dropped for Studio's own document too.
     const incomplete = { models: [{ id: "x:1b", measured: "m", settings: { retryEmptyTurn: true } }] };
     expect(() => parseTuning(document(incomplete), "test")).toThrow(ModelTuningError);
+  });
+});
+
+describe("the example the documentation hands out", () => {
+  test("is a document this Studio accepts, and needs no explaining away", () => {
+    /*
+      `docs/llms/model-tuning.md` tells somebody who measured a model to start from this file and
+      change it. An example that has quietly stopped parsing is worse than no example: it is read
+      as the contract, so every document copied from it is wrong in the same way, and the person
+      who follows the page correctly is the one who gets the failure.
+
+      Asserted through the same entry point an operator's file goes through, and asserted on
+      `ignoredKeys` and `undocumentedOverrides` as well as on parsing — an example carrying a
+      misspelling Studio silently drops, or an override with no paragraph behind it, would be
+      teaching both by demonstration.
+    */
+    const path = join(import.meta.dir, "../../../../docs/llms/model-tuning.example.json");
+    const tuning = parseOperatorTuning(JSON.parse(readFileSync(path, "utf8")), "docs example");
+    expect(Object.keys(tuning.models)).toEqual(["mistral-small:24b"]);
+    expect(tuning.models["mistral-small:24b"]?.turnTimeoutMs).toBe(140_000);
+    expect(tuning.ignoredKeys).toEqual([]);
+    expect(tuning.undocumentedOverrides).toEqual([]);
   });
 });
 
