@@ -4,6 +4,78 @@ entries:
   - annotations:
       artifacthub.io/category: database
       artifacthub.io/changes: |
+        - "Every MySQL DDL and DML statement reported a failure for work the server had already applied: the driver returns an object rather than a row array for anything that returns no rows, so CREATE TABLE, INSERT, UPDATE and DELETE all answered with a TypeError while the change was committed. A SQL IDE reporting an error for a statement that ran is the worst available answer, because the user retries it"
+        - "A cache hit ratio was fabricated in eight providers rather than measured: SQLite claimed a fixed 95%, Couchbase published 0% when the stats read was denied (the ordinary case there, and 0 rates as critical), and Postgres, Oracle and SQL Server defaulted to 100 or 0 inside our own SQL. Absent metrics now read as not measured, and buffer pool usage stopped being the same quantity drawn twice"
+        - "MySQL lost its whole health panel, not one metric, on a tenant with no performance_schema database, because the ratio query ran uncaught"
+        - "A result exported as DDL typed numeric and timestamp columns as TEXT, and a binary value was written as its JSON shape - 46 bytes of JSON text where six bytes belonged. Postgres, MySQL, Oracle and SQL Server now report the engine's own column types, and every dialect writes a binary literal its own engine accepts, verified by replaying the export into seven engines"
+        - "A pasted rediss:// or couchbases:// URL landed on SSL mode disable, so the scheme was silently dropped - and the Couchbase transport was posting plain HTTP to the TLS management port"
+        - "The Linux desktop AppImage shipped a launcher only its builder could execute: linuxdeploy writes AppRun.wrapped as 0770 root:root, so anything reading the image with real permission checks - an extracted AppDir owned by another uid, a non-root container, or firejail's --appimage mount - died with Permission denied and never opened a window. A private FUSE mount skips that check, which is why the ordinary double-click always worked and no gate ever saw it"
+        - "Chart 0.1.47 changes no template: its content is the appVersion move to 0.13.3"
+        - "Track app release 0.13.3 (appVersion bump; default image tag follows)"
+      artifacthub.io/containsSecurityUpdates: "true"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:0.13.3
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 0.13.3
+    created: "2026-08-24T00:23:46.730911867Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting fourteen engines
+      - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase,
+      ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache
+      Cassandra
+    digest: 934901efc3385d617dbc0c6ade652a56829695d64eee168826d600145c929824
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - couchbase
+    - clickhouse
+    - druid
+    - elasticsearch
+    - opensearch
+    - trino
+    - cassandra
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.47/libredb-studio-0.1.47.tgz
+    version: 0.1.47
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
         - "The Linux desktop AppImage could not start at all on Ubuntu 22.04, Debian 12 or an enterprise distribution of that generation: built on a newer image, it required GLIBC_2.38 in every bundled GTK and WebKit library, so the loader refused every shared object and no window ever opened"
         - "The x64 AppImage is now built on the oldest still-supported LTS and a test refuses a floating runner label on that job, because no release gate can see a glibc floor that only older machines hit"
         - "MariaDB is named as MariaDB - the overview published every MariaDB server as MySQL, an assertion the server never made - and an unmeasured cache hit ratio is no longer reported as 99%"
@@ -2607,4 +2679,4 @@ entries:
     urls:
     - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
     version: 0.1.0
-generated: "2026-08-23T22:09:55.536115822Z"
+generated: "2026-08-24T00:23:46.723775975Z"
