@@ -176,12 +176,40 @@ const operatorModelSchema = z.looseObject({
     as never keeps the refusal explicit rather than incidental.
   */
   notices: z.never().optional(),
-  ...entryShape,
+  /*
+    Keyed by STRING rather than by the settings this Studio knows, and that is the difference
+    between a tolerance and a tolerance that defeats itself.
+
+    A document written for a newer Studio carries a new setting AND the paragraph arguing for it —
+    that pairing is the discipline, not an accident. With enum keys the loose settings schema
+    accepts the setting and the rationale beside it then refuses the whole document, so the exact
+    shape this schema exists to survive would be the one shape it rejects.
+  */
+  rationale: z.partialRecord(z.string(), z.array(z.string().min(1)).min(1)).default({}),
+});
+
+/*
+  The recorded basis, held as loosely as the settings it describes.
+
+  Leaving this strict would have defeated the relaxation above from one block up: a document written
+  against a NEWER Studio records THAT Studio's defaults, so it carries a key this one has never
+  heard of and every model in it would go back to the defaults for a reason that has nothing to do
+  with any measurement. Partial for the same reason read the other way — a Studio that adds a
+  default must not refuse every document written before it existed.
+
+  A default the document does not record is one it says nothing about, so `differsFromDefaults`
+  skips it rather than treating absence as a deviation. Reporting one would invent an override the
+  writer never made.
+*/
+const operatorMeasuredAgainstSchema = z.looseObject({
+  turnTimeoutMs: z.int().positive(),
+  protocol: z.string().min(1),
+  defaults: z.looseObject(measuredAgainstSchema.shape.defaults.shape).partial(),
 });
 
 const operatorDocumentSchema = z.strictObject({
   schemaVersion: z.literal(TUNING_SCHEMA_VERSION),
-  measuredAgainst: measuredAgainstSchema,
+  measuredAgainst: operatorMeasuredAgainstSchema,
   models: z.array(operatorModelSchema),
 });
 
@@ -198,8 +226,8 @@ export class ModelTuningError extends Error {
 export interface ModelTuning {
   /** Every model, keyed by LOWER-CASED id: the same weights answer to more than one spelling. */
   readonly models: Readonly<Record<string, AgentModelProfile>>;
-  /** The defaults the document was written against, for the test that keeps them honest. */
-  readonly measuredAgainst: TuningDocument["measuredAgainst"];
+  /** The basis the document was written against, for the test that keeps it honest. */
+  readonly measuredAgainst: RecordedBasis;
   /**
    * `"<model id>: <setting>"` for every value that differs from the recorded defaults and argues
    * for itself nowhere. Empty for the document this repository ships, and a test says so.
@@ -230,6 +258,19 @@ type StatedSettings = Partial<z.infer<typeof modelSettingsSchema>>;
 type RecordedDefaults = TuningDocument["measuredAgainst"]["defaults"];
 
 /**
+ * What a document says it was measured against.
+ *
+ * `defaults` is PARTIAL, and the type has to say so: Studio's own document records every one, but
+ * an operator's may record only the defaults its Studio knew about. A strict type here would make
+ * the absence checks in `differsFromDefaults` read as dead code to whoever removes them next.
+ */
+export interface RecordedBasis {
+  readonly turnTimeoutMs: number;
+  readonly protocol: string;
+  readonly defaults: Partial<RecordedDefaults>;
+}
+
+/**
  * One entry's settings as a profile: what it stated, and nothing it did not.
  *
  * Built by walking `SETTING_NAMES` rather than naming ten fields, so a setting added to
@@ -247,7 +288,7 @@ function profileFor(measured: string, settings: StatedSettings): AgentModelProfi
 }
 
 /** The settings this entry states that differ from the defaults the document records. */
-function differsFromDefaults(settings: StatedSettings, defaults: RecordedDefaults): string[] {
+function differsFromDefaults(settings: StatedSettings, defaults: Partial<RecordedDefaults>): string[] {
   const changed: string[] = [];
   for (const name of SETTING_NAMES) {
     const stated = settings[name];
@@ -259,10 +300,14 @@ function differsFromDefaults(settings: StatedSettings, defaults: RecordedDefault
       continue;
     }
     if (name === "sampling") {
+      // A default the document does not record says nothing about the setting beside it, so the
+      // setting cannot be a deviation from it. Only an operator document can be sparse here.
+      if (defaults.sampling === undefined) continue;
       const { temperature, topP } = stated as AgentSampling;
       if (temperature !== defaults.sampling.temperature || topP !== defaults.sampling.topP) changed.push(name);
       continue;
     }
+    if (defaults[name] === undefined) continue;
     if (stated !== defaults[name]) changed.push(name);
   }
   return changed;
@@ -270,7 +315,7 @@ function differsFromDefaults(settings: StatedSettings, defaults: RecordedDefault
 
 /** The shape both schemas produce, once their differing strictness has done its work. */
 interface ReadDocument {
-  readonly measuredAgainst: TuningDocument["measuredAgainst"];
+  readonly measuredAgainst: RecordedBasis;
   readonly models: readonly {
     readonly id: string;
     readonly measured: string;

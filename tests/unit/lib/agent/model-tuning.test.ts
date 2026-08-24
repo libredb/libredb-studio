@@ -245,6 +245,69 @@ describe("what a document from outside Studio is held to instead", () => {
     expect(parseOperatorTuning(document(misplaced), "test").ignoredKeys).toEqual(["some-model:9b: sumary"]);
   });
 
+  test("a recorded default this Studio does not implement does not refuse the document", () => {
+    /*
+      The half of forward-compatibility that loosening `settings` alone does not buy.
+
+      A document written against a NEWER Studio records that Studio's defaults, so its
+      `measuredAgainst.defaults` carries a key this one has never heard of. Refusing on that puts
+      every model in the document back on the defaults for a reason that has nothing to do with any
+      measurement — the same failure as refusing on an unknown setting, one block up.
+    */
+    const newer = {
+      measuredAgainst: {
+        turnTimeoutMs: 90_000,
+        protocol: "six surfaces",
+        defaults: { ...COMPLETE, someSettingFromTomorrow: 3 },
+      },
+      models: [{ id: "some-model:9b", measured: "m", settings: { retryEmptyTurn: true } }],
+    };
+    expect(parseOperatorTuning(document(newer), "test").models["some-model:9b"]?.retryEmptyTurn).toBe(true);
+  });
+
+  test("a recorded default the document omits is not read as an override", () => {
+    /*
+      The other direction, and it must not be answered by guessing. A default the document does not
+      record is a default it says nothing about, so the setting beside it cannot be called a
+      deviation from it — reporting one would invent an override the writer never made.
+    */
+    const sparse = {
+      measuredAgainst: { turnTimeoutMs: 90_000, protocol: "six surfaces", defaults: { retryEmptyTurn: false } },
+      models: [{ id: "some-model:9b", measured: "m", settings: { unreportedCallCeiling: 7 } }],
+    };
+    const tuning = parseOperatorTuning(document(sparse), "test");
+    expect(tuning.models["some-model:9b"]?.unreportedCallCeiling).toBe(7);
+    expect(tuning.undocumentedOverrides).toEqual([]);
+  });
+
+  test("a rationale for a setting this Studio does not implement travels with it", () => {
+    /*
+      The shape a forward document actually has: a new setting AND the paragraph arguing for it.
+      Accepting the setting while refusing its rationale would be a tolerance that defeats itself —
+      the document Studio is built to survive is exactly the one it would reject.
+    */
+    const argued = {
+      models: [
+        {
+          id: "some-model:9b",
+          measured: "m",
+          settings: { retryEmptyTurn: true, someSettingFromTomorrow: 3 },
+          rationale: { someSettingFromTomorrow: ["measured on the operator's own hardware"] },
+        },
+      ],
+    };
+    const tuning = parseOperatorTuning(document(argued), "test");
+    expect(tuning.models["some-model:9b"]?.retryEmptyTurn).toBe(true);
+    expect(tuning.ignoredKeys).toEqual(["some-model:9b: someSettingFromTomorrow"]);
+  });
+
+  test("Studio's own document is still refused on both, so neither relaxation leaked", () => {
+    const strayDefault = { measuredAgainst: { turnTimeoutMs: 1, protocol: "p", defaults: { ...COMPLETE, extra: 1 } } };
+    expect(() => parseTuning(document(strayDefault), "test")).toThrow(ModelTuningError);
+    const strayRationale = { models: [{ ...ENTRY, rationale: { notASetting: ["because"] } }] };
+    expect(() => parseTuning(document(strayRationale), "test")).toThrow(ModelTuningError);
+  });
+
   test("the bounds still hold, so a tolerant schema is not an unchecked one", () => {
     const outOfRange = {
       models: [{ id: "some-model:9b", measured: "m", settings: { turnTimeoutMs: 400_000 } }],
