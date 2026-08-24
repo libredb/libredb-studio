@@ -4,6 +4,74 @@ entries:
   - annotations:
       artifacthub.io/category: database
       artifacthub.io/changes: |
+        - "The query agent can be given settings for a model it has never measured, without a new release: agent.modelTuning mounts a JSON document of measured per-model settings and names it to the app"
+        - "Give agent.modelTuning.existingConfigMap a ConfigMap you created from a file, or agent.modelTuning.document the same content inline; there is no separate enable flag, because naming a source is what enables it"
+        - "A document that is missing, unreadable or off-schema is ignored and the settings the image ships with stand, so this cannot break a working agent - and GET /api/agent/config now tells an admin session which of the two happened"
+        - "Until this version the setting existed but could not be used on Kubernetes: it names a file, and the pod runs with a read-only root filesystem and nowhere to put one"
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:0.13.3
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 0.13.3
+    created: "2026-08-24T14:49:50.064405731Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting fourteen engines
+      - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase,
+      ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache
+      Cassandra
+    digest: 1c028d3b08c2138f504e20a42b1ffeed2f550e22b36a509a57e873bb7515479a
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - couchbase
+    - clickhouse
+    - druid
+    - elasticsearch
+    - opensearch
+    - trino
+    - cassandra
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.48/libredb-studio-0.1.48.tgz
+    version: 0.1.48
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
         - "Every MySQL DDL and DML statement reported a failure for work the server had already applied: the driver returns an object rather than a row array for anything that returns no rows, so CREATE TABLE, INSERT, UPDATE and DELETE all answered with a TypeError while the change was committed. A SQL IDE reporting an error for a statement that ran is the worst available answer, because the user retries it"
         - "A cache hit ratio was fabricated in eight providers rather than measured: SQLite claimed a fixed 95%, Couchbase published 0% when the stats read was denied (the ordinary case there, and 0 rates as critical), and Postgres, Oracle and SQL Server defaulted to 100 or 0 inside our own SQL. Absent metrics now read as not measured, and buffer pool usage stopped being the same quantity drawn twice"
         - "MySQL lost its whole health panel, not one metric, on a tenant with no performance_schema database, because the ratio query ran uncaught"
@@ -2679,4 +2747,4 @@ entries:
     urls:
     - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
     version: 0.1.0
-generated: "2026-08-24T00:23:46.723775975Z"
+generated: "2026-08-24T14:49:50.056484135Z"
