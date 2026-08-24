@@ -140,6 +140,7 @@ describe("#341 F2: the run investigates competently and finishes without composi
     // could not tell a model that thought it had reported from one that had simply finished.
     expect(drive.kinds).toEqual([
       "run-started",
+      "driver-resolved",
       "context-captured",
       "statement-drafted",
       "tool-invoked",

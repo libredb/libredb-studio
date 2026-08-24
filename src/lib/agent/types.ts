@@ -42,6 +42,19 @@
  */
 
 import type { Role } from "@/lib/auth";
+import type { LLMProviderType } from "@/lib/llm/types";
+
+/**
+ * Where the settings that drove a run came from.
+ *
+ * A named type rather than an inline union because two places need the same shape: the ledger
+ * event that records it, and `model-tuning`'s projection from its own status onto it. Spelled
+ * twice, the two would drift, and the drift would be invisible — both sides would still compile.
+ */
+export type AgentRunTuningProvenance =
+  | { readonly origin: "bundled" }
+  | { readonly origin: "operator"; readonly path: string; readonly digest: string }
+  | { readonly origin: "operator-ignored"; readonly path: string };
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
 import type { AgentChartSpec, DatabaseType, TableSchema } from "@/lib/types";
@@ -476,6 +489,34 @@ interface AgentRunEventBase {
  */
 export type AgentRunEvent =
   | (AgentRunEventBase & { readonly kind: "run-started"; readonly mode: AgentRunMode })
+  | (AgentRunEventBase & {
+      /**
+       * What drove this stretch of the run: the model, and where its settings came from.
+       *
+       * Written because a finished run said neither. The record carries no model id and no event
+       * did either, so "these settings were measured" — the product's whole claim about a model —
+       * was not checkable from the run that used them. Once a tuning document can arrive from an
+       * operator's disk, neither was "which settings", and `GET /api/agent/config` answers only
+       * for the server at the moment somebody asks rather than for a run read afterwards.
+       *
+       * Per DRIVE rather than per run: a resume can pick up a different model, so a resumed run
+       * carries one of these per stretch and each says what that stretch ran on. A reader takes
+       * the last, or notices they disagree, which is the fact worth noticing.
+       */
+      readonly kind: "driver-resolved";
+      readonly modelId: string;
+      readonly provider: LLMProviderType;
+      /**
+       * `bundled` is written rather than left out: a ledger silent about provenance and one that
+       * says "the shipped measurements" are different claims, and only the second is checkable.
+       *
+       * `operator-ignored` is its own case because the fail-open policy rests on the distinction.
+       * A run driven by the shipped settings because nobody configured a document, and one driven
+       * by them because the operator's could not be read, behave identically and mean opposite
+       * things — the second is a misconfiguration nobody has noticed yet.
+       */
+      readonly tuning: AgentRunTuningProvenance;
+    })
   | (AgentRunEventBase & {
       readonly kind: "context-captured";
       readonly fingerprint: string;

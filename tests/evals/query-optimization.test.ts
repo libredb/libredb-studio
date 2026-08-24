@@ -111,6 +111,7 @@ describe("the optimization arc, on both reference engines", () => {
 
       expect(drive.kinds).toEqual([
         "run-started",
+        "driver-resolved",
         "context-captured",
         "statement-drafted",
         "tool-invoked",

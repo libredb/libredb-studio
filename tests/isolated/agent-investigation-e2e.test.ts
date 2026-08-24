@@ -478,6 +478,7 @@ const kindsOf = (events: readonly AgentRunEvent[]): string[] => events.map((even
  */
 const ARC_LEDGER = [
   "run-started",
+  "driver-resolved",
   // The drive's own schema capture, before the model was asked anything (T8).
   "context-captured",
   // Beat 1: the initial draft, recorded before the call it describes.

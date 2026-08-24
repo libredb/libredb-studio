@@ -76,6 +76,7 @@ describe("the operations arc, on every engine including one agent mode otherwise
       const grounded = engine === "mysql" ? [] : ["context-captured"];
       expect(drive.kinds).toEqual([
         "run-started",
+        "driver-resolved",
         ...grounded,
         "tool-invoked",
         "tool-completed",
@@ -340,6 +341,7 @@ describe("an engine that cannot serve a reading", () => {
     // stopped. Which of those three the reader is looking at used to be a guess.
     expect(drive.kinds).toEqual([
       "run-started",
+      "driver-resolved",
       "tool-invoked",
       "tool-refused",
       "guidance-issued",

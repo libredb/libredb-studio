@@ -253,6 +253,95 @@ describe("AgentRunService — recording what a run narrated", () => {
   });
 });
 
+describe("AgentRunService — what drove the run", () => {
+  /*
+    A finished run used to say nothing about what produced it: no model id anywhere in the record
+    or the ledger, and nothing about where the model's settings came from. So "these settings were
+    measured", which is the product's whole claim about a model, was not checkable from the run —
+    and once a tuning document can arrive from an operator's disk, neither was "which settings".
+
+    Its own method rather than `recordEvent`, on that method's own rule: the narrative type is the
+    access control, and what drove a run is a lifecycle fact rather than something the run
+    narrated. Called once per DRIVE rather than once per run, because a resume can pick up a
+    different model — so a resumed run carries one entry per stretch and each says what that
+    stretch ran on.
+  */
+  test("the model and the tuning it resolved through land in the ledger", async () => {
+    const clock = fakeClock();
+    const h = harness(clock.read);
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.markRunning(runId);
+
+    clock.set(1_700_000_500_000);
+    await h.service.recordDriver(runId, {
+      modelId: "qwen3:8b",
+      provider: "ollama",
+      tuning: { origin: "operator", path: "/etc/libredb/model-tuning.json", digest: "a".repeat(64) },
+    });
+
+    expect((await h.store.read(runId))?.record.events.at(-1)).toEqual({
+      kind: "driver-resolved",
+      modelId: "qwen3:8b",
+      provider: "ollama",
+      tuning: { origin: "operator", path: "/etc/libredb/model-tuning.json", digest: "a".repeat(64) },
+      atMs: 1_700_000_500_000,
+    });
+  });
+
+  test("a run driven by the shipped measurements says so, with no path to explain", async () => {
+    // `bundled` is the absence of an operator document, and it is written rather than left out:
+    // a ledger silent about provenance and one that says "the shipped ones" are different claims,
+    // and only the second is checkable.
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.markRunning(runId);
+
+    await h.service.recordDriver(runId, {
+      modelId: "granite4.1:8b",
+      provider: "ollama",
+      tuning: { origin: "bundled" },
+    });
+
+    const event = (await h.store.read(runId))?.record.events.at(-1);
+    expect(event).toMatchObject({ kind: "driver-resolved", tuning: { origin: "bundled" } });
+  });
+
+  test("a document that was IGNORED is recorded as ignored, not as bundled", async () => {
+    /*
+      The distinction the whole fail-open policy rests on. A run driven by the shipped settings
+      because nobody configured a document, and one driven by them because the operator's document
+      could not be read, behave identically and mean opposite things — the second is a
+      misconfiguration nobody has noticed yet.
+    */
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.markRunning(runId);
+
+    await h.service.recordDriver(runId, {
+      modelId: "qwen3:4b",
+      provider: "ollama",
+      tuning: { origin: "operator-ignored", path: "/etc/libredb/broken.json" },
+    });
+
+    expect((await h.store.read(runId))?.record.events.at(-1)).toMatchObject({
+      tuning: { origin: "operator-ignored", path: "/etc/libredb/broken.json" },
+    });
+  });
+
+  test("refuses a run the loop has not picked up yet, and writes nothing", async () => {
+    // The same rule every other write here obeys: a queued run's ledger is not open for entries.
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+
+    const error = await captureServiceError(() =>
+      h.service.recordDriver(runId, { modelId: "qwen3:8b", provider: "ollama", tuning: { origin: "bundled" } }),
+    );
+
+    expect(error.reasonCode).toBe("RUN_NOT_RUNNING");
+    expect((await h.store.read(runId))?.record.events).toEqual([]);
+  });
+});
+
 describe("AgentRunService — finishing a run", () => {
   test("a finished run is terminal and releases its budget and its artifacts together", async () => {
     const h = harness();

@@ -81,6 +81,7 @@ describe("the assessment arc, on both reference engines", () => {
       // protection — found by review on #345.
       expect(drive.kinds).toEqual([
         "run-started",
+        "driver-resolved",
         "context-captured",
         "tool-invoked",
         "table-profiled",
@@ -370,6 +371,7 @@ describe("a profile that does not settle cleanly", () => {
     await expect(run.drive([profiles("engineering")])).rejects.toThrow(/pool went away/);
     expect((await run.events()).map((event) => event.kind)).toEqual([
       "run-started",
+      "driver-resolved",
       "context-captured",
       "tool-invoked",
     ]);
@@ -514,6 +516,7 @@ describe("the verdict is previewed before the report lands, not after the run di
 
     expect(drive.kinds).toEqual([
       "run-started",
+      "driver-resolved",
       "context-captured",
       "tool-invoked",
       "table-profiled",

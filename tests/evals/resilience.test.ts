@@ -58,6 +58,7 @@ describe("a drive that dies mid-run leaves a run another process can finish", ()
     const afterCrash = (await run.events()).map((event) => event.kind);
     expect(afterCrash).toEqual([
       "run-started",
+      "driver-resolved",
       "context-captured",
       "statement-drafted",
       "tool-invoked",
@@ -257,6 +258,7 @@ describe("a statement that fails at the database is repaired, not repeated", () 
 
     expect(drive.kinds).toEqual([
       "run-started",
+      "driver-resolved",
       "context-captured",
       "statement-drafted",
       "tool-invoked",

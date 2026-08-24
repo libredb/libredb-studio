@@ -127,6 +127,15 @@ export type AgentRunNarrativeEvent = Extract<
 type WithoutTimestamp<T> = T extends unknown ? Omit<T, "atMs"> : never;
 
 /**
+ * The one event `recordDriver` writes, named here so its method's parameter cannot widen.
+ *
+ * Extracted rather than spelled out again: the shape lives in `AgentRunEvent` with the reasoning
+ * for each of its three provenance cases, and a second copy here would be a second place for it
+ * to drift from the ledger it is written into.
+ */
+type AgentRunDriverEvent = Extract<AgentRunEvent, { kind: "driver-resolved" }>;
+
+/**
  * A narrative entry as a CALLER states it: everything but the timestamp, which
  * the service stamps from its own clock. A caller that supplied one could date a
  * run's history from a different clock than the one every other entry uses.
@@ -303,6 +312,33 @@ export class AgentRunService {
     }
     await this.store.appendEvent(runId, { kind: "run-started", atMs: this.clock(), mode: view.record.mode });
     return (await this.readOrThrow(runId)).record;
+  }
+
+  /**
+   * Records WHAT DROVE this stretch of the run: the model, and where its settings came from.
+   *
+   * Its own method rather than an admission to `recordEvent`, on that method's own rule. The
+   * narrative type there is the access control, and this is not something the run narrated — it
+   * is a lifecycle fact, the same class as `run-started`, and it is written by the drive at the
+   * moment it resolves a model rather than by anything the model did.
+   *
+   * Per DRIVE and not per run, which is why it is not folded into `markRunning`: that fires once,
+   * and a resume can pick up a different model after an operator changed the configuration and
+   * restarted. Each stretch writes what it ran on, so a resumed run carries one entry per stretch
+   * and a reader can see them disagree.
+   *
+   * Running only, like every other write here: a queued run's ledger is not open for entries and
+   * a terminal one's is closed.
+   */
+  async recordDriver(runId: string, driver: Omit<AgentRunDriverEvent, "atMs" | "kind">): Promise<void> {
+    const view = await this.readOrThrow(runId);
+    if (view.record.status !== "running") {
+      throw new AgentRunServiceError("RUN_NOT_RUNNING", `agent run "${runId}" is ${view.record.status}`);
+    }
+    // `kind` is the method's, not the caller's: this writes exactly one event, so asking a caller
+    // to restate its name is a field they can only get wrong. `recordEvent` takes it because it
+    // accepts many kinds and the kind is the choice being made there.
+    await this.store.appendEvent(runId, { ...driver, kind: "driver-resolved", atMs: this.clock() });
   }
 
   /**

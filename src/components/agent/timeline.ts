@@ -844,6 +844,24 @@ function describeEvent(
   switch (event.kind) {
     case "run-started":
       return { tone: "neutral", chrome: true, headline: `Run started in ${event.mode} mode` };
+    case "driver-resolved":
+      /*
+        The model, and ONLY the model.
+
+        Worth showing: which model produced a run was not visible anywhere in this interface, and
+        for somebody running several local models that is the first thing they want to know about
+        a run they are reading back.
+
+        Not shown: the tuning provenance this event also carries. A mounted document's path and
+        digest are operator diagnostics — they answer "which settings drove this" for whoever
+        deploys the server, not for whoever asked the question — and a filesystem path in a user's
+        timeline is server topology leaking into a place it has no business being. It stays on the
+        ledger, where `GET /api/agent/config`'s audience reads it.
+
+        A resume writes a second one of these, so a run whose model changed mid-flight shows both
+        lines rather than one. That is the fact, not a duplicate.
+      */
+      return { tone: "neutral", chrome: true, headline: `Driven by ${event.modelId}` };
     case "context-captured":
       return {
         tone: "progress",

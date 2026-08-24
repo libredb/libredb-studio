@@ -71,6 +71,16 @@ const DATABASE_ERROR: AgentToolRefusal = {
  */
 const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
   "run-started": { kind: "run-started", atMs: 1, mode: "agent" },
+  // What drove a stretch of the run. The `operator` provenance is the fixture rather than
+  // `bundled` because it is the shape with fields to get wrong, and the one an operator's
+  // deployment actually writes.
+  "driver-resolved": {
+    kind: "driver-resolved",
+    atMs: 1,
+    modelId: "qwen3:8b",
+    provider: "ollama",
+    tuning: { origin: "operator", path: "/etc/libredb/model-tuning.json", digest: "f".repeat(64) },
+  },
   // A call the server turned back, carrying the verifier's own name for what was missing.
   // `shortfall` is optional because the purpose-written notices answer conditions the
   // verifier has no vocabulary for — a run holding two plans and citing neither, say.

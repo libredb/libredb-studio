@@ -251,10 +251,25 @@ The middle case is why this is a comparison and not a bare "has a seed id". The 
 database would investigate the seed and report on it as though it were the one on screen.
 
 A run emits a closed set of **semantic events**, and they are the whole of what the UI renders:
-`run-started`, `context-captured`, `statement-drafted`, `plan-statement-drafted`, `tool-invoked`,
-`tool-completed`, `tool-refused`, `report-composed`, `closing-statement`, `run-finished`, plus the
-four a single workflow's own tool writes — `plan-comparison`, `recommendation`, `table-profiled` and
-`answer-composed`.
+`run-started`, `driver-resolved`, `context-captured`, `statement-drafted`, `plan-statement-drafted`,
+`tool-invoked`, `tool-completed`, `tool-refused`, `report-composed`, `closing-statement`,
+`run-finished`, plus the four a single workflow's own tool writes — `plan-comparison`,
+`recommendation`, `table-profiled` and `answer-composed`.
+
+**`driver-resolved` says what drove the run**, and it exists because a finished run used to say
+nothing about that: no event and no record field carried the model id, so "these settings were
+measured" — the product's whole claim about a model — was not checkable from the run that used them.
+It carries the model, its provider, and where the settings came from: `bundled`, `operator` with the
+document's path and a digest of the bytes as read, or `operator-ignored` with the path when a
+document was configured and could not be used. The last is its own case on purpose — a run driven by
+the shipped settings because nobody configured a document, and one driven by them because the
+operator's could not be read, behave identically and mean opposite things.
+
+It is written **once per drive** rather than once per run, because a resume picks the model up from
+the configuration as it stands then: a run resumed after an operator changed it carries one entry per
+stretch, and two that disagree are the fact worth finding. The rail renders the model and not the
+provenance — a mounted document's path is server topology, and it belongs to whoever reads
+`GET /api/agent/config` rather than to whoever asked the question.
 
 **`plan-statement-drafted` is planning mode's own**, and is deliberately not `statement-drafted`:
 that kind promises a `stepId` tying a draft to the tool invocation that sent it, and a toolless run
@@ -2466,10 +2481,6 @@ as they are fixed, and a numeral here goes stale silently.
   behind that is about merging (half of one measurement beside half of another is a configuration
   nobody has run), and it justifies whole-**entry** replacement rather than whole-**document**
   rejection: fifty models would be lost to a typo in the thirty-seventh.
-- **B58** — a run records the model it used and nothing about where that model's settings came from,
-  so once a document can arrive from outside Studio, "these settings were measured" is no longer
-  checkable from the run itself. `GET /api/agent/config` answers it for the server at the moment
-  somebody asks, which is not when the question is normally asked.
 - **B59** — per-model WORDING has nowhere to go. A sentence is a measured value here (twice a shared
   change won cells and lost others, and had to be reverted whole), and the per-model override is
   gone: the document refuses wording and nothing else can populate it. Refusing unsigned prompt text

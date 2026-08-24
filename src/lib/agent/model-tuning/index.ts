@@ -25,9 +25,11 @@
  * why. `../config.ts` states the same fail-open policy for its own variable: a mistyped setting
  * must not take the runtime down. Fail-open with no diagnosis is just a setting that does nothing.
  */
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { logger } from "@/lib/logger";
 import { agentModelTuningPath } from "../config";
+import type { AgentRunTuningProvenance } from "../types";
 import { type ModelTuning, parseOperatorTuning, parseTuning } from "./schema";
 import bundled from "./measured-profiles.json";
 
@@ -57,17 +59,35 @@ export type OperatorTuningStatus =
        * an operator's `retryEmtpyTurn` would do nothing and say nothing.
        */
       readonly ignoredKeys: readonly string[];
+      /**
+       * SHA-256 of the document's bytes AS READ.
+       *
+       * The path says which file; this says which version of it. A run recorded against a path
+       * alone cannot be told apart from a run against that path after somebody edited it, which
+       * is most of what recording the path was for.
+       *
+       * Of the bytes rather than of the parsed result: a parsed object would have to be
+       * serialised to be hashed, and two serialisations of one document are the same file while
+       * two files that happen to mean the same thing are not the same evidence.
+       */
+      readonly digest: string;
     }
   | { readonly state: "ignored"; readonly path: string; readonly reason: string };
 
 let active: ModelTuning | null = null;
 let operatorStatus: OperatorTuningStatus = { state: "unset" };
 
-/** The operator's document, or the reason it is not being used. Never throws. */
-function readOperatorDocument(path: string): { readonly doc: ModelTuning } | { readonly reason: string } {
+/** The operator's document with the digest of what was read, or the reason it is not used. Never throws. */
+function readOperatorDocument(
+  path: string,
+): { readonly doc: ModelTuning; readonly digest: string } | { readonly reason: string } {
   try {
+    const text = readFileSync(path, "utf8");
     // The tolerant contract, because this document has a different author: see `parseOperatorTuning`.
-    return { doc: parseOperatorTuning(JSON.parse(readFileSync(path, "utf8")), path) };
+    const doc = parseOperatorTuning(JSON.parse(text), path);
+    // Hashed here rather than by the caller, because THESE are the bytes that were parsed: a
+    // second read to hash could get a different file, which is the one thing a digest must rule out.
+    return { doc, digest: createHash("sha256").update(text).digest("hex") };
   } catch (error) {
     return { reason: error instanceof Error ? error.message : String(error) };
   }
@@ -115,6 +135,7 @@ export function activeTuning(): ModelTuning {
     path,
     models: Object.keys(read.doc.models).length,
     ignoredKeys: read.doc.ignoredKeys,
+    digest: read.digest,
   };
   logger.info("Operator model tuning applied over the measurements Studio ships with", {
     route: "agent/model-tuning",
@@ -135,6 +156,26 @@ export function activeTuning(): ModelTuning {
 export function operatorTuningStatus(): OperatorTuningStatus {
   activeTuning();
   return operatorStatus;
+}
+
+/**
+ * The same fact a run needs to record: where the settings that drove it came from.
+ *
+ * Here rather than in the drive, because it is a projection of THIS module's status and belongs
+ * beside the thing it projects. In the drive it would be a four-line mapping nothing could test
+ * without driving a model.
+ *
+ * `unset` becomes `bundled` rather than being left out: a ledger silent about provenance and one
+ * that says "the shipped measurements" are different claims, and only the second is checkable.
+ * `ignored` keeps its own origin for the reason the fail-open policy exists — a run driven by the
+ * shipped settings because nobody configured a document and one driven by them because the
+ * operator's could not be read behave identically and mean opposite things.
+ */
+export function tuningProvenance(): AgentRunTuningProvenance {
+  const status = operatorTuningStatus();
+  if (status.state === "unset") return { origin: "bundled" };
+  if (status.state === "ignored") return { origin: "operator-ignored", path: status.path };
+  return { origin: "operator", path: status.path, digest: status.digest };
 }
 
 /** Drops the memo so a test can change the environment and read the result. */

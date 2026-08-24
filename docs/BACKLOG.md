@@ -2519,20 +2519,6 @@ or not at all — so the change is where the refusal is thrown, not what it prot
 **Done when:** a document with one bad entry applies the rest, and the skipped entries are reported
 by id through `operatorTuningStatus()` the way `ignoredKeys` already is.
 
-### B58. No run records which tuning document drove it
-
-The product's whole claim about a model is that its settings were measured. A run's ledger records
-the model id and nothing about where its settings came from, so once a document can arrive from
-outside Studio, "measured" stops being checkable from the run: a support conversation cannot tell a
-run driven by the shipped measurements from one driven by an operator's file, or by an older version
-of that file.
-
-`operatorTuningStatus()` answers it for the SERVER, at the moment somebody asks. It does not answer
-it for a run somebody is reading afterwards, which is when the question is normally asked.
-
-**Done when:** a run records the origin of the tuning that drove it — bundled, or a path plus a
-digest of the document as read — so a finished run says what it was driven with.
-
 ### B59. Per-model instructions have nowhere to go, and the mechanism that held them is gone
 
 Wording is measured, not constant: this repository twice changed a shared sentence, won several

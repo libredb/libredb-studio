@@ -332,6 +332,7 @@ describe("a fresh run drives the investigation arc", () => {
     expect(result.turns).toBe(2);
     expect(kindsOf(await eventsOf(b.store, run.runId))).toEqual([
       "run-started",
+      "driver-resolved",
       // The drive's own schema capture, before the model was asked anything.
       "context-captured",
       "statement-drafted",
@@ -420,6 +421,7 @@ describe("a fresh run drives the investigation arc", () => {
     const events = await eventsOf(b.store, run.runId);
     expect(kindsOf(events)).toEqual([
       "run-started",
+      "driver-resolved",
       "context-captured",
       "tool-invoked",
       "tool-completed",
@@ -3516,7 +3518,23 @@ describe("the run reads its schema context through the catalog tool", () => {
     expect(catalogStatements(b)[1]).toContain("pg_constraint");
     expect(catalogStatements(b)[2]).toContain("pg_index");
     expect(b.acquireProvider).toHaveBeenCalledTimes(CONTEXT_READS);
-    expect(kindsOf(await eventsOf(b.store, run.runId))[1]).toBe("context-captured");
+    /*
+      "Before the first turn" as an ORDER rather than an index. This read `kinds[1]`, which said
+      the same thing only for as long as exactly one event preceded it — and the day another
+      opening record was added the assertion failed while the property it names still held.
+
+      The property is that nothing the model did comes first: the inventory is captured, and only
+      then does the run have anything to say. Asserted against every event that represents model
+      activity rather than against a position, so a new opening record cannot break it and a
+      capture that genuinely slipped past the first turn cannot pass.
+    */
+    const kinds = kindsOf(await eventsOf(b.store, run.runId));
+    const captured = kinds.indexOf("context-captured");
+    expect(captured).toBeGreaterThan(-1);
+    for (const activity of ["tool-invoked", "statement-drafted", "closing-statement", "report-composed"]) {
+      const at = kinds.indexOf(activity);
+      if (at !== -1) expect(captured).toBeLessThan(at);
+    }
   });
 
   test("the packed inventory reaches the model fenced, carrying the fingerprint a claim can cite", async () => {

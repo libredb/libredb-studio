@@ -98,6 +98,7 @@ export const AGENT_RUN_ID_PATTERN = /^[A-Za-z0-9_]{1,64}$/;
 const EVENT_KINDS: ReadonlySet<string> = new Set(
   Object.keys({
     "run-started": true,
+    "driver-resolved": true,
     "context-captured": true,
     "statement-drafted": true,
     "tool-invoked": true,

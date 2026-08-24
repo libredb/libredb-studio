@@ -56,6 +56,7 @@ import {
   reusableSnapshot,
 } from "./context-snapshot";
 import { agentModelTurnTimeoutMs } from "./config";
+import { tuningProvenance } from "./model-tuning";
 import { BASELINE_NOTICES } from "./models/notices";
 import {
   ceilingFor,
@@ -2391,6 +2392,23 @@ export async function runInvestigation(
     }
 
     const record = resumed.record.status === "queued" ? await service.markRunning(runId) : resumed.record;
+
+    /*
+      What this stretch is about to be driven with, before it is driven with it.
+
+      Written per DRIVE and not inside `markRunning`, which fires once: a resume picks the model up
+      from the configuration as it stands now, so a run resumed after an operator changed it ran on
+      two different things and a single entry would name only the first. Each stretch says what it
+      ran on, and a reader who finds two that disagree has found the fact worth finding.
+
+      Before the first turn rather than after the last, because a run that fails or is cancelled is
+      exactly the run somebody asks this question about.
+    */
+    await service.recordDriver(runId, {
+      modelId: model.modelId,
+      provider: model.provider,
+      tuning: tuningProvenance(),
+    });
 
     // Read from the record and not from a module constant: the turn ceiling is one of
     // the four figures the decision table varies per workflow, and a drive that used

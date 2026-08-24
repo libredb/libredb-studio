@@ -94,6 +94,7 @@ describe("NL2SQL's happy path, as an agent run", () => {
 
       expect(drive.kinds).toEqual([
         "run-started",
+        "driver-resolved",
         "context-captured",
         "statement-drafted",
         "tool-invoked",
@@ -293,6 +294,7 @@ describe("Autopilot's happy path, as an agent run", () => {
 
       expect(drive.kinds).toEqual([
         "run-started",
+        "driver-resolved",
         "context-captured",
         "tool-invoked",
         "table-profiled",

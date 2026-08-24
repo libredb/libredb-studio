@@ -189,6 +189,44 @@ describe("foldLedgerEntries", () => {
     that says the run stopped without a cited report — which is the difference
     between "succeeded" and "answered".
   */
+  test("the rail names the model that drove the run, and never the document behind it", () => {
+    /*
+      Two halves, and the second is the one worth having.
+
+      SHOWN: which model produced a run was not visible anywhere in this interface. For somebody
+      running several local models it is the first thing they want to know about a run they are
+      reading back, and the ledger now carries it.
+
+      NOT SHOWN: the tuning provenance the same event carries. A mounted document's path is server
+      topology and its digest is an auditing detail — they answer "which settings drove this" for
+      whoever deploys the server, and that reader has `GET /api/agent/config`. A filesystem path
+      rendered into a user's timeline is a leak, and this asserts the absence rather than trusting
+      the mapping to keep omitting it.
+    */
+    const view = foldLedgerEntries([
+      OPENED,
+      event({ kind: "event", event: { kind: "run-started", atMs: 2, mode: "agent" } }),
+      event({
+        kind: "event",
+        event: {
+          kind: "driver-resolved",
+          atMs: 3,
+          modelId: "qwen3:8b",
+          provider: "ollama",
+          tuning: { origin: "operator", path: "/etc/libredb/model-tuning.json", digest: "c".repeat(64) },
+        },
+      }),
+    ]);
+
+    const driver = view.items.at(-1);
+    expect(driver?.headline).toBe("Driven by qwen3:8b");
+    expect(driver?.chrome).toBe(true);
+    expect(driver?.tone).toBe("neutral");
+    const rendered = JSON.stringify(view.items);
+    expect(rendered).not.toContain("/etc/libredb/model-tuning.json");
+    expect(rendered).not.toContain("c".repeat(64));
+  });
+
   test("the model's closing prose becomes an entry of its own", () => {
     const view = foldLedgerEntries([
       OPENED,

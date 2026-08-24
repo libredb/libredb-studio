@@ -6,10 +6,11 @@
  * also how a document that arrives from somewhere else will be checked.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { activeTuning, operatorTuningStatus, resetTuning } from "@/lib/agent/model-tuning";
+import { activeTuning, operatorTuningStatus, resetTuning, tuningProvenance } from "@/lib/agent/model-tuning";
 import bundled from "@/lib/agent/model-tuning/measured-profiles.json";
 import {
   ModelTuningError,
@@ -463,6 +464,25 @@ describe("a document an operator supplies", () => {
     expect(status.state === "ignored" && status.reason).toContain("JSON");
   });
 
+  test("reports a digest of the document it applied, so a later edit is visible", () => {
+    /*
+      The status says WHICH file; the digest says WHICH VERSION of it. A run recorded against a
+      path alone cannot be told apart from a run against the same path after somebody edited it,
+      which is most of the value of recording the path at all.
+
+      Of the bytes as read, not of the parsed result: a parsed object would have to be serialised
+      to be hashed, and two serialisations of one document are the same file while two files with
+      the same meaning are not the same evidence.
+    */
+    const body = JSON.stringify(document());
+    process.env[ENV] = writeDocument(body);
+    resetTuning();
+    const status = operatorTuningStatus();
+
+    expect(status.state).toBe("applied");
+    expect(status.state === "applied" && status.digest).toBe(createHash("sha256").update(body).digest("hex"));
+  });
+
   test("reports the document it applied, and how many models it carried", () => {
     process.env[ENV] = writeDocument(document());
     resetTuning();
@@ -484,6 +504,35 @@ describe("a document an operator supplies", () => {
     const status = operatorTuningStatus();
     expect(status.state).toBe("ignored");
     expect(status.state === "ignored" && status.path).toBe(resolve("not-a-real-document.json"));
+  });
+
+  test("projects the three states onto what a run records, and loses nothing on the way", () => {
+    /*
+      The projection a run's ledger is written from. It lives beside the status rather than in the
+      drive because in the drive it would be four lines nothing could test without driving a model.
+
+      All three cases asserted together, because the value of the third is exactly that it is not
+      the first: a run driven by the shipped settings because nobody configured a document and one
+      driven by them because the operator's could not be read behave identically and mean opposite
+      things.
+    */
+    resetTuning();
+    expect(tuningProvenance()).toEqual({ origin: "bundled" });
+
+    const body = JSON.stringify(document());
+    const good = writeDocument(body);
+    process.env[ENV] = good;
+    resetTuning();
+    expect(tuningProvenance()).toEqual({
+      origin: "operator",
+      path: good,
+      digest: createHash("sha256").update(body).digest("hex"),
+    });
+
+    const bad = writeDocument("{ not json");
+    process.env[ENV] = bad;
+    resetTuning();
+    expect(tuningProvenance()).toEqual({ origin: "operator-ignored", path: bad });
   });
 
   test("reports nothing configured when no path was set", () => {

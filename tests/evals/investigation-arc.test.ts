@@ -56,6 +56,7 @@ describe("an investigation that answers, on both reference engines", () => {
 
       expect(drive.kinds).toEqual([
         "run-started",
+        "driver-resolved",
         "context-captured",
         "statement-drafted",
         "tool-invoked",
@@ -134,6 +135,7 @@ describe("a planning run is judged by what planning mode can produce", () => {
     // and `plan-statement-drafted` when the statement became a fact about the run.
     expect(drive.kinds).toEqual([
       "run-started",
+      "driver-resolved",
       "context-captured",
       "closing-statement",
       "plan-statement-drafted",
@@ -150,7 +152,13 @@ describe("a planning run is judged by what planning mode can produce", () => {
 
     const drive = await run.drive([answersProse("First I would ", "read the employees table.")]);
 
-    expect(drive.kinds).toEqual(["run-started", "context-captured", "closing-statement", "run-finished"]);
+    expect(drive.kinds).toEqual([
+      "run-started",
+      "driver-resolved",
+      "context-captured",
+      "closing-statement",
+      "run-finished",
+    ]);
     expect(drive.verdict).toEqual({
       outcome: "unanswered",
       verifier: "agent-planning.1",
@@ -165,7 +173,7 @@ describe("a planning run is judged by what planning mode can produce", () => {
 
     // Grounded and still mute: being given the schema is not being given an answer,
     // which is what keeps the verdict a measurement of what the run PRODUCED.
-    expect(drive.kinds).toEqual(["run-started", "context-captured", "run-finished"]);
+    expect(drive.kinds).toEqual(["run-started", "driver-resolved", "context-captured", "run-finished"]);
     expect(drive.verdict.unmet).toEqual(["no-plan"]);
   });
 
@@ -194,7 +202,13 @@ describe("a planning run is judged by what planning mode can produce", () => {
     expect(reading.statements).toHaveLength(3);
     // No capture, and no catalog re-read: the inventory was given for free. The one
     // statement it did send is the statistics read, which no hold carries.
-    expect(drive.kinds).toEqual(["run-started", "closing-statement", "plan-statement-drafted", "run-finished"]);
+    expect(drive.kinds).toEqual([
+      "run-started",
+      "driver-resolved",
+      "closing-statement",
+      "plan-statement-drafted",
+      "run-finished",
+    ]);
     expect(drive.modelStatements).toEqual([]);
     expect(drive.statements).toHaveLength(1);
     expect(drive.statements[0]).toContain("pg_stats");
