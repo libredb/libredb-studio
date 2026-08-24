@@ -76,6 +76,7 @@ import { readSqlSpan } from "@/lib/sql/spans";
 import { CASSANDRA_DEFAULT_PORT, CassandraDriverTransport } from "./driver-transport";
 import {
   CASSANDRA_IDENTITY_CQL,
+  type CassandraServerFacts,
   getActiveSessions as readActiveSessions,
   getHealth as readHealth,
   getIndexStats as readIndexStats,
@@ -85,6 +86,7 @@ import {
   getSlowQueries as readSlowQueries,
   getStorageStats as readStorageStats,
   getTableStats as readTableStats,
+  readServerFacts,
 } from "./introspect";
 import { CassandraTransportError, type CassandraTransport } from "./transport";
 
@@ -165,6 +167,17 @@ export class CassandraProvider extends SQLBaseProvider {
   private transport: CassandraTransport | null;
 
   /**
+   * What this connection established about the server, once, at connect time.
+   *
+   * One fact today - whether this build has the `system_views` keyspace - and it is
+   * held here rather than asked per read because it cannot change while the session
+   * lives: a virtual keyspace appears with a node restart, and a restart drops the
+   * session. Cleared in `disconnect()` with the transport it describes, so a reused
+   * connection object never carries the previous server's answer.
+   */
+  private facts: CassandraServerFacts | null;
+
+  /**
    * The transport is injectable, and this is the only production-visible seam: the
    * factory passes two arguments, so a real connection always builds its own driver
    * session. The integration suite passes one built over a session that replays a
@@ -175,6 +188,7 @@ export class CassandraProvider extends SQLBaseProvider {
   constructor(config: DatabaseConnection, options: ProviderOptions = {}, transport?: CassandraTransport) {
     super(config, options);
     this.transport = transport ?? null;
+    this.facts = null;
     this.validate();
   }
 
@@ -377,6 +391,11 @@ export class CassandraProvider extends SQLBaseProvider {
     try {
       await transport.connect();
       await transport.execute(CASSANDRA_IDENTITY_CQL);
+      // One extra statement per connection, and the last thing the attempt does: it
+      // asks which virtual keyspaces this build has, which is what the monitoring
+      // reads key their degradation on instead of the wording of a refusal. It never
+      // throws, so it cannot turn a working connection into a failed one.
+      this.facts = await readServerFacts(transport);
     } catch (error) {
       // `connect()` opens a pool with sockets and reconnection timers behind it, and
       // the identity read runs AFTER that - so a probe that fails leaks the pool
@@ -395,6 +414,7 @@ export class CassandraProvider extends SQLBaseProvider {
   public async disconnect(): Promise<void> {
     const transport = this.transport;
     this.transport = null;
+    this.facts = null;
     if (transport !== null) await transport.close();
     this.setConnected(false);
   }
@@ -422,6 +442,17 @@ export class CassandraProvider extends SQLBaseProvider {
     // Assigned before setConnected(true) and cleared after setConnected(false), so a
     // connected provider always has one.
     return this.transport!;
+  }
+
+  /**
+   * The facts the connect-time probe established.
+   *
+   * Assigned in the same `try` as the identity read and cleared with the transport, so
+   * a connected provider always has them - which is why `requireTransport()` is the
+   * one that checks.
+   */
+  private requireFacts(): CassandraServerFacts {
+    return this.facts!;
   }
 
   /**
@@ -568,12 +599,12 @@ export class CassandraProvider extends SQLBaseProvider {
   public async getOverview(): Promise<DatabaseOverview> {
     const transport = this.requireTransport();
     const keyspace = this.requireKeyspace();
-    return this.guarded(() => readOverview(transport, keyspace));
+    return this.guarded(() => readOverview(transport, keyspace, this.requireFacts()));
   }
 
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
     const transport = this.requireTransport();
-    return this.guarded(() => readPerformanceMetrics(transport));
+    return this.guarded(() => readPerformanceMetrics(transport, this.requireFacts()));
   }
 
   /** Empty, and it asks the cluster nothing: there is no slow-query log to read. */
@@ -583,7 +614,7 @@ export class CassandraProvider extends SQLBaseProvider {
 
   public async getActiveSessions(options: { limit?: number } = {}): Promise<ActiveSessionDetails[]> {
     const transport = this.requireTransport();
-    return this.guarded(() => readActiveSessions(transport, options));
+    return this.guarded(() => readActiveSessions(transport, this.requireFacts(), options));
   }
 
   /** Empty, and it asks the cluster nothing: see `introspect.ts` for the two numbers refused. */
@@ -604,7 +635,7 @@ export class CassandraProvider extends SQLBaseProvider {
   public async getHealth(): Promise<HealthInfo> {
     const transport = this.requireTransport();
     const keyspace = this.requireKeyspace();
-    return this.guarded(() => readHealth(transport, keyspace));
+    return this.guarded(() => readHealth(transport, keyspace, this.requireFacts()));
   }
 
   // ==========================================================================

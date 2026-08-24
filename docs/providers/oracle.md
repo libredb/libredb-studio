@@ -388,10 +388,10 @@ summary all read.
 | `NUMBER` | `number` | `1.2345678901234568e+37` — **digits lost** | the double, see below |
 | `BINARY_DOUBLE` | `number` | `3.5` | the number |
 | `TIMESTAMP` / `DATE` | `Date` | `"2026-08-23T17:46:46.422Z"` | the formatted date |
-| `TIMESTAMP WITH TIME ZONE` | `Date` | `"2026-08-24T07:11:12.345Z"` — offset folded to UTC, sub-ms dropped | the formatted date |
-| `TIMESTAMP WITH LOCAL TIME ZONE` | `Date` | `"2026-08-24T10:11:12.345Z"` | the formatted date |
-| `INTERVAL YEAR TO MONTH` | `IntervalYM` | `{"months":7,"years":3}` | that object, as JSON |
-| `INTERVAL DAY TO SECOND` | `IntervalDS` | `{"fseconds":900000000,"seconds":8,"minutes":7,"hours":6,"days":5}` | that object, as JSON |
+| `TIMESTAMP WITH TIME ZONE` | `Date` | `"2026-08-24T07:11:12.345Z"` — offset folded to UTC, sub-ms dropped | the formatted date — [§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be) |
+| `TIMESTAMP WITH LOCAL TIME ZONE` | `Date` | `"2026-08-24T07:11:12.345Z"` — same, normalized to the session time zone first | the formatted date — [§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be) |
+| `INTERVAL YEAR TO MONTH` | `IntervalYM` | `"+03-07"` | its Oracle literal — [§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be) |
+| `INTERVAL DAY TO SECOND` | `IntervalDS` | `"+05 06:07:08.9"` | its Oracle literal — [§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be) |
 | `XMLTYPE` | `string` | `"<r>\n  <a>1</a>\n</r>\n"` | the serialized document |
 | `JSON` | plain object | `{"k":[1,2]}` | that object, as JSON |
 | any of the above, `NULL` | `null` | `null` | empty |
@@ -461,8 +461,9 @@ and `NUMBER(20,4)` `1234567890123456.7891` as `1234567890123456.8`. Fetching `NU
 would keep the digits — the way `docs/providers/cassandra.md` §3.8 keeps a `bigint`'s — but it is
 **not** part of that change: it changes every numeric cell Oracle produces, including the ones the grid
 right-aligns and the agent arithmetics over, so it is tracked separately rather than smuggled in with
-the LOB fix. The two `INTERVAL` types and `JSON` are lossless as objects and are also left as they
-are; `XMLTYPE` needs nothing, it is already a string.
+the LOB fix. `JSON` is lossless as an object and is left as it is; `XMLTYPE` needs nothing, it is
+already a string. The two `INTERVAL` types were left alone by that change too and are handled now —
+[§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be).
 
 ### 5.4 Declared column types
 
@@ -495,6 +496,138 @@ This is the only source of a type for a computed column or an ad-hoc projection 
 no catalog entry to answer with - and it is what stops the SQL-DDL export from guessing. Measured
 before this existed, the probe table's `NUMBER(10,2)` column exported as `BINARY_DOUBLE` and its
 `BLOB` as `VARCHAR2(4000)`, both inferred from a value.
+
+### 5.5 An interval is normalized to its Oracle literal; a time zone cannot be
+
+Four Oracle types "lose or hide what they carry", and the answers are not the same for both pairs:
+the two intervals are **normalized at the driver boundary**, the two time-zone timestamps **cannot
+be** and this section says so plainly instead of implying otherwise. This is the decision
+[`docs/providers/cassandra.md` §3.8](cassandra.md#38-values-are-normalized-once-at-the-driver-boundary)
+already took for a CQL `duration`, applied to the one other engine here that has the same shape of
+problem.
+
+Measured 2026-08-24 against **Oracle Free 23ai** with **oracledb 6.10.0 in Thin mode**, through
+`createDatabaseProvider({type:"oracle"})`:
+
+| Oracle type | stored | before | after |
+|---|---|---|---|
+| `INTERVAL YEAR TO MONTH` | `INTERVAL '3-7' YEAR TO MONTH` | `{"months":7,"years":3}` | `"+03-07"` |
+| `INTERVAL DAY TO SECOND` | `INTERVAL '5 6:7:8.9' DAY TO SECOND` | `{"fseconds":900000000,"seconds":8,"minutes":7,"hours":6,"days":5}` | `"+05 06:07:08.9"` |
+| `TIMESTAMP WITH TIME ZONE` | `TIMESTAMP '2026-08-24 10:11:12.345678 +03:00'` | `"2026-08-24T07:11:12.345Z"` | unchanged — see below |
+| `TIMESTAMP WITH LOCAL TIME ZONE` | the same value | `"2026-08-24T07:11:12.345Z"` | unchanged — see below |
+
+#### The intervals
+
+The old objects were lossless and unreadable: nothing in the product reconstructs either one, the
+grid showed a JSON blob where a duration belongs, and the SQL export wrote that blob into an
+`INTERVAL` column — which Oracle **refuses** (`ORA-01867: the interval is invalid`), so the row was
+lost rather than silently wrong.
+
+The literal is composed in the provider, not asked of the driver, because the driver refuses to
+produce it: a `fetchTypeHandler` returning `{type: oracledb.STRING}` for either type fails the whole
+statement with `NJS-119: conversion from type DB_TYPE_INTERVAL_YM to type DB_TYPE_VARCHAR is not
+supported`, and the process-wide `oracledb.fetchAsString` rejects both identities up front with
+`NJS-021: invalid type for conversion specified`.
+
+The spelling is Oracle's own signed form rather than the `INTERVAL '3-7' YEAR TO MONTH` keyword form,
+and that is a measured choice, not a preference. A cell reaches the SQL export as a **value**, so the
+keyword form would be exported quoted — `'INTERVAL ''3-7'' YEAR TO MONTH'` — and Oracle answers
+`ORA-01867`. The signed form is accepted as a plain string in exactly the position the export puts
+it. Every form below was replayed against the live server:
+
+```
+ACCEPTED   INSERT INTO d19_cand (tag, iym) VALUES ('a', '+03-07')
+ACCEPTED   INSERT INTO d19_cand (tag, iym) VALUES ('b', '-03-07')
+ACCEPTED   INSERT INTO d19_cand (tag, iym) VALUES ('c', '+00-00')
+ACCEPTED   INSERT INTO d19_cand (tag, ids) VALUES ('d', '+05 06:07:08.9')
+ACCEPTED   INSERT INTO d19_cand (tag, ids) VALUES ('e', '+09 08:07:06')
+ACCEPTED   INSERT INTO d19_cand (tag, ids9) VALUES ('h', '+123456789 23:59:59.123456789')
+REFUSED    INSERT INTO d19_replay (tag, iym) VALUES ('ym-quoted-keyword', 'INTERVAL ''3-7'' YEAR TO MONTH')
+           -> ORA-01867: the interval is invalid
+```
+
+Details that follow from the measurements:
+
+- **One leading sign.** A negative interval arrives with *every* field negative
+  (`INTERVAL '-3-7'` → `{"months":-7,"years":-3}`), so the sign is taken once and the fields are
+  printed absolute: `-03-07`, not `-03--07`.
+- **Two digits is a minimum, not a width.** `INTERVAL '123456789-11' YEAR(9) TO MONTH` arrives as
+  `{"months":11,"years":123456789}` and is spelled `+123456789-11`, which Oracle takes back into the
+  same column. The two-digit padding matches what `TO_CHAR` prints at Oracle's *default* leading
+  precision; the declared precision is not in the value, so a `YEAR(4)` column reads `+03-07` here
+  where the server's own `TO_CHAR` says `+0003-07`. Same value, different padding.
+- **`fseconds` is nanoseconds**, so the fraction is nine digits with trailing zeros trimmed — exact
+  for a `SECOND(9)` column, and no fractional part at all for a whole-second interval
+  (`+09 08:07:06`).
+- **A NULL interval stays `null`**, not a zero interval.
+
+Verified end to end — read through the provider, exported, replayed into a fresh table, and compared
+**by the server**, not by re-reading our own spelling:
+
+```
+PROVIDER ROWS  [{"K":1,"IYM":"+03-07","IDS":"+05 06:07:08.9"},{"K":2,"IYM":"-03-07","IDS":"+09 08:07:06"},{"K":3,"IYM":null,"IDS":null}]
+EXPORT DDL     CREATE TABLE d19_replay ("K" NUMBER, "IYM" INTERVAL YEAR TO MONTH, "IDS" INTERVAL DAY TO SECOND);
+EXPORT INSERT  INSERT INTO d19_replay ("K", "IYM", "IDS") VALUES (1, '+03-07', '+05 06:07:08.9');
+               INSERT INTO d19_replay ("K", "IYM", "IDS") VALUES (2, '-03-07', '+09 08:07:06');
+               INSERT INTO d19_replay ("K", "IYM", "IDS") VALUES (3, NULL, NULL);
+REPLAYED       all four statements accepted; rows read back identical
+SERVER SAYS    SELECT ... CASE WHEN s.iym = r.iym AND s.ids = r.ids THEN 'EQUAL' ...  ->  EQUAL, EQUAL, EQUAL
+               (source TO_CHAR '+0003-07' / '+0005 06:07:08.900000' vs replayed '+03-07' /
+                '+05 06:07:08.900000' — the difference is the declared leading precision of the
+                exported column, not the value)
+```
+
+The columns are found once per result from `metaData[].dbType`, so a query with no interval column
+does no per-cell work and keeps the driver's own rows array untouched.
+
+#### The time zones, and why the offset is not recoverable
+
+**A `TIMESTAMP WITH TIME ZONE` loses its stored offset, and this provider cannot keep it.** The
+driver has already reduced the value to a UTC instant by the time any code here sees it: it hands
+over a JS `Date`, which holds no zone and no sub-millisecond digits.
+
+The obvious candidate was measured and is *worse* than the `Date`. Asking for the column as a string
+(`fetchTypeHandler` → `{type: oracledb.STRING}`) is accepted, but what the driver returns is that
+same `Date` put through `toString()` — in the **Node process's** time zone, with the milliseconds
+gone. Three rows with three different stored offsets, read by a process running in `+03:00`:
+
+```
+SERVER TEXT  plus3  2026-08-24 10:11:12.345678 +03:00
+             minus7 2026-08-24 10:11:12.345678 -07:00
+             named  2026-08-24 10:11:12.345678 ASIA/TOKYO
+
+DEFAULT      plus3  "2026-08-24T07:11:12.345Z"
+             minus7 "2026-08-24T17:11:12.345Z"
+             named  "2026-08-24T01:11:12.345Z"
+
+AS STRING    plus3  "Mon Aug 24 2026 10:11:12 GMT+0300 (Türkiye Standard Time)"
+             minus7 "Mon Aug 24 2026 20:11:12 GMT+0300 (Türkiye Standard Time)"
+             named  "Mon Aug 24 2026 04:11:12 GMT+0300 (Türkiye Standard Time)"
+```
+
+Every row reports `GMT+0300` — the reader's zone, not the stored one — and `.345` is gone. That
+would replace a correct instant with a wrong-looking local rendering, and would break the ordinary
+`DATE`/`TIMESTAMP` path the grid formats, so it was rejected. `oracledb.fetchAsString` refuses both
+identities outright (`NJS-021`), and the driver exposes no offset beside the `Date`
+(`Object.keys(date)` is empty).
+
+So the instant is right and the offset is gone. **A user who needs the stored zone must ask the
+server for it**, which is the one place that still has it:
+
+```sql
+SELECT TO_CHAR(ttz, 'YYYY-MM-DD HH24:MI:SS.FF6 TZR') FROM t;   -- 2026-08-24 10:11:12.345678 -07:00
+```
+
+The same `TO_CHAR` recovers the sub-millisecond digits that a `Date` cannot hold — for a plain
+`TIMESTAMP(6)` too, where `.345678` is likewise truncated to `.345`. A `TIMESTAMP WITH LOCAL TIME
+ZONE` has no stored offset to lose (Oracle normalizes it on write and renders it in the *session's*
+zone), so for that type only the sub-millisecond truncation applies.
+
+**A `Date` cell does not replay through the SQL export into Oracle** — that is a separate defect and
+not fixed here. Measured on the same run: a `TIMESTAMP WITH TIME ZONE` cell exports as
+`'2026-08-24T07:11:12.345Z'` and Oracle refuses it with `ORA-01843: An invalid month was specified`.
+It affects every `DATE`/`TIMESTAMP` column, not just the zoned ones, and it lives in the shared
+export (`src/lib/export/result-export.ts`), not in this provider.
 
 ---
 
@@ -669,7 +802,14 @@ JS value, so no test could produce the `Lob` stream object oracledb really retur
 a suite that never saw the driver's own value shape. The mock now carries the `DB_TYPE_*` / `STRING`
 / `BUFFER` identities a fetch type handler is written against, and records the options each
 `execute()` received, so the handler itself is asserted over each type; the value shapes it produces
-are pinned from live measurements ([§5.3](#53-what-each-oracle-type-arrives-as)).
+are pinned from live measurements ([§5.3](#53-what-each-oracle-type-arrives-as)). The same holds for
+the two `INTERVAL` identities and the `IntervalYM`/`IntervalDS` field shapes
+([§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be)) — and those
+constants are typed as the driver's `DbType` from `src/types/db-drivers.d.ts`, which is what keeps
+the mock and the provider reading the same declaration. That declaration is hand-written because
+**`oracledb` publishes none** (verified on 6.10.0: no `types`/`typings` field, no `.d.ts` in the
+package, and no `@types/oracledb` dependency here), so a driver upgrade that changes a shape is
+caught by a live probe, not by `tsc`.
 
 > ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide; files mocking different drivers
 > cross-contaminate in a shared process. A **single file** is safe (one file = one process). The
@@ -684,7 +824,10 @@ The suite covers: validation, connect/disconnect, query, capabilities, **labels 
 health, maintenance (analyze/optimize/kill), pool stats, the transaction lifecycle, query
 cancellation (`break()`), overview, performance metrics, slow queries, active sessions,
 table/index/storage stats, **the LOB fetch type handler** (per type, plus that `getSchema` is left
-alone and that a `BLOB` reaches `asBytes` in both its live and its serialized shape), error mapping,
+alone and that a `BLOB` reaches `asBytes` in both its live and its serialized shape), **the
+`INTERVAL` literals** (both types, positive/negative/zero, a nine-digit year count, nanosecond
+precision, `NULL`, both query paths, and that a result with no interval column keeps the driver's own
+rows array), error mapping,
 and **every `ssl.mode` branch** (the TCPS switch, the
 DN-match flag, the concatenated `walletContent`, and a pasted connect string keeping its own
 protocol) asserted against the attributes `createPool` received.
@@ -741,12 +884,22 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   `1.2345678901234568e+37` and a `NUMBER(20,4)` as `1234567890123456.8`. Fetching `NUMBER` as a
   string would keep them exact, at the cost of changing every numeric cell Oracle produces — which
   is why it was left out of the LOB change rather than bundled with it ([§5.3](#53-what-each-oracle-type-arrives-as)).
-- **`INTERVAL YEAR TO MONTH` and `INTERVAL DAY TO SECOND` show as JSON objects**
-  (`{"months":7,"years":3}`), not as their Oracle literals. Lossless, but not what an Oracle user
-  reads. *Future:* normalize to the literal the way the Cassandra provider does for `duration`.
 - **`TIMESTAMP WITH TIME ZONE` arrives as a `Date`**, so the stated offset is folded into UTC and
   sub-millisecond precision is dropped (`+03:00 10:11:12.345678` measured as
-  `"2026-08-24T07:11:12.345Z"`).
+  `"2026-08-24T07:11:12.345Z"`). **Not fixable here:** the driver produces a `Date` and offers no
+  string form that keeps the offset — measured, asking for one returns the reader process's own time
+  zone for every row. `TO_CHAR(col, '… TZR')` is the way to see the stored zone
+  ([§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be)).
+- **A `DATE`/`TIMESTAMP` cell does not replay through the SQL export into Oracle.** It is written as
+  the ISO string a `Date` serializes to (`'2026-08-24T07:11:12.345Z'`) and Oracle answers
+  `ORA-01843: An invalid month was specified`. The fix belongs in the shared export
+  (`src/lib/export/result-export.ts`), which has no Oracle date literal, not in this provider.
+- **`oracledb` ships no TypeScript declarations, so the driver surface is hand-declared.** Verified
+  on 6.10.0: no `types`/`typings` field in its `package.json` and no `.d.ts` anywhere in the package,
+  and there is no `@types/oracledb` in this project's dependencies. `src/types/db-drivers.d.ts`
+  declares the members this provider actually uses instead of the blanket `any` it used to; that
+  declaration is checked against the driver only by the live probes and the integration mock, so a
+  driver upgrade that changes a shape will not be caught by `tsc` alone.
 - **`NJS-138` (pre-12.1 server) is a non-retryable configuration error, not a transient one.**
   `mapDatabaseError()` maps it to `DatabaseConfigError` instead of the generic retryable
   `ConnectionError` every other `connect()` failure produces — see [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir)

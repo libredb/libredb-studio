@@ -264,3 +264,30 @@ describe("PerformanceTab", () => {
     expect(queryAllByTestId("metric-chart").length).toBe(3);
   });
 });
+
+// A refused performance read replaces this panel only (2026-08-24).
+describe("a refused performance read", () => {
+  // Scoped here as well as in the block above: bun:test registers a hook on the
+  // enclosing describe only, so without this the first render in this block leaks into
+  // the second and the control arm queries the previous test's DOM.
+  afterEach(() => {
+    cleanup();
+  });
+
+  const REFUSAL = "Unknown table 'information_schema.GLOBAL_STATUS'.";
+
+  test("shows the engine's own sentence in place of the cards", () => {
+    const rest: MonitoringData = makeData();
+    delete rest.performance;
+    const data = { ...rest, errors: { performance: REFUSAL } } as MonitoringData;
+    const { getByTestId } = render(<PerformanceTab data={data} loading={false} />);
+
+    expect(getByTestId("panel-unavailable-message").textContent).toBe(REFUSAL);
+  });
+
+  test("a performance panel that answered renders no failure panel", () => {
+    const { queryByTestId } = render(<PerformanceTab data={makeData()} loading={false} />);
+
+    expect(queryByTestId("panel-unavailable")).toBeNull();
+  });
+});

@@ -22,7 +22,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S1–S8 · 8
-- [Drivers and connections](#drivers-and-connections) — D1–D22, U17 · 11
+- [Drivers and connections](#drivers-and-connections) — D1–D24, U17 · 9
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U18 · 10
@@ -342,101 +342,44 @@ digits intact, and every consumer of a numeric cell has been checked against the
 
 ---
 
-### D22. One failing read discards the whole monitoring dashboard
+### D23. Every Oracle DATE and TIMESTAMP cell exports as a literal Oracle refuses
 
-`BaseDatabaseProvider.getMonitoringData` (`src/lib/db/base-provider.ts:110`) composes its four core
-reads with `Promise.all`, so ONE rejection throws all four away and `/api/db/monitoring` answers an
-error instead of the three panels that did answer.
+Found 2026-08-24 while verifying the interval normalisation (the old D19) end to end: the intervals
+now replay, and the timestamps in the same result do not. `buildResultExport` writes a `Date` cell as
+its ISO string, so an exported row reads
+`INSERT INTO t ("TTZ") VALUES ('2026-08-24T07:11:12.345Z');` and Oracle answers **ORA-01843: An
+invalid month was specified**. Measured against Oracle Free 23ai through the real export path, dialect
+`oracle`.
 
-Measured in the browser 2026-08-24 on StarRocks 3.3, on the build that moved MySQL's parameterless
-statements to the text protocol: `getOverview()` and `getPerformanceMetrics()` both succeed through
-the provider, and the monitoring page still renders nothing but *Connection Error - Getting analyzing
-error. Detail message: Unknown table 'information_schema.PROCESSLIST'*. That message is
-`getActiveSessions()` - a table StarRocks does not have - and it costs the user the overview, the
-performance panel, the slow-query list, the tables, the indexes and the storage panel, all of which
-the engine can answer.
+It is not specific to `TIMESTAMP WITH TIME ZONE`: `DATE`, `TIMESTAMP` and both zoned forms all arrive
+as `Date` and all export the same unusable string, so a DDL+INSERT export of any ordinary Oracle table
+with a date column cannot be replayed into Oracle. The fix belongs in `src/lib/export/result-export.ts`
+next to the Cassandra and Postgres cases already there - `TO_TIMESTAMP('...','YYYY-MM-DD
+HH24:MI:SS.FF3')` for a timestamp and `TO_DATE` for a date - and it has to decide what a zoned column
+emits, since the offset is already gone by then (see `docs/providers/oracle.md` 5.5).
 
-This is the same shape as the health gate that made three engines unsaveable (fixed 2026-08-24) and
-the Cassandra degradation that keeps eight surfaces while one keyspace is missing: an aggregate that
-fails whole rather than in parts. The panels already know how to render an absence - the cache hit
-ratio, the buffer pool, the SQLite table size and the connection count all say so in place.
-
-Not free: `MonitoringData` declares `overview`, `performance`, `slowQueries` and `activeSessions` as
-required, so the change is `Promise.allSettled` plus an optional shape plus every consumer of those
-four fields gating on it, including the monitoring page's own error state (which must still show a
-failure when EVERY read fails, rather than an empty dashboard).
-
-**Done when:** a monitoring read that fails costs its own panel and nothing else, proven on StarRocks
-where `PROCESSLIST` is absent, and the engine's own sentence still reaches the user for the panel that
-failed.
+**Done when:** an Oracle result exported from the grid replays into Oracle with its date columns
+intact, proven by running the exported file back into the engine it came from.
 
 ---
 
-### D19. Oracle's time and interval types lose or hide what they carry
+### D24. Cassandra's monitoring degradation still answers an empty panel, now that absence has a shape
 
-Measured 2026-08-24 over the same probe table:
+The five `system_views` reads degrade to EMPTY on a build with no virtual tables, which was the only
+honest option while `MonitoringData` required every panel. It no longer is: a panel can now be absent
+with the reason recorded under `errors` (2026-08-24), and the browser shows the cost of not using that
+- on ScyllaDB 2026.2.4 the Sessions tab reads *Active 0 / Idle 0 / Wait 0 / Sessions (0) / No active
+sessions found.* for a question the engine cannot answer at all, while StarRocks, which cannot answer
+the same question, says so in the engine's own words.
 
-| Type | Value | Arrives as | On the wire |
-| --- | --- | --- | --- |
-| `TIMESTAMP WITH TIME ZONE` | `10:11:12.345678 +03:00` | `Date` | `"2026-08-24T07:11:12.345Z"` |
-| `TIMESTAMP WITH LOCAL TIME ZONE` | same | `Date` | `"2026-08-24T10:11:12.345Z"` |
-| `INTERVAL YEAR TO MONTH` | `3-7` | `IntervalYM` | `{"months":7,"years":3}` |
-| `INTERVAL DAY TO SECOND` | `5 6:7:8.9` | `IntervalDS` | `{"fseconds":900000000,"seconds":8,"minutes":7,"hours":6,"days":5}` |
+The provider knows which it is: `readServerFacts` establishes `hasVirtualTables` once per connection
+(`src/lib/db/providers/sql/cassandra/introspect.ts`), so the reads that were skipped are exactly the
+ones that should report absence rather than zero. The same question applies to the other providers
+whose surfaces degrade to empty by convention - Druid and Trino return `[]` from `getTableStats` as a
+documented refusal, and `docs/providers/*.md` records each.
 
-The two timestamps fold the stored offset into UTC and drop sub-millisecond precision - the column's
-whole point is the offset it kept, and `+03:00` is not recoverable from the answer. The two intervals
-are lossless but arrive as objects nothing reconstructs: neither reads as the Oracle literal a user
-typed, and neither replays through the SQL export.
-
-The Cassandra provider already answers this shape of question the way it should be answered - a
-`Duration` is normalised to its own CQL literal (`1mo2d3h`) at the driver boundary, and the reason is
-written down in `docs/providers/cassandra.md` §3.8.
-
-**Done when:** an Oracle interval reaches the grid as the literal Oracle would accept back, and a
-`TIMESTAMP WITH TIME ZONE` either keeps its offset or the doc says plainly that it cannot.
-
----
-
-### D20. `oracledb` is declared `any`, so nothing in the Oracle provider is checked against the driver
-
-`src/types/db-drivers.d.ts` declares the whole `oracledb` module as `any`. So `oracledb.STRING`,
-`result.rowsAffected`, `metaData[].dbTypeName` and the `fetchTypeHandler` contract are all unchecked,
-and two changes on 2026-08-24 had to declare their own local structural types (`Result`,
-`FetchTypeHandler`) rather than import the driver's - which the driver does ship.
-
-Both defects fixed in the Oracle provider that day were shapes the type checker could have named: a
-non-SELECT answer with no `rows` array, and a LOB arriving as a stream. The tests could not see them
-either, because the mock was written against the same `any`.
-
-**Done when:** the Oracle provider compiles against `oracledb`'s own published types, or the reason it
-cannot is recorded here with what breaks.
-
-
----
-
-### D21. The Cassandra degradation discriminator is a message match, and a structural one exists
-
-`CassandraTransportError.absentKeyspace()` reads the refused keyspace's NAME out of the server's
-sentence: `/^keyspace '?([A-Za-z0-9_]+)'? does not exist$/i`. That was the narrowest answer available on
-2026-08-24 - measured, all four cases (absent keyspace, table typo, column typo, keyspace typo) arrive
-as protocol code 8704 with the driver's own `keyspace` and `table` properties `undefined` on both
-Cassandra 5.0.9 and ScyllaDB 2026.2.4, so there was nothing structured to key on.
-
-There is a structural fact available that the provider does not read: whether `system_views` exists in
-`system_schema.keyspaces` at all. Asked once per connection, it replaces the text match with a property
-of the server - degrade a `system_views` read on a build that has no such keyspace, and let everything
-else throw. Behaviour would be identical on both measured engines, including the one case the allowlist
-cannot separate (a table typo INSIDE `system_views` on a build that has no `system_views`), which is
-documented in `docs/providers/cassandra.md` §3.6.
-
-What the current form risks: a future build that rephrases the sentence stops matching, and the five
-monitoring reads throw again. That is a bounded regression rather than a lockout - the connection dialog
-no longer gates its save on the health read, so the connection is still creatable and the failure
-reaches the user as the server's own sentence - and the four measured spellings are pinned by tests, so
-a rephrase shows up as a failing test rather than as silence. Raised by an external review of #472.
-
-**Done when:** the degradation keys on a keyspace that is measurably absent rather than on the wording
-of a refusal, with the cost of the extra read stated, and the four spellings kept as a regression pin.
+**Done when:** a Cassandra-family panel the build cannot answer is absent with its own sentence rather
+than empty, and every other provider that degrades to `[]` has been checked against the same rule.
 
 
 ## Value interpolation

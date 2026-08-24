@@ -2107,7 +2107,7 @@ describe("ElasticsearchProvider monitoring", () => {
 
     const data = await provider.getMonitoringData();
 
-    expect(data.overview.version).toBe("Elasticsearch 9.1.4");
+    expect(data.overview?.version).toBe("Elasticsearch 9.1.4");
     expect(data.tables).toHaveLength(3);
     expect(data.storage).toHaveLength(1);
     expect(data.performance).toEqual({});

@@ -19,6 +19,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { MonitoringData, ActiveSessionDetails } from "@/lib/db/types";
+import { PanelUnavailable } from "../PanelUnavailable";
 
 interface SessionsTabProps {
   data: MonitoringData | null;
@@ -37,10 +38,23 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
 
   const sessions = data?.activeSessions ?? [];
 
-  const activeCount = sessions.filter((s) => s.state === "active").length;
-  const idleCount = sessions.filter((s) => s.state === "idle").length;
-  const idleInTxCount = sessions.filter((s) => s.state?.includes("idle in transaction")).length;
-  const waitingCount = sessions.filter((s) => s.waitEventType).length;
+  // A panel whose read failed is absent from the payload with its own message under
+  // `errors`, and that is a different fact from an empty answer: rendering it as data
+  // would claim a measurement the engine refused to make. The whole-dashboard error state
+  // is not right either - the other panels answered - so this panel alone carries the
+  // engine's own sentence. See MonitoringData in src/lib/db/types.ts.
+  const sessionsUnavailable = data?.activeSessions === undefined ? data?.errors?.activeSessions : undefined;
+
+  // The four summary cards and the card title count the same absent panel, so they read
+  // N/A rather than 0 when the engine refused the question. Zero sessions IS a
+  // measurement and still reads 0 - the two must not look alike.
+  const count = (of: (session: ActiveSessionDetails) => unknown): string =>
+    sessionsUnavailable ? "N/A" : String(sessions.filter(of).length);
+
+  const activeCount = count((s) => s.state === "active");
+  const idleCount = count((s) => s.state === "idle");
+  const idleInTxCount = count((s) => s.state?.includes("idle in transaction"));
+  const waitingCount = count((s) => s.waitEventType);
 
   const handleKillClick = (session: ActiveSessionDetails) => {
     setConfirmKill(session);
@@ -82,7 +96,9 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
             <Activity strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-green-500" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{activeCount}</div>
+            <div className="text-lg sm:text-2xl font-medium" data-testid="session-stat-active">
+              {activeCount}
+            </div>
           </CardContent>
         </Card>
 
@@ -92,7 +108,9 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
             <Clock strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{idleCount}</div>
+            <div className="text-lg sm:text-2xl font-medium" data-testid="session-stat-idle">
+              {idleCount}
+            </div>
           </CardContent>
         </Card>
 
@@ -100,11 +118,13 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">In TX</CardTitle>
             <Clock
-              className={`h-3 w-3 sm:h-4 sm:w-4 ${idleInTxCount > 0 ? "text-yellow-500" : "text-muted-foreground"}`}
+              className={`h-3 w-3 sm:h-4 sm:w-4 ${idleInTxCount !== "0" && !sessionsUnavailable ? "text-yellow-500" : "text-muted-foreground"}`}
             />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{idleInTxCount}</div>
+            <div className="text-lg sm:text-2xl font-medium" data-testid="session-stat-in-tx">
+              {idleInTxCount}
+            </div>
           </CardContent>
         </Card>
 
@@ -112,11 +132,13 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
             <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Wait</CardTitle>
             <Users
-              className={`h-3 w-3 sm:h-4 sm:w-4 ${waitingCount > 0 ? "text-orange-500" : "text-muted-foreground"}`}
+              className={`h-3 w-3 sm:h-4 sm:w-4 ${waitingCount !== "0" && !sessionsUnavailable ? "text-orange-500" : "text-muted-foreground"}`}
             />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{waitingCount}</div>
+            <div className="text-lg sm:text-2xl font-medium" data-testid="session-stat-wait">
+              {waitingCount}
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -126,11 +148,13 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
         <CardHeader className="p-3 sm:p-4">
           <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
             <Users strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
-            Sessions ({sessions.length})
+            {sessionsUnavailable ? "Sessions" : `Sessions (${sessions.length})`}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0 sm:p-4 sm:pt-0">
-          {sessions.length === 0 ? (
+          {sessionsUnavailable ? (
+            <PanelUnavailable message={sessionsUnavailable} />
+          ) : sessions.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Users strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
               <p className="text-xs">No active sessions found.</p>

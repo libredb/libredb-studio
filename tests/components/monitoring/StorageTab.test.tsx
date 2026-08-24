@@ -274,3 +274,33 @@ describe("StorageTab", () => {
     expect(queryAllByText("200.00 MB").length).toBe(0);
   });
 });
+
+// A refused getStorageStats read costs the tablespace list only (2026-08-24).
+describe("a refused storage read", () => {
+  // Scoped here as well as in the block above: bun:test registers a hook on the
+  // enclosing describe only, so without this the first render in this block leaks into
+  // the second and the control arm queries the previous test's DOM.
+  afterEach(() => {
+    cleanup();
+  });
+
+  const REFUSAL = "permission denied for function pg_tablespace_size";
+
+  test("shows the engine's own sentence instead of the tablespace empty state", () => {
+    const rest: MonitoringData = makeMonitoringData();
+    delete rest.storage;
+    const data = { ...rest, errors: { storage: REFUSAL } } as MonitoringData;
+    const { getByTestId, queryByText } = render(<StorageTab data={data} loading={false} />);
+
+    expect(getByTestId("panel-unavailable-message").textContent).toBe(REFUSAL);
+    expect(queryByText("No tablespace information available.")).toBeNull();
+  });
+
+  test("an answered empty tablespace list keeps the empty state", () => {
+    const data = { ...makeMonitoringData(), storage: [] } as MonitoringData;
+    const { queryByTestId, queryByText } = render(<StorageTab data={data} loading={false} />);
+
+    expect(queryByTestId("panel-unavailable")).toBeNull();
+    expect(queryByText("No tablespace information available.")).not.toBeNull();
+  });
+});

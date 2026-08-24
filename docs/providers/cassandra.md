@@ -265,41 +265,71 @@ Measured with a least-privilege role (`GRANT SELECT` on one table):
 | `system_views.caches`, `system_views.queries` | 8448, refused |
 | `system.size_estimates` | **0 rows, no error** |
 
-Two things follow. Every monitoring read degrades to empty on `permission`, and — since 2026-08-24, for the
-one case below — on an **absent optional keyspace**. Nothing else: notably not an `invalid` naming a
-table or a column, which is what a typo in this provider's own CQL produces, and an empty panel that
-hides that hides it forever.
+Two things follow. Every monitoring read degrades to empty on `permission`, and — since 2026-08-24 — a
+read of `system_views` is **not sent at all** on a build that measurably does not have that keyspace.
+Nothing else: notably not an `invalid` naming a table or a column, which is what a typo in this
+provider's own CQL produces, and an empty panel that hides that hides it forever.
 
-#### The second condition, and why it needs a name list
+#### The second condition is a property of the server, not the wording of a refusal
 
 ScyllaDB has no `system_views` keyspace at all ([§11](#11-scylladb-is-a-partial-relative-one-absent-keyspace-cost-five-surfaces-until-d9)),
 so the three virtual-table reads are refused by a server that is otherwise healthy. That is a fact
-about the build, not about this provider's CQL — but the protocol does not say so. Measured 2026-08-24
-through `cassandra-driver` 4.9.0, all four of these arrive as `ResponseError` with **code 8704** and
-with the driver's own `keyspace` and `table` properties **`undefined`**:
+about the build, not about this provider's CQL — and **the refusal does not say so**. Measured
+2026-08-24 through `cassandra-driver` 4.9.0, all four of these arrive as `ResponseError` with **code
+8704** and with the driver's own `keyspace` and `table` properties **`undefined`**:
 
-| Sent | Server | Message | `absentKeyspace()` |
-|---|---|---|---|
-| `system_views.clients` | ScyllaDB 2026.2.4 | `Keyspace system_views does not exist` | `system_views` |
-| `system_views.cliets` | Cassandra 5.0.9 | `table cliets does not exist` | `null` |
-| `system_views.caches`, wrong column | Cassandra 5.0.9 | `Undefined column name hit_ratioo in table system_views.caches` | `null` |
-| `system_viewz.clients` | Cassandra 5.0.9 | `keyspace system_viewz does not exist` | `system_viewz` |
+| Sent | Server | Message |
+|---|---|---|
+| `system_views.clients` | ScyllaDB 2026.2.4 | `Keyspace system_views does not exist` |
+| `system_views.cliets` | Cassandra 5.0.9 | `table cliets does not exist` |
+| `system_views.caches`, wrong column | Cassandra 5.0.9 | `Undefined column name hit_ratioo in table system_views.caches` |
+| `system_viewz.clients` | Cassandra 5.0.9 | `keyspace system_viewz does not exist` |
 
-So there is no structured discriminator and the sentence is all there is. Two things keep the reading
-narrow. `CassandraTransportError.absentKeyspace()` reports the **name** the server refused rather than
-a boolean — only the first and last rows are keyspace-shaped at all, and the case difference between
-them (`Keyspace` / `keyspace`) is the servers', not a normalisation. And `introspect.ts` holds an
-**allowlist of the keyspaces this provider knows are optional**, which is `system_views` and nothing
-else. That is what separates the first row from the last: `system_viewz` is a typo in this file and
-still fails loudly, and `system_schema` is not on the list at all, because it is readable on every
-measured build and even by a least-privilege role, so a server refusing the whole of it is a fault the
-tree must not hide.
+The first implementation (2026-08-24) told those four apart by reading the refused keyspace's **name**
+out of the sentence, because nothing structured distinguishes them. An external review of #472 named
+the risk in that form and it is now closed: a build that rephrases any of those sentences would have
+stopped matching and taken five monitoring panels with it. **The discriminator is now a keyspace catalog, asked
+once per connection**, and the four spellings above are kept only as a regression pin in
+`tests/integration/db/cassandra-provider.test.ts`. Nothing in this provider reads a server's sentence
+to decide anything.
 
-One case the allowlist cannot separate, recorded rather than papered over: on a build with **no**
-`system_views` keyspace, a typo in a `system_views` table name is refused with the keyspace message
-too (measured — all three ScyllaDB rows above answer the same sentence), so it would degrade there.
-The typo is caught on the engine that has the keyspace, which is the one this provider is developed
-against.
+The catalog is `system_virtual_schema`, and **not** `system_schema` — which is the part that review's
+own proposal got wrong and a measurement caught. Measured 2026-08-24 through the same driver:
+
+| Probe | Cassandra 5.0.9 | ScyllaDB 2026.2.4 |
+|---|---|---|
+| `SELECT keyspace_name FROM system_schema.keyspaces` | `probe, system, system_auth, system_distributed, system_schema, system_traces` — **no `system_views`** | 9 rows, no `system_views` either |
+| `SELECT keyspace_name FROM system_virtual_schema.keyspaces` | `system_views, system_virtual_schema` | 8704 `Keyspace system_virtual_schema does not exist` |
+
+A virtual keyspace is not in `system_schema` on either engine, so keying on that catalog would have
+emptied all five panels on the engine that answers them. `readServerFacts()` in
+[`introspect.ts`](../../src/lib/db/providers/sql/cassandra/introspect.ts) therefore reads the virtual
+catalog and resolves one boolean, `hasVirtualTables`:
+
+- the catalog answered → the **name** `system_views` is in the list, or it is not;
+- the catalog was refused as `invalid` (**code**, not text) → there is no virtual schema, so there are
+  no virtual tables. This is ScyllaDB;
+- the catalog was refused as `permission` (8448) → a role that may not read the virtual schema may not
+  read `system_views` either, and the per-read permission arm already answers those panels empty;
+- **anything else** — a client timeout, an unreachable host — claims no absence: the reads go out and
+  their own failure is what the caller sees, exactly as before the probe existed. The probe therefore
+  cannot fail a `connect()`.
+
+**Cost: one extra statement per successful `connect()`** — measured 4.5 ms against 5.0.9 and 1.6 ms
+against ScyllaDB over loopback, from a cold session. Nothing re-reads it: a virtual keyspace appears
+with a node restart and a restart drops the session, so the fact is held on the provider instance and
+cleared in `disconnect()`. On a build without the keyspace the probe is cheaper than what it replaces —
+the three `system_views` statements are never sent, so a monitoring refresh spends three fewer round
+trips than the catch-the-refusal version did.
+
+Two things stay exactly as narrow as before. `system_viewz` — the shape of a typo in this provider's
+own CQL — is not `system_views`, so it is sent and still fails loudly; and `system_schema` is not the
+optional keyspace either, so a server refusing the whole of it is a fault the tree must not hide.
+
+One case the discriminator cannot separate, recorded rather than papered over, unchanged from the text
+version: on a build with **no** `system_views` keyspace, a typo in a `system_views` table name is
+unreachable — the statement is not sent at all — so it would degrade there. The typo is caught on the
+engine that has the keyspace, which is the one this provider is developed against.
 
 And a security note worth stating plainly: **the object browser lists tables a restricted user cannot
 read.** `system_schema` is world-readable, so the tree shows every table in the keyspace while the
@@ -917,10 +947,11 @@ latency.
 
 Two changes, and the second is not about Cassandra at all.
 
-**The five reads degrade.** A monitoring read now answers empty when the server says the keyspace it
-reads from does not exist AND that keyspace is one this provider knows is optional, which is
-`system_views` and nothing else. The discriminator, the four measured error spellings it rests on and
-the case it cannot separate are all in
+**The five reads degrade.** A monitoring read that needs `system_views` answers empty — without being
+sent — on a build whose virtual-keyspace catalog does not list `system_views`, which is every ScyllaDB
+build. The discriminator was a match on the refusal's wording when this section was written and is a
+catalog read since **2026-08-24**; both, the four measured error spellings that are now only a
+regression pin, and the one case it cannot separate are in
 [§3.6](#36-a-monitoring-surface-degrades-on-a-denial-and-on-one-absent-keyspace).
 
 **The dialog's save no longer depends on the health surface.** A connection that `connect()`s is
@@ -943,16 +974,29 @@ Re-probed 2026-08-24, every surface separately, same method as the original pass
 | `getMonitoringData` | same error | answers | answers with data |
 | the other eight | pass | pass | pass |
 
-And the discriminator itself, measured through the real transport against both servers on the same
-day (`category` / `absentKeyspace()`):
+And the discriminator itself. **Re-measured 2026-08-24 after the structural probe landed**, through `readServerFacts()` and
+then the provider, against both servers:
+
+| Read (connection pinned to the `system` keyspace) | Cassandra 5.0.9 | ScyllaDB 2026.2.4 |
+|---|---|---|
+| `readServerFacts()` | `{ hasVirtualTables: true }`, 4.5 ms | `{ hasVirtualTables: false }`, 1.6 ms |
+| `getOverview` | `Apache Cassandra 5.0.9`, uptime `12.49h`, 23 tables, 1 index, connections 1 | `Apache Cassandra 3.0.8`, uptime `12.50h`, 60 tables, 0 indexes, `activeConnections` key **absent** |
+| `getPerformanceMetrics` | `{ cacheHitRatio: 86.97 }` | `{}` |
+| `getActiveSessions` | 1 running statement | `[]` |
+| `getHealth` | `cacheHitRatio` `86.97%`, connections 1 | `cacheHitRatio` `N/A`, no connections key, no sessions |
+| `getMonitoringData` | answers with data | answers, `performance: {}` |
+| `getSchema` | answers | answers |
+| `system_views` statements sent per monitoring refresh | 3 | **0** |
+
+And the four spellings, re-sent through `provider.query()` — the user's own path, which degrades
+nothing — on the same day, which is what keeps them a live pin rather than a remembered one:
 
 | Statement | Cassandra 5.0.9 | ScyllaDB 2026.2.4 |
 |---|---|---|
-| `SELECT COUNT(*) FROM system_views.clients` | OK | `invalid` / `"system_views"` → degrades |
-| `SELECT COUNT(*) FROM system_views.cliets` | `invalid` / `null` → throws | `invalid` / `"system_views"` |
-| `SELECT hit_ratioo FROM system_views.caches` | `invalid` / `null` → throws | `invalid` / `"system_views"` |
-| `SELECT COUNT(*) FROM system_viewz.clients` | `invalid` / `"system_viewz"` → throws | `invalid` / `"system_viewz"` → throws |
-| `SELECT COUNT(*) FROM system_schema.tables` | OK | OK |
+| `SELECT COUNT(*) AS count FROM system_viewz.clients` | `keyspace system_viewz does not exist` | `Keyspace system_viewz does not exist` |
+| `SELECT COUNT(*) AS count FROM system_views.cliets` | `table cliets does not exist` | `Keyspace system_views does not exist` |
+| `SELECT hit_ratioo FROM system_views.caches` | `Undefined column name hit_ratioo in table system_views.caches` | `Keyspace system_views does not exist` |
+| `SELECT COUNT(*) AS count FROM system_schema.tables` | 49 | 90 |
 
 **The one number that used to be dishonest here is fixed (2026-08-24), and the fix now reaches the agent
 too.** `DatabaseOverview.activeConnections` is optional, and this provider omits the key rather than

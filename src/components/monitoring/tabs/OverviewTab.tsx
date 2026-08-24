@@ -11,6 +11,7 @@ import type { TimeSeriesPoint } from "@/lib/time-series-buffer";
 import { evaluateThreshold, getThresholdColor, DEFAULT_THRESHOLDS } from "@/lib/monitoring-thresholds";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { MetricChart } from "./MetricChart";
+import { PanelUnavailable } from "../PanelUnavailable";
 
 interface OverviewTabProps {
   data: MonitoringData | null;
@@ -25,6 +26,19 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
 
   const overview = data?.overview;
   const performance = data?.performance;
+
+  // A panel whose read failed is absent from the payload with its own message under
+  // `errors`, and that is a different fact from an empty answer: rendering it as data
+  // would claim a measurement the engine refused to make. The whole-dashboard error state
+  // is not right either - the other panels answered - so this panel alone carries the
+  // engine's own sentence. See MonitoringData in src/lib/db/types.ts.
+  if (overview === undefined && data?.errors?.overview) {
+    return (
+      <div className="p-3 sm:p-6">
+        <PanelUnavailable message={data.errors.overview} />
+      </div>
+    );
+  }
 
   // Optional on purpose: an engine that cannot measure its cache (Druid) reports
   // nothing, and that must not be displayed as a measured 0%.
@@ -294,8 +308,23 @@ function PerformanceSummaryCard({
   );
 }
 
-/** Slow-query and session counts, read straight off the payload. */
+/**
+ * Slow-query and session counts, read straight off the payload.
+ *
+ * A count is rendered only when the panel it counts actually answered. `?? 0` used to
+ * stand in for both an empty list and a REFUSED read, which are opposite facts: measured
+ * in the browser on 2026-08-24 against StarRocks 3.3, whose `getActiveSessions` is
+ * "Unknown table 'information_schema.PROCESSLIST'", this card claimed "Active 0 / Idle 0"
+ * for a question the engine had declined to answer. Same fabricated zero the connection
+ * count lost, in a second place.
+ */
+function quickStat(rows: readonly unknown[] | undefined, count: () => number): string {
+  return rows === undefined ? "N/A" : String(count());
+}
+
 function QuickStatsCard({ data }: Readonly<{ data: MonitoringData | null }>) {
+  const sessions = data?.activeSessions;
+
   return (
     <Card className="p-0">
       <CardHeader className="p-3 sm:p-4 pb-2">
@@ -307,20 +336,24 @@ function QuickStatsCard({ data }: Readonly<{ data: MonitoringData | null }>) {
       <CardContent className="p-3 sm:p-4 pt-0 space-y-2 sm:space-y-3">
         <div className="flex justify-between items-center">
           <span className="text-xs sm:text-xs text-muted-foreground">Slow Queries</span>
-          <Badge variant={data?.slowQueries?.length ? "outline" : "secondary"} className="text-xs">
-            {data?.slowQueries?.length ?? 0}
+          <Badge
+            variant={data?.slowQueries?.length ? "outline" : "secondary"}
+            className="text-xs"
+            data-testid="quick-stat-slow-queries"
+          >
+            {quickStat(data?.slowQueries, () => (data?.slowQueries ?? []).length)}
           </Badge>
         </div>
         <div className="flex justify-between items-center">
           <span className="text-xs sm:text-xs text-muted-foreground">Active</span>
-          <Badge variant="secondary" className="text-xs">
-            {data?.activeSessions?.filter((s) => s.state === "active").length ?? 0}
+          <Badge variant="secondary" className="text-xs" data-testid="quick-stat-active">
+            {quickStat(sessions, () => (sessions ?? []).filter((s) => s.state === "active").length)}
           </Badge>
         </div>
         <div className="flex justify-between items-center">
           <span className="text-xs sm:text-xs text-muted-foreground">Idle</span>
-          <Badge variant="secondary" className="text-xs">
-            {data?.activeSessions?.filter((s) => s.state === "idle").length ?? 0}
+          <Badge variant="secondary" className="text-xs" data-testid="quick-stat-idle">
+            {quickStat(sessions, () => (sessions ?? []).filter((s) => s.state === "idle").length)}
           </Badge>
         </div>
       </CardContent>

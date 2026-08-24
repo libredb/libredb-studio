@@ -178,6 +178,14 @@ export function OperationsTab() {
 
   const sessions = data?.activeSessions ?? [];
   const tables = data?.tables ?? [];
+
+  // A panel whose read failed is absent from the payload with its own message under
+  // `errors`, and that is a different fact from an empty answer: rendering it as data
+  // would claim a measurement the engine refused to make. The whole-dashboard error state
+  // is not right either - the other panels answered - so this panel alone carries the
+  // engine's own sentence. See MonitoringData in src/lib/db/types.ts.
+  const sessionsUnavailable = data?.activeSessions === undefined ? data?.errors?.activeSessions : undefined;
+  const tablesUnavailable = data?.tables === undefined ? data?.errors?.tables : undefined;
   const [tableSearch, setTableSearch] = useState(deepLinkedTable ?? "");
   const filteredTables = tables.filter((t) => t.tableName.toLowerCase().includes(tableSearch.toLowerCase()));
 
@@ -378,7 +386,9 @@ export function OperationsTab() {
             <div className="p-4 border-b border-hairline flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Table2 className="w-4 h-4 text-blue-400" />
-                <span className="text-xs font-bold text-fg-secondary">Tables ({tables.length})</span>
+                <span className="text-xs font-bold text-fg-secondary">
+                  {tablesUnavailable ? "Tables" : `Tables (${tables.length})`}
+                </span>
               </div>
               <Input
                 placeholder="Filter..."
@@ -395,7 +405,9 @@ export function OperationsTab() {
                   ))}
                 </div>
               ) : filteredTables.length === 0 ? (
-                <div className="p-8 text-center text-fg-subtle text-sm">No tables found.</div>
+                <div className="p-8 text-center text-fg-subtle text-sm" data-testid="operations-tables-empty">
+                  {tablesUnavailable ?? "No tables found."}
+                </div>
               ) : (
                 <div className="divide-y divide-hairline">
                   {filteredTables.map((table) => (
@@ -471,7 +483,9 @@ export function OperationsTab() {
           <div className="p-4 border-b border-hairline">
             <div className="flex items-center gap-2 mb-3">
               <Users className="w-4 h-4 text-green-400" />
-              <span className="text-xs font-bold text-fg-secondary">Sessions ({sessions.length})</span>
+              <span className="text-xs font-bold text-fg-secondary">
+                {sessionsUnavailable ? "Sessions" : `Sessions (${sessions.length})`}
+              </span>
             </div>
             <div className="grid grid-cols-4 gap-2">
               <div className="rounded-lg bg-fill p-2 text-center">
@@ -504,7 +518,9 @@ export function OperationsTab() {
                 ))}
               </div>
             ) : sessions.length === 0 ? (
-              <div className="p-8 text-center text-fg-subtle text-sm">No active sessions found.</div>
+              <div className="p-8 text-center text-fg-subtle text-sm" data-testid="operations-sessions-empty">
+                {sessionsUnavailable ?? "No active sessions found."}
+              </div>
             ) : (
               <Table>
                 <TableHeader>

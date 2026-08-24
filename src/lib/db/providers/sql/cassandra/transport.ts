@@ -165,14 +165,14 @@ export class CassandraTransportError extends Error {
     return this.category === "permission";
   }
 
-  /**
-   * The keyspace this failure says the server does not have, or `null` when the
-   * server named none.
+  /*
+   * WHY THERE IS NO `absentKeyspace()` HERE ANY MORE (2026-08-24).
    *
-   * Text, and it has to be: measured 2026-08-24 through `cassandra-driver` 4.9.0
-   * against cassandra:5.0.9 and scylladb/scylla:2026.2.4, all four of these arrive as
-   * `ResponseError` with `code === 8704` and `keyspace`/`table` both `undefined`, so
-   * the protocol offers no structured way to tell them apart:
+   * There used to be one, reading the refused keyspace's NAME out of the server's
+   * sentence, because the refusal carries nothing else: measured 2026-08-24 through
+   * `cassandra-driver` 4.9.0 against cassandra:5.0.9 and scylladb/scylla:2026.2.4, all
+   * four of these arrive as `ResponseError` with `code === 8704` and `keyspace`/`table`
+   * both `undefined`:
    *
    * | Sent | Server | Message |
    * |---|---|---|
@@ -181,30 +181,14 @@ export class CassandraTransportError extends Error {
    * | `system_views.caches` with a wrong column | 5.0.9 | `Undefined column name hit_ratioo in table system_views.caches` |
    * | `system_viewz.clients` | 5.0.9 | `keyspace system_viewz does not exist` |
    *
-   * Only the first and last are keyspace-shaped, and the caller tells THOSE two apart
-   * by the name: `system_viewz` is a typo in this provider's own CQL and
-   * `system_views` is a keyspace ScyllaDB genuinely does not have. So this method
-   * reports the NAME rather than a boolean - deciding which keyspaces are optional is
-   * the reader's job, not the transport's ([`introspect.ts`](./introspect.ts)).
-   *
-   * The case difference is the server's, not a normalisation: Cassandra writes
-   * `keyspace`, ScyllaDB `Keyspace`. Quotes are accepted because the connect-time
-   * refusal for a pinned keyspace is spelled `Keyspace 'nosuchks' does not exist`
-   * (§3.3 of the provider doc), and a spelling this provider has already measured
-   * once should not be the thing that decides a panel.
+   * That is still true, and it is exactly why the discriminator moved OUT of the
+   * refusal: a build that rephrases any of those sentences would have stopped matching
+   * and taken five monitoring panels with it. The degradation now keys on a property
+   * of the server asked once per connection - whether
+   * `system_virtual_schema.keyspaces` lists `system_views`
+   * ([`introspect.ts`](./introspect.ts)) - and the four spellings above are kept as a
+   * regression pin in `tests/integration/db/cassandra-provider.test.ts` rather than as
+   * a discriminator. Nothing in this provider reads a server's sentence to decide
+   * anything.
    */
-  absentKeyspace(): string | null {
-    // Only an `invalid` (8704) can carry it. Every other category is a different
-    // fault entirely, and matching their text would be sniffing sentences for no gain.
-    if (this.category !== "invalid") return null;
-
-    // A message match, because there is nothing structured to read - and it is load
-    // bearing, so the belt matters: a future build that rephrases this stops matching
-    // and the five monitoring reads throw again, which now degrades the panel rather
-    // than locking the dialog (the save no longer gates on the health read). The four
-    // measured spellings are pinned by tests, so a rephrase fails a test rather than
-    // going quiet. The structural alternative - asking `system_schema.keyspaces`
-    // whether `system_views` exists at all - is BACKLOG D21.
-    return /^keyspace '?([A-Za-z0-9_]+)'? does not exist$/i.exec(this.message.trim())?.[1] ?? null;
-  }
 }

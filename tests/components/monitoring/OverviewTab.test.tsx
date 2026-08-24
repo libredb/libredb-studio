@@ -270,3 +270,72 @@ describe("OverviewTab", () => {
     expect(badge.className).toContain("bg-secondary");
   });
 });
+
+// A refused overview read replaces this panel only; the other tabs still render (2026-08-24).
+describe("a refused overview read", () => {
+  // Scoped here as well as in the block above: bun:test registers a hook on the
+  // enclosing describe only, so without this the first render in this block leaks into
+  // the second and the control arm queries the previous test's DOM.
+  afterEach(() => {
+    cleanup();
+  });
+
+  const REFUSAL = "SELECT command denied to user 'reader' for table 'global_status'";
+
+  test("shows the engine's own sentence in place of the cards", () => {
+    const rest: MonitoringData = makeData();
+    delete rest.overview;
+    const data = { ...rest, errors: { overview: REFUSAL } } as MonitoringData;
+    const { getByTestId, queryByText } = render(<OverviewTab data={data} loading={false} />);
+
+    expect(getByTestId("panel-unavailable-message").textContent).toBe(REFUSAL);
+    expect(queryByText("Connections")).toBeNull();
+  });
+
+  test("an overview that answered renders the cards, with no failure panel", () => {
+    const { queryByTestId, queryByText } = render(<OverviewTab data={makeData()} loading={false} />);
+
+    expect(queryByTestId("panel-unavailable")).toBeNull();
+    expect(queryByText("Connections")).not.toBeNull();
+  });
+});
+
+// Found in the browser on 2026-08-24 against StarRocks 3.3, on the build that made a
+// failing read cost its own panel: the Overview tab rendered, and Quick Stats claimed
+// "Active 0 / Idle 0" for an `activeSessions` read the engine had REFUSED. That is the
+// fabricated zero D17 removed from the connection count, in a second place.
+describe("Quick Stats never counts a refused read as zero", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const REFUSAL = "Getting analyzing error. Detail message: Unknown table 'information_schema.PROCESSLIST'.";
+
+  test("a refused activeSessions read reads N/A rather than 0", () => {
+    const rest: MonitoringData = makeData();
+    delete rest.activeSessions;
+    const data = { ...rest, errors: { activeSessions: REFUSAL } } as MonitoringData;
+    const { getByTestId } = render(<OverviewTab data={data} loading={false} />);
+
+    expect(getByTestId("quick-stat-active").textContent).toBe("N/A");
+    expect(getByTestId("quick-stat-idle").textContent).toBe("N/A");
+  });
+
+  test("a refused slowQueries read reads N/A rather than 0", () => {
+    const rest: MonitoringData = makeData();
+    delete rest.slowQueries;
+    const data = { ...rest, errors: { slowQueries: "SLOWLOG is disabled" } } as MonitoringData;
+    const { getByTestId } = render(<OverviewTab data={data} loading={false} />);
+
+    expect(getByTestId("quick-stat-slow-queries").textContent).toBe("N/A");
+  });
+
+  test("an answered empty list still reads 0, because zero sessions is a measurement", () => {
+    const data = { ...makeData(), activeSessions: [], slowQueries: [] } as MonitoringData;
+    const { getByTestId } = render(<OverviewTab data={data} loading={false} />);
+
+    expect(getByTestId("quick-stat-active").textContent).toBe("0");
+    expect(getByTestId("quick-stat-idle").textContent).toBe("0");
+    expect(getByTestId("quick-stat-slow-queries").textContent).toBe("0");
+  });
+});
