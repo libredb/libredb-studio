@@ -639,9 +639,10 @@ export type AgentRunEvent =
        * record, which is the difference between a model that declines and a mechanism that
        * never fired.
        *
-       * `notice` names WHICH sentence rather than carrying it: the wording is per model now
-       * (`models/notices.ts`) and a ledger repeating it in full would age badly and read as
-       * this server's own prose.
+       * `notice` names WHICH sentence rather than carrying it. The wording lives in
+       * `models/notices.ts` — one baseline every model is told, since the per-model copies went
+       * with the settings that became data — and a ledger repeating a paragraph in full would age
+       * badly and read as this server's own prose.
        */
       readonly kind: "guidance-issued";
       readonly notice: "report-reminder" | "plan-statement" | "report-reserve";

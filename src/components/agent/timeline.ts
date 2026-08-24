@@ -65,9 +65,10 @@ type PlanStatementEvent = Extract<AgentRunEvent, { kind: "plan-statement-drafted
 /**
  * What each sentence the drive says is called in the rail, in the reader's terms.
  *
- * A table rather than the notice's own text: the wording is per model now
- * (`lib/agent/models/notices.ts`), and a rail that printed the paragraph would be handing the
- * user prose written for a model to act on.
+ * A table rather than the notice's own text. This maps an identifier to a label and is not
+ * coupled to model tuning at all: the wording lives in `lib/agent/models/notices.ts`, one baseline
+ * every model is told, and a rail that printed the paragraph would be handing the user prose
+ * written for a model to act on.
  */
 const GUIDANCE_HEADLINE: Record<Extract<AgentRunEvent, { kind: "guidance-issued" }>["notice"], string> = {
   "report-reminder": "Asked to file its report",
@@ -987,8 +988,9 @@ function describeEvent(
         /*
           Something this server said, on a turn where it refused nothing. Neutral, because
           nothing was turned back — a held call gets the `refused` tone and says so — and named
-          rather than quoted: the wording is per model now, and a rail that printed the whole
-          sentence would be repeating a paragraph the user did not ask to read.
+          rather than quoted: the wording is one baseline in `lib/agent/models/notices.ts`, and a
+          rail that printed the whole sentence would be repeating a paragraph the user did not ask
+          to read.
         */
         tone: "neutral",
         headline: GUIDANCE_HEADLINE[event.notice],

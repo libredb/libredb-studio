@@ -53,6 +53,23 @@ spec:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- /* The tuning document, and only when this chart is the one rendering it.
+               Without this the feature silently does not update: a `helm upgrade` with a new
+               agent.modelTuning.document rewrites the ConfigMap and leaves the pod template
+               untouched, so nothing rolls - and the app reads the file once per process, so the
+               running pods keep the profile they started with until something unrelated restarts
+               them. The operator changed a value, the chart took it, and the agent goes on
+               running the old settings.
+               Rendered only for the INLINE document, because an existingConfigMap is the
+               operator's own object: this chart renders nothing for it and so has nothing to
+               hash, and a constant here would be a trigger that never fires pretending to be one.
+               Rolling after editing that ConfigMap is the operator's move, and the README says so.
+               Conditional rather than always-on so an install not using the feature gains no
+               annotation, and therefore no restart, on the upgrade that adds this. */}}
+        {{- $tuning := get (.Values.agent | default dict) "modelTuning" | default dict }}
+        {{- if and (get $tuning "document") (not (get $tuning "existingConfigMap")) }}
+        checksum/agent-model-tuning: {{ include (print $.Template.BasePath "/agent-tuning-configmap.yaml") . | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

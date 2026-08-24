@@ -424,6 +424,7 @@ describe("the chart mounts an operator's model-tuning document", () => {
     env: EnvVar[];
     mounts: Mount[];
     volumes: Volume[];
+    annotations: Record<string, string>;
     configMaps: Array<{ metadata: { name: string }; data: Record<string, string> }>;
   } {
     const run = helmTemplate(args);
@@ -432,6 +433,7 @@ describe("the chart mounts an operator's model-tuning document", () => {
     const deployment = docs.find((doc) => doc?.kind === "Deployment") as {
       spec: {
         template: {
+          metadata: { annotations?: Record<string, string> };
           spec: { containers: Array<{ env?: EnvVar[]; volumeMounts?: Mount[] }>; volumes?: Volume[] };
         };
       };
@@ -441,6 +443,7 @@ describe("the chart mounts an operator's model-tuning document", () => {
       env: container.env ?? [],
       mounts: container.volumeMounts ?? [],
       volumes: deployment.spec.template.spec.volumes ?? [],
+      annotations: deployment.spec.template.metadata.annotations ?? {},
       configMaps: docs.filter((doc) => doc?.kind === "ConfigMap") as Array<{
         metadata: { name: string };
         data: Record<string, string>;
@@ -504,6 +507,45 @@ describe("the chart mounts an operator's model-tuning document", () => {
     expect(named(env, "AGENT_MODEL_TUNING_PATH")?.value).toBe(`${MOUNT_DIR}/measured.json`);
     const mounted = configMaps.find((map) => map.metadata.name.endsWith("-agent-model-tuning"));
     expect(Object.keys(mounted?.data ?? {})).toEqual(["measured.json"]);
+  });
+
+  test("an inline document is hashed into the pod template, so changing it restarts the pod", () => {
+    /*
+      Without this the feature silently does not update. `helm upgrade` with a new
+      `agent.modelTuning.document` writes the ConfigMap and leaves the pod template untouched, so
+      no rollout happens — and `activeTuning()` reads the file once per process, so the running
+      pods keep the profile they started with until something unrelated restarts them. The
+      operator changed a value, the chart accepted it, and the agent goes on running the old
+      settings for as long as nobody looks.
+
+      The assertion that matters is the SECOND one: an annotation that exists but does not move
+      when the document moves would look like this fix and do nothing.
+    */
+    const first = render(["--set-json", `agent.modelTuning.document=${JSON.stringify(DOCUMENT)}`]);
+    const second = render([
+      "--set-json",
+      `agent.modelTuning.document=${JSON.stringify({ ...DOCUMENT, schemaVersion: 1, models: [{ id: "x:1b" }] })}`,
+    ]);
+
+    expect(first.annotations["checksum/agent-model-tuning"]).toBeDefined();
+    expect(second.annotations["checksum/agent-model-tuning"]).not.toBe(
+      first.annotations["checksum/agent-model-tuning"],
+    );
+  });
+
+  test("a ConfigMap the chart did not render carries no checksum, because it cannot see one", () => {
+    /*
+      An `existingConfigMap` is the operator's object: this chart renders nothing for it and
+      therefore has nothing to hash, so a checksum here would be a constant pretending to be a
+      trigger. Rolling the deployment after editing that ConfigMap is the operator's move, and the
+      chart README says so rather than implying the chart will notice.
+    */
+    const { annotations } = render(["--set", "agent.modelTuning.existingConfigMap=my-tuning"]);
+    expect(annotations["checksum/agent-model-tuning"]).toBeUndefined();
+  });
+
+  test("a default render gains no annotation, so upgrading without the feature rolls nothing", () => {
+    expect(render().annotations["checksum/agent-model-tuning"]).toBeUndefined();
   });
 
   test("the path is written before extraEnv, so an operator can still point it elsewhere", () => {

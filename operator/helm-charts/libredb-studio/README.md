@@ -290,6 +290,16 @@ otherwise believe is in force for as long as they never look.
 The document's contract — every setting and its bounds, what happens to a key this build does not
 implement, and a complete example to start from — is in the project's `docs/llms/model-tuning.md`.
 
+**One thing to know about updating it.** The app reads the document once per process, so a change
+only takes effect on a pod that restarts. Changing `agent.modelTuning.document` handles that for
+you: the rendered ConfigMap is hashed into the pod template, so `helm upgrade` rolls the
+deployment. An `existingConfigMap` is your object rather than the chart's — the chart has nothing
+to hash and cannot see your edit — so after changing that ConfigMap, roll the deployment yourself:
+
+```bash
+kubectl rollout restart deployment/libredb-libredb-studio
+```
+
 ## Production Setup (Ingress + HA)
 
 ```bash
