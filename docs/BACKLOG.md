@@ -2090,34 +2090,6 @@ a run resumed often enough passes any constant.
 per-drive constant — most likely as part of B6 — with a test that drives one run twice past the cap and
 shows the first drive's cited results still readable, or the surface stating that they are not.
 
-### B36. A follow-up question is answered as if it were the first one
-
-Driven live on 2026-08-15. An analysis run answered "compare the average salary of employees hired
-before 1990 with those hired after" correctly. The next question typed into the same box — "and how many
-of those employees are there in each group?" — was answered about DEPARTMENTS: nine of them, 289 in
-Development.
-
-"Those groups" had no referent, because a run carries none. `start()` clears the entries and opens a
-fresh ledger, and the model is handed the objective and the schema and nothing else.
-
-The defect is not that runs are independent. It is that the surface does not say so, and the model does
-not either — it silently picks a plausible referent and answers a question nobody asked, with the same
-confident citations a correct answer carries. A user reading the report cannot tell the difference
-without re-reading their own question.
-
-Two shapes would close it, and they are not the same feature:
-
-- **Smaller:** let a run be TOLD about the run before it — its objective and its report — as fenced
-  context, so "those groups" resolves or is honestly refused.
-- **Larger:** run history, so a user can see and return to earlier runs. (Emptying the objective box
-  after a run, which landed with that PR, at least stops the surface reading as a conversation.)
-
-Neither should be built by threading the browser's memory into the prompt: a resumed drive would not
-have it, and the context a run reasons from has to live where the run does.
-
-**Done when:** a follow-up either resolves against the previous run or is refused for lack of a
-referent, with an eval that drives two runs and asserts the second does not answer a different question.
-
 ### B37. A malformed seed config disables the agent everywhere, and blames the connection
 
 Driven live on 2026-08-15. A `seed-connections.yaml` missing a required field made

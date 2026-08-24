@@ -126,6 +126,24 @@ describe("AgentRunStore — opening a run", () => {
     });
   });
 
+  test("persists the prior-run context in the header, so a resumed drive is told the same thing", async () => {
+    const { store } = storeAt();
+    const prior = { runId: "arun_prev", objective: "Compare salaries", report: "Claim 1: 41k" };
+
+    const record = await store.openRun({ ...OPEN_INPUT, priorContext: prior });
+
+    expect(record.priorContext).toEqual(prior);
+    expect((await store.read(record.runId))?.record.priorContext).toEqual(prior);
+  });
+
+  test("leaves priorContext absent when no predecessor was given, so an old ledger and a fresh one stay the same bytes", async () => {
+    const { store } = storeAt();
+
+    const record = await store.openRun(OPEN_INPUT);
+
+    expect(record.priorContext).toBeUndefined();
+  });
+
   test("accepts a caller-supplied run id, so a workflow run and its ledger can share one identity", async () => {
     const { store } = storeAt();
 

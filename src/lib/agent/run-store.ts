@@ -60,6 +60,7 @@ import { randomUUID } from "node:crypto";
 import { getAgentRuntimeConfig } from "./config";
 import { assertPersistableState } from "./state-guard";
 import {
+  type AgentPriorRunContext,
   type AgentRunActor,
   type AgentRunEvent,
   type AgentRunMode,
@@ -167,6 +168,13 @@ export type AgentLedgerEntry =
        * other way to ask.
        */
       readonly toolProtocol?: AgentToolProtocol;
+      /**
+       * Optional on the READ side for the same reason `workflowType` is: `openRun`
+       * writes it only when a follow-up run was opened with a predecessor, and a
+       * header written before this field existed folds to none — which is what was
+       * true of it: no run had a predecessor then.
+       */
+      readonly priorContext?: AgentPriorRunContext;
       readonly actor: AgentRunActor;
       readonly connectionId: string;
       readonly objective: string;
@@ -251,6 +259,8 @@ export interface AgentRunOpenInput {
   readonly autoExecute?: boolean;
   /** Defaults to `native`. Decided by the capability gate at start; see `AgentRunRecord`. */
   readonly toolProtocol?: AgentToolProtocol;
+  /** The run this one follows; written to the header when present. */
+  readonly priorContext?: AgentPriorRunContext;
   readonly actor: AgentRunActor;
   readonly connectionId: string;
   readonly objective: string;
@@ -362,6 +372,7 @@ function foldLedger(runId: string, entries: readonly AgentLedgerEntry[]): AgentR
       // Spread rather than defaulted: `native` is the absence, so writing it would put
       // a field on every record to say what its absence already says.
       ...(header.toolProtocol === undefined ? {} : { toolProtocol: header.toolProtocol }),
+      ...(header.priorContext === undefined ? {} : { priorContext: header.priorContext }),
       status,
       actor: header.actor,
       connectionId: header.connectionId,
@@ -428,6 +439,9 @@ export class AgentRunStore {
       // generation can be read as having permitted something it did not.
       autoExecute: input.autoExecute ?? false,
       ...(input.toolProtocol === undefined ? {} : { toolProtocol: input.toolProtocol }),
+      // Written only when a predecessor exists, so a ledger opened before this
+      // field and one opened with no predecessor are the same bytes.
+      ...(input.priorContext === undefined ? {} : { priorContext: input.priorContext }),
       actor: input.actor,
       connectionId: input.connectionId,
       objective: input.objective,

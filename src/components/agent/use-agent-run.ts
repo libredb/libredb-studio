@@ -69,6 +69,13 @@ export interface AgentRunStartInput {
    * can widen a run that is already open.
    */
   readonly autoExecute?: boolean;
+  /**
+   * The run this one follows, when the user is asking a follow-up question. A request,
+   * like the fields above: the server DERIVES the context from that run's own ledger and
+   * persists it on the new run's record, so nothing the browser remembers later is
+   * trusted into the prompt (`docs/BACKLOG.md` B36).
+   */
+  readonly previousRunId?: string;
   readonly objective: string;
   readonly connectionId: string;
 }

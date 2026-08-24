@@ -45,6 +45,7 @@ import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
 import type {
+  AgentPriorRunContext,
   AgentRunActor,
   AgentRunEvent,
   AgentRunMode,
@@ -395,6 +396,8 @@ export interface EvalRunOptions {
    * PRODUCED and the hand-over is only where that answer was delivered.
    */
   readonly autoExecute?: boolean;
+  /** The run this one follows, for the two-run follow-up scenario (`docs/BACKLOG.md` B36). */
+  readonly priorContext?: AgentPriorRunContext;
   /** What the scripted engine answers a MODEL statement with. Catalog reads are served by the preset. */
   readonly answer?: (sql: string) => Promise<QueryResult>;
   /**
@@ -476,6 +479,7 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
     mode,
     ...(options.workflowType === undefined ? {} : { workflowType: options.workflowType }),
     ...(options.autoExecute === undefined ? {} : { autoExecute: options.autoExecute }),
+    ...(options.priorContext === undefined ? {} : { priorContext: options.priorContext }),
     actor,
     connectionId: engine.connection.id,
     objective,

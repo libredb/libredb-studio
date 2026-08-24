@@ -53,6 +53,7 @@ interface FakeRun {
   connectionId: string;
   objective: string;
   events: unknown[];
+  priorContext?: { runId: string; objective: string; report: string };
 }
 
 function fakeRun(overrides: Partial<FakeRun> = {}): FakeRun {
@@ -92,6 +93,7 @@ const mockStart = mock(
     actor: FakeRun["actor"];
     connectionId: string;
     objective: string;
+    priorContext?: { runId: string; objective: string; report: string };
   }) => {
     const record = fakeRun({ ...input, runId: "arun_new" });
     runs.set(record.runId, record);
@@ -188,6 +190,66 @@ afterEach(() => {
 });
 
 describe("POST /api/agent/runs", () => {
+  /*
+    A follow-up run is opened with the previous run's objective and report derived
+    SERVER-SIDE from that run's own ledger (`docs/BACKLOG.md` B36). The request only
+    names the run; the route resolves it, checks it is the caller's, and persists the
+    derived context on the new run's record.
+  */
+  test("a follow-up run is opened with the previous run's objective and report", async () => {
+    runs.set(
+      "arun_1",
+      fakeRun({
+        events: [
+          {
+            kind: "report-composed",
+            atMs: 1,
+            claims: [{ claim: "A fact", evidence: [{ source: "artifact", correlationId: "corr_1" }] }],
+          },
+        ],
+      }),
+    );
+
+    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_1" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls.at(-1)?.[0]).toMatchObject({
+      priorContext: { runId: "arun_1", objective: "why is checkout slow", report: "Claim 1: A fact" },
+    });
+  });
+
+  test("a run that is not a follow-up carries no prior-run context", async () => {
+    const res = await POST(startRequest(VALID_BODY));
+
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls.at(-1)?.[0].priorContext).toBeUndefined();
+  });
+
+  test("a previousRunId naming no run is refused before a run opens", async () => {
+    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_missing" }));
+
+    expect(res.status).toBe(400);
+    expect(await parseResponseJSON(res)).toMatchObject({
+      error: "previousRunId does not name a run this session may follow",
+    });
+  });
+
+  test("a previousRunId naming another session's run is refused the same way", async () => {
+    runs.set("arun_other", fakeRun({ actor: { sessionId: "grace", role: "user" } }));
+    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_other" }));
+
+    expect(res.status).toBe(400);
+    expect(await parseResponseJSON(res)).toMatchObject({
+      error: "previousRunId does not name a run this session may follow",
+    });
+  });
+
+  test("a previousRunId that is not a non-empty string is refused", async () => {
+    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "" }));
+
+    expect(res.status).toBe(400);
+  });
+
   /*
     A model that cannot call tools is refused BEFORE a run exists, which is the whole
     point of the gate (`docs/BACKLOG.md` B18): otherwise the run opens, spends a drive

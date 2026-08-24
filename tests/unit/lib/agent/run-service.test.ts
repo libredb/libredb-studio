@@ -171,6 +171,16 @@ describe("AgentRunService — starting and reporting a run", () => {
     expect((await h.reader().read(runId))?.record.workflowType).toBe("database-assessment");
   });
 
+  test("a run opened with a prior-run context keeps it on the record", async () => {
+    const h = harness();
+    const prior = { runId: "arun_prev", objective: "Compare salaries", report: "Claim 1: 41k" };
+
+    const record = await h.service.start({ ...START_INPUT, priorContext: prior });
+
+    expect(record.priorContext).toEqual(prior);
+    expect((await h.reader().read(record.runId))?.record.priorContext).toEqual(prior);
+  });
+
   test("reports nothing for a run that does not exist", async () => {
     const h = harness();
     expect(await h.service.status("arun_00000000000000000000000000000000")).toBeNull();

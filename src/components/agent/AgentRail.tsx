@@ -1053,6 +1053,16 @@ export function AgentRail({
       return;
     }
     setReplaceFailed(false);
+    // A follow-up question follows the run that just ended — and only that one: the
+    // previous run must be terminal, opened on the same connection, and not the run a
+    // "change" click is replacing. The id travels to the route, which re-derives the
+    // context from that run's own ledger rather than trusting anything here
+    // (`docs/BACKLOG.md` B36).
+    const followsPrevious =
+      !decided.replacesOpenRun &&
+      run.runId !== null &&
+      !LIVE_STATUSES.has(run.timeline.status) &&
+      openedOn.current?.id === decided.connection.id;
     openedOn.current = { id: decided.connection.id, name: decided.connection.name };
     setOpenedObjective(decided.objective);
     /*
@@ -1085,6 +1095,9 @@ export function AgentRail({
       autoExecute: handover,
       objective: decided.objective,
       connectionId: decided.connection.id,
+      // Sent only when this run genuinely continues the last one; the route refuses
+      // anything else, and nothing later may change which run this one was told about.
+      ...(followsPrevious && run.runId !== null ? { previousRunId: run.runId } : {}),
     });
   };
 

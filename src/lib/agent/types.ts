@@ -942,6 +942,28 @@ export type AgentRunEvent =
     });
 
 /**
+ * What a follow-up run is TOLD about the run it follows (`docs/BACKLOG.md` B36).
+ *
+ * The content is the previous run's objective and report, both of which are prose
+ * somebody else wrote — the user, and a model — so a run handed this context must
+ * treat it as data, not instruction. Fencing is `investigation.ts`'s job at read
+ * time; this type only carries the inert strings, which is what keeps a run
+ * resumable: the context a resumed drive reasons from is the one its ledger
+ * recorded, never the browser's memory.
+ *
+ * Inert by construction, like every other contract here: two strings and an id.
+ * The state guard therefore admits it exactly as it admits the objective.
+ */
+export interface AgentPriorRunContext {
+  /** The run this one follows. */
+  readonly runId: string;
+  /** The previous run's objective, in the user's own words. */
+  readonly objective: string;
+  /** The previous run's report: its claims, its answer statement, and any closing prose. */
+  readonly report: string;
+}
+
+/**
  * One run, whole. Everything a restarted process needs to continue, and nothing
  * a restarted process could not read: no client, no credential, no result set.
  */
@@ -1008,6 +1030,17 @@ export interface AgentRunRecord {
    * the prose path existed, and of every model that can call a tool.
    */
   readonly toolProtocol?: AgentToolProtocol;
+  /**
+   * The run this one follows, when the user asked a follow-up question.
+   *
+   * Optional, and absent means this run was opened without a predecessor — the
+   * ordinary case. It is on the record for the reason every other header field is:
+   * a resumed drive must be told the same context the drive that died was told, so
+   * the context has to live in the ledger rather than in a request body that only
+   * the opener saw. The strings inside are inert prose, so the state guard admits
+   * them exactly as it admits the objective.
+   */
+  readonly priorContext?: AgentPriorRunContext;
   readonly status: AgentRunStatus;
   readonly actor: AgentRunActor;
   /** The single connection this run may reach; the server builds the scope from it. */

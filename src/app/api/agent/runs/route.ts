@@ -2,10 +2,12 @@ import { NextResponse } from "next/server";
 import { admitAgentModel } from "@/lib/agent/capability-gate";
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
 import { AGENT_MAX_OBJECTIVE_LENGTH } from "@/lib/agent/execution-policy";
+import { derivePriorRunContext } from "@/lib/agent/prior-run-context";
 import { driveAgentRun, getAgentRunService } from "@/lib/agent/runtime";
 import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
   DEFAULT_AGENT_WORKFLOW_TYPE,
+  type AgentPriorRunContext,
   type AgentRunMode,
   type AgentRunWorkflowReading,
   type AgentRunWorkflowSource,
@@ -109,7 +111,8 @@ export async function POST(req: Request) {
       return badRequest("Request body must be JSON");
     }
 
-    const { mode, workflowType, workflowSource, workflowReading, autoExecute, objective, connectionId } = body;
+    const { mode, workflowType, workflowSource, workflowReading, autoExecute, objective, connectionId, previousRunId } =
+      body;
     if (typeof mode !== "string" || !MODES.has(mode)) {
       return badRequest('mode must be "planning" or "agent"');
     }
@@ -182,6 +185,13 @@ export async function POST(req: Request) {
     if (typeof connectionId !== "string" || connectionId.trim().length === 0) {
       return badRequest("connectionId must be a non-empty string");
     }
+    // Absent means the run is opened on its own, which is the ordinary case. A
+    // supplied id is REFUSED rather than coerced when it is not a string: it names
+    // a run, and guessing at a run id is how one session could hand another's report
+    // into its own prompt.
+    if (previousRunId !== undefined && (typeof previousRunId !== "string" || previousRunId.trim().length === 0)) {
+      return badRequest("previousRunId must be a non-empty string when provided");
+    }
 
     const connection = await resolveConnection({ connectionId }, guard.session);
 
@@ -207,6 +217,23 @@ export async function POST(req: Request) {
     }
 
     const service = await getAgentRunService();
+
+    // A follow-up run is told about the run it follows — its objective and its report —
+    // as fenced context (`docs/BACKLOG.md` B36). The context is DERIVED on the server
+    // from the previous run's own ledger, never trusted from the request body, and a
+    // caller may only follow a run its own session opened: handing a stranger's report
+    // into a prompt would be a leak the rail cannot see. One answer covers both a run
+    // that does not exist and one that is not the caller's, so the response does not
+    // say which.
+    let priorContext: AgentPriorRunContext | undefined;
+    if (previousRunId !== undefined) {
+      const previous = await service.status(previousRunId);
+      if (previous === null || previous.record.actor.sessionId !== guard.session.username) {
+        return badRequest("previousRunId does not name a run this session may follow");
+      }
+      priorContext = derivePriorRunContext(previous.record);
+    }
+
     const record = await service.start({
       mode: mode as AgentRunMode,
       // Spread rather than passed as `undefined`, so a body that named no workflow
@@ -226,6 +253,10 @@ export async function POST(req: Request) {
       // resumed drive must ask this model the way the first drive asked, and only the
       // start path is in a position to have probed.
       ...(gate.protocol === "native" ? {} : { toolProtocol: gate.protocol }),
+      // Spread for the same reason as the fields above: absent reaches the store as
+      // the request that predates the field, and no run is given a predecessor it
+      // was not opened with.
+      ...(priorContext === undefined ? {} : { priorContext }),
       actor: { sessionId: guard.session.username, role: guard.session.role },
       connectionId: connection.id,
       objective,

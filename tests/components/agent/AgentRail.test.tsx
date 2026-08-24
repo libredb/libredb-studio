@@ -377,6 +377,60 @@ describe("AgentRail", () => {
     expect(getByTestId("agent-timeline-empty")).toBeTruthy();
   });
 
+  test("a follow-up start names the run it follows on the same connection", async () => {
+    const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+    await view.findByTestId("agent-run-id");
+    await waitFor(() => {
+      expect(view.getByTestId("agent-run-status").textContent).toBe("succeeded");
+    });
+
+    // The box emptied when the run opened; the follow-up is a new question in it.
+    fireEvent.change(view.getByTestId("agent-objective"), {
+      target: { value: "and how many of those are there?" },
+    });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+
+    const runCalls = (fetchMock.mock.calls as [RequestInfo | URL, RequestInit?][]).filter(
+      ([url]) => String(url) === "/api/agent/runs",
+    );
+    const lastBody = JSON.parse(String(runCalls.at(-1)?.[1]?.body)) as Record<string, unknown>;
+    expect(lastBody.previousRunId).toBe("arun_1");
+  });
+
+  test("a start after switching connection does not follow the old run", async () => {
+    const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+    await view.findByTestId("agent-run-id");
+    await waitFor(() => {
+      expect(view.getByTestId("agent-run-status").textContent).toBe("succeeded");
+    });
+
+    view.rerender(<AgentRail {...DEFAULT_PROPS} connectionId="seed:analytics" connectionName="Analytics" />);
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "what is blocked" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+
+    const runCalls = (fetchMock.mock.calls as [RequestInfo | URL, RequestInit?][]).filter(
+      ([url]) => String(url) === "/api/agent/runs",
+    );
+    const lastBody = JSON.parse(String(runCalls.at(-1)?.[1]?.body)) as Record<string, unknown>;
+    expect(lastBody.previousRunId).toBeUndefined();
+  });
+
   test("a run cannot start without an objective", () => {
     const fetchMock = mock(async () => jsonResponse({}, 202));
     globalThis.fetch = fetchMock as unknown as typeof fetch;

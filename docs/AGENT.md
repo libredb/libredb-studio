@@ -80,21 +80,37 @@ Two companion pages carry what this one deliberately does not:
 
 ## Table of Contents
 
-- [Turning it on](#turning-it-on)
-- [What a run is](#what-a-run-is)
-- [Durability and resume](#durability-and-resume)
-- [The tool set](#the-tool-set)
-- [What bounds a run](#what-bounds-a-run)
-- [Supported models](#supported-models)
-- [The model side](#the-model-side)
-- [Whether the run answered](#whether-the-run-answered)
-- [What the removed AI panels did that a run does not](#what-the-removed-ai-panels-did-that-a-run-does-not)
-- [HTTP surface](#http-surface)
-- [The surface in the app](#the-surface-in-the-app)
-- [Deployment](#deployment)
-- [Package boundary](#package-boundary)
-- [Module map](#module-map)
-- [Known limitations](#known-limitations)
+- [Agent Runtime — LibreDB Studio](#agent-runtime--libredb-studio)
+  - [Table of Contents](#table-of-contents)
+  - [Turning it on](#turning-it-on)
+  - [What a run is](#what-a-run-is)
+    - [What a plan run knows](#what-a-plan-run-knows)
+    - [What the inventory is an inventory OF](#what-the-inventory-is-an-inventory-of)
+    - [The statement a plan run drafts](#the-statement-a-plan-run-drafts)
+  - [Durability and resume](#durability-and-resume)
+    - [A drive that dies before the loop](#a-drive-that-dies-before-the-loop)
+  - [The tool set](#the-tool-set)
+    - [The query-optimization template](#the-query-optimization-template)
+    - [The database-assessment template](#the-database-assessment-template)
+    - [The operations template](#the-operations-template)
+    - [The data-analysis template](#the-data-analysis-template)
+    - [Presenting an answer](#presenting-an-answer)
+    - [Handing the answer to the editor (auto-execute)](#handing-the-answer-to-the-editor-auto-execute)
+    - [What the fence is proved to hold against](#what-the-fence-is-proved-to-hold-against)
+  - [What bounds a run](#what-bounds-a-run)
+  - [Supported models](#supported-models)
+  - [The model side](#the-model-side)
+    - [What a refused model looks like in the app](#what-a-refused-model-looks-like-in-the-app)
+  - [Whether the run answered](#whether-the-run-answered)
+    - [The eval harness](#the-eval-harness)
+  - [What the removed AI panels did that a run does not](#what-the-removed-ai-panels-did-that-a-run-does-not)
+  - [HTTP surface](#http-surface)
+  - [The surface in the app](#the-surface-in-the-app)
+  - [Deployment](#deployment)
+  - [Package boundary](#package-boundary)
+  - [Module map](#module-map)
+  - [Known limitations](#known-limitations)
+  - [Related documentation](#related-documentation)
 
 ## Turning it on
 
@@ -249,6 +265,13 @@ Which connections qualify is decided in the browser before a run is opened, by
 The middle case is why this is a comparison and not a bare "has a seed id". The server resolves
 `seed:<id>` to its OWN descriptor, so a run started on a copy the user had since pointed at another
 database would investigate the seed and report on it as though it were the one on screen.
+
+A run may also FOLLOW the run before it. The rail sends the previous run's id when the user asks a
+follow-up question on the same connection, the route derives the previous run's objective and report
+from its own ledger, and the new run's header records them as `priorContext`. The context is fenced
+when the model reads it, so a pronoun or a demonstrative ("those groups", "it") either resolves
+against the earlier run or is refused for lack of a referent rather than answered as if the question
+were new ([`src/lib/agent/prior-run-context.ts`](../src/lib/agent/prior-run-context.ts)).
 
 A run emits a closed set of **semantic events**, and they are the whole of what the UI renders:
 `run-started`, `driver-resolved`, `context-captured`, `statement-drafted`, `plan-statement-drafted`,
@@ -2369,9 +2392,6 @@ surface (#407) — twenty-six runs over `docs/AGENT_DEMO.md`, which is also wher
 real-world agreement rate was measured. The count is deliberately not stated: entries leave this list
 as they are fixed, and a numeral here goes stale silently.
 
-- **B36** — a follow-up question is answered as if it were the first. Runs carry no memory of each
-  other, and neither the surface nor the model says so — the model picks a plausible referent and
-  answers a question nobody asked, with the citations a correct answer carries.
 - **B37** — a seed config the server cannot read disables the agent on every connection, and the rail
   blames the connection: "its settings live in this browser", said of a connection this application
   seeds itself. The browser cannot tell an empty seed list from a failed one.
