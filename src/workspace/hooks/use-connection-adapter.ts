@@ -23,22 +23,36 @@ export function useConnectionAdapter({ connections: externalConnections, onSchem
     [externalConnections],
   );
 
-  // The selection is held by ID, not by object, so it can be resolved against the
-  // host's CURRENT list during render instead of being repaired by an effect one
-  // render later. Holding the object also meant a host that renamed a connection
-  // in place kept being served the captured one — the "still in the list?" test
-  // matched on id, so nothing re-synced.
+  // The selection is held by ID, not by object, so it resolves against the host's
+  // CURRENT list during render instead of being repaired by an effect one render
+  // later. Holding the object also meant a host that renamed a connection in place
+  // kept being served the captured one — the "still in the list?" test matched on
+  // id, so nothing re-synced.
   const [activeConnectionId, setActiveConnectionId] = useState<string | null>(null);
   const [schema, setSchema] = useState<TableSchema[]>([]);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
 
-  // The `?? connections[0]` tail is this hook's own fallback, not React's: an
-  // embedded shell always shows the host's first connection when the chosen one
-  // is gone (or when nothing has been chosen yet), and only an empty list is null.
+  // Resolution is by id ONLY — no positional tail. An embedded shell still shows
+  // the host's first connection when nothing has been chosen yet, but that fallback
+  // is resolved once and then HELD as the id below, because re-resolving it
+  // positionally on every render let the host move the selection: prepend or
+  // reorder the list and the editor silently points at a database nobody picked,
+  // with a schema re-fetch behind it (StudioWorkspace keys that fetch on
+  // `activeConnection?.id`).
   const activeConnection = useMemo(
-    () => connections.find((c) => c.id === activeConnectionId) ?? connections[0] ?? null,
+    () => connections.find((c) => c.id === activeConnectionId) ?? null,
     [connections, activeConnectionId],
   );
+
+  // React's documented adjust-state-while-rendering guard (react.dev, "You Might
+  // Not Need an Effect" — adjusting some state when a prop changes). It commits
+  // the fallback for both ways the id can fail to resolve: nothing chosen yet, and
+  // the chosen connection dropped by the host. It terminates — the id it commits
+  // comes from the very list it just failed against, so the next pass resolves —
+  // and an empty list falls straight through, leaving `activeConnection` null.
+  if (!activeConnection && connections.length > 0) {
+    setActiveConnectionId(connections[0].id);
+  }
 
   const setActiveConnection = useCallback((conn: DatabaseConnection | null) => {
     setActiveConnectionId(conn?.id ?? null);

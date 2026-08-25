@@ -223,9 +223,10 @@ describe("useConnectionAdapter", () => {
 
     rerender({ connections: updatedConnections });
 
-    // Synchronous on purpose: the fallback is DERIVED from the current props, so
-    // it must already hold in the render that dropped c2. A `waitFor` here would
-    // also pass against an effect that repairs the selection one render late.
+    // Synchronous on purpose: the fallback is committed DURING the render that
+    // dropped c2 — adjusting state while rendering re-runs the hook before anything
+    // commits — so it must already hold here. A `waitFor` would also pass against an
+    // effect that repairs the selection one render late.
     expect(result.current.activeConnection!.id).toBe("c1");
   });
 
@@ -253,8 +254,9 @@ describe("useConnectionAdapter", () => {
   /**
    * Documents a real change: while the selection was held as an object,
    * `setActiveConnection(null)` left `activeConnection` null even with a non-empty
-   * list. It is now a request to clear the CHOICE, and the derivation falls back to
-   * the host's first connection — the same value a fresh mount shows.
+   * list. It is now a request to clear the CHOICE, and the render-phase guard
+   * immediately commits the host's first connection again — the same value a fresh
+   * mount shows.
    *
    * Unreachable from the shipped shell: the adapter's setter is passed only to
    * `Sidebar`'s `onSelectConnection`, typed `(connection: DatabaseConnection) => void`,
@@ -302,6 +304,58 @@ describe("useConnectionAdapter", () => {
 
     expect(result.current.activeConnection!.id).toBe("c1");
     expect(result.current.activeConnection!.name).toBe("DB One, renamed");
+  });
+
+  // ── The resolved fallback is sticky against host reordering ──────────
+
+  /**
+   * The fallback resolves ONCE and is then held by id. A positional
+   * `?? connections[0]` re-resolved on every render, so a host that prepended or
+   * reordered its list moved the selection to a database the user never picked --
+   * and StudioWorkspace keys its schema fetch on `activeConnection?.id`, so the
+   * editor silently changed database and re-fetched a schema.
+   */
+  test("keeps the implicitly selected connection when the host reorders its list", () => {
+    const onSchemaFetch = mock(() => Promise.resolve([]));
+    const a = makeWorkspaceConnection({ id: "c1", name: "DB One" });
+    const b = makeWorkspaceConnection({ id: "c2", name: "DB Two" });
+
+    const { result, rerender } = renderHook(({ connections }) => useConnectionAdapter({ connections, onSchemaFetch }), {
+      initialProps: { connections: [a, b] },
+    });
+
+    expect(result.current.activeConnection!.id).toBe("c1");
+
+    // Same two connections, host order flipped. Nothing was selected by the user,
+    // so only the committed fallback can keep this on c1.
+    rerender({ connections: [b, a] });
+
+    expect(result.current.activeConnection!.id).toBe("c1");
+    expect(result.current.activeConnection!.name).toBe("DB One");
+  });
+
+  test("the fallback chosen after a removal is itself sticky across a later reorder", () => {
+    const onSchemaFetch = mock(() => Promise.resolve([]));
+    const c1 = makeWorkspaceConnection({ id: "c1", name: "DB One" });
+    const c2 = makeWorkspaceConnection({ id: "c2", name: "DB Two" });
+    const c3 = makeWorkspaceConnection({ id: "c3", name: "DB Three" });
+
+    const { result, rerender } = renderHook(({ connections }) => useConnectionAdapter({ connections, onSchemaFetch }), {
+      initialProps: { connections: [c1, c2, c3] },
+    });
+
+    act(() => {
+      result.current.setActiveConnection(result.current.connections[2]);
+    });
+    expect(result.current.activeConnection!.id).toBe("c3");
+
+    // c3 is dropped by the host: the fallback takes over.
+    rerender({ connections: [c1, c2] });
+    expect(result.current.activeConnection!.id).toBe("c1");
+
+    // ...and that replacement must be held too, not re-resolved positionally.
+    rerender({ connections: [c2, c1] });
+    expect(result.current.activeConnection!.id).toBe("c1");
   });
 
   // ── Maps WorkspaceConnection to DatabaseConnection correctly ────────────

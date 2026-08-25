@@ -222,6 +222,11 @@ export function OverviewTab({ user }: OverviewTabProps) {
   useEffect(() => {
     const { connections: targets } = fleetRequest;
     if (targets.length === 0) return;
+    // A response that lost the race (unmount, a changed connection list, or a newer
+    // refresh) must win nothing: it may neither overwrite the newer request's snapshot
+    // nor clear the spinner, which from the moment it was superseded belongs to that
+    // newer request.
+    let ignore = false;
 
     async function load() {
       setFleetLoading(true);
@@ -232,15 +237,18 @@ export function OverviewTab({ user }: OverviewTabProps) {
           body: JSON.stringify({ connections: targets }),
         });
         const data = await res.json();
-        if (data.results) setFleetHealth(data.results);
+        if (!ignore && data.results) setFleetHealth(data.results);
       } catch {
         // silently fail
       } finally {
-        setFleetLoading(false);
+        if (!ignore) setFleetLoading(false);
       }
     }
 
     void load();
+    return () => {
+      ignore = true;
+    };
   }, [fleetRequest]);
 
   // Auto-refresh fleet health every 60 seconds. Kept as its own effect so that a manual

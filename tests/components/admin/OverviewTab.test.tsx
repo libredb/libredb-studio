@@ -498,6 +498,154 @@ describe("OverviewTab", () => {
     });
   });
 
+  // ── Fleet-health request race ──────────────────────────────────────────────
+
+  /**
+   * Two fleet-health requests can be in flight at once: the 60s auto-refresh (like a
+   * changed connection list) supersedes a request that has not answered yet. These two
+   * tests hold both responses open and settle them out of order, which is the only way
+   * to observe that the superseded response neither overwrites the newer snapshot nor
+   * clears the spinner that now belongs to the newer request.
+   */
+  const staleSnapshot = [
+    {
+      connectionId: "c1",
+      connectionName: "Fleet A (stale)",
+      type: "postgres",
+      status: "healthy",
+      latencyMs: 15,
+    },
+  ];
+  const freshSnapshot = [
+    {
+      connectionId: "c1",
+      connectionName: "Fleet B (fresh)",
+      type: "postgres",
+      status: "healthy",
+      latencyMs: 20,
+    },
+  ];
+
+  /** Serves each fleet-health call a snapshot only once the test opens its gate. */
+  function heldFleetHealth(snapshots: Record<string, unknown>[][]) {
+    const gates: Array<() => void> = [];
+    let served = 0;
+    mockGlobalFetch({
+      "/api/admin/audit": { json: { events: [] } },
+      "/api/admin/fleet-health": async () => {
+        const index = served++;
+        await new Promise<void>((resolve) => gates.push(resolve));
+        return { json: { results: snapshots[index] } };
+      },
+    });
+    return gates;
+  }
+
+  /**
+   * Captures the component's own 60s auto-refresh so the test can fire it on demand.
+   * Every other interval — testing-library's `waitFor` polls on one — must stay real.
+   */
+  function captureAutoRefresh() {
+    const realSetInterval = globalThis.setInterval;
+    const captured: { fire?: () => void } = {};
+    globalThis.setInterval = ((handler: () => void, timeout?: number) => {
+      if (timeout === 60000) {
+        captured.fire = handler;
+        return realSetInterval(() => {}, 100000);
+      }
+      return realSetInterval(handler, timeout);
+    }) as unknown as typeof setInterval;
+    return {
+      captured,
+      restore: () => {
+        globalThis.setInterval = realSetInterval;
+      },
+    };
+  }
+
+  /** Resolves a held response and lets its continuation run inside `act`. */
+  async function settle(open: () => void) {
+    await act(async () => {
+      open();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  test("a fleet-health response that lost the race does not overwrite the newer snapshot", async () => {
+    const gates = heldFleetHealth([staleSnapshot, freshSnapshot]);
+    const { captured, restore } = captureAutoRefresh();
+
+    try {
+      let renderResult: ReturnType<typeof render>;
+      await act(async () => {
+        renderResult = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+      });
+      const { queryByText } = renderResult!;
+
+      // Request A is in flight and unanswered.
+      await waitFor(() => {
+        expect(gates.length).toBe(1);
+      });
+
+      // The auto-refresh supersedes it with request B, which answers first.
+      await act(async () => {
+        captured.fire!();
+      });
+      await waitFor(() => {
+        expect(gates.length).toBe(2);
+      });
+      await settle(gates[1]);
+      await waitFor(() => {
+        expect(queryByText("Fleet B (fresh)")).not.toBeNull();
+      });
+
+      // A settles last; the rendered fleet must still be B's.
+      await settle(gates[0]);
+      expect(queryByText("Fleet B (fresh)")).not.toBeNull();
+      expect(queryByText("Fleet A (stale)")).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  test("a fleet-health response that lost the race does not clear the newer request's spinner", async () => {
+    const gates = heldFleetHealth([staleSnapshot, freshSnapshot]);
+    const { captured, restore } = captureAutoRefresh();
+
+    try {
+      let renderResult: ReturnType<typeof render>;
+      await act(async () => {
+        renderResult = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+      });
+      const { getByText, queryByText } = renderResult!;
+      const refreshButton = () => getByText("Refresh").closest("button") as HTMLButtonElement;
+
+      await waitFor(() => {
+        expect(gates.length).toBe(1);
+      });
+      await act(async () => {
+        captured.fire!();
+      });
+      await waitFor(() => {
+        expect(gates.length).toBe(2);
+      });
+
+      // Superseded request A answers while B is still loading: the spinner belongs to B.
+      await settle(gates[0]);
+      expect(refreshButton().disabled).toBe(true);
+      expect(queryByText("Fleet A (stale)")).toBeNull();
+
+      // Only B's own answer stops the spinner.
+      await settle(gates[1]);
+      await waitFor(() => {
+        expect(queryByText("Fleet B (fresh)")).not.toBeNull();
+      });
+      expect(refreshButton().disabled).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
   // ── Chart tooltip ──────────────────────────────────────────────────────────
 
   /**
