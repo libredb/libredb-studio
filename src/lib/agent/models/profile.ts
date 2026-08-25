@@ -97,6 +97,15 @@ export interface AgentModelProfile {
    *
    * Off by default even so. The ten models locked at 300/300 were measured without it, and a
    * drive-wide change is twice how this repository has handed back cells it had won.
+   *
+   * It SUBSUMES `retryEmptyTurn`, and that is a property of the gate rather than of the name.
+   * The condition is "called nothing", with no test on what was said, so an empty completion
+   * reaches it too and a model carrying both switches spends two extra turns rather than one.
+   * Where this is true `retryEmptyTurn` decides nothing, whatever the entry records - measured
+   * on `nemotron3:33b`, whose entry says `false` and whose empty turns are asked again anyway.
+   * Written down rather than fixed: narrowing the gate to a non-empty turn would change the
+   * behaviour the five passing runs were measured under, and this repository does not move a
+   * measured cell without re-measuring it. See `docs/BACKLOG.md`.
    */
   readonly retryUnreadStop?: boolean;
   /**

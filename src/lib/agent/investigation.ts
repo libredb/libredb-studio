@@ -3173,12 +3173,16 @@ export async function runInvestigation(
           !unreadStopRetried &&
           turns < maxTurns &&
           resources.deadline.remainingMs() > 0 &&
-          // The sentence NAMES `inspect_schema`, so it may only reach a run that holds it.
+          // The sentence NAMES `inspect_schema` AND `inspect_plan`, so it may only reach a run
+          // that holds BOTH. Every set but one is `AGENT_MODE_TOOLS` today, which makes the two
+          // checks equivalent - and that equivalence is the thing a future set would break
+          // silently, so it is asserted rather than relied on.
           // `operations` is the one agent set built on a different four, because the
           // read-class tools need `queryReadOnly`, which only two providers implement. Told to
           // call a tool it has not got, a run calls it, is answered "there is no such tool",
           // and spends the very turn this retry bought: the #350/#356 defect, paid for once.
           holdsTool("inspect_schema") &&
+          holdsTool("inspect_plan") &&
           retriesUnreadStop(model.modelId)
         ) {
           unreadStopRetried = true;

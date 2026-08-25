@@ -2497,6 +2497,13 @@ as they are fixed, and a numeral here goes stale silently.
   the blank line remains the only signal there. It matters because `plan-statement-drafted` is
   recorded on the reader's verdict alone and the goal verifier reads that event as ANSWERED, so
   the run is scored answered while its deliverable would not run.
+- **B65** — `retryUnreadStop` subsumes `retryEmptyTurn`. The gate asks what a stopping turn CALLED
+  and never what it said, so an empty completion reaches it too and a model's recorded
+  `retryEmptyTurn: false` decides nothing. Pinned as it behaves rather than narrowed, because the
+  narrowing would move behaviour five passing runs were measured under.
+- **B66** — the one per-model lever `nemotron3:33b`'s marginal cell has never been swept at. Both
+  its losses are a report turn of 172.7 s and 244.6 s against a 90-second limit, which is the shape
+  `turnTimeoutMs` exists for, and unlike the lever the entry declines it reaches no other surface.
 
 ## Related documentation
 

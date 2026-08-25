@@ -3166,6 +3166,31 @@ describe("a run that stops having read nothing is told to read it itself", () =>
     expect(result.stopReason).toBe("model-stopped");
   });
 
+  test("an EMPTY stopping turn spends it too, so this switch subsumes retryEmptyTurn", async () => {
+    /*
+      The gate asks whether anything was CALLED, not what was said, so a turn with no text at
+      all reaches it as well as the question this was measured on. `nemotron3:33b` records
+      `retryEmptyTurn: false` and its empty turns are asked again regardless - pinned here
+      because it is the behaviour, not the wording, that a reader of the entry would get wrong.
+
+      Not narrowed to a non-empty turn, which is the obvious repair: that would change what the
+      five passing runs were measured under, and a measured cell does not move without being
+      re-measured. Recorded in `docs/BACKLOG.md` instead.
+    */
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(answersProse(""), answersProse("Understood."));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, "https://api.openai.com/v1", "nemotron3:33b"),
+      resources: b.resources,
+    });
+
+    expect(script.turns.length).toBe(2);
+    expect(script.turns[1]?.transcript).toContain("inspect_schema");
+  });
+
   test("it is spent once, so a run that stops again is not asked a third time", async () => {
     const b = boot(freshDataDir());
     const run = await startRun(b);
