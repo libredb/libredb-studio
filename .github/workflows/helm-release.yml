@@ -290,7 +290,11 @@ jobs:
           asset_path=$(ls .cr-release-packages/*.tgz)
           asset=$(basename "$asset_path")
           tag="${asset%.tgz}"
-          desc=$(grep '^description:' charts/libredb-studio/Chart.yaml | cut -d' ' -f2-)
+          # grep/awk for the same reason as the preflight reads above: yq is
+          # not preinstalled. Both fields come from the very Chart.yaml that
+          # `helm package` just packaged, so they cannot drift from the tag.
+          version=$(grep '^version:' charts/libredb-studio/Chart.yaml | awk '{print $2}' | tr -d '"')
+          app_version=$(grep '^appVersion:' charts/libredb-studio/Chart.yaml | awk '{print $2}' | tr -d '"')
           if IS_DRAFT=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
             if [ "$IS_DRAFT" != "true" ]; then
               if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fqx "$asset"; then
@@ -302,7 +306,55 @@ jobs:
             fi
             echo "Reusing existing draft release '$tag'."
           else
-            gh release create "$tag" --draft --title "$tag" --notes "$desc"
+            # Release copy is the only explanation a visitor to the Releases
+            # page gets for the two version streams this repo publishes: the
+            # application (tag `0.13.4`) and this chart (tag
+            # `libredb-studio-0.1.49`, because `helm package` names its
+            # artifact `<chart-name>-<chart-version>.tgz`). The old body -
+            # the chart's `description:` line, identical on every chart
+            # release - answered a question nobody asked.
+            #
+            # Quoted heredoc on purpose: the body is markdown whose backticks
+            # and code fences must reach the release page literally, so the
+            # two version numbers are substituted afterwards rather than
+            # interpolated by the shell.
+            notes="${RUNNER_TEMP}/chart-release-notes.md"
+            cat > "$notes" <<'NOTES'
+          LibreDB Studio Helm chart `__CHART_VERSION__`, deploying application version `__APP_VERSION__` by default.
+
+          ## Install
+
+          From the Helm repository:
+
+          ```bash
+          helm repo add libredb https://libredb.org/libredb-studio/
+          helm repo update
+          helm install libredb libredb/libredb-studio --version __CHART_VERSION__
+          ```
+
+          Or straight from the OCI registry:
+
+          ```bash
+          helm install libredb oci://ghcr.io/libredb/charts/libredb-studio --version __CHART_VERSION__
+          ```
+
+          Both commands work with default values: the chart bootstraps its own JWT secret and admin credentials on first boot. Every value is documented in [charts/libredb-studio/README.md](https://github.com/libredb/libredb-studio/blob/main/charts/libredb-studio/README.md).
+
+          ## Why two version numbers?
+
+          This repository publishes two independent release streams, so the Releases page carries two tag shapes:
+
+          | Tag | What it releases |
+          | --- | --- |
+          | `__APP_VERSION__` | the LibreDB Studio application - npm, Docker, desktop and OS packages |
+          | `libredb-studio-__CHART_VERSION__` | this Helm chart - `helm package` names its artifact `<chart-name>-<chart-version>.tgz`, and the release tag follows it |
+
+          The chart version moves on its own so a chart-only fix ships without forcing an application release. The application version a given chart deploys is its `appVersion` - shown in the `APP VERSION` column of `helm search repo` and on ArtifactHub. The full rationale is in [docs/HELM_CHART.md](https://github.com/libredb/libredb-studio/blob/main/docs/HELM_CHART.md#versioning-policy-version-and-appversion-stay-independent-researched-2026-07).
+          NOTES
+            sed -i "s|__CHART_VERSION__|${version}|g; s|__APP_VERSION__|${app_version}|g" "$notes"
+            gh release create "$tag" --draft \
+              --title "Helm chart ${version} (app ${app_version})" \
+              --notes-file "$notes"
           fi
           # Immutable releases require the git tag to exist at publish time.
           if ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
