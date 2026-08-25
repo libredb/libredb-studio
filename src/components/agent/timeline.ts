@@ -74,6 +74,7 @@ const GUIDANCE_HEADLINE: Record<Extract<AgentRunEvent, { kind: "guidance-issued"
   "report-reminder": "Asked to file its report",
   "plan-statement": "Asked for a runnable statement",
   "report-reserve": "Told this is its last turn",
+  "unread-stop": "Asked to read the database itself",
 };
 
 /**

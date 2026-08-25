@@ -10,7 +10,7 @@
 # The model is an environment variable and the product has no picker, so switching it means
 # restarting the server — which is why the loop lives here rather than inside the spec.
 #
-# Usage: scripts/agent-model-e2e.sh [model ...]      (default: all ten)
+# Usage: scripts/agent-model-e2e.sh [model ...]      (default: every supported model)
 set -u
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO" || exit 1
@@ -19,7 +19,7 @@ MODELS=("$@")
 if [ ${#MODELS[@]} -eq 0 ]; then
   # Fastest first, so the run reports something early, and the hosted model last because it needs
   # its own environment file swapped in rather than a line rewritten.
-  MODELS=(granite4.1:8b granite4.1:30b ornith:9b qwen3.5:9b qwen3:8b gemma4:26b qwen3:14b qwen3.8:latest qwen3:4b gemini-3.5-flash-lite)
+  MODELS=(granite4.1:8b granite4.1:30b ornith:9b qwen3.5:4b qwen3.5:9b qwen3:8b gemma4:26b qwen3:14b nemotron3:33b qwen3.8:latest qwen3:4b gemini-3.5-flash-lite)
 fi
 
 # Watchable by default: the browser opens on screen and every click is visible, and a video of

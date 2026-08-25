@@ -701,7 +701,7 @@ export type AgentRunEvent =
        * badly and read as this server's own prose.
        */
       readonly kind: "guidance-issued";
-      readonly notice: "report-reminder" | "plan-statement" | "report-reserve";
+      readonly notice: "report-reminder" | "plan-statement" | "report-reserve" | "unread-stop";
     })
   | (AgentRunEventBase & {
       /**

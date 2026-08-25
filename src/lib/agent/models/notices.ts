@@ -2,10 +2,10 @@
  * The wording of every sentence the drive says to a run, and the ONLY source of it.
  *
  * Read that literally, because this file used to say the opposite and the opposite is now false.
- * Each measured model once carried its own copy of these three sentences in its own module, so a
+ * Each measured model once carried its own copy of these sentences in its own module, so a
  * change here reached none of them. The modules are gone, the settings are data, and wording is
  * the one thing the document may not carry — so every run of every model is told exactly what is
- * written below. EDITING A SENTENCE HERE CHANGES WHAT ALL TEN MEASURED MODELS ARE TOLD.
+ * written below. EDITING A SENTENCE HERE CHANGES WHAT EVERY MEASURED MODEL IS TOLD.
  *
  * That is a real cost, and it is why the digests are pinned in
  * `tests/unit/lib/agent/model-resolution-table.test.ts`: an edit here turns that test red and asks
@@ -43,5 +43,10 @@ export const BASELINE_NOTICES: AgentNotices = Object.freeze({
   presentBeforeReport: [
     "This run answers by PRESENTING a result, and nothing has been presented yet: a report on its own is scored as having answered nothing.",
     "Your compose_report call was not run. Call present_answer first, with the artifact id of the result that answers the objective, and then call compose_report.",
+  ].join(" "),
+  unreadStop: [
+    "You have stopped without reading anything, and there is nobody to reply to you: this run has no correspondent, so a request for information ends it with nothing established.",
+    "Read it yourself. Call inspect_schema for the tables and their columns, and inspect_plan for how a statement will run, then call compose_report with what you found.",
+    CITATION_RULE,
   ].join(" "),
 });

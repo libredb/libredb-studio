@@ -78,6 +78,60 @@ export interface AgentModelProfile {
    */
   readonly retryEmptyTurn?: boolean;
   /**
+   * Whether a run that stopped WITHOUT CALLING ANYTHING is told to read the database itself.
+   *
+   * A different loss from the empty turn above, and from the report reminder: this model says
+   * something, and what it says is a request. `nemotron3:33b` lost query-optimization to it
+   * twice — once recorded in its own file as "asking for the SQL of the statement it was sent
+   * to diagnose", then again ten seconds into a later run, asking the user to paste the
+   * statement while holding `inspect_schema` and `inspect_plan`. There is nobody to answer: a
+   * run has no correspondent, so the question is a stop dressed as a turn.
+   *
+   * `remindToReport` cannot reach it. That notice tells a run to file what it established and
+   * is gated on `anyToolCalled` for good reason — a run that read nothing has nothing to file.
+   * The sentence this one needs is the other half: not "report what you found" but "find it".
+   *
+   * Free, which is the whole safety argument. `compose_report` is one of the run's tools, so a
+   * run that called nothing composed no report and has already earned `no-report`; the turn is
+   * spent on a run that has lost. It cannot cost a pass, only recover a failure.
+   *
+   * Off by default even so. The ten models locked at 300/300 were measured without it, and a
+   * drive-wide change is twice how this repository has handed back cells it had won.
+   *
+   * It SUBSUMES `retryEmptyTurn`, and that is a property of the gate rather than of the name.
+   * The condition is "called nothing", with no test on what was said, so an empty completion
+   * reaches it too and a model carrying both switches spends two extra turns rather than one.
+   * Where this is true `retryEmptyTurn` decides nothing, whatever the entry records - measured
+   * on `nemotron3:33b`, whose entry says `false` and whose empty turns are asked again anyway.
+   * Written down rather than fixed: narrowing the gate to a non-empty turn would change the
+   * behaviour the five passing runs were measured under, and this repository does not move a
+   * measured cell without re-measuring it. See `docs/BACKLOG.md`.
+   */
+  readonly retryUnreadStop?: boolean;
+
+  /**
+   * Whether this model's PLAN turn asks the endpoint for no reasoning at all.
+   *
+   * Measured on `qwen3.5:4b`, whose five agent surfaces all pass as they are and whose plan
+   * cell was 0/5: every loss a `model-timeout` with an empty ledger, the turn spent thinking
+   * rather than answering. On a Studio-sized prompt it emits 13 188 characters of reasoning
+   * against 1 165 of content. With `reasoning_effort: "none"` the same five runs finish in 2
+   * to 6 seconds.
+   *
+   * PLAN ONLY, and gated on the run's MODE rather than on whether it was handed tools: an
+   * agent run on the prompted protocol is toolless too, and that is the path four of the
+   * twenty-five measured models take. The five agent cells were measured WITH reasoning, and
+   * a setting applied where nothing was measured is a guess wearing a measurement's clothes.
+   *
+   * It reaches the OPENAI-COMPATIBLE adapter only. `providerOptions` is keyed `openai`, which
+   * is right for the three kinds `provider-registry.ts` builds through `@ai-sdk/openai`
+   * (`openai`, `ollama`, `custom`) and reaches nothing on `gemini`, which is `@ai-sdk/google`
+   * and reads its own key. So this is a no-op on the one hosted provider Studio ships an
+   * adapter for, silently — stated here because every model measured with it is local, and
+   * an operator who sets it on a Gemini model is owed the sentence rather than the silence.
+   */
+  readonly suppressPlanReasoning?: boolean;
+  /**
    * How many times a report may be held to ask for the answer that belongs beside it.
    *
    * One is enough for a model that forgot. One evaluated model did not forget: held once
@@ -127,6 +181,8 @@ export interface AgentNotices {
   readonly planStatement: string;
   /** An answer-presenting run about to report a result it read but never presented. */
   readonly presentBeforeReport: string;
+  /** A run that stopped without calling anything, having asked for what it could have read. */
+  readonly unreadStop: string;
 }
 
 /**
@@ -166,6 +222,24 @@ export const DEFAULT_REFUSAL_EXAMPLES = false;
  * the work already done earns the retry.
  */
 export const DEFAULT_RETRY_EMPTY_TURN = false;
+
+/**
+ * A run that stops having called nothing keeps its ending, unless a model's ledger asked.
+ *
+ * Off despite being free to grant — the turn is spent on a run whose verdict is already
+ * `no-report` — because "free" is an argument about cost, not about wording. The sentence sent
+ * is read by the model and acted on by it, so it is a measured value like every other, and it
+ * belongs to the models measured with it rather than to all of them at once.
+ */
+export const DEFAULT_RETRY_UNREAD_STOP = false;
+
+/**
+ * Off, because every model but one was measured thinking and passing.
+ *
+ * A drive-wide change here is how this repository has twice handed back cells it had already
+ * won, so the switch stays per-model and per-mode.
+ */
+export const DEFAULT_SUPPRESS_PLAN_REASONING = false;
 
 /**
  * One, which is what every locked answer-presenting cell was measured against.

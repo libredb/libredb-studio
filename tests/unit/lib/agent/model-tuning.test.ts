@@ -26,6 +26,8 @@ import {
   DEFAULT_REFUSAL_EXAMPLES,
   DEFAULT_REPORT_REMINDER_LIMIT,
   DEFAULT_RETRY_EMPTY_TURN,
+  DEFAULT_RETRY_UNREAD_STOP,
+  DEFAULT_SUPPRESS_PLAN_REASONING,
   DEFAULT_SAMPLING,
   DEFAULT_UNREPORTED_CALL_CEILING,
 } from "@/lib/agent/models/profile";
@@ -40,6 +42,8 @@ const COMPLETE = {
   planStatementRetries: 0,
   presentReminderLimit: 1,
   retryEmptyTurn: false,
+  retryUnreadStop: false,
+  suppressPlanReasoning: false,
   refusalExamples: false,
 };
 
@@ -62,6 +66,8 @@ const document = (overrides: Record<string, unknown> = {}): Record<string, unkno
       planStatementRetries: 0,
       presentReminderLimit: 1,
       retryEmptyTurn: false,
+      retryUnreadStop: false,
+      suppressPlanReasoning: false,
       refusalExamples: false,
     },
   },
@@ -84,7 +90,7 @@ afterEach(() => {
 describe("the document Studio ships with", () => {
   test("passes its own contract", () => {
     const tuning = parseTuning(bundled, "test");
-    expect(Object.keys(tuning.models)).toHaveLength(10);
+    expect(Object.keys(tuning.models)).toHaveLength(12);
   });
 
   test("argues for every value it changed", () => {
@@ -113,6 +119,8 @@ describe("the document Studio ships with", () => {
       planStatementRetries: DEFAULT_PLAN_STATEMENT_RETRIES,
       presentReminderLimit: DEFAULT_PRESENT_REMINDER_LIMIT,
       retryEmptyTurn: DEFAULT_RETRY_EMPTY_TURN,
+      retryUnreadStop: DEFAULT_RETRY_UNREAD_STOP,
+      suppressPlanReasoning: DEFAULT_SUPPRESS_PLAN_REASONING,
       refusalExamples: DEFAULT_REFUSAL_EXAMPLES,
     });
   });
@@ -436,7 +444,7 @@ describe("a document an operator supplies", () => {
     process.env[ENV] = writeDocument("{ not json");
     resetTuning();
     expect(ceilingFor("gemma4:26b")).toBe(10);
-    expect(Object.keys(activeTuning().models)).toHaveLength(10);
+    expect(Object.keys(activeTuning().models)).toHaveLength(12);
   });
 
   test("reports that it ignored a document, naming the file and the reason", () => {
@@ -565,13 +573,13 @@ describe("a document an operator supplies", () => {
   test("is ignored when it breaks the contract, not partially applied", () => {
     process.env[ENV] = writeDocument(document({ schemaVersion: 99 }));
     resetTuning();
-    expect(Object.keys(activeTuning().models)).toHaveLength(10);
+    expect(Object.keys(activeTuning().models)).toHaveLength(12);
   });
 
   test("is ignored when the file is not there at all", () => {
     process.env[ENV] = "/nonexistent/models.json";
     resetTuning();
-    expect(Object.keys(activeTuning().models)).toHaveLength(10);
+    expect(Object.keys(activeTuning().models)).toHaveLength(12);
   });
 
   test("an unset or blank variable is simply no operator document", () => {
@@ -579,7 +587,7 @@ describe("a document an operator supplies", () => {
     // reading it as a path would warn on every boot of an install that configured nothing.
     process.env[ENV] = "   ";
     resetTuning();
-    expect(Object.keys(activeTuning().models)).toHaveLength(10);
+    expect(Object.keys(activeTuning().models)).toHaveLength(12);
   });
 
   test("is read once, so a run cannot see the table change under it", () => {

@@ -2592,3 +2592,41 @@ belongs to whoever owns the measurement rather than to a defect fix.
 **Done when:** either the reader ends an unterminated statement without a blank line, or the
 verifier stops treating a drafted statement as an answer on its own — with the cells that moves
 re-measured either way.
+
+### B65. `retryUnreadStop` subsumes `retryEmptyTurn`, so one entry's `false` decides nothing
+
+The gate asks whether the run CALLED anything (`!anyToolCalled`) and never what it said, so an
+empty completion reaches it as readily as the question it was measured on. A model carrying both
+switches therefore spends two extra turns rather than one, and a model carrying only this one has
+its `retryEmptyTurn: false` overridden by a switch that argues for something else.
+
+Live on `nemotron3:33b`, whose entry records `retryEmptyTurn: false` and whose empty turns are
+asked again anyway. Pinned as it behaves in `tests/isolated/agent-investigation.test.ts` rather
+than repaired, because the repair — narrowing the gate to a turn with text in it — changes the
+behaviour the five passing query-optimization runs were measured under, and this repository does
+not move a measured cell without re-measuring it.
+
+Free either way: `compose_report` is one of the tools `anyToolCalled` counts, so a run reaching
+the gate has already earned `no-report`. What is wrong is the record, not the cost — a reader of
+the entry cannot tell what the model is actually driven with.
+
+**Done when:** the gate tests the stopping text and the affected cells are re-measured, or the
+two switches become one setting whose name covers both stops.
+
+### B66. `nemotron3:33b`'s marginal cell has one per-model lever nobody has swept
+
+Its query-optimization cell reads 5/5, 5/5, 4/5, 4/5 across four sweeps with nothing in the entry
+changing between them, and both losses share one signature: the report-composing turn ran 172.7 s
+and 244.6 s against a 90-second turn, where every passing run composed in 24 to 93.
+
+`turnTimeoutMs` is the per-model setting for exactly that shape — `qwen3.5:9b` carries 150000 and
+the worked example in `docs/llms/model-tuning.example.json` argues the same bimodal case. Unlike
+`reasoning_effort`, it changes no wording and reaches no other model, so it cannot re-open the
+five surfaces this model already locks.
+
+The entry records a different lever (`reasoning_effort: "none"`) as deliberately not taken, for a
+sound reason — its other five cells were measured WITH reasoning. That reason does not apply here,
+and this one has simply not been tried.
+
+**Done when:** a sweep at a raised per-model turn limit either closes the cell or is recorded in
+the entry as having failed to.

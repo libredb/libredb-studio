@@ -13,6 +13,8 @@
       "planStatementRetries": 0,
       "presentReminderLimit": 1,
       "retryEmptyTurn": false,
+      "retryUnreadStop": false,
+      "suppressPlanReasoning": false,
       "refusalExamples": false
     }
   },
@@ -30,6 +32,8 @@
         "planStatementRetries": 0,
         "presentReminderLimit": 1,
         "retryEmptyTurn": true,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
         "refusalExamples": false
       },
       "rationale": {
@@ -53,6 +57,8 @@
         "planStatementRetries": 0,
         "presentReminderLimit": 1,
         "retryEmptyTurn": true,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
         "refusalExamples": false
       },
       "rationale": {
@@ -82,6 +88,8 @@
         "planStatementRetries": 0,
         "presentReminderLimit": 1,
         "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
         "refusalExamples": false
       },
       "rationale": {}
@@ -99,6 +107,8 @@
         "planStatementRetries": 0,
         "presentReminderLimit": 1,
         "retryEmptyTurn": true,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
         "refusalExamples": true
       },
       "rationale": {
@@ -109,6 +119,35 @@
           "Its query-optimization losses are one shape, and it is a shape with a measured cure.",
           "The cell reads 3/5 on a rested machine and 4/5 on the build from before this branch merged `main`, so it is the model rather than the laptop and rather than anything changed here — its 5/5 came from one lucky five. Both losing ledgers read identically: a statement drafted, the read completed, the report reminder delivered, and the run ends `model-stopped` carrying no text at all — neither `model-stopped-saying` nor `closing-statement`, and both are written whenever a turn holds any. An EMPTY completion, which the loop reads as a model that chose to stop.",
           "That is what took `gemma4:26b` from fifteen losses on one cell to 5/5. Same signature, same switch, and the same bound: once per drive."
+        ]
+      }
+    },
+    {
+      "id": "nemotron3:33b",
+      "measured": "6/6 modes locked, 30/30 runs passed with the setting below. Investigate 5/5 . Optimize 5/5 . Assess 5/5 . Operate 5/5 . Analyze 5/5 . Plan 5/5. Query-optimization was the last cell and took twenty-eight runs across eight sittings: 19 of 28 passed before the stop-without-reading switch, and the five that followed it all passed. It is LOCKED but MARGINAL, and four sweeps are why that is written here: 5/5, 5/5, 4/5, 4/5. Both losses have the same signature as the six before them - the report-composing turn running 172.7 and 244.6 seconds against a 90-second turn, where the passes compose theirs in 24 to 93. Nothing in this entry changed between the sweeps; the cell sits near the line, and saying so is better than a figure that reads as steadier than it is.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": true,
+        "suppressPlanReasoning": false,
+        "refusalExamples": true
+      },
+      "rationale": {
+        "refusalExamples": [
+          "Three of its query-optimization losses are one refusal repeated until the run runs out of time: `claims: expected array`, the same sentence each time, the model never changing what it sends. Seven times in one run.",
+          "That is the illness a worked example answers - the refusal names the field and never shows a call that would pass. The example is built from the run's own ledger, so the ids in it are real and a model that copies it verbatim gets a call that is accepted. Measured elsewhere collapsing a loop of twenty-eight identical refusals into one."
+        ],
+        "retryUnreadStop": [
+          "It stops and asks its user for the data. Twice: once \"after being held for a recommendation resting on no plan, asking for the SQL of the statement it was sent to diagnose\", and again ten seconds into a later run - zero tools invoked, closing with \"Could you please share the exact SQL statement you're running for the employee listing?\" while holding `inspect_schema` and `inspect_plan`.",
+          "So the question is not a clarification, it is a stop: a run has no user to answer it. The drive tells this model once, by name, which instrument would have found what it asked for, and gives the turn back.",
+          "Free to grant, which is why it is defensible at all: `compose_report` is one of the tools the drive counts, so a run that called nothing composed no report and has already earned `no-report`. The turn is spent on a run that has lost. The five runs after it were 5/5."
         ]
       }
     },
@@ -125,12 +164,39 @@
         "planStatementRetries": 1,
         "presentReminderLimit": 1,
         "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
         "refusalExamples": false
       },
       "rationale": {
         "planStatementRetries": [
           "Its last open cell, and the loss is `no-statement` twice over.",
           "The closing prose is not a bad plan — it names all eight tables, their columns and their keys, correctly. What it never writes is a runnable statement or the explicit `NO STATEMENT:` refusal, and plan mode's bar is one of those two. `qwen3:14b` lost the same cell the same way and the extra turn won it."
+        ]
+      }
+    },
+    {
+      "id": "qwen3.5:4b",
+      "measured": "6/6 modes locked, 30/30 runs passed with the setting below. Investigate 5/5 . Optimize 5/5 . Assess 5/5 . Operate 5/5 . Analyze 5/5 . Plan 5/5. The five agent surfaces passed at the defaults and are untouched. Plan was 0/5 before the reasoning switch and every loss was a model-timeout with an empty ledger - 90, 170 and 179 seconds spent thinking against a 90-second turn; with it the five runs finish in 2 to 6 seconds.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": true,
+        "refusalExamples": false
+      },
+      "rationale": {
+        "suppressPlanReasoning": [
+          "It thinks instead of answering, and only on plan. Asked for one statement against a Studio-sized prompt it returns 13 188 characters of reasoning and 1 165 of content, in 48 seconds; the five plan runs before this setting spent 90, 170 and 179 seconds and left an empty ledger each time.",
+          "`reasoning_effort: \"none\"` is a REQUEST FIELD, and that is the whole point: nothing is spliced into what Studio says to the model, so no cell's measured wording moves. The in-prompt `/no_think` marker was tried first, looked right on ONE run at 6.5 seconds, did not reproduce - 38 seconds in the system prompt, 51 in the user message - and gave 1/5 in a real sweep. One measurement was not a measurement.",
+          "Applied to the PLAN turn only, gated on the run's mode. The five agent surfaces were all measured WITH reasoning and pass as they are, and an agent run on the prompted protocol is toolless too - so gating on the tool set would have reached exactly the models least able to afford it."
         ]
       }
     },
@@ -147,6 +213,8 @@
         "planStatementRetries": 0,
         "presentReminderLimit": 1,
         "retryEmptyTurn": true,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
         "refusalExamples": false,
         "turnTimeoutMs": 150000
       },
@@ -174,6 +242,8 @@
         "planStatementRetries": 0,
         "presentReminderLimit": 1,
         "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
         "refusalExamples": false
       },
       "rationale": {}
@@ -191,6 +261,8 @@
         "planStatementRetries": 1,
         "presentReminderLimit": 1,
         "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
         "refusalExamples": false
       },
       "rationale": {
@@ -214,6 +286,8 @@
         "planStatementRetries": 0,
         "presentReminderLimit": 1,
         "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
         "refusalExamples": false
       },
       "rationale": {}
@@ -231,6 +305,8 @@
         "planStatementRetries": 0,
         "presentReminderLimit": 1,
         "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
         "refusalExamples": false,
         "perWorkflow": {
           "query-optimization": {

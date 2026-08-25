@@ -62,6 +62,8 @@ import {
   ceilingFor,
   presentReminderLimitFor,
   retriesEmptyTurn,
+  retriesUnreadStop,
+  suppressesPlanReasoning,
   turnTimeoutMsFor,
   planStatementRetriesFor,
   reportReminderLimitFor,
@@ -2189,6 +2191,15 @@ function toolSetOf(definitions: readonly AgentToolDefinition[]): ToolSet | undef
 }
 
 /**
+ * What a plan turn asks for when this model's thinking is the thing that loses the cell.
+ *
+ * A REQUEST FIELD and not a word in the prompt, which is the whole reason it is acceptable:
+ * every planning rule above is wording a measured cell depends on, and nothing here touches
+ * it. The in-prompt `/no_think` marker was tried first and abandoned - see the model's entry.
+ */
+export const PLAN_NO_REASONING_EFFORT = "none";
+
+/**
  * One turn. The stream is read part by part rather than awaited as a result, for
  * the reason `capability-probe.ts` records: after a failed request the result
  * promises reject with the SDK's own wrapper, which hides the error this
@@ -2223,6 +2234,17 @@ async function takeTurn(
     run to reach one field would undo that.
   */
   workflow: AgentRunWorkflowType | undefined,
+  /*
+    The run's PERSISTED mode, and the reasoning switch below is gated on it rather than on the
+    tool set.
+
+    Gating on `tools === undefined` is wrong in a way a unit test does not show: `tools` is
+    undefined for a planning run AND for every turn of an agent run on the prompted protocol,
+    which four of the twenty-five measured models take because they cannot emit `tool_calls`.
+    A switch documented as PLAN ONLY would then reach agent turns of exactly the models most
+    likely to be running locally, and a single-protocol test would pass anyway.
+  */
+  mode: AgentRunMode,
 ): Promise<ModelTurn> {
   /*
     Sampling is per MODEL now, not one number for all 25 of them.
@@ -2240,6 +2262,15 @@ async function takeTurn(
     measured on; a model appears there only when a measurement forced it to.
   */
   const sampling = samplingFor(agentModel.modelId, workflow);
+  /*
+    Keyed `openai`, whatever this provider is called.
+
+    `provider-registry.ts` builds ollama, openai and custom through one `@ai-sdk/openai`
+    adapter, and that adapter reads its options under its OWN key. Keying them by the
+    provider's name passed the unit test - the scripted model is configured as `openai` - and
+    sent nothing at all on the first real ollama run, which then timed out at 94 seconds.
+  */
+  const quietPlan = mode !== "agent" && suppressesPlanReasoning(agentModel.modelId);
   const stream = streamText({
     model: agentModel.model,
     temperature: sampling.temperature,
@@ -2254,6 +2285,7 @@ async function takeTurn(
     instructions,
     messages: [...messages],
     ...(tools === undefined ? {} : { tools }),
+    ...(quietPlan ? { providerOptions: { openai: { reasoningEffort: PLAN_NO_REASONING_EFFORT } } } : {}),
     maxRetries: 0,
     // Real-time backstop for ONE call, sized by what the run has left. The
     // deadline object remains the authority — it is what the loop reads between
@@ -2505,6 +2537,8 @@ export async function runInvestigation(
     let narrowedAtEvent = Number.POSITIVE_INFINITY;
     /** Whether this drive has already re-asked an empty turn; see `retryEmptyTurn`. */
     let emptyTurnRetried = false;
+    /** Whether this drive has already answered a stop that read nothing; see `retryUnreadStop`. */
+    let unreadStopRetried = false;
     const priorProgress = describePriorProgress(record);
     if (priorProgress !== null) messages.push({ role: "user", content: priorProgress });
 
@@ -3040,6 +3074,7 @@ export async function runInvestigation(
         // the model, not the wiring.
         undefined,
         record.workflowType,
+        record.mode,
       );
       text = turn.text;
       if (turn.aborted) return conclude("failed", turnBudgetMs < remainingMs ? "model-timeout" : "deadline-exceeded");
@@ -3148,6 +3183,45 @@ export async function runInvestigation(
             // rather than a transcript.
             text: turn.text.trim().slice(0, 2_000),
           });
+        }
+        /*
+          The stop that asked a question. Measured on `nemotron3:33b`, which ended a
+          query-optimization run ten seconds in by asking the user to paste the statement it
+          was sent to diagnose — holding, at that moment, the two instruments that would have
+          found it. There is no user on the other end of a run, so the question is a stop.
+
+          `remindToReport` above cannot serve it: it is gated on `anyToolCalled`, correctly,
+          because a run that read nothing has nothing to file. This sentence is the other half
+          — not "file what you found" but "go and find it", naming the instruments.
+
+          Granted only where the run has lost anyway. `compose_report` is one of the tools
+          `anyToolCalled` counts, so a run reaching here with it false composed no report and
+          has already earned `no-report`; the turn cannot cost a pass. Once, and only for a
+          model whose ledger asked twice.
+        */
+        if (
+          record.mode === "agent" &&
+          !anyToolCalled &&
+          !unreadStopRetried &&
+          turns < maxTurns &&
+          resources.deadline.remainingMs() > 0 &&
+          // The sentence NAMES `inspect_schema` AND `inspect_plan`, so it may only reach a run
+          // that holds BOTH. Every set but one is `AGENT_MODE_TOOLS` today, which makes the two
+          // checks equivalent - and that equivalence is the thing a future set would break
+          // silently, so it is asserted rather than relied on.
+          // `operations` is the one agent set built on a different four, because the
+          // read-class tools need `queryReadOnly`, which only two providers implement. Told to
+          // call a tool it has not got, a run calls it, is answered "there is no such tool",
+          // and spends the very turn this retry bought: the #350/#356 defect, paid for once.
+          holdsTool("inspect_schema") &&
+          holdsTool("inspect_plan") &&
+          retriesUnreadStop(model.modelId)
+        ) {
+          unreadStopRetried = true;
+          messages.push(...turn.assistantMessages);
+          messages.push({ role: "user", content: notice(BASELINE_NOTICES.unreadStop) });
+          await service.recordEvent(runId, { kind: "guidance-issued", notice: "unread-stop" });
+          return null;
         }
         return conclude("succeeded", "model-stopped");
       }

@@ -43,9 +43,9 @@ annotations:
   # copy-paste recipes, which rendered an unquoted YAML boolean into `core/v1.EnvVar.value`
   # and left bracket arguments a zsh user's shell globs away. The README is a packaged file,
   # so #167 costs it a chart version even though nothing an operator deploys moves.
-  # 0.1.49 carried only the appVersion move to 0.13.4. What 0.13.4 fixes is correctness, not security: a MySQL protocol choice, the
-  # monitoring dashboard's all-or-nothing aggregate, a ScyllaDB connection and an Oracle
-  # LOB read. Its dependency moves are routine patch bumps with no advisory behind them.
+  # 0.1.49 carried only the appVersion move to 0.13.4, whose fixes are correctness rather
+  # than security: a MySQL protocol choice, the monitoring dashboard's all-or-nothing
+  # aggregate, a ScyllaDB connection and an Oracle LOB read. Its dependency moves are routine patch bumps with no advisory behind them.
   # 0.13.3's transport fixes (a rediss:// or couchbases:// URL landing on SSL mode disable,
   # and Couchbase posting plain HTTP to the TLS management port) stay recorded on 0.1.47
   # with this flag set, which is where an operator looking for them will find them. The

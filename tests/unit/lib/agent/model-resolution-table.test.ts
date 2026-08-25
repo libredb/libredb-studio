@@ -29,7 +29,9 @@ import {
   presentReminderLimitFor,
   reportReminderLimitFor,
   retriesEmptyTurn,
+  retriesUnreadStop,
   samplingFor,
+  suppressesPlanReasoning,
   turnTimeoutMsFor,
 } from "@/lib/agent/models";
 import { BASELINE_NOTICES } from "@/lib/agent/models/notices";
@@ -53,6 +55,10 @@ interface ResolvedRow {
   readonly planStatementRetries: number;
   readonly presentReminderLimit: number;
   readonly retriesEmptyTurn: boolean;
+  /** Optional: every row measured before this switch existed resolves it to false. */
+  readonly retriesUnreadStop?: boolean;
+  /** Optional, and PLAN-only; see the field's own note in `profile.ts`. */
+  readonly suppressesPlanReasoning?: boolean;
   readonly refusalExamples: boolean;
   readonly turnTimeoutMs: number | undefined;
   /** Only the surfaces that differ from `PINNED`; every other surface resolves to it. */
@@ -152,6 +158,30 @@ const RESOLVED: ResolvedRow[] = [
     turnTimeoutMs: undefined,
   },
   {
+    id: "nemotron3:33b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    // The one value this model does not share with the defaults, and the reason it has an entry.
+    retriesUnreadStop: true,
+    refusalExamples: true,
+    turnTimeoutMs: undefined,
+  },
+  {
+    id: "qwen3.5:4b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    // The one value this model does not share with the defaults, and the reason it has an entry.
+    suppressesPlanReasoning: true,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  {
     id: "qwen3:8b",
     unreportedCallCeiling: 12,
     reportReminderLimit: 1,
@@ -207,6 +237,8 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
     expect(planStatementRetriesFor(row.id)).toBe(row.planStatementRetries);
     expect(presentReminderLimitFor(row.id)).toBe(row.presentReminderLimit);
     expect(retriesEmptyTurn(row.id)).toBe(row.retriesEmptyTurn);
+    expect(retriesUnreadStop(row.id)).toBe(row.retriesUnreadStop ?? false);
+    expect(suppressesPlanReasoning(row.id)).toBe(row.suppressesPlanReasoning ?? false);
     expect(offersRefusalExamples(row.id)).toBe(row.refusalExamples);
     expect(turnTimeoutMsFor(row.id)).toBe(row.turnTimeoutMs);
   });
@@ -223,7 +255,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
   test("the table covers every registered model, so a new one cannot arrive unpinned", () => {
     const pinned = new Set(RESOLVED.map((row) => row.id));
     for (const id of Object.keys(modelProfiles())) expect(pinned.has(id)).toBe(true);
-    expect(Object.keys(modelProfiles())).toHaveLength(10);
+    expect(Object.keys(modelProfiles())).toHaveLength(12);
   });
 });
 
@@ -273,6 +305,10 @@ describe("what each model records about the runs that earned its settings", () =
     "qwen3:14b": "b1a344db5ee6b5f78780925657fee571eae510a7b8507bcb8badabaf01718aa3",
     "qwen3:4b": "57453d009646b45dcee4bd74c46fcad9fa03ce69790e302fc948f1a60809015a",
     "qwen3:8b": "3dd169b2c0718d77a0db8732d575bb4c863d78ed8343020c103c0f38e9cf016b",
+    // The eleventh model, whose record is new rather than moved; see its entry for the runs.
+    "nemotron3:33b": "c1693800c32d336e610590e909300df682479247a910a291c9913ba278f26a8d",
+    // The twelfth model, whose record is new too; the plan cell is what its setting bought.
+    "qwen3.5:4b": "5e873a71f788b8e5cd361dca67faf1397630fd4da43ac8bf6e570453d02aa811",
   };
 
   test("every model's record survives the move, character for character", () => {
