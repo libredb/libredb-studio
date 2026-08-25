@@ -638,6 +638,112 @@ describe("useConnectionForm", () => {
     expect(result.current.sslMode).toBe("require");
   });
 
+  // ── TLS carried in the pasted string's query string ────────────────────────
+
+  test("handlePasteConnectionString applies a postgres sslmode from the query string", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput("postgresql://u:p@pg.example.com:5432/app?sslmode=verify-full");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.sslMode).toBe("verify-full");
+    expect(result.current.testResult!.message).toContain("parsed successfully");
+    expect(result.current.testResult!.message).not.toContain("SSL Mode");
+  });
+
+  test("handlePasteConnectionString applies MySQL's ssl-mode=REQUIRED", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput("mysql://root:pw@my.example.com/app?ssl-mode=REQUIRED");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.sslMode).toBe("require");
+  });
+
+  test("handlePasteConnectionString reads Encrypt out of an ADO.NET string", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput("Server=sql.example.com,1433;Database=db;Encrypt=True;TrustServerCertificate=True;");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.type).toBe("mssql");
+    expect(result.current.sslMode).toBe("require");
+  });
+
+  // The refusal has to be VISIBLE, and visible in the right colour. The modal renders
+  // `success: true` as a green box with a tick (ConnectionModal.tsx), so emitting the
+  // refusal as a success told the user - in green, with a tick - that dropping their TLS
+  // request was fine. That is the affordance-contradicts-the-sentence defect of #449.
+  test("handlePasteConnectionString says so when it refuses to map an opportunistic sslmode", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput("postgres://u:p@pg.example.com/app?sslmode=prefer");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.sslMode).toBe("disable");
+    expect(result.current.testResult!.success).toBe(false);
+    expect(result.current.testResult!.message).toContain("sslmode=prefer");
+    expect(result.current.testResult!.message).toContain("SSL Mode");
+    // The banner must not read as a success anywhere in its own text either.
+    expect(result.current.testResult!.message).not.toContain("parsed successfully");
+  });
+
+  test("an unmapped TLS parameter does not overwrite a mode the form already holds", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setSSLMode("verify-ca");
+    });
+    act(() => {
+      result.current.setPasteInput("mysql://root:pw@my.example.com/app?ssl-mode=PREFERRED");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.sslMode).toBe("verify-ca");
+    expect(result.current.testResult!.success).toBe(false);
+    expect(result.current.testResult!.message).toContain("ssl-mode=PREFERRED");
+    expect(result.current.testResult!.message).toContain("verify-ca");
+    // The fields WERE filled, and a red box must not leave the user thinking otherwise.
+    expect(result.current.host).toBe("my.example.com");
+    expect(result.current.testResult!.message).toContain("other fields");
+  });
+
+  // A pasted MySQL URL carrying only the boolean spelling used to reach the form with no
+  // mode AND no banner. Both ends of a boolean are mappable, so this one is applied, not
+  // refused - and the banner stays the plain success.
+  test("handlePasteConnectionString applies MySQL's boolean useSSL=true", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput("mysql://root:pw@my.example.com/app?useSSL=true");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.sslMode).toBe("require");
+    expect(result.current.testResult!.success).toBe(true);
+    expect(result.current.testResult!.message).toContain("parsed successfully");
+  });
+
   // ── handlePasteConnectionString shows error for invalid string ─────────────
 
   test("handlePasteConnectionString shows error for invalid string", () => {

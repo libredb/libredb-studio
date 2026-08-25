@@ -317,6 +317,36 @@ discrete-fields form** (the `connectionString` path bypasses it entirely). Note 
    a known managed host) enables `{ rejectUnauthorized: false }`.
 3. Otherwise `undefined`.
 
+#### `ssl-mode` in a pasted URL
+
+The paste box ([`connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)) reads the
+query string, so `mysql://host/db?ssl-mode=REQUIRED` arrives with SSL Mode already set. The values are
+matched case-insensitively (MySQL writes them upper-case) and `sslmode` is accepted as an alias:
+`DISABLED` → `disable`, `REQUIRED` → `require`, `VERIFY_CA` → `verify-ca`, `VERIFY_IDENTITY` →
+`verify-full` (it checks the hostname as well as the chain).
+
+The boolean spellings are read too, and mapped at both ends because a boolean has no opportunistic
+value: `?ssl=true`, `?ssl=1`, `?useSSL=true` → `require`; `?ssl=false`, `?ssl=0`, `?useSSL=false` →
+`disable`. An explicit `ssl-mode` wins when a string carries both. As on Postgres, `require` here
+means `rejectUnauthorized: false` ([mysql.ts:505](../../src/lib/db/providers/sql/mysql.ts)) —
+encrypted, chain unchecked — which is weaker than the driver this provider actually uses: mysql2
+defaults `rejectUnauthorized` to `true` for any `ssl` object it is handed
+(`node_modules/mysql2/lib/connection_config.js:171`). It is **not** weaker than what `useSSL=true`
+means to Connector/J, whose `verifyServerCertificate` is off unless `sslMode` is `VERIFY_CA` /
+`VERIFY_IDENTITY` — so for that spelling the mapping is faithful. The reason it is mapped this way
+regardless of which tool wrote the string is in
+[postgres.md](./postgres.md#sslmode-in-a-pasted-url). mysql2's
+object form (`?ssl={"rejectUnauthorized":true}`) is not a boolean and is reported in the banner rather
+than guessed at.
+
+`PREFERRED` is **not** mapped, and neither is any spelling the map does not know. It means "encrypt if
+the server offers it", and mapping it onto `disable` would downgrade a connection that was in fact
+encrypted: measured over TCP against MySQL with its default self-signed certificate,
+`--ssl-mode=PREFERRED` negotiated `TLS_AES_128_GCM_SHA256` while `--ssl-mode=DISABLED` left
+`Ssl_cipher` empty. Mapping it onto `require` is the mirror-image guess. So the mode the form already
+holds is left alone and the paste banner names the parameter it declined to act on; choose SSL Mode
+yourself in the SSL / TLS panel.
+
 ---
 
 ## 5. Query interface

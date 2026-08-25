@@ -41,12 +41,9 @@ import type {
   ColumnSchema,
   DatabaseOverview,
   HealthInfo,
-  IndexStats,
   PerformanceMetrics,
   SlowQueryStats,
-  StorageStats,
   TableSchema,
-  TableStats,
 } from "@/lib/db/types";
 import type { CassandraRow, CassandraTransport } from "./transport";
 import { CassandraTransportError } from "./transport";
@@ -262,15 +259,78 @@ const CASSANDRA_VIRTUAL_KEYSPACE = "system_views";
 const READS_VIRTUAL_KEYSPACE = new RegExp(`\\bFROM\\s+${CASSANDRA_VIRTUAL_KEYSPACE}\\.`, "i");
 
 /**
+ * Why this build has no virtual tables, in the server's own terms.
+ *
+ * One sentence per measured cause rather than one shared "unavailable": the three are
+ * different facts and send the reader to different places. They are the only text a
+ * user sees where a virtual-table panel would have been, so each names what is missing
+ * rather than that something is.
+ */
+const NO_VIRTUAL_SCHEMA_CATALOG =
+  'this server has no system_virtual_schema catalog at all, so it publishes no virtual tables (measured against scylladb/scylla:2026.2.4, which answers "Keyspace system_virtual_schema does not exist")';
+
+const VIRTUAL_SCHEMA_DENIED =
+  "the connected role may not read system_virtual_schema, so this session cannot reach the virtual tables it describes";
+
+const VIRTUAL_KEYSPACE_ABSENT = "this server's system_virtual_schema.keyspaces does not list a system_views keyspace";
+
+/**
  * What this connection established about the server once, at connect time.
  *
  * One field today, and it is here rather than re-derived per read because the answer
  * cannot change while the session lives (see `CASSANDRA_VIRTUAL_KEYSPACE_CQL`).
+ *
+ * It is a REASON and not a boolean, because a panel that has to report its own absence
+ * needs a sentence and there are three different ones: a build with no virtual-schema
+ * catalog, a build whose catalog lists no `system_views`, and a role that may not read
+ * the catalog are all "no virtual tables here" and none of them says the same thing to
+ * the user. Present means absent - the field holds the reason - and `undefined` means
+ * this build has the keyspace, which is the only state in which a `system_views` read
+ * is sent at all.
  */
 export interface CassandraServerFacts {
-  /** Whether `system_virtual_schema.keyspaces` lists `system_views` on this build. */
-  readonly hasVirtualTables: boolean;
+  /** Why `system_views` cannot be read here, or `undefined` when it can. */
+  readonly virtualTablesAbsence?: string;
 }
+
+/**
+ * The sentence a panel whose only source is a virtual table reports instead of rows.
+ *
+ * ABSENCE is not ZERO (`MonitoringData` in `src/lib/db/types.ts`): a panel left absent
+ * with this sentence under `errors` says the engine could not answer, while the empty
+ * array it used to return said the engine looked and found nothing. Measured
+ * 2026-08-24 in the browser against ScyllaDB 2026.2.4, the second reading rendered as
+ * "Active 0 / Idle 0 / Wait 0 / Sessions (0) / No active sessions found." for a
+ * question that build cannot answer at all.
+ */
+export function cassandraVirtualTableRefusal(source: string, absence: string): string {
+  // No engine name in the sentence: the same provider serves ScyllaDB and every other
+  // relative (#455), and this refusal is the one a ScyllaDB user reads most often - naming
+  // Apache Cassandra there would tell them about a server they are not connected to.
+  return `This panel is read from ${source}, and ${absence}. The statement was not sent, so there is no measurement here rather than a measurement of zero.`;
+}
+
+/**
+ * The three panels this engine refuses on EVERY build, virtual tables or not.
+ *
+ * "This engine family" and not "Apache Cassandra": the same provider serves ScyllaDB and
+ * every other relative (#455), and a ScyllaDB user reading about a server they are not
+ * connected to is the wrong kind of precision. The measurements below were taken on
+ * Apache Cassandra 5.0.9 and the limits are the data model's, not one build's.
+ *
+ * Each one is the reason the corresponding `get*Stats` above used to return `[]`, moved
+ * to where the user can read it: the objects exist - the schema tree lists the tables
+ * and the secondary indexes - so an empty panel claimed a measurement of nothing where
+ * the truth is that the figures the panel requires are not published in any honest unit.
+ */
+export const CASSANDRA_TABLE_STATS_REFUSAL =
+  "This engine family publishes no honest table statistics. A row count would have to come from system.size_estimates, which counts PARTITIONS per token range from flushed SSTables only (measured: 143 for a 500-row clustered table, 525 for a 500-row one), and a size from system_views.disk_usage, which reports whole mebibytes (measured: 1 MiB for a 19,476-byte table). The tables are in the schema tree; these two numbers are not knowable from CQL.";
+
+export const CASSANDRA_INDEX_STATS_REFUSAL =
+  "This engine family publishes no index statistics. system_schema.indexes names an index, its table and its target column - all of which the schema tree already shows - and nothing reachable from CQL reports a secondary index's size or how often it was used. The indexes exist; the numbers this panel requires do not.";
+
+export const CASSANDRA_STORAGE_STATS_REFUSAL =
+  "This engine family publishes no byte-level storage figures. disk_usage, max_partition_size and max_sstable_size are whole mebibytes per table (measured: 1 MiB for a 19,476-byte table, 0 MiB for a table holding 500 unflushed rows), and multiplying a rounded mebibyte would report a 19 KB table as a confident 1 MB.";
 
 /**
  * Ask the server which virtual keyspaces it has. Never throws.
@@ -282,8 +342,11 @@ export interface CassandraServerFacts {
  *   so there are no virtual tables. This is ScyllaDB, measured: the probe itself is
  *   `Keyspace system_virtual_schema does not exist`, and the CODE is what is read;
  * - the catalog was refused as `permission` (8448) -> a role that may not read the
- *   virtual schema is the role that may not read `system_views` either, which the
- *   per-read permission arm below already answers empty for.
+ *   virtual schema is the role that may not read `system_views` either.
+ *
+ * Each of the three absences carries its OWN sentence out, because it is the text the
+ * monitoring panels report in place of rows and the three send the reader to different
+ * places: a dialect difference, a schema this build does not publish, and a grant.
  *
  * Anything else - a client timeout, an unreachable host - says nothing about which
  * keyspaces exist, so it claims no absence: the reads go out and their own failure is
@@ -293,13 +356,16 @@ export interface CassandraServerFacts {
 export async function readServerFacts(transport: CassandraTransport): Promise<CassandraServerFacts> {
   try {
     const { rows } = await transport.execute(CASSANDRA_VIRTUAL_KEYSPACE_CQL);
+    const listed = rows.some((row) => readText(row.keyspace_name) === CASSANDRA_VIRTUAL_KEYSPACE);
 
-    return { hasVirtualTables: rows.some((row) => readText(row.keyspace_name) === CASSANDRA_VIRTUAL_KEYSPACE) };
+    return listed ? {} : { virtualTablesAbsence: VIRTUAL_KEYSPACE_ABSENT };
   } catch (error) {
-    const refused =
-      error instanceof CassandraTransportError && (error.category === "invalid" || error.isMonitoringUnavailable());
+    if (error instanceof CassandraTransportError) {
+      if (error.category === "invalid") return { virtualTablesAbsence: NO_VIRTUAL_SCHEMA_CATALOG };
+      if (error.isMonitoringUnavailable()) return { virtualTablesAbsence: VIRTUAL_SCHEMA_DENIED };
+    }
 
-    return { hasVirtualTables: !refused };
+    return {};
   }
 }
 
@@ -330,7 +396,7 @@ async function readRows(
   cql: string,
   facts: CassandraServerFacts,
 ): Promise<CassandraRow[]> {
-  if (!facts.hasVirtualTables && READS_VIRTUAL_KEYSPACE.test(cql)) return [];
+  if (facts.virtualTablesAbsence !== undefined && READS_VIRTUAL_KEYSPACE.test(cql)) return [];
 
   try {
     return (await transport.execute(cql)).rows;
@@ -599,46 +665,6 @@ export async function getActiveSessions(
       durationMs,
     };
   });
-}
-
-/**
- * Empty, because every figure a table statistic needs is one this engine cannot give
- * honestly.
- *
- * `TableStats` requires a row count and a byte size. The row count would have to come
- * from `system.size_estimates`, which counts PARTITIONS per token range from flushed
- * SSTables - measured at 143 for a 500-row clustered table, 525 for a 500-row one -
- * and the size from `system_views.disk_usage`, which is whole mebibytes and reported
- * "1 MiB" for 19,476 bytes. Either would render as a confident number that is wrong,
- * which is the failure this whole issue exists to avoid; an empty panel is the
- * honest alternative. No statement is sent.
- */
-export function getTableStats(): TableStats[] {
-  return [];
-}
-
-/**
- * Empty, because an index here has no size and no usage counter.
- *
- * `system_schema.indexes` names an index, its table and its target column - all of
- * which the schema tree already shows - and `IndexStats` also requires a size and a
- * scan count. Nothing reachable from CQL reports either for a secondary index, and a
- * zeroed scan count would read as "never used".
- */
-export function getIndexStats(): IndexStats[] {
-  return [];
-}
-
-/**
- * Empty, for the same reason as the database size.
- *
- * The only storage figures a statement can read - `disk_usage`,
- * `max_partition_size`, `max_sstable_size` - are whole mebibytes per table, and
- * `StorageStats` wants a byte figure. Multiplying a rounded mebibyte by 1048576 would
- * turn a 19KB table into a confident 1MB.
- */
-export function getStorageStats(): StorageStats[] {
-  return [];
 }
 
 /**

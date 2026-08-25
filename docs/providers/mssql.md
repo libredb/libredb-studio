@@ -303,6 +303,22 @@ See the [non-Azure trust caveat](#14-known-limitations--future-work).
 fail on the missing user/password/database) rather than honouring the URL. In practice the
 connection always has discrete fields because the UI populates them.
 
+The decomposition includes TLS. An ADO.NET keyword string
+(`Server=host,1433;Database=db;Encrypt=True;TrustServerCertificate=True;`) and the query-string form
+(`mssql://host/db?encrypt=true&trustServerCertificate=true`) both reach the form with SSL Mode set,
+values matched case-insensitively because ADO.NET writes `True`:
+
+| `Encrypt` | `TrustServerCertificate` | SSL Mode | Why |
+|-----------|--------------------------|----------|-----|
+| `False` / `No` | any | `disable` | Not encrypted |
+| `True` / `Yes` | `True` / `Yes` | `require` | Encrypted, chain unchecked |
+| `True` / `Yes` | `False` / `No` / absent | `verify-full` | The documented default validates chain **and** name |
+| `Strict` | ignored | `verify-full` | TDS 8.0 always validates |
+| absent | any | *unset* | `System.Data.SqlClient` defaults it to false, `Microsoft.Data.SqlClient` 4.0+ to true — the string does not carry the answer |
+
+Any other spelling of either keyword is reported in the paste banner and leaves the form's SSL Mode
+untouched rather than falling back to `disable`.
+
 ---
 
 ## 5. Query interface
@@ -619,6 +635,19 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   hosts use `encrypt: true` + `trustServerCertificate: true` — encrypted but **not** authenticated
   (MITM-exposed). For verified TLS, set `connection.ssl` mode `verify-ca`/`verify-full`. (Azure hosts
   validate by default.)
+  - **A paste that worked before can now fail against a self-signed on-prem server.**
+    `Encrypt=True` with `TrustServerCertificate` absent maps to `verify-full`
+    ([§4.4](#44-connection-string-nuance)), which is faithful to `Microsoft.Data.SqlClient` 4.0+ but
+    **changes an outcome**: before the paste box read TLS, such a string left the form on `disable`,
+    the explicit-`ssl` branch never ran, and the default above trusted the certificate. Measured
+    2026-08-25 against SQL Server 2022 (`mcr.microsoft.com/mssql/server:2022-latest`) with its
+    generated self-signed certificate: `{ encrypt: true, trustServerCertificate: true }` connected
+    (`sys.dm_exec_connections.encrypt_option = TRUE`) while `{ encrypt: true,
+    trustServerCertificate: false }` — what `verify-full` builds
+    ([mssql.ts:483](../../src/lib/db/providers/sql/mssql.ts)) — was refused with *"Failed to connect
+    to 127.0.0.1:1433 - self signed certificate"*. If your on-prem server has no trusted certificate,
+    paste `TrustServerCertificate=True` alongside `Encrypt=True`, or set SSL Mode to `require` on the
+    form after pasting.
 - **Binary columns aren't sanitized.** `VARBINARY`/`IMAGE`/`rowversion` come back as Node `Buffer`s
   and cross the wire as `{"type":"Buffer","data":[…]}` (no `0x…` hex conversion like the MySQL
   provider) — see [§5.3](#53-data-type--parameter-handling). The client recovers them: the results

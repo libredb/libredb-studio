@@ -497,8 +497,29 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
 
     setShowPasteInput(false);
     setPasteInput("");
+    // A TLS parameter the parser refused to map is the one thing a green "parsed
+    // successfully" must not swallow: the user asked for encryption and the form is still
+    // showing whatever mode it held. Postgres's `prefer`/`allow` and MySQL's `PREFERRED`
+    // mean "encrypt if the server offers it", which SSL Mode cannot express, and guessing
+    // either end is measurably wrong in both directions (see connection-string-parser.ts).
+    // So name the parameter, name the mode that is actually in force, and say where to fix it.
+    //
+    // `success: false` is the affordance, not a claim that the paste failed: the modal has
+    // exactly two states for this box and renders `true` as a green tick (#449 - an
+    // affordance that contradicts its own sentence is the defect, and a green tick over
+    // "your TLS setting was dropped" is that defect in its most dangerous direction). The
+    // amber third state a warning would deserve is not worth a rendering variant with one
+    // caller, so the sentence carries the nuance: it leads with what was NOT applied and
+    // says outright that the other fields were.
+    if (parsed.unmappedTLSParam) {
+      setTestResult({
+        success: false,
+        message: `TLS setting not applied: "${parsed.unmappedTLSParam}" has no equivalent among disable, require, verify-ca and verify-full. The other fields were filled in, but SSL Mode stays "${sslMode}" - open SSL / TLS and choose one before connecting.`,
+      });
+      return;
+    }
     setTestResult({ success: true, message: "Connection string parsed successfully. Review the fields and connect." });
-  }, [pasteInput, name]);
+  }, [pasteInput, name, sslMode]);
 
   // Ordered for display (the modal renders these as a 2-column grid), and covering the whole
   // DatabaseType union — the same form edits existing connections, so an omitted type leaves the

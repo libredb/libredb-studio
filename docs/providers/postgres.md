@@ -210,6 +210,32 @@ const connection = {
 };
 ```
 
+#### `sslmode` in a pasted URL
+
+The paste box ([`connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)) reads the
+query string, so `postgresql://host/db?sslmode=verify-full` arrives on the form with SSL Mode already
+set. `disable`, `require`, `verify-ca` and `verify-full` map one-to-one.
+
+`prefer` and `allow` are **not** mapped, and neither is any spelling the map does not know. Both mean
+"encrypt if the server offers it", which the form's four modes cannot express, and both directions of
+guess are wrong against a live server: measured on postgres 18 with no server certificate,
+`?sslmode=prefer` connects with `pg_stat_ssl.ssl = f` while `?sslmode=require` is refused outright
+("server does not support SSL, but SSL was required"). So the mode the form already holds is left
+alone and the paste banner names the parameter it declined to act on — the string is never silently
+downgraded to "disable". Set SSL Mode yourself in the SSL / TLS panel.
+
+`?ssl=true` / `?ssl=false` (the JDBC and Heroku spelling) map to `require` / `disable`, since neither
+is opportunistic. **`require` here means `rejectUnauthorized: false`**
+([postgres.ts:793](../../src/lib/db/providers/sql/postgres.ts)) — encrypted, chain **not** verified —
+while `pg` given `ssl: true` verifies by default, so this mapping is weaker than the pasted string
+asks for. It is kept deliberately: the only stronger modes on the form, `verify-ca`/`verify-full`, are
+the ones that ask for a CA certificate, so mapping `?ssl=true` onto one of them would turn a working
+paste into a connection the user cannot complete without a PEM they may not have. The real fix is a
+mode meaning "verified against the system trust store, no PEM"; until it exists, tick `verify-full`
+yourself when the server has a publicly-trusted certificate. `sslrootcert`, `sslcert` and `sslkey` are ignored: they are paths on the machine
+that wrote the string, while the panel holds PEM text and the process that opens the connection is the
+server. Paste the certificate content instead.
+
 ### 4.2 Connection pooling
 
 `connect()` builds a `pg.Pool` ([postgres.ts:281](../../src/lib/db/providers/sql/postgres.ts)) and

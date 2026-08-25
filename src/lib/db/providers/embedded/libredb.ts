@@ -75,6 +75,54 @@ async function loadLibreDB(): Promise<LibreDBModule> {
 }
 
 // ============================================================================
+// The two panels this engine cannot answer, and the one cap that can stop a third
+// ============================================================================
+
+/**
+ * The ceiling on the one keyspace scan every namespace figure is derived from.
+ *
+ * The kernel keeps no per-namespace counter, so "how many rows" here means "how many
+ * keys a scan reached", and the scan is bounded so a large file cannot hang a schema
+ * refresh. Exported because it is also the number `LIBREDB_TABLE_STATS_TRUNCATED`
+ * names to the user.
+ */
+export const LIBREDB_MAX_KEY_SCAN = 10000;
+
+/**
+ * Sessions: refused on every database, because the concept has no source here.
+ *
+ * `@libredb/libredb` 0.2.2 publishes no session, connection or client call at all (grepped
+ * over its shipped `.d.ts`), and the file is opened in this server's own process. The
+ * `<path>.lock` it holds is not a session registry either: measured, it contains
+ * `libredb-lock\n<pid>\n<hostname>\n<nonce>` - the pid is THIS server's, and there is no
+ * user, statement or start time in it to build a session row from. `[]` said the store was
+ * asked who was connected and answered nobody, which is the opposite of the truth: nobody
+ * can be asked.
+ */
+export const LIBREDB_ACTIVE_SESSIONS_REFUSAL =
+  "LibreDB is embedded: the file is opened inside this server's own process, and its API has no session, connection or client call to ask (@libredb/libredb 0.2.2). The exclusive lock it takes admits one process and names only that holder's pid and host - this server's own - with no user, statement or start time to build a session row from, so there is nothing to list here rather than a list that came back empty.";
+
+/**
+ * Indexes: refused on every database, because there is no index object to count.
+ *
+ * The kernel is one ordered key-value keyspace and the catalog records a namespace's
+ * lens plus, for a relational table, its columns and primary key - nothing else. An
+ * empty Indexes panel reads as "this database has no indexes yet", which invites the
+ * user to create one; this engine can never have one to show.
+ */
+export const LIBREDB_INDEX_STATS_REFUSAL =
+  "LibreDB has no secondary indexes: the kernel is a single ordered key-value keyspace, where a key's own byte order is the only index there is, and the catalog declares a namespace's lens and a relational table's columns and nothing that indexes them (@libredb/libredb 0.2.2). This panel has no object to list, rather than a database that has none yet.";
+
+/**
+ * Tables: refused only when the scan was cut off, never otherwise.
+ *
+ * Below the cap the key count IS the row count and the panel answers it. Above the cap
+ * every namespace's figure is short by an unknown amount, and a silently low row count
+ * is the same class of fabrication as the empty panel this work removed.
+ */
+export const LIBREDB_TABLE_STATS_TRUNCATED = `LibreDB keeps no row counter, so this panel counts each namespace's keys - and that scan stops at ${LIBREDB_MAX_KEY_SCAN.toLocaleString("en-US")} keys, which this database exceeds. Every count would be short by an unknown amount, so none is reported. The namespaces themselves are in the schema tree.`;
+
+// ============================================================================
 // LibreDB Provider
 // ============================================================================
 
@@ -246,18 +294,40 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     // kv keys are not cataloged, so anything outside the catalog falls back to
     // key-prefix grouping below.
     const registry: LibreCatalogRegistry = lib.catalog(this.db!);
+    const { groups } = this.scanGroups(registry);
 
+    return groups
+      .map(({ name, rowCount, entry }) => this.schemaForGroup(name, rowCount, entry))
+      .sort((a, b) => (b.rowCount ?? 0) - (a.rowCount ?? 0));
+  }
+
+  /**
+   * The one keyspace scan behind BOTH the schema tree and the Tables panel.
+   *
+   * Sharing it is what keeps the two views consistent: the row count a namespace shows
+   * in the tree and the row count the monitoring panel reports are the same number from
+   * the same pass, so neither can quietly disagree with the other. `truncated` says the
+   * scan hit `LIBREDB_MAX_KEY_SCAN` and stopped - the tree still lists the namespaces it
+   * reached, while the Tables panel refuses (see `getTableStats`).
+   */
+  private scanGroups(registry: LibreCatalogRegistry): {
+    groups: { name: string; rowCount: number; entry: LibreCatalogEntry | undefined }[];
+    truncated: boolean;
+  } {
     // Count keys per scanned group, excluding the reserved catalog namespace.
     const groupCounts = new Map<string, number>();
     let scanned = 0;
-    const MAX_SCAN = 10000;
+    let truncated = false;
     // Empty-string start encodes to the lowest bytes; '\u{10FFFF}' encodes above
     // any UTF-8 text key the lenses produce, so [start, end) covers the keyspace.
     // (kv.prefix cannot be used here — it rejects an empty prefix.)
     for (const { key } of this.kv!.range("", "\u{10FFFF}")) {
-      if (scanned >= MAX_SCAN) break;
       // Skip the database's reserved internal namespace — it is not user data.
       if (this.isReserved(key)) continue;
+      if (scanned >= LIBREDB_MAX_KEY_SCAN) {
+        truncated = true;
+        break;
+      }
       scanned++;
       const name = this.groupName(key);
       groupCounts.set(name, (groupCounts.get(name) ?? 0) + 1);
@@ -267,21 +337,21 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     // colon-prefix), so it is the scanned group "<name>:*". Reconcile the two so
     // a cataloged table/collection always appears even if its group name differs
     // and is rendered with the richer catalog-aware columns.
-    const schemas: TableSchema[] = [];
-    for (const [name, rowCount] of groupCounts) {
-      const entry = this.catalogEntryFor(name, registry);
-      schemas.push(this.schemaForGroup(name, rowCount, entry));
-    }
+    const groups = [...groupCounts].map(([name, rowCount]) => ({
+      name,
+      rowCount,
+      entry: this.catalogEntryFor(name, registry),
+    }));
     // Surface cataloged namespaces that exist but have no scanned rows yet (an
     // empty table/collection), so the catalog view is complete.
     for (const [catalogName, entry] of registry) {
       if (entry.kind === "kv") continue; // kv is the raw layer, never cataloged as a table
       const groupName = `${catalogName}:*`;
       if (groupCounts.has(groupName)) continue;
-      schemas.push(this.schemaForGroup(groupName, 0, entry));
+      groups.push({ name: groupName, rowCount: 0, entry });
     }
 
-    return schemas.sort((a, b) => (b.rowCount ?? 0) - (a.rowCount ?? 0));
+    return { groups, truncated };
   }
 
   /** Group key "user:1" under "user:*"; a key with no ":" is its own group. */
@@ -499,9 +569,21 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   }
 
   // --------------------------------------------------------------------------
-  // Monitoring (filled in Task 5; honest minimal defaults for now)
+  // Monitoring
+  //
+  // Each panel answers a real measurement or is ABSENT with this engine's own sentence
+  // (D24 / #477). Nothing here reports a figure the file does not hold.
   // --------------------------------------------------------------------------
 
+  /**
+   * Health keeps ANSWERING where the monitoring panels refuse.
+   *
+   * `POST /api/db/test-connection` calls this and the connection dialog's save is gated
+   * on that request, so a health check that threw what `getActiveSessions()` throws
+   * would lock the embedded engine out of the product (#455). The two fields it fills
+   * with `[]` are a liveness summary, not the panels: the Sessions and Queries panels
+   * are the surfaces obliged to say what could not be read.
+   */
   public async getHealth(): Promise<HealthInfo> {
     this.ensureConnected();
     return {
@@ -523,6 +605,9 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       databaseSize: this.fileSizeHuman(),
       databaseSizeBytes: this.fileSizeBytes(),
       tableCount: (await this.getSchema()).length,
+      // Not a placeholder: there is no index object in this engine to count, which is
+      // the same fact `getIndexStats()` refuses the Indexes panel with. Zero is the
+      // measurement here, so the Overview card states it.
       indexCount: 0,
     };
   }
@@ -542,17 +627,57 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     return {};
   }
 
+  /**
+   * Empty, and it reads nothing: there is no log of finished statements to read.
+   *
+   * The one always-empty panel that stays empty. `QueriesTab` renders
+   * `ProviderLabels.slowQueriesEmptyState` in place of an empty list and this provider
+   * declares one (`getLabels()` above), so LibreDB's own sentence already reaches the
+   * user here - which is the thing an absent panel exists to deliver.
+   */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
     return [];
   }
-  public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
-    return [];
+
+  /** ABSENT with its reason rather than an empty list: see `LIBREDB_ACTIVE_SESSIONS_REFUSAL`. */
+  public getActiveSessions(): Promise<ActiveSessionDetails[]> {
+    return Promise.reject(new QueryError(LIBREDB_ACTIVE_SESSIONS_REFUSAL, "libredb"));
   }
+
+  /**
+   * A real measurement: one key-count per namespace, from the schema tree's own scan.
+   *
+   * This panel used to answer `[]` on a database with tables - the embedded engine is
+   * the zero-config first run, so that empty table was the first monitoring dashboard
+   * many users ever saw. The count is honest because a namespace's rows ARE its keys
+   * (`employees:1`, `articles:a1`), which is the same thing `getSchema()` reports; the
+   * bytes are not, so `tableSize*`/`indexSize*` stay absent and `totalSize` carries the
+   * "N/A" placeholder the Storage tab already gates on (`tableSizeKnown`, #469).
+   */
   public async getTableStats(): Promise<TableStats[]> {
-    return [];
+    this.ensureConnected();
+    const lib = await loadLibreDB();
+    const { groups, truncated } = this.scanGroups(lib.catalog(this.db!));
+    // A count cut off by the cap is short by an unknown amount, so refuse instead.
+    if (truncated) throw new QueryError(LIBREDB_TABLE_STATS_TRUNCATED, "libredb");
+
+    return groups
+      .map(({ name, rowCount, entry }) => ({
+        // LibreDB has no schema namespace. The column carries the namespace's LENS -
+        // relational / document / kv - which is the one thing the catalog declares
+        // about it, so the panel says something true instead of a filler "main".
+        schemaName: entry?.kind ?? "kv",
+        tableName: name,
+        rowCount,
+        totalSize: "N/A",
+        totalSizeBytes: 0,
+      }))
+      .sort((a, b) => b.rowCount - a.rowCount);
   }
-  public async getIndexStats(): Promise<IndexStats[]> {
-    return [];
+
+  /** ABSENT with its reason rather than an empty list: see `LIBREDB_INDEX_STATS_REFUSAL`. */
+  public getIndexStats(): Promise<IndexStats[]> {
+    return Promise.reject(new QueryError(LIBREDB_INDEX_STATS_REFUSAL, "libredb"));
   }
 
   public async getStorageStats(): Promise<StorageStats[]> {
