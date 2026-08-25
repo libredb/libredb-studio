@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -69,30 +69,68 @@ export function AuditTab() {
   );
 }
 
+/**
+ * The audit read, kept free of state writes so the Effect below can stay in the
+ * shape react.dev prescribes for fetching. A failed request reads as "no events"
+ * — the same thing the old catch branch put on screen.
+ */
+async function loadAuditEvents(type: string): Promise<AuditEvent[]> {
+  try {
+    const params = new URLSearchParams({ limit: "200" });
+    if (type !== "all") params.set("type", type);
+    const res = await fetch(`/api/admin/audit?${params}`);
+    const data = await res.json();
+    return data.events || [];
+  } catch {
+    return [];
+  }
+}
+
 function OperationsAudit() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [refreshCount, setRefreshCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
 
-  const fetchEvents = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({ limit: "200" });
-      if (typeFilter !== "all") params.set("type", typeFilter);
-      const res = await fetch(`/api/admin/audit?${params}`);
-      const data = await res.json();
-      setEvents(data.events || []);
-    } catch {
-      setEvents([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [typeFilter]);
+  // The descriptor bundles which events to ask for with which request this is, so the
+  // Effect below stays the ONLY writer of `events`. A refresh that fetched on its own
+  // would be a second, unguarded writer: one still in flight when the filter changed
+  // would land last and repopulate the table with the previous filter's rows.
+  // (Bundling matters: a bare refresh token is never read inside the Effect, so it
+  // cannot honestly be a dependency — inside the descriptor it is the value the Effect
+  // synchronizes against. Same shape as OverviewTab's fleet health.)
+  const auditRequest = useMemo(() => ({ typeFilter, refreshCount }), [typeFilter, refreshCount]);
 
   useEffect(() => {
-    fetchEvents();
-  }, [fetchEvents]);
+    const { typeFilter: requestedType } = auditRequest;
+    let ignore = false;
+    async function run() {
+      const next = await loadAuditEvents(requestedType);
+      // A response that lost the race (unmount, a newer filter, or a newer refresh)
+      // must not win.
+      if (ignore) return;
+      setEvents(next);
+      setLoading(false);
+    }
+    run();
+    return () => {
+      ignore = true;
+    };
+  }, [auditRequest]);
+
+  // The spinner turns on because the user acted, so it belongs to the event that
+  // caused it rather than to the Effect that follows. Both handlers only ask for a
+  // new synchronization; neither touches `events`.
+  const handleTypeChange = (value: string) => {
+    setLoading(true);
+    setTypeFilter(value);
+  };
+
+  const handleRefresh = () => {
+    setLoading(true);
+    setRefreshCount((c) => c + 1);
+  };
 
   const filteredEvents = useMemo(() => {
     if (!searchQuery) return events;
@@ -112,7 +150,7 @@ function OperationsAudit() {
     <div className="space-y-4">
       {/* Filter Bar */}
       <div className="flex items-center gap-2 flex-wrap">
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
+        <Select value={typeFilter} onValueChange={handleTypeChange}>
           <SelectTrigger className="w-[140px] h-8 text-xs bg-panel border-hairline-strong">
             <SelectValue placeholder="Type" />
           </SelectTrigger>
@@ -139,7 +177,7 @@ function OperationsAudit() {
           variant="ghost"
           size="sm"
           className="h-8 text-fg-muted hover:text-fg-secondary ml-auto"
-          onClick={fetchEvents}
+          onClick={handleRefresh}
           disabled={loading}
         >
           <RefreshCw className={`w-3 h-3 mr-1.5 ${loading ? "animate-spin" : ""}`} />
@@ -230,13 +268,11 @@ function OperationsAudit() {
 }
 
 function QueryAudit() {
-  const [history, setHistory] = useState<QueryHistoryItem[]>([]);
+  // Read once, at mount: the initializer runs only on the initial render, so the
+  // localStorage hit does not repeat and `history`'s identity stays stable.
+  const [history] = useState<QueryHistoryItem[]>(() => storage.getHistory());
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-
-  useEffect(() => {
-    setHistory(storage.getHistory());
-  }, []);
 
   const filteredHistory = useMemo(() => {
     let items = history;
@@ -348,12 +384,9 @@ function QueryAudit() {
 }
 
 function AuditStats() {
-  const [history, setHistory] = useState<QueryHistoryItem[]>([]);
+  // Read once, at mount — see QueryAudit above.
+  const [history] = useState<QueryHistoryItem[]>(() => storage.getHistory());
   const tooltipStyle = chartTooltipStyle(useEffectiveTheme());
-
-  useEffect(() => {
-    setHistory(storage.getHistory());
-  }, []);
 
   const stats = useMemo(() => {
     const total = history.length;

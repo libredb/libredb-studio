@@ -623,11 +623,86 @@ The same `TO_CHAR` recovers the sub-millisecond digits that a `Date` cannot hold
 ZONE` has no stored offset to lose (Oracle normalizes it on write and renders it in the *session's*
 zone), so for that type only the sub-millisecond truncation applies.
 
-**A `Date` cell does not replay through the SQL export into Oracle** — that is a separate defect and
-not fixed here. Measured on the same run: a `TIMESTAMP WITH TIME ZONE` cell exports as
-`'2026-08-24T07:11:12.345Z'` and Oracle refuses it with `ORA-01843: An invalid month was specified`.
-It affects every `DATE`/`TIMESTAMP` column, not just the zoned ones, and it lives in the shared
-export (`src/lib/export/result-export.ts`), not in this provider.
+#### The SQL export writes an Oracle date literal, not an ISO string
+
+A `Date` cell used **not** to replay at all. The shared export wrote it as its ISO string, and every
+one of the four types refuses that — measured 2026-08-25 against the Oracle Free image
+(`Oracle AI Database 26ai Free Release 23.26.2.0.0`) by replaying the exported file:
+
+```
+D     REFUSED  ORA-01861: literal does not match format string
+TS    REFUSED  ORA-01843: An invalid month was specified.
+TTZ   REFUSED  ORA-01843: An invalid month was specified.
+TLTZ  REFUSED  ORA-01843: An invalid month was specified.
+        (all four from INSERT ... VALUES ('2026-08-24T07:11:12.345Z'))
+```
+
+So a DDL+INSERT export of any ordinary Oracle table with a date column was unreplayable. The fix is
+in the shared export (`src/lib/export/result-export.ts`), not in this provider, and the conversion
+function IS the literal — the way `HEXTORAW` already is for a `RAW`. Which function comes from the
+**declared** type (`columnTypes`, [§5.4](#54-declared-column-types)), because the two shapes disagree
+about which fields of the `Date` are the value:
+
+| declared | written as |
+|---|---|
+| `DATE` | `TO_DATE('2026-08-24 10:11:12', 'YYYY-MM-DD HH24:MI:SS')` — the **local** fields |
+| `TIMESTAMP` (and anything else, and no declared type) | `TO_TIMESTAMP('2026-08-24 10:11:12.345', 'YYYY-MM-DD HH24:MI:SS.FF3')` — the **local** fields |
+| `TIMESTAMP WITH TIME ZONE`, `TIMESTAMP WITH LOCAL TIME ZONE` | `FROM_TZ(TO_TIMESTAMP('2026-08-24 17:11:12.345', 'YYYY-MM-DD HH24:MI:SS.FF3'), 'UTC')` — the **UTC** instant |
+
+- **Local fields for a naive column**, because that is the inverse of what the driver did: it built
+  the `Date` by reading the stored wall clock in the *Node process's* zone. Measured above, a `DATE`
+  holding `2026-08-24 10:11:12` arrives as `2026-08-24T07:11:12.000Z` from a process at `+03:00`, so
+  writing the ISO text would move every naive value by the exporter's own offset — and it would parse,
+  which is worse than being refused.
+- **`FROM_TZ(..., 'UTC')` for a zoned column**, because the `Date` there is the true instant and the
+  stored offset is already gone (above). No offset is invented; the instant is preserved *whatever
+  zone the replaying session runs in*, which a plain `TO_TIMESTAMP` is not — it is read in the
+  session's zone. Measured by replaying the same instant into a session at `-07:00` and letting the
+  server compare it against the source row:
+
+  ```
+  fromtz              1999-01-01 18:04:05.006 UTC       EQUAL
+  plain-utc-fields    1999-01-01 18:04:05.006 -07:00    DIFF
+  plain-local-fields  1999-01-01 21:04:05.006 -07:00    DIFF
+  ```
+
+- **What a zoned column loses:** its original zone, and only its zone. A `TIMESTAMP WITH TIME ZONE`
+  that read `2026-08-24 10:11:12.345 -07:00` on the source comes back as
+  `2026-08-24 17:11:12.345 UTC` on the target — the same moment, rendered as UTC, because the offset
+  was gone before the export saw the value. `TIMESTAMP WITH LOCAL TIME ZONE` loses nothing: it has no
+  stored offset, and it renders in the reader's session zone on both sides. A user who needs the
+  original zone must take it from the server with the `TO_CHAR ... TZR` above, in the same result.
+- **Milliseconds are kept** (`FF3`), and a declared `DATE` gets `TO_DATE` because a `DATE` has no
+  fractional second at all. Both were measured: a `TO_TIMESTAMP` literal inserted into a `DATE`
+  column is accepted and silently truncated to the whole second, so the explicit function only says
+  what the column already is.
+
+Verified end to end — read through the provider, exported, replayed into a fresh table, compared **by
+the server**:
+
+```
+PROVIDER ROWS  [{"K":1,"D":"2026-08-24T07:11:12.000Z","TS":"2026-08-24T07:11:12.345Z","TTZ":"2026-08-24T17:11:12.345Z","TLTZ":"2026-08-24T17:11:12.345Z"},
+                {"K":2,"D":"1999-01-01T22:00:00.000Z","TS":"1999-01-02T01:04:05.006Z","TTZ":"1999-01-01T18:04:05.006Z","TLTZ":"1999-01-01T18:04:05.006Z"},
+                {"K":3,"D":null,"TS":null,"TTZ":null,"TLTZ":null}]
+COLUMN TYPES   {"K":"NUMBER","D":"DATE","TS":"TIMESTAMP","TTZ":"TIMESTAMP WITH TIME ZONE","TLTZ":"TIMESTAMP WITH LOCAL TIME ZONE"}
+EXPORT DDL     CREATE TABLE d23_replay ("K" NUMBER, "D" DATE, "TS" TIMESTAMP,
+                 "TTZ" TIMESTAMP WITH TIME ZONE, "TLTZ" TIMESTAMP WITH LOCAL TIME ZONE);
+EXPORT INSERT  INSERT INTO d23_replay ("K", "D", "TS", "TTZ", "TLTZ") VALUES (2,
+                 TO_DATE('1999-01-02 00:00:00', 'YYYY-MM-DD HH24:MI:SS'),
+                 TO_TIMESTAMP('1999-01-02 03:04:05.006', 'YYYY-MM-DD HH24:MI:SS.FF3'),
+                 FROM_TZ(TO_TIMESTAMP('1999-01-01 18:04:05.006', 'YYYY-MM-DD HH24:MI:SS.FF3'), 'UTC'),
+                 FROM_TZ(TO_TIMESTAMP('1999-01-01 18:04:05.006', 'YYYY-MM-DD HH24:MI:SS.FF3'), 'UTC'));
+REPLAYED       CREATE TABLE and all three INSERTs accepted
+SERVER SAYS    K=2  D_EQ EQUAL  TS_EQ EQUAL  TTZ_EQ EQUAL  TLTZ_EQ EQUAL
+               K=3  (the all-NULL row)       EQUAL on all four
+               K=1  DIFF on the three timestamps, by exactly 00:00:00.000678
+```
+
+That last row is the truncation this section is about, not an export defect: `K=1` was stored with
+`.345678` and a `Date` holds milliseconds, so the server measures the difference as the 678
+microseconds the driver dropped (`TO_CHAR(s."TS" - r."TS")` → `+000000000 00:00:00.000678`, and
+`+000000000 00:00:00.000000` for the millisecond-exact row). **A sub-millisecond digit does not
+survive an export, because it did not survive the driver.**
 
 ---
 
@@ -890,10 +965,13 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   string form that keeps the offset — measured, asking for one returns the reader process's own time
   zone for every row. `TO_CHAR(col, '… TZR')` is the way to see the stored zone
   ([§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be)).
-- **A `DATE`/`TIMESTAMP` cell does not replay through the SQL export into Oracle.** It is written as
-  the ISO string a `Date` serializes to (`'2026-08-24T07:11:12.345Z'`) and Oracle answers
-  `ORA-01843: An invalid month was specified`. The fix belongs in the shared export
-  (`src/lib/export/result-export.ts`), which has no Oracle date literal, not in this provider.
+- **A zoned timestamp replays as UTC, not in its original zone.** The SQL export writes a date cell
+  through Oracle's own conversion functions, so the file does replay with the instant intact
+  ([§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be)) — but the
+  stored offset is gone before the export sees the value, so a `TIMESTAMP WITH TIME ZONE` written
+  `10:11:12.345 -07:00` comes back rendered `17:11:12.345 UTC`, and the sub-millisecond digits a
+  `Date` cannot hold are not in the file either. Both are the driver's truncation, above, not the
+  export's.
 - **`oracledb` ships no TypeScript declarations, so the driver surface is hand-declared.** Verified
   on 6.10.0: no `types`/`typings` field in its `package.json` and no `.d.ts` anywhere in the package,
   and there is no `@types/oracledb` in this project's dependencies. `src/types/db-drivers.d.ts`

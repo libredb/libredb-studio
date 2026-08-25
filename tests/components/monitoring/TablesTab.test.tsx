@@ -422,3 +422,52 @@ describe("a refused tables read", () => {
     expect(queryByText("No table statistics available.")).not.toBeNull();
   });
 });
+
+describe("tables that carry no per-table bytes", () => {
+  // Scoped here as well as in the blocks above: bun:test registers a hook on the
+  // enclosing describe only, so without this the first render in this block leaks into
+  // the second and the control arm queries the previous test's DOM.
+  afterEach(() => {
+    cleanup();
+  });
+
+  /** Rows shaped the way LibreDB and bun:sqlite answer: real counts, no sizes. */
+  function sizelessData(): MonitoringData {
+    const data = makeData();
+    return {
+      ...data,
+      tables: [
+        { schemaName: "kv", tableName: "employees:*", rowCount: 25, totalSize: "N/A", totalSizeBytes: 0 },
+        { schemaName: "document", tableName: "articles:*", rowCount: 7, totalSize: "N/A", totalSizeBytes: 0 },
+      ],
+    } as unknown as MonitoringData;
+  }
+
+  test("the Size card says N/A rather than summing the placeholder to 0 B", () => {
+    const { getByTestId } = render(
+      <TablesTab data={sizelessData()} loading={false} onRunMaintenance={mock(async () => true)} />,
+    );
+
+    // The rows are a measurement (25 keys really are 25 rows) so the Tables card counts
+    // them, while `totalSizeBytes` is the placeholder a required field has to carry -
+    // summing it drew "0 B" as the total size of a database with bytes on disk.
+    expect(getByTestId("tables-stat-count").textContent).toBe("2");
+    expect(getByTestId("tables-stat-size").textContent).toBe("N/A");
+  });
+
+  test("a table with no size of its own reads as unknown, not as an empty cell", () => {
+    const { getAllByTestId } = render(
+      <TablesTab data={sizelessData()} loading={false} onRunMaintenance={mock(async () => true)} />,
+    );
+
+    expect(getAllByTestId("table-row-size")[0]?.textContent).toBe("-");
+  });
+
+  test("an engine that publishes bytes still gets its total", () => {
+    const { getByTestId } = render(
+      <TablesTab data={makeData()} loading={false} onRunMaintenance={mock(async () => true)} />,
+    );
+
+    expect(getByTestId("tables-stat-size").textContent).toBe("820.00 MB");
+  });
+});

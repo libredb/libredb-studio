@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -140,15 +140,20 @@ interface ActivityFeedItem {
 
 function useAnimatedCounter(target: number, duration = 1500) {
   const [value, setValue] = useState(0);
-  const prevTarget = useRef(0);
+  // Adjusting state while rendering, React's sanctioned pattern for "a prop changed":
+  // the animation's endpoints are derived here rather than written from the effect, and
+  // `value` is placed where the first frame would put it anyway. Snapping to zero has to
+  // happen in the same pass, or a fleet that goes fully unhealthy would show the stale
+  // pre-collapse figure for one frame.
+  const [anim, setAnim] = useState({ from: 0, to: 0 });
+  if (anim.to !== target) {
+    setAnim({ from: anim.to, to: target });
+    setValue(target === 0 ? 0 : anim.to);
+  }
+  const { from, to } = anim;
 
   useEffect(() => {
-    const start = prevTarget.current;
-    prevTarget.current = target;
-    if (target === 0) {
-      setValue(0);
-      return;
-    }
+    if (to === 0) return;
 
     const startTime = performance.now();
     let raf: number;
@@ -158,7 +163,7 @@ function useAnimatedCounter(target: number, duration = 1500) {
       const progress = Math.min(elapsed / duration, 1);
       // ease-out cubic
       const eased = 1 - Math.pow(1 - progress, 3);
-      setValue(Math.round(start + (target - start) * eased));
+      setValue(Math.round(from + (to - from) * eased));
       if (progress < 1) {
         raf = requestAnimationFrame(tick);
       }
@@ -166,7 +171,7 @@ function useAnimatedCounter(target: number, duration = 1500) {
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [target, duration]);
+  }, [from, to, duration]);
 
   return value;
 }
@@ -184,17 +189,18 @@ interface OverviewTabProps {
 }
 
 export function OverviewTab({ user }: OverviewTabProps) {
-  const [connections, setConnections] = useState<DatabaseConnection[]>([]);
-  const [history, setHistory] = useState<QueryHistoryItem[]>([]);
+  // Query history is initial-only state: a lazy initializer reads localStorage exactly
+  // once per mount. A bare read during render would be impure and would mint a new array
+  // identity on every pass, invalidating every memo below it.
+  const [history] = useState<QueryHistoryItem[]>(() => storage.getHistory());
   const [fleetHealth, setFleetHealth] = useState<FleetHealthItem[]>([]);
   const [fleetLoading, setFleetLoading] = useState(false);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [refreshCount, setRefreshCount] = useState(0);
 
-  const { connections: allConns } = useAllConnections();
-  useEffect(() => {
-    setConnections(allConns);
-    setHistory(storage.getHistory());
-  }, [allConns]);
+  // Read straight from the hook rather than mirroring it into local state: mirroring cost
+  // an extra render in which `connections` was still stale and the empty state flashed.
+  const { connections } = useAllConnections();
 
   // Fetch audit events for activity feed
   useEffect(() => {
@@ -204,34 +210,54 @@ export function OverviewTab({ user }: OverviewTabProps) {
       .catch(() => {});
   }, []);
 
-  const fetchFleetHealth = useCallback(async () => {
-    if (connections.length === 0) return;
-    setFleetLoading(true);
-    try {
-      const res = await fetch("/api/admin/fleet-health", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ connections }),
-      });
-      const data = await res.json();
-      if (data.results) setFleetHealth(data.results);
-    } catch {
-      // silently fail
-    } finally {
-      setFleetLoading(false);
+  // Refreshing is an event, not an effect: it only asks for a new synchronization.
+  const refreshFleetHealth = useCallback(() => setRefreshCount((c) => c + 1), []);
+
+  // The descriptor bundles what to ask for with which request this is. Bundling matters:
+  // a bare refresh token is never read inside the effect, so it cannot honestly be an
+  // effect dependency — as part of the descriptor it is the value the effect synchronizes
+  // against, and `targets` is what the effect actually sends.
+  const fleetRequest = useMemo(() => ({ connections, refreshCount }), [connections, refreshCount]);
+
+  useEffect(() => {
+    const { connections: targets } = fleetRequest;
+    if (targets.length === 0) return;
+    // A response that lost the race (unmount, a changed connection list, or a newer
+    // refresh) must win nothing: it may neither overwrite the newer request's snapshot
+    // nor clear the spinner, which from the moment it was superseded belongs to that
+    // newer request.
+    let ignore = false;
+
+    async function load() {
+      setFleetLoading(true);
+      try {
+        const res = await fetch("/api/admin/fleet-health", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ connections: targets }),
+        });
+        const data = await res.json();
+        if (!ignore && data.results) setFleetHealth(data.results);
+      } catch {
+        // silently fail
+      } finally {
+        if (!ignore) setFleetLoading(false);
+      }
     }
-  }, [connections]);
 
-  useEffect(() => {
-    if (connections.length > 0) fetchFleetHealth();
-  }, [connections, fetchFleetHealth]);
+    void load();
+    return () => {
+      ignore = true;
+    };
+  }, [fleetRequest]);
 
-  // Auto-refresh fleet health every 60 seconds
+  // Auto-refresh fleet health every 60 seconds. Kept as its own effect so that a manual
+  // refresh does not restart the countdown.
   useEffect(() => {
     if (connections.length === 0) return;
-    const interval = setInterval(fetchFleetHealth, 60000);
+    const interval = setInterval(refreshFleetHealth, 60000);
     return () => clearInterval(interval);
-  }, [connections, fetchFleetHealth]);
+  }, [connections, refreshFleetHealth]);
 
   const queryStats = useMemo(() => {
     const total = history.length;
@@ -321,7 +347,10 @@ export function OverviewTab({ user }: OverviewTabProps) {
 
     for (const h of history.slice(0, 10)) {
       items.push({
-        id: `q-${h.executedAt}-${Math.random().toString(36).slice(2, 6)}`,
+        // `h.id` is a CSPRNG local id minted at write time, so it is both unique and
+        // stable across renders. A random suffix churned the key on every recomputation,
+        // which made AnimatePresence replay the entrance animation for settled rows.
+        id: `q-${h.id}`,
         type: "query",
         text: h.query.length > 60 ? h.query.slice(0, 60) + "..." : h.query,
         status: h.status === "success" ? "success" : "failure",
@@ -353,7 +382,7 @@ export function OverviewTab({ user }: OverviewTabProps) {
         totalDBSize={totalDBSize}
         user={user}
         fleetLoading={fleetLoading}
-        onRefresh={fetchFleetHealth}
+        onRefresh={refreshFleetHealth}
       />
 
       {/* SECTION 2: Fleet Health Grid */}

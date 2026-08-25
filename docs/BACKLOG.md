@@ -22,10 +22,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S1–S8 · 8
-- [Drivers and connections](#drivers-and-connections) — D1–D24, U17 · 9
+- [Drivers and connections](#drivers-and-connections) — D1–D26, U17 · 8
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U18 · 10
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U19 · 11
 - [Authentication and security headers](#authentication-and-security-headers) — AU2
 - [Tests](#tests) — T1–T3 · 2
 - [Dependencies](#dependencies) — P1–P5 · 5
@@ -36,7 +36,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C2–C10 · 9
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K2–K4 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A6 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B56 · 38
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B64 · 42
 
 ---
 
@@ -293,30 +293,6 @@ the query, or the field is dropped from `PerformanceMetrics` so no panel offers 
 
 ---
 
-### D16. The TLS a connection string carries in its QUERY STRING is still dropped
-
-`rediss://` and `couchbases://` now reach the form as mode `require` (2026-08-23), which leaves the
-other half of the same intake: `parseGenericURL` drops the query string entirely, so
-`postgresql://host/db?sslmode=verify-full`, MySQL's `?ssl-mode=REQUIRED` and an ADO.NET
-`Encrypt=True;TrustServerCertificate=False` all arrive on the form's `disable` default. The user asked
-for TLS in the string they pasted and the form says plaintext.
-
-Not the same one-line shape as a scheme, which is why it was left out: a scheme implies one mode, a
-parameter carries a VALUE that needs mapping, and two of the values have no representation at all -
-Postgres's `prefer` and `allow` and MySQL's `PREFERRED` mean "encrypt if the server offers it", while
-`SSLMode` is `disable | require | verify-ca | verify-full`. Mapping `prefer` onto either end is a
-security decision, not a translation.
-
-Correcting the record: an earlier version of this entry's predecessor claimed
-"`postgresql://...?sslmode=` already goes through `withSSLMode`". It does not, and never did -
-`withSSLMode`'s only callers were ClickHouse's `http://` / `https://` until the Redis and Couchbase
-schemes joined them.
-
-**Done when:** a pasted string's TLS parameter reaches the form, and either `SSLMode` gains a
-representation for opportunistic TLS or the mapping's refusal to guess is recorded here.
-
----
-
 ### D18. Two engines hand back a number that has already lost digits
 
 Measured 2026-08-24 against Oracle Free 23ai through the provider: `NUMBER(38,0)` holding
@@ -342,45 +318,46 @@ digits intact, and every consumer of a numeric cell has been checked against the
 
 ---
 
-### D23. Every Oracle DATE and TIMESTAMP cell exports as a literal Oracle refuses
+### D25. Couchbase turns an RBAC denial into a zero, which the absence rule now forbids
 
-Found 2026-08-24 while verifying the interval normalisation (the old D19) end to end: the intervals
-now replay, and the timestamps in the same result do not. `buildResultExport` writes a `Date` cell as
-its ISO string, so an exported row reads
-`INSERT INTO t ("TTZ") VALUES ('2026-08-24T07:11:12.345Z');` and Oracle answers **ORA-01843: An
-invalid month was specified**. Measured against Oracle Free 23ai through the real export path, dialect
-`oracle`.
+Found 2026-08-25 by the audit D24 asked for. `degradeTo()`
+(`src/lib/db/providers/document/couchbase/index.ts:196`) swallows a refused management read and
+substitutes a fallback VALUE - `{}` for the pools and bucket payloads, and
+`{ tableCount: 0, indexCount: 0 }` for the catalog counts. Its own comment says why the absences are
+ordinary there: an RBAC role that may read documents may not read `/pools`. But the substitute is a
+measurement the user cannot tell from a real one, so a role without the management grant reads a
+bucket with **0 tables and 0 indexes** rather than "this role may not ask".
 
-It is not specific to `TIMESTAMP WITH TIME ZONE`: `DATE`, `TIMESTAMP` and both zoned forms all arrive
-as `Date` and all export the same unusable string, so a DDL+INSERT export of any ordinary Oracle table
-with a date column cannot be replayed into Oracle. The fix belongs in `src/lib/export/result-export.ts`
-next to the Cassandra and Postgres cases already there - `TO_TIMESTAMP('...','YYYY-MM-DD
-HH24:MI:SS.FF3')` for a timestamp and `TO_DATE` for a date - and it has to decide what a zoned column
-emits, since the offset is already gone by then (see `docs/providers/oracle.md` 5.5).
+`MonitoringData.errors` (#477) is the mechanism the rest of the family now uses, and Cassandra, Trino
+and LibreDB were converted to it in the same round this was found. Couchbase was left out for one
+reason: no Couchbase cluster is running here, so the four refusal categories could not be measured,
+and a refusal sentence that has never been seen from the server is exactly what D21 was fixed for.
 
-**Done when:** an Oracle result exported from the grid replays into Oracle with its date columns
-intact, proven by running the exported file back into the engine it came from.
+**Done when:** a Couchbase panel a role may not read is absent with the cluster's own wording, and
+the counts it feeds carry the same distinction - measured against a live cluster with a document-only
+role, not inferred from the code.
 
 ---
 
-### D24. Cassandra's monitoring degradation still answers an empty panel, now that absence has a shape
+### D26. `?ssl=true` maps onto `require`, and `require` is the one mode that does not verify
 
-The five `system_views` reads degrade to EMPTY on a build with no virtual tables, which was the only
-honest option while `MonitoringData` required every panel. It no longer is: a panel can now be absent
-with the reason recorded under `errors` (2026-08-24), and the browser shows the cost of not using that
-- on ScyllaDB 2026.2.4 the Sessions tab reads *Active 0 / Idle 0 / Wait 0 / Sessions (0) / No active
-sessions found.* for a question the engine cannot answer at all, while StarRocks, which cannot answer
-the same question, says so in the engine's own words.
+`readBooleanTLS` maps a PostgreSQL `?ssl=true` onto `SSLMode` `require` (2026-08-25, D16). That is
+the honest half of a real choice - the alternative was leaving it on the form's `disable` default and
+sending plaintext - but it weakens what the source spelling asks for: `pg` reads `ssl=true` as TLS
+with Node's default `rejectUnauthorized: true`, while this app's `require` is explicitly
+`rejectUnauthorized: false` (`src/lib/db/providers/sql/postgres.ts:793`, where only `verify-ca` and
+`verify-full` verify).
 
-The provider knows which it is: `readServerFacts` establishes `hasVirtualTables` once per connection
-(`src/lib/db/providers/sql/cassandra/introspect.ts`), so the reads that were skipped are exactly the
-ones that should report absence rather than zero. The same question applies to the other providers
-whose surfaces degrade to empty by convention - Druid and Trino return `[]` from `getTableStats` as a
-documented refusal, and `docs/providers/*.md` records each.
+The same change REFUSED to map MongoDB's `tls=true` on exactly that argument, so the two arms of one
+commit disagree. Both are defensible on their own - a downgrade beats plaintext, and a downgrade of
+an Atlas connection is worse than a form the user must fill in - and neither is written down as a
+rule. `SSLMode` having no "encrypt and verify with the system roots, no server-name pinning" value is
+what forces the choice.
 
-**Done when:** a Cassandra-family panel the build cannot answer is absent with its own sentence rather
-than empty, and every other provider that degrades to `[]` has been checked against the same rule.
+**Done when:** the two spellings answer to one stated rule, or `SSLMode` gains the mode that makes
+the question disappear.
 
+---
 
 ## Value interpolation
 
@@ -645,6 +622,24 @@ is accepted deliberately.
 
 ---
 
+### U19. A caution about a save the app could not verify renders as a green success tick
+
+`use-connection-form.ts:423` emits the degraded-save message - "... Click Save Changes again to save
+it anyway." - as `success: true`, and `ConnectionModal.tsx:874` has exactly two renderings for that
+flag: emerald with a `CircleCheck`, or red with a `CircleX`. So the sentence asking the user to think
+again arrives wearing the affordance of a completed action.
+
+Found 2026-08-25 while fixing the identical shape one branch above it: the connection-string TLS
+refusal was emitted the same way and now emits `success: false`. That fix is available here too and
+was deliberately not applied, because a red cross overstates in the other direction - the save is
+being OFFERED, not refused. The same missing thing explains both: this banner has no warning state.
+`AgentRail`'s posture line (#449) is the precedent for the wording, not for the colour.
+
+**Done when:** a message that is neither a success nor a failure renders as neither, and the degraded
+save uses it.
+
+---
+
 ## Authentication and security headers
 
 ### AU2. Static assets receive no security headers — decided, not implemented
@@ -845,33 +840,32 @@ whose own recipe uses `--set-string` for exactly this reason.
 **Done when:** both lines use `--set-string`, and ideally the README's `--set` bracket arguments are
 single-quoted, since unquoted `extraEnv[0]` is a glob pattern in zsh.
 
-### DOC3. Four channel listings still advertise NL2SQL, which the product no longer has
+### DOC3. Six channel listings carry corrected copy that nobody has resubmitted
 
-#331 T2 removed the NL2SQL and Autopilot panels, and #331 T6 rewrote the READMEs, `DOCKERHUB.md` and
-`docs/FEATURES.md` around the agent. The **external channel listings were left out of that PR on
-purpose**: each is a submission to somebody else's marketplace with its own review cycle.
+The false strings are gone from the tree as of 2026-08-25. What is left is the part this repo cannot
+do: each file is a submission to somebody else's marketplace, published from its own review cycle, so
+editing it here changes nothing a user sees until the channel is re-submitted.
 
-Four files, with the strings that are now false:
+| File | What changed |
+| --- | --- |
+| `deploy/railway/TEMPLATE_OVERVIEW.md` | NL2SQL removed; the read-only agent and plan mode named; 13 engines to 14 |
+| `deploy/railway/template.json` | 13 engines to 14; "AI-powered query assistance" to optional read-only AI |
+| `deploy/digitalocean/assets/description-long.md` | NL2SQL bullet replaced by the agent and the plan-derived explanation |
+| `deploy/rancher/CATALOG_LISTING.md` | same, plus an accuracy gate holding each claim to a cited file |
+| `deploy/azure/listing/listing-fields.md` + `listing/description.html` | one Partner Center submission, both halves corrected |
+| `deploy/caprover/libredb-studio.yml` | 13 engines to 14; the AI clause narrowed |
 
-| File | Line | The string |
-| --- | --- | --- |
-| `deploy/railway/TEMPLATE_OVERVIEW.md` | 3 | "with AI-powered query assistance (natural-language-to-SQL, explain, and fix)" |
-| `deploy/digitalocean/assets/description-long.md` | 10 | "**AI-assisted SQL** — turn natural language into queries (NL2SQL)" |
-| `deploy/rancher/CATALOG_LISTING.md` | 87 | "...writes and explains SQL from natural language and" |
-| `deploy/azure/listing/listing-fields.md` | 76 | "2. `nl2sql` — \"Turn a plain-English question into SQL with AI assistance.\"" |
+Two claims had to be narrowed rather than kept, both caught by review rather than by a gate: AI
+explanation is **not** offered on every connection (it is derived from the engine's `EXPLAIN` plan, so
+`BottomPanel.tsx` hides the tab wherever `capabilities.explainFormat` is absent - 7 of the 14
+engines), and "never executes what it recommends" is the formulation #449 already rejected, because
+the consented hand-over runs exactly the recommended statement
+(`src/app/api/agent/runs/[runId]/handover/route.ts`). `tests/unit/marketplace-copy.test.ts` now binds
+the submitted copy to both facts, so a future edit that re-widens either claim fails a gate rather
+than a reviewer.
 
-"Explain" survives the removal and "writes SQL from natural language" does not, so three of the four
-need a rewrite rather than a deletion. The honest replacement is the read-only agent.
-
-**Second staleness in the same files:** the railway line also names 12 engines, and 0.13.0 ships 14
-plus 18 measured relatives. Fix both in one resubmission.
-
-They are four separate submissions rather than one edit: the Azure entry is a numbered item in that
-listing's own field contract, and each of the others is published by its marketplace from the file
-above.
-
-**Done when:** each listing has been resubmitted through its own channel with copy that matches the
-shipped product.
+**Done when:** each listing has been resubmitted through its own channel. Six submissions, five
+channels - the two Azure files travel together.
 
 ---
 

@@ -739,20 +739,56 @@ function readTableStatistics(rows: TrinoRow[]): TableStatistics {
 }
 
 /**
+ * What a table-statistics pass found, and why it found nothing when it found nothing.
+ *
+ * The panel has three different empty readings and only ONE of them is a measurement:
+ * a catalog that really holds no table. The other two - a refused table list, and a
+ * catalog full of tables whose connector publishes no statistics - are refusals, and
+ * `MonitoringData` requires those to be reported as an ABSENT panel carrying the
+ * engine's own sentence rather than as an empty one (#477). The caller turns
+ * `refusal` into that sentence; `undefined` means the rows are the answer.
+ */
+export interface TrinoTableStatsReading {
+  readonly tables: TableStats[];
+  readonly refusal?: string;
+}
+
+/** Why the table list itself produced nothing. Carries the server's own wording. */
+function tableListRefusal(catalog: string, reason: string): string {
+  return `Trino refused the table list for catalog "${catalog}": ${reason}. This panel therefore has no source rather than no tables, and the schema tree reads the same list.`;
+}
+
+/** Why a catalog full of tables produced no statistics row. */
+function tableStatsRefusal(catalog: string, examined: number): string {
+  return `None of the ${examined} tables examined in catalog "${catalog}" published a row count. Trino answers SHOW STATS with a null row count until ANALYZE has run, and for every connector that cannot supply one at all - the jmx connector never does, measured against Trino 476. So these figures are not knowable here; the tables themselves are in the schema tree.`;
+}
+
+/**
  * Row counts and logical sizes, one `SHOW STATS` per table.
  *
  * A table whose connector published NO row count is left out entirely rather than
  * reported as zero (shape 3): `TableStats.rowCount` is a required number with no
  * way to say "unknown", and "0 rows" is a claim nothing made about a Hive table
- * nobody has run `ANALYZE` on. An empty panel on such a catalog is the honest
- * answer, and it is the same answer the connector would give.
+ * nobody has run `ANALYZE` on. Where that leaves NOTHING at all the panel says so in
+ * words instead of rendering an empty table - see `TrinoTableStatsReading`.
  */
 export async function getTableStats(
   runner: TrinoQueryRunner,
   catalog: string,
   options: { schema?: string } = {},
-): Promise<TableStats[]> {
-  const tableRows = await readOptionalRows(runner, trinoTableListSql(catalog));
+): Promise<TrinoTableStatsReading> {
+  let tableRows: TrinoRow[];
+  try {
+    tableRows = await readRows(runner, trinoTableListSql(catalog));
+  } catch (error) {
+    // The same categories `readOptionalRows` swallows, but the refusal is kept: an
+    // empty list and a refused list are the two readings this panel must not merge.
+    if (error instanceof TrinoTransportError && UNAVAILABLE_CATEGORIES.has(error.category)) {
+      return { tables: [], refusal: tableListRefusal(catalog, error.message) };
+    }
+    throw error;
+  }
+
   const addresses = readTableAddresses(tableRows)
     .filter((address) => options.schema === undefined || address.schema === options.schema)
     .slice(0, TRINO_MAX_STATS_TABLES);
@@ -764,7 +800,7 @@ export async function getTableStats(
     }),
   );
 
-  return answers.flatMap(({ address, statistics }) => {
+  const tables = answers.flatMap(({ address, statistics }) => {
     if (statistics.rowCount === undefined) return [];
     const sizeBytes = statistics.dataSizeBytes;
 
@@ -783,6 +819,15 @@ export async function getTableStats(
       },
     ];
   });
+
+  // Tables were examined and none of them answered: a refusal, not an empty catalog.
+  // A catalog that genuinely holds no table keeps its empty array, which IS a
+  // measurement and renders as one.
+  if (tables.length === 0 && addresses.length > 0) {
+    return { tables, refusal: tableStatsRefusal(catalog, addresses.length) };
+  }
+
+  return { tables };
 }
 
 /**

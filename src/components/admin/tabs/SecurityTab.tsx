@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -131,12 +131,10 @@ function AccessSummary() {
 }
 
 function ThresholdSettings() {
-  const [thresholds, setThresholds] = useState<ThresholdConfig[]>(DEFAULT_THRESHOLDS);
+  // getThresholdConfig() already falls back to DEFAULT_THRESHOLDS when nothing is
+  // stored, so reading it in the initializer covers both cases in one render.
+  const [thresholds, setThresholds] = useState<ThresholdConfig[]>(() => storage.getThresholdConfig());
   const [hasChanges, setHasChanges] = useState(false);
-
-  useEffect(() => {
-    setThresholds(storage.getThresholdConfig());
-  }, []);
 
   const updateThreshold = (index: number, field: "warning" | "critical", value: number) => {
     setThresholds((prev) => {

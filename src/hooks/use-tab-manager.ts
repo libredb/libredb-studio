@@ -104,15 +104,18 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
     // NOTE: hydration flag stays false — set by ready effect below.
   }, [workspaceKey, shouldPersistWorkspace]);
 
-  // READY EFFECT — fires after load's setTabs commits (next render)
+  // READY EFFECT — flips the flag on the first render after the LOAD EFFECT reset it
   useEffect(() => {
     if (!shouldPersistWorkspace || isWorkspaceHydrated) return;
     // Deliberate: this is the flip half of the same handshake as the LOAD EFFECT's reset
-    // above — it must run in an effect because it depends on the LOAD EFFECT's setTabs
-    // having already committed (the "next render" this effect is named for).
+    // above — it must run in an effect because it depends on that reset having already
+    // committed. The flag is the only trigger it needs: the LOAD EFFECT is the sole writer
+    // of `tabs`/`activeTabId` on a connection switch and it resets the flag in the same
+    // pass, so every render in which this effect has work to do is already a render in
+    // which `isWorkspaceHydrated` changed. Listing the tabs here only re-ran the guard.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsWorkspaceHydrated(true);
-  }, [tabs, activeTabId, shouldPersistWorkspace, isWorkspaceHydrated]);
+  }, [shouldPersistWorkspace, isWorkspaceHydrated]);
 
   // SAVE EFFECT — debounced write to localStorage (500ms)
   useEffect(() => {
@@ -161,7 +164,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       },
     ]);
     setActiveTabId(newId);
-  }, [activeConnection, metadata]);
+  }, [metadata]);
 
   const closeTab = useCallback(
     (id: string, e: React.MouseEvent) => {

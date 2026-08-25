@@ -18,8 +18,8 @@ mock.module("@monaco-editor/react", () => ({
     config: (config: { paths?: { vs?: string } }) => {
       configCalls.push(config);
     },
+    __getMonacoInstance: () => null,
   },
-  useMonaco: () => null,
 }));
 
 // Imported after the mock so the module-scope loader configuration is observable.

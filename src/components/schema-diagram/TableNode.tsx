@@ -86,9 +86,15 @@ export const TableNode = memo(function TableNode({ id, data }: NodeProps<TableFl
   // FK anchors (which arrive asynchronously via the second-phase relations
   // fetch). React Flow only measures handles on mount or when told to - a
   // missed re-measure means edges to the new handles silently never attach.
+  // The signature is a string rather than the arrays themselves because those
+  // are rebuilt on every buildGraph run, so depending on them would re-measure
+  // on identity-only rebuilds. The effect READS it rather than merely listing
+  // it: the signature IS the handle set the effect synchronises React Flow
+  // against, and it always carries its three separators, so the guard is true
+  // whenever the effect runs.
   const handleSignature = `${compact ? "c" : "d"}|${visibleColumns.length}|${sourceAnchors.join(",")}|${targetAnchors.join(",")}`;
   useEffect(() => {
-    updateNodeInternals(id);
+    if (handleSignature) updateNodeInternals(id);
   }, [id, handleSignature, updateNodeInternals]);
 
   const sourceSet = new Set(sourceAnchors);

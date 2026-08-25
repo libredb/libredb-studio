@@ -121,6 +121,13 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
   // Calculate totals
   const totalRows = tables.reduce((sum, t) => sum + t.rowCount, 0);
   const totalSize = tables.reduce((sum, t) => sum + t.totalSizeBytes, 0);
+  // The same gate StorageTab has carried since #469: `tableSizeBytes` is what says whether
+  // this engine publishes per-table bytes at all, and `totalSizeBytes` is a required field
+  // that has to carry SOMETHING when it does not - a 0 beside the "N/A" its own `totalSize`
+  // spells. Summing those zeros drew "0 B / Total" for LibreDB over a database with bytes
+  // on disk (measured 2026-08-25: 1,878 file bytes, five namespaces), and bun:sqlite sits
+  // in the same shape wherever `dbstat` is missing. `every()` keeps a genuine "no tables"
+  // answer at 0 B, because there is nothing there to be unknown.
   const tablesNeedingVacuum = tables.filter((t) => (t.bloatRatio ?? 0) > 10).length;
 
   // A panel whose read failed is absent from the payload with its own message under
@@ -130,18 +137,22 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
   // engine's own sentence. See MonitoringData in src/lib/db/types.ts.
   const tablesUnavailable = data?.tables === undefined ? data?.errors?.tables : undefined;
 
-  // ABSENCE and ZERO are different inputs — the rule #448 settled for StorageTab, which
+  // ABSENCE and ZERO are different inputs - the rule #448 settled for StorageTab, which
   // this panel was still breaking one component over. A provider that publishes no table
-  // statistics answers `[]` (Apache Cassandra's `getTableStats` returns an empty array as
-  // a documented refusal; Apache Druid and Apache Trino do the same), and `BaseProvider`
-  // assigns that array whenever `includeTables` is set, so `tables` alone cannot tell a
-  // refusal from an empty database. The required `overview.tableCount` can: Cassandra
-  // populates it from `system_schema`, and it read 6 in the very frame these cards read 0
-  // (measured 2026-08-21 in Chrome against Apache Cassandra 5.0.9). Tables the engine
-  // knows about but reports no statistics for means the figures are not knowable, so the
-  // cards say so rather than publishing a confident zero the engine never measured. A
-  // provider that reports a genuine 0 keeps today's arithmetic and today's rendering.
+  // statistics can still answer `[]` (Apache Druid returns an empty array as a documented
+  // refusal, and so does any Trino catalog whose tables partly publish statistics), and
+  // `BaseProvider` assigns that array whenever `includeTables` is set, so `tables` alone
+  // cannot tell a refusal from an empty database. The required `overview.tableCount` can:
+  // Cassandra populated it from `system_schema` and it read 6 in the very frame these
+  // cards read 0 (measured 2026-08-21 in Chrome against Apache Cassandra 5.0.9). Tables
+  // the engine knows about but reports no statistics for means the figures are not
+  // knowable, so the cards say so rather than publishing a confident zero the engine
+  // never measured. A provider that reports a genuine 0 keeps today's arithmetic and
+  // today's rendering. Cassandra and a wholly unmeasurable Trino catalog no longer reach
+  // this heuristic at all: since 2026-08-25 they REJECT with their own sentence and land
+  // on `tablesUnavailable` above, which is the reading this approximation exists for.
   const statsAbsent = tablesUnavailable !== undefined || (tables.length === 0 && (data?.overview?.tableCount ?? 0) > 0);
+  const sizeAbsent = statsAbsent || !tables.every((t) => t.tableSizeBytes !== undefined);
 
   // Whether the engine HAS vacuum is a capability question, not a data question, so it is
   // read from what the provider declares instead of inferred from the rows. Cassandra
@@ -177,7 +188,9 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
             <Table2 strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{statsAbsent ? "N/A" : tables.length}</div>
+            <div className="text-lg sm:text-2xl font-medium" data-testid="tables-stat-count">
+              {statsAbsent ? "N/A" : tables.length}
+            </div>
             {!statsAbsent && (
               <p className="text-xs sm:text-xs text-muted-foreground mt-1">{formatNumber(totalRows)} rows</p>
             )}
@@ -190,8 +203,10 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
             <Search strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium">{statsAbsent ? "N/A" : formatBytes(totalSize)}</div>
-            {!statsAbsent && <p className="text-xs sm:text-xs text-muted-foreground mt-1">Total</p>}
+            <div className="text-lg sm:text-2xl font-medium" data-testid="tables-stat-size">
+              {sizeAbsent ? "N/A" : formatBytes(totalSize)}
+            </div>
+            {!sizeAbsent && <p className="text-xs sm:text-xs text-muted-foreground mt-1">Total</p>}
           </CardContent>
         </Card>
 
@@ -270,7 +285,9 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
                           </span>
                         ) : null}
                       </TableCell>
-                      <TableCell className="text-right text-xs py-2">{table.tableSize}</TableCell>
+                      <TableCell className="text-right text-xs py-2" data-testid="table-row-size">
+                        {table.tableSize ?? "-"}
+                      </TableCell>
                       <TableCell className="text-right text-xs hidden md:table-cell py-2">
                         {table.indexSize || "-"}
                       </TableCell>

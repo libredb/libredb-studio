@@ -25,7 +25,7 @@ export function useConnectionManager(storageReady = false) {
   const [servedSeeds, setServedSeeds] = useState<ManagedConnectionPayload[]>([]);
   const [schema, setSchema] = useState<TableSchema[]>([]);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
-  const [connectionPulse, setConnectionPulse] = useState<"healthy" | "degraded" | "error" | null>(null);
+  const [pulseState, setConnectionPulse] = useState<"healthy" | "degraded" | "error" | null>(null);
 
   const { toast } = useToast();
 
@@ -262,10 +262,7 @@ export function useConnectionManager(storageReady = false) {
 
   // Connection pulse — quick health check every 60s
   useEffect(() => {
-    if (!activeConnection) {
-      setConnectionPulse(null);
-      return;
-    }
+    if (!activeConnection) return;
     const checkHealth = async () => {
       try {
         const res = await fetch("/api/db/health", {
@@ -292,7 +289,9 @@ export function useConnectionManager(storageReady = false) {
     schema,
     setSchema,
     isLoadingSchema,
-    connectionPulse,
+    // Derived rather than reset in the pulse effect: with no active connection
+    // there is nothing to report on, and the render already knows that.
+    connectionPulse: activeConnection === null ? null : pulseState,
     fetchSchema,
     schemaContext,
   };

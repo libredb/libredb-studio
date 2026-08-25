@@ -545,7 +545,7 @@ describe("useQueryExecution", () => {
   // refetches for the same connection id — reference change IS the
   // connection-switch signal this effect relies on.
 
-  test("bottomPanelMode resets from explain when metadata loses explain support", async () => {
+  test("bottomPanelMode resets from explain when metadata loses explain support", () => {
     mockGlobalFetch({});
     const params = createDefaultParams();
     const unsupported = {
@@ -564,10 +564,15 @@ describe("useQueryExecution", () => {
 
     rerender({ metadata: unsupported });
 
-    await waitFor(() => expect(result.current.bottomPanelMode).toBe("results"));
+    // Synchronous on purpose: the reset is a render-phase state adjustment, so the
+    // value must already be "results" when `rerender` returns. An `await waitFor`
+    // here would also pass with a reset that costs one extra committed frame —
+    // exactly the frame in which BottomPanel renders the explain body while the
+    // explain tab has already been filtered out of the strip.
+    expect(result.current.bottomPanelMode).toBe("results");
   });
 
-  test("bottomPanelMode resets from explain when metadata lacks explainFormat even if supportsExplain is true", async () => {
+  test("bottomPanelMode resets from explain when metadata lacks explainFormat even if supportsExplain is true", () => {
     mockGlobalFetch({});
     const params = createDefaultParams();
     // Divergent state (reachable via custom metadata in embedded mode): the tab
@@ -588,7 +593,12 @@ describe("useQueryExecution", () => {
 
     rerender({ metadata: noFormat });
 
-    await waitFor(() => expect(result.current.bottomPanelMode).toBe("results"));
+    // Synchronous on purpose: the reset is a render-phase state adjustment, so the
+    // value must already be "results" when `rerender` returns. An `await waitFor`
+    // here would also pass with a reset that costs one extra committed frame —
+    // exactly the frame in which BottomPanel renders the explain body while the
+    // explain tab has already been filtered out of the strip.
+    expect(result.current.bottomPanelMode).toBe("results");
   });
 
   // ── executeQuery sets explain panel mode for explain queries ────────────────
@@ -934,6 +944,61 @@ describe("useQueryExecution", () => {
     expect(queryCall).toBeDefined();
     const body = JSON.parse(queryCall![1]!.body as string);
     expect(body.sql).toBe("SELECT * FROM users"); // Falls back to tab query
+  });
+
+  // ── The latest-value refs still read the latest values after a re-render ───
+  //
+  // `tabs`, `currentTab` and `activeTabId` are held in refs so that
+  // `executeQuery`'s identity survives a keystroke. Nothing else in this file
+  // pins that those refs are actually refreshed: every other test renders once,
+  // where the `useRef` initializer alone gives the right answer. These three
+  // re-render first, so dropping the sync — or giving it a dependency array that
+  // misses a value — turns them red instead of shipping a stale run.
+
+  test("a run with no override sends the tab text as it reads after the latest render", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+    const params = createDefaultParams();
+
+    const { result, rerender } = renderHook(({ tabs }) => useQueryExecution({ ...params, tabs }), {
+      initialProps: { tabs: [createTab({ query: "SELECT 1" })] },
+    });
+
+    rerender({ tabs: [createTab({ query: "SELECT 2" })] });
+
+    await act(async () => {
+      await result.current.executeQuery(); // No override, no editor ref: the tab text decides
+    });
+
+    const queryCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    expect(queryCall).toBeDefined();
+    const body = JSON.parse(queryCall![1]!.body as string);
+    expect(body.sql).toBe("SELECT 2");
+  });
+
+  test("a run aimed at an unknown tab labels history with the current tab as it now reads", async () => {
+    mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+    const params = createDefaultParams();
+
+    // "tab-missing" is absent from `tabs`, which is what makes `currentTabRef`
+    // the tab the run is attributed to — the only observable that can tell a
+    // fresh `currentTab` from a stale one.
+    const { result, rerender } = renderHook(({ currentTab }) => useQueryExecution({ ...params, currentTab }), {
+      initialProps: { currentTab: createTab({ id: "tab-1", name: "Query 1" }) },
+    });
+
+    rerender({ currentTab: createTab({ id: "tab-1", name: "Renamed" }) });
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1", "tab-missing");
+    });
+
+    expect(addToHistorySpy).toHaveBeenCalledWith(expect.objectContaining({ tabName: "Renamed" }));
   });
 
   // ── executeQuery shows toast when EXPLAIN not supported ────────────────
@@ -2126,6 +2191,36 @@ describe("useQueryExecution", () => {
       // The server-side cancel names tab 2's query, not the last one started.
       const cancelCall = calls.find((c) => c.url.includes("/api/db/cancel"));
       expect(cancelCall?.body.queryId).toBe(mainCalls(calls)[1].body.queryId);
+    });
+
+    /**
+     * A bare `cancelQuery()` resolves its target through `activeTabIdRef`, so the
+     * Cancel button has to follow a tab SWITCH, not just the tab that was active
+     * when the hook first rendered. Every other cancel test here renders once,
+     * where the ref's initializer already holds the answer.
+     */
+    test("cancel with no tab named stops the run on the tab that is active now", async () => {
+      const calls = installDeferredFetch();
+      const { params } = statefulParams();
+      const { result, rerender } = renderHook(({ activeTabId }) => useQueryExecution({ ...params, activeTabId }), {
+        initialProps: { activeTabId: "tab-1" },
+      });
+
+      act(() => {
+        result.current.executeQuery("SELECT 2", "tab-2");
+      });
+      await flush();
+
+      rerender({ activeTabId: "tab-2" });
+
+      await act(async () => {
+        await result.current.cancelQuery();
+      });
+
+      expect(mainCalls(calls)[0].init.signal?.aborted).toBe(true);
+      // And the server is told to stop tab 2's query, not some other id.
+      const cancelCall = calls.find((c) => c.url.includes("/api/db/cancel"));
+      expect(cancelCall?.body.queryId).toBe(mainCalls(calls)[0].body.queryId);
     });
 
     test("a superseded run does not disarm the cancel button of the run that replaced it", async () => {

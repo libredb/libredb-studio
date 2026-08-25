@@ -210,8 +210,12 @@ export function StudioWorkspace({
     } else {
       conn.setSchema([]);
     }
+    // Keyed on the ID, not the object: `activeConnection` is derived from the
+    // host's `connections` prop, so a host that passes a fresh array on every
+    // render would otherwise re-fetch the schema on every render. The ID is the
+    // trigger this effect always meant — the active connection actually changing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conn.activeConnection]);
+  }, [conn.activeConnection?.id]);
 
   // === Modal / overlay state ===
   const [showDiagram, setShowDiagram] = useState(false);

@@ -1104,6 +1104,15 @@ The honest empties, each with its reason:
   no file holds finished queries. No statement is sent to discover that.
 - **`getIndexStats()` is `[]`** and **`indexCount` is `0`** because no index object exists
   ([§6](#6-schema-introspection)).
+
+Those two empty arrays were re-checked on **2026-08-25** against the ABSENT-is-not-EMPTY rule
+`MonitoringData` states (the rule that converted five Cassandra panels and one Trino one). Both stay
+EMPTY, and the distinction is which fact the panel is reporting: **an absent panel means the engine
+could not answer; an empty one means zero is a real measurement.** Druid has no query log and no index
+object, so the count of listable rows really is zero and an empty panel states it correctly — the
+`slowQueriesEmptyState` label carries the reason into the tab besides. The Cassandra panels were
+different: its tables and secondary indexes *exist* and the schema tree lists them in the same frame,
+so `[]` there denied objects the product was showing.
 - **`maxConnections` is `0`** because Druid publishes no connection limit anywhere in SQL — it has no
   pool. A number here would be invented.
 - **`uptime` says `"unknown"`, not `"0ms"`**, when either clock reading is missing: an uptime of zero

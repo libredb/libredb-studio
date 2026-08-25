@@ -64,35 +64,39 @@ export function useStorageSync(): StorageSyncState {
    */
   const mountedRef = useRef(true);
 
-  // ── Push a collection to server (debounced) ──
-  /** Resolves to whether the collection actually reached the server. */
-  const pushToServer = useCallback(async (collection: string, data: unknown): Promise<boolean> => {
-    try {
-      const res = await fetch(`/api/storage/${collection}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
-      setLastSyncedAt(new Date());
-      setSyncError(null);
-      return true;
-    } catch (err) {
-      logger.warn("StorageSync push failed", { collection, error: err instanceof Error ? err.message : String(err) });
-      setSyncError(err instanceof Error ? err.message : "Sync failed");
-      return false;
-    }
-  }, []);
-
   // Self-reference so a failed flush can schedule the next one without
   // `flushPending` and `schedulePush` depending on each other.
   const flushPendingRef = useRef<() => void>(() => {});
 
   // ── Flush pending collections ──
   const flushPending = useCallback(async () => {
+    // Declared inside the flush rather than as its own `useCallback`: it has
+    // exactly one caller, and hoisting it only bought this memo a dependency
+    // that could never change. It closes over nothing but refs, module-level
+    // helpers and stable setters, so a fresh closure per flush costs one
+    // allocation per debounce window and can hold nothing stale.
+    /** Resolves to whether the collection actually reached the server. */
+    const pushToServer = async (collection: string, data: unknown): Promise<boolean> => {
+      try {
+        const res = await fetch(`/api/storage/${collection}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        setLastSyncedAt(new Date());
+        setSyncError(null);
+        return true;
+      } catch (err) {
+        logger.warn("StorageSync push failed", { collection, error: err instanceof Error ? err.message : String(err) });
+        setSyncError(err instanceof Error ? err.message : "Sync failed");
+        return false;
+      }
+    };
+
     const collections = Array.from(pendingCollectionsRef.current);
     pendingCollectionsRef.current.clear();
     if (collections.length === 0) return;
@@ -126,8 +130,16 @@ export function useStorageSync(): StorageSyncState {
     } finally {
       setIsSyncing(false);
     }
-  }, [pushToServer]);
-  flushPendingRef.current = flushPending;
+  }, []);
+
+  // Filled after commit, never during render: React forbids writing `ref.current`
+  // while rendering, and the ref's only reader — the retry timer armed inside
+  // `flushPending` — cannot fire before the first commit, so it never sees the
+  // placeholder. Keyed on `flushPending` so the ref re-syncs if it ever becomes
+  // reactive again.
+  useEffect(() => {
+    flushPendingRef.current = flushPending;
+  }, [flushPending]);
 
   // ── Schedule debounced push ──
   const schedulePush = useCallback(

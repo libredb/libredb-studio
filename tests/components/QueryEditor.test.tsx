@@ -148,7 +148,18 @@ mock.module("@monaco-editor/react", () => ({
     init: mock(() => Promise.resolve()),
     config: mock(() => {}),
   },
-  useMonaco: mock(() => mockUseMonacoReturn),
+}));
+
+/*
+  The Monaco namespace reaches QueryEditor through our own hook, not the package's
+  `useMonaco` — see src/hooks/use-monaco-instance.ts and issue #492. Mocked here rather
+  than mocking the loader underneath it so these tests keep seeing the namespace
+  synchronously: the real hook resolves it from a promise, which would turn every
+  assertion that depends on `monaco` into an awaited one for no gain in coverage. The
+  hook's own load and cancellation behaviour is tested in tests/hooks.
+*/
+mock.module("@/hooks/use-monaco-instance", () => ({
+  useMonacoInstance: mock(() => mockUseMonacoReturn),
 }));
 
 let mockClipboardWriteText = mock((data: string) => {
@@ -450,10 +461,9 @@ describe("QueryEditor", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
     const linesButton = queryByText("Lines");
 
-    // Initial state should be 'true' (default)
-    await waitFor(() => {
-      expect(localStorage.getItem("editor-line-numbers")).toBe("true");
-    });
+    // Nothing is stored until the user chooses: the default lives in the hook, so a
+    // mount no longer writes it back and cannot clobber a preference mid-hydration.
+    expect(localStorage.getItem("editor-line-numbers")).toBeNull();
 
     // Toggle to false
     fireEvent.click(linesButton!);

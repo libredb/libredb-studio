@@ -124,4 +124,46 @@ describe("SavedQueries", () => {
     const { queryByText } = render(<SavedQueries onSelectQuery={mock(() => {})} />);
     expect(queryByText("No saved queries found")).not.toBeNull();
   });
+
+  // ── refreshTrigger change reloads saved queries ────────────────────
+
+  test("refreshTrigger change reloads saved queries from storage", () => {
+    const { queryByText, rerender } = render(<SavedQueries onSelectQuery={mock(() => {})} refreshTrigger={0} />);
+    expect(queryByText("Active Users")).not.toBeNull();
+
+    mockGetSavedQueries.mockClear();
+    mockGetSavedQueries.mockImplementation(() => [
+      ...mockSavedQueries,
+      {
+        id: "q2",
+        name: "Churned Users",
+        description: "Get churned users",
+        query: "SELECT * FROM users WHERE active = false",
+        connectionType: "postgres",
+        tags: ["report"],
+        createdAt: "2026-01-16T10:00:00Z",
+        updatedAt: "2026-01-16T10:00:00Z",
+      },
+    ]);
+
+    rerender(<SavedQueries onSelectQuery={mock(() => {})} refreshTrigger={1} />);
+
+    expect(mockGetSavedQueries).toHaveBeenCalled();
+    expect(queryByText("Churned Users")).not.toBeNull();
+  });
+
+  // A refresh must not behave like a `key` re-mount: the search the user is typing
+  // while a save lands has to survive it.
+  test("a refresh keeps the search the user typed", () => {
+    const { getByPlaceholderText, rerender } = render(
+      <SavedQueries onSelectQuery={mock(() => {})} refreshTrigger={0} />,
+    );
+    const input = getByPlaceholderText("Search saved queries...") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Active" } });
+    expect(input.value).toBe("Active");
+
+    rerender(<SavedQueries onSelectQuery={mock(() => {})} refreshTrigger={1} />);
+
+    expect((getByPlaceholderText("Search saved queries...") as HTMLInputElement).value).toBe("Active");
+  });
 });

@@ -76,16 +76,17 @@ import { readSqlSpan } from "@/lib/sql/spans";
 import { CASSANDRA_DEFAULT_PORT, CassandraDriverTransport } from "./driver-transport";
 import {
   CASSANDRA_IDENTITY_CQL,
+  CASSANDRA_INDEX_STATS_REFUSAL,
+  CASSANDRA_STORAGE_STATS_REFUSAL,
+  CASSANDRA_TABLE_STATS_REFUSAL,
+  cassandraVirtualTableRefusal,
   type CassandraServerFacts,
   getActiveSessions as readActiveSessions,
   getHealth as readHealth,
-  getIndexStats as readIndexStats,
   getOverview as readOverview,
   getPerformanceMetrics as readPerformanceMetrics,
   getSchema as readSchema,
   getSlowQueries as readSlowQueries,
-  getStorageStats as readStorageStats,
-  getTableStats as readTableStats,
   readServerFacts,
 } from "./introspect";
 import { CassandraTransportError, type CassandraTransport } from "./transport";
@@ -456,6 +457,25 @@ export class CassandraProvider extends SQLBaseProvider {
   }
 
   /**
+   * The facts, or a refusal naming the virtual table this panel would have read.
+   *
+   * The gate is here rather than inside the read because the read is also what
+   * `getHealth()` composes, and health must keep answering on a build with no virtual
+   * tables: `POST /api/db/test-connection` calls it and the connection dialog's save is
+   * gated on that request, so a throwing health check locks the whole ScyllaDB family
+   * out of the product (#455). A monitoring panel has the opposite obligation - it is
+   * the surface that must say what it could not read.
+   */
+  private requireVirtualTables(source: string): CassandraServerFacts {
+    const facts = this.requireFacts();
+    if (facts.virtualTablesAbsence !== undefined) {
+      throw new QueryError(cassandraVirtualTableRefusal(source, facts.virtualTablesAbsence), this.type);
+    }
+
+    return facts;
+  }
+
+  /**
    * The keyspace every catalog read resolves against.
    *
    * The connection's `database` field, exactly as a PostgreSQL connection pins one
@@ -602,34 +622,61 @@ export class CassandraProvider extends SQLBaseProvider {
     return this.guarded(() => readOverview(transport, keyspace, this.requireFacts()));
   }
 
+  /**
+   * ABSENT rather than empty on a build with no `system_views`.
+   *
+   * The key cache's hit ratio is this panel's only source, so a build that does not
+   * publish `system_views.caches` cannot answer the panel at all - and an empty
+   * `PerformanceMetrics` said the opposite, that every field was looked up and found
+   * to have no value. `getMonitoringData` leaves a rejected panel absent with this
+   * sentence under `errors`, which is what `PanelUnavailable` renders (#477).
+   */
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
     const transport = this.requireTransport();
-    return this.guarded(() => readPerformanceMetrics(transport, this.requireFacts()));
+    const facts = this.requireVirtualTables("system_views.caches");
+    return this.guarded(() => readPerformanceMetrics(transport, facts));
   }
 
-  /** Empty, and it asks the cluster nothing: there is no slow-query log to read. */
+  /**
+   * Empty, and it asks the cluster nothing: there is no slow-query log to read.
+   *
+   * The one always-empty panel that stays empty. `QueriesTab` renders
+   * `ProviderLabels.slowQueriesEmptyState` in its place, and this provider declares one
+   * (`getLabels()` above), so Cassandra's own sentence already reaches the user here -
+   * which is the thing the absence mechanism exists to deliver.
+   */
   public getSlowQueries(): Promise<SlowQueryStats[]> {
     return Promise.resolve(readSlowQueries());
   }
 
+  /** ABSENT rather than empty on a build with no `system_views`: see `getPerformanceMetrics`. */
   public async getActiveSessions(options: { limit?: number } = {}): Promise<ActiveSessionDetails[]> {
     const transport = this.requireTransport();
-    return this.guarded(() => readActiveSessions(transport, this.requireFacts(), options));
+    const facts = this.requireVirtualTables("system_views.queries");
+    return this.guarded(() => readActiveSessions(transport, facts, options));
   }
 
-  /** Empty, and it asks the cluster nothing: see `introspect.ts` for the two numbers refused. */
+  /**
+   * REFUSED on every build, with the reason, rather than answered empty.
+   *
+   * These three panels never had a source: the tables and the secondary indexes exist
+   * and the schema tree lists them, so `[]` claimed a measurement of nothing where the
+   * truth is that no honest figure is readable from CQL. The panels are absent with
+   * their own sentence for the same reason the ScyllaDB ones above are - the rule
+   * `MonitoringData` states, not a property of any one build.
+   */
   public getTableStats(): Promise<TableStats[]> {
-    return Promise.resolve(readTableStats());
+    return Promise.reject(new QueryError(CASSANDRA_TABLE_STATS_REFUSAL, this.type));
   }
 
-  /** Empty, and it asks the cluster nothing: an index here has no size and no scan counter. */
+  /** Refused with its reason: an index here has no size and no scan counter. */
   public getIndexStats(): Promise<IndexStats[]> {
-    return Promise.resolve(readIndexStats());
+    return Promise.reject(new QueryError(CASSANDRA_INDEX_STATS_REFUSAL, this.type));
   }
 
-  /** Empty, and it asks the cluster nothing: the only storage figures are whole mebibytes. */
+  /** Refused with its reason: the only storage figures are whole mebibytes. */
   public getStorageStats(): Promise<StorageStats[]> {
-    return Promise.resolve(readStorageStats());
+    return Promise.reject(new QueryError(CASSANDRA_STORAGE_STATS_REFUSAL, this.type));
   }
 
   public async getHealth(): Promise<HealthInfo> {

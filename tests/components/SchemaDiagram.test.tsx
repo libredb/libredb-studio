@@ -7,6 +7,12 @@ import { setupFramerMotionMock } from "../helpers/mock-monaco";
 
 // Module-scope handles so tests can assert on mock internals
 const mockUpdateNodeInternals = mock(() => {});
+// The fit-view that follows a completed ELK layout is otherwise invisible to
+// the suite, so a refactor of the layout effect could silently cancel it.
+const mockFitView = mock((_options?: Record<string, unknown>) => {});
+// Records the node array the export actually measured (see the post-yield
+// test); the returned bounds stay the constant the export assertions expect.
+const mockGetNodesBounds = mock((_nodes: unknown) => ({ x: 0, y: 0, width: 800, height: 600 }));
 // Latest props ReactFlow was rendered with (culling assertions)
 let lastReactFlowProps: Record<string, unknown> = {};
 
@@ -14,12 +20,18 @@ let lastReactFlowProps: Record<string, unknown> = {};
 mock.module("@xyflow/react", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require("react");
+  // Resolved once in the factory rather than inside the probe's render body: a
+  // `require` there is an untracked call in a component, which the React Compiler
+  // rules — error severity in this repo — reject. (The binding itself would be
+  // fine: CJS require is module-cached and hands back the same function.) The
+  // factory only runs once "@xyflow/react" is first imported, by which point
+  // mock.module setup has already completed.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { useDiagramActions } = require("@/components/schema-diagram/diagram-context");
   // Probe rendered inside the diagram's providers: the only in-card control
   // (the "+N more" expander) disappears once a table is expanded, so tests
   // exercise the collapse half of toggleExpand through the context action.
   const DiagramActionsProbe = () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { useDiagramActions } = require("@/components/schema-diagram/diagram-context");
     const actions = useDiagramActions();
     return React.createElement("button", {
       "data-testid": "probe-toggle-expand",
@@ -78,7 +90,7 @@ mock.module("@xyflow/react", () => {
       React.createElement("path", { "data-testid": "mock-base-edge", "data-edge-id": id, d: path, style }),
     EdgeLabelRenderer: ({ children }: { children: unknown }) => children,
     getSmoothStepPath: () => ["M0 0 L10 10", 5, 5],
-    getNodesBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
+    getNodesBounds: mockGetNodesBounds,
     getViewportForBounds: () => ({ x: 32, y: 32, zoom: 1 }),
     applyNodeChanges: (_changes: unknown, nodes: unknown[]) => nodes,
     useNodesState: () => [[], mock(() => {}), mock(() => {})],
@@ -86,7 +98,7 @@ mock.module("@xyflow/react", () => {
     // The real useReactFlow returns a referentially stable instance; effects
     // in the component depend on it, so the mock must be a singleton too.
     useReactFlow: (() => {
-      const instance = { fitView: mock(() => {}), getNodes: mock(() => []), getEdges: mock(() => []) };
+      const instance = { fitView: mockFitView, getNodes: mock(() => []), getEdges: mock(() => []) };
       return () => instance;
     })(),
     useUpdateNodeInternals: () => mockUpdateNodeInternals,
@@ -335,6 +347,8 @@ describe("SchemaDiagram", () => {
     mockToastError.mockClear();
     capturedStyles = null;
     mockUpdateNodeInternals.mockClear();
+    mockFitView.mockClear();
+    mockGetNodesBounds.mockClear();
     setLayoutEngineImpl(defaultLayoutEngine);
     mockSnapdom.mockImplementation((el: unknown, _options?: Record<string, unknown>) => {
       const root = el as HTMLElement;
@@ -981,6 +995,12 @@ describe("SchemaDiagram", () => {
       // ...and the surviving table does not inherit any highlight.
       const ordersNode = container.querySelector('[data-node-id="orders"]')!;
       expect(ordersNode.querySelector(".border-blue-500\\/60")).toBeNull();
+
+      // The drop is permanent: clearing the filter brings the table back to
+      // the canvas but must NOT resurrect a selection the user already lost.
+      fireEvent.change(searchInput, { target: { value: "" } });
+      expect(container.querySelector('[data-node-id="users"]')).not.toBeNull();
+      expect(view.queryByText("Selected:")).toBeNull();
     });
 
     test("clicking pane background clears selection", () => {
@@ -1203,6 +1223,81 @@ describe("SchemaDiagram", () => {
         document.documentElement.classList.remove("dark");
         spy.restore();
       }
+    });
+
+    test("export follows a theme flipped after the diagram mounted", async () => {
+      // useEffectiveTheme observes the documentElement `dark` class, so a flip
+      // re-renders the diagram — but the export callback only picks the new
+      // ground up if `mode` is one of its dependencies. Mount-time-theme tests
+      // cannot see that difference; this one can.
+      const spy = spyOnDownloads();
+
+      try {
+        const props = createDefaultProps();
+        const { container } = render(<SchemaDiagram {...props} />);
+        const view = within(container);
+
+        await act(async () => {
+          document.documentElement.classList.add("dark");
+          // Let the MutationObserver deliver before the export is started.
+          await Promise.resolve();
+        });
+
+        const pngButton = view.getByText("PNG").closest("button")!;
+        await act(async () => {
+          fireEvent.click(pngButton);
+          await new Promise((r) => setTimeout(r, 20));
+        });
+
+        const [, options] = mockSnapdom.mock.calls[0] as unknown as [HTMLElement, Record<string, unknown>];
+        expect(options.backgroundColor).toBe("#050505");
+      } finally {
+        document.documentElement.classList.remove("dark");
+        spy.restore();
+      }
+    });
+
+    test("export measures the node set as it stands after the paint yields", async () => {
+      // The nodes are rewritten while the export is yielding — in production by
+      // React Flow reporting measured dimensions for newly un-culled cards,
+      // here by the ELK result landing. Bounds must come from the array as it
+      // stands THEN, not from the one that existed when the button was clicked.
+      const spy = spyOnDownloads();
+      let resolveLayout: () => void = () => {};
+      setLayoutEngineImpl({
+        layout: (graph) =>
+          new Promise((resolve) => {
+            resolveLayout = () =>
+              resolve({ id: "root", children: graph.children.map((child, i) => ({ ...child, x: i * 100, y: 0 })) });
+          }),
+        dispose: () => Promise.resolve(),
+      });
+
+      const props = createDefaultProps({ schema: schemaNoFK });
+      const { container } = render(<SchemaDiagram {...props} />);
+      const view = within(container);
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      // Still on the grid fallback: 320px apart, not the ELK 100px.
+      expect((lastReactFlowProps.nodes as Array<{ position: { x: number } }>)[1].position.x).toBe(320);
+
+      const pngButton = view.getByText("PNG").closest("button")!;
+      fireEvent.click(pngButton);
+      // Commit the ELK result in its own act, so it lands between the click
+      // and the macrotasks the two paint yields wait on.
+      await act(async () => {
+        resolveLayout();
+      });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+
+      expect(mockGetNodesBounds).toHaveBeenCalledTimes(1);
+      const measured = mockGetNodesBounds.mock.calls[0][0] as Array<{ position: { x: number } }>;
+      expect(measured.map((n) => n.position.x)).toEqual([0, 100]);
+
+      spy.restore();
     });
 
     test("SVG export injects the ground of the theme it was exported from", async () => {
@@ -1580,6 +1675,53 @@ describe("SchemaDiagram", () => {
       });
       expect(layoutCalls).toBe(1);
       expect(view.queryByText("col_29")).not.toBeNull();
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Layout lifecycle (spinner + the fit-view that follows a layout)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  describe("Layout lifecycle", () => {
+    test("the fit-view that follows a completed layout survives the layout bookkeeping", async () => {
+      const props = createDefaultProps();
+      render(<SchemaDiagram {...props} />);
+
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+
+      // fitView is scheduled behind a paint yield, so any bookkeeping write
+      // that re-runs the layout effect would fire its cleanup, set
+      // `cancelled` and swallow this call — leaving the diagram unfitted.
+      expect(mockFitView).toHaveBeenCalledWith({ padding: 0.15 });
+    });
+
+    test("the layout spinner shows while ELK is in flight and clears when it resolves", async () => {
+      let resolveLayout: (result: unknown) => void = () => {};
+      setLayoutEngineImpl({
+        layout: () =>
+          new Promise((resolve) => {
+            resolveLayout = resolve;
+          }),
+        dispose: () => Promise.resolve(),
+      });
+
+      const props = createDefaultProps();
+      const { container } = render(<SchemaDiagram {...props} />);
+      const view = within(container);
+
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      expect(view.queryByText("layout")).not.toBeNull();
+
+      await act(async () => {
+        // null keeps the grid fallback but still completes the layout.
+        resolveLayout(null);
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      expect(view.queryByText("layout")).toBeNull();
     });
   });
 
