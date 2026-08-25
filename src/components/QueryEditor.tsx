@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle } from "react";
-import Editor, { useMonaco } from "@monaco-editor/react";
+import Editor from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { Zap, LoaderCircle, TextAlignStart, Trash2, Copy, Play, Hash } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -14,6 +14,7 @@ import { registerLibreDBLanguage } from "@/lib/editor/libredb-language";
 import { registerRedisLanguage } from "@/lib/editor/redis-language";
 import { configureMonacoLoader } from "@/lib/editor/monaco-loader";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
+import { useMonacoInstance } from "@/hooks/use-monaco-instance";
 import { logger } from "@/lib/logger";
 import { setLineNumbersPreference, useLineNumbersPreference } from "@/hooks/use-line-numbers-preference";
 import { writeToClipboard } from "@/components/copy-button";
@@ -98,7 +99,7 @@ const getEditorOptions = (showLineNumbers: boolean) => ({
 
 export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
   ({ value, onChange, onContentChange, onExplain, language = "sql", schemaContext, capabilities }, ref) => {
-    const monaco = useMonaco();
+    const monaco = useMonacoInstance();
     const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
     const [hasSelection, setHasSelection] = useState(false);
 
