@@ -29,6 +29,7 @@
  * the model adapter must not also import this file.
  */
 
+import type { LLMProviderType } from "@/lib/llm/types";
 import type { AgentModel } from "@/lib/agent/model-adapter";
 import { resolveAgentProviderAdapter } from "@/lib/agent/provider-registry";
 import { type FetchDouble, chatTextStream, chatToolCallStream } from "./agent-transport";
@@ -98,12 +99,21 @@ export async function modelOver(
   fetchImpl: FetchDouble,
   apiUrl = "https://api.openai.com/v1",
   modelName = "gpt-4o-mini",
+  /*
+    The provider the run is configured as, which defaults to the one that hid a real defect.
+
+    `providerOptions` were once keyed by the provider's own NAME. Every test passed, because
+    this double is `openai`; the first real ollama run sent nothing and timed out at 94
+    seconds. `provider-registry.ts` builds ollama, openai and custom through one
+    `@ai-sdk/openai` adapter, and that adapter reads its options under its own key.
+  */
+  provider: LLMProviderType = "openai",
 ): Promise<AgentModel> {
-  const config = { provider: "openai", apiKey: "sk-test", model: modelName, apiUrl } as const;
+  const config = { provider, apiKey: "sk-test", model: modelName, apiUrl } as const;
   return {
-    provider: "openai",
+    provider,
     modelId: config.model,
-    model: await resolveAgentProviderAdapter("openai").createModel(config, fetchImpl),
+    model: await resolveAgentProviderAdapter(provider).createModel(config, fetchImpl),
   };
 }
 

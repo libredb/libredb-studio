@@ -42,6 +42,7 @@ import {
   DEFAULT_PRESENT_REMINDER_LIMIT,
   DEFAULT_RETRY_EMPTY_TURN,
   DEFAULT_RETRY_UNREAD_STOP,
+  DEFAULT_SUPPRESS_PLAN_REASONING,
   DEFAULT_SAMPLING,
   DEFAULT_UNREPORTED_CALL_CEILING,
 } from "./profile";
@@ -124,6 +125,16 @@ export function retriesEmptyTurn(modelId: string): boolean {
  */
 export function retriesUnreadStop(modelId: string): boolean {
   return resolve(modelId, "retryUnreadStop") ?? DEFAULT_RETRY_UNREAD_STOP;
+}
+
+/**
+ * Whether this model's plan turn is told to spend nothing on reasoning.
+ *
+ * Read only for a run whose mode is not `agent`; see the field's own note for why the five
+ * agent cells this model already locks are left alone.
+ */
+export function suppressesPlanReasoning(modelId: string): boolean {
+  return resolve(modelId, "suppressPlanReasoning") ?? DEFAULT_SUPPRESS_PLAN_REASONING;
 }
 
 /**

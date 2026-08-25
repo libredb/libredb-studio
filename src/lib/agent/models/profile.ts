@@ -108,6 +108,29 @@ export interface AgentModelProfile {
    * measured cell without re-measuring it. See `docs/BACKLOG.md`.
    */
   readonly retryUnreadStop?: boolean;
+
+  /**
+   * Whether this model's PLAN turn asks the endpoint for no reasoning at all.
+   *
+   * Measured on `qwen3.5:4b`, whose five agent surfaces all pass as they are and whose plan
+   * cell was 0/5: every loss a `model-timeout` with an empty ledger, the turn spent thinking
+   * rather than answering. On a Studio-sized prompt it emits 13 188 characters of reasoning
+   * against 1 165 of content. With `reasoning_effort: "none"` the same five runs finish in 2
+   * to 6 seconds.
+   *
+   * PLAN ONLY, and gated on the run's MODE rather than on whether it was handed tools: an
+   * agent run on the prompted protocol is toolless too, and that is the path four of the
+   * twenty-five measured models take. The five agent cells were measured WITH reasoning, and
+   * a setting applied where nothing was measured is a guess wearing a measurement's clothes.
+   *
+   * It reaches the OPENAI-COMPATIBLE adapter only. `providerOptions` is keyed `openai`, which
+   * is right for the three kinds `provider-registry.ts` builds through `@ai-sdk/openai`
+   * (`openai`, `ollama`, `custom`) and reaches nothing on `gemini`, which is `@ai-sdk/google`
+   * and reads its own key. So this is a no-op on the one hosted provider Studio ships an
+   * adapter for, silently — stated here because every model measured with it is local, and
+   * an operator who sets it on a Gemini model is owed the sentence rather than the silence.
+   */
+  readonly suppressPlanReasoning?: boolean;
   /**
    * How many times a report may be held to ask for the answer that belongs beside it.
    *
@@ -209,6 +232,14 @@ export const DEFAULT_RETRY_EMPTY_TURN = false;
  * belongs to the models measured with it rather than to all of them at once.
  */
 export const DEFAULT_RETRY_UNREAD_STOP = false;
+
+/**
+ * Off, because every model but one was measured thinking and passing.
+ *
+ * A drive-wide change here is how this repository has twice handed back cells it had already
+ * won, so the switch stays per-model and per-mode.
+ */
+export const DEFAULT_SUPPRESS_PLAN_REASONING = false;
 
 /**
  * One, which is what every locked answer-presenting cell was measured against.
