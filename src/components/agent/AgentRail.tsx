@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, ChevronDown, ChevronRight, LoaderCircle, PencilLine, Play, Square, TriangleAlert } from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, LoaderCircle, PencilLine, Play, Square, TriangleAlert, X } from "lucide-react";
 import { CopyButton } from "@/components/copy-button";
 import { renderProse } from "@/components/rich-text";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -1767,6 +1767,9 @@ export function AgentRail({
       ),
   ].join(" · ");
 
+  /** The sheet is the only presentation with something to close. */
+  const inSheet = sheetOpen === true && isMobile;
+
   const content = (
     <div className="flex flex-col h-full min-h-0 bg-surface text-fg">
       <div className="flex items-center justify-between gap-2 px-3 h-9 border-b border-hairline shrink-0">
@@ -1801,6 +1804,21 @@ export function AgentRail({
             </button>
           ))}
         </div>
+        {/*
+          The sheet's own close, in the header row with everything else. `SheetContent`
+          floats one at `top-4 right-4` and this sheet is `p-0`, so that one came down on
+          top of the toggle above - see the class that hides it where the sheet is built.
+        */}
+        {inSheet && (
+          <button
+            type="button"
+            aria-label="Close agent"
+            onClick={() => onSheetOpenChange?.(false)}
+            className="p-1 rounded text-fg-tertiary hover:text-fg-bright hover:bg-fill transition-colors shrink-0"
+          >
+            <X strokeWidth={1.5} className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
       {/*
@@ -2597,7 +2615,14 @@ export function AgentRail({
         <SheetContent
           side="bottom"
           data-testid="agent-rail-sheet"
-          className="md:hidden h-[85vh] p-0 gap-0 bg-surface border-t border-hairline-strong rounded-t-3xl overflow-hidden"
+          /*
+            `[&>button]:hidden` takes down `SheetContent`'s own floating close - its only
+            direct-child button - which is absolutely placed at `top-4 right-4` and, with
+            `p-0` here, landed on the Plan/Agent toggle. The rail renders its own in the
+            header instead. Done from the caller rather than by adding a prop to
+            `ui/sheet.tsx`, which stays as shadcn ships it.
+          */
+          className="md:hidden h-[85vh] p-0 gap-0 bg-surface border-t border-hairline-strong rounded-t-3xl overflow-hidden [&>button]:hidden"
         >
           <SheetHeader className="sr-only">
             <SheetTitle>Agent</SheetTitle>

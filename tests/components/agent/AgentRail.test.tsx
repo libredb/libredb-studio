@@ -1282,6 +1282,59 @@ describe("AgentRail", () => {
   });
 
   /**
+   * `SheetContent` floats its own close button at `top-4 right-4`, over whatever the
+   * sheet holds. This rail's header is a full-bleed 36px row (the sheet is `p-0`), so
+   * that X landed ON the Plan/Agent toggle — measured at 390px: the X spanned
+   * 358-374 and the "Agent" pill 328-378.
+   *
+   * The rail therefore offers its own, in the header row where the other controls are,
+   * and takes the floating one down.
+   *
+   * Two assertions because two things have to hold, and jsdom computes no Tailwind: the
+   * rail's control is IN the header, and the sheet carries the rule that removes the
+   * floating one. `hidden` is `display:none`, so in a browser that also takes the
+   * duplicate out of the tab order and the accessibility tree rather than merely making
+   * it invisible — which is why hiding it is enough and a second visible X is not left
+   * behind. The rendered result is checked at 390px in Chrome, not here.
+   */
+  test("the sheet's close control sits in the header rather than over the mode toggle", async () => {
+    const onSheetOpenChange = mock(() => {});
+    media.setMatches(true);
+    const { findByTestId } = render(<AgentRail {...DEFAULT_PROPS} sheetOpen onSheetOpenChange={onSheetOpenChange} />);
+    const sheet = await findByTestId("agent-rail-sheet");
+
+    const own = sheet.querySelector('button[aria-label="Close agent"]');
+    expect(own).not.toBeNull();
+    const header = sheet.querySelector('[data-testid="agent-mode-agent"]')!.closest("div")!.parentElement!;
+    expect(header.contains(own)).toBe(true);
+
+    // `SheetContent`'s own close is its only DIRECT child button, which is what the
+    // rule targets; the rail's own lives deeper, inside the header.
+    expect(sheet.className).toContain("[&>button]:hidden");
+    expect(own!.parentElement).not.toBe(sheet);
+  });
+
+  test("that control closes the sheet", async () => {
+    const onSheetOpenChange = mock(() => {});
+    media.setMatches(true);
+    const { findByTestId, getByLabelText } = render(
+      <AgentRail {...DEFAULT_PROPS} sheetOpen onSheetOpenChange={onSheetOpenChange} />,
+    );
+    await findByTestId("agent-rail-sheet");
+
+    fireEvent.click(getByLabelText("Close agent"));
+
+    expect(onSheetOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  /** The desktop rail is a panel of the layout: there is nothing to close. */
+  test("the desktop rail offers no close control", () => {
+    const { getByTestId, queryByLabelText } = render(<AgentRail {...DEFAULT_PROPS} />);
+    expect(getByTestId("agent-rail-panel")).toBeTruthy();
+    expect(queryByLabelText("Close agent")).toBeNull();
+  });
+
+  /**
    * The window widening past `md` while the sheet is open is the case a CSS-only
    * split gets wrong: `SheetContent` can be told `md:hidden`, but Radix's overlay
    * cannot, and it also sets `pointer-events: none` on the body. The rail would be

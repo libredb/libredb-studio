@@ -2142,4 +2142,56 @@ describe("Studio", () => {
     // Applying is not executing: nothing runs until the user runs it.
     expect(mockExecuteQuery).not.toHaveBeenCalled();
   });
+
+  // ===========================================================================
+  // What the panel group holds below the breakpoint
+  // ===========================================================================
+
+  /**
+   * `react-resizable-panels` 4 applies a `Panel`'s `className` to a NESTED div —
+   * "Class is applied to nested HTMLDivElement to avoid styles that interfere with
+   * Flex layout", its own types say — so `hidden md:block` on a panel never hid the
+   * panel. It hid the panel's CONTENTS and left the panel itself holding its desktop
+   * share of the row: at 390px the sidebar kept 22% and the agent rail 24%, which is
+   * why the studio body was 211px wide and its header overlapped itself.
+   *
+   * No class can fix that, on either element. A panel the viewport cannot show must
+   * not be in the group at all.
+   */
+  test("the phone renders no sidebar panel to take a share of the row", () => {
+    setViewportMobile(true);
+    const { queryByTestId } = render(<Studio />);
+    expect(queryByTestId("sidebar")).toBeNull();
+  });
+
+  test("and the sidebar is back above the breakpoint", () => {
+    setViewportMobile(false);
+    const { queryByTestId } = render(<Studio />);
+    expect(queryByTestId("sidebar")).not.toBeNull();
+  });
+
+  /**
+   * The agent rail leaves the GROUP on a phone but stays MOUNTED, because its mobile
+   * presentation is a sheet it renders itself — `MobileNav`'s Agent control opens it
+   * through `sheetOpen`. Dropping the rail with the panel would take the phone's only
+   * agent surface with it.
+   */
+  test("the agent rail leaves the panel group on a phone but keeps rendering", async () => {
+    setViewportMobile(true);
+    mockAgentConfig(true);
+    const { findByTestId, container } = render(<Studio />);
+
+    const rail = await findByTestId("agent-rail");
+    expect(rail.closest('[data-testid="resizable-panel"]')).toBeNull();
+    expect(container.querySelector('[data-testid="agent-rail"]')).not.toBeNull();
+  });
+
+  test("and above the breakpoint it is a panel of the group again", async () => {
+    setViewportMobile(false);
+    mockAgentConfig(true);
+    const { findByTestId } = render(<Studio />);
+
+    const rail = await findByTestId("agent-rail");
+    expect(rail.closest('[data-testid="resizable-panel"]')).not.toBeNull();
+  });
 });

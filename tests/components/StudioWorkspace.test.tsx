@@ -339,6 +339,8 @@ const ALL_FEATURES_OFF = {
 // =============================================================================
 
 describe("StudioWorkspace", () => {
+  const originalMatchMedia = window.matchMedia;
+
   beforeEach(() => {
     // Reset prop captures
     capturedSidebarProps = {};
@@ -392,7 +394,21 @@ describe("StudioWorkspace", () => {
 
   afterEach(() => {
     cleanup();
+    window.matchMedia = originalMatchMedia;
   });
+
+  /**
+   * The breakpoint is driven through `window.matchMedia`, as in Studio.test.tsx: a
+   * module mock of `@/hooks/use-mobile` would be process-wide.
+   */
+  function setViewportMobile(matches: boolean) {
+    window.matchMedia = ((query: string) => ({
+      matches,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+  }
 
   // =========================================================================
   // Rendering
@@ -1019,5 +1035,27 @@ describe("StudioWorkspace", () => {
     const { baseElement } = renderWorkspace();
     expect(baseElement.textContent).toContain("Load all results?");
     expect(baseElement.textContent).toContain("Load All");
+  });
+
+  // =========================================================================
+  // What the panel group holds below the breakpoint
+  // =========================================================================
+
+  /**
+   * The embedded surface carried the same defect as the standalone shell:
+   * `react-resizable-panels` 4 applies a `Panel`'s `className` to a NESTED div, so
+   * `hidden md:block` hid the sidebar's contents while the panel kept its 22% of the
+   * row. The host's phone viewport got a 22% empty column and a squeezed body.
+   */
+  test("the phone renders no sidebar panel to take a share of the row", () => {
+    setViewportMobile(true);
+    const { queryByTestId } = renderWorkspace();
+    expect(queryByTestId("sidebar")).toBeNull();
+  });
+
+  test("and the sidebar is back above the breakpoint", () => {
+    setViewportMobile(false);
+    const { queryByTestId } = renderWorkspace();
+    expect(queryByTestId("sidebar")).not.toBeNull();
   });
 });
