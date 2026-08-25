@@ -5,8 +5,10 @@ import * as os from "os";
 import * as path from "path";
 import {
   AGENT_ENABLED_ENV,
+  AGENT_THREAD_CONTEXT_ENV,
   AGENT_WORLD_TARGET_ENV,
   AgentConfigError,
+  isThreadContextEnabled,
   getAgentRuntimeConfig,
   isAgentRuntimeEnabled,
   LEDGER_PROBE_TTL_MS,
@@ -32,6 +34,7 @@ const ENV_KEYS = [
   "LLM_API_KEY",
   "LLM_MODEL",
   "LLM_API_URL",
+  AGENT_THREAD_CONTEXT_ENV,
 ] as const;
 
 let originalEnv: Record<string, string | undefined>;
@@ -627,5 +630,47 @@ describe(".env.example", () => {
     // an operator reads has to say where the decision moved to.
     const agentSection = envExample.split("Agent Runtime")[1] ?? "";
     expect(agentSection).toContain("LLM_API_KEY");
+  });
+});
+
+/**
+ * The conversation off-switch, shaped like `LIBREDB_AGENT_ENABLED` and for the same
+ * two-sided reason: a typo must neither take a working surface away nor turn one on.
+ */
+describe("isThreadContextEnabled", () => {
+  test("conversation context is on when nothing is configured", () => {
+    expect(isThreadContextEnabled()).toBe(true);
+  });
+
+  test.each([["false"], ["off"], ["0"], ["FALSE"], ["  Off  "]])("%s switches it off", (raw) => {
+    process.env[AGENT_THREAD_CONTEXT_ENV] = raw;
+
+    expect(isThreadContextEnabled()).toBe(false);
+  });
+
+  test.each([["true"], ["on"], ["1"]])("%s is accepted and means the default", (raw) => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    process.env[AGENT_THREAD_CONTEXT_ENV] = raw;
+
+    expect(isThreadContextEnabled()).toBe(true);
+    // Affirmative is not a typo, so it must not be reported as one.
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  test("an empty value is the same as saying nothing", () => {
+    process.env[AGENT_THREAD_CONTEXT_ENV] = "   ";
+
+    expect(isThreadContextEnabled()).toBe(true);
+  });
+
+  test("an unrecognised value is ignored and REPORTED, so a typo cannot silently disable it", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    process.env[AGENT_THREAD_CONTEXT_ENV] = "yes-please";
+
+    expect(isThreadContextEnabled()).toBe(true);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain("yes-please");
+    warn.mockRestore();
   });
 });

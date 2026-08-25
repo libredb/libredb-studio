@@ -377,6 +377,116 @@ describe("AgentRail", () => {
     expect(getByTestId("agent-timeline-empty")).toBeTruthy();
   });
 
+  /*
+    The conversation strip and the id the rail sends.
+
+    Every negative assertion below also asserts that the start it is about ACTUALLY
+    HAPPENED. Without that pairing, "no previousRunId was sent" passes just as well
+    when nothing was sent at all, which is a test that cannot fail for the reason it
+    was written.
+  */
+  test("the strip lists the conversation's steps and offers a way out of it", async () => {
+    mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE], {
+      runId: "arun_b",
+      status: "queued",
+      mode: "planning",
+      thread: { threadId: "arun_a", steps: [{ runId: "arun_a", objective: "count by department" }], text: "Step 1" },
+    });
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "chart those" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+    await view.findByTestId("agent-thread");
+
+    expect(view.getByTestId("agent-thread-steps").textContent).toContain("count by department");
+    expect(view.getByTestId("agent-thread-steps").textContent).toContain("arun_a");
+    expect(view.queryByTestId("agent-thread-fresh-pending")).toBeNull();
+
+    // The control takes effect on a start that has not happened, so it owes a visible
+    // state line: without one the click looks like it missed.
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-thread-new"));
+    });
+    expect(view.getByTestId("agent-thread-fresh-pending")).toBeTruthy();
+  });
+
+  test("new conversation suppresses the id, and the start it applies to still happens", async () => {
+    const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE], {
+      runId: "arun_b",
+      status: "queued",
+      mode: "planning",
+      thread: { threadId: "arun_a", steps: [{ runId: "arun_a", objective: "count by department" }], text: "Step 1" },
+    });
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "chart those" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+    await waitFor(() => {
+      expect(view.getByTestId("agent-run-status").textContent).toBe("succeeded");
+    });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-thread-new"));
+    });
+
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "what is blocked" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+
+    const runCalls = (fetchMock.mock.calls as [RequestInfo | URL, RequestInit?][]).filter(
+      ([url]) => String(url) === "/api/agent/runs",
+    );
+    // Non-vacuous: the second start DID fire, so the absence below is about the
+    // conversation rather than about nothing having happened.
+    expect(runCalls).toHaveLength(2);
+    const body = JSON.parse(String(runCalls.at(-1)?.[1]?.body)) as Record<string, unknown>;
+    expect(body.previousRunId).toBeUndefined();
+  });
+
+  test.each([
+    ["disabled", "switched off on this server"],
+    ["unavailable", "could not be reached"],
+    ["error", "could not be reached"],
+  ])("a %s conversation renders its own sentence", async (declined, copy) => {
+    mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE], {
+      runId: "arun_b",
+      status: "queued",
+      mode: "planning",
+      thread: { threadId: "arun_a", steps: [], text: "", declined },
+    });
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "chart those" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+    await view.findByTestId("agent-thread-notice");
+
+    expect(view.getByTestId("agent-thread-notice").textContent).toContain(copy);
+  });
+
+  test("a first question renders no conversation strip", async () => {
+    const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+    await view.findByTestId("agent-run-id");
+
+    const runCalls = (fetchMock.mock.calls as [RequestInfo | URL, RequestInit?][]).filter(
+      ([url]) => String(url) === "/api/agent/runs",
+    );
+    // The start happened, so the absent strip is a decision rather than an accident.
+    expect(runCalls).toHaveLength(1);
+    expect(view.queryByTestId("agent-thread")).toBeNull();
+  });
+
   test("a follow-up start names the run it follows on the same connection", async () => {
     const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
     const view = render(<AgentRail {...DEFAULT_PROPS} />);
@@ -427,8 +537,15 @@ describe("AgentRail", () => {
     const runCalls = (fetchMock.mock.calls as [RequestInfo | URL, RequestInit?][]).filter(
       ([url]) => String(url) === "/api/agent/runs",
     );
+    // Non-vacuous: without this the assertion below passes just as well when the
+    // second start never fired, because the FIRST call carries no previousRunId
+    // either — a test that cannot fail for the reason it was written.
+    expect(runCalls).toHaveLength(2);
     const lastBody = JSON.parse(String(runCalls.at(-1)?.[1]?.body)) as Record<string, unknown>;
     expect(lastBody.previousRunId).toBeUndefined();
+    // And the rail says WHY, in its own voice: a connection change is deliberate and
+    // correct, so blaming the server's "could not be reached" would be a lie.
+    expect(view.getByTestId("agent-thread-notice").textContent).toContain("Connection changed");
   });
 
   test("a run cannot start without an objective", () => {
@@ -4769,6 +4886,61 @@ describe("AgentRail", () => {
         await view.findByTestId("agent-opened-as");
         return { view, fetchMock };
       }
+
+      test("a replacement continues what the replaced run continued, not the run it replaces", async () => {
+        /*
+          Run B continues run A. Changing B's workflow throws B away, so B' has to
+          continue A — otherwise the conversation breaks on the one control whose whole
+          purpose is to re-ask the SAME question a different way, and the referent that
+          worked a moment ago silently stops resolving.
+
+          The predecessor comes off `run.thread.steps`, which is the server's own
+          record, so this also pins that the rail reads the thread rather than
+          remembering one.
+        */
+        let opened: Record<string, unknown> = {};
+        const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+          if (url === "/api/agent/classify") return jsonResponse(classified("query-optimization"));
+          if (url.endsWith("/stream")) return ndjsonResponse([openedLineFrom(opened), STARTED_LINE]);
+          if (url === "/api/agent/runs" && init?.method === "POST") opened = JSON.parse(String(init.body));
+          return jsonResponse(
+            {
+              runId: "arun_b",
+              status: "queued",
+              mode: "planning",
+              thread: {
+                threadId: "arun_a",
+                steps: [{ runId: "arun_a", objective: "count by department" }],
+                text: "Step 1: count by department",
+              },
+            },
+            202,
+          );
+        });
+        globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+        await startWith(view, "chart those");
+        await view.findByTestId("agent-opened-as");
+
+        const runCalls = () =>
+          (fetchMock.mock.calls as [RequestInfo | URL, RequestInit?][]).filter(
+            ([url]) => String(url) === "/api/agent/runs",
+          );
+        const before = runCalls().length;
+
+        fireEvent.click(view.getByTestId("agent-opened-as-change"));
+        await act(async () => {
+          fireEvent.click(view.getByTestId("agent-change-workflow-operations"));
+        });
+
+        // The replacement was actually opened, so the id below is about what it sent
+        // rather than about a start that never happened.
+        expect(runCalls().length).toBe(before + 1);
+        const body = JSON.parse(String(runCalls().at(-1)?.[1]?.body)) as Record<string, unknown>;
+        expect(body.previousRunId).toBe("arun_a");
+      });
 
       test("the two consequences are stated before the click, not after it", async () => {
         const { view } = await inferredRun();

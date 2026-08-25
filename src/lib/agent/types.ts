@@ -942,25 +942,45 @@ export type AgentRunEvent =
     });
 
 /**
- * What a follow-up run is TOLD about the run it follows (`docs/BACKLOG.md` B36).
+ * One step of the conversation a run belongs to, as the SURFACE needs it.
  *
- * The content is the previous run's objective and report, both of which are prose
- * somebody else wrote — the user, and a model — so a run handed this context must
- * treat it as data, not instruction. Fencing is `investigation.ts`'s job at read
- * time; this type only carries the inert strings, which is what keeps a run
- * resumable: the context a resumed drive reasons from is the one its ledger
- * recorded, never the browser's memory.
- *
- * Inert by construction, like every other contract here: two strings and an id.
- * The state guard therefore admits it exactly as it admits the objective.
+ * The objective is capped for carrying. A thread of twenty steps would otherwise
+ * put twenty full objectives on every header after it, and the full text is one
+ * `GET /api/agent/runs/{runId}` away on the run that owns it.
  */
-export interface AgentPriorRunContext {
-  /** The run this one follows. */
+export interface AgentThreadStep {
   readonly runId: string;
-  /** The previous run's objective, in the user's own words. */
   readonly objective: string;
-  /** The previous run's report: its claims, its answer statement, and any closing prose. */
-  readonly report: string;
+}
+
+/**
+ * What a run is told about the conversation it belongs to.
+ *
+ * Two consumers, two fields. `steps` serves the RAIL, which renders the
+ * conversation from the header with no additional request. `text` serves the
+ * MODEL, and holds inert content only: the instruction lines and the fence are
+ * added when the prompt is built, so improving that wording never requires
+ * rewriting a stored ledger, and the server's own voice never enters one.
+ *
+ * `text` is derived once, at open, rather than re-derived at drive time. A resumed
+ * drive must reason from byte-identical context to the first drive, and a
+ * predecessor's ledger going unreadable in between must not silently shrink what
+ * the run was told — the same instinct the held context snapshot follows by
+ * having no TTL.
+ *
+ * `declined` is set only when continuing a conversation was ASKED for and did not
+ * happen. It is persisted rather than answered once, so a reload still shows the
+ * notice rather than leaving the user to wonder.
+ *
+ * Inert by construction, like every other contract here: strings and ids. The
+ * state guard therefore admits it exactly as it admits the objective.
+ */
+export interface AgentThreadContext {
+  readonly threadId: string;
+  /** Prior steps, oldest first. Empty for a thread's first run. */
+  readonly steps: readonly AgentThreadStep[];
+  readonly text: string;
+  readonly declined?: "unavailable" | "disabled" | "error";
 }
 
 /**
@@ -1031,16 +1051,19 @@ export interface AgentRunRecord {
    */
   readonly toolProtocol?: AgentToolProtocol;
   /**
-   * The run this one follows, when the user asked a follow-up question.
+   * The conversation this run belongs to.
    *
-   * Optional, and absent means this run was opened without a predecessor — the
-   * ordinary case. It is on the record for the reason every other header field is:
-   * a resumed drive must be told the same context the drive that died was told, so
-   * the context has to live in the ledger rather than in a request body that only
-   * the opener saw. The strings inside are inert prose, so the state guard admits
-   * them exactly as it admits the objective.
+   * Required HERE and optional on the ledger header, which is the whole
+   * compatibility story in one sentence: the fold always produces a thread. A run
+   * whose thread was not recorded is a thread of ONE, named after itself — which
+   * is what was true of it, since no run belonged to a conversation then, and it
+   * is equally true of a run that starts a conversation today.
+   *
+   * It is on the record for the reason every other header field is: a resumed
+   * drive must be told the same thing the drive that died was told, so the context
+   * has to live in the ledger rather than in a request body only the opener saw.
    */
-  readonly priorContext?: AgentPriorRunContext;
+  readonly thread: AgentThreadContext;
   readonly status: AgentRunStatus;
   readonly actor: AgentRunActor;
   /** The single connection this run may reach; the server builds the scope from it. */

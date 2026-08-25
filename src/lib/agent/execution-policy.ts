@@ -438,3 +438,37 @@ export const AGENT_MAX_REPAIR_ATTEMPTS = 3;
  * client's job is to never construct what the server will refuse.
  */
 export const AGENT_MAX_OBJECTIVE_LENGTH = 4000;
+
+/**
+ * The whole budget for the conversation block a run is handed.
+ *
+ * It bounds two things at once, which is why it is one number: what continuing a
+ * conversation costs a run in context, and how large a ledger header may grow,
+ * since the derived block is persisted on it.
+ *
+ * The same order of magnitude as one objective, deliberately: the account of every
+ * step before this run should not outweigh the question this run was asked.
+ *
+ * An operator who has MEASURED their model may size it per model through
+ * `AGENT_MODEL_TUNING_PATH`. Nothing measured ships for it — no entry in
+ * `measured-profiles.json` names it, because nobody has measured one — so this
+ * compiled default drives every model until somebody does.
+ */
+export const AGENT_THREAD_CONTEXT_MAX_CHARS = 4000;
+
+/**
+ * One carried objective, as the conversation's spine records it.
+ *
+ * Capped because the spine is copied onto every header after it, while the full
+ * text stays on the run that owns it and is one read away.
+ */
+export const AGENT_THREAD_STEP_OBJECTIVE_MAX_CHARS = 200;
+
+/**
+ * How many steps a conversation carries before the OLDEST are dropped.
+ *
+ * Oldest rather than newest because a pronoun reaches for recent ground; and the
+ * drop is stated in the derived text rather than performed silently, since a model
+ * that half-read a conversation must not be confident about the half it has.
+ */
+export const AGENT_THREAD_MAX_STEPS = 20;

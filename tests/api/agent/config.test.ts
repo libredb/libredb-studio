@@ -24,7 +24,12 @@ import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { AGENT_ENABLED_ENV, AGENT_MODEL_TUNING_ENV, AGENT_WORLD_TARGET_ENV } from "@/lib/agent/config";
+import {
+  AGENT_ENABLED_ENV,
+  AGENT_MODEL_TUNING_ENV,
+  AGENT_THREAD_CONTEXT_ENV,
+  AGENT_WORLD_TARGET_ENV,
+} from "@/lib/agent/config";
 import { resetTuning } from "@/lib/agent/model-tuning";
 import * as realAuth from "@/lib/auth";
 import { parseResponseJSON } from "../../helpers/mock-next";
@@ -50,6 +55,7 @@ const ENV_KEYS = [
   AGENT_ENABLED_ENV,
   AGENT_WORLD_TARGET_ENV,
   AGENT_MODEL_TUNING_ENV,
+  AGENT_THREAD_CONTEXT_ENV,
   "WORKFLOW_LOCAL_DATA_DIR",
   "LLM_PROVIDER",
   "LLM_API_KEY",
@@ -106,7 +112,11 @@ describe("GET /api/agent/config", () => {
     const res = await GET();
 
     expect(res.status).toBe(200);
-    expect(await parseResponseJSON<Record<string, unknown>>(res)).toEqual({ enabled: true, ledgerVerified: true });
+    expect(await parseResponseJSON<Record<string, unknown>>(res)).toEqual({
+      enabled: true,
+      ledgerVerified: true,
+      threadContext: true,
+    });
   });
 
   test("says a postgres ledger was not verified here, instead of letting it read as a checked one (B31)", async () => {
@@ -119,7 +129,20 @@ describe("GET /api/agent/config", () => {
 
     const body = await parseResponseJSON<Record<string, unknown>>(await GET());
 
-    expect(body).toEqual({ enabled: true, ledgerVerified: false });
+    expect(body).toEqual({ enabled: true, ledgerVerified: false, threadContext: true });
+  });
+
+  test("reports conversation context switched off, so the rail can say which server did it", async () => {
+    // Reported to an ORDINARY session, not just an admin one: the rail renders a
+    // sentence from it, and the user who asks a follow-up is the one who needs to know
+    // it will not be read as one. It names an operator setting and no path.
+    configureModel();
+    process.env[AGENT_THREAD_CONTEXT_ENV] = "false";
+
+    const body = await parseResponseJSON<Record<string, unknown>>(await GET());
+
+    expect(body.enabled).toBe(true);
+    expect(body.threadContext).toBe(false);
   });
 
   test("reports it disabled and names the missing model, so the operator is told why", async () => {

@@ -1904,30 +1904,33 @@ function describePriorProgress(record: AgentRunRecord): string | null {
 }
 
 /**
- * What a follow-up run is told about the run it follows (`docs/BACKLOG.md` B36).
+ * What a run is told about the conversation it continues.
  *
- * The context is the previous run's objective and its report, both somebody
- * else's words, so the whole block is fenced rather than narrated in the
- * server's voice — the same rule the database-error and profile summaries
- * follow. The instruction half states the one contract B36 pins: a pronoun or
- * a demonstrative ("those groups", "it", "that result") has to resolve against
- * the earlier run, and when it cannot, the honest answer is a refusal, not a
- * guess about a different question.
+ * The content is prose a user and a model wrote, across more than one run, so
+ * the whole block is fenced rather than narrated in the server's voice — the
+ * same rule the database-error and profile summaries follow.
  *
- * `null` when the run has no predecessor, which is the ordinary case.
+ * The instruction half states three things, and the third is REQUIRED by the way
+ * the context is built rather than being a caution. The conversation carries
+ * every step's objective but only the most recent step's report, so a model told
+ * about step 1 knows what was asked there and not what was found. Left unsaid,
+ * this design would create its own false impression: a listed step reads as a
+ * step whose findings are in hand.
+ *
+ * `null` when the run starts a conversation rather than continuing one, which is
+ * the ordinary case.
  */
-function describePriorRunContext(record: AgentRunRecord): string | null {
-  const prior = record.priorContext;
-  if (prior === undefined) return null;
-  const fenced = fenceUntrustedContent(`previous objective: ${prior.objective}\nprevious report:\n${prior.report}`, {
-    label: "earlier run",
-    operationId: "agent/prior-run",
-    reference: prior.runId,
+function describeThreadContext(record: AgentRunRecord): string | null {
+  if (record.thread.text.length === 0) return null;
+  const fenced = fenceUntrustedContent(record.thread.text, {
+    label: "earlier steps",
+    operationId: "agent/thread",
+    reference: record.thread.threadId,
   });
   return [
-    "This run follows an earlier run on the same connection.",
-    'When this objective refers to something the earlier run established — "those groups", "it", "that result", "those rows" — resolve the referent against the earlier run below.',
-    "If the earlier run gives no referent for the words in this objective, say so plainly and refuse to guess: answering a different question is worse than not answering.",
+    "This run continues a conversation. Its earlier steps are listed below, oldest first, with the most recent step's report.",
+    'When this objective refers to something an earlier step established — "those groups", "it", "that result", "those rows" — resolve the referent against the conversation below.',
+    "Earlier steps may list only what was ASKED, not what was found. If the conversation gives no referent for the words in this objective, say so plainly and refuse to guess: answering a different question is worse than not answering.",
     fenced,
   ].join("\n");
 }
@@ -2522,14 +2525,13 @@ export async function runInvestigation(
      */
     const notice = (text: string): string => (prompted ? `${text} ${PROMPTED_PROTOCOL_REMINDER}` : text);
     const messages: ModelMessage[] = [{ role: "user", content: record.objective }];
-    // The run this one follows, stated before anything the model does. A USER
-    // message rather than part of `systemPrompt` for the same reason the prompted
-    // contract is: the context carries prose a user and a model wrote, and the
-    // prose path's own guidance keeps every instruction in user messages. It is
-    // also fenced inside `describePriorRunContext`, because neither half of it is
-    // the server's voice.
-    const priorRunContext = describePriorRunContext(record);
-    if (priorRunContext !== null) messages.push({ role: "user", content: priorRunContext });
+    // The conversation this run continues, stated before anything the model does. A
+    // USER message rather than part of `systemPrompt` for the same reason the prompted
+    // contract is: the context carries prose a user and a model wrote, and the prose
+    // path's own guidance keeps every instruction in user messages. It is also fenced
+    // inside `describeThreadContext`, because none of it is the server's voice.
+    const threadContext = describeThreadContext(record);
+    if (threadContext !== null) messages.push({ role: "user", content: threadContext });
     /*
       The contract is a USER message, not an addition to the instructions, and that is the
       vendor's own guidance rather than a preference: the model card for the reasoning family

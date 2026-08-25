@@ -157,6 +157,20 @@ export interface AgentModelProfile {
   readonly turnTimeoutMs?: number;
 
   /**
+   * How much of a CONVERSATION this model may be handed, in characters.
+   *
+   * Absent everywhere it ships, and deliberately so: this is the one setting here that
+   * carries no measurement at all. It exists because the value that is right is a
+   * function of the model's context window — what a hosted 200k-window model can carry
+   * is not what a small local one can — and this document is how an operator who HAS
+   * measured their own supplies it without a Studio release.
+   *
+   * Absent resolves to `AGENT_THREAD_CONTEXT_MAX_CHARS`, which is what drives every
+   * model today.
+   */
+  readonly threadContextMaxChars?: number;
+
+  /**
    * Whether a refused call is handed a worked example built from this run's ledger.
    *
    * OFF by default for the same reason. Measured on one model, where it collapsed a loop of

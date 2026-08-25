@@ -230,6 +230,7 @@ const EVENT_ENTRIES = Object.entries(EVENTS) as Array<[AgentRunEvent["kind"], Ag
 
 const RUN: AgentRunRecord = {
   runId: "run_1",
+  thread: { threadId: "run_1", steps: [], text: "" },
   mode: "agent",
   workflowType: "query-optimization",
   workflowSource: "chosen",

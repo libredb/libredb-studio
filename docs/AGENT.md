@@ -130,6 +130,7 @@ run by asking `GET /api/agent/config`, the same way it discovers the storage mod
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `LIBREDB_AGENT_ENABLED` | unset (derive) | The explicit **off**-switch. `false`/`off`/`0` mean no agent even with AI configured — the supported way to keep the AI configuration and decline the agent. `true`/`on`/`1` are still accepted and mean the default; they cannot conjure a model, because an override that renders a rail whose Start must fail is the outcome deriving exists to prevent. An unrecognized value warns and is ignored. |
+| `LIBREDB_AGENT_THREAD_CONTEXT` | unset (on) | Whether a run may be told about the **conversation** it belongs to. A follow-up asked on the same connection continues the previous run's thread: the earlier steps' objectives and the most recent step's report are derived server-side from those runs' own ledgers and handed to the model fenced. Set `false`/`off`/`0` where no question's context may reach another. Every run then opens on its own and the rail SAYS so — a user who asks a follow-up is told the conversation is switched off on this server, rather than being left to infer it from an answer that does not resolve. `GET /api/agent/config` reports the state, because an operator who switches something off must not hear silence. An unrecognized value warns and is ignored, the same two-sided rule `LIBREDB_AGENT_ENABLED` follows: a typo must neither take a working surface away nor turn one on. It is the operator's counterpart to the control the user already has — the rail names the run being continued and offers "new conversation" beside it. |
 | `WORKFLOW_TARGET_WORLD` | unset (`local`) | Durable backend for run state. Exactly two values are accepted: `local` (zero-config, on-disk, **single instance**) and `@workflow/world-postgres` (opt-in, multi-replica, needs `WORKFLOW_POSTGRES_URL`). Anything else is **refused**, not defaulted. |
 | `AGENT_MODEL_TURN_TIMEOUT_MS` | unset (`90000`) | How long **one** model call may take before the drive stops waiting for it. Raise it for a LOCAL model: the default was chosen against hosted APIs, where a turn lands in seconds and a 90-second wait only ever means a request that is not coming back. Measured across 25 Ollama models on six surfaces, **nine** runs ended `model-timeout` with the model still working — one of them a reasoning model in plan mode, which holds no tools at all, cut 92 s into its **first** turn with a zero-event ledger. Those runs are scored as having answered nothing, which is a fact about this ceiling and not about the model. A value that is not a positive whole number is **ignored** and the default stands; a value is capped just under half the smallest workflow deadline, because a run has to be able to take two turns to finish. |
 | `AGENT_MODEL_TUNING_PATH` | unset | A JSON document of measured per-model settings, layered over the ones Studio ships with. Studio carries a document recording what specific models were measured under — turn limit, how many readings before it is asked to report, whether an empty turn is asked again — and a model not named in it is driven with the defaults, which is the honest treatment of a model nobody has measured. This is how a model Studio has never measured gets settings somebody else measured: mount a file in the same shape and restart, with no Studio release and no code change. Merged **per model and whole** — an entry here replaces the shipped entry for that model rather than contributing one field to it, because half of one measurement beside half of another is a configuration nobody has run. A file that is missing, unreadable or off-schema is **ignored** and the shipped measurements stand — which is the one setting here that fails **open**, so it is also the one that reports itself: `GET /api/agent/config` tells an **admin** session what became of the document (`{"modelTuning":{"state":"applied"\|"ignored"\|"unset",…}}`, with the path and the parser's reason), because an operator who mounts a file and is told nothing will believe it is in force. It carries numbers and switches only: the sentences the drive says to a model stay in Studio, so supplying this file cannot change what Studio tells a model. On Kubernetes the chart mounts it for you — see `agent.modelTuning.*` in [`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md). The document's own contract — every setting, its bounds, what happens to a key this build does not implement, and the example to start from — is [`docs/llms/model-tuning.md`](llms/model-tuning.md). |
@@ -250,15 +251,57 @@ The middle case is why this is a comparison and not a bare "has a seed id". The 
 `seed:<id>` to its OWN descriptor, so a run started on a copy the user had since pointed at another
 database would investigate the seed and report on it as though it were the one on screen.
 
-A run may also FOLLOW the run before it. The rail sends the previous run's id when the user asks a
-follow-up question on the same connection, the route derives the previous run's objective and
-report from its own ledger, and the new run's header records them as `priorContext`. The context is
-fenced when the model reads it, so a pronoun or a demonstrative ("those groups", "it") either
-resolves against the earlier run or is refused for lack of a referent rather than answered as if
-the question were new ([`src/lib/agent/prior-run-context.ts`](../src/lib/agent/prior-run-context.ts)).
-The chain is **depth 1**: a third run is told about the second and not the first, because the
-derivation reads a run's objective and report and not its `priorContext`. The surface does not yet
-say which run is being followed — or when none is — which is recorded as `docs/BACKLOG.md` B67.
+### The conversation a run belongs to
+
+**Every run belongs to a conversation**, and most belong to one of their own. A run opened on its own
+is a thread of ONE named after itself; a follow-up question asked on the same connection CONTINUES
+the thread the previous run belonged to. The rail sends that run's id, the route derives the context
+server-side from its ledger, and the new run's header records the result as `thread`
+([`src/lib/agent/thread-context.ts`](../src/lib/agent/thread-context.ts)).
+
+**The thread is a linked list in which every node carries its own prefix.** A run's header holds the
+whole chain before it, so following the tail yields the conversation entire and nothing has to
+enumerate anything — which matters, because the store has no enumeration to offer. Two consequences
+follow directly. The chain is **single-connection by induction**, since every link verified the
+connection at its own open. And **threads fork harmlessly**: two tabs continuing the same run both
+produce a thread whose prefix is that run, so the conversation becomes a tree in which each branch is
+self-consistent, with no shared mutable state to conflict over.
+
+**What a run is handed has two halves, drawn from different places.** The **spine** is every step's
+objective, oldest first, and it comes off the header for free. The **evidence** is the most recent
+step's report, and it comes off the record the route already loaded. Older steps' reports are
+deliberately not carried: that would be one ledger read per step for the half the spine already
+supplies — and the spine is the half a later step actually lacks, because a transformation step
+("chart those", "export it") has an objective that is itself a pronoun, so the plain statement of
+intent lives further back.
+
+The block is fenced when the model reads it, so a pronoun or a demonstrative ("those groups", "it")
+either resolves against the conversation or is refused for lack of a referent rather than answered as
+if the question were new. The model is also told, outside the fence, that earlier steps list only what
+was ASKED and not what was found — without that sentence this design would create its own false
+impression, since a listed step reads as a step whose findings are in hand.
+
+**Nothing is truncated silently.** `AGENT_THREAD_CONTEXT_MAX_CHARS` (4000) bounds the block, the spine
+may take at most 75% of it so the newest report always has room, `AGENT_THREAD_MAX_STEPS` (20) bounds
+the chain, and a carried objective is capped at `AGENT_THREAD_STEP_OBJECTIVE_MAX_CHARS` (200). Each of
+those is stated in the text where it applies. The budget is additionally an optional per-model key in
+`AGENT_MODEL_TUNING_PATH`, because the value that is right depends on the model's context window —
+and **no measured value ships for it**, so the compiled default drives every model until an operator
+measures their own.
+
+**Continuing a conversation is an enhancement, never a precondition.** `previousRunId` is attached by
+the rail on its own, so a predecessor that cannot be reached must not take down the question the user
+did type: a shape error refuses, and every runtime condition DEGRADES — the run opens carrying no
+conversation, and the header records `declined` as `"unavailable"` (the run does not exist, is not
+this session's, is on another connection, has not ended, or names an id the ledger refuses),
+`"disabled"` (`LIBREDB_AGENT_THREAD_CONTEXT`) or `"error"` (an unreadable ledger). The value is
+persisted rather than answered once, so a reload still has the notice to show, and the rail says which
+happened rather than going quiet.
+
+**One limit stated rather than glossed:** a connection record repointed at another database keeps its
+id, so a conversation can carry reports about the old database into a run against the new one — the
+same class as the `seed:<id>` concern above, recorded as `docs/BACKLOG.md` B68. What is left of B67 is
+run history across threads.
 
 A run emits a closed set of **semantic events**, and they are the whole of what the UI renders:
 `run-started`, `driver-resolved`, `context-captured`, `statement-drafted`, `plan-statement-drafted`,
@@ -1915,7 +1958,7 @@ rendered, and the first Start is where the operator meets it (B30).
 | Route | Purpose |
 | --- | --- |
 | `GET /api/agent/config` | Whether this server runs agents, and if not, which condition failed: `{"enabled": true, "ledgerVerified": …}` or `{"enabled": false, "reason": …, "detail": "…"}`. The reason is one code per operator action — `OPERATOR_DISABLED`, `NO_MODEL_CONFIGURED`, `LEDGER_UNAVAILABLE`, `UNSANCTIONED_WORLD_TARGET`, `IMPLICIT_HOSTED_WORLD`. The last two are backend refusals and keep their own codes deliberately: neither is a disk problem, and `IMPLICIT_HOSTED_WORLD` fires before anything is asked of a filesystem at all. `ledgerVerified` distinguishes the two kinds of yes: `true` after the writable-path probe passed, `false` for the Postgres carve-out, where the backend is accepted without being contacted (B31). Session-verified. `enabled` is a literal boolean because the rail compares `=== true`. `reason` goes to every session — it names an operator action and no path — while `detail` goes to **admin sessions only**, because `LEDGER_UNAVAILABLE`'s detail carries an absolute server path and an OS error string; every other session gets one stable sentence instead, and loses nothing, since the rail renders nothing when the answer is no. Never 500s, and never names a key's value. The ledger half of the answer is memoised for a few seconds, in-flight promise included — the route sits outside the `ai` rate-limit bucket on purpose, so the memo is what stops an authenticated caller turning a page-load probe into a write per request, including a burst that arrives while one probe is still running. |
-| `POST /api/agent/runs` | Opens a run (mode, optional `workflowType`, objective, `connectionId`, and optional `previousRunId` to follow a run this session opened on the same connection) and returns `202` with the run id and the PERSISTED mode and workflow type. An unrecognised `workflowType` is refused rather than defaulted. An inline connection in the body is refused. A `previousRunId` that does not name a terminal run this session opened on this connection is refused `400`. An agent run whose model was established as unable to call tools is refused `422` before any run is opened. |
+| `POST /api/agent/runs` | Opens a run (mode, optional `workflowType`, objective, `connectionId`, and optional `previousRunId` to continue the conversation a run this session opened belongs to) and returns `202` with the run id, the PERSISTED mode and workflow type, and the `thread` the run actually belongs to. An unrecognised `workflowType` is refused rather than defaulted. An inline connection in the body is refused. A `previousRunId` that is not a non-empty string is refused `400`; one that cannot be reached does **not** refuse the start — the run opens with no conversation and `thread.declined` says so. An agent run whose model was established as unable to call tools is refused `422` before any run is opened. |
 | `GET /api/agent/runs/{runId}` | The run record, folded from its ledger. |
 | `DELETE /api/agent/runs/{runId}` | Requests a stop. Cancellation is enforced by the run loop's own persisted state, not by a driver cancel propagating — so this is "asked to stop", not "has stopped". |
 | `GET /api/agent/runs/{runId}/stream` | The ledger as NDJSON, one entry per line. |
@@ -2379,10 +2422,22 @@ surface (#407) — twenty-six runs over `docs/AGENT_DEMO.md`, which is also wher
 real-world agreement rate was measured. The count is deliberately not stated: entries leave this list
 as they are fixed, and a numeral here goes stale silently.
 
-- **B67** — the rail does not say whether a run follows another. A follow-up run is now TOLD about
-  the run before it — its objective and report, fenced, from that run's own ledger — but the surface
-  names neither the run it follows nor the cases where it deliberately does not, and there is still
-  no run history to return to an earlier run.
+- **B67** — there is no run history across conversations. The rail names the conversation a run
+  continues and lists its steps from the run's own header, but a user cannot see the conversations
+  they had yesterday or return to one: the store has no enumeration, there is no list route, and
+  pagination and retention have not been decided.
+- **B68** — a connection record repointed at another database keeps its id, so a conversation can
+  carry reports established against the old database into a run reading the new one. The same class
+  as B23, and it fails the same way: nothing is refused and nothing looks wrong.
+- **B69** — a reload ends a conversation and the rail does not say so before the next question. The
+  result is honest (no thread, no strip); the transition is silent.
+- **B70** — a run writes no summary for the step after it. The conversation carries the previous
+  step's claims verbatim and truncates at a claim boundary; a model-written `carryForward` sentence
+  was considered and declined, because a claim is evidence and a summary is a lossy compression of
+  it.
+- **B71** — `@ai-sdk/workflow`'s `WorkflowAgent` offers the durability this repository implements by
+  hand, and is not used: it requires the workflow runtime's programming model, which would bind the
+  agent to a hosting runtime this product deliberately does not depend on.
 - **B37** — a seed config the server cannot read disables the agent on every connection, and the rail
   blames the connection: "its settings live in this browser", said of a connection this application
   seeds itself. The browser cannot tell an empty seed list from a failed one.

@@ -986,7 +986,7 @@ Opens a run and returns immediately; the drive happens in the background.
 | `workflowReading` | string | No | How that decision WENT, as against who made it: `"classified"` (a classifier named this workflow), `"unclassified"` (a classifier was asked and reached its fallback) or `"unrecorded"` (nothing classified anything — what a caller naming its own workflow sends). Absent means `"unrecorded"`. An unrecognised value is **refused, not defaulted**, for the reason `workflowSource` is: the surface reads this field back to choose which of three sentences it says about the run, and a fallback presented as a verdict is the one it may not say |
 | `objective` | string | Yes | Non-empty, at most 4000 characters |
 | `connectionId` | string | Yes | Must resolve **server-side**. An inline `connection` object in the body is refused |
-| `previousRunId` | string | No | Follow a run this session already opened: the server derives that run's objective and report from its own ledger, verifies the run belongs to this session, on this connection, and has already ended, and persists the result as fenced `priorContext` on the new run's header. A value that does not name such a run is **refused** with the same `400` as a missing run |
+| `previousRunId` | string | No | Continue the **conversation** a run this session opened belongs to. The server derives the earlier steps' objectives and the most recent step's report from those runs' own ledgers, verifies the named run belongs to this session, is on this connection and has ended, and persists the result as `thread` on the new run's header. A run it cannot reach **does not refuse the start**: the run opens carrying no conversation and the response says so through `thread.declined`. Only a value that is not a non-empty string is refused, with `400` — that is a malformed request rather than a runtime condition |
 
 **Response (202 Accepted):**
 
@@ -1013,7 +1013,7 @@ could arrive twice.
 // 400 Bad Request — one message per rule, e.g.
 { "error": "mode must be \"planning\" or \"agent\"" }
 { "error": "An agent run needs a server-resolvable connectionId; an inline connection cannot be resumed" }
-{ "error": "previousRunId does not name a run this session may follow" }
+{ "error": "previousRunId must be a non-empty string when provided" }
 
 // 404 Not Found — this server runs no agents
 { "error": "The agent runtime is not enabled on this server" }

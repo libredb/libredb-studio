@@ -31,6 +31,7 @@
  * honest treatment of a model nobody has measured.
  */
 
+import { AGENT_THREAD_CONTEXT_MAX_CHARS } from "../execution-policy";
 import { activeTuning } from "../model-tuning";
 import type { AgentRunWorkflowType } from "../types";
 import {
@@ -146,6 +147,19 @@ export function suppressesPlanReasoning(modelId: string): boolean {
  */
 export function turnTimeoutMsFor(modelId: string): number | undefined {
   return resolve(modelId, "turnTimeoutMs");
+}
+
+/**
+ * How much of a CONVERSATION this model may be handed, in characters.
+ *
+ * Falls back to the compiled budget, which is what drives every model today: nothing
+ * measured ships for this setting, because nobody has measured one. It is per-model
+ * rather than per-server because the value that is right is a function of the context
+ * window, and this product runs a hosted 200k-window model and a small local one under
+ * the same code.
+ */
+export function threadContextMaxCharsFor(modelId: string): number {
+  return resolve(modelId, "threadContextMaxChars") ?? AGENT_THREAD_CONTEXT_MAX_CHARS;
 }
 
 /**

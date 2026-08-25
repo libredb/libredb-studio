@@ -89,6 +89,20 @@ const settingsShape = {
   refusalExamples: z.boolean(),
   /** Absent means the product's own limit, which the environment can still move. */
   turnTimeoutMs: z.int().min(1_000).max(179_999).optional(),
+  /**
+   * Absent means the product's own conversation budget.
+   *
+   * It lives here rather than in an environment variable because the value that is
+   * right depends on the MODEL's context window: what a hosted 200k-window model can
+   * carry is not what a small local one can, and this product runs both. NOTHING
+   * measured ships for it — no entry in `measured-profiles.json` names it, because
+   * nobody has measured one — so the compiled default drives every model until an
+   * operator measures their own, which is exactly what this document is for.
+   *
+   * Bounded on both sides: below 200 the spine could not name one step, and above
+   * 32 000 the header this is persisted on stops being a header.
+   */
+  threadContextMaxChars: z.int().min(200).max(32_000).optional(),
   /** One surface at a time; `partialRecord` because naming one must not require naming five. */
   perWorkflow: z.partialRecord(z.enum(WORKFLOWS), samplingSchema).optional(),
 } as const;
@@ -305,8 +319,8 @@ function differsFromDefaults(settings: StatedSettings, defaults: Partial<Recorde
     const stated = settings[name];
     // Absent is not an override: it resolves to the compiled default, which needs no argument.
     if (stated === undefined) continue;
-    // These two have no recorded default: stating either at all is a decision, so both argue.
-    if (name === "turnTimeoutMs" || name === "perWorkflow") {
+    // These have no recorded default: stating any of them at all is a decision, so each argues.
+    if (name === "turnTimeoutMs" || name === "perWorkflow" || name === "threadContextMaxChars") {
       changed.push(name);
       continue;
     }

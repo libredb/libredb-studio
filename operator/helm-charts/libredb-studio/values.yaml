@@ -165,6 +165,19 @@ agent:
   # --set-string is needed.
   enabled: null
 
+  # -- Whether a run may be told about the CONVERSATION it belongs to. Leave unset
+  # (the default) and the chart writes nothing, so the runtime keeps its own default,
+  # which is on. `false` writes LIBREDB_AGENT_THREAD_CONTEXT=false: every run then
+  # opens on its own, and the rail says so rather than going quiet.
+  #
+  # A follow-up asked on the same connection otherwise continues the previous run's
+  # conversation - the earlier steps' objectives and the most recent step's report are
+  # derived server-side from those runs' own ledgers and handed to the model fenced.
+  # Set this where no question's context may reach another. The user already has the
+  # equivalent control (the rail names the conversation and offers to leave it); this
+  # is for when the choice may not be theirs.
+  threadContext: null
+
   # -- Measured per-model settings, layered over the ones the image ships with.
   #
   # The image carries a document recording what specific models were measured under -

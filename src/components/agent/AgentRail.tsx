@@ -758,6 +758,23 @@ export function AgentRail({
   const [replaceFailed, setReplaceFailed] = useState(false);
   /** Whether the way out of an inferred workflow is currently unfolded. */
   const [changeOpen, setChangeOpen] = useState(false);
+  /**
+   * The user has asked for the NEXT question to start a conversation of its own.
+   *
+   * It takes effect on a start that has not happened yet, so it gets a visible state
+   * line of its own: a control whose effect is delayed owes one, or the user cannot
+   * tell the click landed. `agent-change-failed` records the same lesson one control
+   * along. Cleared by the start it applied to.
+   */
+  const [startFresh, setStartFresh] = useState(false);
+  /**
+   * The last start dropped a conversation because the connection had moved.
+   *
+   * The rail's own sentence rather than the server's: it is a deliberate, correct
+   * behaviour and the rail is the layer that knows it happened, while the server's
+   * `declined` collapses five causes it may not tell apart.
+   */
+  const [connectionDropped, setConnectionDropped] = useState(false);
   /** An ask that arrived while the user was typing, waiting for them to take it. */
   const [offeredObjective, setOfferedObjective] = useState<string | null>(null);
   const run = useAgentRun();
@@ -991,6 +1008,10 @@ export function AgentRail({
    * below.
    */
   const openedOn = useRef<{ readonly id: string; readonly name: string | null } | null>(null);
+  // Read off the run rather than held here: the thread has one writer and it is the
+  // route, so what the strip renders is what was recorded on the run.
+  const threadSteps = run.thread?.steps ?? [];
+  const threadDeclined = run.thread?.declined;
 
   /**
    * The objective the OPEN run was opened with.
@@ -1053,16 +1074,32 @@ export function AgentRail({
       return;
     }
     setReplaceFailed(false);
-    // A follow-up question follows the run that just ended — and only that one: the
-    // previous run must be terminal, opened on the same connection, and not the run a
-    // "change" click is replacing. The id travels to the route, which re-derives the
-    // context from that run's own ledger rather than trusting anything here
-    // (`docs/BACKLOG.md` B36).
-    const followsPrevious =
-      !decided.replacesOpenRun &&
-      run.runId !== null &&
-      !LIVE_STATUSES.has(run.timeline.status) &&
-      openedOn.current?.id === decided.connection.id;
+    /*
+      Which run's CONVERSATION this one continues.
+
+      An ordinary follow-up continues the run that just ended. A REPLACEMENT continues
+      what the run it replaces continued — not that run, which is being thrown away:
+      `run.thread.steps` last entry IS that predecessor, and it comes off the server's
+      own record rather than off anything the browser inferred, because the thread has
+      one writer.
+
+      The id travels to the route, which re-derives the conversation from those runs'
+      own ledgers rather than trusting anything here.
+    */
+    const continueTarget = decided.replacesOpenRun
+      ? run.thread?.steps.at(-1)?.runId
+      : run.runId !== null && !LIVE_STATUSES.has(run.timeline.status)
+        ? run.runId
+        : undefined;
+    // Two reasons the rail withholds an id it has, and it OWNS both sentences: the
+    // server's own refusal collapses five causes it must not tell apart, while these
+    // two are deliberate and specific, so saying "could not be reached" of either
+    // would blame a failure for a choice.
+    const connectionHeld = openedOn.current?.id === decided.connection.id;
+    const droppedForConnection = continueTarget !== undefined && !connectionHeld;
+    const previousRunId = startFresh || !connectionHeld ? undefined : continueTarget;
+    setConnectionDropped(droppedForConnection);
+    setStartFresh(false);
     openedOn.current = { id: decided.connection.id, name: decided.connection.name };
     setOpenedObjective(decided.objective);
     /*
@@ -1097,7 +1134,7 @@ export function AgentRail({
       connectionId: decided.connection.id,
       // Sent only when this run genuinely continues the last one; the route refuses
       // anything else, and nothing later may change which run this one was told about.
-      ...(followsPrevious && run.runId !== null ? { previousRunId: run.runId } : {}),
+      ...(previousRunId === undefined ? {} : { previousRunId }),
     });
   };
 
@@ -2111,6 +2148,68 @@ export function AgentRail({
           That is the one thing this affordance may not do, and it is why the field is on
           the record now (#407 review).
         */}
+        {/*
+          What conversation this run belongs to, and the way out of it.
+
+          Rendered only when there is something to say — steps to list, a decline to
+          report, or a connection change to explain. A first question has none of
+          those, and a strip that said "this question started on its own" over every
+          first question would be noise standing where a real notice has to be read.
+
+          The three sentences come from three different knowers, and each says only
+          what it knows: the rail owns the connection change (deliberate, and it is the
+          layer that saw it), the server owns `declined` (five causes it may not tell
+          apart), and the step list is the run's own header.
+        */}
+        {(threadSteps.length > 0 || threadDeclined !== undefined || connectionDropped) && (
+          <div data-testid="agent-thread" className="mt-2 text-[0.625rem] text-fg-muted">
+            {threadSteps.length > 0 && (
+              <>
+                <p>
+                  {`Conversation: ${threadSteps.length} step${threadSteps.length === 1 ? "" : "s"} before this one`}
+                  <button
+                    type="button"
+                    data-testid="agent-thread-new"
+                    onClick={() => setStartFresh(true)}
+                    className="ml-1 px-1 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-fill transition-colors"
+                  >
+                    new conversation
+                  </button>
+                </p>
+                <ol data-testid="agent-thread-steps" className="mt-1 space-y-0.5">
+                  {threadSteps.map((step, index) => (
+                    <li key={step.runId} className="flex gap-1">
+                      <span className="text-fg-subtle">{index + 1}.</span>
+                      <span className="break-words">{step.objective}</span>
+                      <span className="ml-auto font-mono text-fg-subtle truncate">{step.runId}</span>
+                    </li>
+                  ))}
+                </ol>
+              </>
+            )}
+            {startFresh && (
+              <p data-testid="agent-thread-fresh-pending" className="mt-1 text-blue-300/90">
+                Your next question will start a new conversation.
+                <button
+                  type="button"
+                  onClick={() => setStartFresh(false)}
+                  className="ml-1 px-1 py-0.5 rounded text-[0.625rem] text-blue-300 hover:bg-fill transition-colors"
+                >
+                  keep it
+                </button>
+              </p>
+            )}
+            {(threadDeclined !== undefined || connectionDropped) && (
+              <p data-testid="agent-thread-notice" className="mt-1 text-amber-400/80">
+                {connectionDropped
+                  ? "Connection changed, so this question started a new conversation."
+                  : threadDeclined === "disabled"
+                    ? "Conversation context is switched off on this server, so every question starts on its own."
+                    : "The earlier step could not be reached, so this question started on its own."}
+              </p>
+            )}
+          </div>
+        )}
         {run.runId !== null && run.timeline.workflowSource === "inferred" && (
           <div data-testid="agent-opened-as" className="mt-2 text-[0.625rem] text-fg-muted">
             <p>

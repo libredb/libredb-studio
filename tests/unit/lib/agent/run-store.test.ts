@@ -126,22 +126,38 @@ describe("AgentRunStore — opening a run", () => {
     });
   });
 
-  test("persists the prior-run context in the header, so a resumed drive is told the same thing", async () => {
+  test("persists the conversation in the header, so a resumed drive is told the same thing", async () => {
     const { store } = storeAt();
-    const prior = { runId: "arun_prev", objective: "Compare salaries", report: "Claim 1: 41k" };
+    const thread = {
+      threadId: "arun_prev",
+      steps: [{ runId: "arun_prev", objective: "Compare salaries" }],
+      text: "Step 1: Compare salaries\nClaim 1: 41k",
+    };
 
-    const record = await store.openRun({ ...OPEN_INPUT, priorContext: prior });
+    const record = await store.openRun({ ...OPEN_INPUT, thread });
 
-    expect(record.priorContext).toEqual(prior);
-    expect((await store.read(record.runId))?.record.priorContext).toEqual(prior);
+    expect(record.thread).toEqual(thread);
+    expect((await store.read(record.runId))?.record.thread).toEqual(thread);
   });
 
-  test("leaves priorContext absent when no predecessor was given, so an old ledger and a fresh one stay the same bytes", async () => {
+  test("a declined conversation round-trips, so a reload still has the notice to show", async () => {
+    const { store } = storeAt();
+    const thread = { threadId: "arun_gone", steps: [], text: "", declined: "unavailable" as const };
+
+    const record = await store.openRun({ ...OPEN_INPUT, thread });
+
+    expect((await store.read(record.runId))?.record.thread.declined).toBe("unavailable");
+  });
+
+  test("a run that continues nothing folds to a thread of one named after itself", async () => {
     const { store } = storeAt();
 
     const record = await store.openRun(OPEN_INPUT);
 
-    expect(record.priorContext).toBeUndefined();
+    // The same answer a header written before the field existed folds to, which is
+    // what makes the compatibility story and the ordinary case one code path.
+    expect(record.thread).toEqual({ threadId: record.runId, steps: [], text: "" });
+    expect((await store.read(record.runId))?.record.thread.threadId).toBe(record.runId);
   });
 
   test("accepts a caller-supplied run id, so a workflow run and its ledger can share one identity", async () => {

@@ -8,7 +8,9 @@ import {
   planStatementRetriesFor,
   reportReminderLimitFor,
   samplingFor,
+  threadContextMaxCharsFor,
 } from "@/lib/agent/models";
+import { AGENT_THREAD_CONTEXT_MAX_CHARS } from "@/lib/agent/execution-policy";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 
 /**
@@ -154,6 +156,24 @@ describe("sampling is decided per model, defaulting to deterministic", () => {
     expect(turnTimeoutMsFor("qwen3.5:9b")).toBe(150_000);
     expect(turnTimeoutMsFor("qwen3:8b")).toBeUndefined();
     expect(turnTimeoutMsFor("some-model-released-tomorrow:70b")).toBeUndefined();
+  });
+
+  test("no shipped profile sizes the conversation, because nobody has measured one", () => {
+    /*
+      The one setting in this directory that carries NO measurement, and the assertion
+      is about that rather than about a number. It exists so an operator who has
+      measured their own model can size the conversation it is handed — the value
+      depends on the context window, and this product runs a hosted 200k model and a
+      small local one under the same code — and shipping a value nobody measured would
+      make this document claim something it does not have.
+
+      Every model therefore resolves to the compiled budget, including the ten that ARE
+      measured for everything else.
+    */
+    for (const modelId of Object.keys(modelProfiles())) {
+      expect(threadContextMaxCharsFor(modelId)).toBe(AGENT_THREAD_CONTEXT_MAX_CHARS);
+    }
+    expect(threadContextMaxCharsFor("some-model-released-tomorrow:70b")).toBe(AGENT_THREAD_CONTEXT_MAX_CHARS);
   });
 
   test("the model measured answering nothing at all, and nobody else", () => {

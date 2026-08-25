@@ -14,6 +14,40 @@ used, case 19 opens as the wrong workflow, case 20's ending is not the one this 
 and case 22 cannot be performed at all. They are written down as they are. A script that only
 records the improvements is not a measurement.
 
+### Conversations, driven 2026-08-26
+
+Six runs through a browser against a production build, `gemini-3.5-flash-lite` and the seeded
+dvdrental on PostgreSQL 18, read as the least-privilege `libredb_agent` role. Verified against the
+run ledgers in `.workflow-data` rather than off the screen.
+
+The shape driven is the one the design is weakest at — a **transformation step in the middle**, whose
+own objective is a pronoun and whose report might carry nothing forward:
+
+1. *"count my films by category"* — answered: 16 categories, Sports highest at 74, Music lowest at 51.
+2. *"chart those"* — resolved, and re-ran the full `category`/`film_category` aggregate to chart it.
+3. *"show the highest rental rate among those"* — **resolved to films.** It read the grouping too: it
+   drafted `SELECT c.name AS category, MAX(f.rental_rate) … JOIN film_category …` before settling on
+   the simpler `SELECT MAX(rental_rate) FROM film`, and answered 4.99.
+
+Step 3 is the one worth reading twice. Its own predecessor's objective is *"chart those"* — a dangling
+pronoun — so a pairwise chain would have handed it nothing to resolve against. What reached it was the
+**spine**: both earlier objectives, in order, off the header.
+
+Recorded as it happened rather than as it flatters: step 3 resolved the referent and read the
+category framing, and then presented the ungrouped maximum rather than the per-category one it had
+also drafted. The conversation reached the model; which of two correct readings it chose to present
+is a question about the model, not about the transport.
+
+**Control arm**, driven with that three-step conversation still attached: *"how many customers are
+there in each country?"* — answered about customers and countries in one statement, with no film or
+category framing anywhere in it and no refusal for a referent it did not need. Both confusion modes
+the design worried about — contamination, and refusing an answerable question — were absent here.
+
+**The two controls were exercised too.** Switching connection between runs produced the rail's own
+sentence (*"Connection changed, so this question started a new conversation"*) rather than the
+server's decline; and **new conversation** left the next run's header with no `thread` key at all —
+the run wrote nothing, which is the same bytes a run written before conversations existed carries.
+
 ## What works on which engine
 
 Driven live on 2026-08-15 and 2026-08-17, one engine at a time, against real servers. **Verified**
@@ -769,6 +803,7 @@ would close it, so "not yet" means deferred with a reason, not overlooked.
 | Not yet | What happens today | Waiting on |
 | --- | --- | --- |
 | **A verdict that fits an optimization run** | Every Optimize run ends `unanswered`, however good its plans and index recommendation were | B45 — a plan artifact is not an empty result, the same exemption the Operate template already has |
+| **Returning to an earlier conversation** | A follow-up asked on the same connection continues the previous run's conversation, and the rail names the steps it is continuing — but only for the conversation you are in. Yesterday's conversations cannot be listed or reopened, and a page reload starts a new one without saying so | B67 — run history across conversations needs store enumeration, a list route and a retention rule, none of which exist. B69 for the reload |
 | **Causal questions** — "why are sales down?" | Answered from the schema alone, which cannot know which decomposition of a metric is the business one | A per-connection business note, held server-side; sketched in `docs/AGENT_ANALYST_DESIGN.md` §5 |
 | **"This database cannot answer that"** | It does say so, but has to run a throwaway query to be scored as having answered — case 21 spends 5 tool invocations to report that an employees database holds no customer data | B39 — a second arm on the verdict, so a schema-only conclusion counts |
 | **Agent mode on MySQL, Oracle, MongoDB, Redis…** | Only Operate. The other four workflows refuse, correctly and clearly | A database-native read-only statement path per engine — the same `queryReadOnly` PostgreSQL and SQLite implement |

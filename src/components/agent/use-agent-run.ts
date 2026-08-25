@@ -10,6 +10,7 @@ import type {
   AgentRunWorkflowReading,
   AgentRunWorkflowSource,
   AgentRunWorkflowType,
+  AgentThreadContext,
 } from "@/lib/agent/types";
 import { foldLedgerEntries, parseLedgerLine, type AgentRunTimeline } from "./timeline";
 
@@ -70,10 +71,12 @@ export interface AgentRunStartInput {
    */
   readonly autoExecute?: boolean;
   /**
-   * The run this one follows, when the user is asking a follow-up question. A request,
-   * like the fields above: the server DERIVES the context from that run's own ledger and
-   * persists it on the new run's record, so nothing the browser remembers later is
-   * trusted into the prompt (`docs/BACKLOG.md` B36).
+   * The run whose CONVERSATION this one continues, when the user asks a follow-up.
+   *
+   * A request, like the fields above, and a weaker one than they are: the server
+   * derives the conversation from that run's own ledger and persists it, so nothing
+   * the browser remembers is trusted into the prompt — and a run it cannot reach opens
+   * anyway, carrying no conversation and saying so. Naming it never risks the question.
    */
   readonly previousRunId?: string;
   readonly objective: string;
@@ -83,6 +86,12 @@ export interface AgentRunStartInput {
 export interface AgentRunFollower {
   /** Set once the server has opened a run; null before the first start. */
   readonly runId: string | null;
+  /**
+   * The conversation the server said this run belongs to, or null before the first
+   * start. What the rail renders comes from here rather than from anything it
+   * inferred: the thread has one writer, and it is the route.
+   */
+  readonly thread: AgentThreadContext | null;
   /** A start is in flight, or its ledger is still open. */
   readonly isBusy: boolean;
   /**
@@ -128,6 +137,36 @@ interface StartResponse {
   readonly error?: unknown;
   readonly missing?: unknown;
   readonly disproved?: unknown;
+  readonly thread?: unknown;
+}
+
+/**
+ * The conversation the SERVER says this run belongs to.
+ *
+ * Read off the start response rather than assembled here, because the thread has one
+ * writer and it is the route: what the rail renders — the steps, and whether
+ * continuing one was declined — has to be what was actually recorded on the run,
+ * never what the browser asked for.
+ */
+function readThread(value: unknown): AgentThreadContext | null {
+  if (typeof value !== "object" || value === null) return null;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.threadId !== "string" || typeof candidate.text !== "string") return null;
+  if (!Array.isArray(candidate.steps)) return null;
+  const steps = candidate.steps.filter(
+    (step): step is { runId: string; objective: string } =>
+      typeof step === "object" &&
+      step !== null &&
+      typeof (step as Record<string, unknown>).runId === "string" &&
+      typeof (step as Record<string, unknown>).objective === "string",
+  );
+  const declined = candidate.declined;
+  return {
+    threadId: candidate.threadId,
+    steps,
+    text: candidate.text,
+    ...(declined === "unavailable" || declined === "disabled" || declined === "error" ? { declined } : {}),
+  };
 }
 
 /**
@@ -197,6 +236,7 @@ function messageFor(error: unknown): string {
 
 export function useAgentRun(): AgentRunFollower {
   const [runId, setRunId] = useState<string | null>(null);
+  const [thread, setThread] = useState<AgentThreadContext | null>(null);
   const [entries, setEntries] = useState<readonly AgentLedgerEntry[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
@@ -265,6 +305,7 @@ export function useAgentRun(): AgentRunFollower {
       setRunId(null);
 
       let openedRunId: string;
+      let openedThread: AgentThreadContext | null = null;
       try {
         const res = await fetch("/api/agent/runs", {
           method: "POST",
@@ -294,6 +335,7 @@ export function useAgentRun(): AgentRunFollower {
           throw new Error("The server opened a run without naming it");
         }
         openedRunId = body.runId;
+        openedThread = readThread(body.thread);
       } catch (startError) {
         if (!controller.signal.aborted) {
           if (startError instanceof ModelRefusedError) setRefusal(startError.refusal);
@@ -304,6 +346,7 @@ export function useAgentRun(): AgentRunFollower {
       }
 
       setRunId(openedRunId);
+      setThread(openedThread);
 
       try {
         await follow(openedRunId, controller.signal);
@@ -369,5 +412,5 @@ export function useAgentRun(): AgentRunFollower {
   */
   const timeline = useMemo(() => foldLedgerEntries(entries), [entries]);
 
-  return { runId, isBusy, isStopping, timeline, error, refusal, start, cancel };
+  return { runId, thread, isBusy, isStopping, timeline, error, refusal, start, cancel };
 }

@@ -53,6 +53,9 @@ import { AGENT_MODEL_TURN_TIMEOUT_MS, AGENT_WORKFLOW_BUDGETS } from "./execution
  */
 export const AGENT_ENABLED_ENV = "LIBREDB_AGENT_ENABLED";
 
+/** The off-switch for conversation context; see `isThreadContextEnabled`. */
+export const AGENT_THREAD_CONTEXT_ENV = "LIBREDB_AGENT_THREAD_CONTEXT";
+
 /**
  * Durable-execution backend selector. The name is the workflow runtime's own
  * variable — this module validates it rather than introducing a second one, so
@@ -283,6 +286,33 @@ function readAgentEnableFlag(): "off" | "auto" {
  * synchronous and issue no request — the network check is a separate, cached
  * concern on the start path (`capability-gate.ts`).
  */
+const unrecognizedThreadFlagMessage = (raw: string): string =>
+  `LibreDB Studio: unrecognized ${AGENT_THREAD_CONTEXT_ENV} value "${raw}"; it is ignored and conversation context stays on (use "false" to switch it off)`;
+
+/**
+ * Whether a run may be told about the conversation it belongs to.
+ *
+ * Default ON with an explicit off-switch, shaped exactly like `LIBREDB_AGENT_ENABLED`
+ * and for the same two-sided reason: a typo must not silently take a working surface
+ * away, and it must not silently turn one on either. Landing on the default satisfies
+ * both, and the warning is what makes the typo visible.
+ *
+ * Switched off, a run still OPENS — with no conversation, and the rail says so. The
+ * setting decides what a run may be told, never whether a question may be asked; and
+ * an operator who switches something off must not then hear silence, which is why
+ * `GET /api/agent/config` reports it.
+ */
+export function isThreadContextEnabled(): boolean {
+  const raw = process.env[AGENT_THREAD_CONTEXT_ENV];
+  if (!raw) return true;
+
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "") return true;
+  if (NEGATIVE_VALUES.has(normalized)) return false;
+  if (!AFFIRMATIVE_VALUES.has(normalized)) console.warn(unrecognizedThreadFlagMessage(raw));
+  return true;
+}
+
 function availabilityWithoutIO(): AgentAvailability {
   if (readAgentEnableFlag() === "off") {
     return { available: false, reason: "OPERATOR_DISABLED", detail: operatorDisabledMessage() };

@@ -236,6 +236,13 @@ spec:
             - name: LIBREDB_AGENT_ENABLED
               value: {{ get .Values.agent "enabled" | quote }}
             {{- end }}
+            {{- /* The conversation off-switch, on the same rule as the flag above: unset
+                   writes nothing and the app keeps its own default, which is on. Quoted for
+                   the same reason, and written before extraEnv for the same reason. */}}
+            {{- if not (kindIs "invalid" (get .Values.agent "threadContext")) }}
+            - name: LIBREDB_AGENT_THREAD_CONTEXT
+              value: {{ get .Values.agent "threadContext" | quote }}
+            {{- end }}
             {{- /* Where the mounted tuning document lands. Its own directory rather than
                    /app/config, which the seed ConfigMap already claims: a second volume at
                    the same mountPath would hide the first. Written before extraEnv so an

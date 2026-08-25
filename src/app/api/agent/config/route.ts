@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveAgentAvailability } from "@/lib/agent/config";
+import { isThreadContextEnabled, resolveAgentAvailability } from "@/lib/agent/config";
 import { operatorTuningStatus } from "@/lib/agent/model-tuning";
 import { getSession } from "@/lib/auth";
 
@@ -99,7 +99,17 @@ export async function GET() {
   */
   const modelTuning = isAdmin ? { modelTuning: operatorTuningStatus() } : {};
   if (availability.available) {
-    return NextResponse.json({ enabled: true, ledgerVerified: availability.ledgerVerified, ...modelTuning });
+    // Reported to EVERY session, not just an admin one, because the rail renders a
+    // sentence from it: a user who asks a follow-up on a server where conversation
+    // context is switched off has to be told that, rather than left to infer it from
+    // an answer that does not resolve. It names an operator setting and no path, which
+    // is the same line `reason` is on.
+    return NextResponse.json({
+      enabled: true,
+      ledgerVerified: availability.ledgerVerified,
+      threadContext: isThreadContextEnabled(),
+      ...modelTuning,
+    });
   }
 
   const detail = isAdmin ? availability.detail : WITHHELD_DETAIL;

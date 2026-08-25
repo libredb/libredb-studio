@@ -53,7 +53,7 @@ interface FakeRun {
   connectionId: string;
   objective: string;
   events: unknown[];
-  priorContext?: { runId: string; objective: string; report: string };
+  thread: { threadId: string; steps: { runId: string; objective: string }[]; text: string; declined?: string };
 }
 
 function fakeRun(overrides: Partial<FakeRun> = {}): FakeRun {
@@ -77,6 +77,10 @@ function fakeRun(overrides: Partial<FakeRun> = {}): FakeRun {
     connectionId: "seed:sales",
     objective: "why is checkout slow",
     events: [],
+    // What the FOLD gives every run, so a fixture cannot be a shape the store
+    // never produces: a run whose thread was not recorded is a thread of one
+    // named after itself.
+    thread: { threadId: overrides.runId ?? "arun_1", steps: [], text: "" },
     ...overrides,
   };
 }
@@ -93,7 +97,7 @@ const mockStart = mock(
     actor: FakeRun["actor"];
     connectionId: string;
     objective: string;
-    priorContext?: { runId: string; objective: string; report: string };
+    thread?: { threadId: string; steps: { runId: string; objective: string }[]; text: string; declined?: string };
   }) => {
     const record = fakeRun({ ...input, runId: "arun_new" });
     runs.set(record.runId, record);
@@ -191,12 +195,12 @@ afterEach(() => {
 
 describe("POST /api/agent/runs", () => {
   /*
-    A follow-up run is opened with the previous run's objective and report derived
-    SERVER-SIDE from that run's own ledger (`docs/BACKLOG.md` B36). The request only
-    names the run; the route resolves it, checks it is the caller's, and persists the
-    derived context on the new run's record.
+    A run may CONTINUE a conversation, and the context is derived SERVER-SIDE from the
+    predecessor's own ledger. The request only names the run; the route resolves it,
+    checks it is the caller's, on this connection and ended, and persists what it
+    derived on the new run's record.
   */
-  test("a follow-up run is opened with the previous run's objective and report", async () => {
+  test("a run that continues a conversation carries its steps and the derived text", async () => {
     runs.set(
       "arun_1",
       fakeRun({
@@ -215,89 +219,114 @@ describe("POST /api/agent/runs", () => {
 
     expect(res.status).toBe(202);
     expect(mockStart.mock.calls.at(-1)?.[0]).toMatchObject({
-      priorContext: { runId: "arun_1", objective: "why is checkout slow", report: "Claim 1: A fact" },
+      thread: { threadId: "arun_1", steps: [{ runId: "arun_1", objective: "why is checkout slow" }] },
     });
+    expect(mockStart.mock.calls.at(-1)?.[0].thread?.text).toContain("Claim 1: A fact");
   });
 
-  test("a run that is not a follow-up carries no prior-run context", async () => {
+  test("a run that starts its own conversation writes no thread, so its ledger is the bytes it always was", async () => {
     const res = await POST(startRequest(VALID_BODY));
 
     expect(res.status).toBe(202);
-    expect(mockStart.mock.calls.at(-1)?.[0].priorContext).toBeUndefined();
+    expect(mockStart.mock.calls.at(-1)?.[0].thread).toBeUndefined();
   });
 
-  test("a previousRunId naming no run is refused before a run opens", async () => {
-    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_missing" }));
+  /*
+    Every RUNTIME condition below degrades rather than refusing, and that is the rule
+    this block exists to pin: `previousRunId` is attached by the rail on its own — the
+    user never typed it — so a conversation that cannot be reached must not take down
+    the question they DID type. The run opens, carries no conversation, and says so.
 
-    expect(res.status).toBe(400);
-    expect(await parseResponseJSON(res)).toMatchObject({
-      error: "previousRunId does not name a run this session may follow",
-    });
-  });
+    Nothing is leaked that refusing did not leak: the same reasons collapsed into one
+    refusal before and collapse into one `declined` now.
+  */
+  test.each([
+    ["naming no run", () => "arun_missing"],
+    [
+      "naming another session's run",
+      () => {
+        runs.set("arun_other", fakeRun({ actor: { sessionId: "grace", role: "user" }, status: "succeeded" }));
+        return "arun_other";
+      },
+    ],
+    [
+      "naming a run on another connection",
+      () => {
+        runs.set("arun_elsewhere", fakeRun({ connectionId: "seed:analytics", status: "succeeded" }));
+        return "arun_elsewhere";
+      },
+    ],
+    [
+      "naming a run that has not ended",
+      () => {
+        runs.set("arun_running", fakeRun({ status: "running" }));
+        return "arun_running";
+      },
+    ],
+  ])(
+    "a previousRunId %s opens the run anyway and records that the conversation was not reached",
+    async (_case, arrange) => {
+      const previousRunId = arrange();
 
-  test("a previousRunId naming another session's run is refused the same way", async () => {
-    runs.set("arun_other", fakeRun({ actor: { sessionId: "grace", role: "user" }, status: "succeeded" }));
-    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_other" }));
+      const res = await POST(startRequest({ ...VALID_BODY, previousRunId }));
 
-    expect(res.status).toBe(400);
-    expect(await parseResponseJSON(res)).toMatchObject({
-      error: "previousRunId does not name a run this session may follow",
-    });
-  });
+      expect(res.status).toBe(202);
+      expect(mockStart.mock.calls.at(-1)?.[0].thread).toMatchObject({ steps: [], text: "", declined: "unavailable" });
+    },
+  );
 
-  test("a previousRunId that is not a non-empty string is refused", async () => {
+  test("a previousRunId that is not a non-empty string is still refused: that is a client bug", async () => {
     const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "" }));
 
     expect(res.status).toBe(400);
   });
 
-  test("a previousRunId the ledger cannot name is refused, not answered as a server error", async () => {
-    // The store refuses an id outside AGENT_RUN_ID_PATTERN before touching anything;
-    // the route has to give that refusal the same 400 as a missing run, because a
-    // caller guessing ids must not be able to tell "malformed" apart from "not yours".
+  test("a previousRunId the ledger cannot name opens the run anyway", async () => {
+    // The store refuses an id outside AGENT_RUN_ID_PATTERN before touching anything.
+    // It joins the same `unavailable`, because a caller guessing ids must not be able
+    // to tell "malformed" apart from "not yours" — and it does not stop the run.
     mockStatus.mockImplementationOnce(async () => {
       throw new AgentRunStoreError("INVALID_RUN_ID", 'agent run id "arun-1" is not usable as a ledger name');
     });
 
     const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun-1" }));
 
-    expect(res.status).toBe(400);
-    expect(await parseResponseJSON(res)).toMatchObject({
-      error: "previousRunId does not name a run this session may follow",
-    });
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls.at(-1)?.[0].thread).toMatchObject({ declined: "unavailable" });
   });
 
-  test("a previousRunId the ledger cannot read is a server error, not a follow-up refusal", async () => {
-    // A store failure that is NOT a malformed id — the ledger itself unreachable — is
-    // not something the caller can fix by naming another run, so it is not folded into
-    // the follow-up refusal; it surfaces as the unhandled error the store reported.
+  test("an unreadable ledger is recorded as an error rather than as a refusal, and still opens the run", async () => {
+    // Not something the caller can fix by naming another run, and it says nothing about
+    // the id they sent — so it is recorded apart. Recorded rather than logged, because a
+    // fail-open decision has to carry its reason as data.
     mockStatus.mockImplementationOnce(async () => {
       throw new Error("ledger unavailable");
     });
 
     const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_1" }));
 
-    expect(res.status).toBe(500);
-    expect(await parseResponseJSON(res)).toMatchObject({
-      error: "ledger unavailable",
-      statusCode: 500,
-    });
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls.at(-1)?.[0].thread).toMatchObject({ declined: "error" });
   });
 
-  test("a previousRunId on another connection is refused", async () => {
-    runs.set("arun_elsewhere", fakeRun({ connectionId: "seed:analytics", status: "succeeded" }));
+  test("with the operator switch off, previousRunId is ignored and the run says so", async () => {
+    const before = mockStatus.mock.calls.length;
+    process.env.LIBREDB_AGENT_THREAD_CONTEXT = "false";
+    runs.set("arun_1", fakeRun({ status: "succeeded" }));
 
-    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_elsewhere" }));
+    try {
+      const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_1" }));
 
-    expect(res.status).toBe(400);
-  });
-
-  test("a previousRunId naming a run that has not ended is refused", async () => {
-    runs.set("arun_running", fakeRun({ status: "running" }));
-
-    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_running" }));
-
-    expect(res.status).toBe(400);
+      expect(res.status).toBe(202);
+      expect(mockStart.mock.calls.at(-1)?.[0].thread).toMatchObject({ steps: [], text: "", declined: "disabled" });
+      // Measured as a DELTA rather than as "never called": these mocks accumulate
+      // across the file, so `not.toHaveBeenCalled()` would be a claim about the
+      // whole suite. Nothing was looked up here — the switch decides before the
+      // ledger is touched.
+      expect(mockStatus.mock.calls.length).toBe(before);
+    } finally {
+      delete process.env.LIBREDB_AGENT_THREAD_CONTEXT;
+    }
   });
 
   /*
@@ -371,6 +400,7 @@ describe("POST /api/agent/runs", () => {
       workflowSource: string;
       workflowReading: string;
       autoExecute: boolean;
+      thread: { threadId: string; steps: unknown[]; text: string };
     }>(res);
 
     expect(res.status).toBe(202);
@@ -382,6 +412,9 @@ describe("POST /api/agent/runs", () => {
       workflowSource: "chosen",
       workflowReading: "unrecorded",
       autoExecute: false,
+      // Echoed from the RECORD, so a run that started its own conversation reports
+      // the thread of one the fold gave it rather than nothing at all.
+      thread: { threadId: "arun_new", steps: [], text: "" },
     });
     // No `workflowType` reaches the service when the body named none: the store's
     // own default is the single place that answer is decided.
