@@ -25,13 +25,12 @@ export function useProviderMetadata(connection: DatabaseConnection | null): {
   metadata: ProviderMetadata | null;
   isLoading: boolean;
 } {
-  const [metadata, setMetadata] = useState<ProviderMetadata | null>(null);
+  const [metadataState, setMetadata] = useState<ProviderMetadata | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const lastConnectionId = useRef<string | null>(null);
 
   useEffect(() => {
     if (!connection) {
-      setMetadata(null);
       lastConnectionId.current = null;
       return;
     }
@@ -93,5 +92,9 @@ export function useProviderMetadata(connection: DatabaseConnection | null): {
       });
   }, [connection]);
 
-  return { metadata, isLoading };
+  // Derived, not reset in the effect: with no connection there is nothing to
+  // describe, and answering null during render costs no extra pass. The state
+  // itself is still cleared at request time (see above) so a previous
+  // connection's capabilities can never stand in for the one being fetched.
+  return { metadata: connection === null ? null : metadataState, isLoading };
 }

@@ -92,13 +92,9 @@ const SchemaDiff = React.lazy(
 // The saved-chart dashboard. Its data is read on mount, not its module — the module
 // is split at the import above, along with the `DataCharts` this renders.
 function ChartDashboard({ result }: { result: QueryResult | null }) {
-  const [savedCharts, setSavedCharts] = React.useState<
-    { id: string; name: string; chartType: string; xAxis: string; yAxis: string[] }[]
-  >([]);
-  React.useEffect(() => {
-    const charts = storage.getSavedCharts();
-    if (charts.length > 0) setSavedCharts(charts);
-  }, []);
+  // The saved-chart list, read once from storage. Nothing here writes it back —
+  // saving and deleting happen in DataCharts, which owns its own copy.
+  const [savedCharts] = React.useState(() => storage.getSavedCharts());
 
   if (savedCharts.length === 0) {
     return (

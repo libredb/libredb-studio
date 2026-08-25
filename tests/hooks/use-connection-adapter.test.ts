@@ -1,7 +1,7 @@
 import "../setup-dom";
 
 import { describe, test, expect, mock } from "bun:test";
-import { renderHook, act, waitFor } from "@testing-library/react";
+import { renderHook, act } from "@testing-library/react";
 
 import { useConnectionAdapter } from "@/workspace/hooks/use-connection-adapter";
 import type { WorkspaceConnection } from "@/workspace/types";
@@ -223,10 +223,10 @@ describe("useConnectionAdapter", () => {
 
     rerender({ connections: updatedConnections });
 
-    // activeConnection should reset to the first available connection
-    await waitFor(() => {
-      expect(result.current.activeConnection!.id).toBe("c1");
-    });
+    // Synchronous on purpose: the fallback is DERIVED from the current props, so
+    // it must already hold in the render that dropped c2. A `waitFor` here would
+    // also pass against an effect that repairs the selection one render late.
+    expect(result.current.activeConnection!.id).toBe("c1");
   });
 
   // ── Resets activeConnection to null when all connections removed ─────────
@@ -244,9 +244,64 @@ describe("useConnectionAdapter", () => {
     // Remove all connections
     rerender({ connections: [] });
 
-    await waitFor(() => {
-      expect(result.current.activeConnection).toBeNull();
+    // Synchronous for the same reason as the test above.
+    expect(result.current.activeConnection).toBeNull();
+  });
+
+  // ── Clearing the selection falls back to the host's first connection ────
+
+  /**
+   * Documents a real change: while the selection was held as an object,
+   * `setActiveConnection(null)` left `activeConnection` null even with a non-empty
+   * list. It is now a request to clear the CHOICE, and the derivation falls back to
+   * the host's first connection — the same value a fresh mount shows.
+   *
+   * Unreachable from the shipped shell: the adapter's setter is passed only to
+   * `Sidebar`'s `onSelectConnection`, typed `(connection: DatabaseConnection) => void`,
+   * so nothing hands it null. Pinned here so the semantic is a decision, not a
+   * discovery.
+   */
+  test("clearing the selection falls back to the first connection, not null", () => {
+    const connections = [
+      makeWorkspaceConnection({ id: "c1", name: "DB One" }),
+      makeWorkspaceConnection({ id: "c2", name: "DB Two" }),
+    ];
+    const onSchemaFetch = mock(() => Promise.resolve([]));
+
+    const { result } = renderHook(() => useConnectionAdapter({ connections, onSchemaFetch }));
+
+    act(() => {
+      result.current.setActiveConnection(result.current.connections[1]);
     });
+    expect(result.current.activeConnection!.id).toBe("c2");
+
+    act(() => {
+      result.current.setActiveConnection(null);
+    });
+
+    expect(result.current.activeConnection!.id).toBe("c1");
+  });
+
+  // ── The active connection follows the host's latest object ──────────────
+
+  /**
+   * The selection is held by id, not by object. Holding the object meant that a
+   * host renaming a connection in place kept serving the captured one: the
+   * "is it still in the list?" check passed on id, so nothing ever re-synced.
+   */
+  test("the active connection follows the host's latest object for that id", () => {
+    const onSchemaFetch = mock(() => Promise.resolve([]));
+
+    const { result, rerender } = renderHook(({ connections }) => useConnectionAdapter({ connections, onSchemaFetch }), {
+      initialProps: { connections: [makeWorkspaceConnection({ id: "c1", name: "DB One" })] },
+    });
+
+    expect(result.current.activeConnection!.name).toBe("DB One");
+
+    rerender({ connections: [makeWorkspaceConnection({ id: "c1", name: "DB One, renamed" })] });
+
+    expect(result.current.activeConnection!.id).toBe("c1");
+    expect(result.current.activeConnection!.name).toBe("DB One, renamed");
   });
 
   // ── Maps WorkspaceConnection to DatabaseConnection correctly ────────────

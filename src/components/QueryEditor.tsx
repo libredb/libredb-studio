@@ -15,6 +15,7 @@ import { registerRedisLanguage } from "@/lib/editor/redis-language";
 import { configureMonacoLoader } from "@/lib/editor/monaco-loader";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
 import { logger } from "@/lib/logger";
+import { setLineNumbersPreference, useLineNumbersPreference } from "@/hooks/use-line-numbers-preference";
 import { writeToClipboard } from "@/components/copy-button";
 import { toast } from "sonner";
 
@@ -120,17 +121,9 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       canExplainKeyRef.current?.set(canExplain);
     }, [canExplain, onExplain]);
 
-    // Line numbers toggle — default must be SSR-stable; localStorage is applied after mount.
-    const [showLineNumbers, setShowLineNumbers] = useState(true);
-    const [lineNumbersPreferenceReady, setLineNumbersPreferenceReady] = useState(false);
-
-    useEffect(() => {
-      const saved = localStorage.getItem("editor-line-numbers");
-      if (saved !== null) {
-        setShowLineNumbers(saved === "true");
-      }
-      setLineNumbersPreferenceReady(true);
-    }, []);
+    // Line numbers toggle. The store keeps the default SSR-stable and applies the stored
+    // value at hydration, so there is no local default left that could overwrite it.
+    const showLineNumbers = useLineNumbersPreference();
 
     // Track last synced value to detect external changes
     const lastSyncedValueRef = useRef<string>(value);
@@ -157,12 +150,6 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
         editorRef.current.updateOptions({ lineNumbers: showLineNumbers ? "on" : "off" });
       }
     }, [showLineNumbers]);
-
-    // Persist line numbers preference to localStorage
-    useEffect(() => {
-      if (!lineNumbersPreferenceReady) return;
-      localStorage.setItem("editor-line-numbers", String(showLineNumbers));
-    }, [showLineNumbers, lineNumbersPreferenceReady]);
 
     const parsedSchema = useMemo((): ParsedTable[] => {
       if (!schemaContext) return [];
@@ -584,7 +571,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               "h-7 text-xs font-medium gap-2",
               showLineNumbers ? "text-fg-secondary" : "text-fg-muted hover:text-fg-bright",
             )}
-            onClick={() => setShowLineNumbers(!showLineNumbers)}
+            onClick={() => setLineNumbersPreference(!showLineNumbers)}
             title={showLineNumbers ? "Hide line numbers" : "Show line numbers"}
           >
             <Hash strokeWidth={1.5} className="w-3 h-3" /> Lines

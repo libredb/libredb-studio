@@ -234,6 +234,10 @@ describe("BottomPanel", () => {
 
   afterEach(() => {
     cleanup();
+    // ChartDashboard now reads the saved charts from a lazy useState initializer, which
+    // React may re-invoke if it discards and retries a render. A persistent mockReturnValue
+    // reset here is what keeps a populated fixture from silently becoming empty.
+    mockGetSavedCharts.mockReturnValue([]);
   });
 
   test("renders tab buttons for all modes", () => {
@@ -530,7 +534,7 @@ describe("BottomPanel", () => {
   });
 
   test("Dashboard renders saved chart cards with DataCharts when result exists", () => {
-    mockGetSavedCharts.mockReturnValueOnce([
+    mockGetSavedCharts.mockReturnValue([
       makeSavedChart({ id: "chart-1", name: "Revenue", chartType: "bar", xAxis: "month", yAxis: ["revenue"] }),
     ]);
     const props = createDefaultProps({
@@ -556,7 +560,7 @@ describe("BottomPanel", () => {
   });
 
   test("Dashboard shows placeholder on saved chart card when result is null", () => {
-    mockGetSavedCharts.mockReturnValueOnce([makeSavedChart()]);
+    mockGetSavedCharts.mockReturnValue([makeSavedChart()]);
     const props = createDefaultProps({ mode: "dashboard" });
     const { getByText, queryByTestId } = render(
       <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,

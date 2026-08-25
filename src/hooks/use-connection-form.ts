@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import {
   DatabaseConnection,
   DatabaseType,
@@ -165,8 +165,19 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
 
   const isEditMode = !!editConnection;
 
-  // Populate form when editing
-  useEffect(() => {
+  // Populate form when editing.
+  //
+  // Adjusted while rendering rather than in an effect, per React's "adjusting some
+  // state when a prop changes": these are user-editable inputs, so they have to be
+  // state, and an effect committed a frame of postgres/localhost/5432 defaults before
+  // repopulating. The `{ conn }` wrapper is a sentinel, not decoration — `null` means
+  // "no prop applied yet", which is what lets the FIRST render apply the target;
+  // seeding the state from `editConnection` directly would skip mount, and today's
+  // effect does run on mount. Comparing on `.conn` keeps exactly the identity
+  // semantics of the effect's old `[editConnection]` dependency.
+  const [appliedEdit, setAppliedEdit] = useState<{ conn: DatabaseConnection | null | undefined } | null>(null);
+  if (!appliedEdit || appliedEdit.conn !== editConnection) {
+    setAppliedEdit({ conn: editConnection });
     if (editConnection) {
       setType(editConnection.type);
       setName(editConnection.name);
@@ -217,10 +228,28 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         setSSHPassphrase(editConnection.sshTunnel.passphrase || "");
       }
     }
-  }, [editConnection]);
+  }
 
-  // Reset form when modal closes
-  useEffect(() => {
+  // Reset the form when the dialog closes, AND when the edit target goes away while it
+  // is already closed — adjusted while rendering for the same reason as the block
+  // above, and placed here so the two still run in the order the two effects did.
+  //
+  // The second trigger is what keeps the previous connection's credentials out of the
+  // next dialog. Editing X and then clearing the target while closed leaves X's name,
+  // user, password and database in this state, and the Add-Connection dialog opens with
+  // them. The shell happens to clear `editConnection` and `isOpen` in the same handler,
+  // so `isOpen` co-changes today — but that is the caller's business, and a credential
+  // leak may not rest on it, so the guard covers the transition on its own terms.
+  //
+  // Presence, not identity: X -> Y is a new edit target, which the block above
+  // repopulates in full, and re-running the reset for it would only rewrite the same
+  // constants. The sentinel IS seeded from the props, unlike `appliedEdit` above,
+  // because there is nothing for a mount pass to do: in edit mode the body skips the
+  // field block entirely, and the four transient values it clears already start out
+  // null/false/"".
+  const [lastReset, setLastReset] = useState({ isOpen, isEditMode });
+  if (isOpen !== lastReset.isOpen || isEditMode !== lastReset.isEditMode) {
+    setLastReset({ isOpen, isEditMode });
     if (!isOpen) {
       setTestResult(null);
       setShowPasteInput(false);
@@ -247,7 +276,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         setAuthSource("");
       }
     }
-  }, [isOpen, editConnection]);
+  }
 
   const buildConnection = useCallback((): DatabaseConnection => {
     const sslConfig: SSLConfig | undefined =

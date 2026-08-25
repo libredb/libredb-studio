@@ -22,36 +22,54 @@ interface PoolTabProps {
 }
 
 export function PoolTab({ connection }: PoolTabProps) {
-  const [stats, setStats] = useState<PoolStats | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Only two things are state: which request the reader has asked for, and the
+  // one that has come back. Everything the render needs - loading, stats, error
+  // - follows from comparing the two, so nothing has to be set in the effect.
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [settled, setSettled] = useState<{ key: string; stats: PoolStats | null; error: string | null } | null>(null);
 
-  const fetchStats = useCallback(async () => {
-    if (!connection) return;
-    setLoading(true);
-    try {
-      const res = await fetch("/api/db/pool-stats", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // The seed id, not the object: a managed connection arrives here with its
-        // password and connection string stripped, so the object cannot be resolved
-        // to a database once the provider cache is cold.
-        body: JSON.stringify(buildConnectionPayload(connection)),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to fetch pool stats");
-      setStats(data);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      setLoading(false);
-    }
-  }, [connection]);
+  const requestKey = connection === null ? null : `${connection.id}#${refreshToken}`;
+  const loading = requestKey !== null && settled?.key !== requestKey;
+  const stats = settled?.stats ?? null;
+  const error = settled?.error ?? null;
+
+  const reload = useCallback(() => setRefreshToken((t) => t + 1), []);
 
   useEffect(() => {
-    fetchStats();
-  }, [fetchStats]);
+    if (connection === null || requestKey === null) return;
+    let ignore = false;
+
+    fetch("/api/db/pool-stats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // The seed id, not the object: a managed connection arrives here with its
+      // password and connection string stripped, so the object cannot be resolved
+      // to a database once the provider cache is cold.
+      body: JSON.stringify(buildConnectionPayload(connection)),
+    })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to fetch pool stats");
+        return data as PoolStats;
+      })
+      .then((data) => {
+        if (!ignore) setSettled({ key: requestKey, stats: data, error: null });
+      })
+      .catch((err) => {
+        if (ignore) return;
+        // An error does not wipe figures already on screen; it is shown beside
+        // them, exactly as before.
+        setSettled((prev) => ({
+          key: requestKey,
+          stats: prev?.stats ?? null,
+          error: err instanceof Error ? err.message : "Unknown error",
+        }));
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [connection, requestKey]);
 
   if (!connection) {
     return (
@@ -74,7 +92,7 @@ export function PoolTab({ connection }: PoolTabProps) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-2 text-destructive">
         <p className="text-xs">{error}</p>
-        <Button variant="outline" size="sm" onClick={fetchStats}>
+        <Button variant="outline" size="sm" onClick={reload}>
           Try Again
         </Button>
       </div>
@@ -103,7 +121,7 @@ export function PoolTab({ connection }: PoolTabProps) {
           <Server strokeWidth={1.5} className="h-4 w-4 sm:h-5 sm:w-5 text-primary" />
           <h2 className="text-xs sm:text-base font-medium">Connection Pool</h2>
         </div>
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={fetchStats} disabled={loading}>
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={reload} disabled={loading}>
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
         </Button>
       </div>

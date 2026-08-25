@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import type { DatabaseConnection, TableSchema } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { WorkspaceConnection } from "@/workspace/types";
@@ -23,20 +23,26 @@ export function useConnectionAdapter({ connections: externalConnections, onSchem
     [externalConnections],
   );
 
-  const [activeConnection, setActiveConnection] = useState<DatabaseConnection | null>(connections[0] ?? null);
+  // The selection is held by ID, not by object, so it can be resolved against the
+  // host's CURRENT list during render instead of being repaired by an effect one
+  // render later. Holding the object also meant a host that renamed a connection
+  // in place kept being served the captured one — the "still in the list?" test
+  // matched on id, so nothing re-synced.
+  const [activeConnectionId, setActiveConnectionId] = useState<string | null>(null);
   const [schema, setSchema] = useState<TableSchema[]>([]);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
 
-  useEffect(() => {
-    if (connections.length === 0) {
-      setActiveConnection(null);
-      return;
-    }
-    if (activeConnection && connections.some((c) => c.id === activeConnection.id)) {
-      return;
-    }
-    setActiveConnection(connections[0]);
-  }, [connections]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The `?? connections[0]` tail is this hook's own fallback, not React's: an
+  // embedded shell always shows the host's first connection when the chosen one
+  // is gone (or when nothing has been chosen yet), and only an empty list is null.
+  const activeConnection = useMemo(
+    () => connections.find((c) => c.id === activeConnectionId) ?? connections[0] ?? null,
+    [connections, activeConnectionId],
+  );
+
+  const setActiveConnection = useCallback((conn: DatabaseConnection | null) => {
+    setActiveConnectionId(conn?.id ?? null);
+  }, []);
 
   const fetchSchema = useCallback(
     async (conn: DatabaseConnection) => {
@@ -76,7 +82,7 @@ export function useConnectionAdapter({ connections: externalConnections, onSchem
     connections,
     setConnections: (() => {}) as React.Dispatch<React.SetStateAction<DatabaseConnection[]>>,
     activeConnection,
-    setActiveConnection: setActiveConnection as (conn: DatabaseConnection | null) => void,
+    setActiveConnection,
     schema,
     setSchema,
     isLoadingSchema,

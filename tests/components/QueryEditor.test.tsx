@@ -450,10 +450,9 @@ describe("QueryEditor", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
     const linesButton = queryByText("Lines");
 
-    // Initial state should be 'true' (default)
-    await waitFor(() => {
-      expect(localStorage.getItem("editor-line-numbers")).toBe("true");
-    });
+    // Nothing is stored until the user chooses: the default lives in the hook, so a
+    // mount no longer writes it back and cannot clobber a preference mid-hydration.
+    expect(localStorage.getItem("editor-line-numbers")).toBeNull();
 
     // Toggle to false
     fireEvent.click(linesButton!);

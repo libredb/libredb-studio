@@ -28,16 +28,35 @@ export function useMonitoringData(
   connection: DatabaseConnection | null,
   options?: MonitoringOptions,
 ): UseMonitoringDataReturn {
-  const [data, setData] = useState<MonitoringData | null>(null);
+  const [dataState, setData] = useState<MonitoringData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorState, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState(DEFAULT_REFRESH_INTERVAL);
-  const [history, setHistory] = useState<TimeSeriesPoint<MonitoringData>[]>([]);
+  // History belongs to a SELECTION, not to a connection id: leaving a connection
+  // and coming back is a fresh chart, and the id repeats while the excursion does
+  // not. This counter numbers the selections, and it is adjusted during render
+  // rather than in an effect (react.dev, "You Might Not Need an Effect" -
+  // adjusting some state when a prop changes) so that the very render which
+  // switches connections already reports an empty history.
+  const connectionId = connection?.id ?? null;
+  const [selection, setSelection] = useState({ id: connectionId, seq: 0 });
+  if (selection.id !== connectionId) {
+    setSelection({ id: connectionId, seq: selection.seq + 1 });
+  }
+
+  // History carries the selection it belongs to, so a switch needs no reset:
+  // a record whose selection no longer matches reads as no history at all.
+  const [historyState, setHistory] = useState<{
+    selection: number;
+    points: TimeSeriesPoint<MonitoringData>[];
+  } | null>(null);
 
   // Time series buffer for historical data
   const historyRef = useRef(new TimeSeriesBuffer<MonitoringData>(120));
+  // Which selection the buffer above currently holds points for.
+  const historyOwnerRef = useRef<number | null>(null);
 
   // Use refs to store latest values without causing re-renders
   const connectionRef = useRef(connection);
@@ -45,8 +64,16 @@ export function useMonitoringData(
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const isMountedRef = useRef(true);
+  // Mirrored for `fetchData`, which takes no dependencies.
+  const selectionRef = useRef(selection.seq);
 
-  // Update refs when props change
+  // Update refs when props change. This one is declared before the effect that
+  // fetches, so a switch has already renumbered the selection by the time that
+  // effect asks for the new connection's first sample.
+  useEffect(() => {
+    selectionRef.current = selection.seq;
+  }, [selection.seq]);
+
   useEffect(() => {
     connectionRef.current = connection;
   }, [connection]);
@@ -66,11 +93,15 @@ export function useMonitoringData(
   const fetchData = useCallback(async () => {
     const currentConnection = connectionRef.current;
 
+    // No state to clear here: with no connection the exposed data and error are
+    // derived as null during render (see the return below).
     if (!currentConnection) {
-      setData(null);
-      setError(null);
       return;
     }
+
+    // Read before the await: the result belongs to the selection that asked for
+    // it, not to whichever one is on screen when it lands.
+    const selectionSeq = selectionRef.current;
 
     // Cancel previous request if still pending
     if (abortControllerRef.current) {
@@ -113,9 +144,15 @@ export function useMonitoringData(
       setLastUpdated(new Date());
       setError(null);
 
-      // Push to history buffer
+      // Push to history buffer. The buffer belongs to whichever selection last
+      // settled into it, so it is emptied here - after the await, once we know
+      // which selection this result is for - rather than in the effect.
+      if (historyOwnerRef.current !== selectionSeq) {
+        historyRef.current.clear();
+        historyOwnerRef.current = selectionSeq;
+      }
       historyRef.current.push(result);
-      setHistory(historyRef.current.getAll());
+      setHistory({ selection: selectionSeq, points: historyRef.current.getAll() });
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
         return; // Request was cancelled, ignore
@@ -134,17 +171,11 @@ export function useMonitoringData(
 
   // Initial fetch when connection changes
   useEffect(() => {
-    if (!connection) {
-      setData(null);
-      setError(null);
-      historyRef.current.clear();
-      setHistory([]);
-      return;
-    }
-
-    // Clear history on connection change
-    historyRef.current.clear();
-    setHistory([]);
+    // Nothing is reset here: data and error are derived from `connection`, and
+    // history from the selection counter renumbered above - all during render,
+    // so an emptied or changed selection answers correctly on the very render
+    // that changed it.
+    if (!connection) return;
 
     // Initial fetch
     fetchData();
@@ -254,14 +285,16 @@ export function useMonitoringData(
     [fetchData],
   );
 
+  // Derived rather than reset in the connection effect: with no connection
+  // there is nothing to report, and history belongs to one selection only.
   return {
-    data,
+    data: connection === null ? null : dataState,
     loading,
-    error,
+    error: connection === null ? null : errorState,
     lastUpdated,
     autoRefresh,
     refreshInterval,
-    history,
+    history: historyState?.selection === selection.seq ? historyState.points : [],
     setAutoRefresh,
     setRefreshInterval,
     refresh,

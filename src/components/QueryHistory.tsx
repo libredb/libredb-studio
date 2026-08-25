@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { storage } from "@/lib/storage";
 import { QueryHistoryItem } from "@/lib/types";
 import { csvRow } from "@/lib/export/csv";
@@ -39,17 +39,21 @@ type SortField = "executedAt" | "executionTime" | "rowCount";
 type SortOrder = "asc" | "desc";
 
 export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger }: QueryHistoryProps) {
-  const [history, setHistory] = useState<QueryHistoryItem[]>([]);
+  const [history, setHistory] = useState<QueryHistoryItem[]>(() => storage.getHistory());
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "success" | "error">("all");
   const [isGlobal, setIsGlobal] = useState(false);
   const [sortField, setSortField] = useState<SortField>("executedAt");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
 
-  // Refresh history when refreshTrigger changes (replaces key-based re-mount)
-  useEffect(() => {
+  // Bumped after every execution. Adjusting state during render rather than in an effect
+  // keeps the search, the status filter and the sort the user set — which a `key` re-mount
+  // would throw away on every query they run.
+  const [loadedTrigger, setLoadedTrigger] = useState(refreshTrigger);
+  if (loadedTrigger !== refreshTrigger) {
+    setLoadedTrigger(refreshTrigger);
     setHistory(storage.getHistory());
-  }, [refreshTrigger]);
+  }
 
   const filteredHistory = useMemo(() => {
     return history

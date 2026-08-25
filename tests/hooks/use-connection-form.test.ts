@@ -1,6 +1,7 @@
 import "../setup-dom";
 
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { useEffect, useRef } from "react";
 import { renderHook, act } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch } from "../helpers/mock-fetch";
 
@@ -109,6 +110,49 @@ describe("useConnectionForm", () => {
     expect(result.current.environment).toBe("staging");
   });
 
+  // ── The edit target is applied before the first commit ────────────────────
+
+  /**
+   * The population happens DURING the render that first sees `editConnection`, not
+   * in an effect afterwards. The difference is invisible to a test that reads
+   * `result.current` (React Testing Library has already flushed the effects by
+   * then), so this one snapshots the values as of the first commit: with an effect
+   * they are the postgres defaults, and the user sees a frame of them.
+   */
+  test("applies the edit target in the first committed render", () => {
+    const editConn: DatabaseConnection = {
+      id: "edit-first-commit",
+      name: "Committed First",
+      type: "mysql",
+      host: "db.first-commit.example",
+      port: 3306,
+      createdAt: new Date(),
+    };
+
+    const firstCommit: { type?: string; host?: string; name?: string } = {};
+
+    renderHook(() => {
+      const form = useConnectionForm({ ...defaultProps, editConnection: editConn });
+      const recorded = useRef(false);
+      // The guard, not an empty dependency array, is what pins this to the FIRST
+      // commit: the effect is allowed to re-run when the values change, but only the
+      // first reading is kept — which is exactly what an effect-based population
+      // would have got wrong, by committing the defaults before repopulating.
+      useEffect(() => {
+        if (recorded.current) return;
+        recorded.current = true;
+        firstCommit.type = form.type;
+        firstCommit.host = form.host;
+        firstCommit.name = form.name;
+      }, [form.type, form.host, form.name]);
+      return form;
+    });
+
+    expect(firstCommit.type).toBe("mysql");
+    expect(firstCommit.host).toBe("db.first-commit.example");
+    expect(firstCommit.name).toBe("Committed First");
+  });
+
   // ── Reset form when modal closes ──────────────────────────────────────────
 
   test("resets form when modal closes (isOpen false)", () => {
@@ -136,6 +180,126 @@ describe("useConnectionForm", () => {
     expect(result.current.type).toBe("postgres");
     expect(result.current.host).toBe("localhost");
     expect(result.current.port).toBe("5432");
+  });
+
+  /**
+   * A dialog can mount already closed with an edit target — the shell renders this hook
+   * whether or not the dialog is on screen — and that mount must apply the target, in
+   * the first committed render, exactly as the open one does.
+   *
+   * The first-commit reading is the whole point: a plain `result.current` check passes
+   * against the effect-based population too (React Testing Library has flushed the
+   * effects by then), so it would pin nothing. Reading the first commit is what
+   * separates the two — with the population in an effect, this mount commits the
+   * postgres/localhost defaults first, the same frame of wrong values the open dialog
+   * was fixed for.
+   */
+  test("a dialog mounted closed with an edit target applies it in the first committed render", () => {
+    const editConn: DatabaseConnection = {
+      id: "edit-closed",
+      name: "Closed But Editing",
+      type: "mysql",
+      host: "closed.example.com",
+      port: 3306,
+      database: "closeddb",
+      createdAt: new Date(),
+    };
+
+    const firstCommit: { name?: string; host?: string; database?: string } = {};
+
+    const { result } = renderHook(() => {
+      const form = useConnectionForm({ ...defaultProps, isOpen: false, editConnection: editConn });
+      const recorded = useRef(false);
+      useEffect(() => {
+        if (recorded.current) return;
+        recorded.current = true;
+        firstCommit.name = form.name;
+        firstCommit.host = form.host;
+        firstCommit.database = form.database;
+      }, [form.name, form.host, form.database]);
+      return form;
+    });
+
+    expect(firstCommit.name).toBe("Closed But Editing");
+    expect(firstCommit.host).toBe("closed.example.com");
+    expect(firstCommit.database).toBe("closeddb");
+    expect(result.current.name).toBe("Closed But Editing");
+  });
+
+  /**
+   * The other half of the reset's guard, now that the edit target's absence is itself a
+   * trigger: closing the dialog on a connection that is STILL being edited must leave
+   * its fields alone. The trigger fires on that transition too, and only the guard
+   * stops it from blanking the connection the dialog will reopen on.
+   */
+  test("closing the dialog while the edit target remains keeps that connection's fields", () => {
+    const editConn: DatabaseConnection = {
+      id: "edit-still-open",
+      name: "Still Editing",
+      type: "postgres",
+      host: "still.example.com",
+      port: 5432,
+      user: "pgadmin",
+      password: "pgpass",
+      database: "stilldb",
+      createdAt: new Date(),
+    };
+
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true, editConnection: editConn },
+    });
+
+    rerender({ ...defaultProps, isOpen: false, editConnection: editConn });
+
+    expect(result.current.name).toBe("Still Editing");
+    expect(result.current.user).toBe("pgadmin");
+    expect(result.current.password).toBe("pgpass");
+    expect(result.current.database).toBe("stilldb");
+    expect(result.current.host).toBe("still.example.com");
+  });
+
+  /**
+   * The credentials of the connection last edited must not open the NEXT dialog.
+   *
+   * `Studio.tsx` happens to clear `editConnection` and `isOpen` in the same handler
+   * today, so `isOpen` co-changes and the close transition does the clearing — but a
+   * caller that drops the edit target on its own is not doing anything wrong, and the
+   * price of the hook not covering it is another connection's user, password and
+   * database sitting in the Add-Connection dialog when it opens.
+   */
+  test("dropping the edit target while closed clears the credentials before the dialog reopens", () => {
+    const editConn: DatabaseConnection = {
+      id: "edit-dropped",
+      name: "Prod PG",
+      type: "postgres",
+      host: "prod.example.com",
+      port: 5432,
+      user: "pgadmin",
+      password: "pgpass",
+      database: "prod",
+      createdAt: new Date(),
+    };
+
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      // Widened deliberately: the point of this test is the rerender that drops the
+      // target, and inferring the initial props from `editConn` alone would type the
+      // field as non-nullable.
+      initialProps: { ...defaultProps, isOpen: false, editConnection: editConn as DatabaseConnection | null },
+    });
+
+    expect(result.current.user).toBe("pgadmin");
+    expect(result.current.password).toBe("pgpass");
+
+    // The edit target goes away while the dialog is still closed…
+    rerender({ ...defaultProps, isOpen: false, editConnection: null });
+    // …and only then does it open, as the Add-Connection dialog.
+    rerender({ ...defaultProps, isOpen: true, editConnection: null });
+
+    expect(result.current.name).toBe("");
+    expect(result.current.user).toBe("");
+    expect(result.current.password).toBe("");
+    expect(result.current.database).toBe("");
+    expect(result.current.host).toBe("localhost");
   });
 
   // ── handleTestConnection calls POST ────────────────────────────────────────

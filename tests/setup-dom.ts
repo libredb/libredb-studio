@@ -108,5 +108,3 @@ if (typeof globalThis.document === "undefined") {
     });
   }
 }
-
-export {};

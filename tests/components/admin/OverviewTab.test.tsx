@@ -68,7 +68,7 @@ mock.module("next/link", () => ({
 }));
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { render, waitFor, act, cleanup } from "@testing-library/react";
+import { render, waitFor, act, cleanup, fireEvent } from "@testing-library/react";
 import React from "react";
 
 import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
@@ -222,6 +222,37 @@ describe("OverviewTab", () => {
         return url.includes("/api/admin/fleet-health");
       });
       expect(fleetCall).not.toBeUndefined();
+    });
+  });
+
+  /**
+   * The manual Refresh button is the only fleet-health path a user drives, and it is
+   * a distinct code path from the mount effect: the effect synchronises fleet health
+   * against a request descriptor, while the button only mints a new refresh token.
+   * Without this test that token updater is never executed by the suite.
+   */
+  test("the Refresh button re-requests fleet health", async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+    const { getByText } = renderResult!;
+
+    const fleetCallCount = () =>
+      fetchMock.mock.calls.filter(
+        (c: unknown[]) => typeof c[0] === "string" && c[0].includes("/api/admin/fleet-health"),
+      ).length;
+
+    await waitFor(() => {
+      expect(fleetCallCount()).toBe(1);
+    });
+
+    await act(async () => {
+      fireEvent.click(getByText("Refresh"));
+    });
+
+    await waitFor(() => {
+      expect(fleetCallCount()).toBe(2);
     });
   });
 

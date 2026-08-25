@@ -1045,6 +1045,46 @@ describe("tree render model (sqlite-queryplan)", () => {
     }
   });
 
+  test("a query change alone drops the previous analysis", async () => {
+    // The reset keys on (plan, query), not on the plan alone: the same plan object
+    // analysed under a different statement is a different analysis. Nothing else in
+    // the suite pins the `query` half, so a reset keyed only on the plan would pass
+    // everything but this test.
+    const user = userEvent.setup();
+    globalThis.fetch = mockFetchStream("## Old Analysis\nPostgres plan details.") as unknown as typeof fetch;
+
+    const { queryByText, rerender } = render(
+      <VisualExplain plan={samplePlan} query="SELECT * FROM users" databaseType="postgres" />,
+    );
+    fireEvent.click(queryByText("AI Explain")!);
+    await user.click(queryByText("Analyze with AI")!);
+    await waitFor(() => {
+      expect(queryByText("Old Analysis")).not.toBeNull();
+    });
+
+    // identical plan reference, different statement
+    rerender(<VisualExplain plan={samplePlan} query="SELECT id FROM users" databaseType="postgres" />);
+
+    await waitFor(() => {
+      expect(queryByText("Old Analysis")).toBeNull();
+      expect(queryByText("AI Query Analysis")).not.toBeNull();
+    });
+  });
+
+  test("a tab valid for both kinds survives a kind change and a change back", () => {
+    // "raw" belongs to both tab sets, so a kind flip must leave the selection alone —
+    // in both directions. Pins the resync as an overwrite-only-when-invalid rule.
+    const { container, getByText, rerender } = render(<VisualExplain plan={samplePlan} query="SELECT 1" />);
+    fireEvent.click(getByText("raw"));
+    expect(container.textContent).toContain('"Node Type"');
+
+    rerender(<VisualExplain plan={TREE_INPUT} query="SELECT 1" databaseType="sqlite" />);
+    expect(container.textContent).toContain('"notused"');
+
+    rerender(<VisualExplain plan={samplePlan} query="SELECT 1" databaseType="postgres" />);
+    expect(container.textContent).toContain('"Node Type"');
+  });
+
   test("tagged postgres-json input with an empty plan falls back to the empty state", () => {
     const { getByText } = render(<VisualExplain plan={{ kind: "postgres-json", plan: [] }} />);
     expect(getByText("No execution plan")).toBeTruthy();

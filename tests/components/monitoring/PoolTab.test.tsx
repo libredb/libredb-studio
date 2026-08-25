@@ -4,7 +4,7 @@ import "../../helpers/mock-navigation";
 
 import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { PoolTab } from "@/components/monitoring/tabs/PoolTab";
 
 const mockFetch = mock(() =>
@@ -60,6 +60,51 @@ describe("PoolTab", () => {
     const { queryByText } = render(<PoolTab connection={conn} />);
     await waitFor(() => {
       expect(queryByText("Pool not available")).not.toBeNull();
+    });
+  });
+
+  // Both buttons are the only way a reader asks for the figures again, so each
+  // one is pinned: a click must reach the route, not just re-render the tab.
+  test("clicking Try Again re-issues the request", async () => {
+    mockFetch.mockImplementationOnce(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: "Pool not available" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    const { getByText, queryByText } = render(<PoolTab connection={conn} />);
+    await waitFor(() => {
+      expect(queryByText("Pool not available")).not.toBeNull();
+    });
+
+    await act(async () => {
+      fireEvent.click(getByText("Try Again"));
+    });
+
+    await waitFor(() => {
+      expect(queryByText("10")).not.toBeNull();
+    });
+    expect(mockFetch.mock.calls.length).toBe(2);
+  });
+
+  test("the refresh button re-issues the request", async () => {
+    const { container, queryByText } = render(<PoolTab connection={conn} />);
+    await waitFor(() => {
+      expect(queryByText("10")).not.toBeNull();
+    });
+
+    // The header refresh control is the only button on the settled tab.
+    const refreshButton = container.querySelector("button");
+    expect(refreshButton).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.click(refreshButton!);
+    });
+
+    await waitFor(() => {
+      expect(mockFetch.mock.calls.length).toBe(2);
     });
   });
 

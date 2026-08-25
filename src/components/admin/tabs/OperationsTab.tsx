@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -37,7 +37,6 @@ import { useSearchParams } from "next/navigation";
 import { useMonitoringData } from "@/hooks/use-monitoring-data";
 import { storage } from "@/lib/storage";
 import { useAllConnections } from "@/hooks/use-all-connections";
-import type { DatabaseConnection } from "@/lib/types";
 import type { ActiveSessionDetails, MaintenanceType } from "@/lib/db/types";
 import { useProviderMetadata } from "@/hooks/use-provider-metadata";
 
@@ -52,8 +51,18 @@ interface OperationLogEntry {
 }
 
 export function OperationsTab() {
-  const [connections, setConnections] = useState<DatabaseConnection[]>([]);
-  const [selectedConnection, setSelectedConnection] = useState<DatabaseConnection | null>(null);
+  // Only the operator's CHOICE is state; the list and the selected object are both
+  // calculated during render from it. `useAllConnections` is read here, above the
+  // hooks that take `selectedConnection` as an argument, because the derivation has
+  // to happen before they run.
+  const { connections } = useAllConnections();
+  const [selectedId, setSelectedId] = useState<string | null>(() => storage.getActiveConnectionId());
+  // The explicit length check rather than `?? connections[0] ?? null`:
+  // noUncheckedIndexedAccess is off, so `connections[0]` types as non-optional and a
+  // bare `??` chain would claim this can never be null while being undefined on an
+  // empty list.
+  const selectedConnection =
+    connections.find((c) => c.id === selectedId) ?? (connections.length > 0 ? connections[0] : null);
   const [operationLog, setOperationLog] = useState<OperationLogEntry[]>([]);
   const [confirmKill, setConfirmKill] = useState<ActiveSessionDetails | null>(null);
   const [killingPid, setKillingPid] = useState<number | string | null>(null);
@@ -111,18 +120,9 @@ export function OperationsTab() {
   // The `??` fallbacks stay: `metadata` may carry capabilities without labels.
   const labels = metadata?.labels;
 
-  const { connections: allConns } = useAllConnections();
-  useEffect(() => {
-    if (allConns.length === 0) return;
-    setConnections(allConns);
-    const savedId = storage.getActiveConnectionId();
-    const saved = savedId ? allConns.find((c) => c.id === savedId) : null;
-    setSelectedConnection(saved ?? allConns[0]);
-  }, [allConns]);
-
   const handleConnectionChange = (id: string) => {
     const conn = connections.find((c) => c.id === id);
-    if (conn) setSelectedConnection(conn);
+    if (conn) setSelectedId(conn.id);
   };
 
   const addLogEntry = useCallback(
