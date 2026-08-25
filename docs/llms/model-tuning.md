@@ -108,9 +108,19 @@ Every one is optional. What you do not state resolves to the compiled default in
 | `suppressPlanReasoning` | boolean | whether this model's PLAN turn asks the endpoint for no reasoning at all — reaches the OpenAI-compatible adapter only (`openai`, `ollama`, `custom`), so it is a no-op on `gemini` | `false` |
 | `refusalExamples` | boolean | whether a refused call is handed a worked example built from this run's ledger | `false` |
 | `turnTimeoutMs` | integer 1000–179999 | how long ONE turn of this model may take, where the product's own limit does not fit it | the product's limit |
+| `threadContextMaxChars` | integer 200–32000 | how much of a CONVERSATION this model may be handed — the earlier steps' objectives and the most recent step's report, when a follow-up continues a previous run | the product's budget (4000) |
 
 Workflow ids for `perWorkflow`: `investigation`, `query-optimization`, `database-assessment`,
 `operations`, `data-analysis`.
+
+**`threadContextMaxChars` is the one setting Studio ships NO measurement for**, and that is
+deliberate rather than an omission: no entry in the shipped document names it, because nobody has
+measured one. It is here because the value that is right depends on the model's CONTEXT WINDOW —
+what a hosted 200k-window model can carry beside its schema inventory is not what a small local one
+can — and this is the only place that fact can be expressed per model. Lower it if a follow-up on
+your model starts losing the schema block or ending early; raise it if your model has room and your
+conversations are long enough to be truncating. Either way the answer comes from driving it, which
+is what [`testing-your-own.md`](testing-your-own.md) is for.
 
 ## The rules
 

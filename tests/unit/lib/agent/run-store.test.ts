@@ -140,13 +140,22 @@ describe("AgentRunStore — opening a run", () => {
     expect((await store.read(record.runId))?.record.thread).toEqual(thread);
   });
 
-  test("a declined conversation round-trips, so a reload still has the notice to show", async () => {
+  test("a declined conversation round-trips, and is named after THIS run rather than the one refused", async () => {
+    /*
+      The route writes no `threadId` for a refused continuation, and the fold supplies
+      this run's own — the same rule that lets a header with no thread at all fold to a
+      thread of one. It matters one link later: naming the thread after the run it was
+      refused would hand a follow-up of THIS run a root that was never in the
+      conversation, and the derivation would carry it forward as the thread id.
+    */
     const { store } = storeAt();
-    const thread = { threadId: "arun_gone", steps: [], text: "", declined: "unavailable" as const };
+    const thread = { steps: [], text: "", declined: "unavailable" as const };
 
     const record = await store.openRun({ ...OPEN_INPUT, thread });
 
-    expect((await store.read(record.runId))?.record.thread.declined).toBe("unavailable");
+    const folded = (await store.read(record.runId))?.record.thread;
+    expect(folded?.declined).toBe("unavailable");
+    expect(folded?.threadId).toBe(record.runId);
   });
 
   test("a run that continues nothing folds to a thread of one named after itself", async () => {

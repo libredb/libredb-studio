@@ -980,8 +980,28 @@ export interface AgentThreadContext {
   /** Prior steps, oldest first. Empty for a thread's first run. */
   readonly steps: readonly AgentThreadStep[];
   readonly text: string;
+  /**
+   * How many steps have fallen off the FRONT of this conversation, across its whole
+   * length rather than at this link.
+   *
+   * Cumulative because each header carries at most `AGENT_THREAD_MAX_STEPS`, so the
+   * per-derivation figure is 1 forever once the cap is reached: a thirty-step
+   * conversation would keep reporting that one step was dropped. Absent means none.
+   */
+  readonly droppedSteps?: number;
   readonly declined?: "unavailable" | "disabled" | "error";
 }
+
+/**
+ * The thread as a LEDGER HEADER carries it.
+ *
+ * `threadId` is absent when the run starts a conversation of its own, and the fold
+ * supplies the run's own id — the same rule that lets a header with no thread at all
+ * fold to a thread of one. It matters for a DECLINED continuation: naming that thread
+ * after the run it was refused would make a later follow-up inherit a root that was
+ * never part of the conversation.
+ */
+export type AgentThreadHeader = Omit<AgentThreadContext, "threadId"> & { readonly threadId?: string };
 
 /**
  * One run, whole. Everything a restarted process needs to continue, and nothing

@@ -28,6 +28,9 @@ const ACTOR = { sessionId: "sess_1", role: "admin" } as const;
 
 const EVIDENCE: AgentEvidenceReference = { source: "artifact", correlationId: "corr_1" };
 
+/** Spelled once here and asserted against the module's own output, not re-derived. */
+const REPORT_CUT_NOTICE_TEXT = "[The rest of this step's report is not shown here.]";
+
 function threadOf(steps: readonly AgentThreadStep[], threadId = "arun_1"): AgentThreadContext {
   return { threadId, steps, text: "" };
 }
@@ -186,6 +189,76 @@ describe("deriveThreadContext", () => {
     expect(text).toContain("Step 1: chart those");
     expect(text).not.toContain("Claim");
     expect(text.endsWith("\n")).toBe(false);
+  });
+
+  test("the dropped count is CUMULATIVE, so a long conversation does not keep saying one", () => {
+    /*
+      Each header carries at most the cap, so the per-derivation figure is 1 forever
+      once a conversation passes it. A thirty-step thread reporting that a single step
+      was dropped is a number that is only ever right on the first link.
+    */
+    const carried = Array.from({ length: AGENT_THREAD_MAX_STEPS }, (_, index) => ({
+      runId: `arun_${index}`,
+      objective: `step ${index}`,
+    }));
+    const previous = record({
+      runId: "arun_new",
+      thread: { threadId: "arun_0", steps: carried, text: "", droppedSteps: 7 },
+    });
+
+    const derived = deriveThreadContext(previous);
+
+    expect(derived.droppedSteps).toBe(8);
+    expect(derived.text).toContain("8 earlier steps are no longer carried");
+  });
+
+  test("a conversation that has dropped nothing carries no count at all", () => {
+    const derived = deriveThreadContext(record({ objective: "chart those" }));
+
+    expect(derived.droppedSteps).toBeUndefined();
+    expect(derived.text).not.toContain("no longer carried");
+  });
+
+  test("the spine numbers steps from where the conversation IS, not from what is left of it", () => {
+    // A spine that restarts at 1 after steps fell off tells the model this is the
+    // first question when it is the ninth.
+    const previous = record({
+      runId: "arun_new",
+      objective: "latest",
+      thread: {
+        threadId: "arun_0",
+        steps: [{ runId: "arun_8", objective: "the eighth question" }],
+        text: "",
+        droppedSteps: 7,
+      },
+    });
+
+    const { text } = deriveThreadContext(previous);
+
+    expect(text).toContain("Step 8: the eighth question");
+    expect(text).toContain("Step 9: latest");
+    expect(text).not.toContain("Step 1:");
+  });
+
+  test("a report is cut between ITEMS, so a multi-line claim is never half-carried", () => {
+    /*
+      A statement and a claim may both carry newlines. Fitting by LINE would keep the
+      first line of a multi-line SELECT and then announce the rest was omitted at a
+      claim boundary — a sentence about a cut that did not happen there. A partial
+      claim is worse than a missing one: the model reads it as complete.
+    */
+    const multiline = "line one\nline two\nline three that is quite long indeed and keeps going for a while";
+    const claims = Array.from({ length: 80 }, (_, index) => `Claim ${index} ${multiline}`);
+    const previous = record({ events: [reportEvent(...claims)] });
+
+    const { text } = deriveThreadContext(previous);
+
+    expect(text).toContain(REPORT_CUT_NOTICE_TEXT);
+    // Every claim that survived did so WHOLE: no kept claim is missing its own tail.
+    for (const claim of claims) {
+      const label = claim.slice(0, 40);
+      if (text.includes(label)) expect(text).toContain(claim);
+    }
   });
 
   test("an operator-sized budget is honoured over the compiled default", () => {

@@ -60,7 +60,7 @@ import { randomUUID } from "node:crypto";
 import { getAgentRuntimeConfig } from "./config";
 import { assertPersistableState } from "./state-guard";
 import {
-  type AgentThreadContext,
+  type AgentThreadHeader,
   type AgentRunActor,
   type AgentRunEvent,
   type AgentRunMode,
@@ -174,7 +174,7 @@ export type AgentLedgerEntry =
        * before this field existed folds to a thread of one named after itself —
        * which is what was true of it, since no run belonged to a conversation then.
        */
-      readonly thread?: AgentThreadContext;
+      readonly thread?: AgentThreadHeader;
       readonly actor: AgentRunActor;
       readonly connectionId: string;
       readonly objective: string;
@@ -260,7 +260,7 @@ export interface AgentRunOpenInput {
   /** Defaults to `native`. Decided by the capability gate at start; see `AgentRunRecord`. */
   readonly toolProtocol?: AgentToolProtocol;
   /** The conversation this run continues; written to the header only when it does. */
-  readonly thread?: AgentThreadContext;
+  readonly thread?: AgentThreadHeader;
   readonly actor: AgentRunActor;
   readonly connectionId: string;
   readonly objective: string;
@@ -376,7 +376,10 @@ function foldLedger(runId: string, entries: readonly AgentLedgerEntry[]): AgentR
       // continues, or one of its own that begins here. A header written before this
       // field folds to a thread of one named after itself, which is what was true of
       // it, and a run that starts a conversation today folds to exactly the same.
-      thread: header.thread ?? { threadId: runId, steps: [], text: "" },
+      thread:
+        header.thread === undefined
+          ? { threadId: runId, steps: [], text: "" }
+          : { ...header.thread, threadId: header.thread.threadId ?? runId },
       status,
       actor: header.actor,
       connectionId: header.connectionId,

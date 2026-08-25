@@ -272,6 +272,11 @@ describe("POST /api/agent/runs", () => {
 
       expect(res.status).toBe(202);
       expect(mockStart.mock.calls.at(-1)?.[0].thread).toMatchObject({ steps: [], text: "", declined: "unavailable" });
+      // No thread id is written: a refused continuation starts a conversation of its
+      // OWN, and the fold names it after the run being opened. Naming it after the run
+      // it was refused would hand a follow-up of THIS run a root that was never in the
+      // conversation, and the derivation would carry that root forward.
+      expect(mockStart.mock.calls.at(-1)?.[0].thread?.threadId).toBeUndefined();
     },
   );
 

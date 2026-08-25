@@ -51,30 +51,38 @@ const cap = (text: string, max: number): string => (text.length <= max ? text : 
  * Order is the ledger's rather than a chosen one, so a reader gets the answer, the
  * claims and the closing prose in the order they were established.
  */
-function reportOf(record: AgentRunRecord): string {
-  const lines: string[] = [];
+function reportOf(record: AgentRunRecord): readonly string[] {
+  const items: string[] = [];
   for (const event of record.events) {
     if (event.kind === "answer-composed") {
-      lines.push(`Answer statement: ${event.sql}`);
+      items.push(`Answer statement: ${event.sql}`);
     } else if (event.kind === "report-composed") {
       for (const [index, claim] of event.claims.entries()) {
-        lines.push(`Claim ${index + 1}: ${claim.claim}`);
+        items.push(`Claim ${index + 1}: ${claim.claim}`);
       }
     } else if (event.kind === "closing-statement") {
-      lines.push(`Closing: ${event.text}`);
+      items.push(`Closing: ${event.text}`);
     }
   }
-  return lines.join("\n");
+  return items;
 }
 
-/** Keeps whole lines only, so a report is never cut mid-claim. */
-function fitLines(text: string, room: number): readonly string[] {
+/**
+ * Keeps whole ITEMS, so a report is never cut mid-claim.
+ *
+ * Items rather than lines, because a statement and a claim may both carry newlines of
+ * their own: fitting by line would keep the first line of a multi-line `SELECT` and
+ * then announce that the rest was omitted at a claim boundary, which would be a
+ * sentence about a cut that did not happen there. A partial claim is worse than a
+ * missing one — the model would read it as complete.
+ */
+function fitItems(items: readonly string[], room: number): readonly string[] {
   const kept: string[] = [];
   let used = 0;
-  for (const line of text.split("\n")) {
-    if (used + line.length + 1 > room) break;
-    kept.push(line);
-    used += line.length + 1;
+  for (const item of items) {
+    if (used + item.length + 1 > room) break;
+    kept.push(item);
+    used += item.length + 1;
   }
   return kept;
 }
@@ -88,15 +96,23 @@ export function deriveThreadContext(
     objective: cap(previous.objective, AGENT_THREAD_STEP_OBJECTIVE_MAX_CHARS),
   };
   const all = [...previous.thread.steps, appended];
-  const dropped = Math.max(0, all.length - AGENT_THREAD_MAX_STEPS);
-  const steps = dropped === 0 ? all : all.slice(dropped);
+  const shed = Math.max(0, all.length - AGENT_THREAD_MAX_STEPS);
+  const steps = shed === 0 ? all : all.slice(shed);
+  // CUMULATIVE, not per-derivation. Each header carries at most the cap, so `shed` is
+  // 1 forever once a conversation passes it: a thirty-step thread would keep saying
+  // that one step was dropped. A count that is only ever right on the first link is a
+  // worse sentence than no count at all.
+  const droppedSteps = (previous.thread.droppedSteps ?? 0) + shed;
 
   const notices: string[] = [];
-  if (dropped > 0) {
-    notices.push(`[${dropped} earlier step${dropped === 1 ? " is" : "s are"} no longer carried.]`);
+  if (droppedSteps > 0) {
+    notices.push(`[${droppedSteps} earlier step${droppedSteps === 1 ? " is" : "s are"} no longer carried.]`);
   }
 
-  const spineLines = steps.map((step, index) => `Step ${index + 1}: ${step.objective}`);
+  // Numbered from where the conversation actually is, not from what is left of it: a
+  // spine that restarts at 1 after five steps fell off tells the model this is the
+  // first question when it is the sixth.
+  const spineLines = steps.map((step, index) => `Step ${droppedSteps + index + 1}: ${step.objective}`);
   const spineBudget = Math.floor(budget * SPINE_BUDGET_SHARE);
   let hidden = 0;
   while (spineLines.length > 1 && spineLines.join("\n").length > spineBudget) {
@@ -109,16 +125,18 @@ export function deriveThreadContext(
 
   const head = [...notices, ...spineLines].join("\n");
   const threadId = previous.thread.threadId;
+  const carried = droppedSteps === 0 ? {} : { droppedSteps };
   const report = reportOf(previous);
+  const reportText = report.join("\n");
   const remaining = budget - head.length - 1;
 
   if (report.length === 0 || remaining <= 0) {
-    return { threadId, steps, text: cap(head, budget) };
+    return { threadId, steps, ...carried, text: cap(head, budget) };
   }
-  if (report.length <= remaining) {
-    return { threadId, steps, text: `${head}\n${report}` };
+  if (reportText.length <= remaining) {
+    return { threadId, steps, ...carried, text: `${head}\n${reportText}` };
   }
 
-  const kept = fitLines(report, remaining - REPORT_CUT_NOTICE.length - 1);
-  return { threadId, steps, text: [head, ...kept, REPORT_CUT_NOTICE].join("\n") };
+  const kept = fitItems(report, remaining - REPORT_CUT_NOTICE.length - 1);
+  return { threadId, steps, ...carried, text: [head, ...kept, REPORT_CUT_NOTICE].join("\n") };
 }

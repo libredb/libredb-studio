@@ -15,7 +15,7 @@ import {
   type AgentRunWorkflowReading,
   type AgentRunWorkflowSource,
   type AgentRunWorkflowType,
-  type AgentThreadContext,
+  type AgentThreadHeader,
 } from "@/lib/agent/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConfig } from "@/lib/llm/utils/config";
@@ -239,10 +239,13 @@ export async function POST(req: Request) {
       guessing ids learns exactly what it could learn already.
     */
     const TERMINAL: ReadonlySet<AgentRunStatus> = new Set<AgentRunStatus>(["succeeded", "failed", "cancelled"]);
-    let thread: AgentThreadContext | undefined;
+    let thread: AgentThreadHeader | undefined;
     if (previousRunId !== undefined) {
       if (!isThreadContextEnabled()) {
-        thread = { threadId: previousRunId, steps: [], text: "", declined: "disabled" };
+        // No `threadId`: a refused continuation starts a conversation of its OWN, and
+        // the fold names it after this run. Naming it after the run it was refused
+        // would hand a later follow-up a root that was never part of the conversation.
+        thread = { steps: [], text: "", declined: "disabled" };
       } else {
         let previous: AgentRunStatusReport | null = null;
         let failed: "unavailable" | "error" | null = null;
@@ -273,7 +276,7 @@ export async function POST(req: Request) {
               // persisted at open, and a resumed drive must reason from what its first
               // drive was handed. `resolveConfig` is synchronous and reaches nothing.
               deriveThreadContext(previous.record, threadContextMaxCharsFor(resolveConfig().model))
-            : { threadId: previousRunId, steps: [], text: "", declined: failed ?? "unavailable" };
+            : { steps: [], text: "", declined: failed ?? "unavailable" };
       }
     }
 
