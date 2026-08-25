@@ -2380,9 +2380,9 @@ real-world agreement rate was measured. The count is deliberately not stated: en
 as they are fixed, and a numeral here goes stale silently.
 
 - **B67** — the rail does not say whether a run follows another. A follow-up run is now TOLD about
-  the run before it — its objective and report, fenced, from that run's own ledger (`docs/BACKLOG.md`
-  B36, closed) — but the surface names neither the run it follows nor the cases where it deliberately
-  does not, and there is still no run history to return to an earlier run.
+  the run before it — its objective and report, fenced, from that run's own ledger — but the surface
+  names neither the run it follows nor the cases where it deliberately does not, and there is still
+  no run history to return to an earlier run.
 - **B37** — a seed config the server cannot read disables the agent on every connection, and the rail
   blames the connection: "its settings live in this browser", said of a connection this application
   seeds itself. The browser cannot tell an empty seed list from a failed one.

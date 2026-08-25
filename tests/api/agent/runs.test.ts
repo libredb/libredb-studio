@@ -267,6 +267,23 @@ describe("POST /api/agent/runs", () => {
     });
   });
 
+  test("a previousRunId the ledger cannot read is a server error, not a follow-up refusal", async () => {
+    // A store failure that is NOT a malformed id — the ledger itself unreachable — is
+    // not something the caller can fix by naming another run, so it is not folded into
+    // the follow-up refusal; it surfaces as the unhandled error the store reported.
+    mockStatus.mockImplementationOnce(async () => {
+      throw new Error("ledger unavailable");
+    });
+
+    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_1" }));
+
+    expect(res.status).toBe(500);
+    expect(await parseResponseJSON(res)).toMatchObject({
+      error: "ledger unavailable",
+      statusCode: 500,
+    });
+  });
+
   test("a previousRunId on another connection is refused", async () => {
     runs.set("arun_elsewhere", fakeRun({ connectionId: "seed:analytics", status: "succeeded" }));
 
