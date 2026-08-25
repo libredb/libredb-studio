@@ -122,6 +122,13 @@ export interface AgentModelProfile {
    * agent run on the prompted protocol is toolless too, and that is the path four of the
    * twenty-five measured models take. The five agent cells were measured WITH reasoning, and
    * a setting applied where nothing was measured is a guess wearing a measurement's clothes.
+   *
+   * It reaches the OPENAI-COMPATIBLE adapter only. `providerOptions` is keyed `openai`, which
+   * is right for the three kinds `provider-registry.ts` builds through `@ai-sdk/openai`
+   * (`openai`, `ollama`, `custom`) and reaches nothing on `gemini`, which is `@ai-sdk/google`
+   * and reads its own key. So this is a no-op on the one hosted provider Studio ships an
+   * adapter for, silently — stated here because every model measured with it is local, and
+   * an operator who sets it on a Gemini model is owed the sentence rather than the silence.
    */
   readonly suppressPlanReasoning?: boolean;
   /**
