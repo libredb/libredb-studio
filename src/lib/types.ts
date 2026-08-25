@@ -52,7 +52,35 @@ export const ENVIRONMENT_LABELS: Record<ConnectionEnvironment, string> = {
   other: "",
 };
 
-export type SSLMode = "disable" | "require" | "verify-ca" | "verify-full";
+/**
+ * How much TLS a connection asks for.
+ *
+ * `disable` sends plaintext. `require` encrypts and verifies NOTHING: every provider that
+ * has the knob maps it to `rejectUnauthorized: false`, because a self-hosted server
+ * ordinarily presents a self-signed certificate and refusing it would make the ordinary
+ * local TLS deployment unreachable.
+ *
+ * `verify-system` encrypts AND verifies, with nothing to paste: the chain is checked against
+ * the trust store the runtime already has (Node's bundled roots plus whatever the host adds)
+ * and the certificate must name the host we dialled - `rejectUnauthorized: true` with no
+ * `ca`. It is deliberately NOT "verify-ca with the field left blank": `verify-ca` and
+ * `verify-full` exist to pin a chain against a `caCert` PEM the user supplies, which is the
+ * only way to reach a server whose certificate no public root signs, and a form that asks
+ * for a file the user does not have is a connection they cannot complete. `verify-system` is
+ * what a managed endpoint (Neon, Supabase, Atlas, RDS, Capella) can satisfy as pasted, which
+ * is why it is the mode a boolean `?ssl=true` / `?tls=true` in a connection string maps onto
+ * (see `readBooleanTLS` in src/lib/connection-string-parser.ts for the rule).
+ *
+ * `verify-ca` checks the chain and `verify-full` also the server name. That split is honoured
+ * only where the driver exposes the name check on its own - Oracle's `sslServerDNMatch` is
+ * the one that does; the Node TLS drivers cannot separate the two, so both land on
+ * `rejectUnauthorized: true` there and each provider doc says so.
+ *
+ * Adding a member here widens a published type (src/exports/types.ts), so every switch and
+ * lookup table over SSLMode has to answer for it: the providers listed above, the seed schema
+ * (src/lib/seed/types.ts), the PostgreSQL storage backend and the connection form.
+ */
+export type SSLMode = "disable" | "require" | "verify-system" | "verify-ca" | "verify-full";
 
 export interface SSLConfig {
   mode: SSLMode;

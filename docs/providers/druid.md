@@ -777,6 +777,13 @@ first-class `DatabaseConnection` field and is independent of the form's `connect
 applies even though the Druid form shows no TLS row of its own. An explicit `disable` turns TLS
 **off** as firmly as an explicit mode turns it on (the #264 lesson).
 
+`verify-system` (D26) is the mode that DESCRIBES this transport: `fetch` always verifies the chain
+against the platform's certificate store and cannot be told otherwise, so of the four non-`disable`
+modes it is the only one whose name matches the handshake. `require` here does not mean "encrypt
+without checking" the way it does on the driver-based providers — nothing in this transport can skip a
+check — and `verify-ca`/`verify-full` cannot pin against a pasted CA. Nothing in the code branches on
+which one is selected.
+
 The port is **not** changed by TLS, unlike ClickHouse's `8123` → `8443`: a TLS Druid serves on
 whatever `druid.tlsPort` the deployment configured, and there is no well-known value to guess.
 

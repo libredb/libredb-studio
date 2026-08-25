@@ -54,9 +54,12 @@ const mockWithOneShotTunnel = mock(
     await run({ ...connection, host: "127.0.0.1", port: 54321 }),
 );
 
+const mockFindOpenSingleWriterProvider = mock((_connection: Record<string, unknown>) => null as unknown);
+
 mock.module("@/lib/db/factory", () => ({
   getOrCreateProvider: mock(async () => mockProvider),
   createDatabaseProvider: mockCreateDatabaseProvider,
+  findOpenSingleWriterProvider: mockFindOpenSingleWriterProvider,
   withOneShotTunnel: mockWithOneShotTunnel,
 }));
 
@@ -85,6 +88,8 @@ describe("POST /api/db/schema-snapshot", () => {
     // Reset implementations
     (mockProvider.connect as ReturnType<typeof mock>).mockImplementation(async () => {});
     (mockProvider.disconnect as ReturnType<typeof mock>).mockImplementation(async () => {});
+    mockFindOpenSingleWriterProvider.mockClear();
+    mockFindOpenSingleWriterProvider.mockImplementation(() => null);
     mockGetSession.mockClear();
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
@@ -228,5 +233,59 @@ describe("POST /api/db/schema-snapshot", () => {
     expect(mockWithOneShotTunnel).toHaveBeenCalledTimes(1);
     expect(mockWithOneShotTunnel.mock.calls[0]?.[0]).toMatchObject({ host: "db.internal" });
     expect(mockCreateDatabaseProvider.mock.calls[0]?.[0]).toMatchObject({ host: "127.0.0.1", port: 54321 });
+  });
+
+  // ─── Single-writer file reuse (docs/BACKLOG.md D3) ────────────────────────
+  // Measured 2026-08-25 against the released 0.13.4 image: with the built-in LibreDB
+  // sample connected, this route answered HTTP 503 "LibreDB file is already open by
+  // another process (exclusive lock)" - so the Schema Diff tab's Snapshot button, its
+  // only caller, could not read a schema the sidebar was showing at that moment. The
+  // third caller of this shape after test-connection and the profiled acquisition.
+
+  test("borrows the handle already holding a single-writer file instead of opening a second one", async () => {
+    mockCreateDatabaseProvider.mockClear();
+    const borrowed = {
+      connect: mock(async () => {}),
+      disconnect: mock(async () => {}),
+      getSchema: mock(async () => ({ tables: [{ name: "borrowed" }] })),
+    };
+    mockFindOpenSingleWriterProvider.mockImplementation(() => borrowed);
+
+    const req = createMockRequest("/api/db/schema-snapshot", {
+      method: "POST",
+      body: { connection: { ...validConnection, type: "libredb", database: "/tmp/held.libredb" } },
+    });
+
+    const res = await POST(req as never);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.schema).toEqual({ tables: [{ name: "borrowed" }] });
+    // No second handle was built, and the borrowed one was neither opened nor closed
+    // by this route: it belongs to the live connection that opened it.
+    expect(mockCreateDatabaseProvider).not.toHaveBeenCalled();
+    expect(borrowed.connect).not.toHaveBeenCalled();
+    expect(borrowed.disconnect).not.toHaveBeenCalled();
+  });
+
+  test("a borrowed handle is not closed when the schema read fails", async () => {
+    const borrowed = {
+      connect: mock(async () => {}),
+      disconnect: mock(async () => {}),
+      getSchema: mock(async () => {
+        throw new Error("catalog read refused");
+      }),
+    };
+    mockFindOpenSingleWriterProvider.mockImplementation(() => borrowed);
+
+    const req = createMockRequest("/api/db/schema-snapshot", {
+      method: "POST",
+      body: { connection: { ...validConnection, type: "libredb", database: "/tmp/held.libredb" } },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(500);
+    expect(borrowed.disconnect).not.toHaveBeenCalled();
   });
 });

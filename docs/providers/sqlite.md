@@ -472,6 +472,7 @@ answers with nothing both while it is in flight and when it failed.
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core SQLite DML |
 | `supportsTransactions` | **`false`** — SQLite HAS `BEGIN`, but this provider holds no session across two requests, so `POST /api/db/transaction` refuses the call. The flag describes the provider's surface, not the engine, and the trio and SANDBOX toggle are withheld rather than offered and then failed (#U13) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; `PRAGMA foreign_key_list` reads them whether or not enforcement is on |
+| `singleWriterFile` | **absent (not `true`)** — SQLite is a file engine and is *not* single-writer at OPEN. Measured 2026-08-25 on `bun:sqlite`: a second `new Database(path, { readwrite: true })` on a WAL file this process already holds both opens and writes, because SQLite takes its file locks per transaction. LibreDB declares the flag and SQLite must not: the whole point of the agent profile here is a SECOND, `readonly: true` handle on the same file ([§12.1](#121-where-the-boundary-is)), and declaring it would have made the factory hand the agent the writable one instead |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'check']` |
 | `supportsConnectionString` | **`false`** |

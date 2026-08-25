@@ -132,6 +132,10 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
     // prefix, so they are this server's summary of what one scan reached rather than
     // objects the engine declares (#414).
     expect(caps.tablesAreDerivedGroupings).toBe(true);
+    // `lib.open({ path })` takes an exclusive `<path>.lock`, so this engine admits ONE
+    // handle per file - the fact the connection test and the agent's grounding read
+    // both borrow the open one instead of opening a second (D3, B49).
+    expect(caps.singleWriterFile).toBe(true);
     expect(caps.supportsExplain).toBe(false);
     expect(caps.explainFormat).toBeUndefined();
     expect(caps.supportsExplain).toBe(caps.explainFormat !== undefined);

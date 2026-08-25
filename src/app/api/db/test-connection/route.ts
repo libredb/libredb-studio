@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createDatabaseProvider, withOneShotTunnel } from "@/lib/db/factory";
+import { createDatabaseProvider, findOpenSingleWriterProvider, withOneShotTunnel } from "@/lib/db/factory";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
@@ -29,16 +29,40 @@ export async function POST(req: NextRequest) {
     // tunnel's whole lifetime because nothing here is cached, so no eviction would
     // ever close a pooled one - and every failed test click would strand it.
     return await withOneShotTunnel(connection, async (effective) => {
-      // Declared inside the scope so the provider is always torn down before the
-      // tunnel it runs over, on the success and the failure path alike.
-      let provider = null;
+      /*
+        The handle already holding this connection's file, on an engine that admits
+        only one (`ProviderCapabilities.singleWriterFile`; `docs/BACKLOG.md` D3).
+
+        Building a second provider there does not test the connection - it is refused
+        by the exclusive lock the LIVE connection holds, and this route reported that
+        as a failed connection test. Since the dialog gates its save on this answer,
+        the built-in LibreDB sample could not be edited at all: the modal tested the
+        edited copy, hit the sample's own lock, and discarded the edit with a toast
+        about a connection error.
+
+        A borrowed handle answers both of this route's questions - the file is open,
+        and here is its health - so it is reused. It is NOT this route's to close:
+        `borrowed` guards every disconnect below, because closing it would close the
+        file under the session that opened it.
+      */
+      const borrowed = findOpenSingleWriterProvider(effective);
+      // Both declared inside the scope so a provider this route opened is always torn
+      // down before the tunnel it runs over, on the success and the failure path alike.
+      let provider = borrowed;
+      const release = async () => {
+        const own = borrowed ? null : provider;
+        provider = null;
+        if (own) await own.disconnect();
+      };
       try {
-        provider = await createDatabaseProvider(effective, { queryTimeout: 10000 });
-        // The connection itself: every provider's connect() reaches the server and is
-        // refused by a wrong host, port, credential or database - the SQL ones borrow a
-        // pooled client, and the HTTP ones send a probe statement. So a connect that
-        // returns is the fact this route exists to establish.
-        await provider.connect();
+        if (!provider) {
+          provider = await createDatabaseProvider(effective, { queryTimeout: 10000 });
+          // The connection itself: every provider's connect() reaches the server and is
+          // refused by a wrong host, port, credential or database - the SQL ones borrow a
+          // pooled client, and the HTTP ones send a probe statement. So a connect that
+          // returns is the fact this route exists to establish.
+          await provider.connect();
+        }
 
         /*
           The health read is a SECOND fact, and conflating the two is the defect this
@@ -60,8 +84,7 @@ export async function POST(req: NextRequest) {
         try {
           await provider.getHealth();
         } catch (healthError) {
-          await provider.disconnect();
-          provider = null;
+          await release();
 
           return NextResponse.json({
             success: true,
@@ -73,8 +96,7 @@ export async function POST(req: NextRequest) {
         }
         const latency = Date.now() - startTime;
 
-        await provider.disconnect();
-        provider = null;
+        await release();
 
         return NextResponse.json({
           success: true,
@@ -82,8 +104,9 @@ export async function POST(req: NextRequest) {
           latency,
         });
       } finally {
-        // Only reached when the block above threw before its own disconnect.
-        if (provider) {
+        // Only reached when the block above threw before its own release, and never
+        // for a borrowed handle - which this route did not open and must not close.
+        if (provider && !borrowed) {
           try {
             await provider.disconnect();
           } catch {

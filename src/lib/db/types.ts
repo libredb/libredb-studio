@@ -289,6 +289,42 @@ export interface ProviderCapabilities {
    * reader would guess, and a third would be added to a provider and forgotten here.
    */
   tablesAreDerivedGroupings?: boolean;
+  /**
+   * True when the engine admits exactly ONE open handle per database FILE, because
+   * opening the file takes an exclusive lock: a second open of a file this process
+   * already holds does not return a second handle, it throws.
+   *
+   * `libredb` is the only engine that declares it. `lib.open({ path })` takes an
+   * exclusive `<path>.lock` sidecar and a second open of the same path throws
+   * `LibreDbError` with `code: "LOCKED"` - measured 2026-08-25 against
+   * `@libredb/libredb` 0.2.2, in one process. SQLite is the engine a reader would
+   * expect beside it and does NOT belong: measured the same day on `bun:sqlite`, a
+   * second `new Database(path, { readwrite: true })` on a WAL file this process
+   * already holds both opens and writes, because SQLite takes its file locks per
+   * transaction rather than at open.
+   *
+   * It exists because three code paths open a SECOND handle on a file the connection's
+   * own cached provider is already holding, and on this engine the lock defeated every
+   * one of them every time (`docs/BACKLOG.md` D3 and B49): `POST /api/db/test-connection`
+   * reported the lock as a failed connection test - which made the built-in LibreDB
+   * sample impossible to EDIT, because the dialog tests before it saves;
+   * `acquireExecutionProfileProvider` lost every agent grounding read on the
+   * connection to it, silently, since a `ConnectionError` becomes an unavailable
+   * capture rather than a failure; and `POST /api/db/schema-snapshot` answered 503, so
+   * the Schema Diff tab could not snapshot a schema the sidebar was listing.
+   * `findOpenSingleWriterProvider` (`factory.ts`) now hands all three the handle that
+   * is already open, keyed by the RESOLVED FILE PATH rather than the connection id: the
+   * second opener is usually a different connection record pointing at the same file.
+   *
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`
+   * (`src/exports/types.ts`): a required field added after the fact stops every
+   * external implementer compiling. Consumers therefore gate on `=== true`, so an
+   * absent flag reads as "this engine serves as many handles as we open" - the
+   * ordinary case, and the one every client-server engine is in. Reading
+   * `connection.type` at the consumer was the alternative and is forbidden by
+   * `CLAUDE.md`.
+   */
+  singleWriterFile?: boolean;
   supportsMaintenance: boolean;
   maintenanceOperations: MaintenanceType[];
   /**

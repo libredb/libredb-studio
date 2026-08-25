@@ -115,6 +115,16 @@ function degradedSentence(result: TestOutcome): string {
   return result.message ?? result.error ?? "Connected, but this server answered no health data.";
 }
 
+/**
+ * The banner's three renderings. `success` and `error` are the two outcomes the
+ * banner always had; `warning` is the missing third one (#U19) - a caution that is
+ * neither a completed action nor a refusal, such as a degraded connect/save offer or
+ * a paste that filled the form but could not apply one setting. A single field
+ * instead of `success` plus a `degraded` flag, because two booleans read together is
+ * exactly the shape that let a caution wear a green tick in the first place.
+ */
+type TestResultTone = "success" | "warning" | "error";
+
 export function useConnectionForm({ isOpen, onConnect, editConnection, onTestConnection }: UseConnectionFormProps) {
   const [type, setType] = useState<DatabaseType>("postgres");
   const [name, setName] = useState("");
@@ -127,7 +137,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   const [connectionString, setConnectionString] = useState("");
   const [mongoConnectionMode, setMongoConnectionMode] = useState<"host" | "connectionString">("host");
   const [environment, setEnvironment] = useState<ConnectionEnvironment>("local");
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string; latency?: number } | null>(null);
+  const [testResult, setTestResult] = useState<{ tone: TestResultTone; message: string; latency?: number } | null>(
+    null,
+  );
   const [pasteInput, setPasteInput] = useState("");
   const [showPasteInput, setShowPasteInput] = useState(false);
   /** Whether the user has been shown, and clicked past, a connection with no health surface. */
@@ -405,19 +417,21 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       const result = await probeConnection(buildConnection());
 
       setTestResult({
-        success: result.success,
+        // A degraded connection IS connected, so it is not an error - but saying
+        // "Connected successfully" and nothing else is what hid the missing
+        // monitoring surface until the dashboard showed an error page. It is not a
+        // plain success either: it is the same caution `handleConnect` offers below,
+        // so it gets the same warning tone rather than the green tick.
+        tone: !result.success ? "error" : result.degraded ? "warning" : "success",
         message: result.success
-          ? // A degraded connection IS connected, so it stays a success - but saying
-            // "Connected successfully" and nothing else is what hid the missing
-            // monitoring surface until the dashboard showed an error page.
-            result.degraded
+          ? result.degraded
             ? degradedSentence(result)
             : `Connected successfully${result.latency ? ` (${result.latency}ms)` : ""}`
           : result.error || "Connection failed",
         latency: result.latency,
       });
     } catch {
-      setTestResult({ success: false, message: "Network error - could not reach server" });
+      setTestResult({ tone: "error", message: "Network error - could not reach server" });
     } finally {
       setIsTesting(false);
     }
@@ -432,7 +446,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       const result = await probeConnection(conn);
 
       if (!result.success) {
-        setTestResult({ success: false, message: result.error || "Connection failed" });
+        setTestResult({ tone: "error", message: result.error || "Connection failed" });
         return;
       }
 
@@ -452,7 +466,12 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       if (result.degraded === true && !degradedSaveAcknowledged) {
         setDegradedSaveAcknowledged(true);
         setTestResult({
-          success: true,
+          // The save is being OFFERED, not refused, and not yet completed either - a
+          // sentence that asks the user to click again does not belong under a
+          // "success" tick (#U19). This is the same class as the degraded
+          // `handleTestConnection` message above: connected, but the server answered
+          // no health data.
+          tone: "warning",
           // The button's own label, because the dialog renders two of them: "Save
           // Changes" when editing and "Establish Connection" when creating, and naming
           // a button that is not on screen is worse than naming none.
@@ -473,7 +492,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       setMongoConnectionMode("host");
       setTestResult(null);
     } catch {
-      setTestResult({ success: false, message: "Network error - could not reach server" });
+      setTestResult({ tone: "error", message: "Network error - could not reach server" });
     } finally {
       setIsTesting(false);
     }
@@ -486,7 +505,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     const parsed = parseConnectionString(trimmed);
     if (!parsed) {
       setTestResult({
-        success: false,
+        tone: "error",
         // One scheme per branch in connection-string-parser.ts, and nothing else.
         // Elasticsearch, OpenSearch and Trino are absent on purpose: all three are
         // addressed by host and port like Druid, and `http(s)://` already resolves to
@@ -533,21 +552,25 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     // either end is measurably wrong in both directions (see connection-string-parser.ts).
     // So name the parameter, name the mode that is actually in force, and say where to fix it.
     //
-    // `success: false` is the affordance, not a claim that the paste failed: the modal has
-    // exactly two states for this box and renders `true` as a green tick (#449 - an
-    // affordance that contradicts its own sentence is the defect, and a green tick over
-    // "your TLS setting was dropped" is that defect in its most dangerous direction). The
-    // amber third state a warning would deserve is not worth a rendering variant with one
-    // caller, so the sentence carries the nuance: it leads with what was NOT applied and
-    // says outright that the other fields were.
+    // The paste itself worked - every other field is filled in - so this is not a
+    // failure, but a green tick over "your TLS setting was dropped" would be exactly
+    // the defect #449 names (an affordance that contradicts its own sentence), just
+    // in its most dangerous direction. Originally emitted as `success: false` for want
+    // of a third rendering (#U19 found the same missing state one branch below, in
+    // `handleConnect`'s degraded save); now that the warning tone exists for that
+    // caller too, this is the same caution and gets the same tone. The sentence still
+    // leads with what was NOT applied and says outright that the other fields were.
     if (parsed.unmappedTLSParam) {
       setTestResult({
-        success: false,
-        message: `TLS setting not applied: "${parsed.unmappedTLSParam}" has no equivalent among disable, require, verify-ca and verify-full. The other fields were filled in, but SSL Mode stays "${sslMode}" - open SSL / TLS and choose one before connecting.`,
+        tone: "warning",
+        message: `TLS setting not applied: "${parsed.unmappedTLSParam}" has no equivalent among disable, require, verify-system, verify-ca and verify-full. The other fields were filled in, but SSL Mode stays "${sslMode}" - open SSL / TLS and choose one before connecting.`,
       });
       return;
     }
-    setTestResult({ success: true, message: "Connection string parsed successfully. Review the fields and connect." });
+    setTestResult({
+      tone: "success",
+      message: "Connection string parsed successfully. Review the fields and connect.",
+    });
   }, [pasteInput, name, sslMode]);
 
   // Ordered for display (the modal renders these as a 2-column grid), and covering the whole

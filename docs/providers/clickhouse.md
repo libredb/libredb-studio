@@ -612,6 +612,13 @@ default port from `8123` to `8443`
 separate CA/client-certificate plumbing the way Couchbase's `node:https` path has: the transport
 uses the runtime's own `fetch`, whose TLS trust follows the platform's default certificate store.
 
+`verify-system` (D26) is the mode that DESCRIBES this transport: `fetch` always verifies the chain
+against the platform's certificate store and cannot be told otherwise, so of the four non-`disable`
+modes it is the only one whose name matches the handshake. `require` here does not mean "encrypt
+without checking" the way it does on the driver-based providers — nothing in this transport can skip a
+check — and `verify-ca`/`verify-full` cannot pin against a pasted CA. Nothing in the code branches on
+which one is selected.
+
 Two consequences worth stating plainly:
 
 - **`ssl.caCert`, `ssl.clientCert` and `ssl.rejectUnauthorized` are not honoured.** Global `fetch`

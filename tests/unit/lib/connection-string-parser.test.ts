@@ -133,14 +133,20 @@ describe("parseConnectionString", () => {
       expect(result!.database).toBeUndefined();
     });
 
-    // Deliberately NOT a mode, unlike rediss:// and couchbases://: the MongoDB driver
-    // gets the URI verbatim and applies `tls=true` for mongodb+srv itself, WITH chain
-    // verification. Handing it our `require` would set rejectUnauthorized:false and
-    // silently stop verifying an Atlas certificate the driver checks today.
-    test("leaves the TLS intent unset for mongodb+srv://, which the driver reads itself", () => {
+    // The driver applies `tls=true` for mongodb+srv itself, WITH chain verification, so the
+    // form has to say the same thing rather than sit on its `disable` default while the
+    // connection is in fact encrypted (D26). This stayed unset while `require` was the only
+    // alternative, because require is rejectUnauthorized:false and the options object is a
+    // second channel the driver reads - it would have stopped an Atlas certificate being
+    // verified.
+    test("mongodb+srv:// carries the verifying mode the scheme itself implies", () => {
       const result = parseConnectionString("mongodb+srv://user:pass@cluster0.abcde.mongodb.net/appdb");
-      expect(result!.sslMode).toBeUndefined();
+      expect(result!.sslMode).toBe("verify-system");
       expect(result!.connectionString).toBe("mongodb+srv://user:pass@cluster0.abcde.mongodb.net/appdb");
+    });
+
+    test("plain mongodb:// with no TLS parameter says nothing about TLS", () => {
+      expect(parseConnectionString("mongodb://user:pass@host:27017/appdb")!.sslMode).toBeUndefined();
     });
   });
 
@@ -791,6 +797,14 @@ describe("parseConnectionString: TLS parameters", () => {
       });
     }
 
+    // `verify-system` is OUR form's mode, not a libpq one: libpq's sslmode has no such
+    // value, so a string carrying it is a string we cannot honour and must report.
+    test("the form's own verify-system is not a libpq sslmode", () => {
+      const result = parseConnectionString("postgres://u:p@host/db?sslmode=verify-system");
+      expect(result!.sslMode).toBeUndefined();
+      expect(result!.unmappedTLSParam).toBe("sslmode=verify-system");
+    });
+
     test("an unrecognised sslmode does not become disable", () => {
       const result = parseConnectionString("postgres://u:p@host/db?sslmode=banana");
       expect(result!.sslMode).toBeUndefined();
@@ -808,9 +822,13 @@ describe("parseConnectionString: TLS parameters", () => {
       expect(result!.unmappedTLSParam).toBe("sslmode=constructor");
     });
 
-    test("maps the JDBC/Heroku ssl=true form to require", () => {
-      expect(parseConnectionString("postgres://u:p@host/db?ssl=true")!.sslMode).toBe("require");
-      expect(parseConnectionString("postgres://u:p@host/db?ssl=1")!.sslMode).toBe("require");
+    // D26: `pg` reads `ssl=true` as TLS with Node's default `rejectUnauthorized: true`, so
+    // the mapping has to be the verifying mode that needs no PEM. It used to be `require`,
+    // which is `rejectUnauthorized: false` here - encrypted, chain unchecked - i.e. a paste
+    // that asked for verification silently got none.
+    test("maps the JDBC/Heroku ssl=true form to verify-system, not to require", () => {
+      expect(parseConnectionString("postgres://u:p@host/db?ssl=true")!.sslMode).toBe("verify-system");
+      expect(parseConnectionString("postgres://u:p@host/db?ssl=1")!.sslMode).toBe("verify-system");
       expect(parseConnectionString("postgres://u:p@host/db?ssl=false")!.sslMode).toBe("disable");
       expect(parseConnectionString("postgres://u:p@host/db?ssl=0")!.sslMode).toBe("disable");
     });
@@ -881,17 +899,23 @@ describe("parseConnectionString: TLS parameters", () => {
     // `ssl` and `useSSL` are the boolean spellings the JDBC connector and several ORMs
     // write. Reading only ssl-mode dropped them with no mode AND no banner, which is the
     // silent-downgrade defect this whole parameter exists to prevent.
-    test("maps the boolean ssl=true / useSSL=true forms to require", () => {
-      expect(parseConnectionString("mysql://u:p@host/db?ssl=true")!.sslMode).toBe("require");
-      expect(parseConnectionString("mysql://u:p@host/db?ssl=1")!.sslMode).toBe("require");
-      expect(parseConnectionString("mysql://u:p@host/db?useSSL=true")!.sslMode).toBe("require");
-      expect(parseConnectionString("mysql://u:p@host/db?useSSL=TRUE")!.sslMode).toBe("require");
+    test("maps the boolean ssl=true / useSSL=true forms to verify-system", () => {
+      expect(parseConnectionString("mysql://u:p@host/db?ssl=true")!.sslMode).toBe("verify-system");
+      expect(parseConnectionString("mysql://u:p@host/db?ssl=1")!.sslMode).toBe("verify-system");
+      expect(parseConnectionString("mysql://u:p@host/db?useSSL=true")!.sslMode).toBe("verify-system");
+      expect(parseConnectionString("mysql://u:p@host/db?useSSL=TRUE")!.sslMode).toBe("verify-system");
     });
 
     test("maps the boolean ssl=false / useSSL=false forms to disable", () => {
       expect(parseConnectionString("mysql://u:p@host/db?ssl=false")!.sslMode).toBe("disable");
       expect(parseConnectionString("mysql://u:p@host/db?ssl=0")!.sslMode).toBe("disable");
       expect(parseConnectionString("mysql://u:p@host/db?useSSL=false")!.sslMode).toBe("disable");
+    });
+
+    test("the form's own verify-system is not a MySQL ssl-mode", () => {
+      const result = parseConnectionString("mysql://u:p@host/db?ssl-mode=verify-system");
+      expect(result!.sslMode).toBeUndefined();
+      expect(result!.unmappedTLSParam).toBe("ssl-mode=verify-system");
     });
 
     test("an unrecognised boolean value is reported verbatim, in the spelling that was pasted", () => {
@@ -975,13 +999,51 @@ describe("parseConnectionString: TLS parameters", () => {
       expect(parseConnectionString("https://host/default?sslmode=prefer")!.sslMode).toBe("require");
     });
 
-    // The mongodb driver receives the URI verbatim and turns TLS on itself, WITH chain
-    // verification; our `require` means rejectUnauthorized:false, so setting it here
-    // would weaken an Atlas connection rather than describe it.
-    test("mongodb tls=true is left to the driver", () => {
+    // D26: the driver reads `tls=true` as TLS WITH chain verification, and `verify-system`
+    // is the mode that says exactly that, so the paste is now described instead of ignored.
+    // While `require` was the only non-disable mode this had to stay unset: setting it would
+    // have handed the driver rejectUnauthorized:false and stopped an Atlas certificate being
+    // checked.
+    test("mongodb tls=true maps onto the verifying mode the driver already applies", () => {
       const result = parseConnectionString("mongodb://u:p@host:27017/db?tls=true");
-      expect(result!.sslMode).toBeUndefined();
+      expect(result!.sslMode).toBe("verify-system");
       expect(result!.unmappedTLSParam).toBeUndefined();
+    });
+
+    test("mongodb ssl=true, the driver's own deprecated alias, maps the same way", () => {
+      expect(parseConnectionString("mongodb://u:p@host:27017/db?ssl=true")!.sslMode).toBe("verify-system");
+    });
+
+    test("mongodb tls=false is explicit plaintext", () => {
+      expect(parseConnectionString("mongodb://u:p@host:27017/db?tls=false")!.sslMode).toBe("disable");
+    });
+
+    // The driver's own relaxing options (`tlsInsecure`, `tlsAllowInvalidCertificates`) turn
+    // `rejectUnauthorized` OFF while leaving TLS on, which is precisely `require`. Reading
+    // `tls=true` on its own here would have set the verifying mode and, because the provider
+    // passes the options object as a second channel the driver prefers over the URI, broken a
+    // string that connects today.
+    test("a relaxing tls option keeps the paste on require, not on the verifying mode", () => {
+      expect(parseConnectionString("mongodb://h:27017/db?tls=true&tlsInsecure=true")!.sslMode).toBe("require");
+      expect(parseConnectionString("mongodb://h:27017/db?tls=true&tlsAllowInvalidCertificates=true")!.sslMode).toBe(
+        "require",
+      );
+      expect(parseConnectionString("mongodb+srv://h/db?tlsAllowInvalidCertificates=true")!.sslMode).toBe("require");
+    });
+
+    test("a relaxing option that is off does not weaken the mode", () => {
+      expect(parseConnectionString("mongodb://h:27017/db?tls=true&tlsInsecure=false")!.sslMode).toBe("verify-system");
+    });
+
+    test("a relaxing option cannot turn plaintext into TLS", () => {
+      expect(parseConnectionString("mongodb://h:27017/db?tlsInsecure=true")!.sslMode).toBeUndefined();
+      expect(parseConnectionString("mongodb://h:27017/db?tls=false&tlsInsecure=true")!.sslMode).toBe("disable");
+    });
+
+    test("a non-boolean tls value is reported rather than guessed at", () => {
+      const result = parseConnectionString("mongodb://u:p@host:27017/db?tls=maybe");
+      expect(result!.sslMode).toBeUndefined();
+      expect(result!.unmappedTLSParam).toBe("tls=maybe");
     });
   });
 });

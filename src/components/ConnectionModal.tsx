@@ -21,6 +21,7 @@ import {
   Link,
   CircleCheck,
   CircleX,
+  TriangleAlert,
   ClipboardPaste,
   Lock,
   ChevronDown,
@@ -34,6 +35,24 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useConnectionForm } from "@/hooks/use-connection-form";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { WireCompatibilityHint } from "@/components/WireCompatibilityHint";
+
+/**
+ * What each SSL mode actually does, in the panel where it is chosen.
+ *
+ * `verify-system` is the one that needs the sentence most (D26): without it a reader cannot
+ * tell it from `verify-ca` and goes looking for a CA file that mode does not want. The
+ * SSLMode union is published (src/lib/types.ts), so this Record is exhaustive by type - a
+ * mode added there without copy here fails typecheck rather than rendering an empty hint.
+ */
+const SSL_MODE_HINTS: Record<SSLMode, string> = {
+  disable: "Plaintext. Nothing is encrypted.",
+  require: "Encrypts but verifies nothing - any certificate is accepted, including a forged one.",
+  "verify-system":
+    "Encrypts and verifies the certificate chain and host name against the system trust store - no certificate to paste. Use this for a managed endpoint (Neon, Supabase, Atlas, RDS, Capella).",
+  "verify-ca": "Encrypts and verifies the chain against the CA certificate below. Paste one for a private CA.",
+  "verify-full":
+    "Encrypts and verifies the chain against the CA certificate below, and that it names the host you typed.",
+};
 
 interface ConnectionModalProps {
   isOpen: boolean;
@@ -658,22 +677,27 @@ export function ConnectionModal({
                       <div className="space-y-2">
                         <Label className="text-xs font-mediumr text-fg-muted">SSL Mode</Label>
                         <div className="flex flex-wrap gap-1.5">
-                          {(["disable", "require", "verify-ca", "verify-full"] as SSLMode[]).map((mode) => (
-                            <button
-                              key={mode}
-                              type="button"
-                              onClick={() => setSSLMode(mode)}
-                              className={cn(
-                                "px-2.5 py-1.5 rounded-md text-xs font-mediumr transition-all border",
-                                sslMode === mode
-                                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
-                                  : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
-                              )}
-                            >
-                              {mode}
-                            </button>
-                          ))}
+                          {(["disable", "require", "verify-system", "verify-ca", "verify-full"] as SSLMode[]).map(
+                            (mode) => (
+                              <button
+                                key={mode}
+                                type="button"
+                                onClick={() => setSSLMode(mode)}
+                                className={cn(
+                                  "px-2.5 py-1.5 rounded-md text-xs font-mediumr transition-all border",
+                                  sslMode === mode
+                                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                                    : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
+                                )}
+                              >
+                                {mode}
+                              </button>
+                            ),
+                          )}
                         </div>
+                        <p data-testid="ssl-mode-hint" className="text-xs text-fg-muted">
+                          {SSL_MODE_HINTS[sslMode]}
+                        </p>
                       </div>
                       {sslMode !== "disable" && (
                         <div className="space-y-3">
@@ -869,15 +893,21 @@ export function ConnectionModal({
                 className="overflow-hidden"
               >
                 <div
+                  data-testid="connection-test-result"
+                  data-tone={testResult.tone}
                   className={cn(
                     "flex items-center gap-2 p-3 rounded-lg border text-xs",
-                    testResult.success
+                    testResult.tone === "success"
                       ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-400"
-                      : "bg-red-500/5 border-red-500/20 text-red-400",
+                      : testResult.tone === "warning"
+                        ? "bg-amber-500/5 border-amber-500/20 text-amber-400"
+                        : "bg-red-500/5 border-red-500/20 text-red-400",
                   )}
                 >
-                  {testResult.success ? (
+                  {testResult.tone === "success" ? (
                     <CircleCheck strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
+                  ) : testResult.tone === "warning" ? (
+                    <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
                   ) : (
                     <CircleX strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
                   )}

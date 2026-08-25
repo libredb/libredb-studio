@@ -13,6 +13,13 @@ const mockCreateDatabaseProvider = mock(async (connection?: unknown) => {
   return mockProvider;
 });
 
+/**
+ * The writable provider already holding a single-writer file, when one is open
+ * (`docs/BACKLOG.md` D3). Null by default: every engine but LibreDB is in that state.
+ */
+const borrowedProvider = createMockProvider();
+const mockFindOpenSingleWriterProvider = mock((): unknown => null);
+
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
 );
@@ -66,6 +73,7 @@ const mockWithOneShotTunnel = mock(
 // ─── Mock dependencies BEFORE importing route ───────────────────────────────
 mock.module("@/lib/db/factory", () => ({
   createDatabaseProvider: mockCreateDatabaseProvider,
+  findOpenSingleWriterProvider: mockFindOpenSingleWriterProvider,
   withOneShotTunnel: mockWithOneShotTunnel,
   getOrCreateProvider: mock(async () => mockProvider),
   removeProvider: mock(async () => {}),
@@ -96,6 +104,18 @@ describe("POST /api/db/test-connection", () => {
     (mockProvider.connect as ReturnType<typeof mock>).mockClear();
     (mockProvider.disconnect as ReturnType<typeof mock>).mockClear();
     (mockProvider.getHealth as ReturnType<typeof mock>).mockClear();
+    mockFindOpenSingleWriterProvider.mockClear();
+    mockFindOpenSingleWriterProvider.mockImplementation(() => null);
+    for (const method of ["connect", "disconnect", "getHealth"] as const) {
+      (borrowedProvider[method] as ReturnType<typeof mock>).mockClear();
+    }
+    (borrowedProvider.getHealth as ReturnType<typeof mock>).mockImplementation(async () => ({
+      activeConnections: 1,
+      databaseSize: "12 KB",
+      cacheHitRatio: "N/A",
+      slowQueries: [],
+      activeSessions: [],
+    }));
 
     // Reset implementations to defaults
     mockGetSession.mockClear();
@@ -359,5 +379,85 @@ describe("POST /api/db/test-connection", () => {
     await POST(req as never);
 
     expect(disconnectsAtScopeExit).toBe(1);
+  });
+  // ─── Single-writer files (docs/BACKLOG.md D3) ─────────────────────────────
+  // An engine that declares `ProviderCapabilities.singleWriterFile` admits ONE handle
+  // per file, so building a second provider to test it is refused by the lock the live
+  // connection itself holds. The dialog tests before it saves, so that made the
+  // built-in LibreDB sample impossible to EDIT: the edit was discarded with a toast
+  // about a connection error, as if the sample were broken.
+
+  test("reuses the provider already holding a single-writer file instead of opening a second one", async () => {
+    mockFindOpenSingleWriterProvider.mockImplementation(() => borrowedProvider);
+
+    const req = createMockRequest("/api/db/test-connection", {
+      method: "POST",
+      body: { ...validConnection, type: "libredb", database: "/data/sample.libredb" },
+    });
+
+    const data = await parseResponseJSON<{ success: boolean; message: string; latency: number }>(
+      await POST(req as never),
+    );
+
+    expect(data.success).toBe(true);
+    expect(data.message).toBe("Connection successful");
+    expect(typeof data.latency).toBe("number");
+    // No second handle was built, and the open one was not re-connected.
+    expect(mockCreateDatabaseProvider).not.toHaveBeenCalled();
+    expect(borrowedProvider.connect).not.toHaveBeenCalled();
+    expect(borrowedProvider.getHealth).toHaveBeenCalledTimes(1);
+  });
+
+  test("never disconnects a provider it borrowed", async () => {
+    // Closing it would close the file under the live connection that opened it - the
+    // editor's own session - which is worse than the failed test this replaced.
+    mockFindOpenSingleWriterProvider.mockImplementation(() => borrowedProvider);
+
+    const req = createMockRequest("/api/db/test-connection", {
+      method: "POST",
+      body: { ...validConnection, type: "libredb", database: "/data/sample.libredb" },
+    });
+
+    await POST(req as never);
+
+    expect(borrowedProvider.disconnect).not.toHaveBeenCalled();
+    expect(disconnectsAtScopeExit).toBe(0);
+  });
+
+  test("a failed health read on a borrowed provider is a degraded success, and still closes nothing", async () => {
+    mockFindOpenSingleWriterProvider.mockImplementation(() => borrowedProvider);
+    (borrowedProvider.getHealth as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new Error("no monitoring endpoint");
+    });
+
+    const req = createMockRequest("/api/db/test-connection", {
+      method: "POST",
+      body: { ...validConnection, type: "libredb", database: "/data/sample.libredb" },
+    });
+
+    const data = await parseResponseJSON<{ success: boolean; degraded?: boolean; message: string }>(
+      await POST(req as never),
+    );
+
+    expect(data.success).toBe(true);
+    expect(data.degraded).toBe(true);
+    expect(data.message).toContain("no monitoring endpoint");
+    expect(borrowedProvider.disconnect).not.toHaveBeenCalled();
+  });
+
+  test("builds its own provider when nothing holds the file, and closes that one", async () => {
+    // The other half: reuse is not a new default. With no open handle the route opens,
+    // tests and closes its own, exactly as it does for every client-server engine.
+    const req = createMockRequest("/api/db/test-connection", {
+      method: "POST",
+      body: { ...validConnection, type: "libredb", database: "/data/other.libredb" },
+    });
+
+    await POST(req as never);
+
+    expect(mockFindOpenSingleWriterProvider).toHaveBeenCalledTimes(1);
+    expect(mockCreateDatabaseProvider).toHaveBeenCalledTimes(1);
+    expect(mockProvider.connect).toHaveBeenCalledTimes(1);
+    expect(mockProvider.disconnect).toHaveBeenCalledTimes(1);
   });
 });

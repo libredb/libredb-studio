@@ -760,6 +760,16 @@ describe("CouchbaseHttpTransport TLS", () => {
     expect(recorded[0].tls).toEqual({ rejectUnauthorized: false });
   });
 
+  // D26: the mode a `couchbases://` Capella endpoint can satisfy as pasted - its certificate
+  // is signed by a public root, so the chain is checkable with nothing to paste.
+  test("verifies the chain in verify-system mode without a pasted CA", async () => {
+    const recorded: RecordedRequest[] = [];
+
+    await makeTransport({ ssl: { mode: "verify-system" } }, tlsDeps(recorded)).query("SELECT 1");
+
+    expect(recorded[0].tls).toEqual({ rejectUnauthorized: true });
+  });
+
   test("honours an explicit rejectUnauthorized override", async () => {
     const recorded: RecordedRequest[] = [];
 

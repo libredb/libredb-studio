@@ -491,6 +491,7 @@ describe("cassandraClientOptions", () => {
   test.each([
     ["disable", undefined],
     ["require", { rejectUnauthorized: false }],
+    ["verify-system", { rejectUnauthorized: true }],
     ["verify-ca", { rejectUnauthorized: true }],
     ["verify-full", { rejectUnauthorized: true }],
   ] as const)("TLS mode %s produces %o", (mode, expected) => {

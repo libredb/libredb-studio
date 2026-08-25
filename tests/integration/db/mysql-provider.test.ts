@@ -64,11 +64,21 @@ const mockPool = {
   execute: (sql: string, params?: unknown[]) => recordCall("execute", sql, params),
 };
 
+/**
+ * The config object the provider handed `createPool`. Recorded because `buildSSLConfig` is
+ * private and its result is only observable here: a test that merely constructs the provider
+ * and asserts it did not throw passes for every SSL mode, including a wrong one.
+ */
+let lastPoolConfig: Record<string, unknown> = {};
+
+const createPool = (config: Record<string, unknown>) => {
+  lastPoolConfig = config;
+  return mockPool;
+};
+
 mock.module("mysql2/promise", () => ({
-  default: {
-    createPool: () => mockPool,
-  },
-  createPool: () => mockPool,
+  default: { createPool },
+  createPool,
 }));
 
 // Dynamic import AFTER mock is installed
@@ -1487,14 +1497,35 @@ describe("MySQLProvider", () => {
       expect(provider).toBeDefined();
     });
 
-    test("explicit ssl mode disable", () => {
+    test("explicit ssl mode disable", async () => {
       provider = new MySQLProvider(
         makeMySQLConfig({
           ssl: { mode: "disable" },
         }),
       );
-      // Should not throw — ssl disabled
-      expect(provider).toBeDefined();
+      await provider.connect();
+      expect(lastPoolConfig.ssl).toBeUndefined();
+    });
+
+    // D26: the mode a pasted `?ssl=true` / `?useSSL=true` lands on. mysql2 gets
+    // `rejectUnauthorized: true` and no `ca`, which is what the driver does with `ssl: {}`
+    // itself - so the paste is honoured instead of quietly downgraded to `require`.
+    test("ssl mode verify-system verifies against the runtime trust store with no ca", async () => {
+      provider = new MySQLProvider(makeMySQLConfig({ ssl: { mode: "verify-system" } }));
+      await provider.connect();
+      expect(lastPoolConfig.ssl).toEqual({ rejectUnauthorized: true });
+    });
+
+    test("ssl mode require encrypts without checking the chain", async () => {
+      provider = new MySQLProvider(makeMySQLConfig({ ssl: { mode: "require" } }));
+      await provider.connect();
+      expect(lastPoolConfig.ssl).toEqual({ rejectUnauthorized: false });
+    });
+
+    test("ssl mode verify-ca carries the pasted CA alongside the chain check", async () => {
+      provider = new MySQLProvider(makeMySQLConfig({ ssl: { mode: "verify-ca", caCert: "ca-pem" } }));
+      await provider.connect();
+      expect(lastPoolConfig.ssl).toEqual({ rejectUnauthorized: true, ca: "ca-pem" });
     });
   });
 

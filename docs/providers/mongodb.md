@@ -213,12 +213,37 @@ MySQL and Couchbase:
 |------------|---------------|
 | absent / `disable` | none — the client is built as before |
 | `require` | `tls: true`, `rejectUnauthorized: false` |
+| `verify-system` | `tls: true`, `rejectUnauthorized: true`, and **no** `ca` |
 | `verify-ca` / `verify-full` | `tls: true`, `rejectUnauthorized: true` |
 
 `caCert` / `clientCert` / `clientKey` become `ca` / `cert` / `key` when set, each independently — a
 cluster can demand mutual TLS while presenting a self-signed certificate itself. An explicit
 `ssl.rejectUnauthorized` always wins over the mode. `require` does not check the chain because a
-self-hosted replica set presents a self-signed certificate by default.
+self-hosted replica set presents a self-signed certificate by default; `verify-system` is the same
+handshake with verification on and nothing to paste, which is what an Atlas cluster needs (its
+certificate is signed by a public root the runtime already trusts). The driver exposes no separate
+host-name check, so `verify-ca` and `verify-full` build the same options object.
+
+#### `tls=true` in a pasted URI (D26)
+
+The paste box now reads the URI's own TLS options, and maps them by the rule stated in
+`readBooleanTLS` — a boolean TLS spelling lands on the mode that matches what the driver does with it:
+
+| In the pasted URI | SSL Mode set on the form |
+|-------------------|--------------------------|
+| `tls=true` / `ssl=true` | `verify-system` — the driver enables TLS **with** chain verification |
+| `tls=false` / `ssl=false` | `disable` |
+| `mongodb+srv://` with no TLS parameter | `verify-system` — SRV implies TLS in the driver itself |
+| `tlsInsecure=true` / `tlsAllowInvalidCertificates=true` alongside TLS | `require` — both turn `rejectUnauthorized` off |
+| a non-boolean value (`tls=maybe`) | nothing; the paste banner quotes the parameter |
+
+`tls=true` was deliberately **ignored** before this: the only non-`disable` mode that needed no PEM
+was `require`, i.e. `rejectUnauthorized: false`, and because the options object is a second channel
+the driver prefers over the URI, setting it would have stopped an Atlas certificate being verified.
+Leaving it unset had its own cost — the SSL panel read `disable` for a connection that was in fact
+encrypted. `verify-system` removes the trade: the form now says what the URI says.
+`tlsAllowInvalidHostnames` is not in the relaxing set, because this provider never sends
+`checkServerIdentity`, so the URI's own relaxation survives next to a verifying mode.
 
 Measured against a TLS-only server on 2026-08-23 (`mongo:latest --tlsMode requireTLS`): `disable` is
 refused - the server logs *"The server is configured to only allow SSL connections"* - and `require`

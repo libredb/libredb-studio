@@ -512,19 +512,37 @@ describe("ConnectionModal", () => {
   // ── 20. Test result success displayed ──────────────────────────────────
 
   test("test result success message displayed", () => {
-    mockFormOverrides = { testResult: { success: true, message: "Connection successful" } };
+    mockFormOverrides = { testResult: { tone: "success", message: "Connection successful" } };
     const props = createDefaultProps();
-    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    const { queryByText, getByTestId } = render(React.createElement(ConnectionModal, props));
     expect(queryByText("Connection successful")).not.toBeNull();
+    expect(getByTestId("connection-test-result").getAttribute("data-tone")).toBe("success");
   });
 
   // ── 21. Test result failure displayed ──────────────────────────────────
 
   test("test result failure message displayed", () => {
-    mockFormOverrides = { testResult: { success: false, message: "Connection failed: timeout" } };
+    mockFormOverrides = { testResult: { tone: "error", message: "Connection failed: timeout" } };
     const props = createDefaultProps();
-    const { queryByText } = render(React.createElement(ConnectionModal, props));
+    const { queryByText, getByTestId } = render(React.createElement(ConnectionModal, props));
     expect(queryByText("Connection failed: timeout")).not.toBeNull();
+    expect(getByTestId("connection-test-result").getAttribute("data-tone")).toBe("error");
+  });
+
+  // ── 21b. Test result warning displayed (#U19) ────────────────────────────
+
+  test("test result warning message renders as neither success nor failure", () => {
+    // A degraded save/connect asks the user to act again - it is not a completed
+    // action and not a refusal either, so it must not render as the success
+    // (emerald/CircleCheck) or error (red/CircleX) tone.
+    mockFormOverrides = {
+      testResult: { tone: "warning", message: "Connected, but this server answered no health data." },
+    };
+    const props = createDefaultProps();
+    const { queryByText, getByTestId } = render(React.createElement(ConnectionModal, props));
+    expect(queryByText("Connected, but this server answered no health data.")).not.toBeNull();
+    const banner = getByTestId("connection-test-result");
+    expect(banner.getAttribute("data-tone")).toBe("warning");
   });
 
   // ── 22. isTesting shows spinner state ─────────────────────────────────
@@ -597,6 +615,53 @@ describe("ConnectionModal", () => {
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
     expect(queryByText(/postgres:\/\//)).not.toBeNull();
+  });
+
+  // ── 29b. verify-system is offered, and says what it verifies (D26) ──────
+
+  test("the SSL mode row offers verify-system and selecting it reaches the form", () => {
+    mockFormOverrides = { showSSL: true };
+    const props = createDefaultProps();
+    const { getByText } = render(React.createElement(ConnectionModal, props));
+
+    const button = getByText("verify-system").closest("button");
+    expect(button).not.toBeNull();
+    fireEvent.click(button as HTMLButtonElement);
+    expect(mockSetSSLMode).toHaveBeenCalledWith("verify-system");
+  });
+
+  // The copy is the whole point of the mode: a user who cannot tell it from verify-ca will
+  // go looking for the CA file it does not need. Each mode gets its own sentence, so the
+  // panel says what the selected one verifies rather than only naming it.
+  test("each SSL mode explains what it verifies", () => {
+    mockFormOverrides = { showSSL: true, sslMode: "verify-system" };
+    const { queryByTestId } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(queryByTestId("ssl-mode-hint")?.textContent).toContain("system trust store");
+    expect(queryByTestId("ssl-mode-hint")?.textContent).toContain("no certificate");
+  });
+
+  test("the hint for require says it checks nothing", () => {
+    mockFormOverrides = { showSSL: true, sslMode: "require" };
+    const { queryByTestId } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(queryByTestId("ssl-mode-hint")?.textContent).toContain("Encrypts but verifies nothing");
+  });
+
+  test("the hint for disable says the traffic is plaintext", () => {
+    mockFormOverrides = { showSSL: true, sslMode: "disable" };
+    const { queryByTestId } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(queryByTestId("ssl-mode-hint")?.textContent).toContain("Plaintext");
+  });
+
+  test("the hints for verify-ca and verify-full both name the pasted CA", () => {
+    mockFormOverrides = { showSSL: true, sslMode: "verify-ca" };
+    const ca = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(ca.queryByTestId("ssl-mode-hint")?.textContent).toContain("CA certificate below");
+    ca.unmount();
+
+    mockFormOverrides = { showSSL: true, sslMode: "verify-full" };
+    const full = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(full.queryByTestId("ssl-mode-hint")?.textContent).toContain("CA certificate below");
+    expect(full.queryByTestId("ssl-mode-hint")?.textContent).toContain("names the host you typed");
   });
 
   // ── 30. SSL section for verify-ca shows client cert fields ─────────────

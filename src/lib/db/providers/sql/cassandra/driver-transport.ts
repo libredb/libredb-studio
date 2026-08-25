@@ -378,8 +378,9 @@ export function cassandraClientOptions(config: DatabaseConnection, readTimeoutMs
       ? {}
       : {
           sslOptions: {
-            // `verify-ca` and `verify-full` both mean "check the chain"; `require`
-            // means encrypt without checking. NOT exercised against a TLS cluster -
+            // `verify-system`, `verify-ca` and `verify-full` all mean "check the chain"
+            // (the first against the runtime's own trust store, since it carries no CA PEM);
+            // `require` means encrypt without checking. NOT exercised against a TLS cluster -
             // the probe instances speak plaintext - so this is the documented shape
             // of the driver's own option and no claim about a verified path.
             rejectUnauthorized: tlsMode !== "require",

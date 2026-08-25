@@ -109,6 +109,22 @@ describe("PostgresStorageProvider", () => {
     await cloudProvider.close();
   });
 
+  // D26: `verify-system` is this product's own mode name, and STORAGE_POSTGRES_URL is read
+  // for libpq's sslmode - so a URL naming it used to fall through every branch and land on
+  // the non-local default, `rejectUnauthorized: false`. Someone who typed the verifying mode
+  // got no verification and no complaint. It is now the one value in this reader that
+  // actually verifies.
+  test("initialize verifies the chain when the URL names the form's verify-system mode", async () => {
+    const cloudProvider = new PostgresStorageProvider("postgresql://db.example.com:5432/test?sslmode=verify-system");
+    await cloudProvider.initialize();
+
+    const poolConfig = (mockPoolConstructor.mock.calls as unknown[][])[0]?.[0] as {
+      ssl?: unknown;
+    };
+    expect(poolConfig.ssl).toEqual({ rejectUnauthorized: true });
+    await cloudProvider.close();
+  });
+
   test("initialize enables SSL for non-local hosts by default", async () => {
     const cloudProvider = new PostgresStorageProvider("postgresql://db.internal.example:5432/test");
     await cloudProvider.initialize();

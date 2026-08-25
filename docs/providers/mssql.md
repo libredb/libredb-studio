@@ -288,7 +288,15 @@ providers' `connect()`.
 | *(unset)* | `true` | `false` for Azure, **`true`** for non-Azure |
 | `disable` | `false` | — |
 | `require` | `true` | `true` (encrypt, skip cert validation) |
-| `verify-ca` / `verify-full` | `true` | `false` (validate the certificate) |
+| `verify-system` / `verify-ca` / `verify-full` | `true` | `false` (validate the certificate) |
+
+The three verifying modes are **one call** here, and deliberately: tedious exposes a single knob,
+`trustServerCertificate`, and turning it off already means "validate the chain and the name against
+the host's own trust store". There is no separate CA channel — `connection.ssl.caCert` is not read by
+this provider at all — so `verify-system` (D26) needs nothing added, and `verify-ca`/`verify-full` do
+not deliver the CA pinning their names promise. Pinned by
+`tests/integration/db/mssql-provider.test.ts` ("the TLS options handed to tedious"), so a future
+mode cannot fall through to the trusting branch unnoticed.
 
 See the [non-Azure trust caveat](#14-known-limitations--future-work).
 
@@ -318,6 +326,10 @@ values matched case-insensitively because ADO.NET writes `True`:
 
 Any other spelling of either keyword is reported in the paste banner and leaves the form's SSL Mode
 untouched rather than falling back to `disable`.
+
+`verify-system` is not produced by this parser: `Encrypt=True` with `TrustServerCertificate` off is
+`verify-full` already, and since all three verifying modes build the same tedious call, translating it
+to the newer name would change the wording on the form without changing a single option on the wire.
 
 ---
 
@@ -658,7 +670,8 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   XML ON`) around the statement, then re-enable the capability.
 - **Non-Azure default trusts the server certificate.** With no explicit `connection.ssl`, non-Azure
   hosts use `encrypt: true` + `trustServerCertificate: true` — encrypted but **not** authenticated
-  (MITM-exposed). For verified TLS, set `connection.ssl` mode `verify-ca`/`verify-full`. (Azure hosts
+  (MITM-exposed). For verified TLS, set `connection.ssl` mode `verify-system` (or `verify-ca`/
+  `verify-full`, which build the same call here). (Azure hosts
   validate by default.)
   - **A paste that worked before can now fail against a self-signed on-prem server.**
     `Encrypt=True` with `TrustServerCertificate` absent maps to `verify-full`

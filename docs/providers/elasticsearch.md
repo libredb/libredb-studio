@@ -493,6 +493,13 @@ first-class `DatabaseConnection` field and independent of the form's `connection
 even though this form shows no TLS row of its own, and an explicit `disable` turns TLS **off** as
 firmly as an explicit mode turns it on (the #264 lesson).
 
+`verify-system` (D26) is the mode that DESCRIBES this transport: `fetch` always verifies the chain
+against the platform's certificate store and cannot be told otherwise, so of the four non-`disable`
+modes it is the only one whose name matches the handshake. `require` here does not mean "encrypt
+without checking" the way it does on the driver-based providers — nothing in this transport can skip a
+check — and `verify-ca`/`verify-full` cannot pin against a pasted CA. Nothing in the code branches on
+which one is selected.
+
 **The port is not changed by TLS**, unlike ClickHouse's `8123` → `8443`: this product serves HTTPS on
 the same `9200`, so there is no second well-known number, and inventing one would send credentials to
 a port nothing is listening on.

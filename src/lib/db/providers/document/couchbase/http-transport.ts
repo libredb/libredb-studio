@@ -269,7 +269,10 @@ function buildTlsMaterial(ssl: SSLConfig | undefined): CouchbaseTlsMaterial | nu
   // check the chain, because a self-hosted Couchbase node ships a self-signed
   // certificate by default. An explicit flag always wins.
   const material: CouchbaseTlsMaterial = {
-    rejectUnauthorized: ssl.rejectUnauthorized ?? (ssl.mode === "verify-ca" || ssl.mode === "verify-full"),
+    // `require` encrypts without checking - a self-hosted node ships a self-signed
+    // certificate - while every other mode verifies. `verify-system` verifies against the
+    // runtime's own trust store, which is what a Capella endpoint needs and all it needs (D26).
+    rejectUnauthorized: ssl.rejectUnauthorized ?? ssl.mode !== "require",
   };
   if (ssl.caCert) material.ca = ssl.caCert;
   if (ssl.clientCert) material.cert = ssl.clientCert;

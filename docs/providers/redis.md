@@ -277,12 +277,16 @@ under Node's own names — the same mapping the PostgreSQL, MySQL and Couchbase 
 |------------|--------------|
 | absent / `disable` | **not present at all** — ioredis negotiates TLS whenever `tls` is set, `{}` included |
 | `require` | `{ rejectUnauthorized: false }` |
+| `verify-system` | `{ rejectUnauthorized: true }`, with no `ca` — the runtime's own trust store |
 | `verify-ca` / `verify-full` | `{ rejectUnauthorized: true }` |
 
 `caCert` / `clientCert` / `clientKey` become `ca` / `cert` / `key` when set, each independently — a
 server can demand mutual TLS while presenting a self-signed certificate itself. An explicit
 `ssl.rejectUnauthorized` always wins over the mode. `require` does not check the chain because a
-self-hosted Redis presents a self-signed certificate by default.
+self-hosted Redis presents a self-signed certificate by default; every other mode does check it, and
+`verify-system` (D26) checks it against the trust store the runtime already has, so a managed Redis
+whose certificate a public root signs needs no PEM pasted at all. ioredis exposes no separate
+host-name check, so `verify-ca` and `verify-full` build the same object.
 
 Measured against a TLS-only server on 2026-08-23 (`redis:latest --port 0 --tls-port 6380`, so no
 plaintext port exists): `disable` is refused with *"Connection is closed."* and `require` connects in
@@ -292,8 +296,12 @@ does, so the pair is what distinguishes a wired path from a documented shape.
 > A pasted `rediss://` URL arrives with `mode: 'require'` and a `redis://` one with `disable`
 > ([§4.2](#42-connection-string-nuance)), so the scheme picks the mode and the panel is only needed
 > to go *further* than `require` - a verifying mode, or certificate material. `require` rather than
-> `verify-full` because that is what the ordinary `--tls-port` deployment can satisfy: a paste
-> encrypts, and never silently claims to have checked a chain.
+> `verify-system`/`verify-full` because that is what the ordinary `--tls-port` deployment can satisfy:
+> a paste encrypts, and never silently claims to have checked a chain. That is a claim about the
+> SCHEME, and it is not the rule for a boolean TLS *parameter* (D26, see
+> [postgres.md](./postgres.md#sslmode-in-a-pasted-url)): `rediss://` says only "TLS", while
+> `?ssl=true` says what a specific driver does with it. The scheme mapping is unchanged, and whether
+> it should follow the same rule is an open question on the backlog rather than a settled one.
 >
 > Measured through the parser and the provider together on 2026-08-23, against
 > `redis:latest --port 0 --tls-port 6390` with a self-signed certificate:

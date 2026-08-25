@@ -494,7 +494,10 @@ export class OracleProvider extends SQLBaseProvider {
     const wallet = [ssl.caCert, ssl.clientCert, ssl.clientKey].filter(Boolean).join("\n");
 
     return {
-      sslServerDNMatch: ssl.mode === "verify-full",
+      // `verify-system` asks for the same server-name match as `verify-full`; what it does
+      // NOT ask for is a wallet, so with no PEM pasted `tls.connect` falls back to Node's
+      // bundled roots for the chain - which is exactly what the mode means (D26).
+      sslServerDNMatch: ssl.mode === "verify-full" || ssl.mode === "verify-system",
       ...(wallet ? { walletContent: wallet } : {}),
     };
   }

@@ -239,6 +239,13 @@ describe("RedisProvider", () => {
       expect(options.tls).toEqual({ rejectUnauthorized: false });
     });
 
+    // D26: verification without a pasted CA, for a managed endpoint whose certificate a
+    // public root already signs.
+    test("mode verify-system verifies against the runtime trust store, with no ca option", async () => {
+      const options = await connectWithSSL({ mode: "verify-system" });
+      expect(options.tls).toEqual({ rejectUnauthorized: true });
+    });
+
     test("mode verify-ca and verify-full check the chain", async () => {
       expect(await connectWithSSL({ mode: "verify-ca" })).toMatchObject({ tls: { rejectUnauthorized: true } });
       expect(await connectWithSSL({ mode: "verify-full" })).toMatchObject({ tls: { rejectUnauthorized: true } });

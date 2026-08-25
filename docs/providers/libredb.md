@@ -276,6 +276,29 @@ condition as a clear `ConnectionError` (see [§10](#10-error-handling)):
   it after 30 minutes idle — the lock is held that whole time. To edit the same file with external
   tooling, disconnect the Studio connection first (or wait for eviction); otherwise the external
   writer gets `LOCKED`.
+- **Studio's own second openers reuse the handle instead.** Inside this server the lock used to
+  defeat three callers that build a provider outside the writable cache, and it did so every time
+  (`docs/BACKLOG.md` D3 and B49):
+  - `POST /api/db/test-connection` reported the lock as a failed connection test. The connection
+    dialog tests before it saves, so **the built-in sample could not be edited at all**: the edit
+    was discarded with a toast about a connection error, as if the sample were broken.
+  - `acquireExecutionProfileProvider(connection, "agent-operations")` — the agent's grounding read —
+    lost its schema capture to the lock. A `ConnectionError` becomes an *unavailable* capture rather
+    than a failure, so every plan run on a LibreDB connection was silently ungrounded from the
+    moment anyone browsed it in the sidebar.
+  - `POST /api/db/schema-snapshot` answered HTTP 503 with the same message, so the Schema Diff tab's
+    **Snapshot** button — its only caller — could not read a schema the sidebar was listing at that
+    moment. Measured in the browser against the released 0.13.4 image on 2026-08-25.
+
+  All three now call `findOpenSingleWriterProvider` (`src/lib/db/factory.ts`) first, which returns the
+  connected provider already holding the file. The lookup is keyed by the **resolved file path**,
+  not the connection id — the second opener is usually a different connection record pointing at
+  the same file, which is exactly how the sample-edit case reproduced. A borrowed handle is never
+  disconnected by its borrower and never cached under the profiled key: it belongs to the live
+  connection. Two bounds keep the agent's isolation invariant intact — only `agent-operations`
+  borrows (it sends no statement of the model's, so `agent-read-only` and `agent-handover` are
+  still refused on this engine), and an acquisition is not borrowed for a connection that
+  configures an `agentUser`, because a reuse cannot substitute one principal for another.
 
 > **DOWNGRADE WARNING:** a file written by `@libredb/libredb` 0.2.x must never be opened by 0.1.3
 > or older. The old recovery cannot parse the header, classifies the whole file as a torn tail,
@@ -579,6 +602,7 @@ for a different reason — the rows are derived groupings, see 5.3.
 | `supportsTransactions` | `false` — the command grammar has no transaction verb at all, so the trio and SANDBOX are not offered (#U13) |
 | `declaresForeignKeys` | `false` — the catalog declares namespaces and columns and nothing that references another namespace, so there is no foreign key to read |
 | `tablesAreDerivedGroupings` | `true` — the namespaces come from a bounded `kv.range` over 10000 keys, grouped by prefix, so they are this server's summary of what one scan reached rather than objects the engine declares. The agent layer states this to a plan run in one sentence |
+| `singleWriterFile` | `true` — `lib.open({ path })` takes an exclusive `<path>.lock`, so this file admits ONE handle and a second open throws `LOCKED`. The three callers that used to open a second one reuse the open handle instead ([§4.2.1](#421-on-disk-format-locking-and-version-compatibility-02x)). The only engine that declares it: SQLite, the other file engine, takes its locks per transaction rather than at open |
 | `supportsMaintenance` | `false` |
 | `maintenanceOperations` | `[]` |
 | `supportsConnectionString` | `false` |
@@ -680,6 +704,18 @@ document collection (`doc()`) alongside the raw kv keys, then asserts: (a) `getS
 its real declared columns with the primary key marked (the relational signal); (c) the document
 collection shows the generic `id`/`document` columns (the document signal); and (d) raw kv
 namespaces still group as `key`/`value` pseudo-tables.
+
+The **single-writer reuse** (D3/B49) is asserted in `tests/unit/db/factory.test.ts` rather than
+here, because it is the factory's behaviour and it needs the real factory — which this file cannot
+import, since `tests/api/db/test-connection.test.ts` replaces `@/lib/db/factory` process-wide with
+`mock.module`. Two suites there run on the real package and real temp files: *single-writer file
+reuse* (the borrow, the resolved-path identity, the control arm proving a second open really is
+refused, and SQLite proving it is not borrowed from) and *grounding a plan run while the writable
+provider holds the file* (a real plan-mode `captureContextSnapshot` comes back `captured` via
+`provider-inventory` with the profiled cache owning nothing; its control arm — the same run with an
+`agentUser`, which opts out of the reuse — comes back `unavailable` / `CATALOG_READ_REFUSED`, which
+is what every run did before this was closed). What this file asserts is the provider's own half:
+`getCapabilities().singleWriterFile === true`.
 
 A **0.2.x error mapping & locking** suite covers the hardened file boundary: a second open of a
 live-locked file is a clear `ConnectionError` (`LOCKED`); `connect()` takes the exclusive

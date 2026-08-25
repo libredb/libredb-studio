@@ -311,8 +311,13 @@ options ([mysql.ts:114](../../src/lib/db/providers/sql/mysql.ts)):
 discrete-fields form** (the `connectionString` path bypasses it entirely). Note `disable` returns
 `undefined` (mysql2's "off"), not `false`:
 
-1. **Explicit `connection.ssl`** (`SSLConfig`): `disable` → `undefined`; `verify-ca`/`verify-full` →
-   `rejectUnauthorized: true` (otherwise `false`); `caCert`/`clientCert`/`clientKey` → `ca`/`cert`/`key`.
+1. **Explicit `connection.ssl`** (`SSLConfig`): `disable` → `undefined`; `require` →
+   `rejectUnauthorized: false` (the one mode that encrypts without verifying);
+   `verify-system`/`verify-ca`/`verify-full` → `rejectUnauthorized: true`;
+   `caCert`/`clientCert`/`clientKey` → `ca`/`cert`/`key`. `verify-system` passes **no** `ca`, so
+   mysql2 hands `tls.connect` Node's own trust store — that mode exists precisely so a managed
+   endpoint can be verified with no PEM to paste. mysql2 exposes no separate host-name check, so
+   `verify-ca` and `verify-full` build the same object.
 2. **`options.ssl === true` or cloud auto-detect** — `shouldEnableSSL()` (`options.ssl === true` *or*
    a known managed host) enables `{ rejectUnauthorized: false }`.
 3. Otherwise `undefined`.
@@ -326,16 +331,22 @@ matched case-insensitively (MySQL writes them upper-case) and `sslmode` is accep
 `verify-full` (it checks the hostname as well as the chain).
 
 The boolean spellings are read too, and mapped at both ends because a boolean has no opportunistic
-value: `?ssl=true`, `?ssl=1`, `?useSSL=true` → `require`; `?ssl=false`, `?ssl=0`, `?useSSL=false` →
-`disable`. An explicit `ssl-mode` wins when a string carries both. As on Postgres, `require` here
-means `rejectUnauthorized: false` ([mysql.ts:505](../../src/lib/db/providers/sql/mysql.ts)) —
-encrypted, chain unchecked — which is weaker than the driver this provider actually uses: mysql2
-defaults `rejectUnauthorized` to `true` for any `ssl` object it is handed
-(`node_modules/mysql2/lib/connection_config.js:171`). It is **not** weaker than what `useSSL=true`
-means to Connector/J, whose `verifyServerCertificate` is off unless `sslMode` is `VERIFY_CA` /
-`VERIFY_IDENTITY` — so for that spelling the mapping is faithful. The reason it is mapped this way
-regardless of which tool wrote the string is in
-[postgres.md](./postgres.md#sslmode-in-a-pasted-url). mysql2's
+value: `?ssl=true`, `?ssl=1`, `?useSSL=true` → **`verify-system`**; `?ssl=false`, `?ssl=0`,
+`?useSSL=false` → `disable`. An explicit `ssl-mode` wins when a string carries both.
+
+The rule (D26, stated in `readBooleanTLS`) is that a boolean maps onto the mode matching what the
+engine's own driver does with it, never onto a weaker one — and the driver this provider uses is
+mysql2, which defaults `rejectUnauthorized` to `true` for any `ssl` object it is handed
+(`node_modules/mysql2/lib/connection_config.js:171`). `verify-system` is that behaviour exactly:
+verified, with no CA certificate to find. The mapping was `require` until `verify-system` existed —
+`rejectUnauthorized: false` ([mysql.ts](../../src/lib/db/providers/sql/mysql.ts)), encrypted with the
+chain unchecked — because the only verifying modes on the form were the two that demand a PEM.
+
+One spelling is now mapped **stronger** than its writer meant: Connector/J's `useSSL=true` leaves
+`verifyServerCertificate` off unless `sslMode` is `VERIFY_CA`/`VERIFY_IDENTITY`. That direction is the
+deliberate one — a connection refused for an unverifiable certificate says so on screen, while a
+silent downgrade to unverified TLS says nothing at all, and the SSL / TLS panel is one click away for
+a server presenting a self-signed certificate. mysql2's
 object form (`?ssl={"rejectUnauthorized":true}`) is not a boolean and is reported in the banner rather
 than guessed at.
 
@@ -830,7 +841,8 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 - **`cancelQuery()` returns `true` on `KILL QUERY` success** without confirming the target was
   actually executing.
 - **Cloud SSL auto-detect uses `rejectUnauthorized: false`** — encrypted but **not** authenticated
-  (MITM-exposed). For verified TLS, set an explicit `connection.ssl` with mode `verify-ca`/`verify-full`
+  (MITM-exposed). For verified TLS, set an explicit `connection.ssl` with mode `verify-system` (nothing
+  to paste) or `verify-ca`/`verify-full`
   and a `caCert`.
 
 ---

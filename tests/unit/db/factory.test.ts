@@ -1,4 +1,15 @@
 import { describe, test, expect, mock, beforeEach, beforeAll, afterAll } from "bun:test";
+import { open as libreOpen, kv as libreKv } from "@libredb/libredb";
+import { captureContextSnapshot } from "@/lib/agent/context-snapshot";
+import { AgentRunDeadline } from "@/lib/agent/deadline";
+import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
+import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
+import type { AgentToolContext } from "@/lib/agent/tools";
+import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
+import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
+import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
+import { createTargetScope } from "@/lib/db/operations/policy";
+import type { DatabaseProvider, QueryResult } from "@/lib/db/types";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -273,6 +284,7 @@ const {
   evictIdleProviders,
   registerShutdownHandlers,
   acquireExecutionProfileProvider,
+  findOpenSingleWriterProvider,
   getExecutionProfileCacheStats,
   withOneShotTunnel,
 } = await import("@/lib/db/factory");
@@ -1297,6 +1309,156 @@ describe("acquireExecutionProfileProvider", () => {
 });
 
 // ============================================================================
+// Single-writer file reuse (docs/BACKLOG.md D3 and B49)
+// ----------------------------------------------------------------------------
+// A provider that declares `singleWriterFile` admits ONE open handle per file, so
+// the two callers that build a SECOND provider on a file the writable cache is
+// already holding do not get a less privileged handle - they get none. These run on
+// the REAL @libredb/libredb package against temp files, so the lock they assert
+// against is the driver's own, not a fixture's.
+// ============================================================================
+
+describe("single-writer file reuse", () => {
+  let dir: string;
+  let seq = 0;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "libredb-factory-single-writer-"));
+  });
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** A fresh libredb connection with a file of its own, so no test inherits a lock. */
+  function libredbConn(overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
+    seq += 1;
+    return makeConnection("libredb", {
+      id: `libredb-single-writer-${seq}`,
+      database: join(dir, `single-writer-${seq}.libredb`),
+      ...overrides,
+    });
+  }
+
+  test("a second handle on the same file is refused, which is what makes the borrow load-bearing", async () => {
+    // The control arm. Without it every assertion below could pass on an engine that
+    // never locked anything, and the reuse would be measuring nothing.
+    const conn = libredbConn();
+    await getOrCreateProvider(conn);
+
+    const second = await createDatabaseProvider(conn);
+
+    await expect(second.connect()).rejects.toThrow(/exclusive lock/);
+  });
+
+  test("an operations acquisition borrows the open writable handle instead of opening a second one", async () => {
+    const conn = libredbConn();
+    const writable = await getOrCreateProvider(conn);
+
+    const agent = await acquireExecutionProfileProvider(conn, "agent-operations");
+
+    expect(agent).toBe(writable);
+    // Borrowed, never owned: an entry in the profiled cache would let that cache's
+    // idle sweep, or a removeProvider for any connection sharing the file, close the
+    // file under the session that opened it.
+    expect(getExecutionProfileCacheStats()).toEqual({ size: 0, connections: [] });
+    expect(agent.isConnected()).toBe(true);
+  });
+
+  test("the identity is the resolved file path, not the connection id", async () => {
+    // The D3 reproduction exactly: "Sample (LibreDB)" holds the file and the record
+    // being tested is "My Sample" - a different id pointing at the same file.
+    const held = libredbConn({ id: "sample-libredb", name: "Sample (LibreDB)" });
+    const writable = await getOrCreateProvider(held);
+
+    const underTest: DatabaseConnection = { ...held, id: "my-sample", name: "My Sample" };
+
+    expect(findOpenSingleWriterProvider(underTest)).toBe(writable);
+  });
+
+  test("an unresolved spelling of the same path is the same file", async () => {
+    const held = libredbConn();
+    const writable = await getOrCreateProvider(held);
+
+    // Deliberately not built with path.join, which would normalise it before the
+    // factory ever saw it: the lock is per inode, so the lookup has to resolve.
+    const spelled: DatabaseConnection = {
+      ...held,
+      id: "spelled",
+      database: `${dir}/./${held.database!.split("/").pop()!}`,
+    };
+
+    expect(findOpenSingleWriterProvider(spelled)).toBe(writable);
+  });
+
+  test("a connection with no file path holds no file, and matches nothing", async () => {
+    const conn = libredbConn();
+    await getOrCreateProvider(conn);
+
+    // The shape the test-connection route hands this on every request that is not a
+    // file engine at all (a connection-string connection carries no `database`).
+    expect(findOpenSingleWriterProvider(makeConnection("mongodb", { database: undefined }))).toBeNull();
+  });
+
+  test("an engine that admits many handles is not borrowed from, and keeps its read-only boundary", async () => {
+    // SQLite is the engine a reader would expect to declare singleWriterFile. It does
+    // not, and this is what declaring it would have cost: the agent handle here is a
+    // SECOND, `readonly: true` open of the same file, and the database itself refuses
+    // its writes. Borrowing the writable one would have handed the agent write access.
+    const conn = makeConnection("sqlite", { id: "sqlite-many-handles", database: join(dir, "many-handles.db") });
+    const writable = await getOrCreateProvider(conn);
+    await writable.query("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+
+    const agent = await acquireExecutionProfileProvider(conn, "agent-read-only");
+
+    expect(agent).not.toBe(writable);
+    expect(getExecutionProfileCacheStats()).toEqual({ size: 1, connections: [conn.id] });
+    await expect(agent.queryReadOnly!("INSERT INTO t (id) VALUES (1)", AGENT_BUDGET)).rejects.toThrow();
+  });
+
+  test("a profile that sends statements is still refused rather than handed the writable handle", async () => {
+    // The borrow is scoped to `agent-operations`, the profile that sends no statement
+    // at all. `agent-read-only` and `agent-handover` send one, and an engine with no
+    // read-only statement path is refused as it always was - being able to reuse a
+    // handle is not a reason to run a model's statement through a writable one.
+    const conn = libredbConn();
+    const writable = await getOrCreateProvider(conn);
+
+    const error: unknown = await acquireExecutionProfileProvider(conn, "agent-read-only").catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
+    expect(writable.isConnected()).toBe(true);
+  });
+
+  test("a configured agent credential opts out of borrowing (fail closed)", async () => {
+    // The borrowed handle was opened under the connection's own credentials. An
+    // operator who configured `agentUser` asked for something this reuse cannot give,
+    // so it is not silently ignored: the acquisition opens its own handle and hits the
+    // lock, which leaves the run ungrounded and honest rather than grounded under a
+    // credential nobody asked for.
+    const conn = libredbConn({ agentUser: "agent_ro", agentPassword: "agent-secret" });
+    await getOrCreateProvider(conn);
+
+    await expect(acquireExecutionProfileProvider(conn, "agent-operations")).rejects.toThrow(/exclusive lock/);
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("nothing is borrowed once the writable handle is gone", async () => {
+    const conn = libredbConn();
+    await getOrCreateProvider(conn);
+    await removeProvider(conn.id);
+
+    expect(findOpenSingleWriterProvider(conn)).toBeNull();
+
+    // And the file is free, so the acquisition opens - and OWNS - its own handle.
+    const agent = await acquireExecutionProfileProvider(conn, "agent-operations");
+    expect(agent.isConnected()).toBe(true);
+    expect(getExecutionProfileCacheStats()).toEqual({ size: 1, connections: [conn.id] });
+  });
+});
+
+// ============================================================================
 // One-shot tunnel scope (#457)
 // ----------------------------------------------------------------------------
 // The routes that build a provider outside both caches - test-connection and
@@ -1421,5 +1583,97 @@ describe("withOneShotTunnel", () => {
     await withOneShotTunnel(stringOnly, async () => undefined);
 
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Grounding a plan run on a file the editor already has open (`docs/BACKLOG.md` B49).
+ *
+ * The real package, the real factory and a real file: the lock these assert against is
+ * the driver's own. `acquireExecutionProfileProvider` used to open a SECOND handle here
+ * and be refused every time, and because a `ConnectionError` becomes an unavailable
+ * capture rather than a failure, the run went on silently ungrounded. The condition was
+ * "the connection's ordinary provider is connected", which is true from the moment
+ * anyone browses the connection in the sidebar - so in practice it was every run.
+ */
+describe("grounding a plan run while the writable provider holds the file (B49)", () => {
+  const frozenClock = () => 1_700_000_000_000;
+
+  let dir: string;
+  let seq = 0;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "libredb-factory-grounding-"));
+  });
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** A seeded libredb file of its own, so no test inherits another's lock. */
+  function seededConn(overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
+    seq += 1;
+    const file = join(dir, `grounding-${seq}.libredb`);
+    const db = libreOpen({ path: file });
+    const store = libreKv(db);
+    store.set("user:1", "Ada");
+    store.set("order:1", "42");
+    store.set("config", "on");
+    db.close();
+    return makeConnection("libredb", { id: `libredb-grounding-${seq}`, database: file, ...overrides });
+  }
+
+  function planContext(connection: DatabaseConnection, provider: DatabaseProvider): AgentToolContext {
+    return {
+      runId: "run-libredb-grounding",
+      modelId: "unmeasured-model-for-tests",
+      // A PLAN run: it is handed no tools, and this schema read is the server's own.
+      mode: "planning",
+      workflowType: "investigation",
+      actor: { sessionId: "session-1", role: "user" },
+      connection,
+      capabilities: provider.getCapabilities(),
+      labels: provider.getLabels(),
+      registry: createCanonicalOperationRegistry(),
+      scope: createTargetScope(connection.id),
+      tracker: new ExecutionBudgetTracker(),
+      artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
+      deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxTotalRunMs, frozenClock),
+      repairs: new AgentRepairLedger(),
+      acquireProvider: acquireExecutionProfileProvider,
+      clock: frozenClock,
+    };
+  }
+
+  test("the run is grounded from the handle the editor already holds", async () => {
+    const connection = seededConn();
+    const writable = await getOrCreateProvider(connection);
+    expect(writable.isConnected()).toBe(true);
+
+    const capture = await captureContextSnapshot(planContext(connection, writable));
+
+    expect(capture.kind).toBe("captured");
+    if (capture.kind !== "captured") throw new Error("unreachable");
+    expect(capture.snapshot.readVia).toBe("provider-inventory");
+    expect(capture.snapshot.tables.map((t) => t.name).sort()).toEqual(["config", "order:*", "user:*"]);
+    // The handle was BORROWED: the profiled cache owns nothing, so no eviction there
+    // can close the file under the editor's own session.
+    expect(getExecutionProfileCacheStats()).toEqual({ size: 0, connections: [] });
+    expect(writable.isConnected()).toBe(true);
+  });
+
+  test("the same run without the reuse is ungrounded, and nothing about it looks like a failure", async () => {
+    // The control arm, and the pre-fix behaviour exactly. An agent credential opts the
+    // acquisition out of borrowing (it cannot substitute one principal for another), so
+    // this run opens its own handle, hits the lock, and the `ConnectionError` becomes an
+    // unavailable capture instead of an error anyone sees.
+    const connection = seededConn({ agentUser: "agent_ro", agentPassword: "secret" });
+    const writable = await getOrCreateProvider(connection);
+
+    const capture = await captureContextSnapshot(planContext(connection, writable));
+
+    expect(capture.kind).toBe("unavailable");
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
   });
 });

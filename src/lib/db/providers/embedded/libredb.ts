@@ -161,6 +161,12 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       // grouped by their prefix, so the rows are this server's summary of the keys that
       // scan reached rather than objects the engine declares (#414).
       tablesAreDerivedGroupings: true,
+      // `lib.open({ path })` takes an exclusive `<path>.lock` sidecar, so a second
+      // open of a file this process already holds throws `LOCKED` rather than
+      // returning a second handle. The two callers that used to open one - the
+      // connection test and the agent's execution-profile acquisition - reuse the open
+      // handle instead (`findOpenSingleWriterProvider`, D3 and B49).
+      singleWriterFile: true,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

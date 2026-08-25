@@ -508,6 +508,17 @@ describe("OracleProvider", () => {
       expect(attrs.sslServerDNMatch).toBe(false);
     });
 
+    // D26: Thin mode verifies the chain in every TCPS connection, so what verify-system adds
+    // over `require` is the server-name match - the one check Oracle exposes on its own. With
+    // no walletContent, tls.connect falls back to Node's bundled roots, which is precisely
+    // what "verify against the system trust store" means.
+    test("mode verify-system asks for the DN/hostname match with no wallet", async () => {
+      const attrs = await connectWithSSL({ mode: "verify-system" });
+      expect(attrs.connectString).toBe("tcps://localhost:1521/ORCL");
+      expect(attrs.sslServerDNMatch).toBe(true);
+      expect("walletContent" in attrs).toBe(false);
+    });
+
     test("verify-ca checks the chain without the hostname; verify-full asks for both", async () => {
       // Thin mode always calls tls.connect with rejectUnauthorized: true, so the chain
       // is checked in every TCPS mode and the DN/hostname match is the only knob.

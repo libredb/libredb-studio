@@ -131,6 +131,14 @@ describe("SeedDefaultsSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  // D26: SSLMode gained `verify-system`, and this zod enum is a VALUE kept in step by hand -
+  // a mode missing here is not a compile error, it is a seed file the server rejects for a
+  // mode the product supports.
+  it("accepts ssl mode verify-system", () => {
+    const result = SeedDefaultsSchema.safeParse({ ssl: { mode: "verify-system" } });
+    expect(result.success).toBe(true);
+  });
+
   it("rejects ssl mode prefer (not in SSLMode type)", () => {
     const result = SeedDefaultsSchema.safeParse({
       ssl: { mode: "prefer" },

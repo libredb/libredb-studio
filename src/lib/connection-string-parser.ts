@@ -17,9 +17,11 @@ export interface ParsedConnection {
    * default and the provider then speaks plaintext to a TLS port, which fails with a
    * bare "fetch failed" / "Connection is closed." and nothing pointing at the scheme.
    *
-   * `mongodb+srv://` is the one secure scheme deliberately left unset: the driver gets
-   * the URI verbatim and turns TLS on itself, WITH chain verification, so handing it
-   * our `require` (rejectUnauthorized:false, see the mode note below) would stop an
+   * `mongodb+srv://` is set too, to `verify-system`: the driver gets the URI verbatim and
+   * turns TLS on itself WITH chain verification, so that mode is a description of what
+   * happens rather than an instruction. It was deliberately left UNSET while `require`
+   * (rejectUnauthorized:false) was the only alternative, because the provider also sends
+   * an options object the driver prefers over the URI, and that would have stopped an
    * Atlas certificate being verified. Couchbase used to be excused on the same
    * "the provider re-reads the scheme" grounds, which was simply untrue: its transport
    * is HTTP-only and derives http vs https from `config.ssl` alone.
@@ -189,8 +191,9 @@ interface TLSIntent {
 
 /**
  * libpq's sslmode, minus `prefer` and `allow`. Those two are absent on purpose (see the
- * `unmappedTLSParam` note): they mean "encrypt if the server offers it", which none of the
- * four SSLMode values describes.
+ * `unmappedTLSParam` note): they mean "encrypt if the server offers it", which no SSLMode
+ * value describes. `verify-system` is not in the table either - it is this form's own mode
+ * name and not a libpq one, so a string carrying it is a string we cannot honour.
  */
 const POSTGRES_SSLMODE: Record<string, SSLMode> = {
   disable: "disable",
@@ -235,27 +238,67 @@ function mapTLSValue(param: RawParam, table: Record<string, SSLMode>): TLSIntent
 }
 
 /**
- * The boolean TLS spellings: postgres's JDBC/Heroku `ssl=true`, and MySQL's `ssl` / `useSSL`
- * (Connector/J's pre-`sslMode` switch, still written by several ORMs). A boolean has no
- * opportunistic value, so unlike `sslmode`/`ssl-mode` both ends of it are mappable.
+ * The boolean TLS spellings: postgres's JDBC/Heroku `ssl=true`, MySQL's `ssl` / `useSSL`
+ * (Connector/J's pre-`sslMode` switch, still written by several ORMs) and MongoDB's `tls` /
+ * `ssl`. A boolean has no opportunistic value, so unlike `sslmode`/`ssl-mode` both ends of it
+ * are mappable.
  *
- * DECISION (open, and deliberately not changed here): `true` maps to `require`, which in this
- * codebase means `rejectUnauthorized: false` for both engines - encrypted, chain unchecked
- * (postgres.ts:793, mysql.ts:505). That is weaker than what the pasted string asks for: `pg`
- * given `ssl=true` and mysql2 given `ssl: {}` both verify by default. It is the same weakening
- * the mongodb arm above REFUSES to perform. It is kept because the form has no "encrypted,
- * verified by the system trust store, no PEM pasted" mode: verify-ca/verify-full here are the
- * modes that ask for a CA certificate, so mapping `ssl=true` onto one of them would turn a
- * working paste into a connection the user cannot complete without a file they may not have.
- * The honest fix is a mode that means exactly `rejectUnauthorized: true` with the default trust
- * store; until that exists the mapping is documented rather than silently correct
- * (docs/providers/postgres.md, docs/providers/mysql.md).
+ * THE RULE (D26): a boolean TLS spelling is mapped onto the mode that matches what the
+ * engine's OWN driver does with it, and never onto a weaker one. `true` therefore maps to
+ * `verify-system`, because that is what the drivers do: `pg` given `ssl=true` and mysql2 given
+ * `ssl: {}` both connect with Node's default `rejectUnauthorized: true`, and the mongodb
+ * driver reads `tls=true` as TLS with chain verification. `false` maps to `disable`, which is
+ * the same rule read the other way.
+ *
+ * `require` used to be the answer for `true`, and was wrong in one direction while the mongodb
+ * refusal was wrong in the other: `require` is `rejectUnauthorized: false` in every provider
+ * that has the knob, so a paste that asked for a verified connection got an unverified one,
+ * and there was no mode to map onto that did not also demand a CA PEM the user does not have.
+ * `verify-system` (src/lib/types.ts) is that mode, so the rule above no longer has to trade
+ * security against completability.
  */
 function readBooleanTLS(param: RawParam): TLSIntent {
   const flag = param.value.toLowerCase();
-  if (flag === "true" || flag === "1") return { sslMode: "require" };
+  if (flag === "true" || flag === "1") return { sslMode: "verify-system" };
   if (flag === "false" || flag === "0") return { sslMode: "disable" };
   return { unmappedTLSParam: `${param.name}=${param.value}` };
+}
+
+/**
+ * The MongoDB URI's TLS options, read for both schemes.
+ *
+ * `tls=true` (and the driver's deprecated `ssl=` alias) goes through the boolean rule above,
+ * and `mongodb+srv://` with no TLS parameter carries the same mode: the driver turns TLS on
+ * for every SRV connection itself, WITH verification, so leaving the form on its `disable`
+ * default described a connection that is in fact encrypted as one that is not.
+ *
+ * `tlsInsecure` / `tlsAllowInvalidCertificates` pull the result back down to `require`. Both
+ * turn `rejectUnauthorized` off while leaving TLS on (mongodb.d.ts documents the mapping onto
+ * the Node names), which is exactly what `require` means here - and the provider sends its
+ * options object as a second channel the driver prefers over the URI, so a verifying mode
+ * would break a string that connects today. `tlsAllowInvalidHostnames` is NOT in that set: it
+ * relaxes the name check only, which our options object never sets, so the URI's own
+ * relaxation survives alongside a verifying mode.
+ */
+function readMongoTLS(uri: string): TLSIntent {
+  const params = new Map<string, RawParam>();
+  const queryStart = uri.indexOf("?");
+  if (queryStart >= 0) {
+    for (const [name, value] of new URLSearchParams(uri.slice(queryStart + 1))) {
+      params.set(name.toLowerCase(), { name, value });
+    }
+  }
+
+  const flag = params.get("tls") ?? params.get("ssl");
+  const intent: TLSIntent = flag
+    ? readBooleanTLS(flag)
+    : uri.startsWith("mongodb+srv://")
+      ? { sslMode: "verify-system" }
+      : {};
+
+  if (intent.sslMode === undefined || intent.sslMode === "disable") return intent;
+  const relax = params.get("tlsinsecure") ?? params.get("tlsallowinvalidcertificates");
+  return relax !== undefined && relax.value.toLowerCase() === "true" ? { sslMode: "require" } : intent;
 }
 
 /**
@@ -287,10 +330,10 @@ function readADONetTLS(get: (key: string) => string | undefined): TLSIntent {
 /**
  * The TLS a URL carries in its QUERY STRING, for the engines that put it there.
  *
- * Only postgres, mysql and mssql are read: for `rediss://`, `couchbases://` and ClickHouse's
- * `http(s)://` the scheme IS the transport and already decided, and MongoDB's `tls=true` is
- * deliberately left to the driver, which enables TLS itself WITH chain verification - our
- * `require` means rejectUnauthorized:false, so acting on it would weaken an Atlas connection.
+ * Only postgres, mysql and mssql are read here: for `rediss://`, `couchbases://` and
+ * ClickHouse's `http(s)://` the scheme IS the transport and already decided, and MongoDB's
+ * URI is read by `readMongoTLS`, which parses it by hand because `mongodb+srv://` is not a
+ * URL this function's caller can build.
  *
  * Postgres's sslrootcert/sslcert/sslkey are read by nobody here on purpose: they name files on
  * the machine that wrote the string, while the form holds PEM text and the process that opens
@@ -336,6 +379,7 @@ function parseMongoDBString(uri: string): ParsedConnection {
   const result: ParsedConnection = {
     type: "mongodb",
     connectionString: uri,
+    ...readMongoTLS(uri),
   };
 
   try {

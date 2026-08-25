@@ -53,8 +53,16 @@ class MockPool extends EventEmitter {
 /** The pool handed to the most recently constructed provider. */
 let lastPool: MockPool | undefined;
 
+/**
+ * The config object the provider handed `new Pool(...)`. Recorded because `buildSSLConfig`
+ * is private and its result is only observable here: a test that merely connects and
+ * asserts `isConnected()` passes for every SSL mode, including a wrong one.
+ */
+let lastPoolConfig: Record<string, unknown> = {};
+
 mock.module("pg", () => ({
-  Pool: function () {
+  Pool: function (config: Record<string, unknown>) {
+    lastPoolConfig = config;
     lastPool = new MockPool();
     return lastPool;
   },
@@ -669,6 +677,21 @@ describe("PostgresProvider", () => {
       expect(provider.isConnected()).toBe(true);
     });
 
+    // D26: the mode a pasted `?ssl=true` lands on, and the reason it can: `pg` is handed
+    // `rejectUnauthorized: true` with NO `ca`, so Node's own trust store checks the chain and
+    // there is no PEM for the user to find. `require` is the same call with verification off.
+    test("ssl mode verify-system verifies against the runtime trust store with no ca", async () => {
+      provider = new PostgresProvider(makePgConfig({ ssl: { mode: "verify-system" } }));
+      await provider.connect();
+      expect(lastPoolConfig.ssl).toEqual({ rejectUnauthorized: true });
+    });
+
+    test("ssl mode require encrypts without checking the chain", async () => {
+      provider = new PostgresProvider(makePgConfig({ ssl: { mode: "require" } }));
+      await provider.connect();
+      expect(lastPoolConfig.ssl).toEqual({ rejectUnauthorized: false });
+    });
+
     test("ssl mode verify-ca sets rejectUnauthorized to true", async () => {
       provider = new PostgresProvider(
         makePgConfig({
@@ -677,6 +700,7 @@ describe("PostgresProvider", () => {
       );
       await provider.connect();
       expect(provider.isConnected()).toBe(true);
+      expect(lastPoolConfig.ssl).toEqual({ rejectUnauthorized: true });
     });
 
     test("ssl mode verify-full with certs includes ca, cert, key", async () => {

@@ -240,6 +240,7 @@ things the driver understands:
 |------------|----------------|--------------------|----------------|
 | absent / `disable` | `host:port/service` | not set | — (plaintext) |
 | `require` | `tcps://host:port/service` | `false` | **yes** (unavoidable) |
+| `verify-system` | `tcps://host:port/service` | `true` | yes, against the runtime's own roots |
 | `verify-ca` | `tcps://host:port/service` | `false` | yes |
 | `verify-full` | `tcps://host:port/service` | `true` | yes |
 
@@ -252,6 +253,14 @@ the same string to `tls.createSecureContext()` as `cert`, `key` **and** `ca`.
 > `ssl.rejectUnauthorized: false` has nothing to map to. A server with a self-signed certificate is
 > reachable only by supplying its CA in `caCert`. `require` and `verify-ca` therefore differ from
 > `verify-full` only in the **DN/hostname** match, which is the one check Oracle does expose.
+>
+> `verify-system` (D26) asks for that same match. What separates it from `verify-full` here is what it
+> does NOT send: with no PEM pasted there is no `walletContent`, so `tls.connect` falls back to Node's
+> bundled roots for the chain — which is exactly what the mode means. Audited in the installed driver:
+> `oracledb/lib/thin/sqlnet/ntTcp.js` runs `tls.checkServerIdentity(hostName, cert)` when
+> `sslServerDNMatch` is on and no `sslServerCertDN` is configured. Not exercised against a TLS
+> listener (the probe instance speaks TCP), so this is the driver's audited shape and no claim about a
+> verified handshake.
 
 > Note: a pasted `connectionString` is returned **verbatim**, so its own protocol (or full TNS
 > descriptor) decides whether the transport is encrypted — a `require` selected alongside a `tcp`

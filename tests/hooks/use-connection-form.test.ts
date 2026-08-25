@@ -336,7 +336,7 @@ describe("useConnectionForm", () => {
     });
 
     expect(result.current.testResult).not.toBeNull();
-    expect(result.current.testResult!.success).toBe(true);
+    expect(result.current.testResult!.tone).toBe("success");
     expect(result.current.testResult!.message).toContain("Connected successfully");
     expect(result.current.testResult!.latency).toBe(25);
   });
@@ -355,7 +355,7 @@ describe("useConnectionForm", () => {
     });
 
     expect(result.current.testResult).not.toBeNull();
-    expect(result.current.testResult!.success).toBe(false);
+    expect(result.current.testResult!.tone).toBe("error");
     expect(result.current.testResult!.message).toBe("Connection refused");
   });
 
@@ -551,7 +551,7 @@ describe("useConnectionForm", () => {
 
     expect(onConnect).not.toHaveBeenCalled();
     expect(result.current.testResult).not.toBeNull();
-    expect(result.current.testResult!.success).toBe(false);
+    expect(result.current.testResult!.tone).toBe("error");
   });
 
   /*
@@ -589,7 +589,10 @@ describe("useConnectionForm", () => {
     });
 
     // Nothing saved yet - but the user is told what was found, in the server's words.
+    // The sentence asks the user to click again, which is neither a success nor a
+    // failure, so it renders neither (#U19): the warning tone, not the green tick.
     expect(onConnect).not.toHaveBeenCalled();
+    expect(result.current.testResult!.tone).toBe("warning");
     expect(result.current.testResult!.message).toContain("Keyspace system_views does not exist");
     expect(result.current.testResult!.message).toContain("again");
 
@@ -642,7 +645,7 @@ describe("useConnectionForm", () => {
     });
 
     expect(onConnect).not.toHaveBeenCalled();
-    expect(result.current.testResult!.success).toBe(false);
+    expect(result.current.testResult!.tone).toBe("error");
   });
 
   test("Test Connection reports the degradation rather than a bare success", async () => {
@@ -654,9 +657,10 @@ describe("useConnectionForm", () => {
       await result.current.handleTestConnection();
     });
 
-    // It connected, so the result is a success - and the sentence says what is missing
-    // instead of the "Connected successfully" that hid it.
-    expect(result.current.testResult!.success).toBe(true);
+    // It connected, so this is not an error - but it is not a plain success either:
+    // the sentence says what is missing instead of the "Connected successfully" that
+    // hid it, so it gets the warning tone (#U19).
+    expect(result.current.testResult!.tone).toBe("warning");
     expect(result.current.testResult!.message).toContain("no health data");
   });
 
@@ -703,6 +707,7 @@ describe("useConnectionForm", () => {
       await result.current.handleConnect();
     });
     expect(onConnect).not.toHaveBeenCalled();
+    expect(result.current.testResult!.tone).toBe("warning");
     expect(result.current.testResult!.message).toContain("no monitoring here");
 
     await act(async () => {
@@ -732,7 +737,7 @@ describe("useConnectionForm", () => {
     expect(result.current.password).toBe("secret");
     expect(result.current.database).toBe("parsed-db");
     expect(result.current.testResult).not.toBeNull();
-    expect(result.current.testResult!.success).toBe(true);
+    expect(result.current.testResult!.tone).toBe("success");
     expect(result.current.testResult!.message).toContain("parsed successfully");
   });
 
@@ -846,11 +851,12 @@ describe("useConnectionForm", () => {
     expect(result.current.sslMode).toBe("require");
   });
 
-  // The refusal has to be VISIBLE, and visible in the right colour. The modal renders
-  // `success: true` as a green box with a tick (ConnectionModal.tsx), so emitting the
-  // refusal as a success told the user - in green, with a tick - that dropping their TLS
-  // request was fine. That is the affordance-contradicts-the-sentence defect of #449.
-  test("handlePasteConnectionString says so when it refuses to map an opportunistic sslmode", () => {
+  // The caution has to be VISIBLE, and visible in the right colour. The paste itself
+  // worked - every other field was filled in - so this is not a red refusal (that was
+  // the affordance-contradicts-the-sentence defect of #449 in the other direction: a
+  // green tick over "your TLS setting was dropped"); it is the amber warning tone
+  // #U19 added, because the parse both worked AND lost something.
+  test("handlePasteConnectionString warns when it refuses to map an opportunistic sslmode", () => {
     const { result } = renderHook(() => useConnectionForm(defaultProps));
 
     act(() => {
@@ -861,10 +867,10 @@ describe("useConnectionForm", () => {
     });
 
     expect(result.current.sslMode).toBe("disable");
-    expect(result.current.testResult!.success).toBe(false);
+    expect(result.current.testResult!.tone).toBe("warning");
     expect(result.current.testResult!.message).toContain("sslmode=prefer");
     expect(result.current.testResult!.message).toContain("SSL Mode");
-    // The banner must not read as a success anywhere in its own text either.
+    // The banner must not read as a plain, unqualified success in its own text either.
     expect(result.current.testResult!.message).not.toContain("parsed successfully");
   });
 
@@ -882,10 +888,10 @@ describe("useConnectionForm", () => {
     });
 
     expect(result.current.sslMode).toBe("verify-ca");
-    expect(result.current.testResult!.success).toBe(false);
+    expect(result.current.testResult!.tone).toBe("warning");
     expect(result.current.testResult!.message).toContain("ssl-mode=PREFERRED");
     expect(result.current.testResult!.message).toContain("verify-ca");
-    // The fields WERE filled, and a red box must not leave the user thinking otherwise.
+    // The fields WERE filled, and the banner must not leave the user thinking otherwise.
     expect(result.current.host).toBe("my.example.com");
     expect(result.current.testResult!.message).toContain("other fields");
   });
@@ -903,9 +909,41 @@ describe("useConnectionForm", () => {
       result.current.handlePasteConnectionString();
     });
 
-    expect(result.current.sslMode).toBe("require");
-    expect(result.current.testResult!.success).toBe(true);
+    expect(result.current.sslMode).toBe("verify-system");
+    expect(result.current.testResult!.tone).toBe("success");
     expect(result.current.testResult!.message).toContain("parsed successfully");
+  });
+
+  // D26: the paste has to land on a mode the user can actually connect with. verify-system
+  // verifies AND asks for no certificate file, so a Neon/Supabase URL is complete as pasted.
+  test("a managed PostgreSQL URL's ssl=true lands on a verifying mode that needs no CA file", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput("postgres://user:pw@ep-cool-1.eu-central-1.aws.neon.tech/neondb?ssl=true");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.sslMode).toBe("verify-system");
+    expect(result.current.caCert).toBe("");
+    expect(result.current.testResult!.tone).toBe("success");
+  });
+
+  // The banner names the modes it could not match the parameter to, so the list has to be
+  // the real one - a mode missing from the sentence is a mode the user does not know exists.
+  test("the unmapped-parameter banner names verify-system among the modes on offer", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput("postgres://u:p@pg.example.com/app?sslmode=prefer");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.testResult!.message).toContain("verify-system");
   });
 
   // ── handlePasteConnectionString shows error for invalid string ─────────────
@@ -922,7 +960,7 @@ describe("useConnectionForm", () => {
     });
 
     expect(result.current.testResult).not.toBeNull();
-    expect(result.current.testResult!.success).toBe(false);
+    expect(result.current.testResult!.tone).toBe("error");
     expect(result.current.testResult!.message).toContain("Could not parse");
   });
 
@@ -1049,7 +1087,7 @@ describe("useConnectionForm", () => {
     });
 
     expect(result.current.testResult).not.toBeNull();
-    expect(result.current.testResult!.success).toBe(false);
+    expect(result.current.testResult!.tone).toBe("error");
     expect(result.current.testResult!.message).toContain("Network error");
   });
 
@@ -1616,7 +1654,7 @@ describe("useConnectionForm", () => {
     });
 
     expect(result.current.testResult).not.toBeNull();
-    expect(result.current.testResult!.success).toBe(false);
+    expect(result.current.testResult!.tone).toBe("error");
     expect(result.current.testResult!.message).toContain("Network error");
   });
 
@@ -1692,7 +1730,7 @@ describe("useConnectionForm", () => {
     // The adapter replaces the built-in fetch entirely
     expect(onTestConnection).toHaveBeenCalledTimes(1);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(result.current.testResult?.success).toBe(true);
+    expect(result.current.testResult?.tone).toBe("success");
     expect(result.current.testResult?.message).toBe("Connected successfully (42ms)");
     expect(result.current.testResult?.latency).toBe(42);
   });
@@ -1707,7 +1745,7 @@ describe("useConnectionForm", () => {
       await result.current.handleTestConnection();
     });
 
-    expect(result.current.testResult?.success).toBe(false);
+    expect(result.current.testResult?.tone).toBe("error");
     expect(result.current.testResult?.message).toBe("Auth failed");
   });
 

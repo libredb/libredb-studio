@@ -77,8 +77,12 @@ class MockConnectionPool extends EventEmitter {
  * The provider does `new mssql.ConnectionPool(config)`; recording the instance here lets a
  * test emit on the very emitter the provider attached its listener to.
  */
+/** The config the provider handed the pool, for the TLS assertions below. */
+let lastPoolConfig: { options?: { encrypt?: boolean; trustServerCertificate?: boolean } } = {};
+
 function ConnectionPoolFactory(config: unknown): MockConnectionPool {
   const pool = new MockConnectionPool(config);
+  lastPoolConfig = config as typeof lastPoolConfig;
   lastPool = pool;
   return pool;
 }
@@ -478,6 +482,37 @@ describe("MSSQLProvider", () => {
   // =========================================================================
   // 2. Connect / Disconnect
   // =========================================================================
+
+  // =========================================================================
+  // TLS
+  // =========================================================================
+
+  describe("the TLS options handed to tedious", () => {
+    const connectWithSSL = async (mode: NonNullable<DatabaseConnection["ssl"]>["mode"]) => {
+      provider = new MSSQLProvider({ ...baseConfig, ssl: { mode } });
+      await provider.connect();
+      return lastPoolConfig.options;
+    };
+
+    test("mode disable turns encryption off", async () => {
+      expect(await connectWithSSL("disable")).toMatchObject({ encrypt: false });
+    });
+
+    test("mode require encrypts and trusts whatever certificate is presented", async () => {
+      expect(await connectWithSSL("require")).toMatchObject({ encrypt: true, trustServerCertificate: true });
+    });
+
+    // D26: SQL Server needed no code change to answer for `verify-system`. tedious has one
+    // knob, `trustServerCertificate`, and turning it off is already "validate the chain and
+    // the name against the host's trust store" - there is no separate CA channel here, so
+    // verify-system, verify-ca and verify-full all land on the same call. This pins that the
+    // widened union did not silently fall through to the trusting branch.
+    test("mode verify-system validates the certificate, like the two verify-* modes", async () => {
+      expect(await connectWithSSL("verify-system")).toMatchObject({ encrypt: true, trustServerCertificate: false });
+      expect(await connectWithSSL("verify-ca")).toMatchObject({ encrypt: true, trustServerCertificate: false });
+      expect(await connectWithSSL("verify-full")).toMatchObject({ encrypt: true, trustServerCertificate: false });
+    });
+  });
 
   describe("connect / disconnect", () => {
     test("connect creates pool and marks connected", async () => {

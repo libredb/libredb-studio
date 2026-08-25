@@ -801,7 +801,11 @@ export class PostgresProvider extends SQLBaseProvider {
       if (connSSL.mode === "disable") return false;
 
       const ssl: Record<string, unknown> = {
-        rejectUnauthorized: connSSL.mode === "verify-ca" || connSSL.mode === "verify-full",
+        // Every mode except `require` verifies (D26): `verify-system` checks the chain against
+        // the trust store the runtime already has - no `ca` is set below, so Node's bundled
+        // roots decide - while `verify-ca`/`verify-full` check it against the PEM pasted into
+        // the form. `require` is the one mode that encrypts without checking anything.
+        rejectUnauthorized: connSSL.mode !== "require",
       };
 
       if (connSSL.caCert) ssl.ca = connSSL.caCert;

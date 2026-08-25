@@ -444,7 +444,7 @@ is reported as the server spelled it rather than guessed into a CQL word.
 | `localDataCenter` | **Yes** | [§3.4](#34-localdatacenter-is-a-required-connection-field-and-nothing-else-here-has-one) |
 | `database` | No | The **keyspace**. Without it there is no schema tree |
 | `user` / `password` | No | Sent only when a user is set. A stock install runs `AllowAllAuthenticator` and ignores credentials entirely (measured: supplying them to an open server connects fine) |
-| `ssl` | No | Any mode but `disable` sends `sslOptions`: `rejectUnauthorized` from the mode, plus the form's CA (`ca`) and client keypair (`cert` / `key`) under Node's own TLS names, which is the same mapping the PostgreSQL, MySQL and Couchbase adapters use — the driver hands `sslOptions` to `tls.connect`. **Not exercised against a TLS cluster** — the probe instances speak plaintext — so it is the driver's documented option shape and no claim about a verified path, mutual TLS included |
+| `ssl` | No | Any mode but `disable` sends `sslOptions`: `rejectUnauthorized` from the mode (`false` for `require`, `true` for `verify-system`/`verify-ca`/`verify-full` — `verify-system` is simply the one that pastes no CA, leaving Node's own trust store to check the chain), plus the form's CA (`ca`) and client keypair (`cert` / `key`) under Node's own TLS names, which is the same mapping the PostgreSQL, MySQL and Couchbase adapters use — the driver hands `sslOptions` to `tls.connect`. **Not exercised against a TLS cluster** — the probe instances speak plaintext — so it is the driver's documented option shape and no claim about a verified path, mutual TLS included |
 
 ### 4.2 There is no connection string, and why that is not fixable by inventing one
 

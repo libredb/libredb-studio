@@ -214,25 +214,32 @@ const connection = {
 
 The paste box ([`connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)) reads the
 query string, so `postgresql://host/db?sslmode=verify-full` arrives on the form with SSL Mode already
-set. `disable`, `require`, `verify-ca` and `verify-full` map one-to-one.
+set. `disable`, `require`, `verify-ca` and `verify-full` map one-to-one. `verify-system` is not in
+that table: it is the form's own mode name, not a libpq one, so `?sslmode=verify-system` is reported
+as a parameter we cannot honour rather than accepted.
 
 `prefer` and `allow` are **not** mapped, and neither is any spelling the map does not know. Both mean
-"encrypt if the server offers it", which the form's four modes cannot express, and both directions of
+"encrypt if the server offers it", which no mode on the form can express, and both directions of
 guess are wrong against a live server: measured on postgres 18 with no server certificate,
 `?sslmode=prefer` connects with `pg_stat_ssl.ssl = f` while `?sslmode=require` is refused outright
 ("server does not support SSL, but SSL was required"). So the mode the form already holds is left
 alone and the paste banner names the parameter it declined to act on — the string is never silently
 downgraded to "disable". Set SSL Mode yourself in the SSL / TLS panel.
 
-`?ssl=true` / `?ssl=false` (the JDBC and Heroku spelling) map to `require` / `disable`, since neither
-is opportunistic. **`require` here means `rejectUnauthorized: false`**
-([postgres.ts:793](../../src/lib/db/providers/sql/postgres.ts)) — encrypted, chain **not** verified —
-while `pg` given `ssl: true` verifies by default, so this mapping is weaker than the pasted string
-asks for. It is kept deliberately: the only stronger modes on the form, `verify-ca`/`verify-full`, are
-the ones that ask for a CA certificate, so mapping `?ssl=true` onto one of them would turn a working
-paste into a connection the user cannot complete without a PEM they may not have. The real fix is a
-mode meaning "verified against the system trust store, no PEM"; until it exists, tick `verify-full`
-yourself when the server has a publicly-trusted certificate. `sslrootcert`, `sslcert` and `sslkey` are ignored: they are paths on the machine
+`?ssl=true` / `?ssl=false` (the JDBC and Heroku spelling) map to **`verify-system`** / `disable`,
+since neither is opportunistic. The rule the parser states for every boolean TLS spelling is: it maps
+onto the mode that matches what the engine's own driver does with it, never onto a weaker one. `pg`
+given `ssl: true` connects with Node's default `rejectUnauthorized: true`, so `verify-system` — chain
+and host name checked against the runtime's trust store, no PEM to paste — is that mode.
+
+This used to map to `require`, which here means `rejectUnauthorized: false` (encrypted, chain **not**
+verified), because the form had no mode that both verified and asked for nothing: `verify-ca` and
+`verify-full` are the modes that want a CA certificate, so pointing `?ssl=true` at one of them turned
+a working paste into a connection the user could not complete. `verify-system` is that missing mode
+(D26), so a Neon / Supabase / RDS URL now arrives verified and complete. Pick `verify-ca`/`verify-full`
+only when the server's certificate is signed by a CA the runtime does not already trust.
+
+`sslrootcert`, `sslcert` and `sslkey` are ignored: they are paths on the machine
 that wrote the string, while the panel holds PEM text and the process that opens the connection is the
 server. Paste the certificate content instead.
 
@@ -280,9 +287,14 @@ oracledb expose no pool-level `error` event at all, which is recorded at each pr
 `buildSSLConfig()` ([postgres.ts:342](../../src/lib/db/providers/sql/postgres.ts)) resolves SSL with
 this precedence:
 
-1. **Explicit `connection.ssl`** (`SSLConfig`, mode = `disable` | `require` | `verify-ca` | `verify-full`):
+1. **Explicit `connection.ssl`** (`SSLConfig`, mode = `disable` | `require` | `verify-system` |
+   `verify-ca` | `verify-full`):
    - `disable` → no SSL.
-   - `verify-ca` / `verify-full` → `rejectUnauthorized: true`; otherwise `false`.
+   - `require` → `rejectUnauthorized: false` — the ONE mode that encrypts without verifying.
+   - `verify-system` / `verify-ca` / `verify-full` → `rejectUnauthorized: true`. `verify-system`
+     passes no `ca`, so Node's own trust store checks the chain and the host name; the other two
+     verify against `caCert` when one is supplied. `pg` exposes no separate name check, so
+     `verify-ca` and `verify-full` build the same object here.
    - `caCert` / `clientCert` / `clientKey` map to `ca` / `cert` / `key`.
 2. **`options.ssl === true` or cloud auto-detect** — `shouldEnableSSL()` returns true when
    `options.ssl === true` *or* the host matches a known managed provider, enabling
@@ -962,8 +974,10 @@ await provider.disconnect();
 - **Cloud SSL auto-detect does not verify the server certificate.** When SSL is enabled by host
   heuristic (`shouldEnableSSL()`), it uses `rejectUnauthorized: false` — the connection is encrypted
   but **not authenticated**, so it is exposed to man-in-the-middle attacks. For verified TLS, set an
-  explicit `connection.ssl` with mode `verify-ca`/`verify-full` and a `caCert`. *Future:* prefer
-  verifying modes by default and treat the heuristic as encryption-only opportunistic TLS.
+  explicit `connection.ssl` with mode `verify-system` (nothing to paste — the runtime's trust store
+  checks the chain, which is what a managed provider's certificate needs) or `verify-ca`/`verify-full`
+  with a `caCert`. *Future:* prefer verifying modes by default and treat the heuristic as
+  encryption-only opportunistic TLS.
 
 ---
 

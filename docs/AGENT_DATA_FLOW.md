@@ -234,8 +234,11 @@ Every other "twelve" said about grounding in these docs counts the same thing. T
 NOT count. The wire-compatible engines of
 [`docs/providers/README.md`](./providers/README.md) are not extra members — TiDB is grounded because it
 arrives as `mysql`, and it is that type-id that is counted. And one of the twelve, the embedded
-`libredb`, is reached by this path but cannot complete it: the file takes an exclusive lock, so the
-grounding provider never connects and the run is honestly ungrounded (`docs/BACKLOG.md` B49). What
+`libredb`, reaches this path through a handle it does not open: the file takes an exclusive lock, so
+the grounding acquisition borrows the connection's own open provider rather than opening a second one
+that the lock would refuse (`findOpenSingleWriterProvider`, `src/lib/db/factory.ts`; see
+[`docs/providers/libredb.md`](./providers/libredb.md) §4.2.1). A connection that configures an
+`agentUser` opts out of that borrow, and such a run is still honestly ungrounded. What
 leaves this process is the same KIND of thing either way, identifiers and types and nothing else, but
 two properties differ and are stated here rather than left to be discovered:
 

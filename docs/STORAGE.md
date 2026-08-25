@@ -284,7 +284,19 @@ STORAGE_POSTGRES_URL=postgresql://user:pass@localhost:5432/your_db?sslmode=disab
 
 # Cloud PostgreSQL
 STORAGE_POSTGRES_URL=postgresql://user:pass@your-pg-host:5432/your_db?sslmode=require
+
+# Cloud PostgreSQL, with the server certificate actually verified
+STORAGE_POSTGRES_URL=postgresql://user:pass@your-pg-host:5432/your_db?sslmode=verify-system
 ```
+
+> **`sslmode=require` here encrypts but does not verify** (`rejectUnauthorized: false`) — this pool
+> has no channel for a CA certificate, so a verifying default would break every deployment whose
+> storage database presents a self-signed certificate. `sslmode=verify-system` is the connection
+> form's own mode name (`SSLMode` in [`src/lib/types.ts`](../src/lib/types.ts)), not a libpq one, and
+> it is the one value this reader treats as "verify the chain against the runtime's trust store" —
+> which is what a managed provider's publicly-signed certificate needs. Before D26 it fell through
+> every branch and landed on the non-local default, `rejectUnauthorized: false`: the opposite of what
+> it says.
 
 ### Verify
 

@@ -475,9 +475,12 @@ project (and must not become one); `node:https` is a built-in that takes `ca`/`c
 `rejectUnauthorized` directly, so self-signed self-hosted clusters work on the Node runtime that
 ships in the Docker image.
 
-`rejectUnauthorized` follows the same rule PostgreSQL and MySQL use: only `verify-ca` and
-`verify-full` verify the chain by default, because a self-hosted Couchbase node ships a self-signed
-certificate — an explicit `ssl.rejectUnauthorized` always wins
+`rejectUnauthorized` follows the same rule PostgreSQL and MySQL use: `require` is the only mode that
+does **not** verify the chain, because a self-hosted Couchbase node ships a self-signed certificate.
+`verify-system` (D26) verifies against the trust store the runtime already has — the mode a Capella
+endpoint can satisfy exactly as pasted, since its certificate is signed by a public root and there is
+no PEM to go looking for — while `verify-ca`/`verify-full` verify against a pasted `caCert`. An
+explicit `ssl.rejectUnauthorized` always wins
 ([http-transport.ts:256](../../src/lib/db/providers/document/couchbase/http-transport.ts)).
 
 ---

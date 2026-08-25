@@ -162,6 +162,15 @@ export class PostgresStorageProvider implements ServerStorageProvider {
 
     const sslMode = searchParams.get("sslmode")?.toLowerCase();
     if (sslMode === "disable") return false;
+    // `verify-system` is not a libpq sslmode - it is this product's own mode name
+    // (src/lib/types.ts), and someone configuring STORAGE_POSTGRES_URL from the connection
+    // form's vocabulary will write it. It means "verify against the runtime's trust store",
+    // so it is the one value here that turns verification ON; without this branch it fell
+    // through to the non-local default below and got `rejectUnauthorized: false`, i.e. the
+    // opposite of what it says (D26). The libpq spellings keep their existing behaviour: this
+    // pool has no channel for a CA PEM, so a verifying default would break every deployment
+    // whose storage database presents a self-signed certificate.
+    if (sslMode === "verify-system") return { rejectUnauthorized: true };
     if (sslMode === "require" || sslMode === "prefer" || sslMode === "verify-ca" || sslMode === "verify-full") {
       return { rejectUnauthorized: false };
     }

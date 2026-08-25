@@ -322,7 +322,10 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
     const options: MongoClientOptions = {
       tls: true,
-      rejectUnauthorized: ssl.rejectUnauthorized ?? (ssl.mode === "verify-ca" || ssl.mode === "verify-full"),
+      // `require` encrypts without checking; every other mode verifies. `verify-system`
+      // does it against the runtime's own trust store, which is what an Atlas / `tls=true`
+      // paste needs - no `ca` is set below unless the form carries one (D26).
+      rejectUnauthorized: ssl.rejectUnauthorized ?? ssl.mode !== "require",
     };
     if (ssl.caCert) options.ca = ssl.caCert;
     if (ssl.clientCert) options.cert = ssl.clientCert;

@@ -2397,14 +2397,6 @@ as they are fixed, and a numeral here goes stale silently.
   run `internal` or, on the profile error, `agent-credential-unusable`. Deliberate at #414, which had
   no business changing how the two engines it did not touch fail, and an asymmetry a reader will
   trip over until it is resolved.
-- **B49** — a **LibreDB** connection can never be grounded, and the reason is not the agent's.
-  `lib.open()` takes an exclusive lock on the file, and an execution-profile acquisition is a SECOND
-  provider under its own cache key — so once the connection's ordinary provider is open, which it is
-  from the moment anyone browses it, the grounding read fails to connect at all. Measured live on
-  2026-08-17 against `@libredb/libredb` 0.2.2: `ConnectionError` / `CONNECTION_ERROR`, *"LibreDB file
-  is already open by another process"*, converted by `captureFromProvider` into an honest ungrounded
-  run with no `context-captured` event. The same lock is what makes the connection-test modal report a
-  failed connection (`docs/BACKLOG.md` D3), so the two close together.
 - **B51** — the loop delivers three notices to a model (the reserve warning, the report reminder of
   #416, the present-before-report notice of #417) and records none of them. `recordEvent` is called
   for what the RUN did and never for what the server said to it, so a rescued run and a run that never

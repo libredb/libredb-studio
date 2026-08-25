@@ -357,6 +357,16 @@ describe("MongoDBProvider", () => {
       expect(options.rejectUnauthorized).toBe(false);
     });
 
+    // D26: the mode a pasted `tls=true` / `mongodb+srv://` lands on. It has to verify with
+    // no CA PEM in hand, which is the whole reason it exists - an Atlas string carries no
+    // certificate file.
+    test("mode verify-system verifies against the runtime trust store, with no ca option", async () => {
+      const options = await connectWithSSL({ mode: "verify-system" });
+      expect(options.tls).toBe(true);
+      expect(options.rejectUnauthorized).toBe(true);
+      expect("ca" in options).toBe(false);
+    });
+
     test("mode verify-ca and verify-full check the chain", async () => {
       expect(await connectWithSSL({ mode: "verify-ca" })).toMatchObject({ tls: true, rejectUnauthorized: true });
       expect(await connectWithSSL({ mode: "verify-full" })).toMatchObject({ tls: true, rejectUnauthorized: true });

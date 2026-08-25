@@ -168,7 +168,9 @@ export class RedisProvider extends BaseDatabaseProvider {
     if (!ssl || ssl.mode === "disable") return undefined;
 
     const tls: NonNullable<RedisOptions["tls"]> = {
-      rejectUnauthorized: ssl.rejectUnauthorized ?? (ssl.mode === "verify-ca" || ssl.mode === "verify-full"),
+      // `require` encrypts without checking; every other mode verifies. `verify-system`
+      // verifies against the runtime's own trust store, with no CA PEM to paste (D26).
+      rejectUnauthorized: ssl.rejectUnauthorized ?? ssl.mode !== "require",
     };
     if (ssl.caCert) tls.ca = ssl.caCert;
     if (ssl.clientCert) tls.cert = ssl.clientCert;

@@ -22,10 +22,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1–D26, U17 · 8
+- [Drivers and connections](#drivers-and-connections) — D1–D29, U17 · 9
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 11
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 10
 - [Authentication and security headers](#authentication-and-security-headers) — AU2
 - [Tests](#tests) — T1–T3 · 2
 - [Dependencies](#dependencies) — P1–P5 · 5
@@ -36,7 +36,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C2–C10 · 9
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K2–K4 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A6 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B64 · 42
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B66 · 43
 
 ---
 
@@ -125,36 +125,6 @@ pool-level `error` event, and each `connect()` now records that.
 
 Whether the MongoDB, Redis, ClickHouse, Druid, Couchbase, Cassandra or Trino clients expose a fatal
 `error` event that can reach `uncaughtException` is an open question, not a claim.
-
-### D3. Testing a connection to an already-open embedded file fails on its own exclusive lock
-
-`POST /api/db/test-connection` calls `createDatabaseProvider` directly rather than going through the
-cached provider. That is right for credentials the server has never seen, and wrong for an engine
-that permits one writer. If the connection under test points at a file the cached provider already
-holds, the second open is refused:
-
-```
-[DB] Creating libredb provider for "Sample (LibreDB)"      <- cached, holds the file
-[DB] Creating libredb provider for "My Sample"             <- the test, same file
-ConnectionError: LibreDB file is already open by another process (exclusive lock).
-```
-
-Deterministic, not a race. It reproduces every time on the active LibreDB connection.
-
-The consequence is worse than a failed test, because the modal tests before it saves. **Editing the
-built-in LibreDB sample is impossible.** The edit is discarded with a toast about a connection error,
-which reads as if the sample itself were broken. Reproduced against a production build on 2026-08-12
-while verifying #336.
-
-An earlier session recorded this and then retracted it as unreproducible. The retraction of the
-*explanation* stands — it blamed a read-then-write window in the provider cache, which is not what
-happens. The phenomenon is real; those attempts never went through the modal's test path.
-
-Same lock, same fix as B49. Close the two together.
-
-**Done when:** testing a connection that resolves to an already-open single-writer file reuses the
-open provider, or the test is skipped with an honest message. Either way the modal must not present a
-lock conflict as a failed connection test.
 
 ### U17. Four things the Cassandra provider declined to do
 
@@ -312,25 +282,66 @@ and a refusal sentence that has never been seen from the server is exactly what 
 the counts it feeds carry the same distinction - measured against a live cluster with a document-only
 role, not inferred from the code.
 
----
+### D27. On a single-writer file, whichever handle opens first locks the other one out
 
-### D26. `?ssl=true` maps onto `require`, and `require` is the one mode that does not verify
+The reuse D3 and B49 landed runs one way only: `findOpenSingleWriterProvider` reads the **writable**
+cache, so a caller that would open a second handle borrows the editor's. The reverse is still open. If
+an agent run reaches a `libredb` connection nobody has browsed yet, `acquireExecutionProfileProvider`
+opens the file and caches that handle under the PROFILED key — and the editor's own
+`getOrCreateProvider` then fails on the lock, so browsing the connection in the sidebar is refused
+until the profiled entry is evicted (30 minutes idle).
 
-`readBooleanTLS` maps a PostgreSQL `?ssl=true` onto `SSLMode` `require` (2026-08-25, D16). That is
-the honest half of a real choice - the alternative was leaving it on the form's `disable` default and
-sending plaintext - but it weakens what the source spelling asks for: `pg` reads `ssl=true` as TLS
-with Node's default `rejectUnauthorized: true`, while this app's `require` is explicitly
-`rejectUnauthorized: false` (`src/lib/db/providers/sql/postgres.ts:793`, where only `verify-ca` and
-`verify-full` verify).
+Deliberately left: closing it means letting an editor request be served a provider opened under an
+execution profile, which is the isolation invariant `acquireExecutionProfileProvider` exists to keep.
+On this engine that handle carries no actual privilege reduction — `createDatabaseProvider` passes no
+execution context for `libredb` — so the reuse would be safe *for this engine* and wrong as a declared
+rule. Not observed in the browser: the ordinary order is editor-first, because the connection has to be
+selected before a run can be started on it.
 
-The same change REFUSED to map MongoDB's `tls=true` on exactly that argument, so the two arms of one
-commit disagree. Both are defensible on their own - a downgrade beats plaintext, and a downgrade of
-an Atlas connection is worse than a form the user must fill in - and neither is written down as a
-rule. `SSLMode` having no "encrypt and verify with the system roots, no server-name pinning" value is
-what forces the choice.
+**Done when:** either direction of the borrow is safe by construction — for instance a single-writer
+file has ONE cache entry that both callers key off, with the profile deciding how it is used rather
+than which handle it gets — or the agent-first order is refused with a sentence naming the lock.
 
-**Done when:** the two spellings answer to one stated rule, or `SSLMode` gains the mode that makes
-the question disappear.
+### D28. The scheme mappings still choose `require`, which the boolean rule now contradicts
+
+D26 stated the rule for a boolean TLS **parameter**: it maps onto the mode matching what the engine's
+own driver does with it, never onto a weaker one. `withSSLMode` in
+`src/lib/connection-string-parser.ts` maps the TLS **schemes** — `rediss://`, `couchbases://`, and
+ClickHouse's `https://` — onto `require`, which verifies nothing, while ioredis given `rediss://`
+verifies by default. So the same paste is read strongly through one door and weakly through another.
+
+Not changed with D26 on purpose: the existing comments justify `require` on a measured claim about
+self-hosted deployments — a Redis started with `--tls-port` presents a self-signed certificate, so a
+verifying default would refuse the ordinary local setup — and D26's entry names only the boolean
+parameters. `docs/providers/redis.md` now states the boundary rather than leaving the rule looking
+universal, which is why this is a written-down asymmetry and not a silent one.
+
+**Done when:** the schemes answer to the same stated rule as the parameters, or the reason a scheme is
+read more weakly than the parameter beside it is recorded next to `withSSLMode` as a decision rather
+than as an artefact.
+
+### D29. Redis ignores the username, so no ACL user can be used and a pasted one is lost silently
+
+Measured 2026-08-25 against `redis:latest`: `ACL SETUSER probe on >pw ~* +@all -info` creates a user
+whose `INFO` is refused (`NOPERM`), and a connection configured with that user and password still
+reported `Connection successful` with full health — because `RedisProvider.connect()`
+(`src/lib/db/providers/keyvalue/redis.ts:184`) builds `new Redis({ host, port, password, db, ... })`
+and passes **no `username`**, so ioredis authenticates as `default` and the configured user is
+dropped. On a server whose `default` user has no password, that is a connection made as a principal
+the user did not choose.
+
+The parser makes it worse rather than better: `redis://probe:pw@host` fills `user` from the URI
+(`connection-string-parser.ts:507`), so the field is collected, stored, and then ignored at the one
+place it matters. Redis 6 ACLs are how every managed Redis (Redis Cloud, ElastiCache RBAC, Azure
+Cache) issues least-privilege credentials, so this is not an exotic configuration.
+
+Found while looking for a live health failure to verify U19's degraded banner against — which is also
+what the absence rule (#477) would say about it: a health read that succeeds under the wrong principal
+is not the health of the connection that was configured.
+
+**Done when:** a configured Redis username reaches the client, and a server that refuses that user's
+`INFO` produces a degraded connection rather than a green one — measured against an ACL user, not
+inferred.
 
 ---
 
@@ -557,24 +568,6 @@ collapses first. It is not the failure `login-form.tsx`'s comment records — a 
 
 **Done when:** the hero fits at 1280x800 with the relatives line intact, or scrolling at that height
 is accepted deliberately.
-
----
-
-### U19. A caution about a save the app could not verify renders as a green success tick
-
-`use-connection-form.ts:423` emits the degraded-save message - "... Click Save Changes again to save
-it anyway." - as `success: true`, and `ConnectionModal.tsx:874` has exactly two renderings for that
-flag: emerald with a `CircleCheck`, or red with a `CircleX`. So the sentence asking the user to think
-again arrives wearing the affordance of a completed action.
-
-Found 2026-08-25 while fixing the identical shape one branch above it: the connection-string TLS
-refusal was emitted the same way and now emits `success: false`. That fix is available here too and
-was deliberately not applied, because a red cross overstates in the other direction - the save is
-being OFFERED, not refused. The same missing thing explains both: this banner has no warning state.
-`AgentRail`'s posture line (#449) is the precedent for the wording, not for the colour.
-
-**Done when:** a message that is neither a success nor a failure renders as neither, and the degraded
-save uses it.
 
 ---
 
@@ -2248,33 +2241,6 @@ their failure mode is a second decision about a path #414 did not touch. It is s
 reader will trip over.
 
 **Done when:** both grounding paths answer an environment failure the same way.
-
-### B49. A LibreDB connection can never be grounded, because the file takes an exclusive lock
-
-- `lib.open({ path })` takes an **exclusive lock**. Opening the same path a second time in the same
-  process throws `LibreDbError` with `code: "LOCKED"`.
-- `acquireExecutionProfileProvider(connection, "agent-operations")` is a **second provider**, cached
-  under `profiledCacheKey(connection.id, profile)` rather than under the connection id, and it calls
-  `connect()` — which is `lib.open()` on a path the ordinary writable provider already holds open.
-- Driven end to end: with the writable provider connected and returning five namespaces (`config:*`,
-  `people:*`, `project:*`, `users:*`, `session:*`), the profiled acquisition fails with
-  `ConnectionError` / `CONNECTION_ERROR` and the message the provider writes for `LOCKED` — *"LibreDB
-  file is already open by another process (exclusive lock)."*
-- `ConnectionError` extends `DatabaseError`, so `captureFromProvider` converts it into an unavailable
-  capture rather than propagating it. The run continues, honestly, ungrounded — which is why nothing
-  about this looks like a failure anywhere.
-
-The condition is "the connection's ordinary provider is currently connected", which is true from the
-moment anyone browses the connection in the sidebar. So in practice this is every run.
-
-It is not a grounding defect: the same lock defeats any second handle on the same file, which is why D3
-records the connection-test modal presenting it as a failed connection. LibreDB is not a priority, so
-this is recorded rather than fixed.
-
-**Done when:** an execution-profile acquisition on a single-writer embedded engine reuses the
-connection's existing provider instead of opening a second handle — the same answer D3 needs, and the
-reason the two should be closed together — with a test that grounds a plan run on a `libredb` connection
-whose writable provider is already open.
 
 ### B51. The run loop nudges a model three times and records none of it
 

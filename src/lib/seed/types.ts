@@ -1,8 +1,10 @@
 import { z } from "zod";
 import type { DatabaseConnection } from "@/lib/types";
 
-// SSLMode matches src/lib/types.ts line 21 — NO 'prefer'
-const SSLModeSchema = z.enum(["disable", "require", "verify-ca", "verify-full"]);
+// SSLMode matches the union in src/lib/types.ts — NO 'prefer'. Kept in step BY HAND: a zod
+// enum is a value, so a mode missing here is not a compile error, it is a seed file the
+// server rejects with "invalid enum value" for a mode the product supports.
+const SSLModeSchema = z.enum(["disable", "require", "verify-system", "verify-ca", "verify-full"]);
 
 const SSLConfigSchema = z
   .object({
