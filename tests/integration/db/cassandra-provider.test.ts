@@ -49,8 +49,11 @@ import {
   CASSANDRA_CACHE_CQL,
   CASSANDRA_CLIENT_COUNT_CQL,
   CASSANDRA_IDENTITY_CQL,
+  CASSANDRA_INDEX_STATS_REFUSAL,
   CASSANDRA_RUNNING_QUERY_CQL,
   CASSANDRA_SIZE_UNAVAILABLE,
+  CASSANDRA_STORAGE_STATS_REFUSAL,
+  CASSANDRA_TABLE_STATS_REFUSAL,
   CASSANDRA_UNKNOWN_TEXT,
   CASSANDRA_VIRTUAL_KEYSPACE_CQL,
   cassandraColumnListCql,
@@ -1199,16 +1202,26 @@ describe("a server with no system_views keyspace", () => {
     expect("activeConnections" in overview).toBe(false);
   });
 
-  test("no cache ratio is claimed rather than a zero", async () => {
+  test("the performance panel is ABSENT with its own sentence, not an empty reading", async () => {
+    // D24: `{}` said every field was looked up and found to have no value. The key
+    // cache's hit ratio is this panel's only source, and this build publishes no
+    // `system_views.caches` at all, so the panel cannot be answered rather than
+    // answering nothing.
     const { provider } = await connectedProvider(scyllaReplies());
 
-    expect(await provider.getPerformanceMetrics()).toEqual({});
+    await expect(provider.getPerformanceMetrics()).rejects.toThrow(QueryError);
+    await expect(provider.getPerformanceMetrics()).rejects.toThrow(/system_views\.caches/);
+    await expect(provider.getPerformanceMetrics()).rejects.toThrow(/no system_virtual_schema catalog at all/);
   });
 
-  test("the session list is empty rather than a thrown connection", async () => {
+  test("the session panel is ABSENT with its own sentence, not an empty list", async () => {
+    // The reading this entry exists for, measured in the browser against ScyllaDB
+    // 2026.2.4: an empty list rendered as "Active 0 / Idle 0 / Wait 0 / Sessions (0) /
+    // No active sessions found." for a question the build cannot answer at all.
     const { provider } = await connectedProvider(scyllaReplies());
 
-    expect(await provider.getActiveSessions()).toEqual([]);
+    await expect(provider.getActiveSessions()).rejects.toThrow(QueryError);
+    await expect(provider.getActiveSessions()).rejects.toThrow(/system_views\.queries/);
   });
 
   test("health answers, which is what Test Connection and the header badge ride on", async () => {
@@ -1226,13 +1239,21 @@ describe("a server with no system_views keyspace", () => {
   });
 
   test("the monitoring dashboard gets data instead of one connection-error page", async () => {
+    // Still a partial dashboard rather than an error page - the panels this build CAN
+    // answer are unchanged. What changed is the two it cannot: absent, each with the
+    // sentence `PanelUnavailable` renders, instead of a zero and an empty table.
     const { provider } = await connectedProvider(scyllaReplies());
 
     const data = await provider.getMonitoringData();
 
     expect(data.overview?.version).toBe("Apache Cassandra 5.0.9");
-    expect(data.performance).toEqual({});
-    expect(data.activeSessions).toEqual([]);
+    expect(data.performance).toBeUndefined();
+    expect(data.activeSessions).toBeUndefined();
+    expect(data.errors?.performance).toContain("system_views.caches");
+    expect(data.errors?.activeSessions).toContain("system_views.queries");
+    // The panel that is empty by convention on every build keeps its empty array: an
+    // absent slow-query panel would hide the label the tab already renders.
+    expect(data.slowQueries).toEqual([]);
   });
 
   test("a typo in a TABLE name inside system_views still fails loudly", async () => {
@@ -1281,8 +1302,11 @@ describe("a server with no system_views keyspace", () => {
     const { provider, session } = await connectedProvider(scyllaReplies());
 
     await provider.getOverview();
-    await provider.getPerformanceMetrics();
-    await provider.getActiveSessions();
+    await expect(provider.getPerformanceMetrics()).rejects.toThrow(QueryError);
+    await expect(provider.getActiveSessions()).rejects.toThrow(QueryError);
+    // `getHealth` reaches the same two reads and must NOT throw - the connection
+    // dialog's save is gated on it - so it degrades where the panels refuse.
+    await provider.getHealth();
 
     expect(session.asked).not.toContain(CASSANDRA_CLIENT_COUNT_CQL);
     expect(session.asked).not.toContain(CASSANDRA_CACHE_CQL);
@@ -1316,22 +1340,28 @@ describe("a server with no system_views keyspace", () => {
       scyllaReplies({ [CASSANDRA_VIRTUAL_KEYSPACE_CQL]: withoutViews }),
     );
 
-    expect(await provider.getPerformanceMetrics()).toEqual({});
+    // Its own sentence, and not ScyllaDB's: the catalog answered here, it just did not
+    // list the keyspace. Three causes, three sentences.
+    await expect(provider.getPerformanceMetrics()).rejects.toThrow(/does not list a system_views keyspace/);
     expect(session.asked).not.toContain(CASSANDRA_CACHE_CQL);
   });
 
-  test("a role that may not read the virtual catalog gets empty panels, not a broken connection", async () => {
+  test("a role that may not read the virtual catalog gets its own sentence, not a broken connection", async () => {
     // 8448 on the probe, which is the measured shape of a least-privilege role
-    // (§3.6): it cannot establish that the virtual tables are there, and the panels it
-    // would be refused anyway answer empty - the same outcome the per-read permission
-    // arm has always given.
+    // (§3.6): it cannot establish that the virtual tables are there, so the panels whose
+    // only source is one report their own absence - naming the GRANT, because that is a
+    // different place to send the reader than a build that has no virtual schema.
     const denied = responseError(
       8448,
       "User lowpriv has no SELECT permission on <table system_virtual_schema.keyspaces> or any of its parents",
     );
     const { provider } = await connectedProvider(scyllaReplies({ [CASSANDRA_VIRTUAL_KEYSPACE_CQL]: denied }));
 
-    expect(await provider.getPerformanceMetrics()).toEqual({});
+    // A grant, not a dialect: the panel says so rather than telling the user their
+    // server has no virtual tables, which would send them to the wrong place.
+    await expect(provider.getPerformanceMetrics()).rejects.toThrow(/the connected role may not read/);
+    // Health still answers, so the connection can still be created and saved.
+    expect((await provider.getHealth()).activeSessions).toEqual([]);
   });
 
   test("a probe that fails for an unrelated reason leaves the reads exactly as they were", async () => {
@@ -1453,27 +1483,55 @@ describe("getActiveSessions", () => {
 });
 
 describe("the panels that report nothing rather than something wrong", () => {
-  test("table statistics are empty: there is no honest row count and no honest size", async () => {
+  /*
+    ABSENT, not empty (D24). These three used to answer `[]`, which says "the engine
+    looked and found nothing" - and the schema tree in the very same frame lists the
+    tables and the secondary indexes the panel just reported none of. What is missing is
+    the FIGURES, so the panel now carries the reason and `getMonitoringData` leaves it
+    absent under `errors`, exactly as a rejected read from any other engine.
+  */
+  test("table statistics are refused with the reason, and the cluster is still asked nothing", async () => {
     // `size_estimates` counts PARTITIONS from flushed SSTables and was measured at
     // 143 for a 500-row clustered table; `disk_usage` reported 1 MiB for 19,476
     // bytes. Both are numbers that would look exactly like right ones on screen.
     const { provider, session } = await connectedProvider();
     session.asked.length = 0;
 
-    expect(await provider.getTableStats()).toEqual([]);
+    await expect(provider.getTableStats()).rejects.toThrow(QueryError);
+    await expect(provider.getTableStats()).rejects.toThrow(CASSANDRA_TABLE_STATS_REFUSAL);
     expect(session.asked).toEqual([]);
   });
 
-  test("index statistics are empty: an index has no size and no scan counter here", async () => {
-    const { provider } = await connectedProvider();
-
-    expect(await provider.getIndexStats()).toEqual([]);
+  test("the table refusal names both unusable sources rather than saying unavailable", async () => {
+    // The sentence is the only text the user sees where the rows would have been, so
+    // it has to name what was refused and why - not that something was.
+    expect(CASSANDRA_TABLE_STATS_REFUSAL).toContain("system.size_estimates");
+    expect(CASSANDRA_TABLE_STATS_REFUSAL).toContain("system_views.disk_usage");
   });
 
-  test("storage statistics are empty for the same reason as the size", async () => {
+  test("index statistics are refused: an index has no size and no scan counter here", async () => {
     const { provider } = await connectedProvider();
 
-    expect(await provider.getStorageStats()).toEqual([]);
+    await expect(provider.getIndexStats()).rejects.toThrow(QueryError);
+    await expect(provider.getIndexStats()).rejects.toThrow(CASSANDRA_INDEX_STATS_REFUSAL);
+  });
+
+  test("storage statistics are refused for the same reason as the database size", async () => {
+    const { provider } = await connectedProvider();
+
+    await expect(provider.getStorageStats()).rejects.toThrow(QueryError);
+    await expect(provider.getStorageStats()).rejects.toThrow(CASSANDRA_STORAGE_STATS_REFUSAL);
+  });
+
+  test("the slow-query panel stays EMPTY, because its sentence already reaches the user", async () => {
+    // The one always-empty panel that is not converted: `QueriesTab` renders
+    // `ProviderLabels.slowQueriesEmptyState` in place of the empty table, and this
+    // provider declares one. Converting it would move the same sentence from a label
+    // the panel already shows to an error entry, and buy nothing.
+    const { provider } = await connectedProvider();
+
+    expect(await provider.getSlowQueries()).toEqual([]);
+    expect(provider.getLabels().slowQueriesEmptyState).toContain("no aggregate of finished statements");
   });
 });
 
@@ -1533,7 +1591,12 @@ describe("getMonitoringData", () => {
 
     expect(data.overview?.version).toBe("Apache Cassandra 5.0.9");
     expect(data.performance?.cacheHitRatio).toBe(83.05);
-    expect(data.tables).toEqual([]);
+    // The three panels this engine refuses on every build are absent WITH their reason,
+    // and one failing read no longer costs the panels that answered (#477).
+    expect(data.tables).toBeUndefined();
+    expect(data.errors?.tables).toBe(CASSANDRA_TABLE_STATS_REFUSAL);
+    expect(data.errors?.indexes).toBe(CASSANDRA_INDEX_STATS_REFUSAL);
+    expect(data.errors?.storage).toBe(CASSANDRA_STORAGE_STATS_REFUSAL);
   });
 });
 

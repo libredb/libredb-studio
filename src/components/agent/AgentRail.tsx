@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Bot, ChevronDown, ChevronRight, LoaderCircle, PencilLine, Play, Square, TriangleAlert } from "lucide-react";
 import { CopyButton } from "@/components/copy-button";
 import { renderProse } from "@/components/rich-text";
@@ -666,6 +666,33 @@ function TimelineEntryBody({
   );
 }
 
+/**
+ * One workflow the open run can be swapped for. Its own component because the per-item
+ * handler belongs with the item rather than in the rail's render: an arrow that closes
+ * over both a `.map()` parameter and the rail's whole start chain is what costs the
+ * compiler its view of the rail's refs, and two effects below are then reported as
+ * missing dependencies they cannot legally take.
+ */
+function ChangeWorkflowButton({
+  candidate,
+  onSelect,
+}: {
+  readonly candidate: AgentRunWorkflowType;
+  readonly onSelect: (next: AgentRunWorkflowType) => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={`agent-change-workflow-${candidate}`}
+      aria-label={`Stop this run and open a new ${WORKFLOW_LABELS[candidate]} run`}
+      onClick={() => onSelect(candidate)}
+      className="px-2 py-0.5 rounded text-xs font-normal text-fg-muted hover:bg-fill transition-colors"
+    >
+      {WORKFLOW_LABELS[candidate]}
+    </button>
+  );
+}
+
 export function AgentRail({
   connectionId,
   connectionName,
@@ -768,9 +795,9 @@ export function AgentRail({
   const isMobile = useIsMobile();
   const wasMobile = useRef(isMobile);
   useEffect(() => {
-    // Only on a real crossing: `useIsMobile` reports false on its first render and
-    // resolves in an effect, so closing on "not mobile" alone would shut the sheet
-    // in the same commit that opened it.
+    // Only on a real crossing. `wasMobile` is seeded from the first render's answer,
+    // so closing on "not mobile" alone would shut the sheet on every desktop render,
+    // including the one that opened it.
     if (wasMobile.current && !isMobile && sheetOpen) onSheetOpenChange?.(false);
     wasMobile.current = isMobile;
   }, [isMobile, sheetOpen, onSheetOpenChange]);
@@ -790,8 +817,10 @@ export function AgentRail({
     Whether the sheet must be opened is decided HERE, from the viewport itself
     (`isMobileViewport`) rather than from `useIsMobile`. This effect runs after commit
     and only on the client, so the platform's answer is exact at the moment the ask is
-    served — while the hook seeds false and resolves in its own effect, which on a
-    narrow viewport is not a stale answer but a wrong one.
+    served. The hook answers exactly too since it moved to `useSyncExternalStore`, but
+    what it hands back is the value of the render this effect closed over, not the
+    platform's answer at the instant the effect runs. Opening the sheet is a decision
+    taken once, at that instant, so it asks the platform rather than the render.
 
     That replaced a ref recording an "owed" open, paid the next time the hook reported
     mobile. The T1 adversarial recheck showed it carried two defects (R1, R2): on a
@@ -1211,17 +1240,26 @@ export function AgentRail({
     and the timeline's first entry quotes it, so the question stays readable beside the
     run answering it.
 
-    The dependency is the run id alone, which is what makes this fire once per run:
-    `start` sets it to null and then to the id the server named, so even a server that
-    reused an id still moves the value.
+    It is adjusted DURING render against the run id the box was last emptied for, which
+    is React's own remedy for state that has to follow a changing value, rather than in
+    an effect that would commit one frame still holding the previous question and then
+    cascade a second render over it. The guard on the id is what makes it fire once per
+    run — and what stops it looping, since the render that clears the box also records
+    the run it cleared for.
   */
-  useEffect(() => {
-    if (run.runId === null) return;
-    setObjective("");
-    // An edit begun against the run that is ending here is not a state the next run
-    // inherits: the box is a summary again, of the question this new run was opened on.
-    setEditingObjective(false);
-  }, [run.runId]);
+  /** The run the box has already been emptied for; the guard the adjustment needs. */
+  const [followedRunId, setFollowedRunId] = useState<string | null>(null);
+  if (run.runId !== followedRunId) {
+    setFollowedRunId(run.runId);
+    // Only an OPENED run empties it. The id going back to null is a run ending, and the
+    // box has to be left alone through that: see the refusal case above.
+    if (run.runId !== null) {
+      setObjective("");
+      // An edit begun against the run that is ending here is not a state the next run
+      // inherits: the box is a summary again, of the question this new run was opened on.
+      setEditingObjective(false);
+    }
+  }
 
   /**
    * A run this rail is still following. The setting above is frozen for exactly as
@@ -1499,10 +1537,10 @@ export function AgentRail({
   /**
    * Whether the run is still WRITING entries, for the observer's own closure.
    *
-   * A ref rather than the value in scope because the `ResizeObserver` below is created
-   * once and holds the first render's `pinToNewest`: a status read out of that closure
-   * would be `queued` for the life of the panel. It is written in the effect that
-   * follows, never during render.
+   * A ref rather than the value in scope because `pinToNewest` below is built once —
+   * `useCallback` over empty dependencies — and the `ResizeObserver` holds that single
+   * closure for the life of the panel: a status read out of it would be `queued`
+   * forever. It is written in the effect that follows, never during render.
    */
   const timelineLive = useRef(true);
   /** The run whose answer has already been brought into view, so it happens once. */
@@ -1513,11 +1551,17 @@ export function AgentRail({
     followingTimeline.current =
       scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= TIMELINE_BOTTOM_SLACK_PX;
   };
-  const pinToNewest = () => {
+  /*
+    One identity for the life of the panel, which is what lets both the effect below and
+    the `ResizeObserver` under it name this as a dependency without re-subscribing. The
+    dependencies are honestly empty: the body reads three refs and nothing reactive, so
+    there is no value it could go stale on — that is what the refs above are FOR.
+  */
+  const pinToNewest = useCallback(() => {
     const scroller = timelineScroller.current;
     if (scroller === null || !followingTimeline.current || !timelineLive.current) return;
     scroller.scrollTop = scroller.scrollHeight - scroller.clientHeight;
-  };
+  }, []);
 
   /*
     Following the newest entry is right while there IS a newest entry to follow, and
@@ -1558,7 +1602,11 @@ export function AgentRail({
     if (!followingTimeline.current) return;
     const scroller = timelineScroller.current;
     if (scroller !== null) scroller.scrollTop = 0;
-  }, [run.timeline.items, run.timeline.status, run.runId]);
+    // `run.timeline` rather than its `items` and `status` separately: the fold behind it
+    // allocates a fresh object and a fresh `items` array on every recompute, so the whole
+    // timeline moves in exactly the renders those two did — the same firing, named by the
+    // value the body actually reads.
+  }, [run.timeline, run.runId, pinToNewest]);
 
   useEffect(() => {
     const scroller = timelineScroller.current;
@@ -1568,7 +1616,7 @@ export function AgentRail({
     const observer = new ResizeObserver(pinToNewest);
     observer.observe(scroller);
     return () => observer.disconnect();
-  }, []);
+  }, [pinToNewest]);
 
   /*
     What reaches the database, from `posture.ts` and from nowhere else — the whole reason
@@ -2064,16 +2112,7 @@ export function AgentRail({
                 </p>
                 <div className="mt-1 flex flex-wrap items-center gap-1">
                   {(Object.keys(WORKFLOW_LABELS) as AgentRunWorkflowType[]).map((candidate) => (
-                    <button
-                      key={candidate}
-                      type="button"
-                      data-testid={`agent-change-workflow-${candidate}`}
-                      aria-label={`Stop this run and open a new ${WORKFLOW_LABELS[candidate]} run`}
-                      onClick={() => handleChangeWorkflow(candidate)}
-                      className="px-2 py-0.5 rounded text-xs font-normal text-fg-muted hover:bg-fill transition-colors"
-                    >
-                      {WORKFLOW_LABELS[candidate]}
-                    </button>
+                    <ChangeWorkflowButton key={candidate} candidate={candidate} onSelect={handleChangeWorkflow} />
                   ))}
                 </div>
               </div>

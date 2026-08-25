@@ -556,6 +556,23 @@ describe("QueryHistory", () => {
     expect(view.queryByText("INSERT INTO orders VALUES(1)")).not.toBeNull();
   });
 
+  // A refresh must not behave like a `key` re-mount: the search, the status filter and
+  // the sort the user set have to survive every query execution that bumps the trigger.
+  test("a refresh keeps the search the user typed", () => {
+    const { container, rerender } = render(<QueryHistory {...createDefaultProps({ refreshTrigger: 0 })} />);
+    const view = within(container);
+
+    const input = view.getByPlaceholderText("Search by query, connection or tab...") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "users" } });
+    expect(input.value).toBe("users");
+
+    rerender(<QueryHistory {...createDefaultProps({ refreshTrigger: 1 })} />);
+
+    expect((view.getByPlaceholderText("Search by query, connection or tab...") as HTMLInputElement).value).toBe(
+      "users",
+    );
+  });
+
   // ── Sort by rowCount ──────────────────────────────────────────────────────
 
   test("sort by rowCount orders items by row count", async () => {

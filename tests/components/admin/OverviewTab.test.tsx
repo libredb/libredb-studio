@@ -68,7 +68,7 @@ mock.module("next/link", () => ({
 }));
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { render, waitFor, act, cleanup } from "@testing-library/react";
+import { render, waitFor, act, cleanup, fireEvent } from "@testing-library/react";
 import React from "react";
 
 import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
@@ -222,6 +222,37 @@ describe("OverviewTab", () => {
         return url.includes("/api/admin/fleet-health");
       });
       expect(fleetCall).not.toBeUndefined();
+    });
+  });
+
+  /**
+   * The manual Refresh button is the only fleet-health path a user drives, and it is
+   * a distinct code path from the mount effect: the effect synchronises fleet health
+   * against a request descriptor, while the button only mints a new refresh token.
+   * Without this test that token updater is never executed by the suite.
+   */
+  test("the Refresh button re-requests fleet health", async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+    const { getByText } = renderResult!;
+
+    const fleetCallCount = () =>
+      fetchMock.mock.calls.filter(
+        (c: unknown[]) => typeof c[0] === "string" && c[0].includes("/api/admin/fleet-health"),
+      ).length;
+
+    await waitFor(() => {
+      expect(fleetCallCount()).toBe(1);
+    });
+
+    await act(async () => {
+      fireEvent.click(getByText("Refresh"));
+    });
+
+    await waitFor(() => {
+      expect(fleetCallCount()).toBe(2);
     });
   });
 
@@ -465,6 +496,154 @@ describe("OverviewTab", () => {
       expect(queryByText("timeout")).not.toBeNull();
       expect(queryByText("Connection refused")).not.toBeNull();
     });
+  });
+
+  // ── Fleet-health request race ──────────────────────────────────────────────
+
+  /**
+   * Two fleet-health requests can be in flight at once: the 60s auto-refresh (like a
+   * changed connection list) supersedes a request that has not answered yet. These two
+   * tests hold both responses open and settle them out of order, which is the only way
+   * to observe that the superseded response neither overwrites the newer snapshot nor
+   * clears the spinner that now belongs to the newer request.
+   */
+  const staleSnapshot = [
+    {
+      connectionId: "c1",
+      connectionName: "Fleet A (stale)",
+      type: "postgres",
+      status: "healthy",
+      latencyMs: 15,
+    },
+  ];
+  const freshSnapshot = [
+    {
+      connectionId: "c1",
+      connectionName: "Fleet B (fresh)",
+      type: "postgres",
+      status: "healthy",
+      latencyMs: 20,
+    },
+  ];
+
+  /** Serves each fleet-health call a snapshot only once the test opens its gate. */
+  function heldFleetHealth(snapshots: Record<string, unknown>[][]) {
+    const gates: Array<() => void> = [];
+    let served = 0;
+    mockGlobalFetch({
+      "/api/admin/audit": { json: { events: [] } },
+      "/api/admin/fleet-health": async () => {
+        const index = served++;
+        await new Promise<void>((resolve) => gates.push(resolve));
+        return { json: { results: snapshots[index] } };
+      },
+    });
+    return gates;
+  }
+
+  /**
+   * Captures the component's own 60s auto-refresh so the test can fire it on demand.
+   * Every other interval — testing-library's `waitFor` polls on one — must stay real.
+   */
+  function captureAutoRefresh() {
+    const realSetInterval = globalThis.setInterval;
+    const captured: { fire?: () => void } = {};
+    globalThis.setInterval = ((handler: () => void, timeout?: number) => {
+      if (timeout === 60000) {
+        captured.fire = handler;
+        return realSetInterval(() => {}, 100000);
+      }
+      return realSetInterval(handler, timeout);
+    }) as unknown as typeof setInterval;
+    return {
+      captured,
+      restore: () => {
+        globalThis.setInterval = realSetInterval;
+      },
+    };
+  }
+
+  /** Resolves a held response and lets its continuation run inside `act`. */
+  async function settle(open: () => void) {
+    await act(async () => {
+      open();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  test("a fleet-health response that lost the race does not overwrite the newer snapshot", async () => {
+    const gates = heldFleetHealth([staleSnapshot, freshSnapshot]);
+    const { captured, restore } = captureAutoRefresh();
+
+    try {
+      let renderResult: ReturnType<typeof render>;
+      await act(async () => {
+        renderResult = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+      });
+      const { queryByText } = renderResult!;
+
+      // Request A is in flight and unanswered.
+      await waitFor(() => {
+        expect(gates.length).toBe(1);
+      });
+
+      // The auto-refresh supersedes it with request B, which answers first.
+      await act(async () => {
+        captured.fire!();
+      });
+      await waitFor(() => {
+        expect(gates.length).toBe(2);
+      });
+      await settle(gates[1]);
+      await waitFor(() => {
+        expect(queryByText("Fleet B (fresh)")).not.toBeNull();
+      });
+
+      // A settles last; the rendered fleet must still be B's.
+      await settle(gates[0]);
+      expect(queryByText("Fleet B (fresh)")).not.toBeNull();
+      expect(queryByText("Fleet A (stale)")).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  test("a fleet-health response that lost the race does not clear the newer request's spinner", async () => {
+    const gates = heldFleetHealth([staleSnapshot, freshSnapshot]);
+    const { captured, restore } = captureAutoRefresh();
+
+    try {
+      let renderResult: ReturnType<typeof render>;
+      await act(async () => {
+        renderResult = render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+      });
+      const { getByText, queryByText } = renderResult!;
+      const refreshButton = () => getByText("Refresh").closest("button") as HTMLButtonElement;
+
+      await waitFor(() => {
+        expect(gates.length).toBe(1);
+      });
+      await act(async () => {
+        captured.fire!();
+      });
+      await waitFor(() => {
+        expect(gates.length).toBe(2);
+      });
+
+      // Superseded request A answers while B is still loading: the spinner belongs to B.
+      await settle(gates[0]);
+      expect(refreshButton().disabled).toBe(true);
+      expect(queryByText("Fleet A (stale)")).toBeNull();
+
+      // Only B's own answer stops the spinner.
+      await settle(gates[1]);
+      await waitFor(() => {
+        expect(queryByText("Fleet B (fresh)")).not.toBeNull();
+      });
+      expect(refreshButton().disabled).toBe(false);
+    } finally {
+      restore();
+    }
   });
 
   // ── Chart tooltip ──────────────────────────────────────────────────────────

@@ -44,8 +44,16 @@
       // Vendored shadcn/ui primitives track upstream; fixing jsx-a11y findings
       // in place would fork them and complicate future syncs (#100). App code
       // outside this directory enforces these rules at error level.
+      //
+      // The same reasoning covers the React Compiler rules oxlint 1.79 promoted
+      // to error severity: carousel.tsx's embla `onSelect(api)` effect and
+      // sidebar.tsx's `Math.random()` skeleton width are both verbatim upstream
+      // shadcn, untouched here since the initial commit. Rewriting them would
+      // fork the primitives for no user-visible gain.
       "files": ["src/components/ui/**"],
       "rules": {
+        "react/set-state-in-effect": "off",
+        "react/purity": "off",
         "jsx-a11y/no-static-element-interactions": "off",
         "jsx-a11y/click-events-have-key-events": "off",
         "jsx-a11y/label-has-associated-control": "off",

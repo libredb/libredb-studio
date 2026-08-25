@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   Activity,
@@ -22,7 +22,6 @@ import { useMonitoringData } from "@/hooks/use-monitoring-data";
 import { storage } from "@/lib/storage";
 import { useAllConnections } from "@/hooks/use-all-connections";
 import { useProviderMetadata } from "@/hooks/use-provider-metadata";
-import type { DatabaseConnection } from "@/lib/types";
 
 import { OverviewTab } from "./tabs/OverviewTab";
 import { PerformanceTab } from "./tabs/PerformanceTab";
@@ -38,9 +37,29 @@ interface MonitoringDashboardProps {
 
 export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardProps) {
   const router = useRouter();
-  const [connections, setConnections] = useState<DatabaseConnection[]>([]);
-  const [selectedConnection, setSelectedConnection] = useState<DatabaseConnection | null>(null);
+  // The stored active connection is read once, at mount: it seeds the default
+  // selection and nothing re-reads it afterwards. `readString` answers null
+  // without a window, so the server render and the hydration render agree.
+  const [savedId] = useState(() => storage.getActiveConnectionId());
+  // Only what the user picked is state. The selection itself is derived below,
+  // so it is right on the render the connection list first arrives.
+  const [chosenId, setChosenId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
+
+  // Load connections (user + managed seed connections)
+  const { connections: allConns } = useAllConnections();
+
+  // Derived, not stored: an explicit pick wins, otherwise the saved active
+  // connection, otherwise the first one. Resolving against the current list on
+  // every render also means a connection that disappears from it stops being
+  // selected, instead of leaving a dead object behind.
+  const selectedConnection = useMemo(
+    () =>
+      chosenId !== null
+        ? (allConns.find((c) => c.id === chosenId) ?? null)
+        : (allConns.find((c) => c.id === savedId) ?? allConns[0] ?? null),
+    [allConns, chosenId, savedId],
+  );
 
   // Memoize options to prevent infinite re-renders
   const monitoringOptions = useMemo(
@@ -71,23 +90,8 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
   // perform (issue #272). Same hook Studio uses — no new API surface.
   const { metadata } = useProviderMetadata(selectedConnection);
 
-  // Load connections (user + managed seed connections)
-  const { connections: allConns } = useAllConnections();
-  useEffect(() => {
-    if (allConns.length === 0) return;
-    setConnections(allConns);
-
-    setSelectedConnection((prev) => {
-      if (prev) return prev;
-      const savedId = storage.getActiveConnectionId();
-      const saved = savedId ? allConns.find((c) => c.id === savedId) : null;
-      return saved ?? allConns[0];
-    });
-  }, [allConns]);
-
   const handleConnectionChange = (connectionId: string) => {
-    const connection = connections.find((c) => c.id === connectionId);
-    setSelectedConnection(connection || null);
+    setChosenId(connectionId);
   };
 
   const formatLastUpdated = (date: Date | null) => {
@@ -183,7 +187,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
-              {connections.map((conn) => (
+              {allConns.map((conn) => (
                 <SelectItem key={conn.id} value={conn.id}>
                   <div className="flex items-center gap-2">
                     <Database strokeWidth={1.5} className="h-4 w-4" />
@@ -192,7 +196,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                   </div>
                 </SelectItem>
               ))}
-              {connections.length === 0 && (
+              {allConns.length === 0 && (
                 <div className="px-2 py-1 text-xs text-muted-foreground">No connections available</div>
               )}
             </SelectContent>

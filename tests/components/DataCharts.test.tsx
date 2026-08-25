@@ -532,6 +532,19 @@ describe("DataCharts", () => {
     expect(queryByTestId("mock-bar-chart")).not.toBeNull();
   });
 
+  // A second, different result must re-derive the selections. Nothing exercised this
+  // before — every other test mounts once — so it is what pins the re-derivation to a
+  // prop change rather than to a mount.
+  test("a new result re-derives the axis selections", () => {
+    const { queryByTestId, rerender } = render(React.createElement(DataCharts, { result: fewCategoricalResult }));
+    expect(queryByTestId("mock-pie-chart")).not.toBeNull();
+
+    rerender(React.createElement(DataCharts, { result: pureNumericResult }));
+
+    expect(queryByTestId("mock-scatter-chart")).not.toBeNull();
+    expect(queryByTestId("mock-pie-chart")).toBeNull();
+  });
+
   // -----------------------------------------------------------------------
   // Scatter-specific Y selector
   // -----------------------------------------------------------------------

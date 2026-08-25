@@ -417,41 +417,31 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
   const [aggregation, setAggregation] = useState<AggregationType>("none");
   const [dateGrouping, setDateGrouping] = useState<DateGrouping | "">("");
 
-  // Saved charts state
-  const [savedCharts, setSavedCharts] = useState<
-    {
-      id: string;
-      name: string;
-      chartType: ChartType;
-      xAxis: string;
-      yAxis: string[];
-      aggregation: AggregationType;
-      dateGrouping: string;
-    }[]
-  >([]);
+  // Saved charts state, read once from the store the save/delete handlers below write back to.
+  const [savedCharts, setSavedCharts] = useState(() =>
+    storage.getSavedCharts().map((c) => ({
+      id: c.id,
+      name: c.name,
+      chartType: c.chartType as ChartType,
+      xAxis: c.xAxis,
+      yAxis: c.yAxis,
+      aggregation: (c.aggregation || "none") as AggregationType,
+      dateGrouping: c.dateGrouping || "",
+    })),
+  );
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveName, setSaveName] = useState("");
 
-  // Load saved charts from storage
-  React.useEffect(() => {
-    const charts = storage.getSavedCharts();
-    if (charts.length > 0) {
-      setSavedCharts(
-        charts.map((c) => ({
-          id: c.id,
-          name: c.name,
-          chartType: c.chartType as ChartType,
-          xAxis: c.xAxis,
-          yAxis: c.yAxis,
-          aggregation: (c.aggregation || "none") as AggregationType,
-          dateGrouping: c.dateGrouping || "",
-        })),
-      );
-    }
-  }, []);
-
-  // Initialize axis selections when analysis changes
-  React.useEffect(() => {
+  /*
+    The analysis and the specification these selections were derived from. Adjusting the
+    state during render rather than in an effect means the chart never paints once with
+    the previous result's axes; the condition is what stops it looping. Both `analysis`
+    and `appliedSpec` are memos over the props, so they hold their identity until the
+    props change and the condition goes false again on the very next pass.
+  */
+  const [derivedFrom, setDerivedFrom] = useState<{ a: DataAnalysis; s: AgentChartSpec | null } | null>(null);
+  if (derivedFrom === null || derivedFrom.a !== analysis || derivedFrom.s !== appliedSpec) {
+    setDerivedFrom({ a: analysis, s: appliedSpec });
     if (analysis.isVisualizable) {
       /*
         A specification that survived validation seeds the view instead of the
@@ -465,21 +455,21 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
         setYAxis([...appliedSpec.y]);
         // Scatter draws x against ONE other column, held separately from `yAxis`.
         if (appliedSpec.type === "scatter") setScatterY(appliedSpec.y[0]);
-        return;
-      }
-      setChartType(analysis.suggestedChartType);
+      } else {
+        setChartType(analysis.suggestedChartType);
 
-      const defaultX = analysis.categoricalFields[0] || analysis.dateFields[0] || analysis.fields[0]?.name || "";
-      setXAxis(defaultX);
+        const defaultX = analysis.categoricalFields[0] || analysis.dateFields[0] || analysis.fields[0]?.name || "";
+        setXAxis(defaultX);
 
-      if (analysis.numericFields.length > 0) {
-        setYAxis([analysis.numericFields[0]]);
-      }
-      if (analysis.numericFields.length >= 2) {
-        setScatterY(analysis.numericFields[1]);
+        if (analysis.numericFields.length > 0) {
+          setYAxis([analysis.numericFields[0]]);
+        }
+        if (analysis.numericFields.length >= 2) {
+          setScatterY(analysis.numericFields[1]);
+        }
       }
     }
-  }, [analysis, appliedSpec]);
+  }
 
   const chartData = useMemo(() => {
     if (!result?.rows) return [];

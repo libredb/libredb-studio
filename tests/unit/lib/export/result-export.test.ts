@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { buildResultExport, deriveTableName, FALLBACK_TABLE_NAME } from "@/lib/export/result-export";
 
 const source = (over: Partial<Parameters<typeof buildResultExport>[1]> = {}) => ({
@@ -861,5 +861,83 @@ describe("buildResultExport — Cassandra DDL needs a PRIMARY KEY to run at all"
       expect(lines[i].startsWith("--")).toBe(true);
     }
     expect(file.content.endsWith(";")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Oracle date/timestamp literals (D23)
+// ---------------------------------------------------------------------------
+
+describe("buildResultExport - Oracle date and timestamp literals", () => {
+  // CI runs at UTC, where a local-field literal and an ISO one are the same string and
+  // the assertions below would pass against either (a developer machine sets no TZ
+  // either way). Held at a real offset for this block so they cannot.
+  const runnerZone = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = "Asia/Tokyo";
+  });
+  afterAll(() => {
+    if (runnerZone === undefined) delete process.env.TZ;
+    else process.env.TZ = runnerZone;
+  });
+
+  // `oracledb` builds the `Date` for a naive DATE/TIMESTAMP by reading the stored wall
+  // clock in the Node process's zone, so the literal that replays it is the one that
+  // spells those same LOCAL fields back. Under the +09:00 held above this instant is
+  // 2026-08-24 10:11:12.345 locally and 01:11:12.345 in ISO, so the two spellings cannot
+  // be confused for each other.
+  const naive = new Date("2026-08-24T01:11:12.345Z");
+  const instant = new Date("2026-08-24T17:11:12.345Z");
+
+  const oracle = (columnTypes?: Record<string, string>, value: unknown = naive) =>
+    buildResultExport("sql-insert", source({ rows: [{ at: value }], fields: ["at"], dialect: "oracle", columnTypes }))
+      .content;
+
+  test("writes a TIMESTAMP column as TO_TIMESTAMP of its local fields, milliseconds kept", () => {
+    expect(oracle({ at: "TIMESTAMP" })).toContain(
+      `VALUES (TO_TIMESTAMP('2026-08-24 10:11:12.345', 'YYYY-MM-DD HH24:MI:SS.FF3'));`,
+    );
+  });
+
+  test("writes a DATE column as TO_DATE, which is the type that carries no fraction", () => {
+    expect(oracle({ at: "DATE" })).toContain(`VALUES (TO_DATE('2026-08-24 10:11:12', 'YYYY-MM-DD HH24:MI:SS'));`);
+  });
+
+  test("writes a zoned column as the UTC instant through FROM_TZ, not as a fabricated offset", () => {
+    const expected = `VALUES (FROM_TZ(TO_TIMESTAMP('2026-08-24 17:11:12.345', 'YYYY-MM-DD HH24:MI:SS.FF3'), 'UTC'));`;
+    expect(oracle({ at: "TIMESTAMP WITH TIME ZONE" }, instant)).toContain(expected);
+    expect(oracle({ at: "timestamp with local time zone" }, instant)).toContain(expected);
+  });
+
+  test("falls back to the timestamp form when the result declared no type for the column", () => {
+    expect(oracle(undefined)).toContain(
+      `VALUES (TO_TIMESTAMP('2026-08-24 10:11:12.345', 'YYYY-MM-DD HH24:MI:SS.FF3'));`,
+    );
+    expect(oracle({ other: "DATE" })).toContain(
+      `VALUES (TO_TIMESTAMP('2026-08-24 10:11:12.345', 'YYYY-MM-DD HH24:MI:SS.FF3'));`,
+    );
+  });
+
+  test("pads every field, so a single-digit month and a sub-100 millisecond still parse", () => {
+    expect(oracle({ at: "TIMESTAMP" }, new Date("2026-01-01T18:04:05.006Z"))).toContain(
+      `VALUES (TO_TIMESTAMP('2026-01-02 03:04:05.006', 'YYYY-MM-DD HH24:MI:SS.FF3'));`,
+    );
+  });
+
+  test("reads no declared type off the prototype for a column named after one", () => {
+    const file = buildResultExport(
+      "sql-insert",
+      source({ rows: [{ constructor: naive }], fields: ["constructor"], dialect: "oracle", columnTypes: {} }),
+    );
+
+    expect(file.content).toContain(`VALUES (TO_TIMESTAMP('2026-08-24 10:11:12.345', 'YYYY-MM-DD HH24:MI:SS.FF3'));`);
+  });
+
+  test("leaves every other dialect on the ISO literal", () => {
+    const file = buildResultExport(
+      "sql-insert",
+      source({ rows: [{ at: instant }], fields: ["at"], dialect: "postgres", columnTypes: { at: "DATE" } }),
+    );
+    expect(file.content).toContain(`VALUES ('2026-08-24T17:11:12.345Z');`);
   });
 });

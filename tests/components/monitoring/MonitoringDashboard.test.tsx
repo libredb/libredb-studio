@@ -261,6 +261,26 @@ describe("MonitoringDashboard", () => {
     expect(queryByText("PG Dev")).not.toBeNull();
   });
 
+  test("falls back to the first connection when the saved active id is not in the list", async () => {
+    // The stored active connection can name something that no longer exists -
+    // it was deleted, or the seed that served it is gone. The dashboard must
+    // still open on a connection rather than on the empty state.
+    const storageModule = await import("@/lib/storage");
+    const storageRecord = storageModule.storage as unknown as Record<string, unknown>;
+    const originalGetActiveConnectionId = storageRecord.getActiveConnectionId;
+    storageRecord.getActiveConnectionId = mock(() => "gone");
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<MonitoringDashboard />);
+    });
+    const { queryByText } = renderResult!;
+
+    expect(queryByText("PG Dev")).not.toBeNull();
+
+    storageRecord.getActiveConnectionId = originalGetActiveConnectionId;
+  });
+
   test("shows 7 tab triggers", async () => {
     let renderResult: ReturnType<typeof render>;
     await act(async () => {

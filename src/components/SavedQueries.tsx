@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { storage } from "@/lib/storage";
 import { SavedQuery } from "@/lib/types";
 import { Bookmark, Search, Trash2, PenLine, Tag, Calendar } from "lucide-react";
@@ -15,13 +15,17 @@ interface SavedQueriesProps {
 }
 
 export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: SavedQueriesProps) {
-  const [queries, setQueries] = useState<SavedQuery[]>([]);
+  const [queries, setQueries] = useState<SavedQuery[]>(() => storage.getSavedQueries());
   const [search, setSearch] = useState("");
 
-  // Refresh queries when refreshTrigger changes (replaces key-based re-mount)
-  useEffect(() => {
+  // `refreshTrigger` is bumped by whoever writes a saved query. Adjusting state during
+  // render is React's prescribed replacement for a setState-in-effect, and unlike a `key`
+  // re-mount it leaves the search box the user is typing in alone.
+  const [loadedTrigger, setLoadedTrigger] = useState(refreshTrigger);
+  if (loadedTrigger !== refreshTrigger) {
+    setLoadedTrigger(refreshTrigger);
     setQueries(storage.getSavedQueries());
-  }, [refreshTrigger]);
+  }
 
   const filteredQueries = queries.filter((q) => {
     const matchesSearch =

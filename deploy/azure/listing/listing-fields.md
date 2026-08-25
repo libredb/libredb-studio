@@ -31,12 +31,12 @@ LibreDB Studio
 **Search results summary** (limit 100):
 
 <!-- limit:100 -->
-Open-source SQL IDE with AI for 13 engines: PostgreSQL, MySQL, SQL Server, Oracle, MongoDB, Redis+
+Open-source SQL IDE for 14 engines: PostgreSQL, MySQL, SQL Server, Oracle, MongoDB, Redis and more
 
 **Short description** (limit 256):
 
 <!-- limit:256 -->
-Open-source, self-hosted SQL IDE for cloud-native teams. Connect to thirteen engines - PostgreSQL, MySQL, SQL Server, Oracle, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino - explore schemas and query with AI help.
+Open-source, self-hosted SQL IDE for cloud-native teams. Fourteen engines - PostgreSQL, MySQL, SQL Server, Oracle, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Cassandra - explore and query, with read-only AI.
 
 **Description** (limit 5000, HTML): see [description.html](description.html) —
 the limit is asserted by the unit test.
@@ -67,15 +67,15 @@ and engineering contact (name + phone + email; never shown publicly).
 
 | Asset | Requirement | Status |
 |---|---|---|
-| Large logo | 216×216–350×350 PNG, flat background, no gradient/glow/text | ❌ produce `assets/logo-300.png` (brand decision: human) |
-| Screenshots ×5 | exactly 1280×720 PNG + caption each | ❌ recapture — current `public/screenshots/*.png` are 1440×900 |
+| Large logo | 216×216–350×350 PNG, flat background, no gradient/glow/text | TODO produce `assets/logo-300.png` (brand decision: human) |
+| Screenshots ×5 | exactly 1280×720 PNG + caption each | TODO recapture — current `public/screenshots/*.png` are 1440×900 |
 
 Planned captions:
 
 1. `hero-editor` — "Write and run SQL with schema-aware autocomplete and a virtualized result grid."
-2. `nl2sql` — "Turn a plain-English question into SQL with AI assistance."
+2. `agent-rail` — "Ask the read-only agent a question; every claim in its answer cites the result it came from."
 3. `erd-diagram` — "Explore relationships with an automatically generated ERD."
-4. `connection-modal` — "Connect to thirteen engines, from PostgreSQL and SQL Server to Apache Trino."
+4. `connection-modal` — "Connect to fourteen engines, from PostgreSQL and SQL Server to Apache Cassandra."
 5. `data-profiler` — "Profile table data: distributions, null ratios and outliers at a glance."
 
 ## Plan (§7.6)

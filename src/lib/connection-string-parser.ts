@@ -25,6 +25,23 @@ export interface ParsedConnection {
    * is HTTP-only and derives http vs https from `config.ssl` alone.
    */
   sslMode?: SSLMode;
+  /**
+   * A TLS parameter the pasted string carried that SSLMode cannot express, kept verbatim
+   * (`sslmode=prefer`, `ssl-mode=PREFERRED`, `Encrypt=Maybe`) so the form can say which one
+   * it declined to act on.
+   *
+   * Two classes end up here and both must leave `sslMode` untouched rather than fall to the
+   * form's "disable" default. The opportunistic values are a security decision, not a
+   * translation, and the measurements make the trap concrete: against postgres 18 with no
+   * server certificate `?sslmode=prefer` connects with `pg_stat_ssl.ssl = f` while
+   * `?sslmode=require` is refused outright ("server does not support SSL, but SSL was
+   * required"), so prefer -> require breaks a connection that works; against MySQL over TCP
+   * with its default self-signed certificate `--ssl-mode=PREFERRED` negotiates
+   * TLS_AES_128_GCM_SHA256 while DISABLED leaves Ssl_cipher empty, so PREFERRED -> disable
+   * silently downgrades a connection that was encrypted. The second class is any spelling the
+   * maps below do not know: guessing there is the same defect with less information.
+   */
+  unmappedTLSParam?: string;
 }
 
 /**
@@ -162,6 +179,153 @@ export function parseConnectionString(input: string): ParsedConnection | null {
 }
 
 /**
+ * What a TLS parameter resolved to: a mode the form can hold, or the parameter itself when
+ * it has no representation. Never both, and never a fallback to "disable".
+ */
+interface TLSIntent {
+  sslMode?: SSLMode;
+  unmappedTLSParam?: string;
+}
+
+/**
+ * libpq's sslmode, minus `prefer` and `allow`. Those two are absent on purpose (see the
+ * `unmappedTLSParam` note): they mean "encrypt if the server offers it", which none of the
+ * four SSLMode values describes.
+ */
+const POSTGRES_SSLMODE: Record<string, SSLMode> = {
+  disable: "disable",
+  require: "require",
+  "verify-ca": "verify-ca",
+  "verify-full": "verify-full",
+};
+
+/**
+ * MySQL's --ssl-mode, minus PREFERRED for the same reason. VERIFY_IDENTITY checks the
+ * hostname as well as the chain, which is what verify-full means here.
+ */
+const MYSQL_SSL_MODE: Record<string, SSLMode> = {
+  disabled: "disable",
+  required: "require",
+  verify_ca: "verify-ca",
+  verify_identity: "verify-full",
+};
+
+/**
+ * One query parameter kept in the spelling it was pasted in. The lookup is
+ * case-insensitive, but the banner quotes the parameter back at the user, so what it echoes
+ * has to be their text and not a normalised form of it.
+ */
+interface RawParam {
+  name: string;
+  value: string;
+}
+
+/**
+ * Map a documented value case-insensitively, or hand back the parameter verbatim.
+ *
+ * `Object.hasOwn` rather than a bare lookup: the tables are object literals, so an
+ * all-lowercase Object.prototype key reaches them. `?sslmode=constructor` resolved to the
+ * Object constructor FUNCTION - truthy, so it was written into `sslMode` and set as the
+ * form's SSLMode, smuggling a non-SSLMode value past the banner this function exists to
+ * raise. Pinned by tests/unit/lib/connection-string-parser.test.ts.
+ */
+function mapTLSValue(param: RawParam, table: Record<string, SSLMode>): TLSIntent {
+  const key = param.value.toLowerCase();
+  return Object.hasOwn(table, key) ? { sslMode: table[key] } : { unmappedTLSParam: `${param.name}=${param.value}` };
+}
+
+/**
+ * The boolean TLS spellings: postgres's JDBC/Heroku `ssl=true`, and MySQL's `ssl` / `useSSL`
+ * (Connector/J's pre-`sslMode` switch, still written by several ORMs). A boolean has no
+ * opportunistic value, so unlike `sslmode`/`ssl-mode` both ends of it are mappable.
+ *
+ * DECISION (open, and deliberately not changed here): `true` maps to `require`, which in this
+ * codebase means `rejectUnauthorized: false` for both engines - encrypted, chain unchecked
+ * (postgres.ts:793, mysql.ts:505). That is weaker than what the pasted string asks for: `pg`
+ * given `ssl=true` and mysql2 given `ssl: {}` both verify by default. It is the same weakening
+ * the mongodb arm above REFUSES to perform. It is kept because the form has no "encrypted,
+ * verified by the system trust store, no PEM pasted" mode: verify-ca/verify-full here are the
+ * modes that ask for a CA certificate, so mapping `ssl=true` onto one of them would turn a
+ * working paste into a connection the user cannot complete without a file they may not have.
+ * The honest fix is a mode that means exactly `rejectUnauthorized: true` with the default trust
+ * store; until that exists the mapping is documented rather than silently correct
+ * (docs/providers/postgres.md, docs/providers/mysql.md).
+ */
+function readBooleanTLS(param: RawParam): TLSIntent {
+  const flag = param.value.toLowerCase();
+  if (flag === "true" || flag === "1") return { sslMode: "require" };
+  if (flag === "false" || flag === "0") return { sslMode: "disable" };
+  return { unmappedTLSParam: `${param.name}=${param.value}` };
+}
+
+/**
+ * ADO.NET's Encrypt/TrustServerCertificate pair, from either the keyword string or an
+ * mssql:// query. Encrypt on with TrustServerCertificate on is `require`: encrypted, chain
+ * unchecked. Encrypt on with it off - including absent, which is the documented default -
+ * validates the chain AND the name, so verify-full. `Strict` is TDS 8.0, where the driver
+ * ignores TrustServerCertificate entirely and always validates.
+ *
+ * An absent Encrypt says nothing rather than "disable": System.Data.SqlClient defaults it to
+ * false and Microsoft.Data.SqlClient 4.0+ to true, so the string alone does not carry the answer.
+ */
+function readADONetTLS(get: (key: string) => string | undefined): TLSIntent {
+  const encrypt = get("encrypt");
+  if (encrypt === undefined) return {};
+  const value = encrypt.toLowerCase();
+  if (value === "false" || value === "no") return { sslMode: "disable" };
+  if (value === "strict") return { sslMode: "verify-full" };
+  if (value !== "true" && value !== "yes") return { unmappedTLSParam: `Encrypt=${encrypt}` };
+
+  const trust = get("trustservercertificate");
+  if (trust === undefined) return { sslMode: "verify-full" };
+  const trusted = trust.toLowerCase();
+  if (trusted === "true" || trusted === "yes") return { sslMode: "require" };
+  if (trusted === "false" || trusted === "no") return { sslMode: "verify-full" };
+  return { unmappedTLSParam: `TrustServerCertificate=${trust}` };
+}
+
+/**
+ * The TLS a URL carries in its QUERY STRING, for the engines that put it there.
+ *
+ * Only postgres, mysql and mssql are read: for `rediss://`, `couchbases://` and ClickHouse's
+ * `http(s)://` the scheme IS the transport and already decided, and MongoDB's `tls=true` is
+ * deliberately left to the driver, which enables TLS itself WITH chain verification - our
+ * `require` means rejectUnauthorized:false, so acting on it would weaken an Atlas connection.
+ *
+ * Postgres's sslrootcert/sslcert/sslkey are read by nobody here on purpose: they name files on
+ * the machine that wrote the string, while the form holds PEM text and the process that opens
+ * the connection is the server, which cannot read that path.
+ */
+function readQueryTLS(url: URL, type: DatabaseType): TLSIntent {
+  const params = new Map<string, RawParam>();
+  for (const [name, value] of url.searchParams) params.set(name.toLowerCase(), { name, value });
+
+  if (type === "postgres") {
+    // The explicit mode wins over the boolean: a string carrying both said the specific
+    // thing on purpose.
+    const sslmode = params.get("sslmode");
+    if (sslmode) return mapTLSValue(sslmode, POSTGRES_SSLMODE);
+    const ssl = params.get("ssl");
+    return ssl ? readBooleanTLS(ssl) : {};
+  }
+
+  if (type === "mysql") {
+    const mode = params.get("ssl-mode") ?? params.get("sslmode");
+    if (mode) return mapTLSValue(mode, MYSQL_SSL_MODE);
+    // Reading only ssl-mode dropped `?ssl=true` and `?useSSL=true` with no mode and no
+    // banner - the silent downgrade the whole TLS read exists to prevent. mysql2 also
+    // accepts an OBJECT here (`ssl={"rejectUnauthorized":true}`); that is not a boolean, so
+    // it falls through to the banner rather than being guessed at.
+    const flag = params.get("ssl") ?? params.get("usessl");
+    return flag ? readBooleanTLS(flag) : {};
+  }
+
+  if (type === "mssql") return readADONetTLS((key) => params.get(key)?.value);
+
+  return {};
+}
+
+/**
  * Attach a scheme's TLS intent, preserving the null a malformed URL parses to.
  */
 function withSSLMode(parsed: ParsedConnection | null, sslMode: SSLMode): ParsedConnection | null {
@@ -281,6 +445,7 @@ function parseADONetString(input: string): ParsedConnection | null {
       user: params["user id"] || params["uid"] || undefined,
       password: params["password"] || params["pwd"] || undefined,
       database: params["database"] || params["initial catalog"] || undefined,
+      ...readADONetTLS((key) => params[key]),
     };
   } catch {
     return null;
@@ -298,6 +463,7 @@ function parseGenericURL(uri: string, type: DatabaseType, defaultPort: string): 
       user: url.username ? decodeURIComponent(url.username) : undefined,
       password: url.password ? decodeURIComponent(url.password) : undefined,
       database: url.pathname.slice(1) || undefined, // remove leading /
+      ...readQueryTLS(url, type),
     };
   } catch {
     return null;

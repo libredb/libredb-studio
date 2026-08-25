@@ -758,9 +758,10 @@ describe("Trino getActiveSessions", () => {
 describe("Trino getTableStats", () => {
   test("reads the summary row for the count and the column rows for the size", async () => {
     const { runner } = fakeRunner();
-    const stats = await getTableStats(runner, CATALOG, { schema: "tiny" });
+    const { tables, refusal } = await getTableStats(runner, CATALOG, { schema: "tiny" });
 
-    expect(stats).toEqual([
+    expect(refusal).toBeUndefined();
+    expect(tables).toEqual([
       {
         schemaName: "tiny",
         tableName: "nation",
@@ -784,9 +785,9 @@ describe("Trino getTableStats", () => {
 
   test("omits a table whose connector published no row count, rather than calling it empty", async () => {
     const { runner } = fakeRunner();
-    const stats = await getTableStats(runner, CATALOG);
+    const { tables } = await getTableStats(runner, CATALOG);
 
-    expect(stats.map((table) => table.tableName)).toEqual(["nation", "region"]);
+    expect(tables.map((table) => table.tableName)).toEqual(["nation", "region"]);
   });
 
   test("asks SHOW STATS once per table, never a catalog-wide aggregate", async () => {
@@ -812,15 +813,54 @@ describe("Trino getTableStats", () => {
 
   test("degrades one table's failure to that table alone", async () => {
     const { runner } = fakeRunner({ failures: { nationStats: unavailable("unknown-object") } });
-    const stats = await getTableStats(runner, CATALOG, { schema: "tiny" });
+    const { tables } = await getTableStats(runner, CATALOG, { schema: "tiny" });
 
-    expect(stats.map((table) => table.tableName)).toEqual(["region"]);
+    expect(tables.map((table) => table.tableName)).toEqual(["region"]);
   });
 
-  test("asks nothing when the table list itself is unavailable", async () => {
+  /*
+    D24: an empty reading has three causes and only ONE of them is a measurement. The
+    three tests below pin each cause to its own answer, because the panel renders them
+    differently: a refusal is an ABSENT panel carrying the sentence, an empty catalog is
+    an empty panel.
+  */
+  test("a refused table list is a refusal carrying the server's wording, not no tables", async () => {
     const { runner } = fakeRunner({ failures: { tableList: unavailable("auth") } });
+    const { tables, refusal } = await getTableStats(runner, CATALOG);
 
-    expect(await getTableStats(runner, CATALOG)).toEqual([]);
+    expect(tables).toEqual([]);
+    expect(refusal).toContain('refused the table list for catalog "tpch"');
+  });
+
+  test("a catalog whose tables publish no statistics is a refusal naming how many were asked", async () => {
+    // Measured 2026-08-25 against Trino 476: all 379 tables of the jmx catalog answer
+    // SHOW STATS with an empty row_count, so this panel reported nothing at all about a
+    // catalog full of data.
+    const { runner } = fakeRunner({ rows: { tableList: [{ schemaName: "sf1", tableName: "customer" }] } });
+    const { tables, refusal } = await getTableStats(runner, CATALOG);
+
+    expect(tables).toEqual([]);
+    expect(refusal).toContain("None of the 1 tables examined");
+    expect(refusal).toContain("SHOW STATS with a null row count until ANALYZE has run");
+  });
+
+  test("a table list that fails for any other reason still propagates", async () => {
+    // The refusal arm is narrow on purpose: a timeout or a cancelled query says nothing
+    // about what the catalog holds, and a panel that reported it as "no statistics
+    // published" would hide the fault behind a sentence that sounds settled.
+    const { runner } = fakeRunner({ failures: { tableList: unavailable("timeout") } });
+
+    await expect(getTableStats(runner, CATALOG)).rejects.toThrow(TrinoTransportError);
+  });
+
+  test("a catalog that really holds no table stays an EMPTY measurement", async () => {
+    // The one empty reading that is honest: nothing was examined, so nothing was
+    // refused, and an absent panel here would claim the engine could not answer.
+    const { runner } = fakeRunner({ rows: { tableList: [] } });
+    const { tables, refusal } = await getTableStats(runner, CATALOG);
+
+    expect(tables).toEqual([]);
+    expect(refusal).toBeUndefined();
   });
 });
 

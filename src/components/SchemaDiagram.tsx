@@ -93,11 +93,17 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
   const [compactMode, setCompactMode] = useState(false);
   const [expandedTables, setExpandedTables] = useState<ReadonlySet<string>>(new Set());
   const [exporting, setExporting] = useState<"png" | "svg" | null>(null);
-  const [isLayouting, setIsLayouting] = useState(false);
+  // The signature of the last layout that COMPLETED. The spinner is derived
+  // from it rather than held as its own boolean, so it can never disagree
+  // with what the layout effect actually did.
+  const [layoutedSignature, setLayoutedSignature] = useState<string | null>(null);
   const reactFlowInstance = useReactFlow();
   const containerRef = useRef<HTMLDivElement>(null);
   const layoutEngineRef = useRef<LayoutEngine | null>(null);
-  const highlightStoreRef = useRef(createHighlightStore());
+  // State, not a ref: render hands the store to the provider, and refs must
+  // not be read during render. The lazy initializer keeps it to one store per
+  // component instance (useRef would rebuild and discard one every render).
+  const [highlightStore] = useState(createHighlightStore);
   const { toast } = useToast();
 
   // Filter tables by search (deferred so typing stays responsive on large schemas)
@@ -111,6 +117,10 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
     () => buildGraph(filteredSchema, { compact: compactMode, expandedTables: new Set(expandedTables) }),
     [filteredSchema, compactMode, expandedTables],
   );
+
+  // The STRUCTURE of the graph (tables, relationships, compact mode). Both the
+  // layout effect and the spinner read it, so it is computed once.
+  const signature = useMemo(() => graphSignature(graph, compactMode), [graph, compactMode]);
 
   // FK neighbors per table, for selection highlighting.
   const adjacency = useMemo(() => {
@@ -127,7 +137,11 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
   const [nodes, setNodes] = useState<TableFlowNode[]>(graph.nodes);
   const [edges, setEdges] = useState<FkFlowEdge[]>(graph.edges);
   const nodesRef = useRef(nodes);
-  nodesRef.current = nodes;
+  // Latest-value mirror for the async exporter, updated at commit time: a
+  // render React throws away must not be able to poison it.
+  useEffect(() => {
+    nodesRef.current = nodes;
+  });
   // Last known position per table: survives graph rebuilds so user drags and
   // ELK results are not thrown away by cosmetic changes (expand, re-renders).
   const positionsRef = useRef(new Map<string, { x: number; y: number }>());
@@ -140,33 +154,53 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
     });
   }, []);
 
-  // Render immediately, then move nodes to their ELK positions once the
+  // The nodes/edges arrays are state rather than derived values because React
+  // Flow writes back into them (drag positions, selection, measured flags), so
+  // a rebuilt graph is copied in during render - React's "adjust state when a
+  // prop changes" - instead of one commit later in an effect, which would hand
+  // <ReactFlow> a frame of nodes belonging to the previous graph.
+  const [prevGraph, setPrevGraph] = useState(graph);
+  if (graph !== prevGraph) {
+    setPrevGraph(graph);
+    // Updater form on purpose: restorePositions reads a ref, which is only
+    // legal once React is processing the update rather than during render.
+    setNodes(() => restorePositions(graph.nodes));
+    setEdges(graph.edges);
+  }
+
+  // A selection whose table left the graph (filtered out, or dropped by the
+  // async second-phase schema) is invalid the moment the graph rebuilds. The
+  // memo matters: onNodesChange re-renders on every drag frame, and this scan
+  // is O(nodes).
+  const selectionInGraph = useMemo(
+    () => (selectedNode ? graph.nodes.some((n) => n.id === selectedNode) : true),
+    [graph, selectedNode],
+  );
+  if (!selectionInGraph) {
+    setSelectedNode(null);
+  }
+
+  // No boolean of its own: the spinner is on exactly while the current
+  // structure has no completed layout behind it.
+  const isLayouting = graph.nodes.length > 0 && signature !== layoutedSignature;
+
+  // The sync above has already put the nodes on screen at their grid or
+  // remembered positions; this moves them to their ELK positions once the
   // (worker-backed) layout resolves. ELK re-runs only when the graph
   // STRUCTURE changes (tables, relationships, compact mode) - including when
   // FK relations arrive from the async second-phase schema fetch. Cosmetic
   // rebuilds (expanding a table's columns) keep positions and viewport.
   useEffect(() => {
-    if (graph.nodes.length === 0) {
-      setNodes(graph.nodes);
-      setEdges(graph.edges);
-      setIsLayouting(false);
-      return;
-    }
+    if (graph.nodes.length === 0) return;
 
-    const signature = graphSignature(graph, compactMode);
     // The signature is recorded only AFTER a layout completes - an effect
     // re-run that cancels an in-flight layout (e.g. useReactFlow identity
-    // settling on mount) must run ELK again, not skip it.
-    if (signature === lastLayoutSigRef.current) {
-      setNodes(restorePositions(graph.nodes));
-      setEdges(graph.edges);
-      return;
-    }
+    // settling on mount) must run ELK again, not skip it. It stays a REF, and
+    // layoutedSignature stays out of this dep array: a bookkeeping write that
+    // re-ran the effect would fire its cleanup and cancel the pending fitView.
+    if (signature === lastLayoutSigRef.current) return;
 
     let cancelled = false;
-    setNodes(restorePositions(graph.nodes));
-    setEdges(graph.edges);
-    setIsLayouting(true);
     if (!layoutEngineRef.current) {
       layoutEngineRef.current = createLayoutEngine();
     }
@@ -175,10 +209,10 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
       .layout(elkGraph)
       .then((result) => {
         if (cancelled) return;
-        setIsLayouting(false);
         // Recorded for null results too: a known-failed layout must not be
         // retried on every cosmetic rebuild (only cancelled runs may retry).
         lastLayoutSigRef.current = signature;
+        setLayoutedSignature(signature);
         if (!result) return; // keep the grid fallback
         const layouted = applyLayout(graph.nodes, result);
         for (const node of layouted) {
@@ -191,14 +225,14 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
       })
       .catch(() => {
         if (cancelled) return;
-        setIsLayouting(false);
         lastLayoutSigRef.current = signature;
+        setLayoutedSignature(signature);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [graph, compactMode, reactFlowInstance, restorePositions]);
+  }, [graph, signature, reactFlowInstance]);
 
   // Tear down the layout worker with the component. The ref is nulled so a
   // StrictMode remount creates a fresh engine instead of reusing a disposed
@@ -210,18 +244,14 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
     };
   }, []);
 
-  // Keep the highlight in sync with the graph: drop a selection that was
-  // filtered out, and refresh the neighbor set when relationships change
-  // under an active selection (FK data arrives asynchronously).
+  // Push the selection into the external store the memoized nodes and edges
+  // subscribe to. This also refreshes the neighbor set when relationships
+  // change under an active selection (FK data arrives asynchronously). The
+  // store's own equality check swallows the duplicate of what selectTable
+  // already pushed synchronously from the click.
   useEffect(() => {
-    if (!selectedNode) return;
-    if (!graph.nodes.some((n) => n.id === selectedNode)) {
-      setSelectedNode(null);
-      highlightStoreRef.current.select(null);
-      return;
-    }
-    highlightStoreRef.current.select(selectedNode, adjacency.get(selectedNode) ?? new Set());
-  }, [graph, adjacency, selectedNode]);
+    highlightStore.select(selectedNode, selectedNode ? (adjacency.get(selectedNode) ?? new Set()) : undefined);
+  }, [highlightStore, adjacency, selectedNode]);
 
   const onNodesChange = useCallback((changes: NodeChange<TableFlowNode>[]) => {
     for (const change of changes) {
@@ -235,9 +265,11 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
   const selectTable = useCallback(
     (table: string | null) => {
       setSelectedNode(table);
-      highlightStoreRef.current.select(table, table ? (adjacency.get(table) ?? new Set()) : undefined);
+      // Pushed here as well as from the effect so the panel and the node
+      // borders update in ONE commit on the click path.
+      highlightStore.select(table, table ? (adjacency.get(table) ?? new Set()) : undefined);
     },
-    [adjacency],
+    [adjacency, highlightStore],
   );
 
   const onNodeClick = useCallback(
@@ -306,7 +338,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
         setExporting(null);
       }
     },
-    [exporting, toast],
+    [exporting, mode, toast],
   );
 
   // Warn when the DISPLAYED graph runs on guesses: either the schema carries
@@ -334,7 +366,7 @@ function SchemaDiagramInner({ schema, onClose }: SchemaDiagramProps) {
       className="absolute inset-0 z-40 bg-canvas"
       ref={containerRef}
     >
-      <HighlightStoreProvider value={highlightStoreRef.current}>
+      <HighlightStoreProvider value={highlightStore}>
         <DiagramActionsContext.Provider value={diagramActions}>
           <ReactFlow
             nodes={nodes}

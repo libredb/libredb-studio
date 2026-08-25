@@ -2598,6 +2598,25 @@ describe("an answer reads as the app's decision, with the model's caption quoted
       expect(view.items).toHaveLength(2);
       expect(`${view.items[1]?.headline} ${view.items[1]?.detail}`.length).toBeGreaterThan(0);
     });
+
+    test.each(["report-reminder", "plan-statement", "report-reserve", "unread-stop"] as const)(
+      "the %s notice reads as a sentence rather than as its own event name",
+      (notice) => {
+        /*
+          Every notice at once, because the headline map is DATA: a missing entry renders
+          `undefined` at the top of a timeline item and the line still counts as covered the
+          moment the module loads. Only rendering each one asks the question.
+        */
+        const view = foldLedgerEntries([
+          OPENED,
+          event({ kind: "event", event: { kind: "guidance-issued", atMs: 6_000, notice } }),
+        ]);
+
+        const headline = view.items[1]?.headline ?? "";
+        expect(headline.length).toBeGreaterThan(0);
+        expect(headline).not.toContain(notice);
+      },
+    );
   });
 
   test("the columns the chart names never reach the app's own sentence", () => {

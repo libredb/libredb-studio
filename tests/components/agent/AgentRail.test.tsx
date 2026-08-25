@@ -1471,9 +1471,9 @@ describe("AgentRail", () => {
       const onSheetOpenChange = mock(() => {});
       const view = render(<AgentRail {...DEFAULT_PROPS} onSheetOpenChange={onSheetOpenChange} />);
 
-      // The breakpoint is crossed explicitly: `useIsMobile` reports false on its first
-      // render and resolves in an effect, so an ask applied in the mount commit could
-      // not yet know the panel it filled is display:none.
+      // The breakpoint is crossed explicitly, after the mount, so this test exercises a
+      // real transition rather than a rail that was already narrow when it mounted --
+      // that case is the one the "first render on a narrow viewport" test below owns.
       await act(async () => {
         media.setMatches(true);
       });
@@ -1510,12 +1510,12 @@ describe("AgentRail", () => {
      * was already narrow — which the T1 adversarial review named as a real defect this
      * suite had no test for.
      *
-     * `useIsMobile` seeds false and resolves in an effect, so that first commit reads
-     * as desktop no matter how narrow the window is. An ask that decided from the
-     * hook's value would ask nobody to open the sheet: it would land in the panel
-     * branch, which is `hidden md:flex`, and the user would see a shortcut that
-     * visibly did nothing. The rail asks the viewport itself instead, in an effect
-     * that runs after commit, where the platform's answer is exact.
+     * The rail asks the viewport itself (`isMobileViewport`), in an effect that runs
+     * after commit, where the platform's answer is exact at the instant the ask is
+     * served -- rather than from `useIsMobile`, which hands back the value of the
+     * render the effect closed over. The failure this pins is an ask that asks nobody
+     * to open the sheet and lands in the panel branch, `hidden md:flex`, where the
+     * user sees a shortcut that visibly did nothing.
      *
      * Today's wiring never produces that render — the shell starts at null and mounts
      * the rail behind the capability probe — but T2 and T3 wire entry points that are
@@ -2633,8 +2633,17 @@ describe("AgentRail", () => {
       off the node rather than off the entry, so the entry may be empty.
     */
     const observed: { element: Element; notify: () => void }[] = [];
+    /*
+      How many observers the rail has BUILT, which `observed` cannot answer: an observer
+      that is torn down and rebuilt disconnects itself first, so the registration count
+      is 1 either way. The subscription effect names `pinToNewest` as a dependency, and
+      this is what says that dependency is a stable identity rather than a fresh arrow.
+    */
+    let constructedObservers = 0;
     class TestResizeObserver {
-      constructor(private readonly callback: () => void) {}
+      constructor(private readonly callback: () => void) {
+        constructedObservers += 1;
+      }
       observe(element: Element) {
         observed.push({ element, notify: this.callback });
       }
@@ -2651,6 +2660,7 @@ describe("AgentRail", () => {
 
     beforeEach(() => {
       observed.length = 0;
+      constructedObservers = 0;
       (globalThis as { ResizeObserver?: unknown }).ResizeObserver = TestResizeObserver;
     });
 
@@ -2777,6 +2787,31 @@ describe("AgentRail", () => {
       });
 
       expect(scroller.scrollTop).toBe(0);
+    });
+
+    /*
+      The observer is built once for the life of the panel, and entries arriving do not
+      rebuild it. The rail hands `pinToNewest` to `new ResizeObserver(...)` and names it
+      as the subscription effect's dependency, so this holds only while that function
+      keeps one identity across renders; a per-render arrow would tear the observer down
+      and build another on every ledger line. The assertions above cannot see that — they
+      read `scrollTop`, which a rebuilt observer still moves correctly — so the count is
+      asserted directly.
+    */
+    test("the observer is built once, however many entries arrive", async () => {
+      const { stream, scroller } = await startRun();
+      await act(async () => {
+        stream.push(OPENED_LINE);
+      });
+      await act(async () => {
+        stream.push(STARTED_LINE);
+      });
+      await act(async () => {
+        stream.push(FINISHED_LINE);
+      });
+
+      expect(constructedObservers).toBe(1);
+      expect(observed.filter((entry) => entry.element === scroller).length).toBe(1);
     });
 
     /**

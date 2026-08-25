@@ -451,18 +451,16 @@ function AIExplainTab({
   const [hasRun, setHasRun] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // A mounted panel can switch plans without remounting (BottomPanel keeps one
-  // VisualExplain alive across query-tab switches and the AI tab exists for every
-  // plan kind): drop the previous plan's analysis and abort any in-flight stream
-  // so the old response never bleeds into the new plan.
-  useEffect(() => {
+  // Nothing else observes a superseded stream: the parent remounts this component
+  // (via its key) when the analysed (plan, query) pair changes, and the tab strip
+  // unmounts it when the user leaves the AI tab. Either way the response would land
+  // in a dead component, so cancel it. Reading the ref inside a callback that only
+  // runs after commit — never during render — is the documented safe access.
+  const abortInFlight = useCallback(() => {
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
-    setHasRun(false);
-    setAiResponse("");
-    setError(null);
-    setIsLoading(false);
-  }, [plan, query]);
+  }, []);
+  useEffect(() => abortInFlight, [abortInFlight]);
 
   const analyzeWithAI = useCallback(async () => {
     if (!query && !plan) return;
@@ -745,22 +743,43 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
 
   const [activeTab, setActiveTab] = useState<ExplainTab>(kind === "tree" ? "tree" : "insights");
 
-  // BottomPanel keeps a single VisualExplain mounted across query-tab/connection
-  // switches, so the plan kind can change without a remount. Resync the active tab
-  // when it does: a stale tab that is unavailable for the new kind ("insights" on a
-  // tree plan) would otherwise leave the content panel blank.
-  useEffect(() => {
-    if (kind === null) return;
-    setActiveTab((current) => {
-      const available: readonly ExplainTab[] = kind === "tree" ? TREE_TABS : POSTGRES_TABS;
-      return available.includes(current) ? current : available[0];
-    });
-  }, [kind]);
-
   const analysis = useMemo(() => {
     if (!postgresPlan) return null;
     return analyzePlan(postgresPlan);
   }, [postgresPlan]);
+
+  // The exact value handed to AIExplainTab. Hoisted so the remount trigger below and
+  // the prop at the call site can never key on different objects.
+  const aiPlan = input === null ? null : input.kind === "tree" ? input.raw : postgresPlan;
+
+  // BottomPanel keeps a single VisualExplain mounted across query-tab/connection
+  // switches, so the plan kind can change without a remount. Resync the active tab
+  // during render ("Adjusting some state when a prop changes") rather than in an
+  // Effect: a stale tab that is unavailable for the new kind ("insights" on a tree
+  // plan) would otherwise leave the content panel blank for a frame. The guard makes
+  // this self-terminating — React retries the render, and syncedKind then matches.
+  const [syncedKind, setSyncedKind] = useState(kind);
+  if (kind !== null && kind !== syncedKind) {
+    setSyncedKind(kind);
+    const available: readonly ExplainTab[] = kind === "tree" ? TREE_TABS : POSTGRES_TABS;
+    if (!available.includes(activeTab)) {
+      setActiveTab(available[0]);
+    }
+  }
+
+  // A mounted panel can switch plans without remounting, and AIExplainTab holds a whole
+  // analysis for one (plan, query) pair. Bump a generation counter when either changes
+  // and use it as the child's key, so React resets that state on the remount instead of
+  // the child clearing itself one commit later — the old response never paints under the
+  // new plan. A counter is needed because a key must be a primitive and aiPlan is not.
+  const [analysed, setAnalysed] = useState<{ plan: unknown; query?: string; generation: number }>({
+    plan: aiPlan,
+    query,
+    generation: 0,
+  });
+  if (analysed.plan !== aiPlan || analysed.query !== query) {
+    setAnalysed((previous) => ({ plan: aiPlan, query, generation: previous.generation + 1 }));
+  }
 
   // Empty state
   if (input === null) {
@@ -842,7 +861,8 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
       <div className="flex-1 overflow-auto">
         {activeTab === "ai" && (
           <AIExplainTab
-            plan={input.kind === "tree" ? input.raw : postgresPlan}
+            key={analysed.generation}
+            plan={aiPlan}
             query={query}
             schemaContext={schemaContext}
             databaseType={databaseType}

@@ -4,14 +4,18 @@ machine, behind an automatically provisioned HTTPS endpoint, in about five minut
 
 <h3>What you get</h3>
 <ul>
-  <li><strong>One workspace for thirteen engines</strong> - PostgreSQL, MySQL/MariaDB/TiDB, Microsoft SQL Server
+  <li><strong>One workspace for fourteen engines</strong> - PostgreSQL, MySQL/MariaDB/TiDB, Microsoft SQL Server
       (including Azure SQL), Oracle, SQLite, MongoDB/FerretDB, Redis, Couchbase, ClickHouse, Apache Druid,
-      Elasticsearch, OpenSearch and Apache Trino.</li>
+      Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra.</li>
   <li><strong>A real editor</strong> - Monaco-based SQL editing with schema-aware autocomplete,
       formatting, query history and virtualized result grids that stay fast on large result sets.</li>
-  <li><strong>AI query assistance</strong> - turn natural language into SQL, explain and optimize
-      existing queries. You supply your own model provider key; no query data is sent anywhere you
-      have not configured.</li>
+  <li><strong>Optional, read-only AI</strong> - an agent that investigates a question you state and
+      cites the result each claim came from, executing SQL on PostgreSQL and SQLite only, in a session
+      the database itself enforces as read-only; on every other engine it drafts a statement and you
+      run it. One-click plain-English explanation of a query is offered on the engines that return an
+      <code>EXPLAIN</code> plan - PostgreSQL, MySQL, SQLite, Couchbase, ClickHouse, Apache Druid and
+      Apache Trino. You supply your own model provider key; the whole surface is off until you do, and
+      no query data is sent anywhere you have not configured.</li>
   <li><strong>Schema and operations tooling</strong> - ERD diagrams, data profiling, EXPLAIN plans,
       slow-query and session views, and code generation.</li>
   <li><strong>Single sign-on</strong> - vendor-agnostic OIDC that works with Microsoft Entra ID,

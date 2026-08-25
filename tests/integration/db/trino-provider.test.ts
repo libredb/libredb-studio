@@ -1097,10 +1097,28 @@ describe("TrinoProvider monitoring", () => {
 
   test("narrows the stats pass to one schema when asked", async () => {
     const provider = await connectProvider();
-    await provider.getTableStats({ schema: "sf1" });
+    // `sf1.customer` is the fixture's one table whose connector published no row count,
+    // so narrowing to that schema examines a table and gets nothing back - a refusal
+    // (D24), not an empty schema. The assertion here is about WHICH statements went out.
+    await expect(provider.getTableStats({ schema: "sf1" })).rejects.toThrow(/None of the 1 tables examined/);
 
     expect(sentAnything('SHOW STATS FOR "tpch"."tiny"')).toBe(false);
     expect(sentAnything('SHOW STATS FOR "tpch"."sf1"."customer"')).toBe(true);
+  });
+
+  test("the refused table panel is ABSENT with its sentence while the rest of the dashboard answers", async () => {
+    // The whole point of the conversion: one panel that cannot be answered costs that
+    // panel and carries its reason, instead of rendering as a table of no rows.
+    const provider = await connectProvider();
+    const data = await provider.getMonitoringData({
+      schemaFilter: "sf1",
+      includeIndexes: false,
+      includeStorage: false,
+    });
+
+    expect(data.tables).toBeUndefined();
+    expect(data.errors?.tables).toContain("None of the 1 tables examined");
+    expect(data.overview).toBeDefined();
   });
 
   test("describes the catalogs as the storage, because that is where the data is", async () => {

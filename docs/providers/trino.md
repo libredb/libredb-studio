@@ -595,7 +595,7 @@ Everything comes from `system.runtime`, `system.metadata` and — for the two re
 | `getSlowQueries()` | `system.runtime.queries`, `FINISHED` rows by elapsed time | The coordinator's recent history |
 | `getTableStats()` | `SHOW STATS FOR <table>`, one per table, capped at 25 | Real row counts and logical sizes |
 | `getStorageStats()` | `system.metadata.catalogs` | One row per catalog, `location` = the connector |
-| `getIndexStats()` | — | `[]`, no statement sent |
+| `getIndexStats()` | — | `[]`, no statement sent — a MEASUREMENT, not a refusal: no index object exists in any Trino catalog, so zero is the true count |
 | `getHealth()` | The three above | — |
 
 Measured on the probe cluster: `tpch.tiny.lineitem` 60175 rows / 1.51 MB, `tpch.tiny.nation` 25 rows
@@ -620,6 +620,20 @@ Five honest blanks, each with its reason:
 - **`getTableStats()` omits a table whose connector published no row count.** Measured,
   `SHOW STATS FOR system.runtime.nodes` returns the six columns with every value null, summary row
   included. `TableStats.rowCount` cannot say "unknown", and "0 rows" is a claim nobody made.
+- **An empty table panel has three causes, and only one of them is an empty panel.** Since
+  **2026-08-25** the two that are refusals leave the panel ABSENT with a sentence under
+  `MonitoringData.errors`, which is what `PanelUnavailable` renders, instead of an empty table that
+  claims the engine answered "no tables":
+  - the catalog's table list was **refused** (`unknown-object` or `auth`) — the panel carries the
+    server's own wording;
+  - tables were examined and **none** published a row count — the panel names how many were asked.
+    Measured 2026-08-25 against Trino 476: the `jmx` catalog holds **379** tables in schema `current`
+    and a 20-table random sample of them answered `SHOW STATS` with an empty `row_count`, 0 of 20
+    non-null — the jmx connector supplies no statistics at all — so `getTableStats()` refuses the panel there (`None of the 25 tables
+    examined in catalog "jmx" published a row count …`, 25 being the per-pass cap below) while `tpch`
+    (8 rows, `sf1.lineitem` 6,001,215) and `memory` (3 rows) answer unchanged;
+  - the catalog genuinely holds **no table** — `[]`, which is a real measurement and keeps rendering
+    as an empty panel.
 - **`getTableStats()` is capped at 25 tables per pass.** `SHOW STATS` is one statement per table;
   there is no catalog of sizes to aggregate, so N tables cost N statements.
 - **`StorageStats.size` is `"N/A"` with `sizeBytes: 0`, and `usagePercent` is absent**

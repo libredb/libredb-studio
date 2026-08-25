@@ -466,6 +466,12 @@ export function ResultsGrid({
 
   const { rows } = table.getRowModel();
 
+  // react(incompatible-library) reports a property of @tanstack/react-virtual, not of this
+  // component: useVirtualizer returns functions React Compiler cannot memoize, so the compiler
+  // skips memoizing this component. Nothing here can fix that short of dropping the virtualizer,
+  // which is what keeps large result sets renderable. Scoped to this call so a NEW incompatible
+  // library still fails the gate rather than joining a silent warning pile.
+  // oxlint-disable-next-line react/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => tableContainerRef.current,

@@ -2,6 +2,8 @@ import "../setup-dom";
 
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { renderHook, act, waitFor } from "@testing-library/react";
+import React from "react";
+import ReactDOMServer from "react-dom/server";
 
 import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
 
@@ -152,6 +154,28 @@ describe("useIsMobile", () => {
     });
   });
 
+  /**
+   * There is no viewport to ask on the server, so the hook answers false there -
+   * whatever the media query would have said - and the client's hydration pass
+   * gives the same answer, so the two never disagree.
+   */
+  test("answers false on the server, where there is no viewport to ask", () => {
+    // Deliberately a MATCHING query: only the server answer may be rendered here,
+    // so a true reading would show this test up rather than pass unnoticed.
+    const { mockMatchMedia } = createMockMatchMedia(true);
+    Object.defineProperty(window, "matchMedia", {
+      value: mockMatchMedia,
+      writable: true,
+      configurable: true,
+    });
+
+    function Probe() {
+      return React.createElement("span", null, String(useIsMobile()));
+    }
+
+    expect(ReactDOMServer.renderToString(React.createElement(Probe))).toContain("false");
+  });
+
   test("cleans up event listener on unmount", () => {
     const { mockMatchMedia, getMql } = createMockMatchMedia(false);
     Object.defineProperty(window, "matchMedia", {
@@ -180,9 +204,9 @@ describe("useIsMobile", () => {
 // isMobileViewport Tests
 // =============================================================================
 /**
- * The synchronous read the hook cannot give: `useIsMobile` seeds false and resolves
- * in an effect, so a caller that has to DECIDE something at a point in time — rather
- * than render from it — needs the platform's own answer instead of last render's.
+ * The synchronous read the hook cannot give: `useIsMobile` hands back the value of
+ * the render you are inside, so a caller that has to DECIDE something at a point in
+ * time — rather than render from it — needs the platform's own answer instead.
  */
 describe("isMobileViewport", () => {
   let originalMatchMedia: typeof window.matchMedia;
@@ -232,8 +256,8 @@ describe("isMobileViewport", () => {
   /**
    * There is no viewport on the server, and a module that renders on both sides may
    * call this during a render that never touches a browser. It answers false rather
-   * than throwing — the same answer the hook's first render gives, so markup produced
-   * on the server and markup produced on the client's first pass agree.
+   * than throwing — the same answer the hook's server snapshot gives, so markup
+   * produced on the server and markup produced by the hydration pass agree.
    */
   test("answers false where there is no window at all", () => {
     const realWindow = globalThis.window;

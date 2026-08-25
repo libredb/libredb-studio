@@ -621,10 +621,24 @@ export class TrinoProvider extends SQLBaseProvider {
     return this.guarded(() => readActiveSessions(transport, options));
   }
 
+  /**
+   * The tables that published statistics, or an ABSENT panel with the reason.
+   *
+   * An empty array here has three causes and only one of them is a measurement (see
+   * `TrinoTableStatsReading`). The other two used to render as an empty table, which
+   * claims the engine answered "no tables" - measured 2026-08-25 against Trino 476,
+   * the jmx catalog holds 379 tables in schema `current` and a 20-table random sample
+   * of them answered SHOW STATS with an empty row_count (0 of 20 non-null; the jmx
+   * connector supplies no statistics at all), so that panel reported nothing about a
+   * catalog full of data.
+   */
   public async getTableStats(options: { schema?: string } = {}): Promise<TableStats[]> {
     const transport = this.requireTransport();
     const catalog = this.requireCatalog();
-    return this.guarded(() => readTableStats(transport, catalog, options));
+    const reading = await this.guarded(() => readTableStats(transport, catalog, options));
+    if (reading.refusal !== undefined) throw new QueryError(reading.refusal, this.type);
+
+    return reading.tables;
   }
 
   /**

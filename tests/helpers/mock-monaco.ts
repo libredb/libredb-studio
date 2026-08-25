@@ -36,8 +36,8 @@ export function setupMonacoMock() {
       loader: {
         init: mock(() => Promise.resolve()),
         config: mock(() => {}),
+        __getMonacoInstance: mock(() => null),
       },
-      useMonaco: mock(() => null),
     };
   });
 }

@@ -736,6 +736,105 @@ describe("useMonitoringData", () => {
     });
   });
 
+  // ── A switch shows none of the previous connection's history ──────────
+
+  test("a connection switch shows none of the previous connection's history", async () => {
+    const secondConnection: DatabaseConnection = {
+      ...mockConnection,
+      id: "mon-pg-2",
+      name: "Second DB",
+    };
+
+    // Hold the second connection's response open, so the assertion below can
+    // observe the window between the switch and the new data landing. That
+    // window is the point: no point from mon-pg-1 may be visible inside it.
+    let releaseSecond: (() => void) | undefined;
+    const secondLanded = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    let calls = 0;
+
+    mockGlobalFetch({
+      "/api/db/monitoring": async () => {
+        calls += 1;
+        if (calls > 1) await secondLanded;
+        return { ok: true, json: mockMonitoringResponse };
+      },
+    });
+
+    const { result, rerender } = renderHook(({ conn }) => useMonitoringData(conn), {
+      initialProps: { conn: mockConnection as DatabaseConnection | null },
+    });
+
+    await waitFor(() => {
+      expect(result.current.history.length).toBeGreaterThan(0);
+    });
+
+    rerender({ conn: secondConnection });
+
+    await waitFor(() => {
+      expect(result.current.history).toEqual([]);
+    });
+
+    releaseSecond?.();
+
+    await waitFor(() => {
+      expect(result.current.history.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ── Returning after a failed excursion starts a fresh chart ───────────
+
+  test("returning to a connection after a failed one starts a fresh history", async () => {
+    const unreachable: DatabaseConnection = {
+      ...mockConnection,
+      id: "mon-pg-unreachable",
+      name: "Unreachable DB",
+    };
+
+    mockGlobalFetch({
+      "/api/db/monitoring": async (req) => {
+        const body = (await req.json()) as { connection: DatabaseConnection };
+        // The excursion never settles: this host's monitoring read 500s, so it
+        // leaves nothing behind that could re-key the buffer.
+        if (body.connection.id === unreachable.id) {
+          return { ok: false, status: 500, json: { error: "unreachable" } };
+        }
+        return { ok: true, json: mockMonitoringResponse };
+      },
+    });
+
+    const { result, rerender } = renderHook(({ conn }) => useMonitoringData(conn), {
+      initialProps: { conn: mockConnection as DatabaseConnection },
+    });
+
+    await waitFor(() => {
+      expect(result.current.history.length).toBe(1);
+    });
+    const beforeExcursion = result.current.lastUpdated;
+
+    rerender({ conn: unreachable });
+
+    await waitFor(() => {
+      expect(result.current.error).not.toBeNull();
+    });
+    expect(result.current.history).toEqual([]);
+
+    rerender({ conn: mockConnection });
+
+    // Re-selecting is a new selection, not a resumption: nothing may be on the
+    // chart until this selection has collected a sample of its own.
+    expect(result.current.history).toEqual([]);
+
+    await waitFor(() => {
+      expect(result.current.lastUpdated).not.toBe(beforeExcursion);
+    });
+
+    // Exactly one fresh sample - the point recorded before the excursion must
+    // not be spliced onto it across the dead interval.
+    expect(result.current.history.length).toBe(1);
+  });
+
   // ── Auto-refresh interval fires ───────────────────────────────────────
 
   test("auto-refresh interval fires and triggers fetch", async () => {
