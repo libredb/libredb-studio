@@ -184,6 +184,10 @@
         "enabled": {
           "type": ["boolean", "null"],
           "description": "Explicit off-switch for the agent runtime: null (default) writes nothing and lets the app derive availability from the AI configuration plus a writable ledger, false writes LIBREDB_AGENT_ENABLED=false, true declines the off-switch without conjuring a model"
+        },
+        "threadContext": {
+          "type": ["boolean", "null"],
+          "description": "Whether a run may be told about the conversation it belongs to: null (default) writes nothing and the app keeps its own default, which is on; false writes LIBREDB_AGENT_THREAD_CONTEXT=false, so every run opens on its own and the rail says so"
         }
       }
     },

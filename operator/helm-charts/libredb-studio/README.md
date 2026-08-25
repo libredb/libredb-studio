@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.50 \
+  --version 0.1.51 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -193,6 +193,22 @@ helm upgrade libredb libredb/libredb-studio --reuse-values --set agent.enabled=f
 `LIBREDB_AGENT_ENABLED=false`, which is the supported way to have AI configured and no agent; `true`
 is accepted and explicit but cannot conjure a model. The chart renders the value as a quoted string,
 which is why no `--set-string` is needed here.
+
+`agent.threadContext` follows the same rule for a narrower thing: whether a run may be told about the
+**conversation** it belongs to. A follow-up asked on the same connection otherwise continues the
+previous run's conversation — the earlier steps' objectives and the most recent step's report are
+derived server-side from those runs' own ledgers and handed to the model fenced. Unset writes
+nothing and the runtime keeps its own default, which is on; `false` writes
+`LIBREDB_AGENT_THREAD_CONTEXT=false`, and every run then opens on its own with the rail saying so
+rather than going quiet.
+
+```bash
+helm upgrade libredb libredb/libredb-studio --reuse-values --set agent.threadContext=false
+```
+
+Set it where no question's context may reach another. The user already has the equivalent control —
+the rail names the conversation and offers to leave it — so this exists for deployments where that
+choice may not be theirs.
 
 **Run history lives in that ledger, so `persistence` decides whether it survives.** With
 `persistence.enabled=false` the ledger is an `emptyDir`: every run is written, and the entire history
