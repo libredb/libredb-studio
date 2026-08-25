@@ -33,12 +33,19 @@ const NEXT_LABEL = {
  * device rather than a theme. The trade is real and accepted: a viewer whose OS
  * is in night mode still starts on studio's own default rather than theirs.
  *
+ * `showLabel` repeats that same destination as visible text inside the button, for
+ * placements where an icon alone is not a control anyone finds — the mobile
+ * overflow menu, where this is a settings row rather than one glyph among several
+ * (#401). The text lives INSIDE the button on purpose: a caller that put its own
+ * caption beside the toggle would leave that caption behind in the embedded case
+ * below, labelling a control that is not there.
+ *
  * Renders NOTHING when no `ThemeProvider` is mounted above it. That is the
  * embedded case: the host app owns the theme, `useTheme()` falls back to
  * next-themes' default context — whose `themes` array is empty — and a toggle
  * that cannot change anything is worse than no toggle at all.
  */
-export function ThemeToggle({ className }: { className?: string }) {
+export function ThemeToggle({ className, showLabel = false }: { className?: string; showLabel?: boolean }) {
   const { theme, setTheme, themes } = useTheme();
   const hydrated = useHydrated();
 
@@ -72,10 +79,14 @@ export function ThemeToggle({ className }: { className?: string }) {
       aria-label={label}
       title={label}
       onClick={() => setTheme(next)}
-      className={cn("p-1 rounded text-fg-tertiary hover:text-fg-bright hover:bg-fill transition-colors", className)}
+      className={cn(
+        "flex items-center gap-2 p-1 rounded text-fg-tertiary hover:text-fg-bright hover:bg-fill transition-colors",
+        className,
+      )}
     >
       {/* The button keeps its size while empty, so the header does not shift. */}
       {hydrated ? <Icon strokeWidth={1.5} className="w-3.5 h-3.5" /> : <span className="block w-3.5 h-3.5" />}
+      {showLabel && <span>{label}</span>}
     </button>
   );
 }

@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { GitHubRepoLink } from "@/components/github-repo-link";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { writeToClipboard } from "@/components/copy-button";
 import { toast } from "sonner";
 
@@ -223,6 +224,15 @@ export function StudioMobileHeader({
                 <DropdownMenuItem onClick={() => router.push("/monitoring")} className="cursor-pointer">
                   <Gauge strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Monitoring
                 </DropdownMenuItem>
+                <div className="border-t border-hairline my-1" />
+                {/*
+                 * A button, deliberately NOT a `DropdownMenuItem`: an item is a
+                 * `menuitem`, and a button inside one is two interactive roles in the
+                 * same row. It also carries its own label rather than borrowing a
+                 * caption from this menu, so the embedded surface — where the toggle
+                 * renders nothing — is left with no orphan row (#401).
+                 */}
+                <ThemeToggle showLabel className="w-full px-2 py-1.5 text-sm" />
                 <div className="border-t border-hairline my-1" />
                 <DropdownMenuItem onClick={onLogout} className="text-red-400 cursor-pointer">
                   <LogOut strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Logout

@@ -126,6 +126,37 @@ describe("ThemeToggle", () => {
     expect(screen.getByRole("button").querySelector("svg")?.getAttribute("class")).toContain("lucide-moon");
   });
 
+  // ── The labelled form (#401) ────────────────────────────────────────────────
+
+  /**
+   * The desktop header has room for an icon beside other icons; a dropdown row does
+   * not read that way, and an unlabelled 14px glyph in a menu is not a control a
+   * viewer finds. `showLabel` puts the destination in the button as visible text.
+   */
+  test("showLabel puts the destination in the button as text", () => {
+    withTheme("dark");
+    render(<ThemeToggle showLabel />);
+    expect(screen.getByRole("button").textContent).toContain("Switch to light theme");
+  });
+
+  test("the visible text follows the theme, as the aria-label does", () => {
+    withTheme("light");
+    render(<ThemeToggle showLabel />);
+    expect(screen.getByRole("button").textContent).toContain("Switch to dark theme");
+  });
+
+  /**
+   * The label lives INSIDE the button rather than beside it, so the embedded
+   * contract survives: no provider means no control AND no orphan caption for a
+   * control that is not there. A caller that wrapped its own text around the
+   * toggle would leave that caption behind.
+   */
+  test("the labelled form still renders nothing without a provider", () => {
+    withTheme(undefined, []);
+    const { container } = render(<ThemeToggle showLabel />);
+    expect(container.innerHTML).toBe("");
+  });
+
   test("accepts a className so the header can place it", () => {
     render(<ThemeToggle className="mr-1" />);
     expect(screen.getByRole("button").className).toContain("mr-1");
