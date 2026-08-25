@@ -641,6 +641,12 @@ declares what its own operations may be pointed at. The monitoring Tables tab re
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
 card only where `global` is true, and both take the wording from `label` (#U9).
 
+`POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
+REFUSES rather than hides: it takes the placement from whether the request carries a `target`
+(absent or empty means whole-database) and answers `400` when this provider marks that
+placement unavailable while the other one is available - a targetless `{type:"analyze"}` or
+`{type:"reindex"}` is that request here, the API-side half of the two withheld global cards.
+
 | Operation | Control label | Per-row | Global | Why |
 |-----------|---------------|---------|--------|-----|
 | `analyze` | Update Statistics | yes | **no** | `UPDATE STATISTICS FOR <keyspace>` names one collection, and `dispatchMaintenance` requires the target |

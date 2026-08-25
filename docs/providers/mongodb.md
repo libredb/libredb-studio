@@ -98,6 +98,13 @@ Supported operations: `find`, `findOne`, `aggregate`, `count`, `distinct`, `inse
 [`API_DOCS.md` MongoDB Query Format](../API_DOCS.md) section (under `POST /api/db/query`) and
 [`CLAUDE.md`](../../CLAUDE.md) for the request shape.
 
+Since S8 the **execution confirmation gate reads this same shape**:
+`src/lib/db/destructive-commands.ts` names `deleteOne`, `deleteMany`, `updateOne`, `updateMany` and
+the top-level `$out` / `$merge` aggregate stages as the destructive operations here - so each of
+them asks before it runs, exactly as a `DELETE FROM` does on a SQL engine, and a payload the reader
+cannot read as a document with a string `operation` (mongosh syntax such as
+`db.users.deleteMany({})`, a half-typed object) asks as well rather than staying silent.
+
 ### 3.2 BSON serialization for the grid
 
 `serializeDocument()` ([mongodb.ts:388](../../src/lib/db/providers/document/mongodb.ts)) recursively
@@ -347,6 +354,12 @@ declare the same `MaintenanceType` take different kinds of target, so each provi
 declares what its own operations may be pointed at. The monitoring Tables tab renders a
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
 card only where `global` is true, and both take the wording from `label` (#U9).
+
+`POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
+REFUSES rather than hides: it takes the placement from whether the request carries a `target`
+(absent or empty means whole-database) and answers `400` when this provider marks that
+placement unavailable while the other one is available - a targetless `{type:"check"}` is that
+request here.
 
 | Operation | Control label | Per-row | Global | Why |
 |-----------|---------------|---------|--------|-----|

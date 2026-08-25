@@ -1256,3 +1256,153 @@ describe("a nested block comment under the dialect that reads it", () => {
     expect(applyQueryLimit(sql, 500, 0, {}, "postgres").sql).toBe(expected);
   });
 });
+
+// ─── S5: the whole-body probes read code only ────────────────────────────────
+//
+// The statement's TYPE stopped being fooled by a word written in a comment when
+// the leading-keyword reader arrived (#275), and the end-anchored bound probes
+// stopped being fooled by the trailing run when the statement-end reader did
+// (#280). Three probes were left reading the whole body as characters: the Oracle
+// ROWNUM bound, the UNION test and the nested-SELECT count. A mention of any of
+// them mid-statement - in a line comment, a block comment, a string literal or a
+// quoted identifier - answered for the statement, and for ROWNUM that answer is
+// "already bounded", so the limiter skipped the bound and the full result set came
+// back. They read through `lib/sql/words` now, which is the same span reader the
+// rest of the module already shares.
+
+describe("analyzeQuery: a mention in a comment or a literal is not the statement's code", () => {
+  describe("the Oracle ROWNUM bound", () => {
+    test.each<[string, string]>([
+      ["a mid-statement line comment", "SELECT *\n-- try ROWNUM <= 10 here\nFROM huge_table WHERE active = 1"],
+      ["a mid-statement block comment", "SELECT * FROM huge_table /* ROWNUM <= 10 */ WHERE active = 1"],
+      ["a string literal", "SELECT * FROM huge_table WHERE note = 'ROWNUM <= 10'"],
+      ["a quoted identifier", 'SELECT "ROWNUM <= 10" FROM huge_table'],
+    ])("%s does not mark the statement bounded", (_label, sql) => {
+      expect(analyzeQuery(sql).hasLimit).toBe(false);
+
+      // The consequence the user sees: the bound is injected, so the statement
+      // does not run unbounded.
+      const result = applyQueryLimit(sql, 500);
+      expect(result.wasLimited).toBe(true);
+      expect(result.sql).toBe(`${sql} LIMIT 500`);
+    });
+
+    test.each<[string, string]>([
+      ["written plainly", "SELECT * FROM t WHERE ROWNUM <= 10"],
+      ["with no spaces", "SELECT * FROM t WHERE ROWNUM<10"],
+      ["with a comment between the name and its comparison", "SELECT * FROM t WHERE ROWNUM /* n */ <= 10"],
+      ["after a mention of the same words in a literal", "SELECT * FROM t WHERE n = 'ROWNUM <= 1' AND ROWNUM <= 10"],
+    ])("a real bound %s is still detected", (_label, sql) => {
+      expect(analyzeQuery(sql).hasLimit).toBe(true);
+      expect(applyQueryLimit(sql, 500).wasLimited).toBe(false);
+    });
+
+    // Every code occurrence is asked, not just the first: the regex this replaced
+    // scanned the whole body, so a bound written after another mention of the same
+    // pseudo-column was found, and it still is.
+    test("a bound after a non-bound mention of ROWNUM is found", () => {
+      expect(analyzeQuery("SELECT ROWNUM AS rn FROM t WHERE ROWNUM <= 10").hasLimit).toBe(true);
+    });
+
+    // Between the name and its comparison only whitespace and comments are
+    // trivia. A literal, a quoted identifier and a subscript are the statement's
+    // own text, and this shape is valid PostgreSQL: `rownum` is an ordinary column
+    // holding an array, so `rownum[1] <= 10` is not an Oracle row bound. A reader
+    // that stepped over the subscript called the statement bounded and injected
+    // nothing, and the whole table came back.
+    test("a span between ROWNUM and its comparison is not stepped over", () => {
+      const sql = "SELECT tags FROM t WHERE rownum[1] <= 10";
+
+      expect(analyzeQuery(sql, "postgres").hasLimit).toBe(false);
+      expect(applyQueryLimit(sql, 500, 0, {}, "postgres").sql).toBe(`${sql} LIMIT 500`);
+    });
+
+    test("a bare ROWNUM with no comparison is not a bound", () => {
+      expect(analyzeQuery("SELECT ROWNUM, id FROM t").hasLimit).toBe(false);
+      expect(analyzeQuery("SELECT * FROM t WHERE ROWNUM = 1").hasLimit).toBe(false);
+      expect(analyzeQuery("SELECT * FROM t WHERE ROWNUM <= x").hasLimit).toBe(false);
+      expect(analyzeQuery("SELECT * FROM t ORDER BY ROWNUM").hasLimit).toBe(false);
+    });
+  });
+
+  describe("the UNION test", () => {
+    test.each<[string, string]>([
+      ["a mid-statement line comment", "SELECT id\n-- UNION ALL with archive later\nFROM users"],
+      ["a mid-statement block comment", "SELECT id FROM users /* UNION archive */ WHERE active = 1"],
+      ["a string literal", "SELECT id FROM users WHERE note = 'UNION'"],
+      ["a quoted identifier", 'SELECT "UNION" FROM users'],
+    ])("%s does not make the statement a union", (_label, sql) => {
+      expect(analyzeQuery(sql).isUnion).toBe(false);
+    });
+
+    test.each<[string, string]>([
+      ["a plain UNION", "SELECT 1 UNION SELECT 2"],
+      ["UNION ALL", "SELECT 1 UNION ALL SELECT 2"],
+      ["a UNION after a literal mentioning it", "SELECT n FROM a WHERE n = 'UNION' UNION SELECT n FROM b"],
+    ])("%s is still a union", (_label, sql) => {
+      expect(analyzeQuery(sql).isUnion).toBe(true);
+    });
+  });
+
+  describe("the nested-SELECT count", () => {
+    test.each<[string, string]>([
+      ["a mid-statement line comment", "SELECT id\n-- SELECT was here\nFROM users"],
+      ["a mid-statement block comment", "SELECT id FROM users /* SELECT id FROM archive */"],
+      ["a string literal", "SELECT id FROM users WHERE note = 'SELECT 1'"],
+      ["a quoted identifier", 'SELECT "SELECT" FROM users'],
+    ])("%s is not a nested SELECT", (_label, sql) => {
+      expect(analyzeQuery(sql).hasSubquery).toBe(false);
+    });
+
+    test.each<[string, string]>([
+      ["a scalar subquery", "SELECT (SELECT 1) AS x"],
+      ["an IN subquery", "SELECT id FROM users WHERE id IN (SELECT user_id FROM orders)"],
+      ["a subquery after a literal mentioning one", "SELECT (SELECT 1) AS x FROM t WHERE n = 'SELECT 2'"],
+    ])("%s still counts", (_label, sql) => {
+      expect(analyzeQuery(sql).hasSubquery).toBe(true);
+    });
+  });
+
+  // The fail-safe direction this module keeps everywhere: where a run does not
+  // close, no reader over `lib/sql/spans` can say what is inside it, so the three
+  // probes keep the whole-text reading they had rather than reporting the bound
+  // as absent. `\'` is the shape that reaches this - the two dialect readings of
+  // it put the end of the string in different places.
+  describe("a run that never closes keeps the conservative reading", () => {
+    test("a real ROWNUM bound behind an unresolvable literal is still reported", () => {
+      const sql = "SELECT * FROM t WHERE name = 'O\\'Brien' AND ROWNUM <= 10";
+
+      expect(analyzeQuery(sql).hasLimit).toBe(true);
+      // Nothing is rewritten either way: the statement's end is undeterminable.
+      expect(applyQueryLimit(sql, 500)).toMatchObject({ sql, wasLimited: false });
+    });
+
+    test("a real UNION behind an unresolvable literal is still reported", () => {
+      expect(analyzeQuery("SELECT n FROM a WHERE n = 'O\\'Brien' UNION SELECT n FROM b").isUnion).toBe(true);
+    });
+
+    test("a real subquery behind an unresolvable literal is still reported", () => {
+      expect(analyzeQuery("SELECT * FROM t WHERE n = 'O\\'Brien' AND id IN (SELECT id FROM u)").hasSubquery).toBe(true);
+    });
+  });
+
+  // The dialect the module already receives decides which runs are not code, and
+  // these probes now get the same answer as the rest of the module: `#` opens a
+  // comment in MySQL and is an operator character in PostgreSQL, so the SAME text
+  // is a note on one engine and the statement's own bound on the other.
+  //
+  // The `#` run sits MID-statement deliberately. Measured on the trailing form
+  // (`SELECT * FROM t WHERE a = 1 # ROWNUM <= 10 is only a note\n`), both dialects
+  // answer the same with and without the code-word reading above: `readStatementEnd`
+  // already trims a trailing MySQL comment off the text these probes read, so that
+  // shape is decided by the statement-end reader and pins nothing here. With the run
+  // mid-statement the mysql arm flips - bounded before the change, unbounded after.
+  test("which runs are comments is the dialect's answer here too", () => {
+    const sql = "SELECT * FROM t WHERE a #> '{b}' AND ROWNUM <= 10";
+    const commented = "SELECT * FROM t WHERE a = 1 # ROWNUM <= 10\nAND b = 2";
+
+    expect(analyzeQuery(sql, "postgres").hasLimit).toBe(true);
+    expect(analyzeQuery(commented, "mysql").hasLimit).toBe(false);
+    expect(analyzeQuery(commented, "postgres").hasLimit).toBe(true);
+  });
+});

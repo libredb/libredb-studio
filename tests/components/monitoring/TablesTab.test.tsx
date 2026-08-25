@@ -585,3 +585,161 @@ describe("per-row controls follow the provider's own declaration", () => {
     expect(titles).toContain("Optimize");
   });
 });
+
+// U22: the two per-table maintenance items in the schema explorer are DEEP LINKS - they
+// navigate to a maintenance surface and nothing more. They are gated on what the OPERATION
+// declares (`maintenanceControl(..., "perEntity")`), which is a different question from
+// whether the destination has a ROW to hang the control on: this panel renders per-table
+// buttons for rows in `data.tables` only, and both of its absence paths render none. So an
+// operator who arrives from "Optimize Table" on an engine that publishes no table
+// statistics reads an empty list and is told nothing about the operation they asked for.
+describe("a per-table operation with no row to run it on (U22)", () => {
+  // Scoped here as well as in the blocks above: bun:test registers a hook on the
+  // enclosing describe only, so without this the first render in this block leaks into
+  // the second and the control arm queries the previous test's DOM.
+  afterEach(() => {
+    cleanup();
+  });
+
+  /** MySQL's declaration: three per-table operations under the engine's own wording. */
+  const perTableCapabilities = () =>
+    makeCapabilities({
+      maintenanceOperations: ["analyze", "optimize", "check", "kill"],
+      maintenanceOperationSpecs: {
+        analyze: { label: "Analyze Table", perEntity: true, global: true },
+        optimize: { label: "Optimize Table", perEntity: true, global: true },
+        check: { label: "Check Table", perEntity: true, global: true },
+        kill: { label: "Kill Connection", perEntity: false, global: false },
+      },
+    });
+
+  /** Statistics refused: tables absent from the payload, the engine's sentence under `errors`. */
+  function refusedData(): MonitoringData {
+    const rest: MonitoringData = makeData();
+    delete rest.tables;
+    return { ...rest, errors: { tables: "no table statistics for this catalog" } } as MonitoringData;
+  }
+
+  /** Statistics not published: an empty list while the overview counts six tables. */
+  function statslessData(): MonitoringData {
+    const base = makeData();
+    return { ...base, overview: { ...base.overview, tableCount: 6 }, tables: [] } as MonitoringData;
+  }
+
+  // Rendered exactly as `MonitoringDashboard` renders it (src/.../MonitoringDashboard.tsx:305):
+  // no `isAdmin` prop at all, so this arm pins the default-prop path every real caller
+  // takes. /monitoring is also the route a non-admin is sent to, which is why the note
+  // below names no page they cannot open.
+  test("names the per-table operations it cannot start when no statistics were published", () => {
+    const { getByTestId, queryByText } = render(
+      <TablesTab
+        data={statslessData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={perTableCapabilities()}
+      />,
+    );
+
+    const note = getByTestId("tables-maintenance-unattachable").textContent ?? "";
+    // The engine's own wording, the same strings the per-row buttons would carry.
+    expect(note).toContain("Analyze Table");
+    expect(note).toContain("Optimize Table");
+    expect(note).toContain("Check Table");
+    // A connection id comes from the Sessions panel, so it was never on offer here.
+    expect(note).not.toContain("Kill Connection");
+    // The existing absence sentence is still what explains the empty list.
+    expect(queryByText("No table statistics available.")).not.toBeNull();
+    // This branch DID get an answer - an empty list - so it may name the cause.
+    expect(note).toContain("published no table statistics");
+    // A non-admin is sent to /monitoring and denied /admin/* by src/proxy.ts, and this
+    // component cannot tell the two apart (the prop defaults to true), so the note must
+    // not send anyone to the admin Operations page.
+    expect(note).not.toContain("Operations page");
+  });
+
+  test("words a refused read as a read, and leaves the cause to the engine", () => {
+    const { getByTestId } = render(
+      <TablesTab
+        data={refusedData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={perTableCapabilities()}
+      />,
+    );
+
+    // The engine's own refusal still carries the panel; the note adds what the refusal
+    // costs the operator who came here to run one operation.
+    expect(getByTestId("panel-unavailable-message").textContent).toBe("no table statistics for this catalog");
+    const note = getByTestId("tables-maintenance-unattachable").textContent ?? "";
+    expect(note).toContain("Optimize Table");
+    // A refusal is not an absence of statistics: the engine's reason is already on the
+    // panel above (it may be a permission or catalog failure), so this sentence states
+    // only what it measured - that nothing could be read - and leaves the cause there.
+    expect(note).toContain("no table statistics could be read");
+    expect(note).not.toContain("published no table statistics");
+    expect(note).not.toContain("Operations page");
+  });
+
+  test("stays silent on a database that genuinely holds no tables", () => {
+    const base = makeData();
+    const { queryByTestId, queryByText } = render(
+      <TablesTab
+        data={{ ...base, overview: { ...base.overview, tableCount: 0 }, tables: [] } as MonitoringData}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={perTableCapabilities()}
+      />,
+    );
+
+    // Nothing to maintain is not a dead end, so the note would only be noise.
+    expect(queryByText("No tables found.")).not.toBeNull();
+    expect(queryByTestId("tables-maintenance-unattachable")).toBeNull();
+  });
+
+  test("stays silent while rows are there to carry the controls", () => {
+    const { queryByTestId } = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={perTableCapabilities()}
+      />,
+    );
+
+    expect(queryByTestId("tables-maintenance-unattachable")).toBeNull();
+  });
+
+  test("stays silent where the engine declares no per-table maintenance", () => {
+    const { queryByTestId } = render(
+      <TablesTab
+        data={statslessData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={makeCapabilities({
+          maintenanceOperations: ["vacuum"],
+          maintenanceOperationSpecs: { vacuum: { label: "Vacuum Database", perEntity: false, global: true } },
+        })}
+      />,
+    );
+
+    // Nothing was ever offered per table, so there is no per-table dead end to explain.
+    expect(queryByTestId("tables-maintenance-unattachable")).toBeNull();
+  });
+
+  // `isAdmin={false}` is a configuration no caller in src/ produces today - the only
+  // caller passes nothing and the prop defaults to true - so this arm pins the GATE
+  // rather than a live path. The live path is the first test in this block.
+  test("stays silent when a caller does declare a non-admin", () => {
+    const { queryByTestId } = render(
+      <TablesTab
+        data={statslessData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        isAdmin={false}
+        capabilities={perTableCapabilities()}
+      />,
+    );
+
+    expect(queryByTestId("tables-maintenance-unattachable")).toBeNull();
+  });
+});

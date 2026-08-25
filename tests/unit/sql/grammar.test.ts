@@ -287,7 +287,8 @@ describe("resolveSqlGrammar", () => {
   });
 
   // Neither search engine is reachable from this run, so neither row was
-  // established - and PD-5 forbids reading one dialect's rule off another's, which
+  // established - and grammar.ts's rule 2 forbids reading one dialect's rule off
+  // another's behaviour, which
   // here would mean copying five refusals onto a sixth grammar. They keep the
   // compatibility default, and the direction that costs is stated rather than
   // implied: if `//` DOES open a comment in one of them, its splitter over-splits

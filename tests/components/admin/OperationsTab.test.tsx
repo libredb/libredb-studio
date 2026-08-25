@@ -1661,4 +1661,121 @@ describe("OperationsTab", () => {
     expect(titles).toContain("Analyze");
     expect(titles).toContain("Vacuum");
   });
+  // =========================================================================
+  // U22: the per-table operation a deep link asked for, with no row to run it on.
+  //
+  // The schema explorer's two maintenance items are DEEP LINKS: an admin clicking
+  // "Optimize Table" lands here (Studio.tsx `openMaintenance` pushes
+  // /admin/operations?table=...), and this page renders a per-table control only for
+  // a ROW it has statistics for. Every empty branch of the Tables panel therefore said
+  // nothing at all about the operation the operator arrived asking for.
+  // =========================================================================
+
+  /** MySQL's declaration: three per-table operations under the engine's own wording. */
+  const perTableSpecs = {
+    capabilities: {
+      supportsMaintenance: true,
+      maintenanceOperations: ["analyze", "optimize", "check", "kill"],
+      maintenanceOperationSpecs: {
+        analyze: { label: "Analyze Table", perEntity: true, global: true },
+        optimize: { label: "Optimize Table", perEntity: true, global: true },
+        check: { label: "Check Table", perEntity: true, global: true },
+        kill: { label: "Kill Connection", perEntity: false, global: false },
+      },
+    },
+  };
+
+  test("names the deep-linked table the page has no row for", async () => {
+    mockMetadata = perTableSpecs;
+    monitoringOverride = { data: { activeSessions: defaultSessions, tables: multiTables } };
+    setMockSearchParams(new URLSearchParams("table=archived_events"));
+
+    const { getByTestId } = await render_();
+
+    const note = getByTestId("operations-maintenance-unreachable").textContent ?? "";
+    // The engine's own wording, the same strings the per-row buttons would carry.
+    expect(note).toContain("Analyze Table");
+    expect(note).toContain("Optimize Table");
+    expect(note).toContain("Check Table");
+    // A connection id comes from the Sessions panel, so it was never on offer per table.
+    expect(note).not.toContain("Kill Connection");
+    // The name is a measurement here: it is the search param that seeded the filter.
+    expect(note).toContain("archived_events");
+  });
+
+  test("names the operations and the table when the engine refused the read", async () => {
+    mockMetadata = perTableSpecs;
+    monitoringOverride = {
+      data: { activeSessions: defaultSessions, errors: { tables: "permission denied for relation pg_class" } },
+    };
+    setMockSearchParams(new URLSearchParams("table=orders"));
+
+    const { getByTestId } = await render_();
+
+    // The engine's own refusal still carries the panel; the note adds what it costs.
+    expect(getByTestId("operations-tables-empty").textContent).toBe("permission denied for relation pg_class");
+    const note = getByTestId("operations-maintenance-unreachable").textContent ?? "";
+    expect(note).toContain("Optimize Table");
+    expect(note).toContain("orders");
+  });
+
+  test("names the operations without a table when no deep link carried one", async () => {
+    mockMetadata = perTableSpecs;
+    monitoringOverride = {
+      data: { activeSessions: defaultSessions, errors: { tables: "permission denied for relation pg_class" } },
+    };
+
+    const { getByTestId } = await render_();
+
+    const note = getByTestId("operations-maintenance-unreachable").textContent ?? "";
+    expect(note).toContain("Optimize Table");
+    expect(note).toContain("no row to run it on");
+    // Nothing named a table, so the sentence must not claim one was asked for.
+    expect(note).not.toContain("no row for");
+  });
+
+  test("says nothing on a database that genuinely holds no tables", async () => {
+    mockMetadata = perTableSpecs;
+    monitoringOverride = { data: { activeSessions: defaultSessions, tables: [], overview: { tableCount: 0 } } };
+
+    const { queryByTestId, getByTestId } = await render_();
+
+    expect(getByTestId("operations-tables-empty").textContent).toBe("No tables found.");
+    // Nothing to maintain is not a dead end, so the note would only be noise.
+    expect(queryByTestId("operations-maintenance-unreachable")).toBeNull();
+  });
+
+  test("says nothing where the engine declares no per-table maintenance", async () => {
+    mockMetadata = {
+      capabilities: {
+        supportsMaintenance: true,
+        maintenanceOperations: ["vacuum"],
+        maintenanceOperationSpecs: { vacuum: { label: "Vacuum Database", perEntity: false, global: true } },
+      },
+    };
+    monitoringOverride = {
+      data: { activeSessions: defaultSessions, errors: { tables: "permission denied for relation pg_class" } },
+    };
+    setMockSearchParams(new URLSearchParams("table=orders"));
+
+    const { queryByTestId } = await render_();
+
+    // Nothing was ever offered per table, so there is no per-table dead end to explain.
+    expect(queryByTestId("operations-maintenance-unreachable")).toBeNull();
+  });
+
+  test("says nothing once the operator's own filter is what empties the list", async () => {
+    mockMetadata = perTableSpecs;
+    monitoringOverride = { data: { activeSessions: defaultSessions, tables: multiTables } };
+    setMockSearchParams(new URLSearchParams("table=orders"));
+
+    const { queryByTestId, getByPlaceholderText } = await render_();
+
+    await act(async () => {
+      fireEvent.change(getByPlaceholderText("Filter..."), { target: { value: "zzz" } });
+    });
+
+    // The rows and their controls are there; the operator's own filter hid them.
+    expect(queryByTestId("operations-maintenance-unreachable")).toBeNull();
+  });
 });

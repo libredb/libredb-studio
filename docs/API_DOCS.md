@@ -764,7 +764,7 @@ admin routes use.
 |-------|------|----------|-------------|
 | `connection` | object | Yes | Database connection configuration |
 | `type` | string | Yes | Maintenance operation type |
-| `target` | string | No | Target table name or PID (for kill) |
+| `target` | string | No | Target table name or PID (for kill). Also selects the *placement* the request is validated as: absent or empty means whole-database, any name means one object |
 
 **Maintenance Types:**
 
@@ -808,6 +808,17 @@ admin routes use.
 ```
 
 The handler validates against the target provider's capabilities: `type` is required (`{ "error": "Maintenance type is required" }`), the provider must support maintenance at all, and the requested operation must be in that provider's supported set (see the matrix above) — otherwise a `400` is returned listing what the provider does support.
+
+A fourth `400` gates what the operation may be *pointed at*. Each provider declares that separately
+(`maintenanceOperationSpecs`, documented per engine under `docs/providers/`), and `target` selects
+which half of the declaration this request is: absent or empty is a whole-database request, a name
+is a per-object one. When the provider says that placement is not offered for this operation while
+the other one is, nothing is run and the reply names the provider's own wording for the control -
+`{ "error": "Vacuum Database takes no target on this database: it runs over the whole database. Omit 'target'." }`
+for a targeted SQLite `vacuum`, and the mirror-image *"requires a target"* message for a targetless
+operation that has no whole-database form. An operation whose declaration offers *neither* placement
+is not refused: its target is a session or query id that neither half describes (every engine's
+`kill`), so the request passes through.
 
 A `druid` connection fails the second check whatever the `type` is, with `{ "error": "Maintenance operations not supported for this database" }`: no maintenance operation is reachable from Druid SQL, so its supported set is empty by design. Compaction and retention are Coordinator and task concerns, and Druid publishes no catalog of running queries, so there is no id for `kill` to name.
 

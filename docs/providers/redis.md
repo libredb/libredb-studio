@@ -201,6 +201,14 @@ This mirrors the embedded LibreDB provider, and exists so the commented cheatshe
 explorer inserts is directly runnable: selecting one command runs it, and running the whole buffer
 runs its first one (#427).
 
+Since S8 the **execution confirmation gate reads a buffer the same way**:
+`src/lib/db/destructive-commands.ts` drops `#` lines and takes the first block as above, dispatches
+on a leading `{` as §3.4 does, and asks before running any command in its Redis destructive
+vocabulary - key, expiry, string, hash, list, set, sorted-set and stream writes, the scripting
+entry points, and the server and access commands, with container commands such as `CONFIG SET`
+matched on their two-token spelling - while a body it cannot read (broken JSON, a JSON body whose
+`command` is not a string) asks rather than staying silent.
+
 ### 3.5 Reply normalisation into the shared grid
 
 Redis replies are heterogeneous (status strings, integers, nil, flat arrays, hash arrays, bulk
@@ -528,6 +536,12 @@ declare the same `MaintenanceType` take different kinds of target, so each provi
 declares what its own operations may be pointed at. The monitoring Tables tab renders a
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
 card only where `global` is true, and both take the wording from `label` (#U9).
+
+`POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
+REFUSES rather than hides: it takes the placement from whether the request carries a `target`
+(absent or empty means whole-database) and answers `400` when this provider marks that
+placement unavailable while the other one is available - `{type:"analyze", target:"session:"}`
+is that request here, and it is the only one this provider can refuse.
 
 | Operation | Control label | Per-row | Global | Why |
 |-----------|---------------|---------|--------|-----|

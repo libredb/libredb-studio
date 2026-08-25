@@ -16,6 +16,15 @@
  * `SELECT` let `INSERT INTO ... SELECT` type its own statement as a read, and the
  * appended LIMIT then bounded the rows that statement WROTE (#287).
  *
+ * The three probes that read the statement's whole BODY - the Oracle `ROWNUM`
+ * bound, the UNION test and the nested-SELECT count - read code words through
+ * `lib/sql/words` for the same reason. Run over the text as characters, a word the
+ * statement merely MENTIONS answered for it: `… WHERE note = 'ROWNUM <= 10'` and
+ * `… /* ROWNUM <= 10 *\/ …` both read as already bounded, so no LIMIT was injected
+ * and the whole result set came back, and a UNION or a SELECT written in a comment
+ * mis-shaped the other two answers (S5). The leading comment was already excluded
+ * by hand before that (#289 review); everything after the first keyword was not.
+ *
  * Where the statement ENDS comes from `lib/sql/statement-end`, and both the
  * "already bounded" probes and the injection use that one reading. They used to
  * disagree with each other by accident - each worked on the raw text - and a
@@ -28,7 +37,9 @@
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
+import { hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";
 import { readStatementEnd } from "@/lib/sql/statement-end";
+import { findCodeWord } from "@/lib/sql/words";
 import type { DatabaseType } from "@/lib/types";
 
 // ============================================================================
@@ -77,6 +88,71 @@ export interface LimitedQueryResult {
 /**
  * SQL sorgusunu analiz eder ve türünü, LIMIT/OFFSET durumunu belirler.
  */
+
+/**
+ * The first position at or after `index` that is not trivia.
+ *
+ * Only whitespace and comments are skipped. A literal, a quoted identifier and a
+ * subscript are the statement's own text, so a reader that stepped over one would
+ * let the characters after it answer for the characters inside it. Measured on
+ * valid PostgreSQL: `… WHERE rownum[1] <= 10` reads a column named `rownum`
+ * holding an array, which is not an Oracle row bound, and a reader that took the
+ * subscript for trivia reported that statement already bounded - so no LIMIT was
+ * injected and the whole table came back. Pinned in
+ * `tests/unit/db/query-limiter.test.ts`. Skipping comments is what lets
+ * `ROWNUM /* n *\/ <= 10` be read as the one bound it is.
+ */
+function skipTrivia(sql: string, index: number, grammar: SqlGrammar): number {
+  let i = index;
+
+  while (i < sql.length) {
+    const span = readSqlSpan(sql, i, grammar);
+    if (span === null) return i;
+    if (span.kind !== "whitespace" && span.kind !== "line-comment" && span.kind !== "block-comment") return i;
+    i = span.end;
+  }
+
+  return i;
+}
+
+/**
+ * Whether a `< n` / `<= n` comparison follows the word ending at `index`.
+ *
+ * The shape is the one the regex this replaced accepted, deliberately: `ROWNUM`
+ * on the left, `<` or `<=`, a literal count. The mirrored form (`10 >= ROWNUM`)
+ * was not read as a bound before and is not read as one now - reading it would be
+ * a behaviour change rather than the span fix S5 asks for.
+ */
+function readsRownumBound(sql: string, index: number, grammar: SqlGrammar): boolean {
+  let i = skipTrivia(sql, index, grammar);
+  if (sql[i] !== "<") return false;
+  i++;
+  if (sql[i] === "=") i++;
+  i = skipTrivia(sql, i, grammar);
+  return i < sql.length && sql[i] >= "0" && sql[i] <= "9";
+}
+
+/** Whether the statement's CODE carries an Oracle `ROWNUM <= n` bound at or after `from`. */
+function hasCodeRownumBound(sql: string, from: number, grammar: SqlGrammar): boolean {
+  // Every occurrence is asked, not just the first: `SELECT ROWNUM AS rn FROM t
+  // WHERE ROWNUM <= 10` is bounded by its second one, and the regex this replaced
+  // found it.
+  let found = findCodeWord(sql, "ROWNUM", from, grammar);
+
+  while (found !== null) {
+    if (readsRownumBound(sql, found.end, grammar)) return true;
+    found = findCodeWord(sql, "ROWNUM", found.end, grammar);
+  }
+
+  return false;
+}
+
+/** Whether the statement's code contains `word` more than once at or after `from`. */
+function hasRepeatedCodeWord(sql: string, word: string, from: number, grammar: SqlGrammar): boolean {
+  const first = findCodeWord(sql, word, from, grammar);
+  if (first === null) return false;
+  return findCodeWord(sql, word, first.end, grammar) !== null;
+}
 
 /** The type this module reports for a statement operated by `keyword`. */
 function classifyKeyword(keyword: string | undefined): ParsedQueryInfo["type"] {
@@ -127,11 +203,27 @@ function analyzeUnderGrammar(sql: string, grammar: SqlGrammar): ParsedQueryInfo 
   // statement's TEXT rather than just its leading keyword has to start here, or a
   // word written in the leading comment answers for the statement itself.
   const fromKeyword = leading === null ? statement : statement.slice(leading.start);
-  // Whitespace-collapsed, upper-cased body for the probes that scan text. Built
-  // from `fromKeyword`, NOT from `statement`: a leading comment reading
-  // "switch to ROWNUM <= 10" once marked the statement already bounded, which
-  // left the query unbounded - the very symptom #275 removed (PR #289 review).
+  // Where the statement's own code starts. The body probes below take `statement`
+  // plus this offset rather than the `fromKeyword` slice: `readSqlSpan` looks at
+  // the character BEFORE the position it is asked about to tell an Oracle `q'…'`
+  // tag from the tail of a name, so a suffix slice can answer differently than the
+  // same text in place.
+  const bodyStart = leading === null ? 0 : leading.start;
+  // Whitespace-collapsed, upper-cased body, kept for the ONE case the span reader
+  // cannot serve - see `unresolved` below. Built from `fromKeyword`, NOT from
+  // `statement`: a leading comment reading "switch to ROWNUM <= 10" once marked the
+  // statement already bounded, which left the query unbounded - the very symptom
+  // #275 removed (PR #289 review).
   const normalized = fromKeyword.replace(/\s+/g, " ").toUpperCase();
+  // Whether part of this statement is text no reader over `lib/sql/spans` can
+  // resolve - a run that never closes, which on the `\'` shape is a genuine
+  // dialect disagreement rather than a defect. What is written inside such a run is
+  // unknowable, so the three body probes keep the whole-text reading they had here
+  // instead: declining to SEE a bound is the direction that costs rows, and
+  // `applyQueryLimit` refuses to rewrite such a statement anyway (`readStatementEnd`
+  // reports it unrewritable), so the fallback can only widen what is REPORTED and
+  // can never place a bound.
+  const unresolved = hasUnterminatedSpan(fromKeyword, grammar);
 
   // A `WITH` statement is typed by the keyword its CTE list OPERATES, not by the
   // keyword it opens with and not by a `SELECT` found in its text. Asking whether
@@ -188,8 +280,14 @@ function analyzeUnderGrammar(sql: string, grammar: SqlGrammar): ParsedQueryInfo 
     }
   }
 
-  // Oracle legacy: ROWNUM in WHERE clause
-  if (!hasLimit && /\bROWNUM\s*<=?\s*\d+/i.test(normalized)) {
+  // Oracle legacy: ROWNUM in WHERE clause. Read as code words, so a bound written
+  // in a comment or inside a literal is not the statement's: read as characters,
+  // `… WHERE note = 'ROWNUM <= 10'` said the statement was already bounded and the
+  // limiter injected nothing (S5).
+  if (
+    !hasLimit &&
+    (unresolved ? /\bROWNUM\s*<=?\s*\d+/.test(normalized) : hasCodeRownumBound(statement, bodyStart, grammar))
+  ) {
     hasLimit = true;
   }
 
@@ -201,8 +299,11 @@ function analyzeUnderGrammar(sql: string, grammar: SqlGrammar): ParsedQueryInfo 
     existingOffset = parseInt(offsetOnlyMatch[1]);
   }
 
-  // UNION detection
-  const isUnion = /\bUNION\b/i.test(normalized);
+  // UNION detection - the code word, for the same reason: a comment reading
+  // "UNION ALL with archive later" is not a union.
+  const isUnion = unresolved
+    ? /\bUNION\b/.test(normalized)
+    : findCodeWord(statement, "UNION", bodyStart, grammar) !== null;
 
   // CTE detection (WITH clause) - this answers what the statement LEADS with,
   // which is a different question from what it operates: `WITH t AS (...) INSERT
@@ -210,9 +311,11 @@ function analyzeUnderGrammar(sql: string, grammar: SqlGrammar): ParsedQueryInfo 
   // keyword and is true for every `WITH`, whatever its type turned out to be.
   const hasCTE = keyword === "WITH";
 
-  // Subquery detection (nested SELECT - birden fazla SELECT var mı)
-  const selectCount = (normalized.match(/\bSELECT\b/g) || []).length;
-  const hasSubquery = selectCount > 1;
+  // Subquery detection: a SECOND SELECT in the statement's code. Counting the word
+  // in the text made `… WHERE note = 'SELECT 1'` a subquery.
+  const hasSubquery = unresolved
+    ? (normalized.match(/\bSELECT\b/g) || []).length > 1
+    : hasRepeatedCodeWord(statement, "SELECT", bodyStart, grammar);
 
   return {
     type,

@@ -61,6 +61,35 @@ const TABLE_ACTIONS: { type: MaintenanceType; label: string; Icon: LucideIcon; h
   { type: "check", label: "Check", Icon: ShieldCheck, hover: "hover:text-green-500" },
 ];
 
+/**
+ * Why no per-table maintenance control is anywhere on this page.
+ *
+ * The schema explorer's two maintenance items are DEEP LINKS, and for an admin they
+ * land HERE - `openMaintenance` in src/components/Studio.tsx pushes
+ * /admin/operations?table=... - not on the monitoring Tables panel. They are gated on
+ * what the OPERATION declares (`maintenanceControl(..., "perEntity")`), which is a
+ * different question from whether this page has a ROW to hang the control on: the
+ * controls render per row of `filteredTables` only, so every empty branch of the panel
+ * below rendered nothing at all about the operation the operator arrived asking for
+ * (U22).
+ *
+ * Unlike the monitoring panel, this page HAS the requested table's name - the `?table=`
+ * search param that seeded the filter - so naming it is a measurement rather than an
+ * invention. It is named only while the filter still holds that param: once the operator
+ * types something else, that table is no longer why the list is empty.
+ */
+function TableMaintenanceUnreachableNote({
+  actions,
+  missingTable,
+}: Readonly<{ actions: string[]; missingTable: string | null }>) {
+  const where = missingTable === null ? "no row to run it on" : `no row for "${missingTable}" to run it on`;
+  return (
+    <p className="px-4 pb-4 text-xs text-fg-muted leading-relaxed" data-testid="operations-maintenance-unreachable">
+      {`Per-table maintenance (${actions.join(", ")}) is run from a row of this list, and this page has ${where}.`}
+    </p>
+  );
+}
+
 interface OperationLogEntry {
   id: string;
   timestamp: Date;
@@ -232,6 +261,25 @@ export function OperationsTab() {
   const tablesUnavailable = data?.tables === undefined ? data?.errors?.tables : undefined;
   const [tableSearch, setTableSearch] = useState(deepLinkedTable ?? "");
   const filteredTables = tables.filter((t) => t.tableName.toLowerCase().includes(tableSearch.toLowerCase()));
+
+  // U22. Both halves have to be true for the dead end: the engine declares a control
+  // that takes ONE table, and this page has no row to offer it on. Which absence it is
+  // decides what the note may say:
+  //  - the deep link named a table and no row here matches it, so the name can be stated;
+  //  - or the read was refused / the engine published no statistics while its own
+  //    overview counts tables - the same reading `TablesTab` uses - and no name is known.
+  // A database that genuinely holds no tables is neither: there is nothing to maintain
+  // and nothing to explain. An empty list the operator's OWN filter produced is neither
+  // either, which is why the deep-link arm requires the filter to still hold the param.
+  const deepLinkRowMissing =
+    deepLinkedTable !== null &&
+    deepLinkedTable !== "" &&
+    tableSearch === deepLinkedTable &&
+    filteredTables.length === 0;
+  const tableStatsAbsent =
+    tablesUnavailable !== undefined || (tables.length === 0 && (data?.overview?.tableCount ?? 0) > 0);
+  const maintenanceUnreachable =
+    tableActions.length > 0 && filteredTables.length === 0 && (deepLinkRowMissing || tableStatsAbsent);
 
   const activeCount = sessions.filter((s) => s.state === "active").length;
   const idleCount = sessions.filter((s) => s.state === "idle").length;
@@ -511,6 +559,12 @@ export function OperationsTab() {
                 </div>
               )}
             </div>
+            {maintenanceUnreachable && (
+              <TableMaintenanceUnreachableNote
+                actions={tableActions.map((a) => a.label)}
+                missingTable={deepLinkRowMissing ? deepLinkedTable : null}
+              />
+            )}
           </div>
         )}
 

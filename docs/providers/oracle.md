@@ -815,6 +815,14 @@ declares what its own operations may be pointed at. The monitoring Tables tab re
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
 card only where `global` is true, and both take the wording from `label` (#U9).
 
+`POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
+REFUSES rather than hides: it takes the placement from whether the request carries a `target`
+(absent or empty means whole-database) and answers `400` when this provider marks that
+placement unavailable while the other one is available. On Oracle it never speaks: every
+declaration above is either both placements or neither. `kill` declaring neither is not "takes
+no target" - `SID,SERIAL#` comes from the Sessions panel, which this field says nothing about -
+so those requests pass through.
+
 | Operation | Control label | Per-row | Global | Why |
 |-----------|---------------|---------|--------|-----|
 | `analyze` | Gather Statistics | yes | yes | `GATHER_TABLE_STATS` / `GATHER_SCHEMA_STATS` |

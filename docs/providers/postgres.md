@@ -581,6 +581,13 @@ declares what its own operations may be pointed at. The monitoring Tables tab re
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
 card only where `global` is true, and both take the wording from `label` (#U9).
 
+`POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
+REFUSES rather than hides: it takes the placement from whether the request carries a `target`
+(absent or empty means whole-database) and answers `400` when this provider marks that
+placement unavailable while the other one is available. On PostgreSQL it never speaks, for the
+same reason both surfaces were already right here: every declaration above is either both
+placements or neither.
+
 | Operation | Control label | Per-row | Global | Why |
 |-----------|---------------|---------|--------|-----|
 | `vacuum` | Vacuum Table | yes | yes | `VACUUM ANALYZE <t>` and bare `VACUUM ANALYZE` both exist |

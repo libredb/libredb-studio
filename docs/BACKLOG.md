@@ -21,11 +21,11 @@ None of it is a GitHub issue.
 
 **Sections**
 
-- [SQL statement reading](#sql-statement-reading) — S2–S8 · 7
+- [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
 - [Drivers and connections](#drivers-and-connections) — D1–D26, U17 · 8
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U22 · 13
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 11
 - [Authentication and security headers](#authentication-and-security-headers) — AU2
 - [Tests](#tests) — T1–T3 · 2
 - [Dependencies](#dependencies) — P1–P5 · 5
@@ -76,13 +76,6 @@ The decline that keeps #293 safe keys on an unanchored `OFFSET`/`FETCH` mention 
 refused. The precise alternative — walk forward to where the unresolvable region starts — only helps
 for a mention *before* the bad span, and costs a new shared-reader API.
 
-### S5. The limiter's whole-body probes still read inside comments
-
-`src/lib/db/utils/query-limiter.ts` runs its `ROWNUM` test, its `UNION` test and its subquery
-`SELECT` count over the whole statement text. A statement that merely *mentions* a bound in an
-interior comment therefore reads as already bounded. The statement's *type* stopped being fooled this
-way in maintainer-sweep-4/5; these flags did not.
-
 ### S6. Grammar facts left undecided
 
 `grammar.ts` records a fact as established only when a first-party source was found. Where none was,
@@ -120,16 +113,6 @@ Scanning an unreadable region for destructive vocabulary, and asking only when a
 plausibly be in there. Sound on its face. It substitutes a cleverer reading for the honesty rule #297
 pinned: the gate asks because it *cannot* read the text, not because it guessed what is in it.
 Revisit only with an explicit product decision.
-
-### S8. The confirmation gate's destructive vocabulary is SQL-only
-
-`isDangerousQuery` recognises SQL keywords. It is close to inert for the two non-SQL types it is
-still asked about: a Redis `FLUSHALL` or `DEL key`, and a MongoDB `{"operation":"drop"}`, are
-destructive and match nothing. The span-based half of the gate no longer fires on their text at all,
-which leaves the keyword half as the only check — and it does not speak their languages.
-
-**Done when:** a destructive MongoDB operation and a destructive Redis command each ask before
-running, driven from one type-to-facts place rather than a type test in the component.
 
 ---
 
@@ -593,22 +576,6 @@ being OFFERED, not refused. The same missing thing explains both: this banner ha
 **Done when:** a message that is neither a success nor a failure renders as neither, and the degraded
 save uses it.
 
-### U20. The maintenance API validates that an operation EXISTS, not that it can take the target
-
-`src/app/api/db/maintenance/route.ts` checks `capabilities.maintenanceOperations.includes(type)` and
-nothing else, then calls `provider.runMaintenance(type, target)`. Since 2026-08-25 each provider also
-declares what KIND of target each operation takes (`maintenanceOperationSpecs`), and both UI surfaces
-gate on it - but the route does not, so every mismatch the declaration describes stays reachable by a
-direct request. Measured: `POST {type:"vacuum", target:"users"}` against SQLite still vacuums the whole
-file, which is exactly the reading SQLite's `vacuum: { perEntity: false }` exists to withhold.
-
-Not a security hole - the route is admin-gated and every one of these statements is one an admin may
-run - but the invariant lives in one layer only, and the layer it is missing from is the one an
-integration calls.
-
-**Done when:** the route refuses a target an operation cannot take, or the declaration says why the API
-is deliberately wider than the UI.
-
 ---
 
 ### U21. Two global maintenance cards exist for operations that have no card copy
@@ -628,21 +595,6 @@ recorded reason it is withheld.
 
 ---
 
-### U22. `TableItem`'s deep links are gated on the operation, not on where the operation can be run
-
-`src/components/schema-explorer/TableItem.tsx` reads the maintenance declaration since 2026-08-25, so
-the wording is the provider's own and a per-entity operation is what it offers. What it still cannot
-express is that its two items are DEEP LINKS: they navigate to the maintenance page with a table name,
-and whether that page has a control for the operation is a separate question from whether the operation
-takes a table.
-
-The class is recorded in that file's own comment for Elasticsearch ("clicking Merge Segments landed on
-a page with no maintenance controls, no error and no explanation"), and the same shape returns whenever
-a provider declares an operation `perEntity: true` while the destination page renders it under a
-condition of its own.
-
-**Done when:** the link is offered only where the destination renders the control, tested against the
-destination rather than against the declaration.
 ---
 
 ## Authentication and security headers

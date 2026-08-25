@@ -989,7 +989,43 @@ describe("isDangerousQuery", () => {
   test("does not prompt for non-SQL query text whose escaped quote a SQL reader cannot resolve", () => {
     expect(isDangerousQuery('{"operation":"find","filter":{"msg":"say \\"hi\\""}}', "mongodb")).toBe(false);
     expect(isDangerousQuery('{"operation":"find","filter":{"msg":"hi"}}', "mongodb")).toBe(false);
-    expect(isDangerousQuery('SET k "a\\"b"', "redis")).toBe(false);
+    // A READ whose argument carries the same escaped quote. This case used to be
+    // `SET k "a\"b"`, which the non-SQL vocabulary now prompts for on its own merits
+    // (S8) - so the escaped quote is asserted through a command that asks for nothing.
+    expect(isDangerousQuery('GETRANGE k "a\\"b" 0 1', "redis")).toBe(false);
+  });
+
+  // ── The non-SQL half of the vocabulary (S8) ──────────────────────────────
+  //
+  // Both execution paths ask this predicate about every connection, and for these two
+  // types it answered false whatever the text said: a `FLUSHALL` and a `deleteMany`
+  // reached the engine with no confirmation at all. What each command or operation
+  // means, and which of them these two providers can actually dispatch, is pinned in
+  // tests/unit/db/destructive-commands.test.ts; these rows pin that the GATE reads it.
+
+  test.each<[string, "mongodb" | "redis", string]>([
+    ["a MongoDB deleteMany", "mongodb", '{"collection":"users","operation":"deleteMany","filter":{}}'],
+    ["a MongoDB updateMany", "mongodb", '{"collection":"u","operation":"updateMany","filter":{},"update":{}}'],
+    ["a Redis FLUSHALL", "redis", "FLUSHALL"],
+    ["a Redis DEL", "redis", "DEL session:1"],
+    ["a Redis DEL in the JSON form", "redis", '{"command":"DEL","args":["session:1"]}'],
+  ])("prompts for %s", (_label, type, query) => {
+    expect(isDangerousQuery(query, type)).toBe(true);
+  });
+
+  test.each<[string, "mongodb" | "redis", string]>([
+    ["a MongoDB find", "mongodb", '{"collection":"users","operation":"find","filter":{}}'],
+    ["a MongoDB aggregate that only groups", "mongodb", '{"collection":"o","operation":"aggregate","pipeline":[]}'],
+    ["a Redis SCAN", "redis", "SCAN 0 MATCH session:* COUNT 50"],
+    ["a Redis HGETALL", "redis", "HGETALL user:1"],
+  ])("does not prompt for %s", (_label, type, query) => {
+    expect(isDangerousQuery(query, type)).toBe(false);
+  });
+
+  // An empty tab is not a command, and both call sites hand this predicate the buffer
+  // as it stands - so the unreadable-asks rule must not fire on nothing.
+  test.each<["mongodb" | "redis"]>([["mongodb"], ["redis"]])("does not prompt for an empty %s buffer", (type) => {
+    expect(isDangerousQuery("", type)).toBe(false);
   });
 
   // Only the unresolvable-run half was narrowed. The keyword half still reads the
@@ -1266,9 +1302,30 @@ describe("isDangerousQuery", () => {
    * dialects whose text is not SQL: a `;` in a Mongo document or a Redis command
    * separates nothing, so a fragment cut there is invented (#427) - and the
    * multi-statement route is a SQL route those never take.
+   *
+   * Written so that removing the narrowing changes the answer. The first fixture of
+   * this test put the `;` inside quotes, where the splitter cuts nothing under any
+   * grammar, so both arms produced one fragment either way and the assertion held
+   * with the guard deleted.
    */
-  test("does not split a non-SQL buffer looking for fragments to prompt about", () => {
+  test("does not cut a Redis buffer at a `;` outside quotes to invent a fragment to prompt about", () => {
+    // A Redis key may contain a `;`, and this is one command - `GET`, a read. Cut
+    // under the SQL grammar the same text is `GET migration` plus
+    // `drop table users`, and that second, invented fragment is a write: measured
+    // here as two fragments from `splitStatements`, the second of which
+    // `isDangerousQuery` alone calls dangerous.
+    expect(isDangerousQuery("GET migration;drop table users", "redis")).toBe(false);
+  });
+
+  test("answers a MongoDB buffer from its own vocabulary, not from a split reading", () => {
+    // Valid JSON cannot carry a `;` outside a string, so this is the direction that
+    // shape can produce. mongosh syntax is what the provider refuses, so the
+    // vocabulary reports it unreadable and the gate asks - while a split-and-keyword
+    // reading of the same two fragments finds no operative write at all
+    // (`deleteMany` is not the word DELETE, and `db.notes.drop()` is not DROP TABLE).
+    expect(isDangerousQuery("db.notes.deleteMany({});db.notes.find({})", "mongodb")).toBe(true);
+    // And the everyday read that motivated the narrowing still does not prompt: the
+    // SQL inside the filter is a value, and `find` is not in the vocabulary.
     expect(isDangerousQuery('{"operation":"find","filter":{"note":"; drop table t"}}', "mongodb")).toBe(false);
-    expect(isDangerousQuery('SET note "a; delete from t"', "redis")).toBe(false);
   });
 });

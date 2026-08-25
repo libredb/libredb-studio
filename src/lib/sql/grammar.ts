@@ -242,7 +242,9 @@ const ELASTICSEARCH_GRAMMAR: SqlGrammar = {
   // NOT established, and left at the default deliberately. `[` has no meaning at all
   // in this grammar - `SELECT [1, 2]` and `SELECT [customer] FROM probe_orders` are
   // both "extraneous input '['" - so it is neither an identifier quote nor a
-  // subscript, and PD-5 forbids reading one dialect's rule off another's. The name
+  // subscript, and this module's rule 2 forbids reading one dialect's rule off
+  // another's behaviour (see the header, and the undecided table in
+  // `docs/editor/query-optimization.md`). The name
   // reading can only cost a bound on a statement the engine refuses anyway, which is
   // the same fail-safe argument the `mysql` and `oracle` rows make.
   bracket: DEFAULT_SQL_GRAMMAR.bracket,
@@ -252,8 +254,8 @@ const ELASTICSEARCH_GRAMMAR: SqlGrammar = {
   // `SELECT q'{it's}'` is a `parsing_exception` - the form does not exist here.
   alternateQuoting: false,
   // NOT established: this engine was not reachable from the run that probed the other
-  // eight (2026-08-25), and PD-5 forbids reading its rule off the five refusals
-  // measured elsewhere. It keeps the compatibility default, and the direction that
+  // eight (2026-08-25), and this module's rule 2 forbids reading its rule off the
+  // five refusals measured elsewhere. It keeps the compatibility default, and the direction that
   // costs is worth stating: if `//` DOES open a comment here, this dialect's splitter
   // over-splits exactly as `cassandra`'s did.
   doubleSlashComment: DEFAULT_SQL_GRAMMAR.doubleSlashComment,
@@ -514,8 +516,8 @@ const CASSANDRA_GRAMMAR: SqlGrammar = {
  * NOT established, and therefore left at the default: how `mysql` and `oracle` read
  * `[…]`. It is not an identifier quote in either - MySQL gives it no meaning outside
  * a JSON path written inside a string, and Oracle none outside an alternate-quote
- * delimiter - but neither has a SUBSCRIPT rule to read it under instead, and PD-5
- * forbids reading one dialect's rule off another's. The name reading costs them a
+ * delimiter - but neither has a SUBSCRIPT rule to read it under instead, and this
+ * module's rule 2 forbids reading one dialect's rule off another's behaviour. The name reading costs them a
  * bound on a nested bracket run, and it can never misplace one: a run it cannot
  * close is undeterminable, and an undeterminable end is not cut. That is the
  * fail-safe direction, so it is what they keep.
@@ -600,8 +602,8 @@ const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["mong
  * document or a Redis command is simply read as SQL under the compatibility
  * grammar. For a reader that only ever declines to act, that costs nothing. For the
  * confirmation gate it cost a false prompt on ordinary reads: the escaped quote in
- * `{"filter":{"msg":"say \"hi\""}}` or in `SET k "a\"b"` is an unresolvable literal
- * to a SQL span reader and a perfectly closed one in the grammar the text is
+ * `{"filter":{"msg":"say \"hi\""}}` or in `GETRANGE k "a\"b" 0 1` is an unresolvable
+ * literal to a SQL span reader and a perfectly closed one in the grammar the text is
  * actually written in - and the dialog then said the statement could not be read
  * about text that reads fine. An operator who learns to click the confirmation away
  * is the one thing that gate cannot survive.

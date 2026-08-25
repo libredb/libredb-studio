@@ -680,6 +680,14 @@ declares what its own operations may be pointed at. The monitoring Tables tab re
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
 card only where `global` is true, and both take the wording from `label` (#U9).
 
+`POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
+REFUSES rather than hides: it takes the placement from whether the request carries a `target`
+(absent or empty means whole-database) and answers `400` when this provider marks that
+placement unavailable while the other one is available. On Trino it never speaks: `kill`
+declares neither placement, which is not "takes no target" but "the target comes from somewhere
+this field says nothing about", so the request passes through to the query id the Sessions
+panel supplied.
+
 | Operation | Control label | Per-row | Global | Why |
 |-----------|---------------|---------|--------|-----|
 | `kill` | Terminate Query | no | no | the target is the query id the Sessions panel lists; neither a table nor a whole database can supply one |

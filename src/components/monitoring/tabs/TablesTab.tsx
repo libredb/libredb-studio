@@ -110,6 +110,41 @@ function VacuumNote({
   return null;
 }
 
+/**
+ * Why a per-table maintenance control is nowhere on this page.
+ *
+ * The two maintenance items in the schema explorer (`src/components/schema-explorer/TableItem.tsx`)
+ * are DEEP LINKS into a maintenance surface, and they are gated on what the OPERATION declares -
+ * `maintenanceControl(..., "perEntity")` - which is a different question from whether the surface
+ * has a ROW to hang the control on. Per-table buttons are rendered for rows of `data.tables` only,
+ * so both absence paths in this panel render none of them, and an operator who arrived asking for
+ * one operation was shown an empty list that said nothing about it (U22).
+ *
+ * The operations are named and the table is not: nothing passes the deep link's table name into
+ * this panel - `MonitoringDashboard` renders it with no search params - so naming a table here
+ * would be an invention. What can be stated honestly is which controls the engine declares per
+ * table and why none of them appears.
+ *
+ * Two things the note deliberately does NOT say:
+ *  - No page to go to instead. The only caller (`MonitoringDashboard`) passes no `isAdmin`, and the
+ *    prop defaults to true, so this component cannot tell an admin from the non-admin that
+ *    /monitoring is the route for - and `src/proxy.ts` denies a non-admin /admin/operations. Of the
+ *    two fixes available (thread the real role down, or drop the clause) dropping it is the smaller
+ *    one and the only one that changes no other behaviour: threading the role would also switch off
+ *    the per-row buttons on that route, which is older behaviour and not this change's business.
+ *  - One cause for two inputs. `refused` is the `errors.tables` branch, where `PanelUnavailable` is
+ *    already showing the engine's own reason - a permission or catalog failure as often as a missing
+ *    statistic - so that branch says only what was measured here: nothing could be read.
+ */
+function MaintenanceUnattachableNote({ actions, refused }: Readonly<{ actions: string[]; refused: boolean }>) {
+  const cause = refused ? "no table statistics could be read" : "this database published no table statistics";
+  return (
+    <p className="text-xs text-muted-foreground text-center px-4 pb-6" data-testid="tables-maintenance-unattachable">
+      {`Per-table maintenance (${actions.join(", ")}) is run from a row of this list, and ${cause} - so there is no row to run it on.`}
+    </p>
+  );
+}
+
 function bloatBadgeVariant(ratio: number): "destructive" | "outline" | "secondary" {
   if (ratio > 20) return "destructive";
   if (ratio > 10) return "outline";
@@ -208,6 +243,13 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
     const control = maintenanceControl(capabilities, action.type, "perEntity");
     return control.offered ? [{ ...action, label: control.label ?? action.label }] : [];
   });
+
+  // Both halves have to be true for the dead end U22 names: the engine declares a control
+  // that takes ONE table, and this panel has no table to offer it on. `statsAbsent` covers
+  // both readings of that absence - the refusal recorded under `errors.tables` and the empty
+  // list an engine returns while its own overview counts tables - and is false for a database
+  // that genuinely holds none, where there is nothing to maintain and nothing to explain.
+  const maintenanceUnattachable = isAdmin && availableActions.length > 0 && statsAbsent;
 
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
@@ -366,6 +408,12 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
                 </TableBody>
               </Table>
             </div>
+          )}
+          {maintenanceUnattachable && (
+            <MaintenanceUnattachableNote
+              actions={availableActions.map((a) => a.label)}
+              refused={tablesUnavailable !== undefined}
+            />
           )}
         </CardContent>
       </Card>

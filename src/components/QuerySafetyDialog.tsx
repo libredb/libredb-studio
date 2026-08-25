@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { ShieldAlert, ShieldCheck, TriangleAlert, LoaderCircle, Play, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isDestructiveNonSqlQuery } from "@/lib/db/destructive-commands";
 import { readsSqlText, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { hasUnterminatedSpan } from "@/lib/sql/spans";
@@ -408,6 +409,13 @@ function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
  * text (#292, #295): Oracle's `q'{it's}'` and ClickHouse's `[[1,2],[3,4]]` are
  * closed runs under their own grammars and unresolvable under a reader without them.
  *
+ * For the two types whose text is not SQL there is nothing here to read, and this
+ * predicate answered false for them outright - so a Redis `FLUSHALL` or `DEL` and a
+ * MongoDB `deleteMany` ran with no confirmation at all, on both execution paths,
+ * while the same intent on every SQL engine asked (S8). Their vocabulary now comes
+ * from `@/lib/db/destructive-commands`, one table per type read by one function, and
+ * it names only what those two providers can actually dispatch.
+ *
  * `databaseType` is the connection the statement is about to run on, and both
  * call sites hold one (#292). It decides the characters the engines read
  * differently: a write written after a `#` is commented out in MySQL and the
@@ -449,6 +457,11 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
     route and a `;` in a Mongo document or a Redis command separates nothing, so
     splitting there could only invent fragments to prompt about (#427).
   */
-  if (!readsSqlText(databaseType)) return false;
+  // Where the text is not SQL, its own vocabulary decides. This used to be a bare
+  // `return false`, which is why a Redis `FLUSHALL` and a Mongo `deleteMany` ran with
+  // no confirmation at all while a `DELETE FROM` on every SQL engine asked (S8). The
+  // facts are a table in `@/lib/db/destructive-commands`, not a type test written
+  // here: this file already learned that lesson for the span rule above.
+  if (!readsSqlText(databaseType)) return isDestructiveNonSqlQuery(query, databaseType);
   return splitStatements(query, grammar).some((statement) => writesUnderGrammar(statement.sql, grammar));
 }

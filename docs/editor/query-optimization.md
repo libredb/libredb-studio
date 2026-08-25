@@ -176,11 +176,22 @@ A rule that could **not** be established is not guessed from a neighbouring dial
 at the compatibility default below, and it is listed here rather than left implicit. The default is per
 **fact**, not per dialect: a dialect whose `#` rule is known can still be undecided about its brackets.
 
-The three non-SQL types, **MongoDB, Redis and LibreDB, have no SQL grammar at all** and are left out of the rows
-below: their providers never reach these readers on the query path, and the confirmation gate — which
-reads whatever is in the editor — asks `readsSqlText()` before applying any span-based rule to their
-text, so a JSON document or a Redis command is not judged by a SQL reader that cannot parse it. The
-gate's keyword tests still run on that text.
+**MongoDB and Redis are the two types whose query text is not SQL at all** — `NON_SQL_DIALECTS` in
+`src/lib/sql/grammar.ts` holds exactly those two, which is what `readsSqlText()` reports on. Their
+providers never reach these readers on the query path, and the confirmation gate — which reads whatever
+is in the editor — asks `readsSqlText()` before applying any span-based rule to their text, so a JSON
+document or a Redis command is not judged by a SQL reader that cannot parse it.
+
+Nor is the gate's SQL keyword reading applied to it. Those two types have a vocabulary of their own in
+`src/lib/db/destructive-commands.ts`: one table per type of the destructive operations the provider can
+actually dispatch (`deleteOne`/`deleteMany`/`updateOne`/`updateMany` and the `$out`/`$merge` pipeline
+stages for MongoDB; `DEL`, `FLUSHALL`, `SET`, `CONFIG SET` and the rest for Redis), and the gate reduces
+the buffer the way the provider would — one JSON document, or Redis's first blank-line-delimited block —
+before looking a name up in it. Text it cannot read as a command at all is not treated as safe: mongosh
+syntax, a half-typed document or a broken JSON command body **asks**. Before that table existed the
+answer for both types was a bare `false`, so a `FLUSHALL` and a `deleteMany` ran with no confirmation
+while a `DELETE FROM` on every SQL engine asked. The embedded LibreDB is not in that set — its text is
+read as SQL, and its undecided grammar facts are rows in the table below.
 
 | Fact | Undecided, so left at the default | Established, and it happens to equal the default |
 |------|-----------------------------------|--------------------------------------------------|
@@ -455,11 +466,13 @@ The accepted cost, pinned by tests rather than left to be discovered, in two cla
 **Not a cost this rule pays: non-SQL query text.** Both execution paths ask about whatever is in the
 editor, so this predicate is handed MongoDB documents and Redis commands as well. A SQL span reader's
 verdict about text that is not SQL is not evidence of anything — the escaped quote in
-`{"filter":{"msg":"say \"hi\""}}` or in `SET k "a\"b"` closes perfectly in the grammar the text is
-actually written in — so the unresolvable-run rule is applied only where `readsSqlText()` says the
-dialect writes SQL. Saying *"could not be read"* about text that reads fine is the false alarm this
-notice exists to avoid, and a gate operators learn to click through protects nothing. The keyword
-tests still run on that text; only the span-based rule is narrowed.
+`{"filter":{"msg":"say \"hi\""}}` or in `GETRANGE k "a\"b" 0 1` closes perfectly in the grammar the
+text is actually written in — so the unresolvable-run rule is applied only where `readsSqlText()` says
+the dialect writes SQL. Saying *"could not be read"* about text that reads fine is the false alarm this
+notice exists to avoid, and a gate operators learn to click through protects nothing. Only the
+span-based rule is narrowed: the non-SQL vocabulary above still answers for that text, which is why the
+Redis half of this example is a `GETRANGE` and not the `SET k "a\"b"` it used to be — `SET` is in that
+vocabulary and now prompts on its own merits, whatever its quoting.
 
 A fourth class arrives with the nesting fact (#300), and it is the reverse of the ones above — a prompt
 the dialect *adds* rather than one it narrows: on PostgreSQL, SQL Server and ClickHouse a block comment

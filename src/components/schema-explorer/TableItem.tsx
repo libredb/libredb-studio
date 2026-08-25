@@ -154,7 +154,20 @@ function renderMenuItems({
           the same dead end with the capability flag switched on (#U9).
 
           Global maintenance is unaffected wherever an engine has any: it lives on the
-          admin Operations page and still runs there. */}
+          admin Operations page and still runs there.
+
+          What this gate CANNOT answer is the rest of U22: both items are deep links, and the
+          destination renders a per-table control only for a ROW it has statistics for. Nothing
+          here knows whether one will arrive: `TableSchema.rowCount` and `.size` are optional and
+          come from the schema read, not from the monitoring statistics the destination lists, and
+          no declared capability says whether an engine publishes per-table figures - so
+          withholding the link would need a new capability flag this repo does not want. The
+          destinations were made to say so instead - `TableMaintenanceUnreachableNote` in
+          src/components/admin/tabs/OperationsTab.tsx, where an admin's link actually lands
+          (Studio.tsx `openMaintenance`), and `MaintenanceUnattachableNote` in
+          src/components/monitoring/tabs/TablesTab.tsx for the /monitoring panel. Each is the only
+          reader that knows whether a row turned up, and its answer is testable against what
+          actually renders rather than against what was declared. */}
       {isAdmin && rowsAreAddressable && (analyzeControl.offered || vacuumControl.offered) && (
         <>
           <Separator />
