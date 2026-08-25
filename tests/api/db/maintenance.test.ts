@@ -185,6 +185,34 @@ describe("POST /api/db/maintenance", () => {
     expect(data.message).toBe("OK");
   });
 
+  // The audit log is where an operator reconstructs what was done to a database, so a
+  // refusal recorded as a completed operation is worse than no record. This became routine
+  // rather than theoretical on 2026-08-25: MySQL and Oracle now read the engine's own
+  // verdict, so `success: false` on an HTTP 200 is the ordinary answer for a target the
+  // engine would not touch.
+  test("an operation the engine refused is audited as a failure, not as success", async () => {
+    (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementation(async () => ({
+      success: false,
+      executionTime: 3,
+      message: "OPTIMIZE failed: u9v.missing: Table 'u9v.missing' doesn't exist",
+    }));
+
+    const req = createMockRequest("/api/db/maintenance", {
+      method: "POST",
+      body: { type: "vacuum", target: "missing", connection: validConnection },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ success: boolean }>(res);
+
+    // Still a 200: the request was well formed and the statement reached the engine. What
+    // the engine answered travels in the body, and in the audit row.
+    expect(res.status).toBe(200);
+    expect(data.success).toBe(false);
+    expect(mockAuditPush).toHaveBeenCalledTimes(1);
+    expect((mockAuditPush.mock.calls[0]![0] as { result: string }).result).toBe("failure");
+  });
+
   test("non-admin user returns 403", async () => {
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "user", username: "user" }),

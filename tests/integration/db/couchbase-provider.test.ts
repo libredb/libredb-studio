@@ -284,6 +284,14 @@ describe("CouchbaseProvider metadata", () => {
       declaresForeignKeys: false,
       supportsMaintenance: true,
       maintenanceOperations: ["analyze", "reindex", "kill"],
+      // All three go through `requireTarget`, so all three are per-keyspace only.
+      // The global Reindex card that #U6 wired up answered *"The reindex operation
+      // requires a target"* on every click, which is what `global: false` withholds.
+      maintenanceOperationSpecs: {
+        analyze: { label: "Update Statistics", perEntity: true, global: false },
+        reindex: { label: "Build Deferred Indexes", perEntity: true, global: false },
+        kill: { label: "Cancel Request", perEntity: false, global: false },
+      },
       supportsConnectionString: true,
       defaultPort: 8091,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER)\\s+(COLLECTION|SCOPE|INDEX)\\b",

@@ -81,6 +81,13 @@ export class RedisProvider extends BaseDatabaseProvider {
       tablesAreDerivedGroupings: true,
       supportsMaintenance: true,
       maintenanceOperations: ["analyze"],
+      // `runMaintenance(type)` takes no target parameter at all: the operation is
+      // `INFO`, which reports on the server and cannot be pointed at a key pattern.
+      // A per-row control here would have named one grouping and answered with
+      // server-wide metrics - the dead end #427 reported for "Key Info" (#U9).
+      maintenanceOperationSpecs: {
+        analyze: { label: "Server Info", perEntity: false, global: true },
+      },
       supportsConnectionString: false,
       defaultPort: 6379,
       schemaRefreshPattern: "(DEL|FLUSHDB|FLUSHALL|RENAME)\\b",

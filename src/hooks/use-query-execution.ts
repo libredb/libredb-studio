@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
 import { isMultiStatement } from "@/lib/sql/statement-splitter";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { shouldRefreshSchema } from "@/lib/query-generators";
 import { ApiErrorCode } from "@/lib/api/error-codes";
@@ -322,7 +323,11 @@ export function useQueryExecution({
           !isPlaygroundRun &&
           !params &&
           dialectIsSql &&
-          isMultiStatement(queryToExecute);
+          // Under the connection's own dialect, the same record the gate above
+          // reads the statement with: whether a `;` is code depends on the
+          // engine's comment, quoting and bracket rules, and a fragment this
+          // disagrees about is a fragment the route RUNS (S1).
+          isMultiStatement(queryToExecute, resolveSqlGrammar(activeConnection.type));
 
         // Use transaction endpoint if a transaction is active or in playground mode
         const useTransaction = (transactionActive || isPlaygroundRun) && !isExplain;

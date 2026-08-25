@@ -275,6 +275,17 @@ describe("RedisProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("getCapabilities()", () => {
+    // #U9: `runMaintenance(type)` takes no target parameter at all - the operation is
+    // INFO, which reports on the server and cannot be pointed at a key pattern. A
+    // per-row control here answered with server-wide metrics for one grouping.
+    test("declares the target grammar of its one maintenance operation", () => {
+      const caps = provider.getCapabilities();
+
+      expect(caps.maintenanceOperationSpecs).toEqual({
+        analyze: { label: "Server Info", perEntity: false, global: true },
+      });
+      expect(Object.keys(caps.maintenanceOperationSpecs ?? {}).sort()).toEqual([...caps.maintenanceOperations].sort());
+    });
     test("returns correct capability metadata", () => {
       const caps = provider.getCapabilities();
       expect(caps.queryLanguage).toBe("json");

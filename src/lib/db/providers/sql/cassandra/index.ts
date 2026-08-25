@@ -25,11 +25,13 @@
  * - `ALLOW FILTERING` IS THE LAST CLAUSE. `… LIMIT 3 ALLOW FILTERING` returns rows;
  *   `… ALLOW FILTERING LIMIT 3` is a syntax error. The shared limiter appends, so the
  *   two clauses are transposed.
- * - A LINE COMMENT NEEDS A NEWLINE TO CLOSE IT, and CQL has a third comment form the
- *   shared readers do not know. `SELECT … LIMIT 3 -- note` with nothing after it is
- *   "line 1:45 mismatched character '<EOF>' expecting set null", and `-- note\n`
- *   returns rows; `//` is a line comment too. The limiter trims the newline, so a
- *   statement that would end inside a comment is left alone.
+ * - A LINE COMMENT NEEDS A NEWLINE TO CLOSE IT. `SELECT … LIMIT 3 -- note` with
+ *   nothing after it is "line 1:45 mismatched character '<EOF>' expecting set null",
+ *   and `-- note\n` returns rows. `sql.trim()` inside the shared limiter drops that
+ *   newline, so a statement that would end inside a comment is left alone here. CQL's
+ *   THIRD comment form, `//`, used to be part of this trap and no longer is: it is a
+ *   grammar fact (`doubleSlashComment`) that every shared reader now honours, so this
+ *   file no longer scans for it - see `endsInsideLineComment`.
  * - THERE IS NO EXPLAIN. `EXPLAIN SELECT …` is "line 1:0 no viable alternative at
  *   input 'EXPLAIN'". The only substitute is `{traceQuery: true}` plus
  *   `system_traces.events`, which profiles a statement that has ALREADY RUN - so it
@@ -123,15 +125,30 @@ const APPENDED_AFTER_ALLOW_FILTERING = /\bALLOW(\s+)FILTERING\s+(LIMIT\s+\d+)/i;
 /**
  * Whether this text ends INSIDE a line comment - i.e. whether CQL would refuse it.
  *
- * Two comment forms, and the second is why this cannot be left to the shared readers:
- * CQL treats `//` as a line comment as well as `--`, and neither may be closed by end
- * of input. Measured on 5.0.9, `SELECT * FROM probe.customers LIMIT 3 -- note` with
- * nothing after it is a syntax error while the same text plus a newline returns the
- * rows.
+ * CQL needs TWO facts about comments that most dialects here do not, and only one of
+ * them is still local to this provider. `//` being a line comment as well as `--` IS
+ * a grammar fact - and not this engine's alone, since ClickHouse reads it the same way
+ * (both measured) - so it is `grammar.ts`'s `doubleSlashComment` now and this function
+ * no longer carries a private scan for it: it asks the shared span reader, which reads
+ * both forms under the `cassandra` grammar. The fact that stays local is the other -
+ * that NEITHER form may be closed by end of input. Measured on 5.0.9,
+ * `SELECT * FROM probe.customers LIMIT 3 -- note` with nothing after it is "line 1:45
+ * mismatched character '<EOF>' expecting set null" while the same text plus a newline
+ * returns the rows. That is a fact about where a statement may END, not about what a
+ * run is: `SqlSpan` calls a line comment closed by end of input terminated, which is
+ * correct everywhere else and is the answer every reader over it wants.
  *
- * It walks with the shared span reader so a `--` or `//` inside a string literal or a
- * quoted name is not mistaken for one - `WHERE url = 'http://x'` is an ordinary
- * statement - and so the walk stays linear rather than backtracking.
+ * The private scan was not merely redundant, and dropping it is why this is a fix
+ * rather than a tidy-up: while `//` was invisible to the shared readers, the row
+ * limiter appended the bound INSIDE the comment on this engine and on ClickHouse
+ * (measured there: `SELECT number FROM numbers(1000) // note` limited to 5 was
+ * emitted as `… // note LIMIT 5` and returned 1000 rows while reporting
+ * `wasLimited: true`), and the statement splitter cut a bare DROP out of one CQL read.
+ *
+ * Walking with the shared reader is also what keeps a `--` or `//` inside a string
+ * literal or a quoted name from being mistaken for a comment - `WHERE url =
+ * 'http://x'` is an ordinary statement - and keeps the walk linear rather than
+ * backtracking.
  */
 function endsInsideLineComment(sql: string, grammar: SqlGrammar): boolean {
   let open = false;
@@ -139,17 +156,10 @@ function endsInsideLineComment(sql: string, grammar: SqlGrammar): boolean {
   for (let at = 0; at < sql.length; ) {
     const span = readSqlSpan(sql, at, grammar);
     if (span !== null) {
-      // A `--` run the shared reader recognises. It is only UNCLOSED if it reaches
-      // the end of the text with no newline to close it.
+      // Either comment form, whichever the grammar recognised. It is only UNCLOSED if
+      // it reaches the end of the text with no newline to close it.
       open = span.kind === "line-comment" && span.end === sql.length && !sql.endsWith("\n");
       at = span.end;
-      continue;
-    }
-
-    if (sql[at] === "/" && sql[at + 1] === "/") {
-      const newline = sql.indexOf("\n", at);
-      open = newline === -1;
-      at = newline === -1 ? sql.length : newline + 1;
       continue;
     }
 

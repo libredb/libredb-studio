@@ -793,6 +793,49 @@ describe("QueryEditor", () => {
     window.removeEventListener("execute-query", handler);
   });
 
+  test("getEffectiveQuery reads the statement boundary under the connection's dialect", () => {
+    /*
+      The third reader of "where does a statement end", and the one whose answer is what
+      gets SENT. It used to be `lastIndexOf(";")` over the raw text - no spans, no
+      dialect, not even a string-literal check - so on this buffer, which PostgreSQL
+      reads as the single statement `SELECT 1`, it cut at the `;` inside the nested
+      comment and sent only the tail: a line comment followed by the SELECT. Measured in
+      Chrome on 2026-08-25 against postgres 18, the request body carried that tail and
+      the grid read 0 rows where psql answers 2, because the engine sees a line comment
+      and nothing else. The splitter and the confirmation gate already agreed (S1); this
+      reader did not.
+
+      (This comment says "the tail" rather than quoting it, because quoting it would put
+      a comment closer inside this comment - which is the same reading the fix is about.)
+    */
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
+      },
+    };
+
+    let eventDetail: { query: string } | null = null;
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
+
+    const buffer = "/* a /* b */ ; DROP TABLE users; -- */ SELECT 1";
+    render(React.createElement(QueryEditor, createDefaultProps({ value: buffer, databaseType: "postgres" as const })));
+    act(() => {
+      capturedCommands[0].handler();
+    });
+
+    expect(eventDetail).not.toBeNull();
+    expect(eventDetail!.query).toBe(buffer);
+    window.removeEventListener("execute-query", handler);
+  });
+
   test("getEffectiveQuery returns selected text when selection exists", () => {
     mockUseMonacoReturn = {
       Range: class {
@@ -1346,7 +1389,7 @@ describe("QueryEditor", () => {
     window.removeEventListener("execute-query", handler);
   });
 
-  test("getEffectiveQuery: empty statement between semicolons falls through to full value", () => {
+  test("getEffectiveQuery: a caret between two semicolons runs the statement before it", () => {
     mockUseMonacoReturn = {
       Range: class {
         constructor(
@@ -1370,8 +1413,18 @@ describe("QueryEditor", () => {
       capturedCommands[0].handler();
     });
 
-    // Empty statement between ;; → falls through to full editor value
-    expect(eventDetail!.query).toBe("SELECT 1;;SELECT 2");
+    /*
+      The caret sits in the empty statement between the two `;`, so there is no statement
+      it is INSIDE - and the answer is the one it is immediately after.
+
+      This is a deliberate policy change (2026-08-25). Falling through to the whole editor
+      value, which is what the `indexOf(";")` reader did here, means "run the statement I
+      am in" silently runs EVERY statement in the buffer: with a `DROP` in the second one
+      that is a destructive surprise, and it is the same all-or-nothing reading the
+      multi-statement route exists to make explicit. The nearest preceding statement is
+      what the caret is actually pointing at.
+    */
+    expect(eventDetail!.query).toBe("SELECT 1");
     window.removeEventListener("execute-query", handler);
   });
 

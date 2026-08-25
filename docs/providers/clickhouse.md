@@ -407,6 +407,17 @@ takes the bound before it rather than inside it. A comment carrying one opener t
 passed through untouched — the same fail-safe direction as an unclosed array, and it costs that
 statement a confirmation prompt as well (#300).
 
+A fourth fact of the same record, and the only one this dialect shares with another engine here:
+**`//` is a single-line comment.** ClickHouse's syntax reference lists it beside `--` and `#`, and the
+shared reader used to read the two slashes as code, so a comment written that way took the row bound
+with it: `SELECT number FROM numbers(1000) // note` emitted `... // note LIMIT 5`, which the server
+reads as an unbounded query inside a comment — measured on 26.7.1, that returned **1000 rows while the
+result claimed it was limited to 5**. It now emits `... LIMIT 5 // note` and returns 5. Apache
+Cassandra is the other engine with this form ([`cassandra.md`](cassandra.md)); every other dialect this
+product reads treats the characters where they stand, PostgreSQL as an operator that does not exist
+(#S1). A `;` behind the comment is not a separator either, which is what stops the multi-statement
+route inventing a fragment out of commented-out text.
+
 The same reading reaches the **destructive-statement confirmation**, because that predicate reads the
 statement under the connection's dialect too. It gains prompts here: a nested array before a
 destructive keyword (`WITH [[1,2],[3,4]] AS x DELETE FROM t`) used to leave the run unterminated and
@@ -769,6 +780,35 @@ operations. A target is qualified through
 `escapeIdentifier()` (`"database"."table"`, defaulting the database to the pinned one when the
 target names none), so a hostile or oddly-named table cannot break out of the generated statement.
 
+### Where each operation may be offered (`maintenanceOperationSpecs`)
+
+Declaring that an operation EXISTS is not enough to put a button on it: two engines that
+declare the same `MaintenanceType` take different kinds of target, so each provider also
+declares what its own operations may be pointed at. The monitoring Tables tab renders a
+per-row control only where `perEntity` is true, the admin Operations tab a whole-database
+card only where `global` is true, and both take the wording from `label` (#U9).
+
+| Operation | Control label | Per-row | Global | Why |
+|-----------|---------------|---------|--------|-----|
+| `optimize` | Optimize Table | yes | **no** | `OPTIMIZE TABLE ... FINAL` names one table and `dispatchMaintenance` requires that target; ClickHouse has no "optimize database", and looping every table would merge the whole dataset behind one click |
+| `analyze` | Table Statistics | yes | yes | `describeParts` deliberately accepts no target as well as one |
+| `kill` | Cancel Query | no | no | the target is a query id from the Sessions panel |
+
+`vacuumAction` says *"Optimize Table"*, so `vacuumActionOperation: 'optimize'` records that
+the vacuum slot names `optimize` rather than a `vacuum` ClickHouse would reject. The global
+*"Merge Parts"* card stays withheld even so, because `optimize` declares `global: false`.
+
+That makes `vacuumGlobalLabel` / `vacuumGlobalTitle` / `vacuumGlobalDesc` **deliberately
+unreachable here**: no surface can render them while `optimize` has no whole-database form.
+They are kept rather than dropped because `ProviderLabels` requires all three and the
+inherited default is PostgreSQL's *"Removes dead rows and returns space to the operating
+system"* — a statement ClickHouse does not have — so the choice is between wording that is
+wrong if it ever shows and wording that is right if it ever shows. What #U9 removed was
+wording that was written and never shown *without saying so*; the unreachability is asserted
+in `tests/integration/db/clickhouse-provider.test.ts` ("the global vacuum card cannot render,
+so its wording is unreachable by design") so that a future spec change makes it visible
+rather than silent.
+
 ---
 
 ## 9. Capabilities & labels
@@ -802,7 +842,9 @@ not exist: `analyzeAction`/`analyzeGlobalLabel`/`analyzeGlobalTitle` → *"Table
 `vacuumAction` → *"Optimize Table"*, `vacuumGlobalLabel` → *"Optimize"*, `vacuumGlobalTitle` →
 *"Merge Parts"*. The card descriptions name the substituted operation explicitly (`OPTIMIZE TABLE
 ... FINAL`) rather than reusing generic wording that would describe a command ClickHouse does not
-have.
+have. Of those, only `analyzeAction`/`analyzeGlobal*` and `vacuumAction` are reachable — the
+`vacuumGlobal*` triad is unreachable by design
+([§8](#where-each-operation-may-be-offered-maintenanceoperationspecs)).
 
 One more label, and it is about the monitoring tab rather than maintenance:
 `slowQueriesEmptyState` → *"Query stats come from system.query_log, which records nothing while

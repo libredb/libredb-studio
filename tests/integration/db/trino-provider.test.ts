@@ -515,6 +515,22 @@ afterEach(() => {
 // ============================================================================
 
 describe("TrinoProvider metadata", () => {
+  // #U9: the only operation Trino has is terminating a statement, and that needs the
+  // query id the Sessions panel lists - neither a table nor a whole database. So no
+  // maintenance control is offered anywhere, which is what the two `false`s say.
+  test("declares its one maintenance operation as neither per-table nor global", () => {
+    const caps = new TrinoProvider(makeConnection()).getCapabilities();
+
+    expect(caps.maintenanceOperationSpecs).toEqual({
+      kill: { label: "Terminate Query", perEntity: false, global: false },
+    });
+    expect(Object.keys(caps.maintenanceOperationSpecs ?? {}).sort()).toEqual([...caps.maintenanceOperations].sort());
+    // "Reclaim Space" and "Table Statistics" name nothing this engine can run, and
+    // both stay unshown because the operations behind them are undeclared - not
+    // because the wording is redirected anywhere.
+    expect(new TrinoProvider(makeConnection()).getLabels().vacuumActionOperation).toBeUndefined();
+    expect(caps.maintenanceOperations).toEqual(["kill"]);
+  });
   test("declares SQL on port 8080, with double-quoted identifiers and no statement terminator", () => {
     const capabilities = new TrinoProvider(makeConnection()).getCapabilities();
 

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { DEFAULT_SQL_GRAMMAR, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { hasUnterminatedSpan, readSqlSpan } from "@/lib/sql/spans";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -717,5 +717,101 @@ describe("hasUnterminatedSpan", () => {
 
     expect(unresolved).toBe(false);
     expect(elapsed, `took ${elapsed.toFixed(1)}ms`).toBeLessThan(200);
+  });
+});
+
+// ── `//`: the third line-comment form, and only where a dialect has it ──────
+//
+// The fact `grammar.ts` used to say it could not carry. It matters here rather
+// than only in the provider that worked around it, because a comment is what a
+// `;` can hide INSIDE - and `statement-splitter.ts` reads its boundaries through
+// this module, so a `//` read as code hands `/api/db/multi-query` a fragment the
+// operator never wrote.
+//
+// Measured 2026-08-25: a line comment on Cassandra 5.0.9, ScyllaDB 2026.2.4 and
+// ClickHouse 26.7.1; refused outright by PostgreSQL 18, MySQL 26.7.0, Oracle Free,
+// SQL Server 2022, Trino 476 and SQLite. The rows and their probes are in
+// `grammar.test.ts`.
+
+describe("readSqlSpan: `//` line comments", () => {
+  const CASSANDRA = resolveSqlGrammar("cassandra");
+  const CLICKHOUSE_SLASH = resolveSqlGrammar("clickhouse");
+  const POSTGRES_SLASH = resolveSqlGrammar("postgres");
+  const TRINO = resolveSqlGrammar("trino");
+
+  test.each<[string, SqlGrammar]>([
+    ["cassandra", CASSANDRA],
+    ["clickhouse", CLICKHOUSE_SLASH],
+  ])("a dialect that has the form reads it as a comment (%s)", (_label, grammar) => {
+    expect(spanOf("// note\nSELECT 1", 0, grammar)).toBe("line-comment|// note\n");
+    expect(spanOf("SELECT 1 // note\n, 2", 9, grammar)).toBe("line-comment|// note\n");
+  });
+
+  // The newline ENDS the run, measured on both engines that have the form:
+  // `SELECT 1 AS a // note\n, 2 AS b` answers two columns on ClickHouse, and the
+  // same shape returns rows on Cassandra. A run to end-of-input would have hidden
+  // the second column.
+  test.each<[string, SqlGrammar]>([
+    ["cassandra", CASSANDRA],
+    ["clickhouse", CLICKHOUSE_SLASH],
+  ])("the run ends at the newline rather than at the end of the text (%s)", (_label, grammar) => {
+    const span = readSqlSpan("SELECT 1 // note\n, 2", 9, grammar);
+
+    expect(span).toEqual({ kind: "line-comment", end: 17, terminated: true });
+  });
+
+  test.each<[string, SqlGrammar]>([
+    ["postgres", POSTGRES_SLASH],
+    ["trino", TRINO],
+    ["no dialect named", DEFAULT_SQL_GRAMMAR],
+  ])("a dialect without the form reads it as code (%s)", (_label, grammar) => {
+    expect(readSqlSpan("SELECT 1 // note", 9, grammar)).toBeNull();
+  });
+
+  // `/` is division everywhere and `//` is a real OPERATOR NAME in PostgreSQL
+  // (measured: `SELECT 1 // 2` is "operator does not exist: integer // integer",
+  // not a syntax error), so a single slash must never open a run under any grammar.
+  test("a lone slash is code even where `//` is a comment", () => {
+    expect(readSqlSpan("SELECT 1 / 2", 9, CASSANDRA)).toBeNull();
+    expect(readSqlSpan("SELECT 1 /", 9, CASSANDRA)).toBeNull();
+  });
+
+  // The branch order has to keep `/*` reachable: both forms open with a slash, and
+  // reading `/*` as a `//` run would swallow the rest of the line and lose the
+  // comment's real end.
+  test("a block comment still opens where `//` is a comment", () => {
+    expect(spanOf("/* a */ SELECT 1", 0, CASSANDRA)).toBe("block-comment|/* a */");
+    expect(spanOf("/* a\nb */ SELECT 1", 0, CLICKHOUSE_SLASH)).toBe("block-comment|/* a\nb */");
+  });
+
+  // `WHERE url = 'http://x'` is an ordinary statement on both engines, so the
+  // literal readers stay in front of this one.
+  test("a `//` inside a literal or a quoted name is not a comment", () => {
+    expect(spanOf("'http://x'", 0, CASSANDRA)).toBe("string|'http://x'");
+    expect(spanOf('"a//b" FROM t', 0, CLICKHOUSE_SLASH)).toBe('quoted-identifier|"a//b"');
+  });
+
+  // End of input closes it HERE, the same answer this module gives every line
+  // comment - and on ClickHouse that is the server's answer too (`SELECT 1 AS a //
+  // note` returns 1). CQL disagrees, which is a fact about where a statement may
+  // END rather than about what the run is, and the reason is on `SqlSpan.terminated`.
+  test("a `//` comment with no newline runs to the end and is terminated", () => {
+    expect(readSqlSpan("SELECT 1 // note", 9, CLICKHOUSE_SLASH)).toEqual({
+      kind: "line-comment",
+      end: 16,
+      terminated: true,
+    });
+  });
+});
+
+describe("hasUnterminatedSpan: `//`", () => {
+  // A `//` run read as CODE leaves whatever follows it to be scanned as SQL, so an
+  // apostrophe inside the comment opened a literal that never closed and the
+  // confirmation gate asked about a statement CQL reads without trouble.
+  test("a comment carrying an apostrophe is resolvable where the dialect has the form", () => {
+    const sql = "SELECT id FROM probe.customers // it's fine\n";
+
+    expect(hasUnterminatedSpan(sql, resolveSqlGrammar("cassandra"))).toBe(false);
+    expect(hasUnterminatedSpan(sql, DEFAULT_SQL_GRAMMAR)).toBe(true);
   });
 });

@@ -426,6 +426,30 @@ and `reindex` targets are quoted via `escapeIdentifier()`:
 `kill` — SQLite has no sessions to terminate. Quoting the target prevents identifier injection in
 `ANALYZE`/`REINDEX` statements (which cannot use bind parameters for object names).
 
+### Where each operation may be offered (`maintenanceOperationSpecs`)
+
+Declaring that an operation EXISTS is not enough to put a button on it: two engines that
+declare the same `MaintenanceType` take different kinds of target, so each provider also
+declares what its own operations may be pointed at. The monitoring Tables tab renders a
+per-row control only where `perEntity` is true, the admin Operations tab a whole-database
+card only where `global` is true, and both take the wording from `label` (#U9).
+
+| Operation | Control label | Per-row | Global | Why |
+|-----------|---------------|---------|--------|-----|
+| `vacuum` | Vacuum Database | no | yes | `VACUUM` rewrites the whole file and `runMaintenance` drops the target, so a per-table control named one table and acted on the database |
+| `analyze` | Analyze Table | yes | yes | `ANALYZE [<t>]` |
+| `reindex` | Reindex Table | yes | yes | `REINDEX [<t>]` |
+| `check` | Integrity Check | no | yes | `PRAGMA integrity_check` reads the whole file, target ignored |
+
+**The schema explorer's row menu reads the same declaration.** It is the third surface that
+renders this wording, and it used to gate on `supportsMaintenance` alone — so it offered
+*"Vacuum Table"* for ONE table here while the monitoring Tables tab correctly withheld that
+control, and the click deep-linked to a page where no such control exists. `TableItem.tsx`
+now asks `maintenanceControl(capabilities, …, 'perEntity')` for each of its two items, so on
+SQLite the row menu offers *"Analyze Table"* and no vacuum item at all. Unknown capabilities
+read as a denial there, as they already did on the other two surfaces: `/api/db/provider-meta`
+answers with nothing both while it is in flight and when it failed.
+
 ---
 
 ## 9. Capabilities & labels
@@ -451,7 +475,10 @@ and `reindex` targets are quoted via `escapeIdentifier()`:
 ### Labels
 
 Default SQL labels — *Table* / *Select Top 50* / *Vacuum Table* / *Analyze Table*, which match
-SQLite's real `VACUUM`/`ANALYZE`.
+SQLite's real `VACUUM`/`ANALYZE`. `vacuumAction`'s *"Vacuum Table"* is the one word that is
+narrower than the statement: `VACUUM` is not per-table, which is what
+`vacuum: { perEntity: false, label: 'Vacuum Database' }` says, and the per-row surfaces take
+their wording from that `label` rather than from this field.
 
 One field is overridden: `slowQueriesEmptyState` → *"SQLite keeps no statistics about finished
 statements, so there is nothing to enable."* `getSlowQueries()` answers `[]` unconditionally

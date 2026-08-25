@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting fourteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra
 type: application
-version: 0.1.49
+version: 0.1.50
 appVersion: "0.13.4"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -39,9 +39,11 @@ annotations:
   artifacthub.io/category: database
   artifacthub.io/license: MIT
   artifacthub.io/prerelease: "false"
-  # False: 0.1.49 changes no packaged template at all - 0.1.48's optional model-tuning
-  # ConfigMap and read-only mount are unchanged - and carries only the appVersion move to
-  # 0.13.4. What 0.13.4 fixes is correctness, not security: a MySQL protocol choice, the
+  # False: 0.1.50 changes no packaged template and no value - it corrects the README's own
+  # copy-paste recipes, which rendered an unquoted YAML boolean into `core/v1.EnvVar.value`
+  # and left bracket arguments a zsh user's shell globs away. The README is a packaged file,
+  # so #167 costs it a chart version even though nothing an operator deploys moves.
+  # 0.1.49 carried only the appVersion move to 0.13.4. What 0.13.4 fixes is correctness, not security: a MySQL protocol choice, the
   # monitoring dashboard's all-or-nothing aggregate, a ScyllaDB connection and an Oracle
   # LOB read. Its dependency moves are routine patch bumps with no advisory behind them.
   # 0.13.3's transport fixes (a rediss:// or couchbases:// URL landing on SSL mode disable,

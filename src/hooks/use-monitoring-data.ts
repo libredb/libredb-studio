@@ -270,6 +270,23 @@ export function useMonitoringData(
           throw new Error(result.error || `Failed to run ${type}`);
         }
 
+        // A 200 says the statement reached the engine, not that the engine did the work:
+        // `MaintenanceResult.success` is the engine's own verdict, and reading only the
+        // status code turned every refusal into a green tick. Measured through the real
+        // MySQL provider on 2026-08-25, OPTIMIZE on a table that is not there answers 200
+        // with `{success:false, message:"OPTIMIZE failed: ... doesn't exist"}` - and
+        // `OperationsTab` writes this boolean straight into its operation log, so the
+        // whole surface recorded a completed operation. A provider that reports no verdict
+        // keeps the old reading: only an explicit `false` is a refusal.
+        if (result.success === false) {
+          toast.error(result.message || `${type} failed`);
+          // Refreshed anyway: a refused operation can still have moved part of the state
+          // it was asked about (Oracle rebuilds index by index), so the panels must not
+          // keep showing what was true before the attempt.
+          await fetchData();
+          return false;
+        }
+
         toast.success(result.message || `${type} completed successfully`);
 
         // Refresh data after maintenance

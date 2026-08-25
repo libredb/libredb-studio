@@ -1,5 +1,6 @@
 import { describe, test, expect, spyOn } from "bun:test";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
+import { maintenanceControl } from "@/lib/db/types";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, DatabaseError } from "@/lib/db/errors";
 import type {
   DatabaseConnection,
@@ -774,5 +775,90 @@ describe("getMonitoringData partial failures", () => {
 
     expect(data.slowQueries).toBeUndefined();
     expect(data.errors?.slowQueries).toBe("slow log unavailable");
+  });
+});
+
+// ============================================================================
+// maintenanceControl() — the one gate both maintenance surfaces ask (#U9)
+// ============================================================================
+
+describe("maintenanceControl", () => {
+  const caps = (overrides: Partial<ProviderCapabilities> = {}): ProviderCapabilities =>
+    ({
+      supportsMaintenance: true,
+      maintenanceOperations: ["vacuum", "analyze"],
+      ...overrides,
+    }) as ProviderCapabilities;
+
+  test("undefined capabilities are a denial, not a permission", () => {
+    // /api/db/provider-meta answers with nothing both while it is in flight and when
+    // it failed, and failing open there is what put the dead buttons on the very
+    // connections the #272/#282 gates exist for.
+    expect(maintenanceControl(undefined, "vacuum", "perEntity")).toEqual({ offered: false });
+    expect(maintenanceControl(undefined, "vacuum", "global")).toEqual({ offered: false });
+  });
+
+  test("an engine with no maintenance offers nothing in either placement", () => {
+    const cassandraShaped = caps({ supportsMaintenance: false, maintenanceOperations: [] });
+
+    expect(maintenanceControl(cassandraShaped, "vacuum", "perEntity").offered).toBe(false);
+    expect(maintenanceControl(cassandraShaped, "analyze", "global").offered).toBe(false);
+  });
+
+  test("an operation the provider does not declare is never offered", () => {
+    expect(maintenanceControl(caps(), "reindex", "perEntity").offered).toBe(false);
+    expect(maintenanceControl(caps(), "reindex", "global").offered).toBe(false);
+  });
+
+  test("no spec means both placements under the CALLER's wording", () => {
+    // The compatibility promise `maintenanceOperationSpecs` was made optional for:
+    // an implementation that declares nothing behaves exactly as it did before #U9,
+    // and gets no label of its own, so the surface keeps its generic verb.
+    expect(maintenanceControl(caps(), "vacuum", "perEntity")).toEqual({ offered: true });
+    expect(maintenanceControl(caps(), "vacuum", "global")).toEqual({ offered: true });
+  });
+
+  test("a spec decides each placement independently and names the control", () => {
+    const sqliteShaped = caps({
+      maintenanceOperations: ["vacuum", "analyze"],
+      maintenanceOperationSpecs: {
+        vacuum: { label: "Vacuum Database", perEntity: false, global: true },
+        analyze: { label: "Analyze Table", perEntity: true, global: true },
+      },
+    });
+
+    expect(maintenanceControl(sqliteShaped, "vacuum", "perEntity")).toEqual({
+      offered: false,
+      label: "Vacuum Database",
+    });
+    expect(maintenanceControl(sqliteShaped, "vacuum", "global")).toEqual({
+      offered: true,
+      label: "Vacuum Database",
+    });
+    expect(maintenanceControl(sqliteShaped, "analyze", "perEntity")).toEqual({
+      offered: true,
+      label: "Analyze Table",
+    });
+  });
+
+  test("an operation whose target is a session id is offered in neither placement", () => {
+    const withKill = caps({
+      maintenanceOperations: ["kill"],
+      maintenanceOperationSpecs: { kill: { label: "Terminate Backend", perEntity: false, global: false } },
+    });
+
+    expect(maintenanceControl(withKill, "kill", "perEntity").offered).toBe(false);
+    expect(maintenanceControl(withKill, "kill", "global").offered).toBe(false);
+  });
+
+  test("a spec for an operation the provider does not declare cannot resurrect it", () => {
+    // The two lists can drift; `maintenanceOperations` stays the authority, because
+    // /api/db/maintenance validates against it and answers 400 for anything else.
+    const drifted = caps({
+      maintenanceOperations: ["analyze"],
+      maintenanceOperationSpecs: { vacuum: { label: "Vacuum Table", perEntity: true, global: true } },
+    });
+
+    expect(maintenanceControl(drifted, "vacuum", "perEntity").offered).toBe(false);
   });
 });

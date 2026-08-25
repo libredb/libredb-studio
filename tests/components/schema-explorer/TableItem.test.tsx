@@ -95,6 +95,31 @@ const libredbCaps = caps({
  * and the engine still declares no maintenance of any kind.
  */
 const searchCaps = caps({ supportsMaintenance: false, maintenanceOperations: [] });
+/**
+ * SQLite-shaped (#U9): `VACUUM` rewrites the whole file and takes no target, so the
+ * provider declares `vacuum: { perEntity: false }` — and the monitoring Tables tab
+ * already withholds that control while this menu still offered it for ONE table.
+ */
+const sqliteCaps = caps({
+  supportsMaintenance: true,
+  maintenanceOperations: ["vacuum", "analyze", "reindex", "check"],
+  maintenanceOperationSpecs: {
+    vacuum: { label: "Vacuum Database", perEntity: false, global: true },
+    analyze: { label: "Analyze Table", perEntity: true, global: true },
+  },
+});
+/**
+ * MySQL-shaped (#U9): no `vacuum` at all, and the vacuum SLOT names `optimize` —
+ * which is the operation whose `perEntity` decides whether the item may appear.
+ */
+const mysqlCaps = caps({
+  supportsMaintenance: true,
+  maintenanceOperations: ["analyze", "optimize", "check", "kill"],
+  maintenanceOperationSpecs: {
+    analyze: { label: "Analyze Table", perEntity: true, global: true },
+    optimize: { label: "Optimize Table", perEntity: true, global: true },
+  },
+});
 
 /**
  * Labels are partial for the same reason capabilities are: TableItem reads four
@@ -700,6 +725,88 @@ describe("TableItem", () => {
       // derived grouping stays: this gate is about maintenance and nothing else.
       expect(dropdown.queryByText("Profile Table")).not.toBeNull();
       expect(dropdown.queryByText("Generate Test Data")).not.toBeNull();
+    });
+
+    /*
+      A THIRD surface renders the same wording (#U9). This menu gated both items on
+      `supportsMaintenance` alone, so on SQLite it offered "Vacuum Table" for ONE table
+      while the monitoring Tables tab correctly withheld that control — SQLite declares
+      `vacuum: { perEntity: false }` because `VACUUM` rewrites the whole file and
+      ignores a target. Clicking it deep-linked to a page with no such control: the
+      exact dead end this file's own comment above records as fixed for Elasticsearch.
+    */
+    test("withholds the vacuum item where the provider says vacuum takes no table", () => {
+      const { getByTestId } = render(
+        <TableItem
+          table={largeTable}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin
+          capabilities={sqliteCaps}
+          labels={labelsFor({})}
+        />,
+      );
+      const dropdown = within(getByTestId("dropdown"));
+      expect(dropdown.queryByText("Vacuum Table")).toBeNull();
+      // Analyze DOES take a table here, so this is not the blanket withholding the
+      // no-maintenance engines get.
+      expect(dropdown.queryByText("Analyze Table")).not.toBeNull();
+    });
+
+    test("follows the vacuum slot to the operation it actually names", () => {
+      // MySQL declares no `vacuum`; its vacuum slot says "Optimize Table" and
+      // `vacuumActionOperation` says that is `optimize`, which IS per-table here.
+      const { getByTestId } = render(
+        <TableItem
+          table={largeTable}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin
+          capabilities={mysqlCaps}
+          labels={labelsFor({ vacuumAction: "Optimize Table", vacuumActionOperation: "optimize" })}
+        />,
+      );
+      const dropdown = within(getByTestId("dropdown"));
+      expect(dropdown.queryByText("Optimize Table")).not.toBeNull();
+      expect(dropdown.queryByText("Vacuum Table")).toBeNull();
+    });
+
+    test("takes the wording from the provider's own declaration, not from the label slot", () => {
+      // `label` on the spec is the engine's own name for the control and it wins over
+      // BOTH `labels.analyzeAction` and this component's generic fallback, exactly as
+      // it does on the other two surfaces. All three strings are different here on
+      // purpose: asserting the spec label while it reads the same as the fallback
+      // ("Analyze Table") cannot fail, whichever branch the component took.
+      const { getByTestId } = render(
+        <TableItem
+          table={largeTable}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin
+          capabilities={caps({
+            supportsMaintenance: true,
+            maintenanceOperations: ["analyze"],
+            maintenanceOperationSpecs: { analyze: { label: "Refresh Statistics", perEntity: true, global: true } },
+          })}
+          labels={labelsFor({ analyzeAction: "Gather Statistics" })}
+        />,
+      );
+      const dropdown = within(getByTestId("dropdown"));
+      expect(dropdown.queryByText("Refresh Statistics")).not.toBeNull();
+      expect(dropdown.queryByText("Gather Statistics")).toBeNull();
+      expect(dropdown.queryByText("Analyze Table")).toBeNull();
+    });
+
+    test("offers nothing while the capabilities are still unknown", () => {
+      // `/api/db/provider-meta` answers with nothing both while it is in flight and
+      // when it failed, and both maintenance surfaces read that as a denial. A menu
+      // that guessed "offer it" is how the dead buttons came back.
+      const { getByTestId } = render(
+        <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin labels={labelsFor({})} />,
+      );
+      const dropdown = within(getByTestId("dropdown"));
+      expect(dropdown.queryByText("Analyze Table")).toBeNull();
+      expect(dropdown.queryByText("Vacuum Table")).toBeNull();
     });
 
     test("hides maintenance from a non-admin even when declared", () => {

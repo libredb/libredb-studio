@@ -422,6 +422,22 @@ describe("MongoDBProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("getCapabilities()", () => {
+    // #U9: `validate` and `compact` are per-collection commands this provider also
+    // loops over `listCollections()`, so both placements are real. `dbCheck` is not
+    // looped and refuses to run without a collection name.
+    test("declares the target grammar of every maintenance operation", () => {
+      const caps = provider.getCapabilities();
+
+      expect(caps.maintenanceOperationSpecs).toEqual({
+        vacuum: { label: "Compact Collection", perEntity: true, global: true },
+        analyze: { label: "Validate Collection", perEntity: true, global: true },
+        check: { label: "Check Collection", perEntity: true, global: false },
+      });
+      expect(Object.keys(caps.maintenanceOperationSpecs ?? {}).sort()).toEqual([...caps.maintenanceOperations].sort());
+      // MongoDB's "Compact Collection" really is the `vacuum` it declares, so the
+      // label needs no redirection.
+      expect(provider.getLabels().vacuumActionOperation).toBeUndefined();
+    });
     test("returns correct capability metadata", () => {
       const caps = provider.getCapabilities();
       expect(caps.queryLanguage).toBe("json");

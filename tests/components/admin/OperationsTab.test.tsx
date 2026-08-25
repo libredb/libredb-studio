@@ -1460,4 +1460,205 @@ describe("OperationsTab", () => {
 
     expect(getByTestId("operations-tables-empty").textContent).toBe("No tables found.");
   });
+  // ── Every control is gated and titled by the provider's own declaration (#U9) ──
+  //
+  // #427 reverted a generic label-to-operation mapping, and the reason is here: two
+  // engines that declare the same `MaintenanceType` take different kinds of target,
+  // so only the provider can say what a control may be pointed at. These tests use
+  // the shapes the real providers declare.
+
+  const render_ = async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    return renderResult!;
+  };
+
+  const titlesIn = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll("button"))
+      .map((b) => b.getAttribute("title"))
+      .filter((t): t is string => t !== null);
+
+  test("MySQL renders its own maintenance words and never 'Vacuum Table'", async () => {
+    // MySQL has no VACUUM at all: the base default put "Run Vacuum / Reclaim Space"
+    // on this tab and "Vacuum" on every table row for an engine whose operations are
+    // analyze/optimize/check/kill.
+    mockMetadata = {
+      capabilities: {
+        supportsMaintenance: true,
+        maintenanceOperations: ["analyze", "optimize", "check", "kill"],
+        maintenanceOperationSpecs: {
+          analyze: { label: "Analyze Table", perEntity: true, global: true },
+          optimize: { label: "Optimize Table", perEntity: true, global: true },
+          check: { label: "Check Table", perEntity: true, global: true },
+          kill: { label: "Kill Connection", perEntity: false, global: false },
+        },
+      },
+      labels: {
+        analyzeGlobalLabel: "Run Analyze",
+        analyzeGlobalTitle: "Update Statistics",
+        analyzeGlobalDesc: "Runs ANALYZE TABLE over every table.",
+        vacuumActionOperation: "optimize",
+        vacuumGlobalLabel: "Run Optimize",
+        vacuumGlobalTitle: "Optimize Tables",
+        vacuumGlobalDesc: "Runs OPTIMIZE TABLE over every table in the database.",
+      },
+    };
+
+    const { queryByText, container } = await render_();
+
+    // The global card the provider's wording was written for now renders...
+    expect(queryByText("Run Optimize")).not.toBeNull();
+    expect(queryByText("Optimize Tables")).not.toBeNull();
+    // ...and the words for an operation MySQL does not have are gone.
+    expect(queryByText("Run Vacuum")).toBeNull();
+    expect(queryByText("Reclaim Space")).toBeNull();
+
+    const titles = titlesIn(container);
+    expect(titles).toContain("Analyze Table");
+    expect(titles).toContain("Optimize Table");
+    expect(titles).toContain("Check Table");
+    expect(titles).not.toContain("Vacuum");
+    expect(titles).not.toContain("Vacuum Table");
+    // `kill` declares neither placement: its target is a connection id, which only
+    // the Sessions panel below can supply.
+    expect(titles).not.toContain("Kill Connection");
+  });
+
+  test("the global card whose label was redirected SENDS the redirected operation", async () => {
+    // Sending `vacuum` to SQL Server, Oracle, MySQL or ClickHouse is a 400 from
+    // /api/db/maintenance: none of them declares it.
+    mockMetadata = {
+      capabilities: {
+        supportsMaintenance: true,
+        maintenanceOperations: ["analyze", "optimize", "kill"],
+        maintenanceOperationSpecs: {
+          analyze: { label: "Gather Statistics", perEntity: true, global: true },
+          optimize: { label: "Rebuild Indexes", perEntity: true, global: true },
+          kill: { label: "Kill Session", perEntity: false, global: false },
+        },
+      },
+      labels: { vacuumActionOperation: "optimize", vacuumGlobalLabel: "Rebuild Indexes" },
+    };
+
+    const { queryByText } = await render_();
+    const button = queryByText("Rebuild Indexes");
+    expect(button).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.click(button!);
+    });
+
+    expect(mockRunMaintenance).toHaveBeenCalledWith("optimize", undefined);
+  });
+
+  test("an operation with no whole-database form gets no global card", async () => {
+    // ClickHouse: OPTIMIZE names one table, so the "Merge Parts" card would always
+    // have answered *"The optimize operation requires a target"*. Its analyze does
+    // take both, so the section itself still renders - which is what makes the
+    // absence of the optimize card a gate rather than a blanket denial.
+    mockMetadata = {
+      capabilities: {
+        supportsMaintenance: true,
+        maintenanceOperations: ["optimize", "analyze", "kill"],
+        maintenanceOperationSpecs: {
+          optimize: { label: "Optimize Table", perEntity: true, global: false },
+          analyze: { label: "Table Statistics", perEntity: true, global: true },
+          kill: { label: "Cancel Query", perEntity: false, global: false },
+        },
+      },
+      labels: {
+        vacuumActionOperation: "optimize",
+        vacuumGlobalLabel: "Optimize",
+        vacuumGlobalTitle: "Merge Parts",
+        analyzeGlobalLabel: "Table Statistics",
+      },
+    };
+
+    const { queryByText, container } = await render_();
+
+    expect(queryByText("Global Operations")).not.toBeNull();
+    expect(queryByText("Table Statistics")).not.toBeNull();
+    expect(queryByText("Optimize")).toBeNull();
+    expect(queryByText("Merge Parts")).toBeNull();
+    // The per-table control is the one that CAN succeed, so it stays.
+    expect(titlesIn(container)).toContain("Optimize Table");
+  });
+
+  test("Couchbase's global Reindex card is withheld and the per-collection item carries the target", async () => {
+    // The #U6 card rendered for every provider declaring `reindex` and answered
+    // *"The reindex operation requires a target"* on Couchbase, whose BUILD INDEX
+    // names one keyspace and has no whole-bucket form.
+    mockMetadata = {
+      capabilities: {
+        supportsMaintenance: true,
+        maintenanceOperations: ["analyze", "reindex", "kill"],
+        maintenanceOperationSpecs: {
+          analyze: { label: "Update Statistics", perEntity: true, global: false },
+          reindex: { label: "Build Deferred Indexes", perEntity: true, global: false },
+          kill: { label: "Cancel Request", perEntity: false, global: false },
+        },
+      },
+      labels: {
+        reindexGlobalLabel: "Build Indexes",
+        reindexGlobalTitle: "Build Deferred GSI Indexes",
+        analyzeGlobalLabel: "Update Statistics",
+      },
+    };
+
+    const { queryByText, container } = await render_();
+
+    // Not one global control can succeed here, so the whole section is absent.
+    expect(queryByText("Global Operations")).toBeNull();
+    expect(queryByText("Build Indexes")).toBeNull();
+    expect(queryByText("Update Statistics")).toBeNull();
+
+    const titles = titlesIn(container);
+    expect(titles).toContain("Build Deferred Indexes");
+    expect(titles).toContain("Update Statistics");
+
+    await act(async () => {
+      fireEvent.click(container.querySelector('button[title="Build Deferred Indexes"]')!);
+    });
+
+    // The target is what made this control honest: "users" is the collection row.
+    expect(mockRunMaintenance).toHaveBeenCalledWith("reindex", "users");
+  });
+
+  test("an operation that ignores its target gets no per-row control", async () => {
+    // Redis: `runMaintenance(type)` takes no target parameter at all, so a per-row
+    // "Key Info" answered with server-wide metrics for one key prefix (#427). Rows
+    // here are addressable, so nothing but the declaration withholds the control.
+    mockMetadata = {
+      capabilities: {
+        supportsMaintenance: true,
+        maintenanceOperations: ["analyze"],
+        maintenanceOperationSpecs: { analyze: { label: "Server Info", perEntity: false, global: true } },
+      },
+      labels: { analyzeGlobalLabel: "Run Info", analyzeGlobalTitle: "Server Info" },
+    };
+
+    const { queryByText, container } = await render_();
+
+    expect(queryByText("Run Info")).not.toBeNull();
+    expect(titlesIn(container)).not.toContain("Server Info");
+  });
+
+  test("a provider that declares no specs keeps the pre-#U9 controls", async () => {
+    // `maintenanceOperationSpecs` is optional on the published interface, so an
+    // implementation that declares nothing must behave exactly as it did.
+    mockMetadata = {
+      capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze", "vacuum", "reindex"] },
+    };
+
+    const { queryByText, container } = await render_();
+
+    expect(queryByText("Run Analyze")).not.toBeNull();
+    expect(queryByText("Run Vacuum")).not.toBeNull();
+    expect(queryByText("Run Reindex")).not.toBeNull();
+    const titles = titlesIn(container);
+    expect(titles).toContain("Analyze");
+    expect(titles).toContain("Vacuum");
+  });
 });

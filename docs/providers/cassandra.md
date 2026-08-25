@@ -524,13 +524,22 @@ SELECT * FROM probe.customers LIMIT 3 -- note\n    -> 3 rows
 SELECT * FROM probe.customers LIMIT 3 // note\n    -> 3 rows
 ```
 
-`//` is a line comment in CQL and the shared span readers know nothing about it. Both facts break the
-limiter's insert-before-trailing-trivia rule (#280) in different ways: for `--` it re-attaches the
-comment after the clause and the trim drops the newline that closed it, turning a **valid** statement
-into a syntax error; for `//` it appends the clause *inside* the comment. So a statement whose
-rewritten form would end inside a line comment is **left exactly as written**, `wasLimited: false`.
-The check walks the shared span reader, so a `//` inside a string literal (`WHERE url =
-'http://x'`) is not mistaken for a comment.
+`//` is a line comment in CQL, and that half **is** a shared grammar fact — `doubleSlashComment` in
+[`src/lib/sql/grammar.ts`](../../src/lib/sql/grammar.ts), measured over the native protocol on
+Cassandra 5.0.9 and ScyllaDB 2026.2.4. It used to be a private scan inside this provider, and while
+it was, the shared readers were blind to it: the statement splitter cut
+`SELECT id FROM probe.customers // note; DROP TABLE probe.customers` — **one** statement to this
+server, the `;` and the write both inside the comment — into a read and a bare `DROP`, and
+`/api/db/multi-query` runs every fragment it is handed.
+
+What stays local to this engine is the OTHER half: neither comment form may be closed by end of
+input. That is a fact about where a statement may **end**, not about what a run is, so both comment
+forms now break the limiter's insert-before-trailing-trivia rule (#280) the same way — the clause
+goes in before the comment and `sql.trim()` drops the newline that closed it, turning a **valid**
+statement into a syntax error. So a statement whose rewritten form would end inside a line comment is
+**left exactly as written**, `wasLimited: false`. The check walks the shared span reader, which is
+also what keeps a `//` inside a string literal (`WHERE url = 'http://x'`) from being read as a
+comment.
 
 **One shape is knowingly left unbounded.** A statement whose last clause is `PER PARTITION LIMIT n`
 reads as already bounded to the shared reader, so nothing is injected — `... PER PARTITION LIMIT 2

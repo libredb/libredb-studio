@@ -593,6 +593,64 @@ are backtick-quoted via `escapeIdentifier()`:
 `getCapabilities().maintenanceOperations = ['analyze', 'optimize', 'check', 'kill']`. `kill`
 validates that the target parses as an integer connection id.
 
+### The verdict is in the result set, not in the absence of an exception
+
+`ANALYZE`, `OPTIMIZE` and `CHECK TABLE` answer a **result set** — one row per (table, message)
+with `Table` / `Op` / `Msg_type` / `Msg_text` — and a statement the server refuses resolves
+normally. Measured through the driver against MySQL 26.7.0 (`libredb-mysql`) on 2026-08-25:
+
+| Statement | Rows MySQL answers |
+|-----------|--------------------|
+| `OPTIMIZE TABLE \`real1\`` | `note` *"Table does not support optimize, doing recreate + analyze instead"*, then `status` *"OK"* |
+| `OPTIMIZE TABLE \`missing\`` | `Error` *"Table 'u9t.missing' doesn't exist"*, then `status` *"Operation failed"* |
+| `CHECK TABLE \`real1\`` | `status` *"OK"* |
+
+So `await runStatement(conn, sql); return { success: true }` reported a completed operation for
+a statement the server had rejected — `optimize u9t` answered
+`{"success":true,"message":"OPTIMIZE completed successfully"}` while the server's own answer was
+Error / *"Table 'u9t.missing' doesn't exist"* / *"Operation failed"* — and it discarded the
+`Msg_text` that is the entire point of `CHECK TABLE`, whose OK-or-corruption-report is the only
+thing the user asked for. `readMaintenanceReport()` reads those rows:
+
+- **any row with `Msg_type` = `error`** (matched case-insensitively; the server sends `Error`,
+  the manual documents the set in lower case) → `success: false`, and the message quotes those
+  rows **with their table names**, because the whole-database form names every table in one
+  statement and a per-table Error row is the only place the failure appears;
+- **otherwise** → `success: true`, and the message quotes the engine's own texts, deduplicated:
+  over forty tables the OK and InnoDB's *"doing recreate + analyze instead"* note repeat once
+  per table and say the same thing forty times.
+
+After the fix, through the provider: `check real1` → *"CHECK: OK"*, `optimize missing` →
+`success: false` *"OPTIMIZE failed: u9t.missing: Table 'u9t.missing' doesn't exist"*. This is the
+same read SQLite's `check` already did with `PRAGMA integrity_check`.
+
+**A database with no tables runs no statement.** `OPTIMIZE TABLE ${getAllTablesForMaintenance()}`
+string-joined an empty list, and MySQL answered *"You have an error in your SQL syntax … near
+''"* — measured through the provider against an empty database on 2026-08-25. Nothing to do is
+not a failure and it is not a syntax error either, so the whole-database form now answers
+`success: true` with *"OPTIMIZE: no tables in u9empty to run it on."* without sending anything.
+
+### Where each operation may be offered (`maintenanceOperationSpecs`)
+
+Declaring that an operation EXISTS is not enough to put a button on it: two engines that
+declare the same `MaintenanceType` take different kinds of target, so each provider also
+declares what its own operations may be pointed at. The monitoring Tables tab renders a
+per-row control only where `perEntity` is true, the admin Operations tab a whole-database
+card only where `global` is true, and both take the wording from `label` (#U9).
+
+| Operation | Control label | Per-row | Global | Why |
+|-----------|---------------|---------|--------|-----|
+| `analyze` | Analyze Table | yes | yes | `ANALYZE TABLE <t>`, or every table via `getAllTablesForMaintenance()` |
+| `optimize` | Optimize Table | yes | yes | `OPTIMIZE TABLE <t>`, same loop without a target |
+| `check` | Check Table | yes | yes | `CHECK TABLE <t>`, same loop without a target |
+| `kill` | Kill Connection | no | no | the target is a connection id from the Sessions panel |
+
+MySQL has no `VACUUM`, and the base labels put *"Vacuum Table"* in the explorer's row menu
+and *"Run Vacuum" / "Reclaim Space"* on the Operations tab anyway. The labels now say
+*"Optimize Table"* / *"Run Optimize" / "Optimize Tables"*, and `vacuumActionOperation:
+'optimize'` is what makes the surfaces send `optimize` for them - the global card used to be
+gated on the literal `vacuum`, so MySQL's own wording was written and never shown (#U9).
+
 ---
 
 ## 10. Capabilities & labels
@@ -618,10 +676,19 @@ validates that the target parses as an integer connection id.
 ### Labels
 
 MySQL keeps the default SQL `getLabels()` from `BaseDatabaseProvider` (entity → *Table*, *Select Top
-50*, etc.) for everything a person clicks. (The default `analyzeAction`/`vacuumAction` wording is
-generic SQL phrasing; MySQL's actual maintenance verbs are optimize/check/analyze.)
+50*, etc.) for everything a person clicks. `analyzeAction` is one of them and is correct: MySQL runs
+`ANALYZE TABLE`. The vacuum slot is not, and is overridden.
 
-**One field is overridden** ([mysql.ts:346](../../src/lib/db/providers/sql/mysql.ts)):
+**The vacuum slot** ([mysql.ts](../../src/lib/db/providers/sql/mysql.ts)): `vacuumAction` →
+*"Optimize Table"*, `vacuumGlobalLabel` → *"Run Optimize"*, `vacuumGlobalTitle` → *"Optimize
+Tables"*, `vacuumGlobalDesc` → the OPTIMIZE TABLE sentence, and `vacuumActionOperation` →
+`optimize`. MySQL has no `VACUUM`, so the base default put *"Vacuum Table"* in the explorer's row
+menu and *"Run Vacuum" / "Reclaim Space"* on the admin Operations tab for an engine whose operations
+are analyze/optimize/check/kill — and because that card was gated on the literal `vacuum`, no
+wording MySQL could have declared would have been shown (#U9,
+[§9](#where-each-operation-may-be-offered-maintenanceoperationspecs)).
+
+**And one monitoring field** ([mysql.ts:346](../../src/lib/db/providers/sql/mysql.ts)):
 `slowQueriesEmptyState` → *"Query stats come from
 performance_schema.events_statements_summary_by_digest - enable the Performance Schema to see them."*
 The monitoring Queries panel's empty state was hardcoded to PostgreSQL's `pg_stat_statements` advice

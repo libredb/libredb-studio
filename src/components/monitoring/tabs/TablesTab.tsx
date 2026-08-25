@@ -1,14 +1,29 @@
 "use client";
 
 import React, { useState } from "react";
-import { Table2, Search, TriangleAlert, LoaderCircle, RefreshCw, Zap, type LucideIcon } from "lucide-react";
+import {
+  Table2,
+  Search,
+  TriangleAlert,
+  LoaderCircle,
+  RefreshCw,
+  Zap,
+  Wrench,
+  ShieldCheck,
+  type LucideIcon,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { MaintenanceType, MonitoringData, ProviderCapabilities } from "@/lib/db/types";
+import {
+  maintenanceControl,
+  type MaintenanceType,
+  type MonitoringData,
+  type ProviderCapabilities,
+} from "@/lib/db/types";
 import { PanelUnavailable } from "../PanelUnavailable";
 
 /**
@@ -16,11 +31,22 @@ import { PanelUnavailable } from "../PanelUnavailable";
  * `MaintenanceType` vocabulary a provider declares in `maintenanceOperations`
  * rather than to a loose string — a typo would then be a type error instead of
  * a silently missing control.
+ *
+ * `label` is only the fallback for a provider that declares no
+ * `maintenanceOperationSpecs`: where one exists, `maintenanceControl()` replaces the
+ * generic verb with the engine's own name for it, so MySQL titles its buttons
+ * "Optimize Table" and "Check Table" rather than borrowing PostgreSQL's vocabulary.
+ * `optimize` and `check` are candidates at all because the operations exist on five
+ * providers and had no per-table control anywhere; the ones whose statement takes no
+ * object (SQL Server's `DBCC CHECKDB`, SQLite's `PRAGMA integrity_check`) declare
+ * `perEntity: false` and are filtered out here (#U9).
  */
 const MAINTENANCE_ACTIONS: { type: MaintenanceType; label: string; Icon: LucideIcon; className: string }[] = [
   { type: "analyze", label: "Analyze", Icon: Search, className: "h-6 w-6 sm:h-8 sm:w-8" },
   { type: "vacuum", label: "Vacuum", Icon: RefreshCw, className: "h-6 w-6 sm:h-8 sm:w-8" },
+  { type: "optimize", label: "Optimize", Icon: Wrench, className: "h-6 w-6 sm:h-8 sm:w-8" },
   { type: "reindex", label: "Reindex", Icon: Zap, className: "h-6 w-6 sm:h-8 sm:w-8 hidden sm:inline-flex" },
+  { type: "check", label: "Check", Icon: ShieldCheck, className: "h-6 w-6 sm:h-8 sm:w-8 hidden sm:inline-flex" },
 ];
 
 /**
@@ -172,11 +198,16 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
     setActionLoading(null);
   };
 
-  // Offer only the maintenance a provider declares it can perform: /api/db/maintenance
-  // rejects everything else with 400, so an ungated button can only produce an error.
-  const availableActions = capabilities?.supportsMaintenance
-    ? MAINTENANCE_ACTIONS.filter((action) => capabilities.maintenanceOperations.includes(action.type))
-    : [];
+  // Offer only the maintenance a provider declares it can perform HERE: /api/db/maintenance
+  // rejects an undeclared operation with 400, and a declared one whose target is not a table
+  // rejects the table name the button sends — SQLite's VACUUM ignores it and rewrote the whole
+  // database from a control that named one table, Oracle's index rebuild answered ORA-01418
+  // for every table name there is. `maintenanceControl` reads the provider's own
+  // `perEntity` declaration for each, and hands back the engine's own wording with it (#U9).
+  const availableActions = MAINTENANCE_ACTIONS.flatMap((action) => {
+    const control = maintenanceControl(capabilities, action.type, "perEntity");
+    return control.offered ? [{ ...action, label: control.label ?? action.label }] : [];
+  });
 
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">

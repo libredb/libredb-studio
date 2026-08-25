@@ -857,12 +857,18 @@ describe("isDangerousQuery", () => {
    *
    * The write-inside-a-read probe looks for `UPDATE … SET` only, because widening it
    * to the other write keywords would make every read whose code names one of them
-   * prompt. And the whole editor text is read as one statement, so a destructive
-   * statement later in a script is only caught by that same unanchored probe.
+   * prompt.
+   *
+   * The gap this list used to record beside it - "the whole editor text is read as one
+   * statement, so a destructive statement later in a script is only caught by that same
+   * unanchored probe" - is closed (S1): the predicate now reads the SAME fragments
+   * `/api/db/multi-query` will run, so a later `DROP` is answered by its own fragment's
+   * keyword rather than by luck. The row below is kept, with the answer it now has,
+   * because a regression there is silence on a script's second statement.
    */
   test.each<[string, string, boolean]>([
     ["a DELETE hidden in a CTE body", "WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone", false],
-    ["a DROP after a leading SELECT", "SELECT 1; DROP TABLE users", false],
+    ["a DROP after a leading SELECT", "SELECT 1; DROP TABLE users", true],
     ["an UPDATE after a leading SELECT", "SELECT 1;\nUPDATE t SET x = 1", true],
   ])("answers %s with %p", (_label, query, expected) => {
     expect(isDangerousQuery(query)).toBe(expected);
@@ -1056,6 +1062,51 @@ describe("isDangerousQuery", () => {
     expect(isDangerousQuery(query, "clickhouse")).toBe(true);
   });
 
+  // ── `//` is a line comment on two engines and an operator on the rest (S1) ──
+  //
+  // The fourth grammar fact, and the only one two unrelated engines share: CQL and
+  // ClickHouse read `//` to end of line, so a `;` behind it separates nothing and a
+  // statement behind it is text nobody wrote. Measured 2026-08-25 - Cassandra 5.0.9
+  // and ScyllaDB 2026.2.4 return the row for `SELECT release_version FROM
+  // system.local // note; DROP KEYSPACE nope`, and ClickHouse 26.7.1 answers 1 for
+  // `SELECT 1 // note; DROP TABLE nope` while the bare DROP is refused on both. Every
+  // other dialect here reads the characters where they stand: PostgreSQL 18 answers
+  // "operator does not exist: integer // integer".
+  //
+  // This predicate splits the buffer and asks about each fragment, so the fact decides
+  // whether there IS a second fragment to ask about - which is what makes the answer
+  // differ by dialect for one identical string.
+
+  test.each<["cassandra" | "clickhouse"]>([["cassandra"], ["clickhouse"]])(
+    "stays silent on %s, where the destructive half is commented out",
+    (type) => {
+      expect(isDangerousQuery("SELECT 1 // note; DROP TABLE users", type)).toBe(false);
+    },
+  );
+
+  test.each<[string]>([["postgres"], ["mysql"], ["trino"], ["mssql"]])(
+    "prompts on %s, where `//` is not a comment and the DROP is a statement",
+    (type) => {
+      expect(isDangerousQuery("SELECT 1 // note; DROP TABLE users", type as "postgres")).toBe(true);
+    },
+  );
+
+  // The compatibility default, for a dialect this product has not measured: `//` is
+  // not a comment there either, so the fragment behind it is asked about. Silence
+  // would be the answer that needs the evidence, not the prompt.
+  test("prompts with no dialect at all, which is the unmeasured reading", () => {
+    expect(isDangerousQuery("SELECT 1 // note; DROP TABLE users")).toBe(true);
+  });
+
+  // The line comment ENDS at the newline, so what follows is code again - the same
+  // reading `--` gets, and the reason `//` is not a to-end-of-buffer rule. The `;` here
+  // sits on the second line, so it really is a boundary and the DROP really is a
+  // statement: Cassandra 5.0.9 answers "line 2:0 mismatched input 'DROP'" for the same
+  // text, which is the engine agreeing there are two things here.
+  test("prompts on cassandra where the separator is on the line after the comment", () => {
+    expect(isDangerousQuery("SELECT 1 // note\n; DROP TABLE users", "cassandra")).toBe(true);
+  });
+
   // ── Where a block comment ends decides what this predicate reads (#300) ──
   //
   // The third grammar fact, and the one that reaches this predicate through the
@@ -1157,5 +1208,67 @@ describe("isDangerousQuery", () => {
 
     expect(dangerous).toBe(false);
     expect(elapsed, `took ${elapsed.toFixed(1)}ms`).toBeLessThan(200);
+  });
+
+  // ── The gate reads what the RUNNER will run (S1) ─────────────────────────
+
+  /**
+   * A buffer holding more than one statement does not run as one: the editor sends it
+   * to `/api/db/multi-query`, which splits it and runs the fragments in order. This
+   * predicate read only the whole text, so the operative keyword of
+   * `SELECT 1; DROP TABLE users` is SELECT and the DROP ran unconfirmed - the gate and
+   * the runner disagreed about what was going to run.
+   *
+   * The fix is the shared splitter under the same grammar, so the two ask about the
+   * same fragments.
+   */
+  test.each<[string, string]>([
+    ["a DROP in the second statement", "SELECT 1; DROP TABLE users"],
+    ["a DELETE after a read", "SELECT count(*) FROM users;\nDELETE FROM sessions"],
+    ["an UPDATE ... SET in the last statement", "SELECT 1; SELECT 2; UPDATE t SET x = 1"],
+    ["a write behind a comment in a later fragment", "SELECT 1;\n-- cleanup\nTRUNCATE TABLE audit"],
+  ])("prompts for %s, which only a fragment carries", (_label, query) => {
+    expect(isDangerousQuery(query, "postgres")).toBe(true);
+  });
+
+  test("a script of reads still does not prompt", () => {
+    expect(isDangerousQuery("SELECT 1; SELECT 2;\nSELECT * FROM users", "postgres")).toBe(false);
+  });
+
+  /**
+   * The entry's own attack, from both sides - and the two dialects answer differently
+   * because the ENGINES do, which is the whole point of threading the grammar.
+   *
+   * Measured on postgres 18 (container libredb-postgres): block comments nest, so the
+   * operator's text is one read and the table survives it - `ran = 1`, and the table
+   * still in `pg_class` afterwards. The splitter now agrees, so no bare DROP fragment
+   * exists to run and the gate has nothing to ask about.
+   *
+   * Measured on MySQL (container libredb-mysql): comments are flat, so the same text
+   * really does drop the table - `information_schema.tables` for that schema went to
+   * 0 - and the whole-text reading found no operative keyword at all, because the
+   * first code character there is the `;`. That is the silence this test closes.
+   */
+  test("the S1 attack: silent under PostgreSQL because nothing destructive runs", () => {
+    const attack = "/* a /* b */ ; DROP TABLE users; -- */ SELECT 1";
+
+    expect(isDangerousQuery(attack, "postgres")).toBe(false);
+  });
+
+  test("the S1 attack: prompts under MySQL, where the DROP really is a statement", () => {
+    const attack = "/* a /* b */ ; DROP TABLE users; -- */ SELECT 1";
+
+    expect(isDangerousQuery(attack, "mysql")).toBe(true);
+  });
+
+  /**
+   * The narrowing that keeps this from becoming a false-prompt machine on the two
+   * dialects whose text is not SQL: a `;` in a Mongo document or a Redis command
+   * separates nothing, so a fragment cut there is invented (#427) - and the
+   * multi-statement route is a SQL route those never take.
+   */
+  test("does not split a non-SQL buffer looking for fragments to prompt about", () => {
+    expect(isDangerousQuery('{"operation":"find","filter":{"note":"; drop table t"}}', "mongodb")).toBe(false);
+    expect(isDangerousQuery('SET note "a; delete from t"', "redis")).toBe(false);
   });
 });

@@ -633,6 +633,28 @@ tab since #272, the admin Operations tab since #282.
 Calling `runMaintenance` with one directly throws a `QueryError` naming the three supported
 operations.
 
+### Where each operation may be offered (`maintenanceOperationSpecs`)
+
+Declaring that an operation EXISTS is not enough to put a button on it: two engines that
+declare the same `MaintenanceType` take different kinds of target, so each provider also
+declares what its own operations may be pointed at. The monitoring Tables tab renders a
+per-row control only where `perEntity` is true, the admin Operations tab a whole-database
+card only where `global` is true, and both take the wording from `label` (#U9).
+
+| Operation | Control label | Per-row | Global | Why |
+|-----------|---------------|---------|--------|-----|
+| `analyze` | Update Statistics | yes | **no** | `UPDATE STATISTICS FOR <keyspace>` names one collection, and `dispatchMaintenance` requires the target |
+| `reindex` | Build Deferred Indexes | yes | **no** | `BUILD INDEX ON <keyspace>` names one collection; there is no whole-bucket form |
+| `kill` | Cancel Request | no | no | the target is a request id from the Sessions panel |
+
+Both global cards are withheld rather than synthesised from a keyspace list this provider
+does not enumerate for maintenance. Before #U9 the global Reindex card rendered for every
+provider that declared `reindex`, so on Couchbase every click answered *"The reindex
+operation requires a target"*; the per-collection control carries the keyspace and runs.
+`vacuumAction` (*"Compact"*) names nothing this provider can run - its own description says
+the server compacts automatically - so `vacuum` stays undeclared, `vacuumActionOperation`
+stays absent, and that card never renders either.
+
 ---
 
 ## 9. Capabilities & labels

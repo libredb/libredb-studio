@@ -62,7 +62,14 @@ export async function POST(request: Request) {
         target: target || "all",
         connectionName: connection.name || connection.database || "unknown",
         user: guard.session.username || "admin",
-        result: "success",
+        // The engine's verdict, not the request's. `runMaintenance` resolving is only the
+        // statement having reached the engine: since 2026-08-25 MySQL and Oracle read the
+        // server's own answer, so `success: false` on a 200 is the ordinary reply for a
+        // target the engine would not touch - and recording that as a completed operation
+        // is worse than not recording it, because this log is where an operator
+        // reconstructs what was done to a database. A provider that reports no verdict
+        // keeps the old reading: only an explicit `false` is a failure.
+        result: result.success === false ? "failure" : "success",
         duration,
       });
     } catch (auditError) {

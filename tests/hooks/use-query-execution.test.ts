@@ -658,6 +658,49 @@ describe("useQueryExecution", () => {
     expect(multiCall).toBeDefined();
   });
 
+  // ── the multi-statement decision reads the connection's dialect (S1) ───────
+
+  test("executeQuery keeps a PostgreSQL nested-comment buffer on /api/db/query", async () => {
+    /*
+      Measured on postgres 18 (container libredb-postgres): block comments NEST there,
+      so `/* a /* b *\/ ; DROP TABLE users; -- *\/ SELECT 1` is one read - the statement
+      ran as `SELECT 1` and the table was still in `pg_class` afterwards. The
+      dialect-blind splitter said 3, so this buffer took the multi-statement route and
+      it executed a bare `DROP TABLE users` the operator's text never contained.
+
+      The active connection here is `postgres`, so the decision is made under that
+      dialect's grammar and the buffer stays on the single-statement endpoint.
+
+      The buried statement is an UPDATE rather than the entry's DROP for a mock reason,
+      not a behavioural one: the file-wide `isDangerousQuery` stub above flags any text
+      CONTAINING the word DROP, so that buffer would stop at the confirmation dialog
+      before any endpoint was chosen and this test would assert nothing about routing.
+      What the real predicate answers for the entry's own shape is pinned in
+      tests/components/QuerySafetyDialog.test.tsx, against the real grammar.
+    */
+    const fetchMock = mockGlobalFetch({
+      "/api/db/multi-query": { ok: true, json: mockQueryResult },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const params = createDefaultParams();
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("/* a /* b */ ; UPDATE users SET admin = true; -- */ SELECT 1");
+    });
+
+    const multiCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/multi-query"),
+    );
+    expect(multiCall).toBeUndefined();
+    const singleCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    expect(singleCall).toBeDefined();
+  });
+
   // ── a non-SQL dialect never takes the statement splitter ──────────────────
 
   test("executeQuery keeps a JSON-dialect buffer on /api/db/query, semicolons and all (#427)", async () => {

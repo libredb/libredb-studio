@@ -407,6 +407,48 @@ describe("POST /api/db/multi-query", () => {
   // to `prepareQuery` and that it executes the prepared text. The bound a real
   // provider produces for these same statements is pinned at the shared seam, in
   // `tests/unit/db/query-limiter.test.ts` and `tests/unit/db/sql-base.test.ts`.
+  // ── The split happens under the resolved connection's dialect (S1) ────────
+  //
+  // This is the one surface that EXECUTES what the splitter returns, so a fragment
+  // invented by a reading the engine does not share is a statement the operator never
+  // wrote. Measured on postgres 18 (container libredb-postgres): block comments nest,
+  // so `/* a /* b */ ; DROP TABLE users; -- */ SELECT 1` is ONE read there - `ran = 1`,
+  // and the table still in `pg_class` afterwards. The dialect-blind splitter cut it
+  // into three and this route ran fragment two, a bare `DROP TABLE users`.
+  describe("dialect-aware splitting", () => {
+    const attack = "/* a /* b */ ; DROP TABLE users; -- */ SELECT 1";
+
+    test("a PostgreSQL connection runs one statement and never the hidden DROP", async () => {
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: validConnection, sql: attack },
+      });
+
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ statementCount: number; statements: { sql: string }[] }>(res);
+      const executed = (mockProvider.query as ReturnType<typeof mock>).mock.calls.map((call) => call[0]);
+
+      expect(data.statementCount).toBe(1);
+      expect(executed).not.toContain("DROP TABLE users");
+      expect(data.statements[0].sql).toBe(attack);
+    });
+
+    test("a MySQL connection reads the same text flat, which is that engine's own answer", async () => {
+      // Measured on MySQL (container libredb-mysql): the DROP really does run there -
+      // the schema's table count went to 0 - so three fragments is the honest split and
+      // the confirmation gate is what must ask about it, not this route.
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: { ...validConnection, type: "mysql", port: 3306 }, sql: attack },
+      });
+
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ statementCount: number }>(res);
+
+      expect(data.statementCount).toBe(3);
+    });
+  });
+
   describe("final-statement classification", () => {
     test("comment-led final SELECT is prepared and the bounded SQL reaches the engine", async () => {
       const finalStatement = "-- final read\nSELECT * FROM users";

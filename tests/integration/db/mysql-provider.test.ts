@@ -350,13 +350,47 @@ function defaultMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
     return Promise.resolve([[], []]);
   }
 
-  // ANALYZE TABLE / OPTIMIZE TABLE / CHECK TABLE
+  // ANALYZE TABLE / OPTIMIZE TABLE / CHECK TABLE answer a RESULT SET, one row per
+  // (table, message), and the verdict lives in Msg_type/Msg_text. Measured through the
+  // driver against MySQL 26.7.0 (`libredb-mysql`) on 2026-08-25:
+  //   OPTIMIZE TABLE `real1`   -> note "Table does not support optimize, doing recreate
+  //                               + analyze instead" then status "OK"
+  //   OPTIMIZE TABLE `missing` -> Error "Table 'u9t.missing' doesn't exist" then
+  //                               status "Operation failed"
+  // The empty array this used to answer is what made the "reports success when MySQL
+  // reported failure" defect untestable: no row means no verdict to read.
   if (
     normalized.startsWith("analyze table") ||
     normalized.startsWith("optimize table") ||
     normalized.startsWith("check table")
   ) {
-    return Promise.resolve([[], []]);
+    const op = normalized.split(" ")[0];
+    const named = [...sql.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+    return Promise.resolve([
+      named.flatMap((name) =>
+        name === "missing"
+          ? [
+              { Table: `testdb.${name}`, Op: op, Msg_type: "Error", Msg_text: `Table 'testdb.${name}' doesn't exist` },
+              { Table: `testdb.${name}`, Op: op, Msg_type: "status", Msg_text: "Operation failed" },
+            ]
+          : [
+              // InnoDB has no in-place OPTIMIZE, so the server prepends this note to
+              // every optimize it does perform - a non-error row the user should see.
+              ...(op === "optimize"
+                ? [
+                    {
+                      Table: `testdb.${name}`,
+                      Op: op,
+                      Msg_type: "note",
+                      Msg_text: "Table does not support optimize, doing recreate + analyze instead",
+                    },
+                  ]
+                : []),
+              { Table: `testdb.${name}`, Op: op, Msg_type: "status", Msg_text: "OK" },
+            ],
+      ),
+      [],
+    ]);
   }
 
   // Default: generic SELECT result
@@ -582,6 +616,35 @@ describe("MySQLProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("getCapabilities()", () => {
+    // #U9: MySQL has no VACUUM at all, and every statement it does have names tables.
+    test("declares the target grammar of every maintenance operation", () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      const caps = provider.getCapabilities();
+
+      expect(caps.maintenanceOperationSpecs).toEqual({
+        analyze: { label: "Analyze Table", perEntity: true, global: true },
+        optimize: { label: "Optimize Table", perEntity: true, global: true },
+        check: { label: "Check Table", perEntity: true, global: true },
+        kill: { label: "Kill Connection", perEntity: false, global: false },
+      });
+      expect(Object.keys(caps.maintenanceOperationSpecs ?? {}).sort()).toEqual([...caps.maintenanceOperations].sort());
+      // The engine has no `vacuum`, so nothing may be offered under that name.
+      expect(caps.maintenanceOperations).not.toContain("vacuum");
+    });
+
+    test("the vacuum label names OPTIMIZE, and the surfaces send that", () => {
+      // The base default put "Vacuum Table" in the explorer's per-row menu and
+      // "Run Vacuum / Reclaim Space" on the Operations tab for an engine that has
+      // neither, and the global card was gated on the literal `vacuum`, so MySQL's
+      // own wording could never appear (#U9).
+      const labels = new MySQLProvider(makeMySQLConfig()).getLabels();
+
+      expect(labels.vacuumAction).toBe("Optimize Table");
+      expect(labels.vacuumActionOperation).toBe("optimize");
+      expect(labels.vacuumGlobalLabel).toBe("Run Optimize");
+      expect(labels.vacuumGlobalTitle).toBe("Optimize Tables");
+      expect(labels.vacuumGlobalDesc).toContain("OPTIMIZE TABLE");
+    });
     test("returns correct MySQL capabilities", () => {
       provider = new MySQLProvider(makeMySQLConfig());
       const caps = provider.getCapabilities();
@@ -786,6 +849,130 @@ describe("MySQLProvider", () => {
       await expect(provider.runMaintenance("vacuum" as unknown as "analyze", "users")).rejects.toThrow(
         "Unsupported maintenance type for MySQL",
       );
+    });
+
+    // ------------------------------------------------------------------------
+    // The verdict is in the RESULT SET, not in the absence of a throw
+    // ------------------------------------------------------------------------
+    // `await runStatement(conn, sql); return { success: true }` discarded the rows
+    // MySQL answers with, so a statement the server refused was reported as a
+    // completed operation and CHECK TABLE's whole purpose - its Msg_text - never
+    // reached the user. Measured through the provider against MySQL 26.7.0 on
+    // 2026-08-25: `optimize u9t` answered `{"success":true,"message":"OPTIMIZE
+    // completed successfully"}` while the server's own answer for the same statement
+    // was Error / "Table 'u9t.missing' doesn't exist" / "Operation failed".
+
+    test("check reports the engine's own verdict rather than a generic sentence", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const result = await provider.runMaintenance("check", "users");
+
+      expect(result.success).toBe(true);
+      // The Msg_text is the point of CHECK TABLE: "OK" here, a corruption report on a
+      // damaged table.
+      expect(result.message).toContain("OK");
+    });
+
+    test("a table MySQL says does not exist is a failure, and says why", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize", "missing");
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("Table 'testdb.missing' doesn't exist");
+    });
+
+    test("check on a missing table fails too", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const result = await provider.runMaintenance("check", "missing");
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("doesn't exist");
+    });
+
+    test("one failing table fails the whole-database run and names that table", async () => {
+      // The global card sends no target and the statement names every table, so a
+      // per-table Error row is the only place the failure appears.
+      mockExecuteFn = (sql: string) => {
+        if (sql.includes("SELECT TABLE_NAME")) {
+          return Promise.resolve([[{ TABLE_NAME: "users" }, { TABLE_NAME: "missing" }], []]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize");
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("testdb.missing");
+      // The table that DID optimize is not reported as a failure.
+      expect(result.message).not.toContain("testdb.users");
+    });
+
+    test("the non-error rows MySQL adds are kept, deduplicated", async () => {
+      // InnoDB prepends a note to every OPTIMIZE it performs; over many tables that
+      // note and the OK repeat once per table, which is one sentence, not forty.
+      mockExecuteFn = (sql: string) => {
+        if (sql.includes("SELECT TABLE_NAME")) {
+          return Promise.resolve([[{ TABLE_NAME: "users" }, { TABLE_NAME: "orders" }], []]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize");
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain("Table does not support optimize");
+      expect(result.message).toContain("OK");
+      expect(result.message.match(/OK/g)).toHaveLength(1);
+    });
+
+    test("the whole-database form on a database with no tables runs no statement", async () => {
+      // `OPTIMIZE TABLE ${await this.getAllTablesForMaintenance(conn)}` string-joined an
+      // empty list, and MySQL answered "You have an error in your SQL syntax ... near ''"
+      // - measured through the provider against an empty database on 2026-08-25.
+      const statements: string[] = [];
+      mockExecuteFn = (sql: string) => {
+        statements.push(sql);
+        if (sql.includes("SELECT TABLE_NAME")) {
+          return Promise.resolve([[], []]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize");
+
+      // Nothing to do is not a failure, and it is not a syntax error either.
+      expect(result.success).toBe(true);
+      expect(result.message).toContain("no tables");
+      expect(statements.some((sql) => sql.startsWith("OPTIMIZE TABLE"))).toBe(false);
+    });
+
+    test("a statement that answers a header rather than a result set still succeeds", async () => {
+      // KILL is the one maintenance statement here that does NOT answer a result set -
+      // mysql2 hands back a `ResultSetHeader` object - so it never reaches the row reader
+      // and keeps the generic sentence. The three that do (ANALYZE/OPTIMIZE/CHECK TABLE)
+      // always answer rows, measured on 26.7.0, which is why the reader does not have to
+      // defend against a header shape it is never given.
+      mockExecuteFn = (sql: string) => {
+        if (sql.startsWith("KILL")) {
+          return Promise.resolve([{ affectedRows: 0, warningStatus: 0 }, undefined]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const result = await provider.runMaintenance("kill", "1234");
+
+      expect(result.success).toBe(true);
+      expect(result.message).toBe("KILL completed successfully");
     });
   });
 

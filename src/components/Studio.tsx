@@ -595,6 +595,7 @@ export default function Studio() {
                                 : undefined
                             }
                             language={editorLanguageForTabType(tabMgr.currentTab.type)}
+                            databaseType={conn.activeConnection?.type}
                             schemaContext={conn.schemaContext}
                             capabilities={metadata?.capabilities}
                           />

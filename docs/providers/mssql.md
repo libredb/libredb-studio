@@ -500,6 +500,25 @@ are bracket-escaped (`]` → `]]`):
 `getCapabilities().maintenanceOperations = ['analyze', 'check', 'optimize', 'kill']`. `kill`
 validates the target parses as an integer SPID.
 
+### Where each operation may be offered (`maintenanceOperationSpecs`)
+
+Declaring that an operation EXISTS is not enough to put a button on it: two engines that
+declare the same `MaintenanceType` take different kinds of target, so each provider also
+declares what its own operations may be pointed at. The monitoring Tables tab renders a
+per-row control only where `perEntity` is true, the admin Operations tab a whole-database
+card only where `global` is true, and both take the wording from `label` (#U9).
+
+| Operation | Control label | Per-row | Global | Why |
+|-----------|---------------|---------|--------|-----|
+| `analyze` | Update Statistics | yes | yes | `UPDATE STATISTICS [<t>]`, or every table without a target |
+| `check` | Check Database | no | yes | `DBCC CHECKDB` takes no object: `runMaintenance` ignores the target, so a per-table control would name one table and check the database |
+| `optimize` | Rebuild Indexes | yes | yes | `ALTER INDEX ALL ON [<t>] REBUILD`, or every table without a target |
+| `kill` | Kill Session | no | no | the target is a SPID from the Sessions panel |
+
+`vacuumAction` has said *"Rebuild Indexes"* since this provider shipped, and that is
+`optimize`: `vacuumActionOperation: 'optimize'` says so, which is what lets the global card
+render those words and send an operation SQL Server declares (#U9).
+
 ---
 
 ## 10. Capabilities & labels

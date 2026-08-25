@@ -566,6 +566,30 @@ describe("MSSQLProvider", () => {
   // =========================================================================
 
   describe("getCapabilities()", () => {
+    // #U9: DBCC CHECKDB takes no object, and `runMaintenance` ignores the target for
+    // it - a per-table Check control would have named one table and checked the
+    // database.
+    test("declares the target grammar of every maintenance operation", () => {
+      const caps = provider.getCapabilities();
+
+      expect(caps.maintenanceOperationSpecs).toEqual({
+        analyze: { label: "Update Statistics", perEntity: true, global: true },
+        check: { label: "Check Database", perEntity: false, global: true },
+        optimize: { label: "Rebuild Indexes", perEntity: true, global: true },
+        kill: { label: "Kill Session", perEntity: false, global: false },
+      });
+      expect(Object.keys(caps.maintenanceOperationSpecs ?? {}).sort()).toEqual([...caps.maintenanceOperations].sort());
+    });
+
+    test("the vacuum label names the index rebuild, and the surfaces send that", () => {
+      const labels = provider.getLabels();
+
+      expect(labels.vacuumAction).toBe("Rebuild Indexes");
+      expect(labels.vacuumActionOperation).toBe("optimize");
+      // A redirected slot must name an operation the provider really declares,
+      // otherwise the card it gates could only ever produce a 400.
+      expect(provider.getCapabilities().maintenanceOperations).toContain("optimize");
+    });
     test("returns correct capabilities for MSSQL", () => {
       const caps = provider.getCapabilities();
       expect(caps.defaultPort).toBe(1433);

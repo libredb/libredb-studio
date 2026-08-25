@@ -340,6 +340,23 @@ maps the generic operations onto MongoDB admin commands:
 `getCapabilities().maintenanceOperations = ['vacuum', 'analyze', 'check']` — so the UI surfaces those
 three, though `runMaintenance` also accepts `optimize`/`kill`/`reindex` when invoked directly.
 
+### Where each operation may be offered (`maintenanceOperationSpecs`)
+
+Declaring that an operation EXISTS is not enough to put a button on it: two engines that
+declare the same `MaintenanceType` take different kinds of target, so each provider also
+declares what its own operations may be pointed at. The monitoring Tables tab renders a
+per-row control only where `perEntity` is true, the admin Operations tab a whole-database
+card only where `global` is true, and both take the wording from `label` (#U9).
+
+| Operation | Control label | Per-row | Global | Why |
+|-----------|---------------|---------|--------|-----|
+| `vacuum` | Compact Collection | yes | yes | `{compact: <coll>}`, or every collection from `listCollections()` |
+| `analyze` | Validate Collection | yes | yes | `{validate: <coll>}`, same loop without a target |
+| `check` | Check Collection | yes | **no** | `{dbCheck: <coll>}` is not looped and throws without a collection name |
+
+*"Compact Collection"* really is the `vacuum` this provider declares, so
+`vacuumActionOperation` stays absent.
+
 ---
 
 ## 9. Capabilities & labels

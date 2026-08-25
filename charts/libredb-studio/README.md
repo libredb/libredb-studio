@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.49 \
+  --version 0.1.50 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -415,9 +415,12 @@ helm install libredb libredb/libredb-studio \
   --set replicaCount=3 \
   --set ingress.enabled=true \
   --set ingress.className=nginx \
-  --set "ingress.annotations.nginx\.ingress\.kubernetes\.io/limit-rpm=120" \
-  --set "ingress.annotations.nginx\.ingress\.kubernetes\.io/limit-burst-multiplier=2"
+  --set-string "ingress.annotations.nginx\.ingress\.kubernetes\.io/limit-rpm=120" \
+  --set-string "ingress.annotations.nginx\.ingress\.kubernetes\.io/limit-burst-multiplier=2"
 ```
+
+`--set-string`, not `--set`: ingress annotations are a `map[string]string`, and plain `--set`
+type-coerces the bare number, rendering `limit-rpm: 120` as an integer that the API server rejects.
 
 With Traefik, attach a `rateLimit` middleware and reference it from the ingress annotations.
 
@@ -429,8 +432,8 @@ it, so pass it through `extraEnv`:
 
 ```bash
 helm install libredb libredb/libredb-studio \
-  --set extraEnv[0].name=ALLOWED_ORIGINS \
-  --set extraEnv[0].value=https://libredb.example.com
+  --set 'extraEnv[0].name=ALLOWED_ORIGINS' \
+  --set-string 'extraEnv[0].value=https://libredb.example.com'
 ```
 
 ### The Content-Security-Policy escape hatch
@@ -442,12 +445,19 @@ passed through `extraEnv`:
 
 ```bash
 helm install libredb libredb/libredb-studio \
-  --set extraEnv[0].name=CSP_REPORT_ONLY \
-  --set extraEnv[0].value="true"
+  --set 'extraEnv[0].name=CSP_REPORT_ONLY' \
+  --set-string 'extraEnv[0].value=true'
 ```
 
 In report-only mode the browser logs the same violation to its console instead of blocking the
 resource. Please also open an issue naming the violated directive.
+
+`--set-string`, not `--set`, and the single quotes are load-bearing in both `extraEnv` recipes above.
+`--set extraEnv[0].value=true` renders `value: true`, an unquoted YAML boolean, and the API server
+rejects the manifest with `invalid type for io.k8s.api.core.v1.EnvVar.value: got "bool", expected
+"string"` — `extraEnv` is typed only as an array of objects in `values.schema.json`, so nothing
+catches it before apply. Unquoted `extraEnv[0]` is also a glob pattern in zsh, which fails the
+command with `no matches found` before helm is reached.
 
 Setting both `ALLOWED_ORIGINS` and `CSP_REPORT_ONLY` at once needs a distinct index per entry —
 `extraEnv` is a list, and `--set` on the same index (`extraEnv[0]` in both examples above) just
@@ -456,10 +466,10 @@ second variable:
 
 ```bash
 helm install libredb libredb/libredb-studio \
-  --set extraEnv[0].name=ALLOWED_ORIGINS \
-  --set extraEnv[0].value=https://libredb.example.com \
-  --set extraEnv[1].name=CSP_REPORT_ONLY \
-  --set extraEnv[1].value="true"
+  --set 'extraEnv[0].name=ALLOWED_ORIGINS' \
+  --set-string 'extraEnv[0].value=https://libredb.example.com' \
+  --set 'extraEnv[1].name=CSP_REPORT_ONLY' \
+  --set-string 'extraEnv[1].value=true'
 ```
 
 ### Separating the storage encryption key
@@ -474,9 +484,9 @@ same directory, alongside the database file):
 
 ```bash
 helm install libredb libredb/libredb-studio \
-  --set extraEnv[0].name=STORAGE_ENCRYPTION_KEY \
-  --set extraEnv[0].valueFrom.secretKeyRef.name=libredb-studio-storage \
-  --set extraEnv[0].valueFrom.secretKeyRef.key=encryption-key
+  --set 'extraEnv[0].name=STORAGE_ENCRYPTION_KEY' \
+  --set 'extraEnv[0].valueFrom.secretKeyRef.name=libredb-studio-storage' \
+  --set 'extraEnv[0].valueFrom.secretKeyRef.key=encryption-key'
 ```
 
 Rotating the key makes existing stored credentials unreadable — the connections survive and their

@@ -21,15 +21,15 @@ None of it is a GitHub issue.
 
 **Sections**
 
-- [SQL statement reading](#sql-statement-reading) — S1–S8 · 8
+- [SQL statement reading](#sql-statement-reading) — S2–S8 · 7
 - [Drivers and connections](#drivers-and-connections) — D1–D26, U17 · 8
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U19 · 11
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U22 · 13
 - [Authentication and security headers](#authentication-and-security-headers) — AU2
 - [Tests](#tests) — T1–T3 · 2
 - [Dependencies](#dependencies) — P1–P5 · 5
-- [Documentation](#documentation) — DOC1–DOC3 · 3
+- [Documentation](#documentation) — DOC1, DOC3 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
 - [Chart configuration surface](#chart-configuration-surface) — N1–N3 · 3
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H13 · 10
@@ -44,20 +44,6 @@ None of it is a GitHub issue.
 
 The readers in `src/lib/sql/` decide where a statement starts, where it ends, and what it operates
 on. `src/lib/sql/grammar.ts` gave them a dialect (#292). These are the gaps that channel leaves.
-
-### S1. `statement-splitter.ts` is dialect-blind, and one shape yields a runnable bare `DROP`
-
-`src/lib/sql/statement-splitter.ts` walks spans itself instead of using `spans.ts`, so it disagrees
-with every other reader. A `;` inside a MySQL `#` comment, an Oracle `q'{a'b;c}'` body, a `[a;b]`
-name or a backtick-quoted subscript key each split one statement into fragments.
-
-The sharp case: `/* a /* b */ ; DROP TABLE users; -- */ SELECT 1` splits into three fragments. The
-second is a valid bare `DROP TABLE users` that the multi-statement route would run. `isDangerousQuery`
-answers false, because the confirmation gate reads the whole editor text and never the fragments.
-Same family as #300, wider blast radius.
-
-**Done when:** the splitter reads spans through the shared reader with the caller's dialect, and the
-gate and the splitter agree about what is going to run.
 
 ### S2. Backslash escaping is not a grammar fact
 
@@ -76,8 +62,6 @@ The single largest follow-up from that sweep.
 
 - **MySQL executable comments.** `/*!40000 DELETE FROM t */` is an ordinary comment to every reader
   here. MySQL executes it. Nothing asks first.
-- **ClickHouse `//`.** Accepted as a line comment (live-verified), modelled nowhere. So
-  `// note\nDROP TABLE t` answers not-dangerous. CQL has the same form — see U17.
 - **MySQL connection charset.** On a `latin1` connection a leading U+00A0 executes. `buildPoolConfig`
   passes the user's connection string straight to mysql2 as `uri`, so the charset is outside the
   readers' view.
@@ -124,8 +108,11 @@ bracket rows (HTTP-only provider, no driver to read), MSSQL's block-comment nest
 ships no tokenizer), PostgreSQL's bracket and block-comment rows (`pg` carries no SQL tokenizer), and
 the `nq'…'` spelling of Oracle's alternate quoting.
 
-**Missing fact, not an undecided one:** `SqlGrammar` has no `lineComment` row, so it cannot express
-CQL's `//` or its newline-terminated comments. See U17.1.
+**Closed 2026-08-25:** `SqlGrammar` now carries `doubleSlashComment`, established by live probe on
+Apache Cassandra 5.0.9, ScyllaDB 2026.2.4 and ClickHouse 26.7.1 (a line comment on all three) and
+refused on PostgreSQL 18, MySQL 26.7.0, SQLite, Oracle, SQL Server 2022 and Trino 476. It is undecided
+for elasticsearch and opensearch, and absent with the whole row for couchbase, druid and libredb -
+recorded in the table in `docs/editor/query-optimization.md`.
 
 ### S7. A confirmation refinement that was considered and rejected
 
@@ -192,18 +179,23 @@ The provider shipped in #424 Phase 4 with four bounded absences. None is a defec
 honest answer to something measured on Apache Cassandra 5.0.9. Each is also something a later change
 could take further, and one of them is a shared-reader limitation rather than a provider decision.
 
-**1. `SqlGrammar` cannot express CQL's comment rules, so the provider works around them.** Two facts,
-both measured. CQL has a THIRD line-comment form, `//`, which the readers in `src/lib/sql/` know
-nothing about. And a line comment of EITHER form must be closed by a NEWLINE: `SELECT * FROM
+**1. `SqlGrammar` expresses ONE of CQL's two comment rules since 2026-08-25.** The third
+line-comment form, `//`, is now a grammar fact (`doubleSlashComment`) that every reader in
+`src/lib/sql/` honours - which closed the S1 defect this absence was still producing on this engine:
+`SELECT ... // note; DROP TABLE ...` was cut into a read and a runnable bare `DROP` out of text the
+server reads as one statement. What remains is the SECOND fact: a line comment of either form must be
+closed by a NEWLINE: `SELECT * FROM
 probe.customers LIMIT 3 -- note` with nothing after it is `line 1:45 mismatched character '<EOF>'
 expecting set null`, while the same text plus `\n` returns the rows.
 
 So the shared limiter's insert-before-trailing-trivia rewrite (#280) turns a VALID statement into a
 syntax error on this one engine, because `sql.trim()` drops the newline that closed the comment.
 `CassandraProvider.prepareQuery` declines to rewrite any statement whose rewritten form would end
-inside a line comment. Fail-safe: the statement runs unbounded and `wasLimited: false` says so.
-Widening `SqlGrammar` with a `lineComment` fact would fix it properly and would change how every
-dialect's comments are read, so it is its own change. See S6.
+inside a line comment. Fail-safe: the statement runs unbounded and `wasLimited: false` says so. The
+newline rule is a `spans.ts` question rather than a grammar one - that reader ends a line comment at
+LF, and CQL also ends one at a bare CR (measured 2026-08-25: `-- note\r; DROP` is `line 1:51
+mismatched input 'DROP'` on 5.0.9, so the engine sees two things where the reader sees one). It
+under-splits, which is the safe direction, and the same divergence predates the `//` work. See S6.
 
 **2. A statement whose last clause is `PER PARTITION LIMIT n` is left unbounded.** The shared reader
 sees a trailing `LIMIT n` and reports the statement as already bounded, so nothing is injected. `...
@@ -543,43 +535,6 @@ file's ratio is not the tree's.
 **Done when:** the scope is widened with the benign sites made explicit, or the decision not to is
 recorded here with the number that justified it.
 
-### U9. Four providers point `vacuumAction` at something that is not `vacuum`, and MySQL offers one it lacks
-
-Two mismatches, measured while fixing #427 and left alone.
-
-**(a) MySQL shows the base default it never meant.** The per-row maintenance items are gated on
-`isAdmin` alone, so MySQL renders *"Vacuum Table"* — `BaseDatabaseProvider`'s default wording —
-although its `maintenanceOperations` is `['analyze', 'optimize', 'check', 'kill']`. The item names an
-operation MySQL does not have, and following it reaches an Operations tab with no vacuum card either.
-
-**(b) ClickHouse, SQL Server, Oracle and Couchbase map the LABEL onto another operation.** Their
-`vacuumAction` reads *"Optimize Table"*, *"Rebuild Indexes"*, *"Rebuild Indexes"* and *"Compact"*,
-standing for the `optimize` / `optimize` / `optimize` / `reindex` each declares.
-
-So a label-driven gate is not enough, and a *generic* label-to-operation mapping is actively wrong.
-#427 built one, wired it into the per-table button, and handed Oracle a *"Rebuild Indexes"* control
-that sent `optimize` with a TABLE name — while `oracle.ts` builds `ALTER INDEX "<target>" REBUILD`
-from that target, so every click answered **ORA-01418: specified index does not exist**. A control
-that always fails is worse than the dead end it replaced. The chain was reverted before merge.
-
-What the revert paid for: any future mapping must be **per provider**, declared next to the operation
-it names. The target grammar differs even among providers declaring the same `MaintenanceType`.
-Oracle's `optimize` wants an index name, ClickHouse's wants a table, Couchbase's `reindex` wants a
-keyspace.
-
-**A third mismatch, measured 2026-08-23 while giving the Reindex card per-provider wording.** The
-global Reindex card cannot succeed on Couchbase at all, whatever it is titled. `dispatchMaintenance()`
-routes `reindex` — and `analyze`, and `kill` — through `requireTarget()`, while
-`OperationsTab.handleRunMaintenance("reindex")` sends no target, so the card answers *"The reindex
-operation requires a target"*. That change gave the card honest wording and deliberately left the
-behaviour alone, because a global control over a per-keyspace operation is the same shape of mistake
-the reverted mapping was. Either the card names a keyspace or Couchbase should not offer it globally.
-
-**Done when:** each provider declares which operation its `vacuumAction` (and `analyzeAction`) stands
-for *and* what kind of target it takes, both surfaces gate and title from that declaration, the
-Couchbase Reindex card either carries a target or is withheld, and a live Oracle run proves the
-per-table control succeeds rather than returning ORA-01418.
-
 ### U18. The login hero has no vertical slack left, and the relatives line spends 56px it does not have
 
 Measured on the built app (`next start`, Chromium), before and after the change that added the
@@ -638,6 +593,56 @@ being OFFERED, not refused. The same missing thing explains both: this banner ha
 **Done when:** a message that is neither a success nor a failure renders as neither, and the degraded
 save uses it.
 
+### U20. The maintenance API validates that an operation EXISTS, not that it can take the target
+
+`src/app/api/db/maintenance/route.ts` checks `capabilities.maintenanceOperations.includes(type)` and
+nothing else, then calls `provider.runMaintenance(type, target)`. Since 2026-08-25 each provider also
+declares what KIND of target each operation takes (`maintenanceOperationSpecs`), and both UI surfaces
+gate on it - but the route does not, so every mismatch the declaration describes stays reachable by a
+direct request. Measured: `POST {type:"vacuum", target:"users"}` against SQLite still vacuums the whole
+file, which is exactly the reading SQLite's `vacuum: { perEntity: false }` exists to withhold.
+
+Not a security hole - the route is admin-gated and every one of these statements is one an admin may
+run - but the invariant lives in one layer only, and the layer it is missing from is the one an
+integration calls.
+
+**Done when:** the route refuses a target an operation cannot take, or the declaration says why the API
+is deliberately wider than the UI.
+
+---
+
+### U21. Two global maintenance cards exist for operations that have no card copy
+
+MSSQL and MongoDB declare `check` as globally runnable and MySQL declares `optimize` the same way, but
+`ProviderLabels` has only the `analyzeGlobal*` and `vacuumGlobal*` triads, so a global card can only be
+rendered where the provider's `vacuumActionOperation` happens to redirect the vacuum slot to it. MySQL
+gets an Optimize card that way; MSSQL's and MongoDB's `check` gets nothing.
+
+Deliberately not fixed with U9 (2026-08-25): inventing card copy for five providers without measuring
+what each statement actually does is the generic mapping #427 reverted. What is needed first is the
+measurement, per provider, of what a whole-database `CHECK` costs on a real instance - `DBCC CHECKDB`
+is not a free read.
+
+**Done when:** an operation a provider declares globally runnable either has its own card copy or a
+recorded reason it is withheld.
+
+---
+
+### U22. `TableItem`'s deep links are gated on the operation, not on where the operation can be run
+
+`src/components/schema-explorer/TableItem.tsx` reads the maintenance declaration since 2026-08-25, so
+the wording is the provider's own and a per-entity operation is what it offers. What it still cannot
+express is that its two items are DEEP LINKS: they navigate to the maintenance page with a table name,
+and whether that page has a control for the operation is a separate question from whether the operation
+takes a table.
+
+The class is recorded in that file's own comment for Elasticsearch ("clicking Merge Segments landed on
+a page with no maintenance controls, no error and no explanation"), and the same shape returns whenever
+a provider declares an operation `perEntity: true` while the destination page renders it under a
+condition of its own.
+
+**Done when:** the link is offered only where the destination renders the control, tested against the
+destination rather than against the declaration.
 ---
 
 ## Authentication and security headers
@@ -824,21 +829,6 @@ line-anchoring style, so the fix is a convention change — anchor on symbol nam
 much as a correction.
 
 The same disease is in this file. Prefer symbol names here too.
-
-### DOC2. Two chart README `--set` recipes render a YAML boolean where Kubernetes needs a string
-
-`charts/libredb-studio/README.md`'s Content-Security-Policy escape hatch sets `CSP_REPORT_ONLY` with
-`--set extraEnv[0].value="true"`, twice: the single-variable example and the two-variable one. The
-shell strips the quotes and Helm type-coerces the bare word, so the manifest renders `value: true` —
-an unquoted YAML boolean, while `core/v1.EnvVar.value` is a string. The API server rejects it:
-`invalid type for io.k8s.api.core.v1.EnvVar.value: got "bool", expected "string"`. Reproduced with
-`helm template` on 2026-08-12.
-
-`--set-string` is the fix, one word per line. Found while documenting the agent runtime in #329 T13,
-whose own recipe uses `--set-string` for exactly this reason.
-
-**Done when:** both lines use `--set-string`, and ideally the README's `--set` bracket arguments are
-single-quoted, since unquoted `extraEnv[0]` is a glob pattern in zsh.
 
 ### DOC3. Six channel listings carry corrected copy that nobody has resubmitted
 

@@ -299,6 +299,17 @@ export class SQLiteProvider extends SQLBaseProvider {
       // POST /api/db/transaction refuses the call and the controls stay hidden.
       supportsTransactions: false,
       maintenanceOperations: ["vacuum", "analyze", "reindex", "check"],
+      // `VACUUM` rewrites the whole database file and takes no object at all, and
+      // `PRAGMA integrity_check` reads the whole file the same way - `runMaintenance`
+      // ignores the target for both, so a per-table control there named one table and
+      // acted on the database (#U9). `ANALYZE` and `REINDEX` do take a bare name and
+      // also run over everything without one.
+      maintenanceOperationSpecs: {
+        vacuum: { label: "Vacuum Database", perEntity: false, global: true },
+        analyze: { label: "Analyze Table", perEntity: true, global: true },
+        reindex: { label: "Reindex Table", perEntity: true, global: true },
+        check: { label: "Integrity Check", perEntity: false, global: true },
+      },
     };
   }
 

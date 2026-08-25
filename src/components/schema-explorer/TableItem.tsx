@@ -15,6 +15,7 @@ import {
   WandSparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { maintenanceControl } from "@/lib/db/types";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -90,6 +91,20 @@ function renderMenuItems({
   // "ordinary objects", matching the flag's own docblock.
   const rowsAreAddressable = capabilities?.tablesAreDerivedGroupings !== true;
 
+  // The SAME question the monitoring Tables tab and the admin Operations tab ask, so
+  // that three surfaces cannot disagree about what a provider declared (#U9). Gating
+  // on `supportsMaintenance` alone is what put "Vacuum Table" on ONE SQLite table
+  // while the Tables tab correctly withheld it - SQLite's VACUUM takes no target, and
+  // the page this item deep-links to therefore has no such control. Unknown
+  // capabilities read as a denial here too: `/api/db/provider-meta` answers with
+  // nothing both while it is in flight and when it failed.
+  //
+  // The vacuum item follows `vacuumActionOperation`, not the literal `vacuum`: four
+  // providers point that wording at an operation that is not a vacuum, and it is the
+  // operation - not the label - whose targeting decides whether a table can be named.
+  const analyzeControl = maintenanceControl(capabilities, "analyze", "perEntity");
+  const vacuumControl = maintenanceControl(capabilities, labels?.vacuumActionOperation ?? "vacuum", "perEntity");
+
   return (
     <>
       <Item onClick={() => callbacks.onTableClick?.(table.name)}>
@@ -128,26 +143,33 @@ function renderMenuItems({
           and for a derived grouping there is no such object to name — which is exactly
           the dead end #427 reported for Redis "Key Info".
 
-          The second half of the condition is the same dead end reached the other way,
-          measured in the browser on 2026-08-19 against Elasticsearch 9.1.4: an index IS
-          addressable, so both items rendered on an engine that declares
-          `supportsMaintenance: false`, and the page they open gates its Global
-          Operations card on that same capability — so clicking "Merge Segments" landed
-          on a page with no maintenance controls, no error and no explanation.
+          The rest of the condition is the same dead end reached the other way, and the
+          #427 gate reached only its first case. Measured in the browser on 2026-08-19
+          against Elasticsearch 9.1.4: an index IS addressable, so both items rendered
+          on an engine that declares `supportsMaintenance: false`, and the page they
+          open gates its Global Operations card on that same capability — so clicking
+          "Merge Segments" landed on a page with no maintenance controls, no error and
+          no explanation. `maintenanceControl` above closes the rest of it: an engine
+          that declares the operation but not for a single table (SQLite's VACUUM) is
+          the same dead end with the capability flag switched on (#U9).
 
           Global maintenance is unaffected wherever an engine has any: it lives on the
           admin Operations page and still runs there. */}
-      {isAdmin && rowsAreAddressable && capabilities?.supportsMaintenance !== false && (
+      {isAdmin && rowsAreAddressable && (analyzeControl.offered || vacuumControl.offered) && (
         <>
           <Separator />
-          <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.name)}>
-            <Search strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-amber-500" />
-            {labels?.analyzeAction || "Analyze Table"}
-          </Item>
-          <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.name)}>
-            <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-blue-400" />
-            {labels?.vacuumAction || "Vacuum Table"}
-          </Item>
+          {analyzeControl.offered && (
+            <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.name)}>
+              <Search strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-amber-500" />
+              {analyzeControl.label ?? labels?.analyzeAction ?? "Analyze Table"}
+            </Item>
+          )}
+          {vacuumControl.offered && (
+            <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.name)}>
+              <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-blue-400" />
+              {vacuumControl.label ?? labels?.vacuumAction ?? "Vacuum Table"}
+            </Item>
+          )}
         </>
       )}
     </>

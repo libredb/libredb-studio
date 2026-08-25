@@ -640,6 +640,17 @@ export class PostgresProvider extends SQLBaseProvider {
       // BEGIN / COMMIT / ROLLBACK over one held pool client (`beginTransaction()` below).
       supportsTransactions: true,
       maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
+      // Every statement below has both forms - `VACUUM ANALYZE <table>` and bare
+      // `VACUUM ANALYZE`, `REINDEX TABLE <table>` and `REINDEX DATABASE` - so
+      // PostgreSQL is the engine whose per-row and global controls were both already
+      // right, and declaring them changes nothing here (#U9). `kill` takes a backend
+      // PID, which only the Sessions panel can supply.
+      maintenanceOperationSpecs: {
+        vacuum: { label: "Vacuum Table", perEntity: true, global: true },
+        analyze: { label: "Analyze Table", perEntity: true, global: true },
+        reindex: { label: "Reindex Table", perEntity: true, global: true },
+        kill: { label: "Terminate Backend", perEntity: false, global: false },
+      },
     };
   }
 

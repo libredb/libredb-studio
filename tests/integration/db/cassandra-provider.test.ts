@@ -899,9 +899,11 @@ describe("prepareQuery", () => {
   });
 
   test("a statement ending in a `//` comment is not rewritten either", () => {
-    // CQL has a THIRD line-comment form the shared readers know nothing about, so
-    // the limiter appends the clause INSIDE the comment: measured,
-    // `SELECT * FROM probe.customers // note LIMIT 3` is a syntax error.
+    // CQL's THIRD line-comment form, and it is a shared grammar fact now
+    // (`doubleSlashComment`) rather than a scan this provider kept to itself - so the
+    // mechanism here is exactly the `--` one above: the limiter inserts before the
+    // comment and `sql.trim()` drops the newline that closed it, leaving
+    // `… LIMIT 500 // note` at end of input, which CQL refuses. Left as written.
     const prepared = provider.prepareQuery("SELECT * FROM probe.customers // note\n", { limit: 500 });
 
     expect(prepared.query).toBe("SELECT * FROM probe.customers // note\n");
@@ -909,6 +911,8 @@ describe("prepareQuery", () => {
   });
 
   test("a `//` inside a string literal is not a comment", () => {
+    // The shared span reader is what makes this true, and it is the reason the private
+    // `//` scan could be dropped: a literal reader sits in front of the comment branch.
     const prepared = provider.prepareQuery("SELECT * FROM probe.customers WHERE name = 'http://x'", { limit: 5 });
 
     expect(prepared.query).toBe("SELECT * FROM probe.customers WHERE name = 'http://x' LIMIT 5");

@@ -53,6 +53,20 @@ const ALLOWED: ReadonlySet<string> = new Set([
     dependency the splitter gains later.
   */
   "@/lib/sql/statement-splitter",
+  /*
+    Added when the unfenced cut started reading the CONNECTION'S dialect instead of the
+    compatibility default. Where a statement ends is exactly what this record decides, and its
+    answers differ on shipped engines — `//` is a line comment in CQL and ClickHouse and an
+    operator name or a syntax error everywhere else — so a draft whose comment carried a `;` was
+    cut at that `;` and the run recorded half its statement.
+
+    Admitted on the same ground as the splitter, and the ground is already MEASURED here rather
+    than argued: the closure test below walks `./statement-splitter` and finds `./grammar` in it
+    with `@/lib/types` as its only reach, then asserts that reach is type-only. So this specifier
+    adds nothing to the browser bundle that the previous entry had not already brought — the
+    module was one hop away and is now zero.
+  */
+  "@/lib/sql/grammar",
 ]);
 
 describe("the plan-draft reader stays reachable from a browser", () => {
@@ -60,19 +74,40 @@ describe("the plan-draft reader stays reachable from a browser", () => {
     expect(specifiers(SOURCE).filter((specifier) => !ALLOWED.has(specifier))).toEqual([]);
   });
 
-  test("the splitter it now reaches imports nothing, so admitting it costs nothing transitively", () => {
+  test("everything the splitter reaches is a pure SQL reader, so admitting it costs nothing transitively", () => {
     /*
       The half the allowlist cannot check. This file reads `plan-draft.ts`'s own specifiers, so a
       dependency added to `statement-splitter.ts` would leave that list unchanged and this
       boundary green while the browser pays for it — which is the exact shape of the zod incident
       the header describes.
 
-      Zero imports is a stronger property than "pure": it cannot acquire a transitive cost without
-      this assertion going red first.
+      This used to assert ZERO imports, which was the stronger property. S1 spent it deliberately:
+      the splitter was walking spans itself, disagreeing with every other reader about which `;` is
+      code, and one shape yielded a runnable bare `DROP` fragment — so it now reads through
+      `spans.ts` under a `grammar.ts` record. Zero is therefore replaced by the CLOSURE, computed
+      here rather than named at one level: every module reachable from the splitter must be one of
+      these two readers, whose own only reach is a TYPE-ONLY import of the shared type module. That
+      is checked below, so a value import appearing anywhere in the closure fails this test rather
+      than a browser.
     */
-    const splitter = fs.readFileSync(path.join(process.cwd(), "src/lib/sql/statement-splitter.ts"), "utf8");
+    const read = (specifier: string) =>
+      fs.readFileSync(path.join(process.cwd(), "src/lib/sql", `${specifier.replace("./", "")}.ts`), "utf8");
 
-    expect(specifiers(splitter)).toEqual([]);
+    const closure = new Set<string>();
+    const pending = ["./statement-splitter"];
+    while (pending.length > 0) {
+      const current = pending.pop() as string;
+      for (const specifier of specifiers(read(current))) {
+        if (closure.has(specifier)) continue;
+        closure.add(specifier);
+        if (specifier.startsWith("./")) pending.push(specifier);
+      }
+    }
+
+    expect([...closure].sort()).toEqual(["./grammar", "./spans", "@/lib/types"]);
+    // The one non-relative member, and it is erased at build time: a VALUE import of the shared
+    // type module would pull the whole type barrel into the browser bundle.
+    expect(read("./grammar")).toContain('import type { DatabaseType } from "@/lib/types"');
   });
 
   test("it does not reach the statement guard, which is where zod enters", () => {

@@ -471,3 +471,117 @@ describe("tables that carry no per-table bytes", () => {
     expect(getByTestId("tables-stat-size").textContent).toBe("820.00 MB");
   });
 });
+
+describe("per-row controls follow the provider's own declaration", () => {
+  // Scoped here as well as in the blocks above: bun:test registers a hook on the
+  // enclosing describe only, so without this the first render in this block leaks into
+  // the second and the control arm queries the previous test's DOM.
+  afterEach(() => {
+    cleanup();
+  });
+
+  const titlesFrom = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll("button"))
+      .map((b) => b.getAttribute("title"))
+      .filter((t): t is string => t !== null);
+
+  test("MySQL gets its own three verbs and no vacuum control at all", () => {
+    // MySQL has no VACUUM: the generic list offered "Analyze" alone and named nothing
+    // it could run for the OPTIMIZE and CHECK it does have (#U9).
+    const { container } = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={makeCapabilities({
+          maintenanceOperations: ["analyze", "optimize", "check", "kill"],
+          maintenanceOperationSpecs: {
+            analyze: { label: "Analyze Table", perEntity: true, global: true },
+            optimize: { label: "Optimize Table", perEntity: true, global: true },
+            check: { label: "Check Table", perEntity: true, global: true },
+            kill: { label: "Kill Connection", perEntity: false, global: false },
+          },
+        })}
+      />,
+    );
+
+    const titles = titlesFrom(container);
+    expect(titles).toContain("Analyze Table");
+    expect(titles).toContain("Optimize Table");
+    expect(titles).toContain("Check Table");
+    expect(titles).not.toContain("Vacuum");
+    expect(titles).not.toContain("Vacuum Table");
+    // A connection id comes from the Sessions panel, so no table row may offer it.
+    expect(titles).not.toContain("Kill Connection");
+  });
+
+  test("an operation that ignores the target it is handed gets no per-row control", () => {
+    // SQLite's VACUUM rewrites the whole database file and `runMaintenance` drops the
+    // target, so this button named one table and acted on all of them.
+    const { container } = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={makeCapabilities({
+          maintenanceOperations: ["vacuum", "analyze", "reindex", "check"],
+          maintenanceOperationSpecs: {
+            vacuum: { label: "Vacuum Database", perEntity: false, global: true },
+            analyze: { label: "Analyze Table", perEntity: true, global: true },
+            reindex: { label: "Reindex Table", perEntity: true, global: true },
+            check: { label: "Integrity Check", perEntity: false, global: true },
+          },
+        })}
+      />,
+    );
+
+    const titles = titlesFrom(container);
+    expect(titles).toContain("Analyze Table");
+    expect(titles).toContain("Reindex Table");
+    expect(titles).not.toContain("Vacuum Database");
+    expect(titles).not.toContain("Integrity Check");
+  });
+
+  test("the button sends the operation its label was declared for", async () => {
+    const onRunMaintenance = mock(async () => true);
+    const { container } = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={onRunMaintenance}
+        capabilities={makeCapabilities({
+          maintenanceOperations: ["analyze", "optimize"],
+          maintenanceOperationSpecs: {
+            analyze: { label: "Gather Statistics", perEntity: true, global: true },
+            optimize: { label: "Rebuild Indexes", perEntity: true, global: true },
+          },
+        })}
+      />,
+    );
+
+    fireEvent.click(container.querySelector('button[title="Rebuild Indexes"]')!);
+
+    // Oracle's "Rebuild Indexes" is `optimize`, and the target is the TABLE - the
+    // shape that answered ORA-01418 for a table name before this change.
+    await waitFor(() => expect(onRunMaintenance).toHaveBeenCalledWith("optimize", "users"));
+  });
+
+  test("a provider that declares no specs keeps the pre-#U9 three controls", () => {
+    // `maintenanceOperationSpecs` is optional on the published interface: an
+    // implementation that declares nothing must behave exactly as it did.
+    const { container } = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={makeCapabilities({ maintenanceOperations: ["vacuum", "analyze", "reindex", "optimize"] })}
+      />,
+    );
+
+    const titles = titlesFrom(container);
+    expect(titles).toContain("Analyze");
+    expect(titles).toContain("Vacuum");
+    expect(titles).toContain("Reindex");
+    expect(titles).toContain("Optimize");
+  });
+});

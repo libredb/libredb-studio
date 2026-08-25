@@ -521,6 +521,23 @@ Info"* / *"Server Info"* / *"Get Redis server information and statistics."* — 
 query-planner copy. Those `analyzeGlobal*` fields had been declared and set for a long time and read
 by no component (#427).
 
+### Where each operation may be offered (`maintenanceOperationSpecs`)
+
+Declaring that an operation EXISTS is not enough to put a button on it: two engines that
+declare the same `MaintenanceType` take different kinds of target, so each provider also
+declares what its own operations may be pointed at. The monitoring Tables tab renders a
+per-row control only where `perEntity` is true, the admin Operations tab a whole-database
+card only where `global` is true, and both take the wording from `label` (#U9).
+
+| Operation | Control label | Per-row | Global | Why |
+|-----------|---------------|---------|--------|-----|
+| `analyze` | Server Info | **no** | yes | `runMaintenance(type)` takes no target parameter at all - the operation is `INFO`, which reports on the server and cannot be pointed at a key prefix |
+
+A per-row control here answered with server-wide metrics for one grouping, which is the
+dead end #427 reported for *"Key Info"*. The Operations tab's global card carries Redis's
+own *"Run Info" / "Server Info"* wording. *"Memory Doctor"* names no declared operation, so
+no control offers it.
+
 ---
 
 ## 9. Capabilities & labels

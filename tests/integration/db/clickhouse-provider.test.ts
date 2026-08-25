@@ -24,6 +24,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { ClickHouseProvider } from "@/lib/db/providers/sql/clickhouse";
+import { maintenanceControl } from "@/lib/db/types";
 import {
   AuthenticationError,
   ConnectionError,
@@ -404,6 +405,18 @@ afterEach(() => {
 // ============================================================================
 
 describe("ClickHouseProvider metadata", () => {
+  // #U9: "Optimize Table" is `optimize`, not a vacuum ClickHouse does not have. The
+  // global card stays withheld even so, because OPTIMIZE names one table - the
+  // redirection is what stops the surface sending a `vacuum` this provider rejects.
+  test("the vacuum label names OPTIMIZE, whose global form is still withheld", () => {
+    const provider = new ClickHouseProvider(makeConnection());
+    const labels = provider.getLabels();
+
+    expect(labels.vacuumAction).toBe("Optimize Table");
+    expect(labels.vacuumActionOperation).toBe("optimize");
+    expect(provider.getCapabilities().maintenanceOperations).toContain("optimize");
+    expect(provider.getCapabilities().maintenanceOperationSpecs?.optimize?.global).toBe(false);
+  });
   test("declares the capabilities the design spec settled on", () => {
     const capabilities = new ClickHouseProvider(makeConnection()).getCapabilities();
 
@@ -418,6 +431,13 @@ describe("ClickHouseProvider metadata", () => {
       declaresForeignKeys: false,
       supportsMaintenance: true,
       maintenanceOperations: ["optimize", "analyze", "kill"],
+      // OPTIMIZE names one table and `dispatchMaintenance` requires that target, so
+      // there is no whole-database form to offer; `describeParts` accepts both (#U9).
+      maintenanceOperationSpecs: {
+        optimize: { label: "Optimize Table", perEntity: true, global: false },
+        analyze: { label: "Table Statistics", perEntity: true, global: true },
+        kill: { label: "Cancel Query", perEntity: false, global: false },
+      },
       supportsConnectionString: true,
       defaultPort: 8123,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER|RENAME|TRUNCATE|ATTACH|DETACH)\\b",
@@ -453,6 +473,23 @@ describe("ClickHouseProvider metadata", () => {
     expect(labels.vacuumAction).toBe("Optimize Table");
     expect(labels.vacuumGlobalDesc).toContain("OPTIMIZE");
     expect(labels.analyzeGlobalDesc).toContain("no ANALYZE");
+  });
+
+  // The `vacuumGlobal*` triad above is DELIBERATELY unreachable, which is a claim that
+  // has to be executable rather than a comment: the global vacuum card follows
+  // `vacuumActionOperation`, and that operation declares no whole-database form here.
+  // Written-and-never-shown wording is the condition #U9 set out to remove, so if a
+  // future spec change makes `optimize` global, this test says the words are live again
+  // and must be checked against what the card would then run.
+  test("the global vacuum card cannot render, so its wording is unreachable by design", () => {
+    const provider = new ClickHouseProvider(makeConnection());
+    const capabilities = provider.getCapabilities();
+    const vacuumOperation = provider.getLabels().vacuumActionOperation ?? "vacuum";
+
+    expect(vacuumOperation).toBe("optimize");
+    expect(maintenanceControl(capabilities, vacuumOperation, "global").offered).toBe(false);
+    // The per-row control IS reachable, so this is not a provider with no maintenance.
+    expect(maintenanceControl(capabilities, vacuumOperation, "perEntity").offered).toBe(true);
   });
 
   // Until #U12 the monitoring Queries panel told a ClickHouse operator to install a
@@ -952,6 +989,28 @@ describe("ClickHouseProvider query preparation", () => {
     const prepared = provider().prepareQuery("SELECT * FROM users -- daily check", { limit: 25 });
 
     expect(prepared.query).toBe("SELECT * FROM users LIMIT 25 -- daily check");
+    expect(prepared.wasLimited).toBe(true);
+  });
+
+  // ── `//` is a line comment here too (S1) ──────────────────────────────────
+  //
+  // The fourth form of the same record. Reading the two slashes as code put the
+  // bound INSIDE the comment, so the server saw an unbounded query: measured on
+  // ClickHouse 26.7.1, `SELECT number FROM numbers(1000) // note` emitted with
+  // `... // note LIMIT 5` returned all 1000 rows while `wasLimited` said 5. The
+  // grammar fact is shared with Apache Cassandra and with no other dialect here.
+
+  test("bounds a statement that ends in a `//` comment, before the comment", () => {
+    const prepared = provider().prepareQuery("SELECT number FROM numbers(1000) // note", { limit: 5 });
+
+    expect(prepared.query).toBe("SELECT number FROM numbers(1000) LIMIT 5 // note");
+    expect(prepared.wasLimited).toBe(true);
+  });
+
+  test("reads a `//` comment as ending at its newline, not at the end of the buffer", () => {
+    const prepared = provider().prepareQuery("SELECT number // note\nFROM numbers(1000)", { limit: 5 });
+
+    expect(prepared.query).toBe("SELECT number // note\nFROM numbers(1000) LIMIT 5");
     expect(prepared.wasLimited).toBe(true);
   });
 

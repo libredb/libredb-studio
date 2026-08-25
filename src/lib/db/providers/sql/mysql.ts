@@ -105,6 +105,67 @@ const runStatement = <T extends RowDataPacket[] = RowDataPacket[]>(
     ? queryable.query<T>(sql)
     : queryable.execute<T>(sql, asExecuteParams(params));
 
+/**
+ * One row of MySQL's answer to `ANALYZE`/`OPTIMIZE`/`CHECK TABLE`. These statements
+ * return a RESULT SET, not a header: the outcome is data, and reading it is the only
+ * way to know what happened.
+ */
+interface MaintenanceReportRow extends RowDataPacket {
+  Table: string;
+  Op: string;
+  Msg_type: string;
+  Msg_text: string;
+}
+
+/**
+ * MySQL's verdict on a table maintenance statement, taken from the statement's own
+ * answer.
+ *
+ * The statement does NOT throw when the server refuses it: measured through this
+ * provider against MySQL 26.7.0 (`libredb-mysql`) on 2026-08-25, `OPTIMIZE TABLE
+ * \`missing\`` resolves normally and answers
+ *
+ *   [{ Table: 'u9t.missing', Op: 'optimize', Msg_type: 'Error',
+ *      Msg_text: "Table 'u9t.missing' doesn't exist" },
+ *    { Table: 'u9t.missing', Op: 'optimize', Msg_type: 'status',
+ *      Msg_text: 'Operation failed' }]
+ *
+ * so `await runStatement(...); return { success: true }` reported a completed
+ * operation for a statement the server had rejected - and discarded the `Msg_text`
+ * that is the entire point of `CHECK TABLE`, whose OK-or-corruption-report is the only
+ * thing the user asked for. `Msg_type` is the decision (`'Error'` from the server,
+ * matched case-insensitively because the manual documents the set in lower case), and
+ * the same read is what SQLite's `check` already does with `PRAGMA integrity_check`.
+ *
+ * The whole-database form names every table in one statement, so a failing table is
+ * quoted WITH its name - it is the only place the failure appears - while a successful
+ * run quotes the messages alone and deduplicates them: over forty tables the OK and
+ * InnoDB's "doing recreate + analyze instead" note repeat once per table and say the
+ * same thing forty times.
+ */
+function readMaintenanceReport(
+  type: MaintenanceType,
+  rows: MaintenanceReportRow[],
+): { success: boolean; message: string } {
+  const failures = rows.filter((row) => String(row.Msg_type).toLowerCase() === "error");
+  if (failures.length > 0) {
+    return {
+      success: false,
+      message: `${type.toUpperCase()} failed: ${unique(failures.map((row) => `${row.Table}: ${row.Msg_text}`)).join("; ")}`,
+    };
+  }
+
+  // A statement that answers no row at all leaves nothing to quote; the generic
+  // sentence is then all there is to say.
+  if (rows.length === 0) {
+    return { success: true, message: `${type.toUpperCase()} completed successfully` };
+  }
+
+  return { success: true, message: `${type.toUpperCase()}: ${unique(rows.map((row) => row.Msg_text)).join("; ")}` };
+}
+
+const unique = (values: string[]): string[] => [...new Set(values)];
+
 // ============================================================================
 // SQL Statements
 // ============================================================================
@@ -390,11 +451,28 @@ export class MySQLProvider extends SQLBaseProvider {
       // The driver's own connection.beginTransaction() over one held connection.
       supportsTransactions: true,
       maintenanceOperations: ["analyze", "optimize", "check", "kill"],
+      // MySQL has no VACUUM, and every statement it does have names tables:
+      // `ANALYZE/OPTIMIZE/CHECK TABLE <t>` with a target, the same verb over every
+      // table in the database without one (`getAllTablesForMaintenance`). `kill`
+      // takes a connection id from the Sessions panel.
+      maintenanceOperationSpecs: {
+        analyze: { label: "Analyze Table", perEntity: true, global: true },
+        optimize: { label: "Optimize Table", perEntity: true, global: true },
+        check: { label: "Check Table", perEntity: true, global: true },
+        kill: { label: "Kill Connection", perEntity: false, global: false },
+      },
     };
   }
 
   /**
-   * Only the slow-query empty state; every other label is the SQL default and right.
+   * The vacuum slot and the slow-query empty state; every other label is the SQL
+   * default and right.
+   *
+   * MySQL rendered the base default *"Vacuum Table"* in the explorer's per-row menu
+   * and the base *"Run Vacuum" / "Reclaim Space"* copy on the Operations tab, for an
+   * engine whose operations are `analyze`/`optimize`/`check`/`kill` (#U9). The words
+   * below name what MySQL actually runs, and `vacuumActionOperation` says which
+   * operation the surfaces should send for them.
    *
    * `getSlowQueries()` reads `performance_schema.events_statements_summary_by_digest`
    * and answers `[]` when that read fails, which on a server with the Performance
@@ -404,6 +482,12 @@ export class MySQLProvider extends SQLBaseProvider {
   public override getLabels(): ProviderLabels {
     return {
       ...super.getLabels(),
+      vacuumAction: "Optimize Table",
+      vacuumActionOperation: "optimize",
+      vacuumGlobalLabel: "Run Optimize",
+      vacuumGlobalTitle: "Optimize Tables",
+      vacuumGlobalDesc:
+        "Runs OPTIMIZE TABLE over every table in the database, rebuilding its storage and reclaiming the space deleted rows left behind.",
       slowQueriesEmptyState:
         "Query stats come from performance_schema.events_statements_summary_by_digest - enable the Performance Schema to see them.",
     };
@@ -839,21 +923,27 @@ export class MySQLProvider extends SQLBaseProvider {
         let sql = "";
 
         switch (type) {
+          // The three table verbs share one shape: `<VERB> TABLE <list>`, where the
+          // list is the one table the caller named or every table in the database, and
+          // the answer is a RESULT SET carrying the verdict (`readMaintenanceReport`).
           case "analyze":
-            sql = target
-              ? `ANALYZE TABLE ${this.escapeIdentifier(target)}`
-              : `ANALYZE TABLE ${await this.getAllTablesForMaintenance(conn)}`;
-            break;
           case "optimize":
-            sql = target
-              ? `OPTIMIZE TABLE ${this.escapeIdentifier(target)}`
-              : `OPTIMIZE TABLE ${await this.getAllTablesForMaintenance(conn)}`;
-            break;
-          case "check":
-            sql = target
-              ? `CHECK TABLE ${this.escapeIdentifier(target)}`
-              : `CHECK TABLE ${await this.getAllTablesForMaintenance(conn)}`;
-            break;
+          case "check": {
+            const tables = target ? this.escapeIdentifier(target) : await this.getAllTablesForMaintenance(conn);
+            // An empty database joined to an empty list, and `OPTIMIZE TABLE ` alone is
+            // a syntax error - measured through the provider against a database with no
+            // tables on 2026-08-25: "You have an error in your SQL syntax ... near ''".
+            // Nothing to do is not a failure, so it is reported as what it is rather
+            // than as the engine's complaint about a statement we should not have sent.
+            if (!tables) {
+              return {
+                success: true,
+                message: `${type.toUpperCase()}: no tables in ${this.config.database ?? "this database"} to run it on.`,
+              };
+            }
+            const [rows] = await runStatement<MaintenanceReportRow[]>(conn, `${type.toUpperCase()} TABLE ${tables}`);
+            return readMaintenanceReport(type, rows);
+          }
           case "kill":
             if (!target) {
               throw new QueryError("Target connection ID is required for kill operation", "mysql");
@@ -875,7 +965,7 @@ export class MySQLProvider extends SQLBaseProvider {
         }
 
         await runStatement(conn, sql);
-        return { success: true };
+        return { success: true, message: `${type.toUpperCase()} completed successfully` };
       } finally {
         conn.release();
       }
@@ -884,7 +974,7 @@ export class MySQLProvider extends SQLBaseProvider {
     return {
       success: result.success,
       executionTime,
-      message: `${type.toUpperCase()} completed successfully`,
+      message: result.message,
     };
   }
 

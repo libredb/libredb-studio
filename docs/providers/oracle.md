@@ -38,7 +38,7 @@ providers, with several Oracle-isms that are worth knowing before reading the co
 | Pagination | `LIMIT … OFFSET` | `FETCH FIRST n ROWS ONLY` / `OFFSET m ROWS FETCH NEXT n` |
 | Schema scope | all non-system schemas | the connecting **user's** schema (`OWNER = USER`) |
 | Schema queries | 1 `MATERIALIZED`-CTE round-trip | **5 bulk** `ALL_*` queries grouped in memory |
-| Maintenance | vacuum / analyze / reindex / kill | `analyze` (DBMS_STATS) / `optimize` (index rebuild) / `kill` |
+| Maintenance | vacuum / analyze / reindex / kill | `analyze` (DBMS_STATS) / `optimize` (rebuild one table's indexes, or the schema's) / `kill` |
 | Transaction timeout | 5-minute auto-rollback | **none** |
 | Cancellation | `pg_cancel_backend(pid)` | `connection.break()` (tracked connection) |
 | SSL | `buildSSLConfig()` + cloud auto-detect | `tcps://` + `sslServerDNMatch` + `walletContent` (no cloud auto-detect) |
@@ -345,7 +345,7 @@ selects the other branch of `buildQueryResult()`: the grid is empty (`rows: []`,
 
 Until 2026-08-24 the count was `rows.length` on both branches, so every statement that wrote
 something reported `0` for work it had done. Measured 2026-08-24 through
-`createDatabaseProvider({type:"oracle"})` against Oracle Free 23ai, with an interleaved `SELECT`
+`createDatabaseProvider({type:"oracle"})` against Oracle AI Database 26ai Free, with an interleaved `SELECT`
 proving each statement had landed:
 
 | statement | `rowsAffected` on the wire | `rowCount` before | after |
@@ -375,7 +375,7 @@ actually running). Exposed via `POST /api/db/cancel`.
 ### 5.3 What each Oracle type arrives as
 
 Every row below was measured on 2026-08-24 through `createDatabaseProvider({type:"oracle"})` against
-**Oracle Free 23ai** with **oracledb 6.10.0 in Thin mode**, over a probe table holding one populated
+**Oracle AI Database 26ai Free** with **oracledb 6.10.0 in Thin mode**, over a probe table holding one populated
 row and one all-`NULL` row. The `JSON.stringify` column is what `POST /api/db/query` puts on the wire,
 and therefore what the grid, the row detail sheet, the CSV, the SQL export and the agent's result
 summary all read.
@@ -473,7 +473,7 @@ Oracle is the one engine of the four whose driver hands over a NAME rather than 
 `fields`, by both `query()` and `queryInTransaction()`, and it is uppercase - the same spelling
 `ALL_TAB_COLUMNS.DATA_TYPE` uses, so a declared type reads like the schema tree's entry.
 
-Measured on Oracle Free 23ai over the probe table, verbatim from `oracledb`:
+Measured on Oracle AI Database 26ai Free over the probe table, verbatim from `oracledb`:
 
 | declared | `dbTypeName` | also reported |
 |---|---|---|
@@ -506,7 +506,7 @@ be** and this section says so plainly instead of implying otherwise. This is the
 already took for a CQL `duration`, applied to the one other engine here that has the same shape of
 problem.
 
-Measured 2026-08-24 against **Oracle Free 23ai** with **oracledb 6.10.0 in Thin mode**, through
+Measured 2026-08-24 against **Oracle AI Database 26ai Free** with **oracledb 6.10.0 in Thin mode**, through
 `createDatabaseProvider({type:"oracle"})`:
 
 | Oracle type | stored | before | after |
@@ -759,7 +759,7 @@ sub-query is independently privilege-guarded ([§3.6](#36-privilege-resilient-mo
 
 Two states, both ordinary:
 
-- **The connected user cannot read `V$SYSSTAT`.** Measured 2026-08-23 on Oracle Free 23ai against a
+- **The connected user cannot read `V$SYSSTAT`.** Measured 2026-08-23 on Oracle AI Database 26ai Free against a
   user granted only `CREATE SESSION`:
 
   ```
@@ -797,13 +797,78 @@ them.
 | Type | With target | Without target |
 |------|-------------|----------------|
 | `analyze` | `DBMS_STATS.GATHER_TABLE_STATS(USER, '<t>')` | `DBMS_STATS.GATHER_SCHEMA_STATS(USER)` |
-| `optimize` | `ALTER INDEX "<t>" REBUILD` | rebuild **every** normal user index (`USER_INDEXES`, each in its own try/catch) |
+| `optimize` | rebuild the indexes THAT TABLE owns: `SELECT INDEX_NAME FROM USER_INDEXES WHERE TABLE_NAME = :t AND INDEX_TYPE = 'NORMAL'`, then `ALTER INDEX "<i>" REBUILD` for each (own try/catch) | rebuild **every** normal user index (`USER_INDEXES`, each in its own try/catch) |
 | `kill` | `ALTER SYSTEM KILL SESSION '<SID,SERIAL#>'` | throws (`SID,SERIAL#` required) |
 
 `getCapabilities().maintenanceOperations = ['analyze', 'optimize', 'kill']`. Targets are
 **inline-escaped** (single quotes doubled for the PL/SQL string literal; double quotes doubled for
 the quoted index identifier) rather than routed through `escapeIdentifier()`, because they sit
-inside `DBMS_STATS` arguments / `ALTER` identifiers that can't take bind parameters.
+inside `DBMS_STATS` arguments / `ALTER` identifiers that can't take bind parameters. The
+`optimize` catalog read is the exception: `TABLE_NAME = :tableName` sits in a WHERE clause,
+which does take a bind.
+
+### Where each operation may be offered (`maintenanceOperationSpecs`)
+
+Declaring that an operation EXISTS is not enough to put a button on it: two engines that
+declare the same `MaintenanceType` take different kinds of target, so each provider also
+declares what its own operations may be pointed at. The monitoring Tables tab renders a
+per-row control only where `perEntity` is true, the admin Operations tab a whole-database
+card only where `global` is true, and both take the wording from `label` (#U9).
+
+| Operation | Control label | Per-row | Global | Why |
+|-----------|---------------|---------|--------|-----|
+| `analyze` | Gather Statistics | yes | yes | `GATHER_TABLE_STATS` / `GATHER_SCHEMA_STATS` |
+| `optimize` | Rebuild Indexes | yes | yes | the target is a TABLE, and its own indexes are rebuilt - the shape SQL Server's identically worded `ALTER INDEX ALL ON [<t>] REBUILD` has |
+| `kill` | Kill Session | no | no | the target is `SID,SERIAL#` from the Sessions panel |
+
+`optimize` used to take an INDEX name, so the per-table button #427 wired up sent a table
+and every click answered **ORA-01418: specified index does not exist** - reproduced against
+`ldb-oracle-r5` on 2026-08-25 and re-run after the fix, which brought an `UNUSABLE` index
+on the named table back to `VALID` both with a target and without one. That container's
+`SELECT BANNER_FULL FROM V$VERSION` answers *"Oracle AI Database 26ai Free Release
+23.26.2.0.0"*, which is the product name used throughout this document. `INDEX_TYPE =
+'NORMAL'` excludes what `ALTER INDEX ... REBUILD` cannot take (the LOB index a CLOB column
+creates was present in that probe) and keeps the B-tree indexes that back UNIQUE and PRIMARY
+KEY constraints. A table with no rebuildable index succeeds having rebuilt nothing: "nothing
+to do" is not a failure, and neither is a heap table.
+
+**An empty index list has two causes, and they are not the same fact.** A target the schema
+does not own answered `{"success": true}` in ~1 ms having done nothing at all - measured
+through the provider on 2026-08-25 for `U9MISSING` (no such table) and for `u9real` (a real
+table spelled in the wrong case, which Oracle stores folded to upper case). Where
+`TABLE_NAME = :t` returns no index, `SELECT TABLE_NAME FROM USER_TABLES WHERE TABLE_NAME = :t`
+is asked as well, and a target that catalog does not know is reported as a failed operation:
+
+| Target | Result |
+|--------|--------|
+| `U9REAL` (one index) | `success: true` · *"OPTIMIZE: rebuilt 1 of 1 indexes."* |
+| `U9HEAP` (no index, real table) | `success: true` · *"OPTIMIZE: rebuilt 0 of 0 indexes."* |
+| `u9real` (case mismatch) | `success: false` · *"this schema owns no TABLE named u9real …"* |
+| `U9MISSING` (absent) | `success: false` · *"this schema owns no TABLE named U9MISSING …"* |
+| a plain VIEW | `success: false` · the same sentence, which is why it names the view case too |
+| no target (whole schema) | `success: true` · *"OPTIMIZE: rebuilt 27 of 30 indexes."* |
+| every index of the table refused | `success: false` · *"rebuilt 0 of 2 indexes. ORA-01647 …"* |
+
+The existence question is asked ONLY when the index list came back empty, so the ordinary
+path stays at one catalog read. `USER_TABLES` is the catalog that answers it because it is
+not narrower than `USER_INDEXES`: measured on the same container, a MATERIALIZED VIEW's
+container appears there under the view's own name and its indexes are keyed to that name,
+while a plain VIEW appears in neither - and a view owns no index for "Rebuild Indexes" to
+have rebuilt. The count in the message is there because tolerating one failed index means
+`success: true` alone cannot distinguish 2 of 2 from 1 of 2.
+
+**None of them rebuilding is a third fact.** One index failing leaves the run completed - an
+offline tablespace or an unusable partition stops that index alone - but a table where EVERY
+rebuild is refused had nothing it was asked to do happen. Measured on 2026-08-25 with the
+table's tablespace put READ ONLY, so every `ALTER INDEX ... REBUILD` answers ORA-01647: this
+reported `{"success": true, "message": "OPTIMIZE: rebuilt 0 of 2 indexes."}` in 14 ms with the
+ORA text discarded in an empty `catch`. It now reports `success: false` and carries the
+engine's first refusal, because the count says how many and only the ORA text says why. A
+table with no index at all keeps its success: nothing to do is still not a failure.
+
+`vacuumAction` has said *"Rebuild Indexes"* since this provider shipped, and that is
+`optimize`, not a `vacuum` Oracle has no statement for: `vacuumActionOperation: 'optimize'`
+is what lets the Operations tab render those words and send an operation Oracle declares.
 
 ---
 

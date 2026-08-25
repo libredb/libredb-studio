@@ -266,6 +266,20 @@ describe("SQLiteProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("getCapabilities()", () => {
+    // #U9: VACUUM rewrites the whole file and `runMaintenance` ignores the target, so
+    // the per-table control named one table and acted on the database. The same is
+    // true of PRAGMA integrity_check.
+    test("declares the target grammar of every maintenance operation", () => {
+      const caps = new SQLiteProvider(makeSQLiteConfig()).getCapabilities();
+
+      expect(caps.maintenanceOperationSpecs).toEqual({
+        vacuum: { label: "Vacuum Database", perEntity: false, global: true },
+        analyze: { label: "Analyze Table", perEntity: true, global: true },
+        reindex: { label: "Reindex Table", perEntity: true, global: true },
+        check: { label: "Integrity Check", perEntity: false, global: true },
+      });
+      expect(Object.keys(caps.maintenanceOperationSpecs ?? {}).sort()).toEqual([...caps.maintenanceOperations].sort());
+    });
     test("returns correct SQLite capabilities", () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       const caps = provider.getCapabilities();

@@ -672,6 +672,23 @@ every connector decides for itself whether it implements it, and measured, the `
 answers `This connector does not support analyze` and no connector on the probe cluster implements
 it. A button that always fails is worse than a stated reason.
 
+### Where each operation may be offered (`maintenanceOperationSpecs`)
+
+Declaring that an operation EXISTS is not enough to put a button on it: two engines that
+declare the same `MaintenanceType` take different kinds of target, so each provider also
+declares what its own operations may be pointed at. The monitoring Tables tab renders a
+per-row control only where `perEntity` is true, the admin Operations tab a whole-database
+card only where `global` is true, and both take the wording from `label` (#U9).
+
+| Operation | Control label | Per-row | Global | Why |
+|-----------|---------------|---------|--------|-----|
+| `kill` | Terminate Query | no | no | the target is the query id the Sessions panel lists; neither a table nor a whole database can supply one |
+
+So no maintenance control is offered anywhere on Trino - which is the same answer the
+labels give in prose: *"Trino Owns No Storage"* and *"Statistics Belong to the Connector"*
+name nothing this engine can run, and both stay unshown because the operations behind them
+are undeclared.
+
 ---
 
 ## 9. Capabilities & labels

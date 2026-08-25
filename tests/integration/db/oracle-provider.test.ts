@@ -647,7 +647,7 @@ describe("OracleProvider", () => {
     // oracledb answers a non-SELECT with no `rows` array at all and its own
     // `rowsAffected`; the envelope used to be built from `rows.length`, so every
     // INSERT, UPDATE and DELETE reported 0 for work it had done. Measured through
-    // `createDatabaseProvider({type:"oracle"})` against Oracle Free 23ai on
+    // `createDatabaseProvider({type:"oracle"})` against Oracle AI Database 26ai Free on
     // 2026-08-24 (rowsAffected 1 / 3 / 4 / 0 for the shapes below), with an
     // interleaved SELECT proving each statement had landed.
     test("reports the driver's rowsAffected for an INSERT", async () => {
@@ -721,7 +721,7 @@ describe("OracleProvider", () => {
     // LOB columns. Without a fetch type handler oracledb answers a CLOB, an
     // NCLOB and a BLOB with a `Lob` stream object, and the row cannot be
     // serialised at all - measured on 2026-08-24 through
-    // `createDatabaseProvider({type:"oracle"})` against Oracle Free 23ai with
+    // `createDatabaseProvider({type:"oracle"})` against Oracle AI Database 26ai Free with
     // oracledb 6.10.0 Thin: every one of the four LOB columns of `r6_lob` came
     // back with `constructor.name === "Lob"`, and `JSON.stringify` of the row
     // threw `TypeError: Converting circular structure to JSON ... starting at
@@ -818,7 +818,7 @@ describe("OracleProvider", () => {
 
     // INTERVAL columns. oracledb answers them with its own `IntervalYM` /
     // `IntervalDS` objects, which no surface here reconstructs and which Oracle
-    // refuses back. Measured 2026-08-24 against Oracle Free 23ai (oracledb 6.10.0,
+    // refuses back. Measured 2026-08-24 against Oracle AI Database 26ai Free (oracledb 6.10.0,
     // Thin) over `d19_probe`: `INTERVAL '3-7' YEAR TO MONTH` arrived as
     // `{"months":7,"years":3}` and `INTERVAL '5 6:7:8.9' DAY TO SECOND` as
     // `{"fseconds":900000000,"seconds":8,"minutes":7,"hours":6,"days":5}`. The
@@ -946,6 +946,28 @@ describe("OracleProvider", () => {
   // =========================================================================
 
   describe("getCapabilities()", () => {
+    // #U9: `optimize` takes a TABLE and rebuilds that table's own indexes. It used to
+    // take an INDEX name, so the per-table button #427 wired up sent a table and every
+    // click answered ORA-01418 (reproduced against Oracle AI Database 26ai Free on 2026-08-25).
+    test("declares the target grammar of every maintenance operation", () => {
+      const caps = provider.getCapabilities();
+
+      expect(caps.maintenanceOperationSpecs).toEqual({
+        analyze: { label: "Gather Statistics", perEntity: true, global: true },
+        optimize: { label: "Rebuild Indexes", perEntity: true, global: true },
+        kill: { label: "Kill Session", perEntity: false, global: false },
+      });
+      expect(Object.keys(caps.maintenanceOperationSpecs ?? {}).sort()).toEqual([...caps.maintenanceOperations].sort());
+    });
+
+    test("the vacuum label names the index rebuild, and the surfaces send that", () => {
+      // Oracle has no VACUUM; this slot has said "Rebuild Indexes" since the provider
+      // shipped, and the global card gated on the literal `vacuum` never showed it.
+      const labels = provider.getLabels();
+
+      expect(labels.vacuumAction).toBe("Rebuild Indexes");
+      expect(labels.vacuumActionOperation).toBe("optimize");
+    });
     test("returns correct capabilities for Oracle", () => {
       const caps = provider.getCapabilities();
       expect(caps.defaultPort).toBe(1521);
@@ -1318,18 +1340,219 @@ describe("OracleProvider", () => {
       expect(capturedSql).toContain("GATHER_SCHEMA_STATS");
     });
 
-    test("optimize with target rebuilds that index", async () => {
+    // The target is a TABLE name, because a table name is the only thing either
+    // maintenance surface has to send. Building `ALTER INDEX "<target>" REBUILD` from
+    // it answered ORA-01418 for every table there is - measured against Oracle AI
+    // Database 26ai Free on 2026-08-25, then re-run after this fix (#U9).
+    test("optimize with a table target rebuilds the indexes THAT TABLE owns", async () => {
       const captured: string[] = [];
-      mockExecuteFn = async (sql: string) => {
+      let indexQueryBinds: unknown;
+      mockExecuteFn = async (sql: string, binds?: unknown) => {
         captured.push(sql);
+        const upper = sql.toUpperCase();
+        if (upper.includes("USER_INDEXES") && upper.includes("TABLE_NAME =")) {
+          indexQueryBinds = binds;
+          return {
+            rows: [{ INDEX_NAME: "SYS_C008646" }, { INDEX_NAME: "U9_PROBE_NAME_IX" }],
+            metaData: [{ name: "INDEX_NAME" }],
+          };
+        }
         return defaultExecute(sql);
       };
 
       await provider.connect();
-      const result = await provider.runMaintenance("optimize", "IDX_USERS_NAME");
+      const result = await provider.runMaintenance("optimize", "U9_PROBE");
 
       expect(result.success).toBe(true);
-      expect(captured.some((sql) => sql.includes('ALTER INDEX "IDX_USERS_NAME" REBUILD'))).toBe(true);
+      // The table is looked up, with its name bound rather than interpolated.
+      expect(indexQueryBinds).toEqual(["U9_PROBE"]);
+      // Both of the table's own indexes are rebuilt, and the TABLE name is never
+      // handed to ALTER INDEX - the assertion that used to hold and produced ORA-01418.
+      expect(captured).toContain('ALTER INDEX "SYS_C008646" REBUILD');
+      expect(captured).toContain('ALTER INDEX "U9_PROBE_NAME_IX" REBUILD');
+      expect(captured.some((sql) => sql.includes('ALTER INDEX "U9_PROBE" REBUILD'))).toBe(false);
+    });
+
+    test("optimize on a table with no rebuildable index succeeds having rebuilt nothing", async () => {
+      // A heap table with no index is an ordinary state, and so is a table whose only
+      // index is the LOB index the catalog query filters out (the live probe's
+      // SYS_IL0000073772C00003$$). "Nothing to do" is not a failure - but only for a
+      // table the catalog KNOWS, which is why USER_TABLES answers a row here.
+      const captured: string[] = [];
+      mockExecuteFn = async (sql: string) => {
+        captured.push(sql);
+        const upper = sql.toUpperCase();
+        if (upper.includes("USER_INDEXES") && upper.includes("TABLE_NAME =")) {
+          return { rows: [], metaData: [{ name: "INDEX_NAME" }] };
+        }
+        if (upper.includes("USER_TABLES") && upper.includes("TABLE_NAME =")) {
+          return { rows: [{ TABLE_NAME: "U9_HEAP" }], metaData: [{ name: "TABLE_NAME" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize", "U9_HEAP");
+
+      expect(result.success).toBe(true);
+      expect(captured.some((sql) => sql.toUpperCase().startsWith("ALTER INDEX"))).toBe(false);
+    });
+
+    // An empty USER_INDEXES answer has TWO causes and they are different facts: a table
+    // with no rebuildable index, and a target that is not a table of this schema at
+    // all. Both answered `{"success":true}` in ~1 ms having done nothing - measured
+    // through the provider against ldb-oracle-r5 (Oracle AI Database 26ai Free Release
+    // 23.26.2.0.0) on 2026-08-25 for a name that does not exist AND for a real table
+    // spelled in the wrong case.
+    test("optimize on a target the catalog does not know is not a completed operation", async () => {
+      const captured: string[] = [];
+      let existenceBinds: unknown;
+      mockExecuteFn = async (sql: string, binds?: unknown) => {
+        captured.push(sql);
+        const upper = sql.toUpperCase();
+        if (upper.includes("USER_INDEXES") && upper.includes("TABLE_NAME =")) {
+          return { rows: [], metaData: [{ name: "INDEX_NAME" }] };
+        }
+        if (upper.includes("USER_TABLES") && upper.includes("TABLE_NAME =")) {
+          existenceBinds = binds;
+          return { rows: [], metaData: [{ name: "TABLE_NAME" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize", "u9real");
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("u9real");
+      // Case is Oracle's rule, not ours: the name is bound exactly as the caller wrote
+      // it, so a lower-case spelling of an upper-case table is reported as unknown
+      // rather than silently succeeding.
+      expect(existenceBinds).toEqual(["u9real"]);
+      expect(captured.some((sql) => sql.toUpperCase().startsWith("ALTER INDEX"))).toBe(false);
+    });
+
+    test("the whole-schema form asks no existence question", async () => {
+      // There is no target to check, and an empty schema is not an error.
+      const captured: string[] = [];
+      mockExecuteFn = async (sql: string) => {
+        captured.push(sql);
+        const upper = sql.toUpperCase();
+        if (upper.includes("USER_INDEXES")) {
+          return { rows: [], metaData: [{ name: "INDEX_NAME" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize");
+
+      expect(result.success).toBe(true);
+      expect(captured.some((sql) => sql.toUpperCase().includes("USER_TABLES"))).toBe(false);
+    });
+
+    test("optimize reports how many indexes it rebuilt", async () => {
+      // One index failing is tolerated, so "success" alone hides how much of the
+      // operation actually happened.
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("USER_INDEXES") && upper.includes("TABLE_NAME =")) {
+          return {
+            rows: [{ INDEX_NAME: "BAD_IDX" }, { INDEX_NAME: "GOOD_IDX" }],
+            metaData: [{ name: "INDEX_NAME" }],
+          };
+        }
+        if (sql.startsWith('ALTER INDEX "BAD_IDX"')) {
+          throw new Error("ORA-01502: index is in unusable state");
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize", "U9_PROBE");
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain("1 of 2");
+    });
+
+    test("optimize on a table tolerates one index failing", async () => {
+      // An offline tablespace or an unusable partition stops that index alone; the
+      // remaining ones still rebuild, which is the choice the whole-schema form made.
+      const rebuilt: string[] = [];
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("USER_INDEXES") && upper.includes("TABLE_NAME =")) {
+          return {
+            rows: [{ INDEX_NAME: "BAD_IDX" }, { INDEX_NAME: "GOOD_IDX" }],
+            metaData: [{ name: "INDEX_NAME" }],
+          };
+        }
+        if (sql.startsWith('ALTER INDEX "BAD_IDX"')) {
+          throw new Error("ORA-01502: index is in unusable state");
+        }
+        if (upper.startsWith("ALTER INDEX")) {
+          rebuilt.push(sql);
+          return { rows: [], metaData: [] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize", "U9_PROBE");
+
+      expect(result.success).toBe(true);
+      expect(rebuilt).toEqual(['ALTER INDEX "GOOD_IDX" REBUILD']);
+    });
+
+    test("optimize reports failure when EVERY index of the table failed", async () => {
+      /*
+        Tolerating one failure and tolerating all of them are different facts. Measured
+        against ldb-oracle-r5 (Oracle AI Database 26ai Free Release 23.26.2.0.0) on
+        2026-08-25: a table whose tablespace is READ ONLY answers ORA-01647 for every
+        `ALTER INDEX ... REBUILD`, and this reported `{"success":true,"message":"OPTIMIZE:
+        rebuilt 0 of 2 indexes."}` in 14 ms with the ORA text discarded - the same
+        success-reporting shape this whole pass exists to remove, one level in.
+
+        The engine's own first refusal travels in the message: "rebuilt 0 of 2" says the
+        count and nothing about why, and why is the only part an operator can act on.
+      */
+      mockExecuteFn = async (sql: string) => {
+        const upper = sql.toUpperCase();
+        if (upper.includes("USER_INDEXES") && upper.includes("TABLE_NAME =")) {
+          return {
+            rows: [{ INDEX_NAME: "BAD_IDX" }, { INDEX_NAME: "ALSO_BAD_IDX" }],
+            metaData: [{ name: "INDEX_NAME" }],
+          };
+        }
+        if (upper.startsWith("ALTER INDEX")) {
+          throw new Error("ORA-01647: tablespace 'V9RO_TS' is read-only, cannot allocate space in it");
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize", "V9RO");
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("0 of 2");
+      expect(result.message).toContain("ORA-01647");
+    });
+
+    test("optimize quotes an index name that contains a double quote", async () => {
+      const captured: string[] = [];
+      mockExecuteFn = async (sql: string) => {
+        captured.push(sql);
+        const upper = sql.toUpperCase();
+        if (upper.includes("USER_INDEXES") && upper.includes("TABLE_NAME =")) {
+          return { rows: [{ INDEX_NAME: 'ODD"NAME' }], metaData: [{ name: "INDEX_NAME" }] };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      await provider.runMaintenance("optimize", "U9_PROBE");
+
+      expect(captured).toContain('ALTER INDEX "ODD""NAME" REBUILD');
     });
 
     test("optimize without target rebuilds all indexes and tolerates individual failures", async () => {
@@ -1618,8 +1841,8 @@ describe("OracleProvider", () => {
     });
 
     test("reports nothing when V$SYSSTAT is not readable, rather than a perfect cache", async () => {
-      // The ordinary case, not an exotic one. Measured 2026-08-23 on Oracle Free
-      // 23ai against a user granted only CREATE SESSION:
+      // The ordinary case, not an exotic one. Measured 2026-08-23 on Oracle AI
+      // Database 26ai Free against a user granted only CREATE SESSION:
       //   ORA-00942: table or view "SYS"."V_$SYSSTAT" does not exist
       // This assertion used to read `toBe(100)` with the comment "Default
       // fallback", so the suite protected the fabrication.
@@ -1640,7 +1863,7 @@ describe("OracleProvider", () => {
 
     test("omits the ratio when V$SYSSTAT answers a NULL row", async () => {
       // The counter denominator can be 0, which NULLIF turns into one row whose
-      // single column is NULL. Measured 2026-08-23 on Oracle Free 23ai:
+      // single column is NULL. Measured 2026-08-23 on Oracle AI Database 26ai Free:
       //    HIT_RATIO
       //   ----------
       //   <NULL>
@@ -2055,7 +2278,7 @@ describe("OracleProvider", () => {
 /**
  * `oracledb` is the one driver of the four that hands over a NAME: `metaData[].
  * dbTypeName`, uppercase, the same word `ALL_TAB_COLUMNS.DATA_TYPE` uses. The names
- * below are verbatim from Oracle Free 23ai over `r5_types`, plus the
+ * below are verbatim from Oracle AI Database 26ai Free over `r5_types`, plus the
  * `TIMESTAMP WITH TIME ZONE` that `SYSTIMESTAMP` declares.
  */
 describe("OracleProvider declared column types", () => {

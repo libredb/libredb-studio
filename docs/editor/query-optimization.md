@@ -158,13 +158,16 @@ id, so no reader can grow a dialect test of its own.
 | `[…]` | an **array literal or subscript**: it nests (`[[1,2],[3,4]]`), nothing inside it is escaped, and a literal inside it is a literal (`m['a]b']`) | ClickHouse, PostgreSQL, Trino |
 | `/* … /* … */ … */` | one **nesting** comment: a `/*` inside a comment opens another and the run continues until the depth returns to zero, so a region that already contains comments can be commented out. A run short of a closer is undeterminable rather than closed early | PostgreSQL, SQL Server, ClickHouse |
 | `/* … /* … */ … */` | a **flat** comment: the first `*/` ends it, and everything after that is the statement's own code | MySQL, MariaDB, SQLite, Oracle, and the default |
+| `//` | opens a **line comment**, ending at the newline like `--` | Apache Cassandra (and its relatives), ClickHouse |
+| `//` | **ordinary code** — an operator the parser refuses (`operator does not exist: integer // integer` on PostgreSQL 18), or a character it rejects outright | everything else, including the default |
 
 Each row was established from an authoritative source: the engine's own documentation, or its
 driver's own tokenizer under `node_modules` (node-oracledb accepts `#` inside an identifier; the
 SQLite amalgamation classifies `#` as a bind-variable prefix and `[` as a "`[...]` style quoted id").
 For the engines that ARE an HTTP endpoint — Elasticsearch, OpenSearch and Trino — the grammar was
 asked directly instead: each fact is a statement the live server answered, not an inference. Trino's
-four were probed on 2026-08-20 against 476, and two of them are the opposite of what a neighbouring
+first four were probed on 2026-08-20 against 476 (its fifth, `//`, on 2026-08-25), and two of them are
+the opposite of what a neighbouring
 dialect would have suggested: `SELECT 1 AS a # trailing` is `line 1:15: mismatched input '#'`, so `#`
 hides nothing and is `code`; and `SELECT [customer] FROM tpch.sf1.nation` fails with "Column
 'customer' cannot be resolved" while `SELECT ARRAY[ARRAY[1,2],ARRAY[3,4]][1][2]` answers `2`, so the
@@ -185,6 +188,7 @@ gate's keyword tests still run on that text.
 | `q'…'` | nobody | everything except Oracle: the form is Oracle's alone, so "not a literal" is the correct reading for the rest |
 | `[…]` | MySQL, Oracle, Elasticsearch, Couchbase, Druid, LibreDB | SQL Server, SQLite and OpenSearch, whose rule the default already applied |
 | `/* … */` nesting | Couchbase, Druid, LibreDB | MySQL, SQLite, Oracle, Elasticsearch, OpenSearch and Trino, whose flat rule the default already applied — each established from its own source rather than assumed to agree |
+| `//` | Elasticsearch, OpenSearch, Couchbase, Druid, LibreDB | PostgreSQL, MySQL, SQLite, Oracle, SQL Server and Trino, each refused on a live server: `SELECT 1 // note` is an error there, so "not a comment" is the reading the default already applied |
 
 The distinction is visible in `src/lib/sql/grammar.ts` too: an established fact is written out in that
 dialect's row, an undecided one is written `DEFAULT_SQL_GRAMMAR.<fact>`.
@@ -350,10 +354,16 @@ bounded, a final data-modifying one is not. The route resolves its connection be
 reading is done under **that connection's dialect** and this route and the provider that runs the
 statement cannot disagree about what the statement is.
 
-The splitter itself is a separate, still dialect-blind scan: it inlines its own span walk and reads
-`#` as ordinary code, so a MySQL hash comment carrying a `;` still splits a statement there. Changing
-that moves statement boundaries, which is its own change with its own tests — recorded here rather
-than folded in.
+The splitter reads spans through the shared reader (`src/lib/sql/spans.ts`) under the caller's
+grammar, so it agrees with every other reader here about which `;` is code. It used to inline its own
+scan and know none of the dialect facts, and unlike the other readers its disagreement was not a
+missing bound: this route RUNS what it returns. Measured on postgres 18,
+`/* a /* b */ ; DROP TABLE t; -- */ SELECT 1` is one read (block comments nest there), and the flat
+reading cut it into three whose second was a bare `DROP TABLE t` — which the route executed. Measured
+on MySQL, whose comments are flat, that same text really does drop the table, so the fragment is
+honest there and the confirmation gate is what must see it. Callers pass the connection's dialect
+(this route, and the editor's multi-statement decision); a call that names none keeps the
+compatibility grammar, the same stated default the rest of `src/lib/sql` applies.
 
 Last-only is that route's own policy, and it leaves a hole this section does not close: a non-final
 `SELECT` runs exactly as written, and its **entire** result set travels back in `statements[i].rows`.
@@ -464,7 +474,7 @@ own grammar (#295) and unresolvable only to a reader without it — and it lifts
 cannot read at all: Oracle's `q'{it's}'` (#292). It does nothing for the first class, per that
 bullet.
 
-Three gaps are known and pinned by tests rather than claimed closed:
+Two gaps are known and pinned by tests rather than claimed closed:
 
 - **Only `UPDATE … SET` is looked for inside a read.** A write hidden in a CTE *body* under any
   other keyword (`WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone`) does not prompt.
@@ -479,10 +489,15 @@ Three gaps are known and pinned by tests rather than claimed closed:
   `tests/components/QuerySafetyDialog.test.tsx` ("does not prompt when the statement's shape cannot
   be typed") so the boundary stays a decision — the shipped rule keys on unresolvable *runs*, and
   widening it to every statement the reader cannot type would prompt for an empty editor.
-- **A multi-statement script is read as one statement.** `SELECT 1; DROP TABLE users` does not
-  prompt (its first keyword is the `SELECT`), while `SELECT 1; UPDATE t SET x = 1` does, because
-  the unanchored probe finds it. Executing the destructive statement on its own prompts, as long
-  as that statement's own shape can be typed — the gap above is the exception.
+
+A third gap sat beside them and is closed (S1). A multi-statement script used to be read as one
+statement, so `SELECT 1; DROP TABLE users` did not prompt — its first keyword is the `SELECT` —
+while `SELECT 1; UPDATE t SET x = 1` did, because the unanchored probe happened to find it. The gate
+now splits the editor text with the same splitter and the same grammar the runner uses, and asks
+about **each fragment** the multi-statement route will run. The split is only performed where the dialect's text is SQL — a `;`
+in a Mongo document or a Redis command separates nothing, so a fragment cut there would be invented
+(#427). Pinned by `tests/components/QuerySafetyDialog.test.tsx` ("The gate reads what the RUNNER will
+run").
 
 Four runs bypass the gate on purpose, all on the standalone path
 (`src/hooks/use-query-execution.ts`): an EXPLAIN run (see below), a Load-More page of a result the

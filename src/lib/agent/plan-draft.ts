@@ -19,6 +19,7 @@
  * end run in a real browser caught it again.
  */
 
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { splitStatements } from "@/lib/sql/statement-splitter";
 import { fenceTagEngine, isQueryFenceTag } from "@/lib/sql/fence-tags";
 import type { DatabaseType } from "@/lib/types";
@@ -250,7 +251,7 @@ export function readPlanStatement(text: string, dialect?: DatabaseType): PlanSta
   // only AFTER the fenced and refusal paths, which keeps every existing precedence
   // untouched: a fenced block still wins among several, and a refusal still wins over an
   // illustration the run declined to stand behind.
-  const unfenced = unfencedStatement(plain);
+  const unfenced = unfencedStatement(plain, dialect);
   return unfenced === null ? { kind: "absent" } : { kind: "statement", sql: unfenced, tag: undefined };
 }
 
@@ -274,6 +275,15 @@ export function readPlanStatement(text: string, dialect?: DatabaseType): PlanSta
  * tracks string literals, comments and dollar-quoting, so `SELECT 'a;b' AS pair;` is one
  * statement and not two. Whitespace knows none of that.
  *
+ * Under THIS CONNECTION'S dialect, which this reader already holds and used to pass only
+ * to `fencedBlock`. Where a statement ends is exactly the question `grammar.ts` answers
+ * per engine, and the answers differ on shipped ones: `//` is a line comment in CQL and
+ * ClickHouse and an operator name or a syntax error everywhere else, so a draft whose
+ * comment carried a `;` was cut at that `;` and the run recorded HALF its statement -
+ * scored as a shortfall against a model that wrote a good one. The grammar record is a
+ * pure lookup over a frozen table, so it costs this file's browser boundary nothing;
+ * `plan-draft-boundary.test.ts` checks that rather than trusting it.
+ *
  * With NO terminator the splitter has nothing to cut on and returns the whole candidate, so
  * the blank line remains the only signal — a model that omits the semicolon and explains
  * itself on the next line still gets its prose through. Narrower, undemonstrated on a real
@@ -283,7 +293,7 @@ export function readPlanStatement(text: string, dialect?: DatabaseType): PlanSta
  * engine, and the recorder stamps the connection's own dialect the way it does for an
  * untagged fence.
  */
-function unfencedStatement(lines: readonly string[]): string | null {
+function unfencedStatement(lines: readonly string[], dialect: DatabaseType | undefined): string | null {
   const start = lines.findIndex((line) => STATEMENT_OPENER.test(line));
   if (start === -1) return null;
   const body: string[] = [];
@@ -302,7 +312,7 @@ function unfencedStatement(lines: readonly string[]): string | null {
     A second statement on the SAME line has no line to cut at, so the splitter's text is the only
     answer left there; it costs that rare draft its semicolon and nothing else.
   */
-  const [first, second] = splitStatements(candidate);
+  const [first, second] = splitStatements(candidate, resolveSqlGrammar(dialect));
   const sql =
     second === undefined
       ? candidate

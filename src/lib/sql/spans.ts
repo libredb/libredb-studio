@@ -16,29 +16,29 @@
  * `db/utils/query-limiter.ts` hand-writes its semicolon strip for the same
  * reason. A scanner that advances one span at a time cannot backtrack at all.
  *
- * Two older readers in this folder overlap with it and are deliberately left
- * alone, because rewriting either changes behaviour this module is not chartered
- * to change:
+ * `statement-splitter.ts` used to inline the same scan - wound together with the
+ * line counting it needs, and knowing none of the dialect facts below - and the
+ * argument for leaving it alone was that the divergences only ever cost a fragment
+ * its row bound. That argument was wrong about the direction: `/api/db/multi-query`
+ * RUNS each fragment the splitter returns, so a boundary this module does not see is
+ * a statement the operator never wrote. It reads through here now, with the caller's
+ * grammar (S1), which is why the list of readers deliberately left alone is down to
+ * one:
  *
- * - `statement-splitter.ts` inlines the same scan, wound together with the line
- *   counting it needs, and knows none of the dialect facts below: it treats `#`
- *   as ordinary code, so a MySQL hash comment containing a `;` still splits there;
- *   it has no alternate-quoting branch, so an Oracle `q'{a'b;c}'` body splits
- *   at that `;`; and it has no bracket branch of either kind, so a `;` inside a
- *   bracket-quoted NAME (`SELECT [a;b] FROM t`, verified) splits one statement into
- *   two while every reader over this module sees one name. The bracket fact's
- *   SUBSCRIPT half escapes it only where the key is STRING-quoted, and by luck
- *   rather than by design: the splitter reads `'…'` and `"…"` but not backticks, so
- *   `SELECT arr[\`a;b\`] FROM t` splits there exactly as the bracketed name does.
- *   All three divergences are safe in the same direction - the fragments lose a
- *   bound rather than gaining a misplaced one - and reusing this module would move
- *   statement boundaries: a separate bug with its own tests.
  * - `alias-extractor.ts:134-135` blanks literals with a regex that honours
  *   BACKSLASH escapes, which this module reports as undeterminable instead (see
- *   `readQuoted`). Its job is autocomplete, where a wrong alias costs a
- *   suggestion; here a wrong literal boundary costs a bound on a write.
+ *   `readQuoted`). Its comment strip (lines 130-132) knows `--` and the block form
+ *   and no dialect at all, so it does not know `//` either. Its job is autocomplete,
+ *   where a wrong alias costs a suggestion; here a wrong literal boundary costs a
+ *   bound on a write - or, at the splitter, a fragment that gets executed.
  *
- * This module is what every NEW reader builds on, so the count does not grow.
+ * This module is what every reader builds on now, new or not, so the count does not
+ * grow - and a dialect fact added here reaches all of them at once. `//` is the
+ * worked example: it was missing, so on Cassandra, ScyllaDB and ClickHouse the
+ * splitter cut `SELECT … // note; DROP …` into a read and a bare DROP out of text
+ * every one of those servers reads as ONE statement (measured 2026-08-25). One field
+ * on the grammar record fixed the splitter, the confirmation gate, the row limiter
+ * and the statement-end reader together.
  *
  * Where the dialects genuinely disagree about a character, the reading comes from
  * the caller's grammar record (`grammar.ts`) rather than from this file taking one
@@ -80,8 +80,14 @@ export interface SqlSpan {
    * guessing - see `operative-keyword.ts`, where the guess would be a bound
    * appended to a write.
    *
-   * A line comment closed by the end of the input is `true`: end-of-input closes
-   * it in every dialect, and nothing follows it to be wrong about.
+   * A line comment closed by the end of the input is `true`: nothing follows it for
+   * a reader over this module to be wrong about, which is the question this flag
+   * answers. It is not a claim that every SERVER accepts such a statement - CQL does
+   * not, measured (`… LIMIT 3 -- note` with nothing after it is "line 1:45 mismatched
+   * character '<EOF>' expecting set null", and the same text plus a newline returns
+   * the rows). That is a fact about where a statement may END rather than about what
+   * the run is, so the one caller it costs - the Cassandra provider's row-limit
+   * rewrite - holds it itself; see `providers/sql/cassandra/index.ts`.
    */
   terminated: boolean;
 }
@@ -99,15 +105,27 @@ function isHashOperatorTail(ch: string | undefined): boolean {
 /**
  * Whether a line comment opens at `index`.
  *
- * `--` opens one in every dialect here and needs no grammar. `#` is the one this
- * module could not answer on its own, so it asks the grammar record: MySQL and
- * ClickHouse open a comment on any `#`, PostgreSQL, Oracle, SQL Server and SQLite
- * open none, and a caller that named no dialect keeps the hybrid reading this
- * module used to apply to everyone (see `DEFAULT_SQL_GRAMMAR`).
+ * `--` opens one in every dialect here and needs no grammar. The other two forms
+ * are the grammar record's answers, and they are asked in different shapes because
+ * the questions differ:
+ *
+ * - `#` is a DISAGREEMENT about one character. MySQL and ClickHouse open a comment
+ *   on any `#`, PostgreSQL, Oracle, SQL Server and SQLite open none, and a caller
+ *   that named no dialect keeps the hybrid reading this module used to apply to
+ *   everyone (see `DEFAULT_SQL_GRAMMAR`).
+ * - `//` is a form only CQL and ClickHouse HAVE. The other six engines refuse the
+ *   characters where they stand, and PostgreSQL reads them as an operator name
+ *   (`SELECT 1 // 2` is "operator does not exist: integer // integer", measured), so
+ *   reading the run there would hide the rest of a line the server does not.
+ *
+ * A single `/` is never a run under any grammar: it is division everywhere, and the
+ * `/*` opener is read after this by the block-comment branch, which is what keeps
+ * the two slash forms from taking each other's text.
  */
 function opensLineComment(sql: string, index: number, grammar: SqlGrammar): boolean {
   const ch = sql[index];
   if (ch === "-") return sql[index + 1] === "-";
+  if (ch === "/") return grammar.doubleSlashComment && sql[index + 1] === "/";
   if (ch !== "#") return false;
   if (grammar.hash === "code") return false;
   if (grammar.hash === "comment") return true;
@@ -449,6 +467,15 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
   // DELETE FROM users` was typed a read and handed a bound, which MySQL applies to
   // the rows the DELETE removes. The grammar record answers it now (#292), and the
   // hybrid survives only as what a caller that named no dialect gets.
+  // The third form, `//`, is CQL's and ClickHouse's and nobody else's, and it is the
+  // fact this module was missing rather than one it resolved wrongly. Read as code,
+  // the `;` a `// note` hides is a statement BOUNDARY to `statement-splitter.ts`, and
+  // `/api/db/multi-query` runs what that returns - so on three shipped engines
+  // `SELECT … // note; DROP …` was cut into a read and a bare DROP out of text every
+  // one of those servers reads as ONE statement (measured 2026-08-25 on Cassandra
+  // 5.0.9, ScyllaDB 2026.2.4 and ClickHouse 26.7.1). The grammar record answers it
+  // now, and it is deliberately NOT widened: PostgreSQL reads `//` as an operator
+  // NAME and the other five refuse the characters where they stand.
   if (opensLineComment(sql, index, grammar)) {
     const newline = sql.indexOf("\n", index);
     // The newline belongs to the comment: it is what closes it.

@@ -277,6 +277,12 @@ export class TrinoProvider extends SQLBaseProvider {
       // implements it, and vacuum, reindex, optimize and check belong to storage
       // systems Trino does not own.
       maintenanceOperations: ["kill"],
+      // Trino owns no storage and computes no statistics, so the only operation it
+      // has is terminating a statement - and that needs the query id the Sessions
+      // panel lists, which is neither a table nor a whole database (#U9).
+      maintenanceOperationSpecs: {
+        kill: { label: "Terminate Query", perEntity: false, global: false },
+      },
       // Trino's own JDBC URL is `jdbc:trino://host:port/catalog/schema`, which the
       // shared parser in `connection-string-parser.ts` does not accept. Rather than
       // advertise a field that would reject everything a user pastes, this stays

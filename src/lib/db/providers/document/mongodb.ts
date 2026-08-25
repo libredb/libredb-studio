@@ -177,6 +177,15 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       supportsMaintenance: true,
       maintenanceOperations: ["vacuum", "analyze", "check"],
+      // `validate` and `compact` are both per-collection commands that this provider
+      // also loops over `listCollections()` when no target is named, so both
+      // placements are real. `dbCheck` is not looped and refuses to run without a
+      // collection name, so it is offered on a collection row only (#U9).
+      maintenanceOperationSpecs: {
+        vacuum: { label: "Compact Collection", perEntity: true, global: true },
+        analyze: { label: "Validate Collection", perEntity: true, global: true },
+        check: { label: "Check Collection", perEntity: true, global: false },
+      },
       supportsConnectionString: true,
       defaultPort: 27017,
       schemaRefreshPattern: '"operation"\\s*:\\s*"(insert|delete|update)',

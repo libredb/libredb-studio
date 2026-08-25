@@ -398,6 +398,7 @@ export function StudioWorkspace({
                             value={tabMgr.currentTab.query}
                             onContentChange={(val) => tabMgr.updateTabById(tabMgr.currentTab.id, { query: val })}
                             language={editorLanguageForTabType(tabMgr.currentTab.type)}
+                            databaseType={conn.activeConnection?.type}
                             schemaContext={conn.schemaContext}
                             capabilities={conn.metadata?.capabilities}
                           />

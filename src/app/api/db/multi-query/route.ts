@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import { splitStatements } from "@/lib/sql/statement-splitter";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { isSelectQuery } from "@/lib/db/utils/query-limiter";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
@@ -114,7 +115,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Connection and query are required" }, { status: 400 });
     }
 
-    const statements = splitStatements(sql);
+    // The resolved connection's dialect, not the compatibility default: this is the
+    // one surface that EXECUTES what the splitter returns, so a fragment invented by
+    // a reading the engine does not share is a statement the operator never wrote.
+    // Measured on postgres 18, `/* a /* b *\/ ; DROP TABLE t; -- *\/ SELECT 1` is one
+    // read there and the flat reading made its second fragment a bare DROP (S1).
+    const statements = splitStatements(sql, resolveSqlGrammar(connection.type));
 
     if (statements.length === 0) {
       return NextResponse.json({ error: "No valid SQL statements found" }, { status: 400 });

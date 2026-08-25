@@ -29,16 +29,37 @@ import {
   Database,
   ShieldAlert,
   LoaderCircle,
+  Wrench,
+  ShieldCheck,
   CircleCheck,
   CircleX,
   Table2,
+  type LucideIcon,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useMonitoringData } from "@/hooks/use-monitoring-data";
 import { storage } from "@/lib/storage";
 import { useAllConnections } from "@/hooks/use-all-connections";
-import type { ActiveSessionDetails, MaintenanceType } from "@/lib/db/types";
+import { maintenanceControl, type ActiveSessionDetails, type MaintenanceType } from "@/lib/db/types";
 import { useProviderMetadata } from "@/hooks/use-provider-metadata";
+
+/**
+ * The per-row maintenance controls this tab can render, in display order, with the
+ * generic verb each one falls back to where the provider declares no
+ * `maintenanceOperationSpecs`.
+ *
+ * `optimize` and `check` are candidates because five providers declare those
+ * operations and no per-row control anywhere offered them; each is filtered out again
+ * wherever the provider says its statement takes no object (SQL Server's
+ * `DBCC CHECKDB`, SQLite's `VACUUM`) - see `maintenanceControl` (#U9).
+ */
+const TABLE_ACTIONS: { type: MaintenanceType; label: string; Icon: LucideIcon; hover: string }[] = [
+  { type: "analyze", label: "Analyze", Icon: Search, hover: "hover:text-yellow-500" },
+  { type: "vacuum", label: "Vacuum", Icon: HardDrive, hover: "hover:text-blue-500" },
+  { type: "optimize", label: "Optimize", Icon: Wrench, hover: "hover:text-blue-500" },
+  { type: "reindex", label: "Reindex", Icon: RefreshCw, hover: "hover:text-purple-500" },
+  { type: "check", label: "Check", Icon: ShieldCheck, hover: "hover:text-green-500" },
+];
 
 interface OperationLogEntry {
   id: string;
@@ -104,21 +125,44 @@ export function OperationsTab() {
     selectedConnection,
     monitoringOptions,
   );
-  const canRun = (type: MaintenanceType) =>
-    metadata?.capabilities.supportsMaintenance === true && metadata.capabilities.maintenanceOperations.includes(type);
-  const anyMaintenance = canRun("analyze") || canRun("vacuum") || canRun("reindex");
+  // Both maintenance surfaces ask ONE question - `maintenanceControl` in
+  // src/lib/db/types.ts - so that neither can offer a control the other's engine
+  // rejects. `capabilities` may be undefined here (provider-meta in flight, or its
+  // request failed), which that helper reads as a denial.
+  const capabilities = metadata?.capabilities;
+  const offers = (type: MaintenanceType, placement: "perEntity" | "global") =>
+    maintenanceControl(capabilities, type, placement).offered;
   // The six analyze/vacuum global ProviderLabels fields were declared, set by
   // seven providers, and read by no component, so every engine rendered
   // Postgres's query-planner copy (#427).
   //
-  // Which card each provider's wording actually reaches follows from the gates
-  // below, not from the labels: the analyze card renders for every provider that
-  // declares `analyze`, so Redis now says "Server Info" and MongoDB "Validate
-  // Collections"; the GLOBAL vacuum card is gated on the literal `vacuum`, which
-  // among the providers that ship vacuum wording only MongoDB declares.
+  // Which card each provider's wording reaches follows from the gates below, not from
+  // the labels: the analyze card renders wherever `analyze` has a whole-database form,
+  // so Redis says "Server Info" and MongoDB "Validate Collections", while the vacuum
+  // card follows `vacuumActionOperation` and now reaches SQL Server's, Oracle's and
+  // MySQL's own wording too.
   //
   // The `??` fallbacks stay: `metadata` may carry capabilities without labels.
   const labels = metadata?.labels;
+  // The vacuum CARD is the provider's vacuum wording, and four engines point that
+  // wording at an operation that is not `vacuum` (`vacuumActionOperation`, #U9). It is
+  // the operation - not the label - that decides whether the card renders and what the
+  // button sends: gating the card on the literal `vacuum` is what kept SQL Server's,
+  // Oracle's, MySQL's and ClickHouse's own words written and never shown, and sending
+  // `vacuum` to any of those four is a 400 from /api/db/maintenance.
+  const vacuumOperation = labels?.vacuumActionOperation ?? "vacuum";
+  const globalAnalyze = offers("analyze", "global");
+  const globalVacuum = offers(vacuumOperation, "global");
+  // Never twice: where the vacuum slot already names `reindex`, this card would send
+  // the same operation under a second set of words.
+  const globalReindex = vacuumOperation !== "reindex" && offers("reindex", "global");
+  const anyMaintenance = globalAnalyze || globalVacuum || globalReindex;
+
+  // The per-row controls, in the provider's own words.
+  const tableActions = TABLE_ACTIONS.flatMap((action) => {
+    const control = maintenanceControl(capabilities, action.type, "perEntity");
+    return control.offered ? [{ ...action, label: control.label ?? action.label }] : [];
+  });
 
   const handleConnectionChange = (id: string) => {
     const conn = connections.find((c) => c.id === id);
@@ -279,7 +323,10 @@ export function OperationsTab() {
         <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-red-400 text-sm">{error}</div>
       )}
 
-      {/* Global Operations — hidden entirely where the provider declares none */}
+      {/* Global Operations — hidden entirely where not one operation has a
+          whole-database form. On Couchbase every operation needs a keyspace, so this
+          section is absent rather than three cards that answer "requires a
+          target" (#U9). */}
       {anyMaintenance && (
         <div>
           <div className="flex items-center gap-2 mb-3">
@@ -288,7 +335,7 @@ export function OperationsTab() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Analyze */}
-            {canRun("analyze") && (
+            {globalAnalyze && (
               <div className="p-4 rounded-xl border border-hairline bg-fill-subtle hover:bg-fill transition-colors">
                 <div className="flex items-start justify-between mb-3">
                   <div className="w-8 h-8 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center">
@@ -313,7 +360,7 @@ export function OperationsTab() {
             )}
 
             {/* Vacuum */}
-            {canRun("vacuum") && (
+            {globalVacuum && (
               <div className="p-4 rounded-xl border border-hairline bg-fill-subtle hover:bg-fill transition-colors">
                 <div className="flex items-start justify-between mb-3">
                   <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
@@ -323,10 +370,12 @@ export function OperationsTab() {
                     size="sm"
                     variant="outline"
                     className="h-7 text-xs border-hairline-strong hover:bg-blue-500/10 hover:text-blue-500"
-                    onClick={() => handleRunMaintenance("vacuum")}
+                    onClick={() => handleRunMaintenance(vacuumOperation)}
                     disabled={!!actionLoading || !selectedConnection}
                   >
-                    {actionLoading === "vacuum-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
+                    {actionLoading === `${vacuumOperation}-global` ? (
+                      <RefreshCw className="w-3 h-3 animate-spin mr-1" />
+                    ) : null}
                     {labels?.vacuumGlobalLabel ?? "Run Vacuum"}
                   </Button>
                 </div>
@@ -339,8 +388,10 @@ export function OperationsTab() {
 
             {/* Reindex — the triad is OPTIONAL on ProviderLabels (only the three
                 providers that declare the `reindex` operation set it), so the
-                hardcoded strings below stay as the fallback (#U6). */}
-            {canRun("reindex") && (
+                hardcoded strings below stay as the fallback (#U6). Withheld where the
+                vacuum slot above already names `reindex`: one operation, two sets of
+                words, is a second card that does the same thing (#U9). */}
+            {globalReindex && (
               <div className="p-4 rounded-xl border border-hairline bg-fill-subtle hover:bg-fill transition-colors">
                 <div className="flex items-start justify-between mb-3">
                   <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
@@ -437,38 +488,23 @@ export function OperationsTab() {
                         </div>
                       </div>
                       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {canRun("analyze") && (
+                        {tableActions.map(({ type, label, Icon, hover }) => (
                           <Button
+                            key={type}
                             size="icon"
                             variant="ghost"
-                            className="w-7 h-7 text-fg-muted hover:text-yellow-500"
-                            title="Analyze"
-                            onClick={() => handleRunMaintenance("analyze", table.tableName)}
+                            className={`w-7 h-7 text-fg-muted ${hover}`}
+                            title={label}
+                            onClick={() => handleRunMaintenance(type, table.tableName)}
                             disabled={!!actionLoading}
                           >
-                            {actionLoading === `analyze-${table.tableName}` ? (
+                            {actionLoading === `${type}-${table.tableName}` ? (
                               <LoaderCircle className="w-3 h-3 animate-spin" />
                             ) : (
-                              <Search className="w-3 h-3" />
+                              <Icon className="w-3 h-3" />
                             )}
                           </Button>
-                        )}
-                        {canRun("vacuum") && (
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="w-7 h-7 text-fg-muted hover:text-blue-500"
-                            title="Vacuum"
-                            onClick={() => handleRunMaintenance("vacuum", table.tableName)}
-                            disabled={!!actionLoading}
-                          >
-                            {actionLoading === `vacuum-${table.tableName}` ? (
-                              <LoaderCircle className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <HardDrive className="w-3 h-3" />
-                            )}
-                          </Button>
-                        )}
+                        ))}
                       </div>
                     </div>
                   ))}

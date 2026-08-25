@@ -3,9 +3,10 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { ShieldAlert, ShieldCheck, TriangleAlert, LoaderCircle, Play, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
+import { readsSqlText, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { hasUnterminatedSpan } from "@/lib/sql/spans";
+import { splitStatements } from "@/lib/sql/statement-splitter";
 import { findCodeWord } from "@/lib/sql/words";
 import type { DatabaseType } from "@/lib/types";
 
@@ -353,6 +354,27 @@ export function QuerySafetyDialog({
 const DANGEROUS_KEYWORDS = new Set(["DELETE", "DROP", "TRUNCATE", "ALTER", "GRANT", "REVOKE", "UPDATE"]);
 
 /**
+ * Whether ONE statement's own code asks for a confirmation, read under `grammar`.
+ *
+ * Its own function because the caller below asks the question twice over different
+ * text: the whole editor buffer, and then each fragment the multi-statement route
+ * will run. Re-deriving the two keyword tests per call site is how the gate and the
+ * runner drifted apart in the first place.
+ */
+function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
+  const keyword = readOperativeKeyword(text, grammar)?.keyword;
+  if (keyword !== undefined && DANGEROUS_KEYWORDS.has(keyword)) return true;
+
+  // A write the statement's own keyword does not report: PostgreSQL's data-modifying
+  // CTE is OPERATED by its SELECT (`WITH x AS (UPDATE … SET …) SELECT * FROM x`), so
+  // this probe stays unanchored deliberately. It reads the statement's CODE rather
+  // than its text, so a read that merely quotes or comments the two words - which
+  // the pattern before it treated as a write - no longer asks for a confirmation.
+  const update = findCodeWord(text, "UPDATE", 0, grammar);
+  return update !== null && findCodeWord(text, "SET", update.end, grammar) !== null;
+}
+
+/**
  * Detect if a query is potentially dangerous and should trigger safety analysis.
  *
  * This gates the confirmation dialog on BOTH execution paths - `use-query-execution`
@@ -408,14 +430,25 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // run: narrowing this rule is not switching the gate off.
   if (readsSqlText(databaseType) && hasUnterminatedSpan(query, grammar)) return true;
 
-  const keyword = readOperativeKeyword(query, grammar)?.keyword;
-  if (keyword !== undefined && DANGEROUS_KEYWORDS.has(keyword)) return true;
+  if (writesUnderGrammar(query, grammar)) return true;
 
-  // A write the statement's own keyword does not report: PostgreSQL's data-modifying
-  // CTE is OPERATED by its SELECT (`WITH x AS (UPDATE … SET …) SELECT * FROM x`), so
-  // this probe stays unanchored deliberately. It reads the statement's CODE rather
-  // than its text, so a read that merely quotes or comments the two words - which
-  // the pattern before it treated as a write - no longer asks for a confirmation.
-  const update = findCodeWord(query, "UPDATE", 0, grammar);
-  return update !== null && findCodeWord(query, "SET", update.end, grammar) !== null;
+  /*
+    The editor text is not always what runs. A buffer holding more than one
+    statement takes `/api/db/multi-query`, which SPLITS it and runs the fragments
+    one by one, and this predicate read only the whole text - so a write in any
+    fragment but the first was invisible to it: the operative keyword of
+    `SELECT 1; DROP TABLE users` is SELECT.
+
+    Measured on MySQL, where the entry's shape is not even hypothetical:
+    `/* a /* b *\/ ; DROP TABLE s1.users; -- *\/ SELECT 1` really does drop the
+    table there (MySQL reads block comments flat), and the whole-text reading found
+    no operative keyword at all because the first code character is the `;`.
+
+    So the gate asks about exactly what the runner will run: the same splitter,
+    under the same grammar. Only for SQL text - the multi-statement route is a SQL
+    route and a `;` in a Mongo document or a Redis command separates nothing, so
+    splitting there could only invent fragments to prompt about (#427).
+  */
+  if (!readsSqlText(databaseType)) return false;
+  return splitStatements(query, grammar).some((statement) => writesUnderGrammar(statement.sql, grammar));
 }

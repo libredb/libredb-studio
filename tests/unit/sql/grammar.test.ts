@@ -232,6 +232,79 @@ describe("resolveSqlGrammar", () => {
     // were written against.
     expect(DEFAULT_SQL_GRAMMAR.blockComment).toBe("flat");
   });
+
+  // ── `//`: a THIRD line-comment form (S1 follow-up) ───────────────────────
+  //
+  // The one fact `grammar.ts` said it could not carry, and the splitter is where
+  // that cost was live: `//` hides the rest of the line on TWO shipped engines, so
+  // a `;` written inside such a comment is not a statement boundary - and
+  // `/api/db/multi-query` RUNS every fragment the splitter returns, so the
+  // dialect-blind reading manufactured a bare `DROP` out of text the server reads
+  // as one statement. Every row below was probed 2026-08-25 against a live engine,
+  // through the surface the provider itself uses, because "it is documented" is not
+  // the same claim as "it is what the server does".
+  //
+  // A comment: two engines, and both halves measured rather than one inferred.
+  //  - `cassandra` (Apache Cassandra 5.0.9 and ScyllaDB 2026.2.4, which shares this
+  //    type-id, both over the native protocol):
+  //    `SELECT release_version FROM system.local // note; DROP KEYSPACE nope\n`
+  //    returns the ROW - one read - and the DROP does not run (a bare
+  //    `DROP KEYSPACE nope` answers "Keyspace 'nope' doesn't exist", so the OK is
+  //    proof it was hidden). Without the trailing newline the same text is "line
+  //    1:68 mismatched character '<EOF>' expecting set null", which is the SECOND
+  //    CQL fact - a line comment needs a newline to close it - and that one still
+  //    has no field here (see `CASSANDRA_GRAMMAR`).
+  //  - `clickhouse` (26.7.1, over HTTP): `SELECT 1 AS a // note; SELECT 999`
+  //    answers `1` with no error, while `SELECT 1; DROP TABLE nope` is refused with
+  //    "Syntax error (Multi-statements are not allowed)" - so the `;` was inside the
+  //    comment rather than ignored. `SELECT 1 AS a // note\n, 2 AS b` answers TWO
+  //    columns, so the run ends at the NEWLINE: it is a LINE comment, not a
+  //    to-end-of-input one. Unlike CQL, end of input closes it (`SELECT 1 AS a //
+  //    note` answers 1).
+  //
+  // Code: five engines plus SQLite, each refusing the characters outright, so
+  // nothing on that line is hidden - which is the only thing these readers ask.
+  //  - `postgres` (18): `SELECT 1 // 2` is "operator does not exist: integer //
+  //    integer", so `//` is an OPERATOR NAME there, and `SELECT 1 AS a // note` is
+  //    "syntax error at or near \"//\"".
+  //  - `mysql` (26.7.0): ERROR 1064 near '// note'.
+  //  - `oracle` (Oracle Free 23, via sqlplus): ORA-00923 "FROM keyword not found
+  //    where expected".
+  //  - `mssql` (2022, via sqlcmd): Msg 102 "Incorrect syntax near '/'".
+  //  - `trino` (476, `POST /v1/statement`): "line 1:15: mismatched input '/'".
+  //  - `sqlite` (the bundled driver): 'near "/": syntax error'.
+  test.each<[DatabaseType, boolean]>([
+    ["cassandra", true],
+    ["clickhouse", true],
+    ["postgres", false],
+    ["mysql", false],
+    ["oracle", false],
+    ["mssql", false],
+    ["trino", false],
+    ["sqlite", false],
+  ])("%s reads `//` as a line comment: %s", (type, doubleSlashComment) => {
+    expect(resolveSqlGrammar(type).doubleSlashComment).toBe(doubleSlashComment);
+  });
+
+  // Neither search engine is reachable from this run, so neither row was
+  // established - and PD-5 forbids reading one dialect's rule off another's, which
+  // here would mean copying five refusals onto a sixth grammar. They keep the
+  // compatibility default, and the direction that costs is stated rather than
+  // implied: if `//` DOES open a comment in one of them, its splitter over-splits
+  // exactly as `cassandra`'s did.
+  test.each<DatabaseType>(["elasticsearch", "opensearch"])(
+    "%s is left at the compatibility default for `//`",
+    (type) => {
+      expect(resolveSqlGrammar(type).doubleSlashComment).toBe(DEFAULT_SQL_GRAMMAR.doubleSlashComment);
+    },
+  );
+
+  test("the compatibility default does not read `//` as a comment", () => {
+    // Today's reading once more: no reader in this folder had a `//` branch before
+    // this fact existed, so keeping it out is what leaves every dialect-less
+    // fixture answering what it answered.
+    expect(DEFAULT_SQL_GRAMMAR.doubleSlashComment).toBe(false);
+  });
 });
 
 describe("hashRunIsAmbiguous", () => {

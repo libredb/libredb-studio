@@ -573,6 +573,26 @@ with targets quoted via [§3.6](#36-safe-maintenance-targets):
 `getCapabilities().maintenanceOperations = ['vacuum', 'analyze', 'reindex', 'kill']`. `kill`
 validates that the target parses as an integer PID.
 
+### Where each operation may be offered (`maintenanceOperationSpecs`)
+
+Declaring that an operation EXISTS is not enough to put a button on it: two engines that
+declare the same `MaintenanceType` take different kinds of target, so each provider also
+declares what its own operations may be pointed at. The monitoring Tables tab renders a
+per-row control only where `perEntity` is true, the admin Operations tab a whole-database
+card only where `global` is true, and both take the wording from `label` (#U9).
+
+| Operation | Control label | Per-row | Global | Why |
+|-----------|---------------|---------|--------|-----|
+| `vacuum` | Vacuum Table | yes | yes | `VACUUM ANALYZE <t>` and bare `VACUUM ANALYZE` both exist |
+| `analyze` | Analyze Table | yes | yes | same, for `ANALYZE` |
+| `reindex` | Reindex Table | yes | yes | `REINDEX TABLE <t>` / `REINDEX DATABASE <db>` |
+| `kill` | Terminate Backend | no | no | the target is a backend PID, which only the Sessions panel lists |
+
+PostgreSQL is the engine both surfaces were already right about - every statement here has
+a one-table form and a whole-database form - so these declarations record the baseline the
+other providers are measured against rather than a change in behaviour. `vacuumAction`
+really means `vacuum` here, so `vacuumActionOperation` stays absent.
+
 ---
 
 ## 10. Capabilities & labels

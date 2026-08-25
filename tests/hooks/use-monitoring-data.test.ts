@@ -310,6 +310,44 @@ describe("useMonitoringData", () => {
     expect(mockToastSuccess).toHaveBeenCalled();
   });
 
+  // ── a refused operation is reported as refused, not as a green tick ────────
+
+  test("runMaintenance reports an HTTP 200 carrying success:false as a failure", async () => {
+    /*
+      The route answers 200 whenever the STATEMENT reached the engine; whether the engine
+      DID the work is `result.success`, and reading only the status code made every
+      refusal a green success toast. Measured through the real MySQL provider on
+      2026-08-25: OPTIMIZE on a table that is not there answers
+      `{"success":false,"message":"OPTIMIZE failed: u9v.missing: Table 'u9v.missing'
+      doesn't exist"}` with a 200, so the operator was told the optimize completed and
+      the Operations tab logged it as a success.
+    */
+    mockGlobalFetch({
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
+      "/api/db/maintenance": {
+        ok: true,
+        json: { success: false, message: "OPTIMIZE failed: u9v.missing: Table 'u9v.missing' doesn't exist" },
+      },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    let maintenanceResult = true;
+    await act(async () => {
+      maintenanceResult = await result.current.runMaintenance("optimize", "missing");
+    });
+
+    // The boolean is what OperationsTab writes into its own log, so it has to carry the
+    // engine's verdict rather than the transport's.
+    expect(maintenanceResult).toBe(false);
+    expect(mockToastError).toHaveBeenCalledWith("OPTIMIZE failed: u9v.missing: Table 'u9v.missing' doesn't exist");
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+  });
+
   // ── history is empty initially ─────────────────────────────────────────────
 
   test("history is empty initially", () => {

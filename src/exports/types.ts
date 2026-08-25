@@ -24,4 +24,4 @@ export type {
 } from "../lib/types";
 
 // Also export provider types
-export type { ProviderCapabilities, ProviderLabels } from "../lib/db/types";
+export type { ProviderCapabilities, ProviderLabels, MaintenanceOperationSpec } from "../lib/db/types";

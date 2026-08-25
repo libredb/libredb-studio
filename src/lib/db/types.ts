@@ -94,6 +94,72 @@ export interface MaintenanceResult {
   message: string;
 }
 
+/**
+ * What ONE maintenance operation can be pointed at on ONE engine, declared next to
+ * that engine's own wording for it.
+ *
+ * `maintenanceOperations` says only that an operation EXISTS here, and #427 measured
+ * what a surface built on that alone offers. Oracle declares `optimize`, so the
+ * per-table button sent `optimize` with a TABLE name - and `oracle.ts` built
+ * `ALTER INDEX "<target>" REBUILD` from it, so every click answered ORA-01418
+ * (reproduced 2026-08-25 against Oracle AI Database 26ai Free before this change). The target
+ * grammar differs between engines that declare the SAME `MaintenanceType`, so a
+ * generic label-to-operation mapping is wrong by construction and the declaration has
+ * to travel with the provider.
+ *
+ * `perEntity` and `global` are independent because both halves occur: Couchbase's
+ * `reindex` is BUILD INDEX for ONE keyspace and has no whole-database form (its global
+ * card answered *"The reindex operation requires a target"*), while SQLite's `VACUUM`
+ * rewrites the whole file and ignores a target entirely (a per-table control there
+ * names one table and vacuums the database). An operation whose target is a session or
+ * query id - every engine's `kill` - is `false` for both: the Sessions panel supplies
+ * that id, and no table or global control can.
+ */
+export interface MaintenanceOperationSpec {
+  /** This engine's own wording for a control that runs the operation. */
+  label: string;
+  /** Runs against ONE object the browser lists: a table, a collection, a keyspace. */
+  perEntity: boolean;
+  /** Runs with no target at all, over the whole database. */
+  global: boolean;
+}
+
+/** Where a surface wants to put a control: on one row, or on a whole-database card. */
+export type MaintenancePlacement = "perEntity" | "global";
+
+/**
+ * Whether ONE maintenance control may be offered in ONE place, and the wording to
+ * give it - the single gate both maintenance surfaces ask, so that they cannot
+ * disagree about what a provider declared.
+ *
+ * `label` is undefined rather than a fallback string on purpose: only the provider
+ * may name the operation, so a caller that gets no name keeps its own generic word.
+ * That is also the whole of the compatibility story for the optional
+ * `maintenanceOperationSpecs` - a provider that declares no spec is offered in both
+ * placements under the caller's own wording, which is what both surfaces did before
+ * #U9.
+ */
+export function maintenanceControl(
+  capabilities: ProviderCapabilities | undefined,
+  type: MaintenanceType,
+  placement: MaintenancePlacement,
+): { offered: boolean; label?: string } {
+  // Unknown capabilities are not a permission: `/api/db/provider-meta` answers with
+  // nothing both while it is in flight and when it failed, and failing open there
+  // puts the dead buttons back on exactly the connections the #272/#282 gates exist
+  // for.
+  if (capabilities?.supportsMaintenance !== true || !capabilities.maintenanceOperations.includes(type)) {
+    return { offered: false };
+  }
+
+  const spec = capabilities.maintenanceOperationSpecs?.[type];
+  if (spec === undefined) {
+    return { offered: true };
+  }
+
+  return { offered: spec[placement], label: spec.label };
+}
+
 // ============================================================================
 // Provider Capabilities & Labels
 // ============================================================================
@@ -225,6 +291,16 @@ export interface ProviderCapabilities {
   tablesAreDerivedGroupings?: boolean;
   supportsMaintenance: boolean;
   maintenanceOperations: MaintenanceType[];
+  /**
+   * Per-operation targeting for the operations above, keyed by `MaintenanceType`.
+   *
+   * Optional for the published-interface reason `supportsInlineRowEdit` records
+   * (`src/exports/types.ts`): a required field added after the fact stops every
+   * external implementer compiling. Absent means "gate on `maintenanceOperations`
+   * alone", which is what both maintenance surfaces did before #U9 - so an
+   * implementation that declares nothing here behaves exactly as it did.
+   */
+  maintenanceOperationSpecs?: Partial<Record<MaintenanceType, MaintenanceOperationSpec>>;
   supportsConnectionString: boolean;
   defaultPort: number | null;
   /**
@@ -279,6 +355,34 @@ export interface ProviderLabels {
   generateAction: string;
   analyzeAction: string;
   vacuumAction: string;
+  /**
+   * Which operation `vacuumAction` and the `vacuumGlobal*` triad actually NAME.
+   *
+   * Four providers point that wording at something that is not `vacuum`: ClickHouse's
+   * *"Optimize Table"* and SQL Server's, Oracle's and MySQL's *"Rebuild Indexes"* /
+   * *"Optimize Table"* each stand for the `optimize` the provider declares. MySQL
+   * rendered the base default *"Vacuum Table"* for an engine whose operations
+   * are `analyze`/`optimize`/`check`/`kill`. The global vacuum card was gated on the
+   * literal `vacuum`, so every one of those provider's own words was written and never
+   * shown, and the per-row item named an operation the page behind it could not run.
+   *
+   * Absent means `vacuum`, so no provider that really vacuums declares anything - and
+   * a provider whose vacuum wording names NOTHING it can run leaves this absent too:
+   * Couchbase's *"Compact"* says in its own description that the server compacts
+   * automatically and there is no manual equivalent, so `vacuum` stays undeclared and
+   * the card stays withheld, which is the honest outcome rather than pointing the
+   * words at the unrelated `reindex` it does declare.
+   * `analyzeAction` needs no twin of this, but not because every engine's analyze
+   * wording stands for `analyze`: read across the providers, three point it at nothing
+   * runnable - Trino's *"Table Statistics"*, the search family's *"Index Statistics"*
+   * and the embedded LibreDB's *"Key Info"*. What makes the twin unnecessary is the
+   * other half of each of those three: none of them declares an `analyze` operation
+   * (`maintenanceOperations` is `['kill']` on Trino and `[]` on the other two), so the
+   * control is withheld there by the declaration alone. Not one provider points its
+   * analyze wording at a DIFFERENT operation it does declare, which is the only case a
+   * twin field would resolve.
+   */
+  vacuumActionOperation?: MaintenanceType;
   searchPlaceholder: string;
   analyzeGlobalLabel: string;
   analyzeGlobalTitle: string;

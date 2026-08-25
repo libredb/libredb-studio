@@ -323,6 +323,19 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       supportsMaintenance: true,
       maintenanceOperations: ["analyze", "reindex", "kill"],
+      // All three of `dispatchMaintenance`'s cases go through `requireTarget`, so
+      // every whole-bucket control here answered *"The reindex operation requires a
+      // target"* rather than running anything (#U9). `UPDATE STATISTICS FOR
+      // <keyspace>` and `BUILD INDEX ON <keyspace>` both name ONE collection, which
+      // the collection rows can supply; there is no "every keyspace in the bucket"
+      // form of either statement, so the global cards are withheld instead of
+      // synthesised from a keyspace list this provider does not enumerate for
+      // maintenance.
+      maintenanceOperationSpecs: {
+        analyze: { label: "Update Statistics", perEntity: true, global: false },
+        reindex: { label: "Build Deferred Indexes", perEntity: true, global: false },
+        kill: { label: "Cancel Request", perEntity: false, global: false },
+      },
       supportsConnectionString: true,
       defaultPort: 8091,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER)\\s+(COLLECTION|SCOPE|INDEX)\\b",

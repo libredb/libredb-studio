@@ -413,6 +413,17 @@ export class MSSQLProvider extends SQLBaseProvider {
       // The mssql package's Transaction object over one held pool connection.
       supportsTransactions: true,
       maintenanceOperations: ["analyze", "check", "optimize", "kill"],
+      // `optimize` is `ALTER INDEX ALL ON [<t>] REBUILD`, so its target is a TABLE
+      // even though the wording says indexes - the same words Oracle uses for an
+      // operation that needed a different kind of name (#U9). `check` is
+      // `DBCC CHECKDB`, which takes no object: `runMaintenance` ignores the target,
+      // so only a global control can honestly offer it.
+      maintenanceOperationSpecs: {
+        analyze: { label: "Update Statistics", perEntity: true, global: true },
+        check: { label: "Check Database", perEntity: false, global: true },
+        optimize: { label: "Rebuild Indexes", perEntity: true, global: true },
+        kill: { label: "Kill Session", perEntity: false, global: false },
+      },
     };
   }
 
@@ -421,6 +432,10 @@ export class MSSQLProvider extends SQLBaseProvider {
       ...super.getLabels(),
       analyzeAction: "Update Statistics",
       vacuumAction: "Rebuild Indexes",
+      // The vacuum slot has said "Rebuild Indexes" since this provider shipped, and
+      // that is `optimize`, not `vacuum` - so the global card gated on the literal
+      // `vacuum` never rendered these words at all (#U9).
+      vacuumActionOperation: "optimize",
       analyzeGlobalLabel: "Update Stats",
       analyzeGlobalTitle: "Update Statistics",
       analyzeGlobalDesc: "Updates query optimizer statistics for all tables to improve query performance.",

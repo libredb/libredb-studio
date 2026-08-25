@@ -1858,6 +1858,32 @@ describe("PostgresProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("getCapabilities()", () => {
+    // #U9: the target grammar of each operation, declared next to it. PostgreSQL is
+    // the engine both surfaces were already right about - every statement here has a
+    // one-table form and a whole-database form - so this records the baseline the
+    // other providers are measured against rather than a change in behaviour.
+    test("declares the target grammar of every maintenance operation", () => {
+      provider = new PostgresProvider(makePgConfig());
+      const specs = provider.getCapabilities().maintenanceOperationSpecs;
+
+      expect(specs).toEqual({
+        vacuum: { label: "Vacuum Table", perEntity: true, global: true },
+        analyze: { label: "Analyze Table", perEntity: true, global: true },
+        reindex: { label: "Reindex Table", perEntity: true, global: true },
+        // A backend PID comes from the Sessions panel; no table row and no global
+        // card can supply one.
+        kill: { label: "Terminate Backend", perEntity: false, global: false },
+      });
+      // Every declared operation carries a spec, and no spec names an operation the
+      // provider does not declare.
+      expect(Object.keys(specs ?? {}).sort()).toEqual([...provider.getCapabilities().maintenanceOperations].sort());
+    });
+
+    test("the vacuum label really means vacuum here", () => {
+      // Absent is the default, so the four engines whose vacuum wording names
+      // something else are the ones that have to say so (#U9).
+      expect(new PostgresProvider(makePgConfig()).getLabels().vacuumActionOperation).toBeUndefined();
+    });
     test("returns correct PostgreSQL capabilities", () => {
       provider = new PostgresProvider(makePgConfig());
       const caps = provider.getCapabilities();
