@@ -3,6 +3,8 @@ import { admitAgentModel } from "@/lib/agent/capability-gate";
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
 import { AGENT_MAX_OBJECTIVE_LENGTH } from "@/lib/agent/execution-policy";
 import { derivePriorRunContext } from "@/lib/agent/prior-run-context";
+import type { AgentRunStatusReport } from "@/lib/agent/run-service";
+import { AgentRunStoreError } from "@/lib/agent/run-store";
 import { driveAgentRun, getAgentRunService } from "@/lib/agent/runtime";
 import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
@@ -221,14 +223,31 @@ export async function POST(req: Request) {
     // A follow-up run is told about the run it follows — its objective and its report —
     // as fenced context (`docs/BACKLOG.md` B36). The context is DERIVED on the server
     // from the previous run's own ledger, never trusted from the request body, and a
-    // caller may only follow a run its own session opened: handing a stranger's report
-    // into a prompt would be a leak the rail cannot see. One answer covers both a run
-    // that does not exist and one that is not the caller's, so the response does not
-    // say which.
+    // caller may only follow a run its own session opened, on the same connection, that
+    // has already ended. One answer covers a run that does not exist, one that is not
+    // the caller's, one on another connection, one still running, and an id the ledger
+    // cannot name — so the response does not say which.
+    const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set(["succeeded", "failed", "cancelled"]);
     let priorContext: AgentPriorRunContext | undefined;
     if (previousRunId !== undefined) {
-      const previous = await service.status(previousRunId);
-      if (previous === null || previous.record.actor.sessionId !== guard.session.username) {
+      let previous: AgentRunStatusReport | null;
+      try {
+        previous = await service.status(previousRunId);
+      } catch (error) {
+        // A run id the ledger cannot name is a malformed id, not a missing run; it joins
+        // the same refusal, because the store refuses it before touching anything and a
+        // caller guessing ids must not be able to tell the two apart.
+        if (error instanceof AgentRunStoreError && error.reasonCode === "INVALID_RUN_ID") {
+          return badRequest("previousRunId does not name a run this session may follow");
+        }
+        throw error;
+      }
+      if (
+        previous === null ||
+        previous.record.actor.sessionId !== guard.session.username ||
+        previous.record.connectionId !== connection.id ||
+        !TERMINAL_RUN_STATUSES.has(previous.record.status)
+      ) {
         return badRequest("previousRunId does not name a run this session may follow");
       }
       priorContext = derivePriorRunContext(previous.record);

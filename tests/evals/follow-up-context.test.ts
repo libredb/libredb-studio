@@ -1,18 +1,28 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { UNTRUSTED_CONTENT_BEGIN } from "@/lib/agent/untrusted-content";
+import { derivePriorRunContext } from "@/lib/agent/prior-run-context";
 import { type EvalRun, openEvalRun } from "../isolated/fixtures/agent-eval-harness";
 import { callsTool, reportOn } from "../isolated/fixtures/agent-scripted-model";
 
 /**
- * B36: a follow-up question is answered against the run it follows, not as if it
- * were the first question of a fresh run (`docs/BACKLOG.md` B36).
+ * B36, the mechanism: a follow-up run is handed the run it follows as fenced
+ * context (`docs/BACKLOG.md` B36).
  *
  * The defect was measured live on 2026-08-15: "and how many of those employees are
  * there in each group?" was answered about DEPARTMENTS, because a run carries no
- * referent for "those groups". These two runs pin the fix end to end: the second
- * run's transcript carries the first run's objective and report as fenced context,
- * so the referent resolves — and a run opened with no predecessor carries none.
+ * referent for "those groups".
+ *
+ * What a SCRIPTED model establishes here, and what it cannot. The second run's
+ * transcript carrying the first run's objective and report — fenced, before
+ * anything is done — is proven directly, because the transcript is what the loop
+ * actually sent. That the model RESOLVED "those groups" against it is not: the
+ * fixture hands the scripted model the SQL it then asserts came back
+ * (`callsTool("run_read_query", { sql: GROUP_COUNT_SQL, ... })`), so nothing in
+ * this path can distinguish a run that resolved the referent from one that did
+ * not. The referent-resolution half belongs to a live measurement
+ * (`tests/evals/real-model.ts`); this scenario pins the transport, not the
+ * judgement.
  */
 
 const runs: EvalRun[] = [];
@@ -41,7 +51,7 @@ const SALARY_SQL = "SELECT hire_year < 1990 AS before_1990, avg(salary) AS avg_s
 const GROUP_COUNT_SQL = "SELECT hire_year < 1990 AS before_1990, count(*) AS headcount FROM employees GROUP BY 1";
 
 describe("B36: a follow-up run is told about the run it follows", () => {
-  test("the second run resolves 'those groups' against the first run's objective and report", async () => {
+  test("the second run is handed the first run's objective and report, fenced, before it does anything", async () => {
     const first = await open({ objective: FIRST_OBJECTIVE });
     const firstDrive = await first.drive([
       callsTool("run_read_query", { sql: SALARY_SQL, rationale: "one read answers the comparison" }),
@@ -49,11 +59,9 @@ describe("B36: a follow-up run is told about the run it follows", () => {
     ]);
     expect(firstDrive.verdict.outcome).toBe("answered");
 
-    const prior = {
-      runId: first.runId,
-      objective: FIRST_OBJECTIVE,
-      report: "Claim 1: Before 1990 averaged 41k; after 1990 averaged 38k.",
-    };
+    // Derived from the first run's own record, the way the route derives it — so the
+    // derivation itself runs here rather than being hand-written past it.
+    const prior = derivePriorRunContext(await first.record());
 
     const second = await open({
       objective: "and how many of those employees are there in each group?",
@@ -70,7 +78,8 @@ describe("B36: a follow-up run is told about the run it follows", () => {
     expect(transcript).toContain("previous report:");
     expect(transcript).toContain(UNTRUSTED_CONTENT_BEGIN);
 
-    // It answered the question the user asked, not a different one.
+    // The scripted model echoes the SQL it was handed, so these two assert the
+    // pipeline ran to a cited answer — not that the model resolved the referent.
     expect(secondDrive.modelStatements).toEqual([GROUP_COUNT_SQL]);
     expect(secondDrive.verdict.outcome).toBe("answered");
   });

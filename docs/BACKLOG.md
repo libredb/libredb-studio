@@ -2520,3 +2520,19 @@ and this one has simply not been tried.
 
 **Done when:** a sweep at a raised per-model turn limit either closes the cell or is recorded in
 the entry as having failed to.
+
+---
+
+### B67. The rail does not say whether a run follows another, and run history is still absent
+
+The model half of B36 is closed: a follow-up run is now TOLD about the run before it — its
+objective and its report, derived server-side and fenced before the model reads them. What is
+left is the surface half B36 named in the same sentence: the rail still says nothing about
+whether a run is following another, or about the cases where it deliberately is not (the
+connection switched, the run was replaced), so a user cannot tell how their follow-up was read.
+And the "run history" larger shape B36 sketched — a user being able to see and return to earlier
+runs — is still unbuilt.
+
+**Done when:** the rail states, for an open run, which run it follows and why it follows no run;
+and run history either exists or is recorded here as deliberately declined rather than
+overlooked.

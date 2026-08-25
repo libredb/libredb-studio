@@ -80,37 +80,21 @@ Two companion pages carry what this one deliberately does not:
 
 ## Table of Contents
 
-- [Agent Runtime — LibreDB Studio](#agent-runtime--libredb-studio)
-  - [Table of Contents](#table-of-contents)
-  - [Turning it on](#turning-it-on)
-  - [What a run is](#what-a-run-is)
-    - [What a plan run knows](#what-a-plan-run-knows)
-    - [What the inventory is an inventory OF](#what-the-inventory-is-an-inventory-of)
-    - [The statement a plan run drafts](#the-statement-a-plan-run-drafts)
-  - [Durability and resume](#durability-and-resume)
-    - [A drive that dies before the loop](#a-drive-that-dies-before-the-loop)
-  - [The tool set](#the-tool-set)
-    - [The query-optimization template](#the-query-optimization-template)
-    - [The database-assessment template](#the-database-assessment-template)
-    - [The operations template](#the-operations-template)
-    - [The data-analysis template](#the-data-analysis-template)
-    - [Presenting an answer](#presenting-an-answer)
-    - [Handing the answer to the editor (auto-execute)](#handing-the-answer-to-the-editor-auto-execute)
-    - [What the fence is proved to hold against](#what-the-fence-is-proved-to-hold-against)
-  - [What bounds a run](#what-bounds-a-run)
-  - [Supported models](#supported-models)
-  - [The model side](#the-model-side)
-    - [What a refused model looks like in the app](#what-a-refused-model-looks-like-in-the-app)
-  - [Whether the run answered](#whether-the-run-answered)
-    - [The eval harness](#the-eval-harness)
-  - [What the removed AI panels did that a run does not](#what-the-removed-ai-panels-did-that-a-run-does-not)
-  - [HTTP surface](#http-surface)
-  - [The surface in the app](#the-surface-in-the-app)
-  - [Deployment](#deployment)
-  - [Package boundary](#package-boundary)
-  - [Module map](#module-map)
-  - [Known limitations](#known-limitations)
-  - [Related documentation](#related-documentation)
+- [Turning it on](#turning-it-on)
+- [What a run is](#what-a-run-is)
+- [Durability and resume](#durability-and-resume)
+- [The tool set](#the-tool-set)
+- [What bounds a run](#what-bounds-a-run)
+- [Supported models](#supported-models)
+- [The model side](#the-model-side)
+- [Whether the run answered](#whether-the-run-answered)
+- [What the removed AI panels did that a run does not](#what-the-removed-ai-panels-did-that-a-run-does-not)
+- [HTTP surface](#http-surface)
+- [The surface in the app](#the-surface-in-the-app)
+- [Deployment](#deployment)
+- [Package boundary](#package-boundary)
+- [Module map](#module-map)
+- [Known limitations](#known-limitations)
 
 ## Turning it on
 
@@ -267,11 +251,14 @@ The middle case is why this is a comparison and not a bare "has a seed id". The 
 database would investigate the seed and report on it as though it were the one on screen.
 
 A run may also FOLLOW the run before it. The rail sends the previous run's id when the user asks a
-follow-up question on the same connection, the route derives the previous run's objective and report
-from its own ledger, and the new run's header records them as `priorContext`. The context is fenced
-when the model reads it, so a pronoun or a demonstrative ("those groups", "it") either resolves
-against the earlier run or is refused for lack of a referent rather than answered as if the question
-were new ([`src/lib/agent/prior-run-context.ts`](../src/lib/agent/prior-run-context.ts)).
+follow-up question on the same connection, the route derives the previous run's objective and
+report from its own ledger, and the new run's header records them as `priorContext`. The context is
+fenced when the model reads it, so a pronoun or a demonstrative ("those groups", "it") either
+resolves against the earlier run or is refused for lack of a referent rather than answered as if
+the question were new ([`src/lib/agent/prior-run-context.ts`](../src/lib/agent/prior-run-context.ts)).
+The chain is **depth 1**: a third run is told about the second and not the first, because the
+derivation reads a run's objective and report and not its `priorContext`. The surface does not yet
+say which run is being followed — or when none is — which is recorded as `docs/BACKLOG.md` B67.
 
 A run emits a closed set of **semantic events**, and they are the whole of what the UI renders:
 `run-started`, `driver-resolved`, `context-captured`, `statement-drafted`, `plan-statement-drafted`,
@@ -1928,7 +1915,7 @@ rendered, and the first Start is where the operator meets it (B30).
 | Route | Purpose |
 | --- | --- |
 | `GET /api/agent/config` | Whether this server runs agents, and if not, which condition failed: `{"enabled": true, "ledgerVerified": …}` or `{"enabled": false, "reason": …, "detail": "…"}`. The reason is one code per operator action — `OPERATOR_DISABLED`, `NO_MODEL_CONFIGURED`, `LEDGER_UNAVAILABLE`, `UNSANCTIONED_WORLD_TARGET`, `IMPLICIT_HOSTED_WORLD`. The last two are backend refusals and keep their own codes deliberately: neither is a disk problem, and `IMPLICIT_HOSTED_WORLD` fires before anything is asked of a filesystem at all. `ledgerVerified` distinguishes the two kinds of yes: `true` after the writable-path probe passed, `false` for the Postgres carve-out, where the backend is accepted without being contacted (B31). Session-verified. `enabled` is a literal boolean because the rail compares `=== true`. `reason` goes to every session — it names an operator action and no path — while `detail` goes to **admin sessions only**, because `LEDGER_UNAVAILABLE`'s detail carries an absolute server path and an OS error string; every other session gets one stable sentence instead, and loses nothing, since the rail renders nothing when the answer is no. Never 500s, and never names a key's value. The ledger half of the answer is memoised for a few seconds, in-flight promise included — the route sits outside the `ai` rate-limit bucket on purpose, so the memo is what stops an authenticated caller turning a page-load probe into a write per request, including a burst that arrives while one probe is still running. |
-| `POST /api/agent/runs` | Opens a run (mode, optional `workflowType`, objective, `connectionId`) and returns `202` with the run id and the PERSISTED mode and workflow type. An unrecognised `workflowType` is refused rather than defaulted. An inline connection in the body is refused. An agent run whose model was established as unable to call tools is refused `422` before any run is opened. |
+| `POST /api/agent/runs` | Opens a run (mode, optional `workflowType`, objective, `connectionId`, and optional `previousRunId` to follow a run this session opened on the same connection) and returns `202` with the run id and the PERSISTED mode and workflow type. An unrecognised `workflowType` is refused rather than defaulted. An inline connection in the body is refused. A `previousRunId` that does not name a terminal run this session opened on this connection is refused `400`. An agent run whose model was established as unable to call tools is refused `422` before any run is opened. |
 | `GET /api/agent/runs/{runId}` | The run record, folded from its ledger. |
 | `DELETE /api/agent/runs/{runId}` | Requests a stop. Cancellation is enforced by the run loop's own persisted state, not by a driver cancel propagating — so this is "asked to stop", not "has stopped". |
 | `GET /api/agent/runs/{runId}/stream` | The ledger as NDJSON, one entry per line. |
@@ -2392,6 +2379,10 @@ surface (#407) — twenty-six runs over `docs/AGENT_DEMO.md`, which is also wher
 real-world agreement rate was measured. The count is deliberately not stated: entries leave this list
 as they are fixed, and a numeral here goes stale silently.
 
+- **B67** — the rail does not say whether a run follows another. A follow-up run is now TOLD about
+  the run before it — its objective and report, fenced, from that run's own ledger (`docs/BACKLOG.md`
+  B36, closed) — but the surface names neither the run it follows nor the cases where it deliberately
+  does not, and there is still no run history to return to an earlier run.
 - **B37** — a seed config the server cannot read disables the agent on every connection, and the rail
   blames the connection: "its settings live in this browser", said of a connection this application
   seeds itself. The browser cannot tell an empty seed list from a failed one.

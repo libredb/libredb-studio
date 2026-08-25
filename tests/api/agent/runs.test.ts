@@ -200,6 +200,7 @@ describe("POST /api/agent/runs", () => {
     runs.set(
       "arun_1",
       fakeRun({
+        status: "succeeded",
         events: [
           {
             kind: "report-composed",
@@ -235,7 +236,7 @@ describe("POST /api/agent/runs", () => {
   });
 
   test("a previousRunId naming another session's run is refused the same way", async () => {
-    runs.set("arun_other", fakeRun({ actor: { sessionId: "grace", role: "user" } }));
+    runs.set("arun_other", fakeRun({ actor: { sessionId: "grace", role: "user" }, status: "succeeded" }));
     const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_other" }));
 
     expect(res.status).toBe(400);
@@ -246,6 +247,38 @@ describe("POST /api/agent/runs", () => {
 
   test("a previousRunId that is not a non-empty string is refused", async () => {
     const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "" }));
+
+    expect(res.status).toBe(400);
+  });
+
+  test("a previousRunId the ledger cannot name is refused, not answered as a server error", async () => {
+    // The store refuses an id outside AGENT_RUN_ID_PATTERN before touching anything;
+    // the route has to give that refusal the same 400 as a missing run, because a
+    // caller guessing ids must not be able to tell "malformed" apart from "not yours".
+    mockStatus.mockImplementationOnce(async () => {
+      throw new AgentRunStoreError("INVALID_RUN_ID", 'agent run id "arun-1" is not usable as a ledger name');
+    });
+
+    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun-1" }));
+
+    expect(res.status).toBe(400);
+    expect(await parseResponseJSON(res)).toMatchObject({
+      error: "previousRunId does not name a run this session may follow",
+    });
+  });
+
+  test("a previousRunId on another connection is refused", async () => {
+    runs.set("arun_elsewhere", fakeRun({ connectionId: "seed:analytics", status: "succeeded" }));
+
+    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_elsewhere" }));
+
+    expect(res.status).toBe(400);
+  });
+
+  test("a previousRunId naming a run that has not ended is refused", async () => {
+    runs.set("arun_running", fakeRun({ status: "running" }));
+
+    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_running" }));
 
     expect(res.status).toBe(400);
   });

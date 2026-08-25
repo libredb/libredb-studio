@@ -49,6 +49,7 @@ import type {
   AgentRunActor,
   AgentRunEvent,
   AgentRunMode,
+  AgentRunRecord,
   AgentRunStopReason,
   AgentRunWorkflowType,
   AgentRunTerminalStatus,
@@ -453,6 +454,8 @@ export interface EvalRun {
   /** Records a stop request against the durable ledger, as the HTTP surface would. */
   requestCancellation(): Promise<void>;
   events(): Promise<readonly AgentRunEvent[]>;
+  /** The whole folded record, so a follow-up can be derived from it the way the route does. */
+  record(): Promise<AgentRunRecord>;
   dispose(): void;
 }
 
@@ -612,6 +615,11 @@ export async function openEvalRun(options: EvalRunOptions = {}): Promise<EvalRun
       const view = await boot().store.read(record.runId);
       if (!view) throw new Error(`run ${record.runId} has no ledger`);
       return view.record.events;
+    },
+    async record() {
+      const view = await boot().store.read(record.runId);
+      if (!view) throw new Error(`run ${record.runId} has no ledger`);
+      return view.record;
     },
     dispose() {
       fs.rmSync(dataDir, { recursive: true, force: true });
