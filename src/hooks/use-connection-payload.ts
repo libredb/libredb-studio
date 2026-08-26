@@ -4,6 +4,49 @@ import type { DatabaseConnection, SSHTunnelConfig, SSLConfig } from "@/lib/types
 export type ManagedConnectionPayload = Omit<DatabaseConnection, "createdAt"> & { createdAt: string; seedId?: string };
 
 /**
+ * The `reason` `GET /api/connections/managed` puts on its 500 when the failure was its
+ * own seed configuration rather than anything else in the request.
+ *
+ * A bare 500 says only "this request failed", and a browser reading that cannot tell it
+ * from "the server serves no seeds" — which is a legitimate answer, and the one a
+ * default deployment gets when no seed file exists. Naming the failure is what lets the
+ * client hold "I do not have the seed list" instead of "the list is empty" (B37).
+ */
+export const SEED_CONFIG_UNREADABLE_REASON = "seed-config-unreadable";
+
+/**
+ * What the browser knows about the server's seed list.
+ *
+ * Deliberately not an array: an array has no way to say "I do not have it", so a load
+ * that failed becomes an empty list, and an empty list is a real answer. Everything
+ * downstream then draws a conclusion from an absence it cannot distinguish from a
+ * failure. The load state is part of the value so that no caller can forget to ask.
+ */
+export type ServedSeeds =
+  | { readonly loaded: true; readonly seeds: readonly ManagedConnectionPayload[] }
+  | { readonly loaded: false };
+
+/** The seed list before anything has been served: loaded, and genuinely empty. */
+export const NO_SERVED_SEEDS: ServedSeeds = { loaded: true, seeds: [] };
+
+/**
+ * Why a connection has no id a run may be started on.
+ *
+ * - `browser-only` — the server cannot rebuild this connection: it has never heard of
+ *   it, or it holds a seed of this id that reaches somewhere else. The settings that
+ *   decide where it points live in this browser.
+ * - `seed-config-unreadable` — the server could not read its own seed configuration, so
+ *   nothing is known about what it can rebuild. Nothing has been established about this
+ *   connection at all.
+ */
+type UnresolvableConnectionReason = "browser-only" | typeof SEED_CONFIG_UNREADABLE_REASON;
+
+/** The id a run may be started on, or the reason there is none. */
+export type AgentRunConnection =
+  | { readonly id: string; readonly reason?: undefined }
+  | { readonly id: null; readonly reason: UnresolvableConnectionReason };
+
+/**
  * Builds the connection portion of an API request body.
  * For managed connections: sends { connectionId: "seed:X" } (no credentials).
  * For user connections: sends { connection: conn } (full object).
@@ -120,8 +163,9 @@ function reachesSameDatabase(conn: DatabaseConnection, served: ManagedConnection
 }
 
 /**
- * The id a run may be STARTED on, or null when the server could not re-resolve this
- * connection to the same database later.
+ * The id a run may be STARTED on, or the reason there is none — the server cannot
+ * re-resolve this connection to the same database later, or it could not read its own
+ * seed configuration and so nothing has been established either way (B37).
  *
  * A different question from `buildConnectionPayload`, which asks how to send a
  * connection ONCE and may hand the server the whole object. A run persists an id and
@@ -136,15 +180,18 @@ function reachesSameDatabase(conn: DatabaseConnection, served: ManagedConnection
  * the user edits it to point somewhere else, starting a run by id would investigate
  * the seed's database and report on it as if it were the one on screen.
  */
-export function resolveAgentRunConnectionId(
-  conn: DatabaseConnection,
-  servedSeeds: readonly ManagedConnectionPayload[],
-): string | null {
-  if (!conn.seedId) return null;
-  if (conn.managed) return `seed:${conn.seedId}`;
+export function resolveAgentRunConnectionId(conn: DatabaseConnection, servedSeeds: ServedSeeds): AgentRunConnection {
+  if (!conn.seedId) return { id: null, reason: "browser-only" };
+  if (conn.managed) return { id: `seed:${conn.seedId}` };
 
-  const served = servedSeeds.find((seed) => seed.seedId === conn.seedId);
-  if (served === undefined) return null;
+  // An unread seed list is not an empty one (B37). Comparing against seeds nobody has
+  // seen would answer "the server does not hold this" from having asked nothing, which
+  // is wrong for exactly the connections this application seeds itself — and it points a
+  // user at their own settings while the server's own configuration is what failed.
+  if (!servedSeeds.loaded) return { id: null, reason: SEED_CONFIG_UNREADABLE_REASON };
 
-  return reachesSameDatabase(conn, served) ? `seed:${conn.seedId}` : null;
+  const served = servedSeeds.seeds.find((seed) => seed.seedId === conn.seedId);
+  if (served === undefined) return { id: null, reason: "browser-only" };
+
+  return reachesSameDatabase(conn, served) ? { id: `seed:${conn.seedId}` } : { id: null, reason: "browser-only" };
 }

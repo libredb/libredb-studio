@@ -31,15 +31,40 @@
  * string the test wrote would only prove the parser agrees with its author.
  */
 
-import type { ColumnSchema, ForeignKeySchema } from "@/lib/types";
+import type { ColumnSchema, ForeignKeySchema, IndexSchema } from "@/lib/types";
 
 /** What one stored `CREATE TABLE` yields. Empty when the text is not one. */
 export interface SqliteTableDefinition {
   readonly columns: readonly ColumnSchema[];
   readonly foreignKeys: readonly ForeignKeySchema[];
+  /**
+   * The indexes SQLite builds to enforce this table's `UNIQUE` constraints.
+   *
+   * They are here because they are NOWHERE ELSE: SQLite stores no DDL for them, so
+   * the composed index read (`sql IS NOT NULL`) cannot see them, and the table's own
+   * DDL — where the constraint is declared — is the only place the agent path can
+   * learn they exist. Leaving them out made a foreign key covered by a `UNIQUE`
+   * constraint read as unindexed (`docs/BACKLOG.md` B25).
+   */
+  readonly indexes: readonly IndexSchema[];
 }
 
-const EMPTY_TABLE: SqliteTableDefinition = Object.freeze({ columns: [], foreignKeys: [] });
+const EMPTY_TABLE: SqliteTableDefinition = Object.freeze({ columns: [], foreignKeys: [], indexes: [] });
+
+/**
+ * What a constraint-created index is CALLED here.
+ *
+ * Not the engine's own `sqlite_autoindex_<table>_<n>`: that name is not derivable
+ * from the DDL — a named `CONSTRAINT uq_x UNIQUE (…)` does not lend the index its
+ * name (measured: the index is still `sqlite_autoindex_…`), and the `<n>` counts
+ * constraints in an order this reader does not model. Inventing one would put a
+ * name in the inventory that might not exist in the database.
+ *
+ * Plain words in parentheses instead, the same convention `IMPLICIT_PRIMARY_KEY`
+ * uses above, so no reader can mistake it for an index somebody wrote a
+ * `CREATE INDEX` for. It IS a real index — it just has no DDL and no author.
+ */
+const IMPLICIT_UNIQUE_INDEX = "(unique constraint)";
 
 /**
  * What a reference names when the DDL omits the referenced column. SQLite then
@@ -288,6 +313,16 @@ interface ParsedItem {
   readonly foreignKeys: readonly ForeignKeySchema[];
   /** Column names a table-level `PRIMARY KEY (…)` named. */
   readonly primaryKeyColumns: readonly string[];
+  /**
+   * Column names one `UNIQUE` constraint covers, IN ORDER — the order is the point,
+   * since a covering test is a prefix test, not a membership test.
+   *
+   * A `PRIMARY KEY` is deliberately not reported the same way: the primary key is
+   * already in the column inventory (`isPrimary`), and an `INTEGER PRIMARY KEY` is
+   * the rowid itself with no index behind it at all, so an index row for it would
+   * name an object that does not exist.
+   */
+  readonly uniqueColumns: readonly string[];
 }
 
 function parseItem(item: string): ParsedItem {
@@ -297,33 +332,44 @@ function parseItem(item: string): ParsedItem {
 
   const head = upper(tokens[0]);
   if (TABLE_CONSTRAINT_HEADS.has(head)) {
-    const list = tokens[2];
+    // `PRIMARY KEY (…)` and `FOREIGN KEY (…)` spell the keyword in two words, so
+    // their list is the third token; `UNIQUE (…)` spells it in one.
+    const list = head === "UNIQUE" ? tokens[1] : tokens[2];
     const names = list?.kind === "paren" ? columnNames(list.value) : [];
-    if (head === "PRIMARY") return { foreignKeys: [], primaryKeyColumns: names };
+    if (head === "PRIMARY") return { foreignKeys: [], primaryKeyColumns: names, uniqueColumns: [] };
+    if (head === "UNIQUE") return { foreignKeys: [], primaryKeyColumns: [], uniqueColumns: names };
     if (head === "FOREIGN") {
       const referencesAt = tokens.findIndex((token) => upper(token) === "REFERENCES");
       return {
         foreignKeys: referencesAt === -1 ? [] : referenceEdges(tokens, referencesAt, names),
         primaryKeyColumns: [],
+        uniqueColumns: [],
       };
     }
-    return { foreignKeys: [], primaryKeyColumns: [] };
+    return { foreignKeys: [], primaryKeyColumns: [], uniqueColumns: [] };
   }
 
   const name = nameOf(tokens[0]);
-  if (name === null) return { foreignKeys: [], primaryKeyColumns: [] };
+  if (name === null) return { foreignKeys: [], primaryKeyColumns: [], uniqueColumns: [] };
 
   const { type, next } = readTypeName(tokens, 1);
   let nullable = true;
   let isPrimary = false;
+  let unique = false;
   const foreignKeys: ForeignKeySchema[] = [];
   for (let index = next; index < tokens.length; index += 1) {
     const word = upper(tokens[index]);
     if (word === "NOT" && upper(tokens[index + 1]) === "NULL") nullable = false;
     else if (word === "PRIMARY" && upper(tokens[index + 1]) === "KEY") isPrimary = true;
+    else if (word === "UNIQUE") unique = true;
     else if (word === "REFERENCES") foreignKeys.push(...referenceEdges(tokens, index, [name]));
   }
-  return { column: { name, type, nullable, isPrimary }, foreignKeys, primaryKeyColumns: [] };
+  return {
+    column: { name, type, nullable, isPrimary },
+    foreignKeys,
+    primaryKeyColumns: [],
+    uniqueColumns: unique ? [name] : [],
+  };
 }
 
 /**
@@ -340,6 +386,7 @@ export function parseSqliteTableDdl(sql: string): SqliteTableDefinition {
   const body = sql.slice(start + 1, matchingParenthesis(sql, start));
   const columns: ColumnSchema[] = [];
   const foreignKeys: ForeignKeySchema[] = [];
+  const indexes: IndexSchema[] = [];
   const tablePrimaryKey = new Set<string>();
 
   for (const item of splitTopLevel(body)) {
@@ -347,11 +394,15 @@ export function parseSqliteTableDdl(sql: string): SqliteTableDefinition {
     if (parsed.column !== undefined) columns.push(parsed.column);
     foreignKeys.push(...parsed.foreignKeys);
     for (const name of parsed.primaryKeyColumns) tablePrimaryKey.add(name);
+    if (parsed.uniqueColumns.length > 0) {
+      indexes.push({ name: IMPLICIT_UNIQUE_INDEX, columns: [...parsed.uniqueColumns], unique: true });
+    }
   }
 
   return {
     columns: columns.map((column) => (tablePrimaryKey.has(column.name) ? { ...column, isPrimary: true } : column)),
     foreignKeys,
+    indexes,
   };
 }
 

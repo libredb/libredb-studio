@@ -22,21 +22,21 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1–D29, U17 · 9
+- [Drivers and connections](#drivers-and-connections) — D1–D27, U17 · 7
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 10
 - [Authentication and security headers](#authentication-and-security-headers) — AU2
-- [Tests](#tests) — T1–T3 · 2
+- [Tests](#tests) — T1–T5 · 4
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC1, DOC3 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
 - [Chart configuration surface](#chart-configuration-surface) — N1–N3 · 3
-- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H13 · 10
+- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H13 · 9
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C2–C10 · 9
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K2–K4 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A6 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B66 · 43
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B74 · 46
 
 ---
 
@@ -213,10 +213,6 @@ first-contact policy is written in `docs/providers/`-adjacent documentation the 
 
 ---
 
----
-
----
-
 ### D14. Three providers lost the buffer-pool gauge, because it was the cache hit ratio wearing a second name
 
 Removing the fabricated cache hit ratios exposed that `bufferPoolUsage` was not a second measurement.
@@ -231,10 +227,11 @@ extension not installed by default, `V$BUFFER_POOL_STATISTICS` needs the privile
 needs, and `sys.dm_os_buffer_descriptors` is a full descriptor scan on a large instance. So a gauge
 that reads a real pool has a cost the panel has never paid.
 
-**Done when:** each provider either measures pool occupancy for real, at a cost written down next to
-the query, or the field is dropped from `PerformanceMetrics` so no panel offers a gauge nothing fills.
-
----
+**Done when:** each of the three either measures pool occupancy for real, at a cost written down next
+to the query, or its omission is recorded as the answer. Dropping the field outright is no longer one
+of the options: MySQL, MongoDB, Couchbase and ClickHouse all fill it with a real occupancy figure
+(`mysql.ts`, `mongodb.ts`, `couchbase/index.ts`, `clickhouse/index.ts`), so removing it would delete
+four working gauges to tidy away three absent ones.
 
 ---
 
@@ -301,49 +298,6 @@ selected before a run can be started on it.
 **Done when:** either direction of the borrow is safe by construction — for instance a single-writer
 file has ONE cache entry that both callers key off, with the profile deciding how it is used rather
 than which handle it gets — or the agent-first order is refused with a sentence naming the lock.
-
-### D28. The scheme mappings still choose `require`, which the boolean rule now contradicts
-
-D26 stated the rule for a boolean TLS **parameter**: it maps onto the mode matching what the engine's
-own driver does with it, never onto a weaker one. `withSSLMode` in
-`src/lib/connection-string-parser.ts` maps the TLS **schemes** — `rediss://`, `couchbases://`, and
-ClickHouse's `https://` — onto `require`, which verifies nothing, while ioredis given `rediss://`
-verifies by default. So the same paste is read strongly through one door and weakly through another.
-
-Not changed with D26 on purpose: the existing comments justify `require` on a measured claim about
-self-hosted deployments — a Redis started with `--tls-port` presents a self-signed certificate, so a
-verifying default would refuse the ordinary local setup — and D26's entry names only the boolean
-parameters. `docs/providers/redis.md` now states the boundary rather than leaving the rule looking
-universal, which is why this is a written-down asymmetry and not a silent one.
-
-**Done when:** the schemes answer to the same stated rule as the parameters, or the reason a scheme is
-read more weakly than the parameter beside it is recorded next to `withSSLMode` as a decision rather
-than as an artefact.
-
-### D29. Redis ignores the username, so no ACL user can be used and a pasted one is lost silently
-
-Measured 2026-08-25 against `redis:latest`: `ACL SETUSER probe on >pw ~* +@all -info` creates a user
-whose `INFO` is refused (`NOPERM`), and a connection configured with that user and password still
-reported `Connection successful` with full health — because `RedisProvider.connect()`
-(`src/lib/db/providers/keyvalue/redis.ts:184`) builds `new Redis({ host, port, password, db, ... })`
-and passes **no `username`**, so ioredis authenticates as `default` and the configured user is
-dropped. On a server whose `default` user has no password, that is a connection made as a principal
-the user did not choose.
-
-The parser makes it worse rather than better: `redis://probe:pw@host` fills `user` from the URI
-(`connection-string-parser.ts:507`), so the field is collected, stored, and then ignored at the one
-place it matters. Redis 6 ACLs are how every managed Redis (Redis Cloud, ElastiCache RBAC, Azure
-Cache) issues least-privilege credentials, so this is not an exotic configuration.
-
-Found while looking for a live health failure to verify U19's degraded banner against — which is also
-what the absence rule (#477) would say about it: a health read that succeeds under the wrong principal
-is not the health of the connection that was configured.
-
-**Done when:** a configured Redis username reaches the client, and a server that refuses that user's
-`INFO` produces a degraded connection rather than a green one — measured against an ACL user, not
-inferred.
-
----
 
 ## Value interpolation
 
@@ -588,8 +542,6 @@ recorded reason it is withheld.
 
 ---
 
----
-
 ## Authentication and security headers
 
 ### AU2. Static assets receive no security headers — decided, not implemented
@@ -642,6 +594,47 @@ it — `images: { unoptimized: true }` disables the optimizer's fetch entirely a
 request against a running server. A unit test importing `next.config` cannot exercise the route.
 
 ---
+
+### T4. Eight backlog ids cited in `src/` name entries that no longer exist
+
+Measured 2026-08-26 by sweeping every `B*` id cited under `src/` against the entries in this file.
+Dangling, with the number of source files citing each: **B7** (2), **B8** (2), **B17** (1), **B18**
+(2), **B24** (3), **B27** (1), **B43** (8), **B47** (3). All of them predate this round -
+`git show HEAD:src/lib/agent/table-profile.ts` carries the B7 and B8 citations already.
+
+The mechanism is the asymmetry in the guard. `tests/unit/agent-documentation.test.ts` enforces the
+two-way invariant between `docs/AGENT.md` and this file, so a `B`-id cited by that document must
+exist and vice versa. Nothing checks a citation from a source comment. So the instruction this file
+opens with - delete an entry when the work lands - leaves every code comment pointing at it silently
+wrong, and those comments are not decoration: `table-profile.ts` cites B7 for "PostgreSQL expression
+indexes are absent" and B8 for "the catalog read returns composite keys as the cross product of both
+sides", which are behavioural limits a reader would act on.
+
+Not fixed in the round that found it, on purpose. Each of the eight needs its claim re-verified
+before it can be rewritten or restored, and the two possibilities are opposite: the entry may have
+been deleted because the limitation was fixed (in which case the comment is false), or deleted by
+mistake (in which case the entry should come back). Eight of those judgements is more than one round
+can do honestly.
+
+**Done when:** no id cited in `src/` is missing from this file, and the drift guard covers source
+citations the way it already covers `docs/AGENT.md`.
+
+### T5. The allowlist's provider-free check reads one level deep
+
+`tests/security/route-auth.test.ts` now verifies that every route on `ROUTES_WITHOUT_A_PROVIDER` is
+still provider-free, rather than merely naming a real route (this closed H10). It does that by
+reading each allowlisted route's own source and matching the provider entry points: the `@/lib/db`
+and `@/lib/llm` module specifiers by PREFIX, so a new factory export is covered the day it lands,
+plus the one indirect helper that exists today - `@/lib/api/schema-route`, which is how
+`db/schema/list` and `db/schema/relations` reach a provider without naming `@/lib/db` at all.
+
+The residual is transitive reach. A future route that obtains a provider through a NEW indirect
+helper module would still pass, because nothing follows the import graph. Measured at the time it was
+written: zero allowlisted routes reach a provider, with or without comment stripping, so this is a
+gap in the guard rather than a defect it is hiding.
+
+**Done when:** the check resolves a route's imports transitively, or the set of indirect helpers is
+itself pinned so a new one cannot appear unnoticed.
 
 ## Dependencies
 
@@ -1099,20 +1092,6 @@ considered each introduced a worse flaw.
 **Done when:** a cheaper, audit-visible eviction policy is found that does not reopen the oldest-first
 bypass.
 
-### H10. The route-guard allowlist verifies existence, not truth
-
-`ROUTES_WITHOUT_A_PROVIDER` in `tests/security/route-auth.test.ts` maps a route key to a one-line
-reason the route is exempt from the "requires a session" sweep. The only automated check on it confirms
-each key matches a real route on disk. It does not verify that the *reason* is still true.
-
-Nothing greps an allowlisted route's file for a provider import (`@/lib/db`, `getOrCreateProvider`,
-`createLLMProvider`, …). So a future edit that adds a provider call to one of these routes — say
-`storage/migrate` growing a database-backed feature — would silently escape the sweep the allowlist
-exists to police. Exactly the failure mode the enumeration was built to catch for undiscovered routes.
-
-**Done when:** a second, independent check greps each allowlisted file for provider-reaching imports
-and fails loudly if one appears.
-
 ### H11. `login_account`'s hard cap is an accepted denial-of-login handle on a known account
 
 The `login_account` bucket is keyed on `hmacHex(submittedEmail)`, which makes it immune to
@@ -1265,7 +1244,7 @@ rather than hand-maintained.
 
 ### C9. `elkjs` is EPL-2.0 and a direct production dependency
 
-Every other direct production dependency is permissive. `elkjs@0.11.1` is EPL-2.0 — a file-level
+Every other direct production dependency is permissive. `elkjs@^0.12.0` is EPL-2.0 — a file-level
 reciprocal license with a patent-retaliation clause — and it is ours by choice rather than transitive:
 the schema diagram's layout worker imports it at
 `src/components/schema-diagram/elk.worker.ts`.
@@ -1863,24 +1842,6 @@ overstates.
 against — a fingerprint sent with the request and compared server-side, refusing with a distinct reason
 when it has moved. Until then `docs/AGENT.md` says the comparison is against the last fetch.
 
-### B25. SQLite hides constraint-created indexes, so `fk_unindexed` can fire on a covered key
-
-`composeSqliteIndexes` reads the index inventory from `CREATE INDEX` text (`sql IS NOT NULL`), and the
-indexes SQLite creates for a `UNIQUE` or `PRIMARY KEY` constraint carry no DDL at all. They are absent
-from the captured inventory, so a foreign-key column covered by a `UNIQUE` constraint looks uncovered to
-`findUnindexedForeignKeys` (`src/lib/agent/table-profile.ts`).
-
-The finding is worded to survive this — "no index **in the captured inventory** leads on this
-foreign-key column", not "this foreign key is unindexed" — and the primary key is read from the column
-inventory rather than the index one, so a PK-covered key is already correct. What remains wrong is the
-`UNIQUE` case, which reports a covering index that exists.
-
-**Done when:** the SQLite capture surfaces constraint-created indexes — the information is in the
-table's own stored DDL, which `parseSqliteTableDdl` already reads for columns and foreign keys — or the
-finding is suppressed on SQLite for columns a `UNIQUE` constraint covers.
-
-Related: B7 (PostgreSQL expression indexes absent) and B8 (composite keys skipped entirely).
-
 ### B26. A profile can test for an email shape and not for a digit run
 
 `table-profile.ts` tests one value shape inside the database, `LIKE '%_@_%._%'`, and derives
@@ -2090,27 +2051,6 @@ a run resumed often enough passes any constant.
 per-drive constant — most likely as part of B6 — with a test that drives one run twice past the cap and
 shows the first drive's cited results still readable, or the surface stating that they are not.
 
-### B37. A malformed seed config disables the agent everywhere, and blames the connection
-
-Driven live on 2026-08-15. A `seed-connections.yaml` missing a required field made
-`GET /api/connections/managed` throw. The browser then held an empty `servedSeeds`, so
-`resolveAgentRunConnectionId` returned null for EVERY connection — including the two samples this
-application ships and seeds itself — and the rail said:
-
-> "Sample (Employees) cannot be rebuilt on the server: its settings live in this browser."
-
-False twice over. The connection is a seed, its settings live on the server, and what actually happened
-is that the server could not read its own config. The true cause appeared in the server log and nowhere
-a user can see.
-
-The rail is stating a conclusion drawn from an absence it cannot distinguish from a failure — the same
-shape as an unreadable plan reading as a cheap one (#373) — and it costs an operator the whole agent
-surface while pointing them at the wrong file.
-
-**Done when:** the browser can tell "the server served no seeds" apart from "the server could not load
-its seeds", and the rail says the second one differently, with a test that fails the managed endpoint
-and asserts the copy names the server's configuration rather than the connection.
-
 ### B38. A run is offered on an engine that cannot run it, and refuses only after a model turn
 
 Driven live on 2026-08-15. Starting an agent run on the bundled `libredb` sample opens the run, drafts a
@@ -2169,33 +2109,6 @@ database has answered it, and should be able to say so without inventing a query
 
 **Done when:** a data-analysis run can conclude "not answerable here" and be scored `answered` for it,
 with the rule stated in `WORKFLOW_TOOL_RULES` and an eval asserting no fabricated statement is sent.
-
-### B45. Every optimization run is scored `unanswered`, including one that produced a correct index
-
-Driven live on 2026-08-17. A query-optimization run compared plans with real PostgreSQL costs,
-recommended a `CREATE INDEX` that is the right index, offered it to the editor — and ended *"Run did not
-answer — Every result the report cited came back empty, so the answer rests on nothing."* Every Optimize
-run in that drive ended the same way.
-
-Two mechanisms compose into it. The plan artifact a run cites is `sql.explain.estimate`, and a plan
-arrives in a single column, so the artifact's summary records `rowCount: 0` — the artifact is complete
-and its row count is meaningless. And `verifyOptimizationGoal` composes on the investigation baseline,
-which carries the `empty-evidence` arm: every cited result returning zero rows ends the run unanswered.
-
-**This is structurally the same error the operations template was explicitly exempted from, and the
-exemption's own rationale applies verbatim.** `src/lib/agent/goal-verifier.ts` argues that holding an
-operational reading to the emptiness rule is "precisely backwards" — "no session is blocked" and "no
-index is unused" are answers, and marking a healthy server's run unanswered is "the same error as
-demanding an artifact only some valid answers can produce". A plan with zero rows in it is the same
-shape: emptiness is a property of how a plan is returned, not of whether the question was answered.
-
-The cost is worse than a wrong label, because the verdict is the part of a run a sceptical reader trusts
-most: the product contradicts its own good answer, in its own voice, at the end of the run.
-
-**Done when:** an optimization run whose report cites a plan and recommends an index is scored
-`answered` — either by exempting `sql.explain.estimate` from the emptiness arm or by not composing that
-arm into this template — with an eval that fails if the run above reads `unanswered`, and with the reason
-recorded next to the operations exemption so the two read as one decision.
 
 ### B48. The composed grounding path still loses a plan run to an environment failure
 
@@ -2317,41 +2230,6 @@ extension views before the user creates anything.
 
 **Done when:** a plan run against a stock TimescaleDB, one against a stock Cloudberry and one against a
 stock AlloyDB Omni all report a captured schema naming the user's tables.
-
-### B54. A refused grounding capture leaves no trace in the ledger, so B52 cannot be diagnosed from it
-
-`docs/llms/setup.md` states the rule this breaks: "Every run writes its ledger to `.workflow-data`, and
-that is the authority on what a run did."
-
-For a capture that SUCCEEDS that is true — `investigation.ts` records a `context-captured` event carrying
-the fingerprint, the table count and the whole snapshot. For a capture that is REFUSED it is not: the
-`capture.kind === "unavailable"` branch pushes `planningUngroundedNote(...)` into the model's prompt and
-returns without recording anything.
-
-Measured 2026-08-20 against a live AlloyDB Omni 17.9.0, in the browser, with a least-privilege agent
-role. Two ledgers side by side:
-
-- **Vitess, capture succeeded:** `context-captured`, `fingerprint ctx_3ce059ca...`, `tableCount 2`, plus
-  the full snapshot.
-- **AlloyDB Omni, capture refused:** four events — `run-opened`, `run-started`, `closing-statement`,
-  `run-finished` — and nothing between the second and the third. The 849-byte ledger names no catalog
-  read, no reason code and no row count.
-
-So the only record that the run was ungrounded is the model's own sentence, "This run was given no
-inventory of this database". The reason — `CATALOG_READ_REFUSED`, 536 rows against a 200-row budget, 341
-of them extension views in `public` — is computed in `context-snapshot.ts`, handed to the model, and then
-dropped. It is not in the ledger and not in the server log either: grepping the run's own log for
-`CATALOG_READ_REFUSED`, `row budget` and `536` finds nothing.
-
-Worse than a gap in telemetry, because this repo has already recorded the trap it walks into: a missing
-event reads as work that was not needed rather than knowledge that was lost. An operator diagnosing B52
-today has to reproduce the run outside the product to learn why it had no schema.
-
-Related: B13, where the capture's own SPEND is missing from the ledger for the same structural reason.
-
-**Done when:** a refused capture records an event carrying its `reasonCode` and, where the reason is the
-row budget, the two numbers — rows projected and rows allowed — and a plan run whose capture was refused
-can be explained from its ledger alone.
 
 ### B55. A LibreDB plan run drafts `GET users:*`, a command that answers zero rows rather than failing
 
@@ -2615,3 +2493,63 @@ nothing to do; if the packaging ever separates the durability primitives from th
 this is the entry to revisit.
 
 **Done when:** the packaging separates them, or this entry is deleted as permanently declined.
+
+### B72. Three verifiers still judge a plan-only report by the emptiness census
+
+B45 exempted plans from the emptiness clause for `query-optimization` only, and deliberately stopped
+there. `agent-investigation.1`, `agent-database-assessment.1` and `agent-data-analysis.1` still call
+`restsOnlyOnEmptyResults` with no exemption set, so a report of theirs whose only citation is a plan
+artifact is scored `empty-evidence` for the same wrong reason: a plan arrives in one column, the
+driver reports no row count for it, and that zero measures nothing.
+
+Reachable rather than theoretical - `inspect_plan` is in `AGENT_MODE_TOOLS`, so every one of those
+workflows is offered it. Left out of B45 because closing it means changing what three released
+verifier ids mean, which by this file's own versioning rule (`goal-verifier.ts`: a rule that changes
+its mind takes a new id) forces `agent-investigation.1` to `.2` plus the two ids composing on it,
+and updates across the eval suites and the verifier table. The narrow fix was measured; this one has
+not been.
+
+Pinned today rather than left ambiguous: a test asserts that an investigation citing the same
+plan-only ledger is still judged by the unexempted baseline, so the boundary is stated and a change
+to it is deliberate.
+
+**Done when:** a plan-only report is judged the same way whichever workflow composed it, with the id
+bumps that implies.
+
+### B73. The row-budget pair travels as prose and is recovered by regex
+
+B54 records a refused capture's `reasonCode` and, for a row-budget refusal, the two numbers. The
+reason code is structural. The numbers are not: they are formatted into a `QueryError` MESSAGE by the
+provider (`postgres.ts`, `sqlite.ts` - both refuse rather than truncate) and read back out by
+`rowBudgetIn` in `context-snapshot.ts`. `statementAdvice` (`tools.ts`) reads the same sentence with
+the same anchor, so there are two prose consumers, not one.
+
+Blast radius of doing it properly, measured while closing B54: a structured field on `QueryError`
+(`src/lib/db/errors.ts`, the error type every provider throws, ~40 call sites), the two provider
+formatters, a carrier on the `database-error` variant of `AgentToolRefusal` (pinned closed by the T2
+tests) and a pass-through in `runAuditedAgentCall`. Five files across a shared error type, which is
+why B54 kept the regex.
+
+The failure mode is silence, which is what makes it worth an entry: a reword drops the numbers and
+nothing goes wrong loudly. That is currently held off by a test that drives a REAL over-budget
+`queryReadOnly` through `bun:sqlite` and asserts the parse against the error the provider itself
+threw, plus a source-template assertion for PostgreSQL, which cannot be driven without a server. Both
+go red on a reword.
+
+**Done when:** the two numbers reach the ledger as fields rather than as a parsed sentence, and both
+prose consumers are converted in the same pass.
+
+### B74. A `COLLATE` unique constraint is reported as covering a foreign key it cannot serve
+
+Found while closing B25. `UNIQUE (a COLLATE NOCASE)` creates a real index, and the capture now lists
+it, but that index does not serve a BINARY equality lookup on `a` - so `fk_unindexed` will stay silent
+about a key the engine would still scan for. The direction matters: this is a false negative, the
+same class B25 fixed in the opposite direction.
+
+Deliberately not modelled: `parseSqliteIndexDdl` drops `COLLATE` on user-written indexes too, so
+honouring it for constraint-created ones only would make the inventory disagree with itself about the
+same fact. Consistency was chosen over a distinction that would have to be introduced in both readers
+at once.
+
+**Done when:** collation is part of what an index column carries, in both readers, and coverage
+accounts for it.

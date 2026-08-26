@@ -1152,6 +1152,20 @@ Auth required. Returns seed/managed connections for the current user's role, wit
 { "connections": [], "cacheHint": 60000 }
 ```
 
+A failure the endpoint attributes to its **own seed configuration** says so, so a client can tell
+"the server serves no seeds" (a `200` with an empty `connections`) from "the server could not read
+its seeds":
+
+```json
+{ "error": "Failed to load managed connections", "reason": "seed-config-unreadable" }
+```
+
+`500` with `reason: "seed-config-unreadable"` means `seed-connections.yaml` could not be read or
+parsed. A `500` **without** `reason` is any other failure of the request and is not a claim about
+that file. The browser holds the second as an unread seed list rather than an empty one, which is
+what stops the agent rail reporting a connection's settings as browser-local when the server's own
+configuration is what failed.
+
 ---
 
 ### Admin API

@@ -18,6 +18,7 @@ import { GET } from "@/app/api/connections/managed/route";
 import { resetCache } from "@/lib/seed/config-loader";
 import { getSession } from "@/lib/auth";
 import { setSqliteSampleSeedState, SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
+import { SEED_CONFIG_UNREADABLE_REASON } from "@/hooks/use-connection-payload";
 
 describe("GET /api/connections/managed", () => {
   beforeEach(() => {
@@ -125,5 +126,44 @@ describe("GET /api/connections/managed", () => {
 
     process.env.SEED_CONFIG_PATH = origPath;
     resetCache();
+  });
+
+  // B37. A 500 alone tells the browser only that this request failed, and a browser
+  // that cannot tell "the server serves no seeds" from "the server could not read its
+  // seed list" ends up saying the first about connections this application seeds
+  // itself. So the failure NAMES itself: the seed configuration is what could not be
+  // read, and that is the sentence a user is owed.
+  it("names the seed configuration as the thing that failed, not just the request", async () => {
+    const origPath = process.env.SEED_CONFIG_PATH;
+    process.env.SEED_CONFIG_PATH = path.join(
+      path.resolve(__dirname, "../../fixtures/seed-connections"),
+      "invalid-config.yaml",
+    );
+    resetCache();
+
+    const res = await GET();
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({
+      error: "Failed to load managed connections",
+      reason: SEED_CONFIG_UNREADABLE_REASON,
+    });
+
+    process.env.SEED_CONFIG_PATH = origPath;
+    resetCache();
+  });
+
+  // The other half of the same claim: a failure that is NOT the seed configuration must
+  // not be reported as one. Without this arm the reason would be a synonym for 500 and
+  // the rail would blame a config file for a broken session cookie.
+  it("does not blame the seed configuration for a failure somewhere else", async () => {
+    (getSession as ReturnType<typeof mock>).mockImplementation(() => {
+      throw new Error("session store unreachable");
+    });
+
+    const res = await GET();
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string; reason?: string };
+    expect(body.error).toBe("Failed to load managed connections");
+    expect(body.reason).toBeUndefined();
   });
 });

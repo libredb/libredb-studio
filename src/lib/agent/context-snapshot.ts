@@ -93,6 +93,20 @@ import type {
   TableSchema,
 } from "@/lib/types";
 
+/**
+ * How much of a catalog a refused capture asked for, against how much it may have.
+ *
+ * Its own named shape rather than two loose numbers, because it travels: the capture
+ * carries it, the `context-unavailable` ledger entry records it, and a reader that had
+ * to guess which of two bare integers was the bound is a reader that will guess wrong.
+ */
+export interface AgentContextRowBudget {
+  /** Rows the read produced, or would have. */
+  readonly projected: number;
+  /** Rows this run's policy allows one read to carry. */
+  readonly allowed: number;
+}
+
 /** Why a run has no snapshot. All are states the run continues from, not failures. */
 export type AgentContextUnavailableCode =
   /**
@@ -123,6 +137,12 @@ export type AgentContextCapture =
   | {
       readonly kind: "unavailable";
       readonly reasonCode: AgentContextUnavailableCode;
+      /**
+       * The two numbers a row-budget refusal named, when that is what refused this
+       * capture: how many rows the catalog read projected, and how many the run's
+       * policy allows. Present only for that reason — see `rowBudgetIn`.
+       */
+      readonly rowBudget?: AgentContextRowBudget;
       /**
        * WHY this run has no inventory, in one sentence and with no advice in it.
        *
@@ -262,7 +282,10 @@ function buildSqliteTables(rows: ReadonlyMap<AgentCatalogKind, readonly Record<s
     tables.set(name, {
       name,
       columns: [...definition.columns],
-      indexes: [],
+      // The constraint-created indexes SQLite stores no DDL for: the composed index
+      // read below cannot see them, and they are what kept a UNIQUE-covered foreign
+      // key reading as unindexed (docs/BACKLOG.md B25).
+      indexes: [...definition.indexes],
       foreignKeys: [...definition.foreignKeys],
     });
   }
@@ -316,8 +339,50 @@ function fingerprintTables(tables: readonly TableSchema[]): string {
 // Capture
 // ============================================================================
 
+/**
+ * The row budget a refusal named, read out of the sentence that named it.
+ *
+ * A regex over a message is not the shape anybody would choose, and it is the only
+ * shape available: the two numbers are formatted by the PROVIDER
+ * (`postgres.ts`/`sqlite.ts` both refuse rather than truncate) into a `QueryError`
+ * message, and neither the error nor the tool refusal that wraps it carries them as
+ * fields. Reading them here is what turns the pair from prose the model was shown into
+ * data the ledger can hold — which is the whole of B54's second half, since the reason
+ * code alone says "somebody said no" where the numbers say "narrow the capture".
+ *
+ * Anchored on the whole phrase, so the `200` in the advice sentence the tool layer
+ * appends ("add LIMIT 200") cannot be mistaken for a measurement. `statementAdvice` in
+ * `tools.ts` reads the same message with the same anchor; the duplication is deliberate
+ * rather than shared, because the two answer different questions — one composes advice
+ * for a model, the other records a fact — and either may be given a different source.
+ *
+ * Absent when the refusal was about anything else, and absent is the honest answer:
+ * this run met no budget, so a pair of zeros would be a measurement nobody took (#477).
+ * The REASON CODE never depends on this function, so a message this cannot read still
+ * produces a diagnosable entry — one that says "refused" without inventing a bound.
+ *
+ * EXPORTED so the loop can be closed by a test rather than by a comment. The hazard is
+ * silent: reword the provider's sentence and this returns `undefined` for ever, the
+ * ledger quietly loses the pair, and B54 re-opens with nothing going red. So
+ * `tests/integration/db/sqlite-provider.test.ts` drives a REAL over-budget read through
+ * `bun:sqlite`, catches the error the provider itself threw, and feeds its message
+ * through here — and pins PostgreSQL's copy of the same sentence against its source.
+ */
+export function rowBudgetIn(detail: string): AgentContextRowBudget | undefined {
+  const matched = /row budget: (\d+) rows > (\d+) allowed/.exec(detail);
+  if (matched === null) return undefined;
+  return { projected: Number(matched[1]), allowed: Number(matched[2]) };
+}
+
 function unavailable(reasonCode: AgentContextUnavailableCode, detail: string): AgentContextCapture {
-  return { kind: "unavailable", reasonCode, detail, modelText: `${detail}\n${FALLBACK_ADVICE}` };
+  const rowBudget = rowBudgetIn(detail);
+  return {
+    kind: "unavailable",
+    reasonCode,
+    detail,
+    ...(rowBudget === undefined ? {} : { rowBudget }),
+    modelText: `${detail}\n${FALLBACK_ADVICE}`,
+  };
 }
 
 /**

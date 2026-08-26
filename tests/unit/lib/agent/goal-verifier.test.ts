@@ -321,7 +321,7 @@ describe("a query-optimization run is judged by its own artifact as well as the 
       ),
     );
 
-    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
+    expect(verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.3", unmet: [] });
   });
 
   test("THE GATE: a perfect report with no plan comparison does not answer this workflow's question", () => {
@@ -333,7 +333,7 @@ describe("a query-optimization run is judged by its own artifact as well as the 
     expect(verifyRunGoal(run("agent", "succeeded", events, "investigation")).outcome).toBe("answered");
     expect(verifyRunGoal(run("agent", "succeeded", events, "query-optimization"))).toEqual({
       outcome: "unanswered",
-      verifier: "agent-query-optimization.2",
+      verifier: "agent-query-optimization.3",
       unmet: ["no-plan-comparison"],
     });
   });
@@ -420,7 +420,7 @@ describe("a query-optimization run is judged by its own artifact as well as the 
         reportCiting(ARTIFACT(CORRELATION.full)),
       ]);
 
-      expect(verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
+      expect(verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.3", unmet: [] });
     });
 
     test("an index citing a read rather than a plan is not grounded in what the engine does", () => {
@@ -482,6 +482,91 @@ describe("a query-optimization run is judged by its own artifact as well as the 
       ]);
 
       expect(verdict.outcome).toBe("answered");
+    });
+
+    /**
+     * B45: the run that recommended the right index and was told it had not answered.
+     *
+     * Driven live on 2026-08-17. A plan arrives in one column and the engine reports no
+     * row count for it, so the artifact's summary records `rowCount: 0` while the plan
+     * itself is complete — and a report citing that plan rested, by the baseline's
+     * arithmetic, entirely on empty results. Every Optimize run in that drive ended
+     * *"Run did not answer"*, over a correct `CREATE INDEX`.
+     */
+    describe("a plan's row count is not evidence of emptiness", () => {
+      /** The same plan, as the live engine reported it: complete, and counted as no rows. */
+      const planReadCountedEmpty: AgentRunEvent = {
+        kind: "tool-completed",
+        atMs: 20,
+        stepId: "step_plan",
+        artifact: {
+          correlationId: CORRELATION.plan,
+          runId: "arun_1",
+          operationId: "sql.explain.estimate",
+          summary: { rowCount: 0, columnNames: ["QUERY PLAN"], elapsedMs: 4 },
+        },
+      };
+
+      test("a report resting on a plan alone answers, whatever row count the plan carries", () => {
+        const verdict = optimization([
+          contextCaptured,
+          planReadCountedEmpty,
+          recommends("index", ARTIFACT(CORRELATION.plan)),
+          reportCiting(ARTIFACT(CORRELATION.plan)),
+        ]);
+
+        expect(verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.3", unmet: [] });
+      });
+
+      test("the exemption is the plan's alone: a report resting on an empty READ is still empty", () => {
+        // The control. Zero rows from a bounded read IS the answer that read gave, and
+        // nothing here widens what counts as evidence — only which artifact's row count
+        // is meaningful.
+        const verdict = optimization([
+          contextCaptured,
+          planReadCountedEmpty,
+          completed(CORRELATION.empty, 0),
+          recommends("index", ARTIFACT(CORRELATION.plan)),
+          reportCiting(ARTIFACT(CORRELATION.empty)),
+        ]);
+
+        expect(verdict.unmet).toEqual(["empty-evidence"]);
+      });
+
+      test("a plan read and nothing reported is still a run that answered nothing", () => {
+        // The second control: the exemption must not turn a missing report into an
+        // answer. `no-report` dominates, as it does everywhere else.
+        expect(optimization([contextCaptured, planReadCountedEmpty]).unmet).toEqual(["no-report"]);
+      });
+
+      test("citing a plan is not by itself the workflow's artifact", () => {
+        // And the third: passing the baseline is not passing the bar. A report on a
+        // plan with no comparison and no recommendation still owes the template's own
+        // artifact, so the exemption cannot answer this workflow's question for it.
+        const verdict = optimization([contextCaptured, planReadCountedEmpty, reportCiting(ARTIFACT(CORRELATION.plan))]);
+
+        expect(verdict.unmet).toEqual(["no-plan-comparison"]);
+      });
+
+      test("an investigation citing the same plan is still judged by the unexempted baseline", () => {
+        // The exemption is the optimization rule's, and `agent-investigation.1` means
+        // what it meant. The same shape is reachable there — every workflow is offered
+        // `inspect_plan` — and widening that id's rule is a separate decision.
+        const verdict = verifyRunGoal(
+          run(
+            "agent",
+            "succeeded",
+            [contextCaptured, planReadCountedEmpty, reportCiting(ARTIFACT(CORRELATION.plan))],
+            "investigation",
+          ),
+        );
+
+        expect(verdict).toEqual({
+          outcome: "unanswered",
+          verifier: "agent-investigation.1",
+          unmet: ["empty-evidence"],
+        });
+      });
     });
   });
 

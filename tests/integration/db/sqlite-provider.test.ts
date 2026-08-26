@@ -19,6 +19,7 @@ import {
   readDbstatSizes,
 } from "@/lib/db/providers/sql/sqlite";
 import { resolveSQLiteDriverName } from "@/lib/db/providers/sql/sqlite-driver";
+import { rowBudgetIn } from "@/lib/agent/context-snapshot";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { ConnectionError, DatabaseConfigError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
@@ -1223,6 +1224,46 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
         maxResultRows: 2,
       }),
     ).rejects.toThrow(QueryError);
+  });
+
+  test("the row budget refusal a grounding capture records is parsed out of THIS message (B54)", async () => {
+    /*
+      The loop B54 closes, closed at both ends.
+
+      A refused schema capture now writes a `context-unavailable` ledger entry carrying
+      the two numbers — rows projected against rows allowed — and the only place those
+      numbers exist is inside the sentence this provider formats: neither `QueryError`
+      nor the tool refusal that wraps it carries them as fields, so `rowBudgetIn` reads
+      them back out of the message.
+
+      That is a silent-failure shape, which is why this test drives the REAL provider
+      instead of asserting against a hand-typed copy of the sentence. Reword the message
+      in `sqlite.ts` and this goes red here, rather than going quiet in production and
+      re-opening the entry with the ledger blank again.
+    */
+    const dbPath = await seedDatabase();
+    const profile = await openAgent(dbPath);
+
+    const thrown = await profile
+      .queryReadOnly("SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3", { ...AGENT_BUDGET, maxResultRows: 2 })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    expect(thrown).toBeInstanceOf(QueryError);
+    expect(rowBudgetIn((thrown as QueryError).message)).toEqual({ projected: 3, allowed: 2 });
+
+    /*
+      PostgreSQL formats the same sentence in its own file and cannot be driven from
+      here without a server, so its copy is pinned against the SOURCE. Weaker than the
+      live arm above — it proves the template still reads that way, not that a running
+      engine produces it — and still red on a reword, which is the property that matters.
+    */
+    const postgresSource = await Bun.file("src/lib/db/providers/sql/postgres.ts").text();
+    expect(postgresSource).toContain(
+      "Read-only execution exceeded the row budget: ${result.rows.length} rows > ${budget.maxResultRows} allowed",
+    );
   });
 
   test("enforces the byte budget with a typed error instead of truncating", async () => {

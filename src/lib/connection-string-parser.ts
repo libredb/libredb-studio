@@ -369,7 +369,19 @@ function readQueryTLS(url: URL, type: DatabaseType): TLSIntent {
 }
 
 /**
- * Attach a scheme's TLS intent, preserving the null a malformed URL parses to.
+ * Attach a scheme's TLS intent, preserving the null a malformed URL parses to. The mode
+ * overwrites whatever the form was holding - pasting is not a merge.
+ *
+ * A scheme is read more weakly than the boolean *parameter* beside it, and that is a
+ * decision rather than an artefact (D28). D26 settled the rule for a boolean parameter:
+ * it maps onto the mode matching what the engine's own driver does with it, never onto a
+ * weaker one. A scheme cannot answer to that rule, because the secure scheme is the only
+ * spelling a self-hosted deployment has: `rediss://`, `couchbases://` and ClickHouse's
+ * `https://` all describe servers that present a self-signed certificate by default, so
+ * a verifying mode here would refuse the ordinary `--tls-port` install with a chain
+ * error. `require` therefore encrypts without ever claiming to have checked a chain, and
+ * the connection panel stays the one place verification is turned on. The per-scheme
+ * reason is recorded at each call site above; this is the rule they share.
  */
 function withSSLMode(parsed: ParsedConnection | null, sslMode: SSLMode): ParsedConnection | null {
   return parsed && { ...parsed, sslMode };

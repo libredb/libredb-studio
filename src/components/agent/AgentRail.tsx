@@ -5,6 +5,7 @@ import { Bot, ChevronDown, ChevronRight, LoaderCircle, PencilLine, Play, Square,
 import { CopyButton } from "@/components/copy-button";
 import { renderProse } from "@/components/rich-text";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import type { AgentRunConnection } from "@/hooks/use-connection-payload";
 import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
 import { describeAgentCapability } from "@/lib/agent/capability-labels";
 /*
@@ -93,8 +94,15 @@ import { useAgentRun } from "./use-agent-run";
  */
 
 export interface AgentRailProps {
-  /** The run's connection, already narrowed to a server-resolvable id, or null. */
-  readonly connectionId: string | null;
+  /**
+   * The run's connection, already narrowed to a server-resolvable id — or, when there
+   * is none, the reason there is none. `null` when no connection is selected at all.
+   *
+   * The reason is carried rather than derived here because only the shell knows it: the
+   * two absences look identical from this component ("no id"), and they are not the same
+   * sentence to a user (B37).
+   */
+  readonly connectionId: AgentRunConnection | null;
   readonly connectionName: string | null;
   /** Below `md` only: whether the sheet presentation is open. */
   readonly sheetOpen?: boolean;
@@ -694,7 +702,7 @@ function ChangeWorkflowButton({
 }
 
 export function AgentRail({
-  connectionId,
+  connectionId: connection,
   connectionName,
   connectionType = null,
   sheetOpen = false,
@@ -704,6 +712,9 @@ export function AgentRail({
   onShowArtifact,
   prefill = null,
 }: AgentRailProps) {
+  // Everything below asks only "is there an id"; the reason is read once, where the
+  // caveat is written.
+  const connectionId = connection?.id ?? null;
   const [mode, setMode] = useState<AgentRunMode>("planning");
   /**
    * The workflow axis, which is now a choice the user need not make: Automatic until
@@ -2066,13 +2077,32 @@ export function AgentRail({
           )}
         </div>
 
-        {connectionId === null && (
-          <p data-testid="agent-unresolvable-connection" className="mt-2 text-xs text-amber-400/80">
-            {connectionName ?? "This connection"} cannot be rebuilt on the server: its settings live in this browser. A
-            run re-resolves its connection there after a restart, so it can only investigate a connection the server
-            holds too.
-          </p>
-        )}
+        {/*
+          Two absences, and they are not the same sentence (B37). "No id" reads as
+          "the server does not hold this connection" only when the server ANSWERED
+          with the connections it holds. When it could not read its own seed
+          configuration, nothing has been established about this connection at all —
+          and saying its settings live in this browser is false of the samples this
+          application ships and seeds itself, while sending the operator to the wrong
+          file. Which absence it is comes from the shell, because only it asked.
+        */}
+        {connectionId === null &&
+          (connection?.reason === "seed-config-unreadable" ? (
+            <p
+              data-testid="agent-seed-config-unreadable"
+              data-tone="warning"
+              className="mt-2 text-xs text-amber-400/80"
+            >
+              The server could not read its own connection configuration, so it cannot resolve a connection for a run.
+              This is not a problem with {connectionName ?? "this connection"} — the server log says what failed.
+            </p>
+          ) : (
+            <p data-testid="agent-unresolvable-connection" className="mt-2 text-xs text-amber-400/80">
+              {connectionName ?? "This connection"} cannot be rebuilt on the server: its settings live in this browser.
+              A run re-resolves its connection there after a restart, so it can only investigate a connection the server
+              holds too.
+            </p>
+          ))}
 
         {/*
           Next to the status rather than only in the timeline: the timeline scrolls

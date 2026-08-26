@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getManagedConnections, getPendingSeeds } from "@/lib/seed";
 import { logger } from "@/lib/logger";
+import { SEED_CONFIG_UNREADABLE_REASON } from "@/hooks/use-connection-payload";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,23 @@ export async function GET() {
       return NextResponse.json({ error: "Authentication required" }, { status: 401 });
     }
 
-    const connections = await getManagedConnections([session.role]);
+    // Read in its own try, so the `reason` below is a claim about the seed
+    // configuration and not a synonym for "this request failed" (B37). A browser told
+    // only "500" cannot tell an unreadable seed file from a server that serves no
+    // seeds, and it then reports the second — of connections this application seeds
+    // itself. The outer catch keeps its unattributed 500 for everything else.
+    let connections;
+    try {
+      connections = await getManagedConnections([session.role]);
+    } catch (error) {
+      logger.error("Failed to load the seed configuration", error, {
+        route: "GET /api/connections/managed",
+      });
+      return NextResponse.json(
+        { error: "Failed to load managed connections", reason: SEED_CONFIG_UNREADABLE_REASON },
+        { status: 500 },
+      );
+    }
 
     const sanitized = connections.map((conn) => {
       if (conn.managed) {

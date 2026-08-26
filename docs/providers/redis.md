@@ -235,6 +235,7 @@ Redis uses the discrete-field form of `DatabaseConnection` (not `connectionStrin
 |-------|----------|-------|
 | `host` | ✅ | Validated in `validate()` — throws `DatabaseConfigError` if missing |
 | `port` | — | Defaults to `6379` |
+| `user` | — | The **Redis 6 ACL user**, sent as ioredis's `username`; empty means `default` ([§4.1a](#41a-acl-users-d29)) |
 | `password` | — | Sent as `password`; omit for unauthenticated instances |
 | `database` | — | Logical DB index, parsed as int; defaults to `0` |
 | `ssl` | — | `SSLConfig`; becomes the ioredis `tls` option ([§4.3](#43-ssl--tls)) |
@@ -246,11 +247,44 @@ const connection = {
   type: 'redis',
   host: 'localhost',
   port: 6379,
+  user: 'analytics',    // optional — the ACL user; omit to authenticate as `default`
   password: 'secret',   // optional
   database: '0',         // logical DB index
   createdAt: new Date(),
 };
 ```
+
+### 4.1a ACL users (D29)
+
+The modal's **Username** field is the Redis 6 ACL user. `connect()` passes it as ioredis's
+`username` (the field is `user` on the connection, `username` in `RedisOptions`), and passes
+**nothing at all** when it is empty — a plain `requirepass` server has no ACL user to name, and
+ioredis only authenticates as `default` when `username` is absent. A pasted
+`redis://analytics:pw@host:6379/0` fills the same field: `parseGenericURL`
+([`src/lib/connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)) decomposes the
+userinfo into `user` / `password` ([§4.2](#42-connection-string-nuance)).
+
+Measured 2026-08-26 against `redis:latest`, with `default` left `on nopass ~* &* +@all` and a second
+user defined `on >probepw ~* +@all -info`, both arms:
+
+```text
+{host, port, password}            -> ACL WHOAMI = default | INFO succeeds
+{host, port, username, password}  -> ACL WHOAMI = probe   | INFO refused: NOPERM
+```
+
+The first arm is the defect this replaced: the configured principal was dropped silently, the
+session ran as `default`, and health went green under someone else's permissions. Both arms together
+are what make it a measurement — the value was collected by the form and stored on the connection
+already; only `connect()` ignored it.
+
+**A restricted user costs the INFO-derived surfaces.** ioredis's own ready check calls `INFO`, and on
+`NOPERM` it logs *"Skipping the ready check"* and connects anyway — which is the wanted behaviour: a
+least-privilege user must still be able to connect and browse keys. But `getHealth()`,
+`getOverview()` and `getPerformanceMetrics()` all read `INFO` ([§7](#7-monitoring--health)), so for a
+user without `+info` they raise the server's own `NOPERM` sentence rather than answering with
+fabricated zeros. `POST /api/db/test-connection` reports that as a **degraded** (amber) result, not a
+green tick and not a failure: the connection is real, the health read is not. Grant `+info`,
+or expect the monitoring panels to stay empty for that user.
 
 ### 4.2 Connection-string nuance ⚠️
 
@@ -258,8 +292,9 @@ const connection = {
 discrete fields. However, the UI connection-string parser
 ([`src/lib/connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)) *does*
 recognise `redis://` and `rediss://` URLs and **decomposes** them into `host` / `port` (default
-`6379`) / `password` / `database` before they reach the provider. So a user can paste a
-`redis://:pw@host:6379/0` URL into the modal, but the provider never sees the raw string.
+`6379`) / `user` / `password` / `database` before they reach the provider. So a user can paste a
+`redis://:pw@host:6379/0` URL into the modal, but the provider never sees the raw string. A userinfo
+name becomes the ACL user ([§4.1a](#41a-acl-users-d29)).
 
 Because the raw string is dropped, the scheme's TLS intent has to travel as a field: the parser
 returns `sslMode: 'require'` for `rediss://` and `sslMode: 'disable'` for `redis://`, which the
@@ -672,7 +707,10 @@ formats (JSON, plain, empty, `HGETALL`, `INFO`, nil), error handling (malformed 
 `command`, Redis-side error, disconnected provider), schema scanning, health, overview, performance,
 slow queries, active sessions, table/index/storage stats, `getMonitoringData`, maintenance, a
 battery of common commands (`KEYS`, `SET`, `DEL`, `PING`, `DBSIZE`), and **every `ssl.mode` branch**
-asserted against the options object the `Redis` constructor received.
+asserted against the options object the `Redis` constructor received. The same captured options carry
+the **ACL user** assertions ([§4.1a](#41a-acl-users-d29)) — `username` present for a named user,
+absent for both an empty string and an unset field — and a refused `INFO` is asserted to raise the
+server's own `NOPERM` sentence out of `getHealth()`.
 
 ### 11.3 Run it
 
@@ -692,6 +730,16 @@ development:
 ```bash
 docker run --rm -p 6379:6379 redis:7-alpine
 # then point a connection at localhost:6379 in the Studio UI and run e.g. `INFO`, `SCAN 0`
+```
+
+To reproduce the ACL rig of [§4.1a](#41a-acl-users-d29) — a user that can browse keys but not read
+`INFO`:
+
+```bash
+docker run --rm -d --name redis-acl -p 6389:6379 redis:latest
+docker exec redis-acl redis-cli ACL SETUSER probe on '>probepw' '~*' +@all -info
+# Username `probe`, password `probepw`: keys browse, and health reports degraded (amber).
+# Leave Username empty and the same password authenticates as `default`, whose INFO succeeds.
 ```
 
 ---

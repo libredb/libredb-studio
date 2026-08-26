@@ -98,7 +98,7 @@ mock.module("@/hooks/use-auth", () => ({
 mock.module("@/hooks/use-connection-manager", () => ({
   useConnectionManager: mock(() => ({
     connections: [],
-    servedSeeds: [],
+    servedSeeds: { loaded: true, seeds: [] },
     activeConnection: null,
     schema: [],
     schemaContext: "[]",
@@ -1568,7 +1568,7 @@ describe("Studio", () => {
     const { findByTestId } = render(<Studio />);
     await findByTestId("agent-rail");
 
-    expect(capturedAgentRailProps.connectionId).toBe("seed:sales");
+    expect(capturedAgentRailProps.connectionId).toEqual({ id: "seed:sales" });
     expect(capturedAgentRailProps.connectionName).toBe("Sales");
   });
 
@@ -1581,7 +1581,7 @@ describe("Studio", () => {
     const { findByTestId } = render(<Studio />);
     await findByTestId("agent-rail");
 
-    expect(capturedAgentRailProps.connectionId).toBeNull();
+    expect(capturedAgentRailProps.connectionId).toEqual({ id: null, reason: "browser-only" });
     expect(capturedAgentRailProps.connectionName).toBe("TestPG");
   });
 
@@ -1600,21 +1600,29 @@ describe("Studio", () => {
 
   test("an untouched copy of an editable seed reaches the rail as startable", async () => {
     mockAgentConfig(true);
-    connMgrOverride = { activeConnection: seedCopy, connections: [seedCopy], servedSeeds: [servedSeed] };
+    connMgrOverride = {
+      activeConnection: seedCopy,
+      connections: [seedCopy],
+      servedSeeds: { loaded: true, seeds: [servedSeed] },
+    };
     const { findByTestId } = render(<Studio />);
     await findByTestId("agent-rail");
 
-    expect(capturedAgentRailProps.connectionId).toBe("seed:sample");
+    expect(capturedAgentRailProps.connectionId).toEqual({ id: "seed:sample" });
   });
 
   test("a seed copy edited to reach another database reaches the rail as unresolvable", async () => {
     mockAgentConfig(true);
     const edited = { ...seedCopy, database: "somewhere-else" };
-    connMgrOverride = { activeConnection: edited, connections: [edited], servedSeeds: [servedSeed] };
+    connMgrOverride = {
+      activeConnection: edited,
+      connections: [edited],
+      servedSeeds: { loaded: true, seeds: [servedSeed] },
+    };
     const { findByTestId } = render(<Studio />);
     await findByTestId("agent-rail");
 
-    expect(capturedAgentRailProps.connectionId).toBeNull();
+    expect(capturedAgentRailProps.connectionId).toEqual({ id: null, reason: "browser-only" });
   });
 
   test("with no connection selected the rail is told so", async () => {

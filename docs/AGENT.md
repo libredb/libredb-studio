@@ -304,7 +304,8 @@ same class as the `seed:<id>` concern above, recorded as `docs/BACKLOG.md` B68. 
 run history across threads.
 
 A run emits a closed set of **semantic events**, and they are the whole of what the UI renders:
-`run-started`, `driver-resolved`, `context-captured`, `statement-drafted`, `plan-statement-drafted`,
+`run-started`, `driver-resolved`, `context-captured`, `context-unavailable`, `statement-drafted`,
+`plan-statement-drafted`,
 `tool-invoked`, `tool-completed`, `tool-refused`, `report-composed`, `closing-statement`,
 `run-finished`, plus the four a single workflow's own tool writes — `plan-comparison`,
 `recommendation`, `table-profiled` and `answer-composed`.
@@ -317,6 +318,20 @@ document's path and a digest of the bytes as read, or `operator-ignored` with th
 document was configured and could not be used. The last is its own case on purpose — a run driven by
 the shipped settings because nobody configured a document, and one driven by them because the
 operator's could not be read, behave identically and mean opposite things.
+
+**`context-unavailable` says a capture was REFUSED**, and it is a separate kind rather than a
+`context-captured` carrying an absence. A refused capture read nothing, so it has no fingerprint and
+no table count - writing `tableCount: 0` would state that the database has no tables - and three
+readers take `context-captured` as proof an inventory exists (`reusableSnapshot`, the grounding check
+the tools layer applies to a citation, and the rail's own capture line). It carries the reason code,
+the capture's own one-sentence diagnosis, and, where the row budget is what refused the read, both
+numbers: rows projected against rows allowed. Before it, a plan run whose capture was refused left
+nothing at all between the drive starting and the run ending, so the rule this document's setup guide
+states about ledgers - that the ledger is the authority on what a run did - held only for captures
+that succeeded, in exactly the case an operator has to diagnose. The reason code and the sentence
+never depend on parsing anything; the two numbers are read back out of the provider's own refusal
+message, which is pinned by a test that drives a real over-budget read rather than by a copy of the
+sentence.
 
 It is written **once per drive** rather than once per run, because a resume picks the model up from
 the configuration as it stands then: a run resumed after an operator changed it carries one entry per
@@ -836,7 +851,7 @@ something that is not an estimating plan of this run, while `PLAN_RESULT_RELEASE
 was honest and the rows have expired — telling a model the first when the second happened would send
 it looking for a mistake it did not make.
 
-Its goal verifier is `agent-query-optimization.2`: the investigation baseline, **and** evidence that
+Its goal verifier is `agent-query-optimization.3`: the investigation baseline, **and** evidence that
 the change it proposes rests on what the engine actually does. The baseline dominates, so a run that
 never reported is told that rather than that it skipped a comparison.
 
@@ -849,6 +864,17 @@ attempted `CREATE INDEX ...; SELECT ...`, was refused as it should be, and was t
 the plan it **diagnosed**, cited by the recommendation itself: `no-plan-evidence` is an index
 recommendation that names no plan this run read. Not merely a plan somewhere on the ledger — the
 citation is what ties the index to the access path it changes.
+
+**A plan is exempt from the baseline's emptiness clause, which is the same lesson a third time.**
+A plan is a description of a statement, it arrives in one column, and the driver reports no
+row count for it - so the artifact is complete and its `rowCount: 0` measures nothing. Driven live on
+2026-08-17, every Optimize run in the drive ended `empty-evidence`, including one that compared real
+PostgreSQL costs, recommended the right index and offered it to the editor, because the plan was the
+only thing those reports had to cite: the product contradicted its own good answer, in its own voice,
+at the end of the run. The exemption is one artifact **kind** and nothing more - an empty bounded read
+cited by an optimization report still ends the run `empty-evidence`, because zero rows from a read is
+the answer that read gave - and it is this rule's alone: `agent-investigation.1` and the two verifiers
+composing on it are untouched, so the id bump is `agent-query-optimization.2` -> `.3`.
 
 ### The database-assessment template
 
@@ -909,10 +935,14 @@ and that is a reversal of a product decision rather than an oversight: epic #325
 set at three and #330 T3 reopened it. Its own id is what lets an operator see profiling in the audit
 stream, and deny it, without denying every read the agent makes.
 
-Three honest limits, each with a backlog entry: SQLite hides constraint-created indexes so
-`fk_unindexed` can fire on a covered key (**B25**); only an email shape is tested, because `LIKE`
+Two honest limits, each with a backlog entry: only an email shape is tested, because `LIKE`
 cannot express a digit run (**B26**); and a profile that times out reports the failure rather than
-falling back to catalog statistics (**B28**).
+falling back to catalog statistics (**B28**). A third is closed: SQLite stores no DDL for the index
+it builds to enforce a `UNIQUE` constraint, so the composed index read cannot see it - the capture
+now reads those out of the table's own `CREATE TABLE` and lists them as `(unique constraint)`, plain
+words rather than a name that could be mistaken for a user's `CREATE INDEX`. `fk_unindexed` remains a
+prefix test: an index serves the column it LEADS on, so `UNIQUE (note, parent_id)` does not cover
+`parent_id`.
 
 ### The operations template
 
@@ -1767,7 +1797,7 @@ build until somebody decides what "answered" means for it.
 | --- | --- | --- |
 | `planning` | The run left non-empty closing prose, **and** that prose was its deliverable: a drafted statement on the ledger, or an explicit `NO STATEMENT:` refusal. That mode is toolless and can never cite evidence, so judging it by the investigation rule would fail every planning run that did its job — but prose alone was how a generic lecture scored `answered` for as long as it did. `operations` planning is exempt: its plan deliverable is prose by decision, and the exemption survives that workflow's rules welcoming a fenced reading — welcome is not required, and a run that produced no block may have answered its objective perfectly, so a bar asking for one would fail it. Which engines can express a reading as a statement is deliberately not the basis: a Redis Operate plan was observed writing `INFO memory` into a block its editor runs. | `no-plan`, `no-statement` |
 | `agent` (investigation) | The run composed at least one claim, **and** the claims do not rest entirely on empty results. | `no-report`, `empty-evidence` |
-| `agent` (query-optimization) | The baseline above, **and** either a plan comparison on the ledger or an index recommendation citing a plan this run read. `agent-query-optimization.2`. | the above, plus `no-plan-comparison`, `no-plan-evidence` |
+| `agent` (query-optimization) | The baseline above with **plans exempt from its emptiness clause** (a plan's row count measures nothing), **and** either a plan comparison on the ledger or an index recommendation citing a plan this run read. `agent-query-optimization.3`. | the above, plus `no-plan-comparison`, `no-plan-evidence` |
 | `agent` (database-assessment) | The baseline above, **and** a table profiled. `agent-database-assessment.1`. | the above, plus `no-table-profile` |
 | `agent` (operations) | A composed report, **and** at least one claim in it citing an artifact this run read. `agent-operations.2`. **Not** composed on the baseline: an empty reading is an answer, so the emptiness clause is dropped — and an empty reading still satisfies the citation arm, because the artifact exists. The arm was added by #411: the run gained a citable schema inventory, so "cite a reading" stopped being enforced by composition alone. See [The operations template](#the-operations-template). | `no-report`, `no-reading`, `cancelled` |
 | `agent` (data-analysis) | The baseline above, **and** an `answer-composed` entry: which result IS the answer, and how to show it — **and at least one claim citing that same artifact**, so the report is about the result it presented. `agent-data-analysis.1`. | the above, plus `no-answer`, `answer-uncited` |
@@ -2438,23 +2468,12 @@ as they are fixed, and a numeral here goes stale silently.
 - **B71** — `@ai-sdk/workflow`'s `WorkflowAgent` offers the durability this repository implements by
   hand, and is not used: it requires the workflow runtime's programming model, which would bind the
   agent to a hosting runtime this product deliberately does not depend on.
-- **B37** — a seed config the server cannot read disables the agent on every connection, and the rail
-  blames the connection: "its settings live in this browser", said of a connection this application
-  seeds itself. The browser cannot tell an empty seed list from a failed one.
 - **B38** — an engine with no read-only execution path is offered a run anyway, and refuses only after
   the run has opened and spent a model turn. The rail withholds every other capability the host
   cannot serve; this is the one it does not.
 - **B39** — a data-analysis run has no honest way to conclude that the question is not about this
   database. Its only route to `answered` is a reading of the data, so a run that establishes the
   question is unanswerable fabricates one — the #356 shape again, in a new place.
-- **B45** — every query-optimization run is scored `unanswered / empty-evidence`, including one that
-  compared two plans, priced both and wrote the correct `CREATE INDEX`. A `sql.explain.estimate`
-  artifact records `rowCount: 0` because a plan arrives in a single column, and
-  `verifyOptimizationGoal` composes on the investigation baseline, which carries the emptiness arm.
-  The operations template was exempted from exactly this, for a reason it states at length — holding
-  an operational reading to the emptiness rule is "precisely backwards" — and that argument applies
-  to a plan artifact verbatim. The #356 shape a third time: a rule stated in terms of an artifact
-  only one valid answer can produce.
 - **B48** — the two grounding paths fail differently. Since #414 a plan run on one of the nine
   provider-path engines survives an unreachable host, a wrong password or a half-configured
   `agentUser`: `captureFromProvider` converts a `DatabaseError` or an `ExecutionProfileError` raised
@@ -2463,6 +2482,20 @@ as they are fixed, and a numeral here goes stale silently.
   run `internal` or, on the profile error, `agent-credential-unusable`. Deliberate at #414, which had
   no business changing how the two engines it did not touch fail, and an asymmetry a reader will
   trip over until it is resolved.
+- **B72** — plans are exempt from the emptiness census for `query-optimization` only. The
+  investigation, database-assessment and data-analysis verifiers still judge a plan-only report by a
+  row count that measures nothing, and `inspect_plan` is offered to all three. Closing it changes what
+  three released verifier ids mean, so it takes the id bumps that implies; the boundary is pinned by a
+  test rather than left ambiguous.
+- **B73** — a refused capture's reason code is structural, but its row-budget pair still travels as
+  prose inside a `QueryError` message and is recovered by regex, with two prose consumers reading the
+  same sentence. Doing it properly touches the error type every provider throws, so the change that
+  recorded the refusal kept the regex and pinned it with a test that drives a real over-budget read.
+- **B74** — `UNIQUE (a COLLATE NOCASE)` is listed as covering a foreign key on `a`, which it cannot
+  serve for a binary equality lookup. A false negative in the direction opposite the constraint-index
+  fix,
+  left unmodelled because the user-index reader drops `COLLATE` too and honouring it in one reader
+  only would make the inventory disagree with itself.
 - **B51** — the loop delivers three notices to a model (the reserve warning, the report reminder of
   #416, the present-before-report notice of #417) and records none of them. `recordEvent` is called
   for what the RUN did and never for what the server said to it, so a rescued run and a run that never
@@ -2507,17 +2540,6 @@ as they are fixed, and a numeral here goes stale silently.
   baseline, so it is PostgreSQL's privilege rule and not an AlloyDB property. The agent is therefore
   unusable out of the box on all three, and the same shape will appear on any PostgreSQL whose image
   ships wide catalogs or wide extension views before the user has created anything.
-- **B54** — a REFUSED grounding capture records nothing in the run's own ledger, so the failure above
-  cannot be diagnosed from the record. A capture that succeeds writes `context-captured` with its
-  fingerprint, table count and snapshot; the `capture.kind === "unavailable"` branch pushes the
-  ungrounded note into the model's prompt and returns without recording anything. Measured on the same
-  AlloyDB Omni run: the ledger holds four events - `run-opened`, `run-started`, `closing-statement`,
-  `run-finished` - and its 849 bytes name no catalog read, no reason code and no row count, while the
-  Vitess ledger beside it carries `context-captured` with `ctx_3ce059ca...` and `tableCount 2`. The
-  reason (`CATALOG_READ_REFUSED`, 536 against 200) is computed, handed to the model and dropped; it is
-  not in the server log either. So the only trace is the model's own sentence, and this repo has
-  already recorded why that is dangerous - a missing event reads as work that was not needed rather
-  than knowledge that was lost.
 - **B55** — a grounded LibreDB plan run drafts `GET users:*`, and `get` is an exact-key lookup with no
   glob: the key does not exist, so the command answers zero rows and no error. The inventory's rows are
   NAMED `users:*`, which reads as a glob the grammar does not have, and LibreDB declares no
@@ -2533,8 +2555,8 @@ as they are fixed, and a numeral here goes stale silently.
   `$shipping.region` and recorded no `context-captured` event at all; a restart fixed it on the first
   run. Redis showed the same shape, refusing an objective about keys that had just been seeded. The
   design intent - a run reasons over the inventory its claims cite - is not the problem; a NEW run
-  inheriting it indefinitely is, and B54's gap means the ledger cannot tell "held, hours old" from
-  "captured just now".
+  inheriting it indefinitely is, and a reused snapshot writes no capture event of its own, so the
+  ledger cannot tell "held, hours old" from "captured just now".
 - **B57** — an operator's tuning document is refused WHOLE when any part of it fails. The argument
   behind that is about merging (half of one measurement beside half of another is a configuration
   nobody has run), and it justifies whole-**entry** replacement rather than whole-**document**

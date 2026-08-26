@@ -173,7 +173,14 @@ investigated. The rail says so rather than offering a Start that must fail:
 
 > *"… cannot be rebuilt on the server: its settings live in this browser. A run re-resolves its
 > connection there after a restart, so it can only investigate a connection the server holds too."*
-> (`AgentRail.tsx:1604-1610`)
+> (`AgentRail.tsx:2098-2104`)
+
+A *different* absence gets a different sentence. When the server could not read its own seed
+configuration, nothing has been established about your connection at all, so the rail says that
+instead of blaming it:
+
+> *"The server could not read its own connection configuration, so it cannot resolve a connection
+> for a run. This is not a problem with … — the server log says what failed."*
 
 ### What a Plan run knows about your database
 

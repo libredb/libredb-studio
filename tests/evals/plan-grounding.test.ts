@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
+import { QueryError } from "@/lib/db/errors";
+import type { AgentRunEvent } from "@/lib/agent/types";
 import { UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import {
   DEPARTMENTS,
@@ -174,6 +176,98 @@ describe("a plan run on an engine this server cannot ground says so", () => {
     // planning run has no tools, and naming one it does not have is the #350 failure.
     expect(sent).not.toContain("inspect_schema");
     expect(drive.status).toBe("succeeded");
+  });
+});
+
+/*
+  B54. A refused capture used to leave the ledger silent, which broke the rule
+  `docs/llms/setup.md` states about it: every run writes its ledger, and that is the
+  authority on what the run did. It was the authority only for a capture that
+  SUCCEEDED — the refusal path pushed a sentence into the prompt and returned, so the
+  849-byte ledger of the AlloyDB Omni run the entry measured named no catalog read, no
+  reason code and no row count, and the only record that the run was ungrounded was the
+  model's own prose. The trap that makes it worse is already on file here: a missing
+  event reads as work that was not needed rather than knowledge that was lost.
+
+  `context-unavailable` is its own kind rather than a `context-captured` carrying an
+  absence, and the tests below assert both halves of why. A refused capture has no
+  honest `fingerprint` and no honest `tableCount`, so the absence rule (#477) forbids
+  the variant; and every reader that asks `kind === "context-captured"` —
+  `reusableSnapshot`, the grounding check in `tools.ts`, the timeline — treats the entry
+  as PROOF that an inventory exists, so one that carried a refusal would poison all
+  three.
+*/
+/** One ledger entry of a given kind, narrowed, so an assertion can read its own fields. */
+const eventOfKind = <K extends AgentRunEvent["kind"]>(
+  drive: EvalDrive,
+  kind: K,
+): Extract<AgentRunEvent, { kind: K }> | undefined =>
+  drive.events.find((entry): entry is Extract<AgentRunEvent, { kind: K }> => entry.kind === kind);
+
+describe("a refused capture records why it was refused", () => {
+  test("postgres: the row budget refusal carries both numbers and no fabricated count", async () => {
+    // The measured shape of B52, as the provider itself raises it: `queryReadOnly`
+    // refuses rather than truncating, and the two numbers are the whole diagnosis —
+    // 536 rows against a 200-row budget says "narrow the capture", where the reason
+    // code alone says only "somebody said no".
+    const run = await openEvalRun({
+      engine: "postgres",
+      mode: "planning",
+      objective: "Which department has the most employees?",
+      catalogAnswer: () => {
+        throw new QueryError("Read-only execution exceeded the row budget: 536 rows > 200 allowed", "postgres");
+      },
+    });
+    runs.push(run);
+
+    const drive = await run.drive(PLAN);
+
+    expect(drive.kinds).not.toContain("context-captured");
+    expect(drive.kinds).toContain("context-unavailable");
+    const event = eventOfKind(drive, "context-unavailable");
+    expect(event).toMatchObject({
+      reasonCode: "CATALOG_READ_REFUSED",
+      rowBudget: { projected: 536, allowed: 200 },
+    });
+    // The absence rule, asserted rather than implied: nothing was read, so the entry
+    // states no count and no fingerprint at all.
+    expect(event).not.toHaveProperty("tableCount");
+    expect(event).not.toHaveProperty("fingerprint");
+    expect(drive.status).toBe("succeeded");
+  });
+
+  test("mysql: a provider that cannot describe itself records the reason and states no budget", async () => {
+    // The other refusal family, and the reason `rowBudget` is optional rather than a
+    // pair of zeros: this run met no budget, so a number here would be a measurement
+    // nobody took.
+    const run = await openPlan("mysql");
+
+    const drive = await run.drive(PLAN);
+
+    const event = eventOfKind(drive, "context-unavailable");
+    expect(event?.reasonCode).toBe("CATALOG_READ_REFUSED");
+    expect(event?.rowBudget).toBeUndefined();
+    // The diagnosis the model was given, so the ledger and the prompt cannot disagree
+    // about why this run had no inventory.
+    expect(event?.detail).toContain("this database refused to describe its own schema");
+  });
+
+  test("postgres: a capture that SUCCEEDS records what it always did, and no refusal", async () => {
+    // The control. `context-captured` is the entry every reader of a grounded run
+    // depends on, and the fix above must not have moved any part of it.
+    const run = await openPlan("postgres");
+
+    const drive = await run.drive(PLAN);
+
+    expect(drive.kinds).not.toContain("context-unavailable");
+    const event = eventOfKind(drive, "context-captured");
+    expect(event).toMatchObject({
+      kind: "context-captured",
+      tableCount: DEPARTMENTS.length,
+      noun: { singular: "table", plural: "tables" },
+    });
+    expect(event?.fingerprint).toMatch(/^ctx_[0-9a-f]{32}$/);
+    expect(event?.snapshot?.tables).toHaveLength(DEPARTMENTS.length);
   });
 });
 

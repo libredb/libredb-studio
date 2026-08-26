@@ -73,7 +73,12 @@ describe("the operations arc, on every engine including one agent mode otherwise
       // `context-captured` appears exactly where a catalog can be read (#411): the two
       // engines `CATALOG_PLANS` serves ground the run before its first turn, and every
       // other engine continues ungrounded rather than failing.
-      const grounded = engine === "mysql" ? [] : ["context-captured"];
+      //
+      // Ungrounded is now WRITTEN DOWN rather than left as a hole (B54). The entry the
+      // MySQL preset gets is `context-unavailable`, never a `context-captured` with a
+      // zero count: this run read nothing, and a count would state that this database
+      // has no tables.
+      const grounded = engine === "mysql" ? ["context-unavailable"] : ["context-captured"];
       expect(drive.kinds).toEqual([
         "run-started",
         "driver-resolved",
@@ -342,6 +347,10 @@ describe("an engine that cannot serve a reading", () => {
     expect(drive.kinds).toEqual([
       "run-started",
       "driver-resolved",
+      // The MySQL preset's provider cannot describe itself, so this run is ungrounded —
+      // and since B54 that is an entry rather than a hole. It sits before the first tool
+      // call because the capture is attempted before the first turn.
+      "context-unavailable",
       "tool-invoked",
       "tool-refused",
       "guidance-issued",

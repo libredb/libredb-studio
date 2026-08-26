@@ -419,7 +419,7 @@ describe("useConnectionForm", () => {
     // alone would not have caught this, because the earlier eligibility tests built
     // their "edited" copy by hand rather than through the editor that produces it.
     const served = { ...seedCopy, createdAt: seedCopy.createdAt.toISOString() };
-    expect(resolveAgentRunConnectionId(saved, [served])).toBe("seed:sample");
+    expect(resolveAgentRunConnectionId(saved, { loaded: true, seeds: [served] })).toEqual({ id: "seed:sample" });
   });
 
   /*
@@ -469,7 +469,9 @@ describe("useConnectionForm", () => {
     expect(saved.password).toBeUndefined();
 
     const served = { ...sqliteSeed, createdAt: sqliteSeed.createdAt.toISOString() };
-    expect(resolveAgentRunConnectionId(saved, [served])).toBe("seed:sqlite-embedded-sample");
+    expect(resolveAgentRunConnectionId(saved, { loaded: true, seeds: [served] })).toEqual({
+      id: "seed:sqlite-embedded-sample",
+    });
   });
 
   // Preserving must not resurrect what the user turned OFF: the form owns TLS and

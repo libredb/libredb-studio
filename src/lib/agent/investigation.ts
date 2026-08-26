@@ -47,6 +47,7 @@ import { createHash } from "node:crypto";
 import { type ModelMessage, Output, type ToolSet, streamText, tool } from "ai";
 import { z } from "zod";
 import {
+  type AgentContextCapture,
   captureContextSnapshot,
   connectionIdentity,
   heldSnapshotForConnection,
@@ -2650,6 +2651,34 @@ export async function runInvestigation(
      * honest: `grounding.schemaKnown` is what decides whether the model is told to
      * write against an inventory or told it has not seen this database at all.
      */
+    /**
+     * The capture that did NOT happen, written down (B54).
+     *
+     * Both refusal paths call this — the planning one and the agent/operations one —
+     * because the gap was identical on each: the branch pushed its note into the prompt
+     * and returned, so the ledger of an ungrounded run held nothing between the drive
+     * starting and the run ending. The rule `docs/llms/setup.md` states about ledgers
+     * ("that is the authority on what a run did") was therefore true only of a capture
+     * that SUCCEEDED, in exactly the case an operator has to diagnose.
+     *
+     * Before the note, not after it, and for the same reason the successful capture
+     * records before it packs: what the run tells the model about its own grounding has
+     * to be something already durably part of the run's history.
+     *
+     * The reason code and the sentence are the capture's own — this function invents
+     * nothing and measures nothing, so there is no count, no fingerprint and no noun
+     * here. A refused capture read no rows, and stating a number about rows nobody read
+     * is the absence failure this repository keeps re-finding (#477).
+     */
+    const recordRefusedCapture = async (capture: AgentContextCapture & { kind: "unavailable" }): Promise<void> => {
+      await service.recordEvent(runId, {
+        kind: "context-unavailable",
+        reasonCode: capture.reasonCode,
+        detail: capture.detail,
+        ...(capture.rowBudget === undefined ? {} : { rowBudget: capture.rowBudget }),
+      });
+    };
+
     const establishPlanningContext = async (): Promise<void> => {
       const recorded = reusableSnapshot(record.events, record.connectionId);
       const held = recorded === null ? heldSnapshotForConnection(connectionIdentity(context.connection)) : null;
@@ -2662,6 +2691,7 @@ export async function runInvestigation(
       if (snapshot === null) {
         const capture = await captureContextSnapshot(context);
         if (capture.kind === "unavailable") {
+          await recordRefusedCapture(capture);
           messages.push({
             role: "user",
             content: operations
@@ -2821,6 +2851,7 @@ export async function runInvestigation(
 
       const capture = await captureContextSnapshot(context);
       if (capture.kind === "unavailable") {
+        await recordRefusedCapture(capture);
         // The capture's own words send a model to `inspect_schema`, which an operations
         // run does not hold: naming a tool the run has not got is the #350 failure, and
         // this workflow is the one that reaches engines where the capture always fails.

@@ -101,6 +101,7 @@ const EVENT_KINDS: ReadonlySet<string> = new Set(
     "run-started": true,
     "driver-resolved": true,
     "context-captured": true,
+    "context-unavailable": true,
     "statement-drafted": true,
     "tool-invoked": true,
     "tool-completed": true,

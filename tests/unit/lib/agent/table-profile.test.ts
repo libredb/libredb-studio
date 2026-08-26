@@ -1,4 +1,6 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { parseSqliteTableDdl } from "@/lib/agent/sqlite-ddl";
 import {
   HIGH_NULL_RATIO,
   MIN_ROWS_FOR_RATIO_FINDINGS,
@@ -316,5 +318,61 @@ describe("types with no equality operator", () => {
     const sql = composeTableProfile("postgres", { table: "t", depth: "distribution" }, [column("payload", "json")]);
 
     expect(sql).toContain('count("payload")');
+  });
+});
+
+describe("a foreign key covered by a constraint-created index (docs/BACKLOG.md B25)", () => {
+  /**
+   * The SQLite blind spot, end to end and against a real engine.
+   *
+   * SQLite stores NO DDL for the index it builds to enforce a `UNIQUE` constraint,
+   * so the composed index read (`sql IS NOT NULL`) returns nothing for it and the
+   * key looked uncovered. The covering index is declared in the table's own DDL, so
+   * the inventory is assembled here exactly as the SQLite capture assembles it —
+   * columns, foreign keys AND constraint-created indexes all out of one
+   * `CREATE TABLE` — and the control table proves the finding still fires when
+   * there really is no index.
+   */
+  const inventory = (statements: readonly string[], name: string): TableSchema => {
+    const database = new Database(":memory:");
+    try {
+      for (const statement of statements) database.run(statement);
+      const row = database.prepare("SELECT sql FROM sqlite_master WHERE name = ?").get(name) as { sql: string };
+      const definition = parseSqliteTableDdl(row.sql);
+      return {
+        name,
+        columns: [...definition.columns],
+        indexes: [...definition.indexes],
+        foreignKeys: [...definition.foreignKeys],
+      };
+    } finally {
+      database.close();
+    }
+  };
+
+  const SCHEMA = [
+    "CREATE TABLE parents (id INTEGER PRIMARY KEY)",
+    "CREATE TABLE covered (id INTEGER PRIMARY KEY, parent_id INTEGER UNIQUE REFERENCES parents (id))",
+    "CREATE TABLE composite (id INTEGER PRIMARY KEY, parent_id INTEGER, note TEXT, UNIQUE (parent_id, note), FOREIGN KEY (parent_id) REFERENCES parents (id))",
+    "CREATE TABLE trailing (id INTEGER PRIMARY KEY, note TEXT, parent_id INTEGER, UNIQUE (note, parent_id), FOREIGN KEY (parent_id) REFERENCES parents (id))",
+    "CREATE TABLE bare (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parents (id))",
+  ];
+
+  test("a UNIQUE constraint covers the key, and the covering index is not presented as a user index", () => {
+    const table = inventory(SCHEMA, "covered");
+
+    expect(findUnindexedForeignKeys(table)).toEqual([]);
+    expect(table.indexes.map((index) => index.name)).toEqual(["(unique constraint)"]);
+  });
+
+  test("a composite UNIQUE covers the key it LEADS on, and not one it merely mentions", () => {
+    expect(findUnindexedForeignKeys(inventory(SCHEMA, "composite"))).toEqual([]);
+    // Prefix, not membership: `UNIQUE (note, parent_id)` cannot serve a lookup on
+    // `parent_id` alone, so the finding stands.
+    expect(findUnindexedForeignKeys(inventory(SCHEMA, "trailing")).map((f) => f.code)).toEqual(["fk_unindexed"]);
+  });
+
+  test("the control: a key with no index at all is still reported", () => {
+    expect(findUnindexedForeignKeys(inventory(SCHEMA, "bare")).map((f) => f.code)).toEqual(["fk_unindexed"]);
   });
 });

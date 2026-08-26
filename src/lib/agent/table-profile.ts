@@ -343,15 +343,21 @@ function deriveFindings(
 /**
  * Foreign-key columns that no index in the CAPTURED INVENTORY leads on.
  *
- * Stated that precisely because the inventory has two known blind spots, and a
- * finding worded as "this foreign key is unindexed" would overstate both:
+ * Stated that precisely because the inventory still has a known blind spot, and a
+ * finding worded as "this foreign key is unindexed" would overstate it:
+ * **PostgreSQL expression indexes are absent**, and a partly-expression index
+ * appears carrying only its plain columns (`docs/BACKLOG.md` B7).
  *
- *  - **SQLite hides constraint-created indexes.** The catalog read takes indexes
- *    from `CREATE INDEX` text, and the indexes SQLite builds for `UNIQUE` and
- *    `PRIMARY KEY` carry no DDL at all — so a foreign key covered by a `UNIQUE`
- *    constraint is invisible here and would be reported. `docs/BACKLOG.md` B25.
- *  - **PostgreSQL expression indexes are absent** and a partly-expression index
- *    appears carrying only its plain columns (`docs/BACKLOG.md` B7).
+ * SQLite's constraint-created indexes WERE a second blind spot (B25) and are not
+ * one any more: SQLite stores no DDL for them, so the composed index read cannot
+ * see them, and `parseSqliteTableDdl` now reports the ones a `UNIQUE` constraint
+ * creates out of the table's own DDL — as an index named `(unique constraint)`,
+ * which is plain words rather than a name anybody could mistake for a user's
+ * `CREATE INDEX`. A `PRIMARY KEY` needs no such row: it is read from the column
+ * inventory below, not from the index one.
+ *
+ * COVERAGE IS A PREFIX TEST, not a membership test: an index serves a lookup on the
+ * column it LEADS on, so `UNIQUE (note, parent_id)` does not cover `parent_id`.
  *
  * Composite foreign keys are SKIPPED rather than guessed at: PostgreSQL's catalog
  * read returns them as the cross product of both sides (B8), so their columns

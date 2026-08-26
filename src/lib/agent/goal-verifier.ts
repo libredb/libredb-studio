@@ -58,7 +58,23 @@ export type AgentGoalVerifierId =
    * recommended.
    */
   | "agent-query-optimization.1"
+  /**
+   * Released, and kept for the reason `.1` is kept: it shipped on `main`, real runs
+   * were measured against it, and a reader of one of those ledgers holds this type.
+   * `.2` still means what it meant — the two-arm rule, with a plan judged by the
+   * baseline's emptiness census like any other artifact.
+   */
   | "agent-query-optimization.2"
+  /**
+   * B45: the same two arms, with a plan exempt from the emptiness census.
+   *
+   * A new id rather than a tightening under `.2`, by the test this file states for
+   * `agent-data-analysis.1`: `.2` is on `main`, so somewhere there is a verdict recorded
+   * under it, and the rule it names has changed its mind — a run scored `unanswered` by
+   * `.2` can be `answered` by this one. Two runs' verdicts sharing one id under two
+   * different rules is exactly what a versioned id exists to prevent.
+   */
+  | "agent-query-optimization.3"
   | "agent-database-assessment.1"
   /**
    * Kept for the reason `agent-query-optimization.1` is kept: it shipped on `main` and
@@ -246,19 +262,32 @@ function rowCountsByArtifact(events: readonly AgentRunEvent[]): ReadonlyMap<stri
  * `composeReportTool` refuses an invented correlation id, so this only arises from
  * a hand-written or older ledger, and calling a result empty when nobody has seen
  * it would be the verifier inventing the very evidence it is checking for.
+ *
+ * `unbounded` is the set of artifacts whose row count says nothing about whether the
+ * question was answered, and it is skipped for the same reason: a count that cannot
+ * be read is not a count of zero. The caller names them, because which artifacts
+ * those are is a fact about a WORKFLOW's evidence and not about arithmetic — only the
+ * optimization rule passes any (B45).
  */
-function restsOnlyOnEmptyResults(claims: readonly AgentReportClaim[], events: readonly AgentRunEvent[]): boolean {
+function restsOnlyOnEmptyResults(
+  claims: readonly AgentReportClaim[],
+  events: readonly AgentRunEvent[],
+  unbounded: ReadonlySet<string>,
+): boolean {
   const counts = rowCountsByArtifact(events);
   const cited: number[] = [];
   for (const claim of claims) {
     for (const reference of claim.evidence) {
-      if (reference.source !== "artifact") continue;
+      if (reference.source !== "artifact" || unbounded.has(reference.correlationId)) continue;
       const rowCount = counts.get(reference.correlationId);
       if (rowCount !== undefined) cited.push(rowCount);
     }
   }
   return cited.length > 0 && cited.every((rowCount) => rowCount === 0);
 }
+
+/** No artifact is exempt from the emptiness census, which is every rule but one. */
+const EVERY_COUNT_MEANS_SOMETHING: ReadonlySet<string> = Object.freeze(new Set<string>());
 
 /**
  * The plan bar: the run spoke, and what it said was its deliverable rather than a
@@ -307,11 +336,20 @@ function verifyPlanningGoal(run: VerifiableAgentRun): readonly AgentGoalShortfal
   return run.status === "cancelled" ? ["cancelled"] : ["no-statement"];
 }
 
-/** An investigation answered when it composed claims that rest on something it read. */
-function verifyInvestigationGoal(run: VerifiableAgentRun): readonly AgentGoalShortfall[] {
+/**
+ * An investigation answered when it composed claims that rest on something it read.
+ *
+ * `unbounded` is the composing rules' seam and defaults to empty, so `agent-investigation.1`
+ * means exactly what it meant: a workflow that has an artifact whose row count is not a
+ * measure of its answer says so at the call, and nothing is exempt by default.
+ */
+function verifyInvestigationGoal(
+  run: VerifiableAgentRun,
+  unbounded: ReadonlySet<string> = EVERY_COUNT_MEANS_SOMETHING,
+): readonly AgentGoalShortfall[] {
   const claims = composedClaims(run.events);
   if (claims.length === 0) return run.status === "cancelled" ? ["cancelled"] : ["no-report"];
-  return restsOnlyOnEmptyResults(claims, run.events) ? ["empty-evidence"] : [];
+  return restsOnlyOnEmptyResults(claims, run.events, unbounded) ? ["empty-evidence"] : [];
 }
 
 type GoalRule = (run: VerifiableAgentRun) => readonly AgentGoalShortfall[];
@@ -358,9 +396,27 @@ function planArtifacts(events: readonly AgentRunEvent[]): ReadonlySet<string> {
  * Not merely "a plan is somewhere on the ledger": the citation is what ties this
  * recommendation to that plan, and without it the run is proposing an index beside
  * a plan rather than because of one.
+ *
+ * **A plan is exempt from the baseline's emptiness census, and this is the #356 lesson
+ * for a third time (B45).** A plan is a DESCRIPTION of a statement, arriving in one
+ * column, and the driver reports no row count for it: the artifact is complete and its
+ * `rowCount: 0` measures nothing. Driven live on 2026-08-17, every Optimize run in the
+ * drive ended `empty-evidence` — including one that compared real costs, recommended
+ * the right index and offered it to the editor — because the plan was the only thing
+ * those reports had to cite. The argument the `operations` rule makes below is this
+ * argument: emptiness is a property of how the artifact is RETURNED, and holding a
+ * reading to a rule that does not describe it marks a right answer wrong.
+ *
+ * The exemption is this rule's and stops here. `agent-investigation.1` and the two
+ * verifiers composing on it are untouched — every workflow is offered `inspect_plan`,
+ * so the same shape is reachable for them, and widening an id's meaning for a case
+ * nobody has measured there is not this fix. It also exempts one artifact KIND and
+ * nothing else: an empty bounded read cited by an optimization report still ends the
+ * run `empty-evidence`, because zero rows from a read is the answer that read gave.
  */
 function verifyQueryOptimizationGoal(run: VerifiableAgentRun): readonly AgentGoalShortfall[] {
-  const baseline = verifyInvestigationGoal(run);
+  const plans = planArtifacts(run.events);
+  const baseline = verifyInvestigationGoal(run, plans);
   if (baseline.length > 0) return baseline;
   if (run.events.some((event) => event.kind === "plan-comparison")) return [];
 
@@ -369,7 +425,6 @@ function verifyQueryOptimizationGoal(run: VerifiableAgentRun): readonly AgentGoa
   );
   if (indexes.length === 0) return ["no-plan-comparison"];
 
-  const plans = planArtifacts(run.events);
   const grounded = indexes.some((event) =>
     event.evidence.some((reference) => reference.source === "artifact" && plans.has(reference.correlationId)),
   );
@@ -519,7 +574,7 @@ function verifyOperationsGoal(run: VerifiableAgentRun): readonly AgentGoalShortf
 
 export const AGENT_WORKFLOW_GOALS: Readonly<Record<AgentRunWorkflowType, AgentWorkflowGoal>> = Object.freeze({
   investigation: { verifier: "agent-investigation.1", verify: verifyInvestigationGoal },
-  "query-optimization": { verifier: "agent-query-optimization.2", verify: verifyQueryOptimizationGoal },
+  "query-optimization": { verifier: "agent-query-optimization.3", verify: verifyQueryOptimizationGoal },
   "database-assessment": { verifier: "agent-database-assessment.1", verify: verifyDatabaseAssessmentGoal },
   operations: { verifier: "agent-operations.2", verify: verifyOperationsGoal },
   "data-analysis": { verifier: "agent-data-analysis.1", verify: verifyDataAnalysisGoal },

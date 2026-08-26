@@ -83,6 +83,13 @@ const capturedCalls: Array<{ command: string; args: string[] }> = [];
  */
 const capturedRedisOptions: Record<string, unknown>[] = [];
 
+/**
+ * When set, `info()` rejects with this message instead of answering. A Redis 6 ACL
+ * user without `+info` is refused exactly this way, and it is the one shape where
+ * the server is reachable but every INFO-derived surface is not (D29).
+ */
+let infoRefusal: string | null = null;
+
 mock.module("ioredis", () => {
   class MockRedis {
     private _config: unknown;
@@ -101,6 +108,7 @@ mock.module("ioredis", () => {
     }
 
     async info() {
+      if (infoRefusal !== null) throw new Error(infoRefusal);
       return MOCK_INFO_STRING;
     }
 
@@ -207,6 +215,39 @@ describe("RedisProvider", () => {
       await provider.connect();
       await provider.disconnect();
       expect(provider.isConnected()).toBe(false);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // ACL user (D29)
+  // --------------------------------------------------------------------------
+
+  describe("the ACL user handed to ioredis", () => {
+    /** The options object of the connection this test just opened. */
+    const lastOptions = (): Record<string, unknown> => capturedRedisOptions[capturedRedisOptions.length - 1];
+
+    const connectAs = async (user: string | undefined) => {
+      provider = new RedisProvider({ ...baseConfig, user, password: "probepw" });
+      await provider.connect();
+      return lastOptions();
+    };
+
+    // Measured 2026-08-26 against `redis:latest` with `probe` defined as
+    // `on >probepw ~* +@all -info`: without `username` in the options, `ACL WHOAMI`
+    // answers `default` and INFO succeeds - the app authenticated as a principal the
+    // user never chose. With it, WHOAMI answers `probe`.
+    test("the connection's user travels as ioredis's username", async () => {
+      expect(await connectAs("probe")).toMatchObject({ username: "probe", password: "probepw" });
+    });
+
+    // A `requirepass`-only server has no ACL users to name, and ioredis authenticates
+    // as `default` only when `username` is absent. So an empty field must stay empty.
+    test("no username is sent when the connection names no user", async () => {
+      expect((await connectAs(undefined)).username).toBeUndefined();
+    });
+
+    test("an empty user string is sent as no username at all", async () => {
+      expect((await connectAs("")).username).toBeUndefined();
     });
   });
 
@@ -798,6 +839,25 @@ describe("RedisProvider", () => {
       expect(health.databaseSize).toBe("1.95MB");
       // hitRatio: 900/(900+100)*100 = 90.0
       expect(health.cacheHitRatio).toBe("90.0");
+    });
+
+    /*
+      D29's other half. An ACL user without `+info` connects and browses keys, and
+      every INFO-derived surface is refused. `getHealth()` must NOT answer with
+      fabricated zeros for a read that never happened - it raises the server's own
+      sentence, which `POST /api/db/test-connection` turns into the degraded (amber)
+      outcome rather than a green one (that translation is covered in
+      tests/api/db/test-connection.test.ts).
+    */
+    test("a refused INFO raises the server's own NOPERM sentence", async () => {
+      infoRefusal = "NOPERM User probe has no permissions to run the 'info' command";
+      try {
+        await expect(provider.getHealth()).rejects.toThrow(
+          "Failed to get Redis health: NOPERM User probe has no permissions to run the 'info' command",
+        );
+      } finally {
+        infoRefusal = null;
+      }
     });
   });
 

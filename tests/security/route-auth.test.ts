@@ -1,4 +1,5 @@
 import { describe, expect, test, mock, spyOn, beforeEach } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { discoverRoutes } from "./helpers/discover-routes";
 
@@ -246,6 +247,83 @@ describe("routes that reach a provider require a session", () => {
     for (const key of Object.keys(ROUTES_WITHOUT_A_PROVIDER)) {
       expect(ALL_ROUTES.some(([routeKey]) => routeKey === key)).toBe(true);
     }
+  });
+
+  // The check above proves an allowlist key names a real route. It does NOT prove the key's
+  // REASON - "reaches no database or LLM provider" - is still true, so a route already on the
+  // allowlist that later grows a provider call escapes the sweep above forever, silently. This
+  // is the second, independent check: it reads each allowlisted route's own source and fails if
+  // the file reaches any of the provider entry points the non-allowlisted routes use.
+  //
+  // The entry-point set below is not a guess: it is every way a route under src/app/api/ obtains
+  // a provider today - the `@/lib/db` barrel and `@/lib/db/factory`
+  // (getOrCreateProvider, createDatabaseProvider, removeProvider, findOpenSingleWriterProvider,
+  // acquireExecutionProfileProvider, withOneShotTunnel), `@/lib/llm`
+  // (createLLMProvider) and its config helpers, and `@/lib/api/schema-route`
+  // (handleSchemaRequest), which is how db/schema/list and db/schema/relations reach a provider
+  // without naming @/lib/db themselves. Matching on the module specifier prefix rather than on a
+  // fixed list of exported names means a NEW factory export is covered the day it is added.
+  //
+  // Deliberately NOT flagged: `@/lib/api/errors`, which nearly every route imports and which
+  // itself imports @/lib/db/errors and @/lib/llm/types - error mapping reaches no provider, and
+  // treating it as an entry point would make this check fire on all sixteen allowlisted routes.
+  const PROVIDER_ENTRY_POINTS: Array<{ label: string; pattern: RegExp }> = [
+    { label: 'a "@/lib/db" import', pattern: /from\s+"@\/lib\/db(?:\/[^"]*)?"/ },
+    { label: 'a "@/lib/llm" import', pattern: /from\s+"@\/lib\/llm(?:\/[^"]*)?"/ },
+    { label: 'a "@/lib/api/schema-route" import', pattern: /from\s+"@\/lib\/api\/schema-route"/ },
+    { label: "a getOrCreateProvider() call", pattern: /\bgetOrCreateProvider\s*\(/ },
+    { label: "a createDatabaseProvider() call", pattern: /\bcreateDatabaseProvider\s*\(/ },
+    { label: "an acquireExecutionProfileProvider() call", pattern: /\bacquireExecutionProfileProvider\s*\(/ },
+    { label: "a findOpenSingleWriterProvider() call", pattern: /\bfindOpenSingleWriterProvider\s*\(/ },
+    { label: "a withOneShotTunnel() call", pattern: /\bwithOneShotTunnel\s*\(/ },
+    { label: "a removeProvider() call", pattern: /\bremoveProvider\s*\(/ },
+    { label: "a createLLMProvider() call", pattern: /\bcreateLLMProvider\s*\(/ },
+    { label: "a handleSchemaRequest() call", pattern: /\bhandleSchemaRequest\s*\(/ },
+  ];
+
+  // The one allowlist entry whose reason does NOT claim to be provider-free (see the doc comment
+  // on ROUTES_WITHOUT_A_PROVIDER). Skipping it is itself verified below - the assertion requires
+  // the entry's reason to still say so, so this set cannot quietly grow into a second unchecked
+  // allowlist.
+  const ALLOWLISTED_BUT_REACHES_A_PROVIDER = ["agent/drive"];
+
+  /** Blanks out comments while preserving line numbering, so a mention in prose is not a hit. */
+  function withoutComments(source: string): string {
+    return source
+      .replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, " "))
+      .replace(/(^|[^:])\/\/.*$/gm, "$1");
+  }
+
+  test("every allowlisted route entry that claims to reach a provider still says so", () => {
+    for (const key of ALLOWLISTED_BUT_REACHES_A_PROVIDER) {
+      expect(ROUTES_WITHOUT_A_PROVIDER[key]).toContain("reaches a provider");
+    }
+  });
+
+  test("every allowlisted route is still provider-free in its own source", () => {
+    const violations: string[] = [];
+
+    for (const key of Object.keys(ROUTES_WITHOUT_A_PROVIDER)) {
+      if (ALLOWLISTED_BUT_REACHES_A_PROVIDER.includes(key)) {
+        continue;
+      }
+      const source = withoutComments(readFileSync(join(API_ROOT_DIR, key, "route.ts"), "utf8"));
+      source.split("\n").forEach((rawLine, index) => {
+        // A type-only import is erased at compile time and can reach nothing at runtime.
+        if (rawLine.trimStart().startsWith("import type ")) {
+          return;
+        }
+        for (const { label, pattern } of PROVIDER_ENTRY_POINTS) {
+          if (pattern.test(rawLine)) {
+            violations.push(
+              `"${key}" is allowlisted as provider-free but route.ts:${index + 1} contains ${label}: ${rawLine.trim()}`,
+            );
+          }
+        }
+      });
+    }
+
+    expect(violations).toEqual([]);
   });
 
   for (const [route, load] of PROVIDER_ROUTES) {

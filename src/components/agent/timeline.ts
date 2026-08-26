@@ -874,6 +874,27 @@ function describeEvent(
         // in the half a user actually reads.
         detail: `${event.tableCount} ${event.tableCount === 1 ? noun.singular : noun.plural}, fingerprint ${event.fingerprint.slice(0, 8)}`,
       };
+    case "context-unavailable":
+      /*
+        The capture that did not happen (B54). `progress` would claim the run got
+        somewhere and a failure tone would claim the run is broken; it is neither — an
+        ungrounded run continues, and on several engines that is its ordinary state.
+
+        The row budget is named where there is one, because "refused" and "refused at
+        536 rows against a bound of 200" ask the reader for different things. The
+        `detail` sentence itself is NOT rendered here: on the composed path it carries
+        the engine's own fenced text, which belongs in the ledger a reader can fetch
+        rather than in a one-line timeline entry.
+      */
+      return {
+        tone: "neutral",
+        chrome: true,
+        headline: "Schema not captured",
+        detail:
+          event.rowBudget === undefined
+            ? event.reasonCode
+            : `${event.reasonCode} — ${event.rowBudget.projected} rows read against a bound of ${event.rowBudget.allowed}`,
+      };
     case "statement-drafted":
       return {
         tone: "neutral",

@@ -929,6 +929,57 @@ describe("foldLedgerEntries", () => {
   });
 
   /*
+    The capture that was REFUSED (B54).
+
+    It reads as a capture that did not happen rather than as a failure of the run: an
+    ungrounded run continues, and on the engines this server cannot ground that is its
+    ordinary state. What must never appear is a count — "0 tables" would be this
+    component stating a fact about the database from an event that measured nothing.
+  */
+  test("a refused capture says so, and names the row budget when that is what refused it", () => {
+    const view = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: {
+          kind: "context-unavailable",
+          atMs: 3,
+          reasonCode: "CATALOG_READ_REFUSED",
+          detail: "The columns inventory was refused.",
+          rowBudget: { projected: 536, allowed: 200 },
+        },
+      }),
+    ]);
+
+    expect(view.items[0].headline).toBe("Schema not captured");
+    expect(view.items[0].detail).toBe("CATALOG_READ_REFUSED — 536 rows read against a bound of 200");
+    // Chrome, like the successful capture beside it: it is the run's own scaffolding
+    // rather than something the run found.
+    expect(view.items[0].chrome).toBe(true);
+    // And it is NOT a capture. The fold's `capture` field is what other surfaces read as
+    // the provenance of an answer, and a refusal is provenance for nothing.
+    expect(view.capture).toBeNull();
+  });
+
+  test("a refused capture with no budget in it shows the reason alone", () => {
+    // The other refusal family — a provider that cannot describe itself — where there is
+    // no bound to name. The entry states the reason and stops, rather than printing a
+    // pair of zeros (#477).
+    const view = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: {
+          kind: "context-unavailable",
+          atMs: 3,
+          reasonCode: "PROVIDER_INVENTORY_TIMED_OUT",
+          detail: "This database did not describe its own schema in time.",
+        },
+      }),
+    ]);
+
+    expect(view.items[0].detail).toBe("PROVIDER_INVENTORY_TIMED_OUT");
+  });
+
+  /*
     The word the timeline calls the inventory's rows by (#414).
 
     The prompt half of this was fixed first, and a live drive against a seeded Redis

@@ -126,6 +126,19 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
     // therefore as inert as the rest of the entry.
     noun: { singular: "key pattern", plural: "key patterns" },
   },
+  // The capture that was REFUSED (B54). Its own kind rather than the entry above
+  // carrying an absence, and the fixture is the row-budget case because that is the
+  // shape with fields to get wrong — and because it is the one an operator has to
+  // diagnose: B52's 536 rows against a 200-row bound. No `tableCount` and no
+  // `fingerprint` exist on it at all, which is the absence rule in the type system
+  // rather than in a convention (#477).
+  "context-unavailable": {
+    kind: "context-unavailable",
+    atMs: 2,
+    reasonCode: "CATALOG_READ_REFUSED",
+    detail: "This run's schema inventory was refused.",
+    rowBudget: { projected: 536, allowed: 200 },
+  },
   "statement-drafted": {
     kind: "statement-drafted",
     atMs: 3,

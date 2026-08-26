@@ -98,7 +98,7 @@ describe("parseSqliteTableDdl — columns", () => {
       "recent",
     );
 
-    expect(parseSqliteTableDdl(ddl)).toEqual({ columns: [], foreignKeys: [] });
+    expect(parseSqliteTableDdl(ddl)).toEqual({ columns: [], foreignKeys: [], indexes: [] });
   });
 
   /**
@@ -120,9 +120,9 @@ describe("parseSqliteTableDdl — columns", () => {
   });
 
   test("text that is not a CREATE statement at all is refused rather than half-read", () => {
-    expect(parseSqliteTableDdl("")).toEqual({ columns: [], foreignKeys: [] });
-    expect(parseSqliteTableDdl("SELECT 1")).toEqual({ columns: [], foreignKeys: [] });
-    expect(parseSqliteTableDdl(undefined as unknown as string)).toEqual({ columns: [], foreignKeys: [] });
+    expect(parseSqliteTableDdl("")).toEqual({ columns: [], foreignKeys: [], indexes: [] });
+    expect(parseSqliteTableDdl("SELECT 1")).toEqual({ columns: [], foreignKeys: [], indexes: [] });
+    expect(parseSqliteTableDdl(undefined as unknown as string)).toEqual({ columns: [], foreignKeys: [], indexes: [] });
   });
 
   /**
@@ -273,5 +273,106 @@ describe("parseSqliteIndexDdl", () => {
   test("text carrying no column list is refused rather than reported as an index on nothing", () => {
     expect(parseSqliteIndexDdl("CREATE INDEX broken ON orders")).toBeNull();
     expect(parseSqliteIndexDdl("")).toBeNull();
+  });
+});
+
+describe("parseSqliteTableDdl — constraint-created indexes (docs/BACKLOG.md B25)", () => {
+  /**
+   * The measurement this whole group exists for: SQLite stores NO DDL for the index
+   * it builds to enforce a `UNIQUE` constraint, so the composed index read — which
+   * is `sql IS NOT NULL` — cannot see it, while `PRAGMA index_list` can. The agent
+   * path cannot use a pragma at all (the statement guard refuses every `PRAGMA_`
+   * word), which is why the table's own DDL is where these indexes come from.
+   */
+  test("SQLite stores no DDL for a UNIQUE constraint's index, so the composed read misses it", () => {
+    const database = new Database(":memory:");
+    try {
+      database.run("CREATE TABLE parents (id INTEGER PRIMARY KEY)");
+      database.run("CREATE TABLE kids (id INTEGER PRIMARY KEY, parent_id INTEGER UNIQUE REFERENCES parents (id))");
+
+      const all = database.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index'").all() as {
+        name: string;
+        sql: string | null;
+      }[];
+      expect(all).toEqual([{ name: "sqlite_autoindex_kids_1", sql: null }]);
+
+      // The engine knows the index exists; the inventory the agent can compose does not.
+      expect(database.prepare("PRAGMA index_list(kids)").all()).toHaveLength(1);
+      expect(database.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL").all()).toEqual(
+        [],
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  test("an inline UNIQUE column yields one implicit index over that column", () => {
+    const ddl = storedDdl(
+      [
+        "CREATE TABLE parents (id INTEGER PRIMARY KEY)",
+        "CREATE TABLE kids (id INTEGER PRIMARY KEY, parent_id INTEGER UNIQUE REFERENCES parents (id))",
+      ],
+      "kids",
+    );
+
+    // Named for what created it, not as though the user had created an index: the
+    // engine's own `sqlite_autoindex_kids_1` is not reproducible from the DDL (a
+    // named `CONSTRAINT` does NOT lend the index its name, and the numbering counts
+    // constraints this reader does not all model), so inventing it would be a guess.
+    expect(parseSqliteTableDdl(ddl).indexes).toEqual([
+      { name: "(unique constraint)", columns: ["parent_id"], unique: true },
+    ]);
+  });
+
+  test("a table-level UNIQUE keeps its column ORDER, so a prefix test can use it", () => {
+    const ddl = storedDdl(["CREATE TABLE kids (parent_id INTEGER, note TEXT, UNIQUE (parent_id, note))"], "kids");
+
+    expect(parseSqliteTableDdl(ddl).indexes).toEqual([
+      { name: "(unique constraint)", columns: ["parent_id", "note"], unique: true },
+    ]);
+  });
+
+  test("a named CONSTRAINT … UNIQUE, and a quoted column, are read the same way", () => {
+    const ddl = storedDdl(['CREATE TABLE kids ("odd name" INTEGER, CONSTRAINT uq_kids UNIQUE ("odd name"))'], "kids");
+
+    expect(parseSqliteTableDdl(ddl).indexes).toEqual([
+      { name: "(unique constraint)", columns: ["odd name"], unique: true },
+    ]);
+  });
+
+  test("every UNIQUE constraint is reported, and nothing else is", () => {
+    const ddl = storedDdl(
+      ["CREATE TABLE kids (a INTEGER UNIQUE, b INTEGER, c INTEGER, CHECK (c > 0), UNIQUE (b, c))"],
+      "kids",
+    );
+
+    expect(parseSqliteTableDdl(ddl).indexes.map((index) => index.columns)).toEqual([["a"], ["b", "c"]]);
+  });
+
+  test("a modifier on the constrained column is dropped, as it is for a user index", () => {
+    // Measured against the engine: an EXPRESSION cannot appear here at all —
+    // `UNIQUE (lower(a))` is refused with "expressions prohibited in PRIMARY KEY and
+    // UNIQUE constraints" — so a modifier is the only thing that can follow the name,
+    // and it is dropped exactly as `parseSqliteIndexDdl` drops it on a user index.
+    const ddl = storedDdl(["CREATE TABLE kids (parent_id TEXT, UNIQUE (parent_id COLLATE NOCASE DESC))"], "kids");
+
+    expect(parseSqliteTableDdl(ddl).indexes).toEqual([
+      { name: "(unique constraint)", columns: ["parent_id"], unique: true },
+    ]);
+  });
+
+  test("a PRIMARY KEY is NOT synthesised, and a plain column yields nothing", () => {
+    // The primary key is read from the COLUMN inventory (`isPrimary`), and an
+    // `INTEGER PRIMARY KEY` is the rowid itself with no index behind it — so an
+    // index row for it would be an object that does not exist.
+    const rowid = storedDdl(["CREATE TABLE kids (id INTEGER PRIMARY KEY, parent_id INTEGER)"], "kids");
+    expect(parseSqliteTableDdl(rowid).indexes).toEqual([]);
+
+    const composite = storedDdl(["CREATE TABLE kids (a TEXT, b TEXT, PRIMARY KEY (a, b)) WITHOUT ROWID"], "kids");
+    expect(parseSqliteTableDdl(composite).indexes).toEqual([]);
+  });
+
+  test("text that is not a CREATE TABLE yields no indexes either", () => {
+    expect(parseSqliteTableDdl("CREATE VIEW v AS SELECT 1").indexes).toEqual([]);
   });
 });

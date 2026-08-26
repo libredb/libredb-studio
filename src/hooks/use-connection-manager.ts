@@ -5,7 +5,13 @@ import type { DatabaseConnection, TableSchema, TableRelations } from "@/lib/type
 import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { logger } from "@/lib/logger";
-import { buildConnectionPayload, type ManagedConnectionPayload } from "./use-connection-payload";
+import {
+  buildConnectionPayload,
+  NO_SERVED_SEEDS,
+  SEED_CONFIG_UNREADABLE_REASON,
+  type ManagedConnectionPayload,
+  type ServedSeeds,
+} from "./use-connection-payload";
 
 /** Pending-seed poll: 1s ticks, give up after 30. NEXT_PUBLIC_MANAGED_POLL_MS
  * shortens the tick in source builds and tests only — NEXT_PUBLIC_ values are
@@ -22,7 +28,7 @@ export function useConnectionManager(storageReady = false) {
    * its seed from one the user has since pointed elsewhere — and that is exactly the
    * question a run has to answer before it may persist a bare `seed:<id>`.
    */
-  const [servedSeeds, setServedSeeds] = useState<ManagedConnectionPayload[]>([]);
+  const [servedSeeds, setServedSeeds] = useState<ServedSeeds>(NO_SERVED_SEEDS);
   const [schema, setSchema] = useState<TableSchema[]>([]);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
   const [pulseState, setConnectionPulse] = useState<"healthy" | "degraded" | "error" | null>(null);
@@ -149,12 +155,22 @@ export function useConnectionManager(storageReady = false) {
       // A non-OK response is a transient failure, NOT "nothing pending" — the
       // poll below must keep retrying (bounded by its attempt budget) instead
       // of treating it as an authoritative empty pendingSeeds.
-      if (!managedRes.ok) return { merged: null, pendingSeeds: [], failed: true };
+      if (!managedRes.ok) {
+        // A failure the server ATTRIBUTED to its own seed configuration is recorded as
+        // an unread seed list rather than left as the empty one this state started with
+        // (B37): downstream, "the server serves no seeds" and "nobody could read the
+        // seeds" are different sentences, and only this response can tell them apart.
+        // Any other failure — a 404 where the route does not exist at all, as in the
+        // platform embed — is not evidence about that configuration and says nothing.
+        const body = (await managedRes.json().catch(() => ({}))) as { reason?: string };
+        if (!cancelled && body.reason === SEED_CONFIG_UNREADABLE_REASON) setServedSeeds({ loaded: false });
+        return { merged: null, pendingSeeds: [], failed: true };
+      }
       const { connections: managedConns, pendingSeeds } = (await managedRes.json()) as {
         connections?: ManagedConnectionPayload[];
         pendingSeeds?: string[];
       };
-      if (!cancelled) setServedSeeds(managedConns ?? []);
+      if (!cancelled) setServedSeeds({ loaded: true, seeds: managedConns ?? [] });
       return {
         merged: managedConns && managedConns.length > 0 ? mergeManagedConnections(managedConns) : null,
         pendingSeeds: pendingSeeds ?? [],

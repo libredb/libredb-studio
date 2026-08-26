@@ -87,6 +87,13 @@ export type AgentRunNarrativeEvent = Extract<
   {
     kind:
       | "context-captured"
+      // The capture that did NOT happen, which is narrative for the same reason the
+      // successful one is: the drive is telling the ledger what it established, or in
+      // this case what it could not (B54). Nothing was executed by a model and no step
+      // was settled — the catalog read that was refused is on the audit stream under
+      // its own operation id, and this entry is the run's own account of being left
+      // ungrounded.
+      | "context-unavailable"
       | "statement-drafted"
       | "report-composed"
       // A call the drive turned back, with what it asked for instead. It belongs here

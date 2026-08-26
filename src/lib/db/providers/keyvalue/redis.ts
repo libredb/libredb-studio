@@ -178,12 +178,29 @@ export class RedisProvider extends BaseDatabaseProvider {
     return tls;
   }
 
+  /**
+   * The connection form's Username is the Redis 6 ACL user, and it has to reach the
+   * driver under ioredis's own name — the field is `user` on the connection and
+   * `username` in `RedisOptions`. Without it ioredis sends a one-argument `AUTH`,
+   * which Redis resolves against `default`.
+   *
+   * Measured 2026-08-26 against `redis:latest` with `default` left `nopass +@all` and
+   * `probe` defined `on >probepw ~* +@all -info`, both arms: with `{password}` alone
+   * `ACL WHOAMI` answered `default` and `INFO` succeeded — the app ran as a principal
+   * the user never chose, and health went green. With `{username, password}` WHOAMI
+   * answered `probe` and `INFO` was refused `NOPERM`. The two arms together are what
+   * make it a measurement rather than a shape (D29).
+   *
+   * `undefined` when the field is empty, never `""`: a plain `requirepass` server has
+   * no ACL user to name, and only an absent `username` authenticates as `default`.
+   */
   public async connect(): Promise<void> {
     try {
       const tls = this.buildTLSOptions();
       this.client = new Redis({
         host: this.config.host,
         port: this.config.port || 6379,
+        username: this.config.user || undefined,
         password: this.config.password || undefined,
         db: this.config.database ? parseInt(this.config.database, 10) : 0,
         connectTimeout: this.queryTimeout,

@@ -102,7 +102,7 @@ mock.module("@/hooks/use-auth", () => ({
 mock.module("@/hooks/use-connection-manager", () => ({
   useConnectionManager: mock(() => ({
     connections: [],
-    servedSeeds: [],
+    servedSeeds: { loaded: true, seeds: [] },
     activeConnection: null,
     schema: [],
     schemaContext: "[]",

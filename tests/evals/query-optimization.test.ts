@@ -125,7 +125,7 @@ describe("the optimization arc, on both reference engines", () => {
         "run-finished",
       ]);
       expect(drive.status).toBe("succeeded");
-      expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
+      expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.3", unmet: [] });
     });
 
     test(`${engine}: the comparison records what the engine's own plan said`, async () => {
@@ -195,7 +195,7 @@ describe("an index answers on the plan it diagnosed", () => {
 
       expect(drive.status).toBe("succeeded");
       expect(drive.stopReason).toBe("report-composed");
-      expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
+      expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.3", unmet: [] });
       // And it stays read-only: the DDL it proposed reached no database.
       for (const statement of drive.modelStatements) expect(statement).not.toContain("CREATE INDEX");
     });
@@ -218,11 +218,52 @@ describe("an index answers on the plan it diagnosed", () => {
 
       expect(drive.verdict).toEqual({
         outcome: "unanswered",
-        verifier: "agent-query-optimization.2",
+        verifier: "agent-query-optimization.3",
         unmet: ["no-plan-evidence"],
       });
     });
   }
+
+  /**
+   * B45, driven end to end: the plan the engine counts as no rows.
+   *
+   * On 2026-08-17 every Optimize run in a live drive ended *"Run did not answer — Every
+   * result the report cited came back empty"*, over a `CREATE INDEX` that was the right
+   * index. The plan was the only thing those reports had to cite, and the driver reports
+   * no row count for an `EXPLAIN` — so the baseline's arithmetic read a complete plan as
+   * an empty result. The engine's answer here is the live one: the plan's rows, counted
+   * as zero.
+   */
+  test("a plan the engine counts as no rows still grounds the run's answer", async () => {
+    const run = await openEvalRun({
+      engine: "postgres",
+      workflowType: "query-optimization",
+      objective: "Why is the employee listing query slow?",
+      answer: async (sql) => {
+        const explaining = sql.startsWith("EXPLAIN");
+        const rows = explaining ? PLANS.postgres(sql) : [{ emp_no: 10001 }];
+        return {
+          rows,
+          fields: Object.keys(rows[0] ?? {}),
+          rowCount: explaining ? 0 : rows.length,
+          executionTime: 3,
+        };
+      },
+    });
+    runs.push(run);
+
+    const drive = await run.drive([
+      callsTool("inspect_plan", { sql: SLOW }, "call_plan_before"),
+      recommends(),
+      reportOn("The listing reads the whole table because last_name is unindexed."),
+    ]);
+
+    const plan = drive.events.find((event) => event.kind === "tool-completed");
+    if (plan?.kind !== "tool-completed") throw new Error("expected the plan artifact");
+    // The reproduction is only honest if the ledger really carries the zero.
+    expect(plan.artifact.summary.rowCount).toBe(0);
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.3", unmet: [] });
+  });
 });
 
 describe("THE GATE: the verifier fails the run when the template's own artifact is absent", () => {
@@ -253,7 +294,7 @@ describe("THE GATE: the verifier fails the run when the template's own artifact 
       expect(drive.stopReason).toBe("report-composed");
       expect(drive.verdict).toEqual({
         outcome: "unanswered",
-        verifier: "agent-query-optimization.2",
+        verifier: "agent-query-optimization.3",
         unmet: ["no-plan-comparison"],
       });
     });
@@ -322,7 +363,7 @@ describe("a run holding two plans and reporting without comparing them is asked 
     expect(drive.transcripts[3]).toContain("no comparison is recorded");
     // And the run went on to compare and report, so the notice cost it nothing.
     expect(drive.kinds).toContain("plan-comparison");
-    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.3", unmet: [] });
   });
 
   test("a run holding ONE plan is asked for the second one, never for a comparison", async () => {
@@ -359,7 +400,7 @@ describe("a run holding two plans and reporting without comparing them is asked 
     expect(drive.transcripts[2]).toContain("inspect_plan");
     expect(drive.transcripts[2]).not.toContain("Call compare_plans with before=");
     // And the run finished the arc the nudge pointed at.
-    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.3", unmet: [] });
   });
 
   test("a run holding no plan IS asked, and the ask is for the reading rather than the comparison", async () => {
@@ -445,7 +486,7 @@ describe("an index recommended on no plan at all is asked for one", () => {
     ]);
 
     expect(drive.transcripts[2]).toContain("inspect_plan");
-    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.3", unmet: [] });
   });
 
   test("a report resting on no plans at all is held and told to inspect one", async () => {
@@ -476,7 +517,7 @@ describe("an index recommended on no plan at all is asked for one", () => {
     ]);
 
     expect(drive.transcripts[1]).toContain("inspect_plan");
-    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
+    expect(drive.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.3", unmet: [] });
   });
 });
 
@@ -525,6 +566,6 @@ describe("a drive that dies after recording a comparison does not make it twice"
     expect(firstTurn).toContain("must not be made again");
     expect(firstTurn).toContain("was already recommended");
     // And the run still answers: the comparison it needs is on its own ledger.
-    expect(resumed.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.2", unmet: [] });
+    expect(resumed.verdict).toEqual({ outcome: "answered", verifier: "agent-query-optimization.3", unmet: [] });
   });
 });

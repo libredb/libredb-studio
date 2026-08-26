@@ -47,6 +47,7 @@ import type { LLMProviderType } from "@/lib/llm/types";
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
 import type { AgentChartSpec, DatabaseType, TableSchema } from "@/lib/types";
+import type { AgentContextRowBudget, AgentContextUnavailableCode } from "./context-snapshot";
 import type { AgentGoalShortfall, AgentGoalVerifierId } from "./goal-verifier";
 import type { AgentToolName } from "./tools";
 import type { AgentInventoryNoun } from "./inventory-noun";
@@ -596,6 +597,50 @@ export type AgentRunEvent =
        * claiming a vocabulary nobody recorded.
        */
       readonly noun?: AgentInventoryNoun;
+    })
+  | (AgentRunEventBase & {
+      /**
+       * A capture that was REFUSED, and why (B54).
+       *
+       * Its own kind rather than a `context-captured` carrying an absence, for two
+       * reasons that point the same way. A refused capture read nothing, so it has no
+       * fingerprint and no table count, and the absence rule this repository already
+       * enforces (#477) says a refusal must be representable AS a refusal rather than
+       * as a zero or a fabricated measurement — `tableCount: 0` here would state that
+       * this database has no tables. And every reader that asks
+       * `kind === "context-captured"` — `reusableSnapshot`, the grounding check in
+       * `tools.ts`, the timeline — treats the entry as PROOF that an inventory exists,
+       * so a variant of it carrying a refusal would make all three claim grounding a
+       * run never had. `call-declined` beside `call-held` is the same decision one
+       * layer down: what did NOT happen gets its own entry.
+       *
+       * Written because the ledger is supposed to be the authority on what a run did
+       * (`docs/llms/setup.md`) and, for exactly the case an operator has to diagnose, it
+       * was not: the refusal branch pushed a sentence into the prompt and returned, so a
+       * plan run whose capture was refused left four events and nothing between the
+       * second and the third. The measured cost is B52 — 536 rows against a 200-row
+       * budget on a live AlloyDB Omni — where the reason code, the numbers and the
+       * catalog read were all computed, handed to the model, and then dropped. And a
+       * missing event is worse here than missing telemetry: it reads as work that was
+       * not needed rather than knowledge that was lost.
+       *
+       * `detail` is the capture's OWN sentence — the same one the model was given — so
+       * the ledger and the prompt cannot disagree about why this run had no inventory.
+       * It is needed rather than redundant: `CATALOG_READ_REFUSED` covers four causes
+       * (a denied read, an over-budget one, an unreachable host, a refused execution
+       * profile) and this is what tells them apart. On the composed path it arrives
+       * fenced, because part of it is text the engine wrote, exactly as `tool-refused`
+       * carries an engine's message.
+       *
+       * NOT recorded: the statements the capture composed, and no noun. The first
+       * belongs to the audit stream and to B13; the second describes rows, and there
+       * are none to describe.
+       */
+      readonly kind: "context-unavailable";
+      readonly reasonCode: AgentContextUnavailableCode;
+      readonly detail: string;
+      /** Present only when the row budget is what refused it. */
+      readonly rowBudget?: AgentContextRowBudget;
     })
   | (AgentRunEventBase & {
       readonly kind: "statement-drafted";
