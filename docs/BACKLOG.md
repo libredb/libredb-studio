@@ -22,7 +22,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1–D27, D30, U17 · 8
+- [Drivers and connections](#drivers-and-connections) — D1–D27, D30, D31, U17 · 9
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 10
@@ -329,6 +329,42 @@ by-the-way edit inside a labelling change.
 panels on Doris show absence rather than an error, and the reading is unchanged on MySQL, MariaDB
 and one analytics relative — each verified against the live container, not inferred from the
 statement text.
+
+### D31. A failed schema read leaves the previous connection's tables on screen as this one's
+
+Measured 2026-08-26 in Chrome against the built app, with the network captured (issue #424, the
+QuestDB probe). The sequence needs no unusual state - a fresh browser context reproduces it:
+
+1. the workspace auto-selects the first connection and loads its schema
+   (`200 POST /api/db/schema/list {"connectionId":"seed:doris-probe"}` -> `probe_customers`,
+   `probe_orders`);
+2. the user clicks a second connection whose schema read fails
+   (`500 POST /api/db/schema/list {"connectionId":"seed:questdb-probe"}` -> `'(' expected`);
+3. the header switches to the second connection and **the object browser keeps showing the first
+   connection's tables, with its row counts** - measured: `probe_customers 3` and
+   `probe_orders 2.0k` under a header reading *QuestDB 10.0.1 (probe)*, while QuestDB's own
+   `questdb_only_marker` never appears and QuestDB has no `probe_customers` at all.
+
+`fetchSchema` in `src/hooks/use-connection-manager.ts` toasts the error and `return`s without
+touching `schema`, so the previous value survives the connection change. `Studio.tsx`'s
+connection-change effect clears it only in the `else` branch, when the active connection becomes
+null - never when the fetch for a new one fails. Storage is not involved: `/api/storage/config`
+answers `serverMode: false`, `libredb_schema_snapshots` was empty, and the tree is React state.
+
+**Why this is worse than an empty tree, and why it is not a QuestDB problem.** An empty object
+browser is the honest reading the absence rule (#477) asks for. This one attributes real objects,
+with real row counts, to a database that does not contain them - and the tables are clickable, so
+the next query is written against a schema the connection does not have. Every engine whose object
+browser fails inherits it: CockroachDB (no `pg_total_relation_size()`), Materialize and RisingWave
+(reserved `MATERIALIZED`), QuestDB (both), and any engine having a bad day.
+
+Noticed in the same capture and not filed separately: one connection selection issues the same
+`schema/list` read **two or three times** - two for the auto-selected connection, three for the
+clicked one. Worth confirming while this is open, since the fix touches the same call.
+
+**Done when:** selecting a connection whose schema read fails shows an empty object browser
+carrying the engine's own error, never the previous connection's tables - verified in a browser
+across two connections where the second one's read fails, not through the hook in isolation.
 
 ---
 

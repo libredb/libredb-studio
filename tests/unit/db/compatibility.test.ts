@@ -55,6 +55,7 @@ const COMPOSE_SERVICE_BY_ENGINE: Readonly<Record<string, string>> = {
   Valkey: "valkey",
   DragonflyDB: "dragonfly",
   KeyDB: "keydb",
+  Garnet: "garnet",
   FerretDB: "ferretdb",
   ScyllaDB: "scylla",
 };
@@ -140,6 +141,52 @@ describe("wire-compatibility registry", () => {
     expect(starrocks?.caveats.some((caveat) => caveat.includes("Row counts and sizes are always 0"))).toBe(true);
     expect(doris?.caveats.some((caveat) => caveat.includes("always 0"))).toBe(false);
     expect(doris?.caveats.some((caveat) => caveat.includes("2000 rows"))).toBe(true);
+  });
+
+  test("QuestDB is NOT in the registry, and the reason is the one a provider probe cannot see", async () => {
+    // Probed 2026-08-26 against `questdb/questdb:10.0.1` and REFUSED a row (#424 Phase 0),
+    // which is why this test asserts an absence. It is here rather than left implicit
+    // because QuestDB is the most re-addable name on that list: it speaks the PostgreSQL
+    // wire protocol, and through the provider a statement answers three rows, so every
+    // signal short of a browser says "query-only relative, register it".
+    //
+    // In the product the editor cannot run anything. It always attaches a `queryId`, the
+    // provider then issues `SELECT pg_backend_pid()` first, and QuestDB has no such
+    // function: `500 unknown function name: pg_backend_pid()`. Measured both ways at the
+    // provider boundary - the same call with a queryId fails, without one returns the rows -
+    // so the cause is established rather than guessed. A query-editor-only tier claims
+    // exactly one thing, and that is the thing that does not work, which makes it the Cloud
+    // Spanner case: the number is the finding and the finding lives in the docs.
+    expect(WIRE_COMPATIBLE_ENGINES.map((engine) => engine.name)).not.toContain("QuestDB");
+    // ...and the reason must be readable beside the table, not only in this test.
+    const docs = await Bun.file("docs/providers/README.md").text();
+    expect(docs).toContain("Measured, and refused a row");
+    const refusedSection = docs.slice(docs.indexOf("Measured, and refused a row"));
+    expect(refusedSection).toContain("QuestDB 10.0.1");
+    expect(refusedSection).toContain("pg_backend_pid()");
+  });
+
+  test("Garnet is a full Redis relative whose own version the product does not show", () => {
+    // Probed 2026-08-26 against `ghcr.io/microsoft/garnet:2.1.5` (#424 Phase 0). Every Redis
+    // surface answers, so `full` by this registry's own definition - the numbers that are
+    // wrong are recorded as caveats, the way Citus's are.
+    //
+    // What separates this row from the other three Redis relatives: Valkey and DragonflyDB
+    // show an emulation level because that is all they publish, and KeyDB publishes nothing
+    // of its own at all. Garnet DOES publish `garnet_version:2.1.5` and `server_name:garnet`
+    // in INFO, and the product still shows Redis 7.4.3 - the one place where the real
+    // version was there to be read and went unread.
+    const garnet = compatibleEnginesFor("redis").find((engine) => engine.name === "Garnet");
+    expect(garnet).toBeDefined();
+    expect(garnet?.tier).toBe("full");
+    expect(garnet?.probedVersion).toBe("Garnet 2.1.5 (advertises Redis 7.4.3)");
+    const caveats = garnet?.caveats.join(" ") ?? "";
+    expect(caveats).toContain("garnet_version");
+    // The two numbers a reader must not trust, both from INFO fields Garnet does not publish
+    // at all: no `used_memory` (so every size reads 0 B) and no keyspace counters (so the
+    // cache hit ratio is the `: 100` fallback D14 already records).
+    expect(caveats).toContain("used_memory");
+    expect(caveats).toContain("cache hit ratio");
   });
 
   test("every entry names a driver we actually ship", () => {

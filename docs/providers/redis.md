@@ -49,10 +49,10 @@ generic components render Redis-appropriate wording.
 | `runMaintenance('analyze')` | Server info snapshot | `INFO` |
 | Indexes / table stats | Not applicable | returns `[]` |
 
-### Valkey, DragonflyDB and KeyDB
+### Valkey, DragonflyDB, KeyDB and Garnet
 
 This provider is what a Valkey connection uses: there is no `valkey` type id, and choosing Redis in
-the connection dialog is the documented way to reach it. `ioredis` speaks the protocol all four
+the connection dialog is the documented way to reach it. `ioredis` speaks the protocol all five
 servers share, and the connection dialog's wire-compatibility hint names the engines this driver has
 been measured against, from the same data
 ([`compatibility.ts`](../../src/lib/db/compatibility.ts)). The full per-engine table is in
@@ -64,15 +64,26 @@ this provider's code, not the engine's.
 version field this whole family publishes — and passes it through as the server gave it. Valkey
 9.1.1 therefore shows **7.2.4** and DragonflyDB df-v1.40.1 shows **7.4.0**: each server's declared
 Redis compatibility level rather than its own release. KeyDB 6.3.4 publishes no version field of its
-own at all, so its overview cannot be told apart from a Redis 6 server. Nothing here renames the
+own at all, so its overview cannot be told apart from a Redis 6 server. **Garnet 2.1.5 is the one
+relative where the real version WAS available and goes unread**: its `INFO` carries
+`garnet_version:2.1.5` and `server_name:garnet` beside `redis_version:7.4.3`, and this read takes
+the compatibility level like everywhere else, so the overview says Redis 7.4.3. On the other three
+the displayed version is the best reading available; here it is a choice, and the reason it stays
+that way is the sentence below - a per-engine branch is what this provider does not do. Nothing here renames the
 server, for the same reason the MySQL provider does not
 ([mysql.md §1.1](./mysql.md#11-mariadb-and-the-other-mysql-protocol-engines)): the alternative is
 asserting a product the `INFO` reply never claimed.
 
 **`maxclients` is not universal.** `maxConnections` comes from `parsed.maxclients` and falls back to
-`0`. Redis, Valkey and KeyDB each publish `maxclients:10000`; Dragonfly's `INFO` carries no
-`maxclients` line at all, so the panel reads 0 — an absent limit shown as a zero, not a measured
-one.
+`0`. Redis, Valkey and KeyDB each publish `maxclients:10000`; neither Dragonfly's nor
+Garnet's `INFO` carries a `maxclients` line at all, so the panel reads 0 — an absent limit shown as
+a zero, not a measured one. **Garnet extends that to two more numbers**: it publishes no
+`used_memory`, so `getOverview().databaseSize` and the memory storage panel read `0 B` for a
+populated server, and neither `keyspace_hits` nor `keyspace_misses`, so the cache hit ratio reads
+the `: 100` fallback and the dashboard rates it *Excellent* (recorded as D14 in
+[`../BACKLOG.md`](../BACKLOG.md)). Its `connected_clients` also stays 0 with a client attached,
+though `CLIENT LIST` itself answers correctly - the session list is right while the count above it
+is not.
 
 **Every `CLIENT LIST` field is optional, and the absent ones surface as defaults.**
 `getActiveSessions()` ([`redis.ts:623`](../../src/lib/db/providers/keyvalue/redis.ts)) splits each
@@ -83,7 +94,7 @@ plausible-looking row rather than an error. Note that the user column reads `nam
 field Redis also publishes, and `name=` is empty until a client calls `CLIENT SETNAME` — so
 `default` is what every engine here shows, Redis included, rather than a relative's quirk.
 
-Two relatives diverge, both measured on the versions above:
+Three relatives diverge, all measured on the versions above:
 
 - **Dragonfly fills `name` with the connection id**, so the user column shows a number (`8`) rather
   than falling back to `default` — the fallback is never reached. Its line also carries no `cmd=`
@@ -91,9 +102,15 @@ Two relatives diverge, both measured on the versions above:
   session, whatever that session is doing.
 - **KeyDB reports a command without its subcommand** (`cmd=client` where Redis and Valkey both send
   `cmd=client|list`), which the query column shows verbatim.
+- **Garnet answers `CLIENT LIST` in full** - the session row is complete and correct - so the
+  divergence there is not in this reply but in the counters above it, listed under `maxclients`.
 
-Valkey is otherwise the closest of the three: every surface in this document answered against
-Valkey 9.1.1, with the version panel the single caveat.
+Valkey is otherwise the closest of the four: every surface in this document answered against
+Valkey 9.1.1, with the version panel the single caveat. Garnet answers every surface too, and its
+key browser grouped 71 keys into `user:*`, `session:*` and `queue:*` exactly as Redis does — what
+separates it is the three numbers above, not a missing surface. It also keeps nothing on disk: a
+restart empties it (measured, `dbsize` 71 before and 0 after), so a fixture there has to be
+re-seeded rather than restarted into.
 
 ---
 
