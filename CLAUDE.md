@@ -69,8 +69,9 @@ After every code change, run all six locally before claiming done — they match
 
 ### Rules & patterns
 
-> **⚠️ Providers are the lifeblood of this project — keep the triad in lockstep: code ↔ docs ↔ tests**, 1:1 per canonical type-id (`postgres`, `mysql`, `sqlite`, `oracle`, `mssql`, `mongodb`, `redis`, plus the embedded `libredb`):
-> - Code: `src/lib/db/providers/<family>/<type-id>.ts` · Docs: `docs/providers/<type-id>.md` · Tests: `tests/integration/db/<type-id>-provider.test.ts`
+> **⚠️ Providers are the lifeblood of this project — keep the triad in lockstep: code ↔ docs ↔ tests**, 1:1 per canonical type-id — the type-id set is the `DatabaseType` union in [`src/lib/types.ts`](src/lib/types.ts) (`postgres`, `mysql`, `sqlite`, `mongodb`, `redis`, `oracle`, `mssql`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `cassandra`, `trino`, plus the embedded `libredb`):
+> - Code: `src/lib/db/providers/<family>/<type-id>.ts`, or `src/lib/db/providers/<family>/<type-id>/index.ts` when the provider is split across modules, as `couchbase`, `clickhouse`, `druid`, `trino` and `cassandra` are · Docs: `docs/providers/<type-id>.md` · Tests: `tests/integration/db/<type-id>-provider.test.ts`
+> - **One directory may serve two type-ids** — `src/lib/db/providers/sql/search/` is both `elasticsearch` and `opensearch` (#424). Docs and tests stay 1:1 anyway: the invariant is per type-id, and each doc is the prime reference for its own product's measured behaviour.
 > - Any change to one side MUST sync the others **in the same PR**. The doc mirrors the code and the code mirrors the doc — never let them drift.
 
 - **DB abstraction:** Strategy Pattern. SQL providers extend `SQLBaseProvider`; MongoDB/Redis extend `BaseDatabaseProvider`. No `=== 'mongodb'` type-checks outside provider classes — drive behaviour through capabilities/labels.
