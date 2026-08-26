@@ -8,15 +8,17 @@ writes beautiful prose about a database and never calls a tool answers nothing h
 question these pages answer is not what a model knows but what it DOES on a run, and every figure
 comes from a run whose ledger is on disk.
 
-**Ten models are supported.** Each cleared all six surfaces — Investigate, Optimize, Assess,
+**Twelve models are supported.** Each cleared all six surfaces — Investigate, Optimize, Assess,
 Operate, Analyze and Plan — five consecutive times, at the 90-second per-turn limit the product
-ships: 300 runs, 300 passes.
+ships: 360 runs, 360 passes.
 
 | Model | Served through | Disk | Median run | Slowest run |
 | --- | --- | --- | --- | --- |
 | [`gemini-3.5-flash-lite`](gemini/gemini-3.5.md) | Gemini API | — | 10s | 21s |
 | [`granite4.1:8b`](granite/granite4.1.md) | Ollama | 5.3 GB | 11s | 22s |
+| [`qwen3.5:4b`](qwen/qwen3.5.md) | Ollama | 3.4 GB | 11s | 156s |
 | [`granite4.1:30b`](granite/granite4.1.md) | Ollama | 17 GB | 26s | 52s |
+| [`nemotron3:33b`](nvidia/nemotron3.md) | Ollama | 27 GB | 21s | 119s |
 | [`ornith:9b`](ornith/ornith.md) | Ollama | 5.5 GB | 31s | 118s |
 | [`qwen3.5:9b`](qwen/qwen3.5.md) | Ollama | 5.8 GB | 33s | 98s |
 | [`gemma4:26b`](gemma/gemma4.md) | Ollama | 16 GB | 36s | 92s |
@@ -27,7 +29,7 @@ ships: 300 runs, 300 passes.
 
 The durations are from one machine and are comparable with each other rather than portable: every
 figure was taken the same way, on the same database, through the same six surfaces. What they are
-for is choosing between these ten — the fastest reaches the same verdicts as the slowest in a
+for is choosing between these twelve — the fastest reaches the same verdicts as the slowest in a
 seventh of the time.
 
 One page per model version. Sizes are rows inside it, because `ollama pull qwen3:4b` is how a

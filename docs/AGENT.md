@@ -1565,7 +1565,7 @@ denial cannot be re-fed to the model as though the SQL were malformed.
 
 ## Supported models
 
-Ten models run every agent surface. Each cleared all six — Investigate, Optimize, Assess, Operate,
+Twelve models run every agent surface. Each cleared all six — Investigate, Optimize, Assess, Operate,
 Analyze and Plan — five consecutive times, at the turn limit the product ships, which is 30 of 30
 runs.
 

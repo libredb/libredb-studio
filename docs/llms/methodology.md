@@ -30,7 +30,7 @@ Each model was asked one question per surface, the same wording for every model,
 | Analyze | "Which part of the company costs us the most in salary?" |
 | Plan | "What tables are in this database and how do they relate to each other?" |
 
-Ten models, six surfaces, five runs: **300 runs, and all 300 passed.**
+Twelve models, six surfaces, five runs: **360 runs, and all 360 passed.**
 
 A run passes only when its goal verdict is `answered`. A run that ends `succeeded` having
 answered nothing is a failure here, and the ledger names which bar it missed.
@@ -44,7 +44,7 @@ happens every time somebody asks.
 
 | | |
 | --- | --- |
-| Hardware | Apple M5 Max, 48 GB unified memory |
+| Hardware | Apple M5 Max, 64 GB unified memory |
 | Storage | 2 TB SSD |
 | Power | macOS high-power mode, on AC |
 
@@ -84,7 +84,7 @@ keeps the shipped one. That is on its page.
 
 ## Driven through the interface as well
 
-The 300 runs above were opened over HTTP. A separate sweep drove all ten models through the
+The 360 runs above were opened over HTTP. A separate sweep drove all twelve models through the
 product's own rail — log in, pick the sample connection, type the objective, press Start, wait
 for the run to finish on screen — one run per surface: **57 of 60 passed.**
 
