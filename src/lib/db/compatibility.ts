@@ -357,7 +357,8 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     caveats: [
       "The overview shows DragonflyDB's Redis emulation level (7.4.0), not the Dragonfly version.",
       "Max connections reads 0, because Dragonfly's INFO reports no usable maxclients.",
-      "Active sessions show a numeric id instead of a username: Dragonfly's CLIENT LIST omits the user field.",
+      "Active sessions show a numeric id instead of a username: Dragonfly's CLIENT LIST sets name= to the connection id.",
+      "Every active session reads idle with state N: Dragonfly's CLIENT LIST carries no cmd= or flags= field.",
     ],
   },
   {

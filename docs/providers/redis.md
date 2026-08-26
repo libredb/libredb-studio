@@ -70,17 +70,27 @@ server, for the same reason the MySQL provider does not
 asserting a product the `INFO` reply never claimed.
 
 **`maxclients` is not universal.** `maxConnections` comes from `parsed.maxclients` and falls back to
-`0`. Redis and Valkey both publish it; Dragonfly's `INFO` carries no usable value, so the panel
-reads 0 — an absent limit shown as a zero, not a measured one.
+`0`. Redis, Valkey and KeyDB each publish `maxclients:10000`; Dragonfly's `INFO` carries no
+`maxclients` line at all, so the panel reads 0 — an absent limit shown as a zero, not a measured
+one.
 
 **Every `CLIENT LIST` field is optional, and the absent ones surface as defaults.**
 `getActiveSessions()` ([`redis.ts:623`](../../src/lib/db/providers/keyvalue/redis.ts)) splits each
 line into `key=value` pairs and substitutes a default for anything missing: the session's user is
-`name` falling back to `default`, its pid `id` falling back to `0`, its command `cmd` falling back
-to `idle`. A relative that omits a field therefore produces a plausible-looking row rather than an
-error. Two such cases are recorded: Dragonfly's session list shows an id where a username would be,
-and on KeyDB a command can arrive without its subcommand (`client` rather than `client|list`),
-which the query column shows verbatim.
+`name` falling back to `default`, its pid `id` falling back to `0`, its state `flags` falling back
+to `N`, its command `cmd` falling back to `idle`. A relative that omits a field therefore produces a
+plausible-looking row rather than an error. Note that the user column reads `name`, not the `user`
+field Redis also publishes, and `name=` is empty until a client calls `CLIENT SETNAME` — so
+`default` is what every engine here shows, Redis included, rather than a relative's quirk.
+
+Two relatives diverge, both measured on the versions above:
+
+- **Dragonfly fills `name` with the connection id**, so the user column shows a number (`8`) rather
+  than falling back to `default` — the fallback is never reached. Its line also carries no `cmd=`
+  and no `flags=` at all, so the query column reads `idle` and the state column `N` for every
+  session, whatever that session is doing.
+- **KeyDB reports a command without its subcommand** (`cmd=client` where Redis and Valkey both send
+  `cmd=client|list`), which the query column shows verbatim.
 
 Valkey is otherwise the closest of the three: every surface in this document answered against
 Valkey 9.1.1, with the version panel the single caveat.
