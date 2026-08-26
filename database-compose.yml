@@ -620,6 +620,19 @@ services:
     ports:
       - "15432:5432"
 
+  # Percona Distribution for PostgreSQL. Same reasoning as `percona-mysql` above, and the
+  # one measured difference is the opposite of that one's: this build DOES put its own name
+  # in `version()`, so the product displays it.
+  percona-postgresql:
+    image: percona/percona-distribution-postgresql:18.6
+    container_name: libredb-percona-postgresql
+    profiles: ["compat"]
+    environment:
+      POSTGRES_PASSWORD: "Probe123pass!"
+      POSTGRES_DB: probe
+    ports:
+      - "15440:5432"
+
   # `yugabyted` is the single-node launcher: it starts the master and the tserver in
   # one container, and --background=false keeps it in the foreground so Docker owns
   # the process and the container does not exit immediately. YSQL listens on 5433,
@@ -705,6 +718,21 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  # Percona Server for MySQL, a drop-in build of MySQL. Nothing here is Percona-specific:
+  # the point of the entry is that the probe ran against a real one rather than assuming a
+  # drop-in behaves like the thing it drops into.
+  #
+  # PINNED to 8.4: `version()` answers a bare 8.4.11-11 there and the product name is only in
+  # `@@version_comment`, so the tag is the only durable record of which build was measured.
+  percona-mysql:
+    image: percona/percona-server:8.4
+    container_name: libredb-percona-mysql
+    profiles: ["compat"]
+    environment:
+      MYSQL_ROOT_PASSWORD: "Probe123pass!"
+    ports:
+      - "13307:3306"
 
   # TiDB needs no PD and no TiKV to run here: --store=unistore is its embedded
   # single-node storage engine, so this is one container like every other entry, and

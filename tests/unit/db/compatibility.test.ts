@@ -45,10 +45,12 @@ const COMPOSE_SERVICE_BY_ENGINE: Readonly<Record<string, string>> = {
   YugabyteDB: "yugabytedb",
   "Apache Cloudberry (incubating)": "cloudberry",
   "AlloyDB Omni": "alloydb",
+  "Percona Distribution for PostgreSQL": "percona-postgresql",
   MariaDB: "mariadb",
   TiDB: "tidb",
   StarRocks: "starrocks",
   "Apache Doris": "doris",
+  "Percona Server for MySQL": "percona-mysql",
   Vitess: "vitess",
   OceanBase: "oceanbase",
   SingleStore: "singlestore",
@@ -187,6 +189,30 @@ describe("wire-compatibility registry", () => {
     // cache hit ratio is the `: 100` fallback D14 already records).
     expect(caveats).toContain("used_memory");
     expect(caveats).toContain("cache hit ratio");
+  });
+
+  test("both Percona distributions are full relatives, and they differ in one thing only", () => {
+    // Probed 2026-08-26 (#424 Phase 0) against `percona/percona-server:8.4` and
+    // `percona/percona-distribution-postgresql:18.6`. Both answer all fifteen surfaces with
+    // the correct numbers, which is the expected result for a drop-in build and the reason
+    // these two were the cheapest names left on the list.
+    //
+    // The one difference is worth a test rather than a sentence, because it is the same
+    // trap Garnet's row records and it lands on only one of the pair: Percona for
+    // PostgreSQL puts its own name in `version()` ("PostgreSQL 18.6 - Percona Server for
+    // PostgreSQL 18.6.1"), so the product displays it, while Percona Server for MySQL
+    // answers a bare `8.4.11-11` and keeps its identity in `@@version_comment`, which the
+    // provider does not read - so that one is indistinguishable from stock MySQL on screen.
+    const mysqlSide = compatibleEnginesFor("mysql").find((e) => e.name === "Percona Server for MySQL");
+    const pgSide = compatibleEnginesFor("postgres").find((e) => e.name === "Percona Distribution for PostgreSQL");
+    expect(mysqlSide?.tier).toBe("full");
+    expect(pgSide?.tier).toBe("full");
+    expect(mysqlSide?.probedVersion).toBe("Percona Server for MySQL 8.4.11-11 (version() reports 8.4.11-11)");
+    expect(pgSide?.probedVersion).toBe("Percona Server for PostgreSQL 18.6.1 on PostgreSQL 18.6");
+    expect(mysqlSide?.caveats.some((c) => c.includes("@@version_comment"))).toBe(true);
+    // The PostgreSQL side must NOT carry that caveat - it does not have the problem, and a
+    // copied caveat is how a pair of rows stops describing two different measurements.
+    expect(pgSide?.caveats.some((c) => c.includes("@@version_comment"))).toBe(false);
   });
 
   test("every entry names a driver we actually ship", () => {

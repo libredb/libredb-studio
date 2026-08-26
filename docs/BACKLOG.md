@@ -22,7 +22,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1–D27, D30, D31, U17 · 9
+- [Drivers and connections](#drivers-and-connections) — D1–D27, D30–D32, U17 · 10
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 10
@@ -365,6 +365,28 @@ clicked one. Worth confirming while this is open, since the fix touches the same
 **Done when:** selecting a connection whose schema read fails shows an empty object browser
 carrying the engine's own error, never the previous connection's tables - verified in a browser
 across two connections where the second one's read fails, not through the hook in isolation.
+
+---
+
+### D32. The MySQL health panel reports `performance_schema` unavailable on a server that has it
+
+Measured 2026-08-26 while probing Percona Server for MySQL, and confirmed on the baseline in the
+same pass, which is what makes it ours: `getHealth()` returns
+`slowQueries: [{ query: "Performance schema not available", calls: 0, avgTime: "N/A" }]` on both
+`percona/percona-server:8.4` and a stock **MySQL 26.7.0**, while on each of them
+`@@performance_schema` is `1` and `getSlowQueries()` on the same connection returns real rows.
+
+So the health reading states an engine capability as absent when it is present, and the panel
+beside it disproves the statement. It is a fabricated absence rather than a missing number, which
+is the class the absence rule (#477) exists to prevent - the honest reading is either the rows
+`getSlowQueries()` can already produce, or no slow-query line at all.
+
+Not Percona's, not new, and not caused by the wire-compatible work - it just took a drop-in build
+to notice, because a caveat had to be written about a reading that turned out to be the baseline's.
+
+**Done when:** the health panel's slow-query line either carries the rows the slow-query read
+returns or is absent, and the "not available" wording appears only on a server where
+`@@performance_schema` is actually 0 - both arms measured, one server of each kind.
 
 ---
 
