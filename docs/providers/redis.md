@@ -49,6 +49,42 @@ generic components render Redis-appropriate wording.
 | `runMaintenance('analyze')` | Server info snapshot | `INFO` |
 | Indexes / table stats | Not applicable | returns `[]` |
 
+### Valkey, DragonflyDB and KeyDB
+
+This provider is what a Valkey connection uses: there is no `valkey` type id, and choosing Redis in
+the connection dialog is the documented way to reach it. `ioredis` speaks the protocol all four
+servers share, and the connection dialog's wire-compatibility hint names the engines this driver has
+been measured against, from the same data
+([`compatibility.ts`](../../src/lib/db/compatibility.ts)). The full per-engine table is in
+[`README.md`](./README.md#wire-compatible-engines); three behaviours belong here because they are
+this provider's code, not the engine's.
+
+**The overview reports the emulation level, not the product.** `getOverview()` reads
+`parsed.redis_version` ([`redis.ts:581`](../../src/lib/db/providers/keyvalue/redis.ts)) — the one
+version field this whole family publishes — and passes it through as the server gave it. Valkey
+9.1.1 therefore shows **7.2.4** and DragonflyDB df-v1.40.1 shows **7.4.0**: each server's declared
+Redis compatibility level rather than its own release. KeyDB 6.3.4 publishes no version field of its
+own at all, so its overview cannot be told apart from a Redis 6 server. Nothing here renames the
+server, for the same reason the MySQL provider does not
+([mysql.md §1.1](./mysql.md#11-mariadb-and-the-other-mysql-protocol-engines)): the alternative is
+asserting a product the `INFO` reply never claimed.
+
+**`maxclients` is not universal.** `maxConnections` comes from `parsed.maxclients` and falls back to
+`0`. Redis and Valkey both publish it; Dragonfly's `INFO` carries no usable value, so the panel
+reads 0 — an absent limit shown as a zero, not a measured one.
+
+**Every `CLIENT LIST` field is optional, and the absent ones surface as defaults.**
+`getActiveSessions()` ([`redis.ts:623`](../../src/lib/db/providers/keyvalue/redis.ts)) splits each
+line into `key=value` pairs and substitutes a default for anything missing: the session's user is
+`name` falling back to `default`, its pid `id` falling back to `0`, its command `cmd` falling back
+to `idle`. A relative that omits a field therefore produces a plausible-looking row rather than an
+error. Two such cases are recorded: Dragonfly's session list shows an id where a username would be,
+and on KeyDB a command can arrive without its subcommand (`client` rather than `client|list`),
+which the query column shows verbatim.
+
+Valkey is otherwise the closest of the three: every surface in this document answered against
+Valkey 9.1.1, with the version panel the single caveat.
+
 ---
 
 ## 2. Architecture
