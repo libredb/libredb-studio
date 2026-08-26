@@ -298,6 +298,17 @@ const manyPieResult: QueryResult = {
   executionTime: 1,
 };
 
+// 9 numeric fields — one more than the 8-slot palette — to test the multi-series cap (#403)
+const manySeriesResult: QueryResult = {
+  rows: [
+    { label: "row1", f1: 1, f2: 2, f3: 3, f4: 4, f5: 5, f6: 6, f7: 7, f8: 8, f9: 9 },
+    { label: "row2", f1: 2, f2: 3, f3: 4, f4: 5, f5: 6, f6: 7, f7: 8, f8: 9, f9: 10 },
+  ],
+  fields: ["label", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9"],
+  rowCount: 2,
+  executionTime: 1,
+};
+
 // =============================================================================
 // DataCharts Tests
 // =============================================================================
@@ -599,7 +610,7 @@ describe("DataCharts", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Pie-specific: X-Axis hidden, "Showing top 10" footer
+  // Pie-specific: X-Axis hidden, "Showing top N" footer
   // -----------------------------------------------------------------------
 
   test("X-Axis label hidden for pie chart", async () => {
@@ -608,13 +619,69 @@ describe("DataCharts", () => {
     expect(queryByText("X-Axis")).toBeNull();
   });
 
-  test('shows "Showing top 10 values" for pie with >10 data points', async () => {
+  // The palette has 8 slots. Slicing a pie at more than that would repaint slot
+  // 1's colour onto slice 9 with nothing to tell them apart (#403) — so the pie
+  // caps at the palette size, not at an arbitrary "top 10".
+  test('shows "Showing top 8 values" for pie with more rows than palette slots', async () => {
     const { queryByText, container } = render(React.createElement(DataCharts, { result: manyPieResult }));
     // manyPieResult has 15 rows and suggests bar, switch to pie
     fireEvent.click(queryByText("Pie")!);
     await waitFor(() => {
       const footerText = container.textContent || "";
-      expect(footerText).toContain("Showing top 10 values");
+      expect(footerText).toContain("Showing top 8 values");
+    });
+  });
+
+  test("does not show a pie truncation footer when rows fit the palette", async () => {
+    const { queryByText, container } = render(React.createElement(DataCharts, { result: fewCategoricalResult }));
+    fireEvent.click(queryByText("Pie")!);
+    await waitFor(() => {
+      expect(container.textContent || "").not.toContain("Showing top");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Multi-series cap: a 9th line/bar series must not repaint slot 1's colour (#403)
+  // -----------------------------------------------------------------------
+
+  test("selecting more series than the palette has slots shows the series-truncation footer", async () => {
+    const { queryAllByRole, queryByText, container } = render(
+      React.createElement(DataCharts, { result: manySeriesResult }),
+    );
+    // manySeriesResult's low row count suggests pie by default, where each click
+    // replaces the single selection instead of accumulating — switch to Bar first.
+    fireEvent.click(queryByText("Bar")!);
+
+    const menuItems = queryAllByRole("menuitem");
+    // f1 is auto-selected as the default single Y field; select f2..f9 to reach 9 series total.
+    for (const name of ["f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9"]) {
+      const item = menuItems.find((el) => el.textContent?.includes(name));
+      expect(item).not.toBeNull();
+      fireEvent.click(item!);
+    }
+
+    await waitFor(() => {
+      const footerText = container.textContent || "";
+      expect(footerText).toContain("Showing first 8 of 9 series");
+    });
+  });
+
+  test("selecting up to 8 series does not show the series-truncation footer", async () => {
+    const { queryAllByRole, queryByText, container } = render(
+      React.createElement(DataCharts, { result: manySeriesResult }),
+    );
+    fireEvent.click(queryByText("Bar")!);
+
+    const menuItems = queryAllByRole("menuitem");
+    // f1 is auto-selected; select f2..f8 to reach exactly 8 — the palette's full size.
+    for (const name of ["f2", "f3", "f4", "f5", "f6", "f7", "f8"]) {
+      const item = menuItems.find((el) => el.textContent?.includes(name));
+      expect(item).not.toBeNull();
+      fireEvent.click(item!);
+    }
+
+    await waitFor(() => {
+      expect(container.textContent || "").not.toContain("Showing first");
     });
   });
 

@@ -401,6 +401,12 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
   // so the chart is the one surface that has to be handed its palette.
   const viz = chartTheme(useEffectiveTheme());
   const CHART_COLORS = viz.series;
+  // The palette has one colour per slot; past that, a series or pie slice
+  // would repeat an earlier colour and become indistinguishable from it. Cap
+  // rendering at the palette size rather than silently reusing a colour, and
+  // say so in the footer so a dropped series isn't mistaken for missing data
+  // (it's still in the Results grid).
+  const MAX_SERIES = CHART_COLORS.length;
 
   // Recharts writes legend entries in the series colour. The coloured icon beside
   // each entry already carries identity, so the word itself goes back to ink —
@@ -657,6 +663,9 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
         return <CircleAlert strokeWidth={1.5} className="w-3 h-3" />;
     }
   };
+
+  const plottedYAxis = yAxis.slice(0, MAX_SERIES);
+  const droppedYAxisCount = yAxis.length - plottedYAxis.length;
 
   return (
     <div className="h-full flex flex-col bg-sunken">
@@ -928,7 +937,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
-                {yAxis.map((field, index) => (
+                {plottedYAxis.map((field, index) => (
                   <Bar
                     key={field}
                     dataKey={field}
@@ -950,7 +959,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
-                {yAxis.map((field, index) => (
+                {plottedYAxis.map((field, index) => (
                   <Line
                     key={field}
                     type="monotone"
@@ -975,7 +984,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
-                {yAxis.map((field, index) => (
+                {plottedYAxis.map((field, index) => (
                   <Area
                     key={field}
                     type="monotone"
@@ -1038,7 +1047,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
-                {yAxis.map((field, index) => (
+                {plottedYAxis.map((field, index) => (
                   <Bar key={field} dataKey={field} stackId="stack" fill={CHART_COLORS[index % CHART_COLORS.length]} />
                 ))}
               </BarChart>
@@ -1055,7 +1064,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
-                {yAxis.map((field, index) => (
+                {plottedYAxis.map((field, index) => (
                   <Area
                     key={field}
                     type="monotone"
@@ -1070,7 +1079,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
             ) : (
               <PieChart margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
                 <Pie
-                  data={chartData.slice(0, 10)}
+                  data={chartData.slice(0, MAX_SERIES)}
                   dataKey={yAxis[0]}
                   nameKey={xAxis}
                   cx="50%"
@@ -1082,8 +1091,8 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                   label={<PieSliceLabel ink={viz.ink} />}
                   labelLine={{ stroke: viz.grid }}
                 >
-                  {chartData.slice(0, 10).map((_entry, index) => (
-                    <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                  {chartData.slice(0, MAX_SERIES).map((_entry, index) => (
+                    <Cell key={`cell-${index}`} fill={CHART_COLORS[index]} />
                   ))}
                 </Pie>
                 <Tooltip content={<CustomTooltip />} />
@@ -1105,7 +1114,14 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
         <span>
           Numeric: <span className="text-fg-tertiary font-mono">{analysis.numericFields.length}</span>
         </span>
-        {chartType === "pie" && chartData.length > 10 && <span className="text-amber-500">Showing top 10 values</span>}
+        {chartType === "pie" && chartData.length > MAX_SERIES && (
+          <span className="text-amber-500">Showing top {MAX_SERIES} values</span>
+        )}
+        {chartType !== "pie" && droppedYAxisCount > 0 && (
+          <span className="text-amber-500">
+            Showing first {MAX_SERIES} of {yAxis.length} series — see the Results grid for the rest
+          </span>
+        )}
       </div>
     </div>
   );
