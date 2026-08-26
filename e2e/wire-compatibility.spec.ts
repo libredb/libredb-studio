@@ -55,7 +55,26 @@ test.describe("Wire compatibility hint", () => {
     await expect(hint).toContainText("CockroachDB");
     await expect(hint.getByTestId("wire-compat-tier-CockroachDB")).toContainText("partial support");
     await expect(hint.getByTestId("wire-compat-tier-Materialize")).toContainText("query editor only");
+    // QuestDB must NOT appear here (#424, probed 2026-08-26 and refused a row): it speaks the
+    // PostgreSQL wire protocol and a statement answers through the provider, but the editor
+    // cannot run anything - `SELECT pg_backend_pid()` precedes every run with a queryId and
+    // QuestDB has no such function. This hint is a claim a user acts on, so the absence is
+    // asserted rather than left to whoever next reads the registry.
+    await expect(hint).not.toContainText("QuestDB");
     await expect(hint.getByTestId("wire-compat-caveat-notice")).toBeVisible();
+  });
+
+  test("Redis names Garnet beside the three relatives it already had", async ({ page }) => {
+    const dialog = page.locator('[role="dialog"]');
+    await dialog.getByText("Redis", { exact: true }).click();
+
+    const hint = dialog.getByTestId("wire-compat-hint");
+    await expect(hint).toBeVisible();
+    await expect(hint).toContainText("Garnet");
+    // All four Redis relatives are `full`, so no tier suffix is rendered for any of them -
+    // asserting the absence is what keeps this test honest about which claim is being made.
+    await expect(hint).toContainText("Valkey");
+    await expect(hint.getByTestId("wire-compat-tier-Garnet")).toHaveCount(0);
   });
 
   test("SQLite shows no hint at all: it has no wire protocol to be compatible with", async ({ page }) => {

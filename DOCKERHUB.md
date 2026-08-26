@@ -131,11 +131,12 @@ Fourteen external engines share one interface, and three of them are read-only b
 
 ### Engines with no provider of their own
 
-Twenty further engines speak the wire protocol of one of the fourteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has seventeen rows rather than twenty because engines that behave identically share a row; all twenty are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+Twenty-three further engines speak the wire protocol of one of the fourteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has nineteen rows rather than twenty-three because engines that behave identically share a row; all twenty-three are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |
-| MariaDB | `mysql` | Full |
+| MariaDB · Percona Server for MySQL | `mysql` | Full — both are drop-in builds and both were measured rather than assumed: all fifteen surfaces answer and the numbers are correct. Nothing on screen says Percona, though: `version()` answers a bare 8.4.11-11 and the product name is only in `@@version_comment` |
+| Percona Distribution for PostgreSQL | `postgres` | Full — behaves as PostgreSQL throughout, with correct row counts and sizes, and unlike the MySQL build it names itself in `version()` |
 | TiDB | `mysql` | Full — but a freshly loaded table reads 0 rows and 0 B until TiDB's background statistics catch up, the slow-query panel stays empty, and only a standalone `--store=unistore` server was probed |
 | Vitess | `mysql` | Full. Row counts and sizes are exact, but a running query cannot be cancelled: vtgate refuses `KILL QUERY` and the statement runs to completion. Per-index sizes read 0 bytes, and only an unsharded single-shard keyspace was probed |
 | Citus | `postgres` | Full — but statistics describe the coordinator, so a distributed table's row count and size are wrong rather than missing |
@@ -143,6 +144,7 @@ Twenty further engines speak the wire protocol of one of the fourteen drivers ab
 | YugabyteDB | `postgres` | Full — but row counts and sizes read 0 until you run `ANALYZE`, and index sizes always read 0 bytes |
 | AlloyDB Omni | `postgres` | Full. Row counts and sizes are exact, but the version panel cannot be told apart from a stock PostgreSQL 17 because `version()` names AlloyDB nowhere, eight of AlloyDB's own `google_ml` tables appear in the object browser, and the slow-query panel stays empty until `pg_stat_statements` is installed |
 | Valkey · DragonflyDB · KeyDB | `redis` | Full |
+| Garnet | `redis` | Full — every Redis surface answers, and the key browser grouped 71 keys into three patterns. It is the one relative whose real version was there to read and went unread: the overview shows Redis 7.4.3 while `INFO` also carries `garnet_version:2.1.5`. Two readings are absences wearing a value - every size shows 0 B because Garnet publishes no `used_memory`, and the cache hit ratio shows 100% because it publishes no keyspace counters. Max connections reads 0 |
 | FerretDB | `mongodb` | Full — sign in with the backend PostgreSQL credentials |
 | StarRocks | `mysql` | Partial — editor, table list, column metadata, table and storage stats, metrics and slow queries work; the overview, health and session panels do not, the version reads MySQL 5.1, and row counts, sizes and indexes are empty |
 | Apache Doris | `mysql` | Partial — the engine StarRocks was forked from, and the more trustworthy of the two: row counts and sizes are correct (2000 rows and 10187 bytes read as exactly that), cancellation genuinely cancels, and sessions, storage and slow queries all answer. The overview and health panels fail on one statement form its grammar rejects, a freshly loaded table reads 0 for about a minute until its background statistics land, the version reads MySQL 5.7.99, no index is ever reported, and a foreign key is accepted but invisible and unenforced |

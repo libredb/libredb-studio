@@ -73,7 +73,7 @@ export const SHIPPED_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(Obj
  * `libredb` is the embedded store this app carries with it; the other fourteen are
  * external engines you point the product at. Everything published as a database
  * count means the external fourteen - README.md's "fourteen drivers reach
- * thirty-four named engines", the login hero's engine claim - so the split needs a
+ * thirty-seven named engines", the login hero's engine claim - so the split needs a
  * definition somewhere, and it belongs beside `SHIPPED` rather than in the UI that
  * prints it. That is the same reason `SHIPPED` itself lives here.
  *
@@ -143,13 +143,22 @@ export interface WireCompatibleEngine {
  * 2026-08-20, Apache Cloudberry and Vitess from a third run the same day,
  * AlloyDB Omni from a fourth run the same day, OceanBase Community Edition
  * and SingleStore from a fifth run the same day, ScyllaDB from a sixth run on
- * 2026-08-21/22, and Apache Doris from a seventh on 2026-08-26.
+ * 2026-08-21/22, and Apache Doris, Garnet and both Percona distributions from a seventh
+ * run on 2026-08-26.
  * Names still awaiting an instance are tracked in issue #424, never here: there
  * is no "pending" state on purpose, because a reader cannot tell a pending entry
  * from a probed one. A name that WAS probed and did not earn an entry has no
  * representation here either - Cloud Spanner's PostgreSQL dialect answered 1 of 15
- * surfaces - so that result is recorded in `docs/providers/README.md` beside this
- * table, with the number that refused it.
+ * surfaces, and QuestDB 10.0.1 failed the one surface a query-only row exists to claim -
+ * so those results are recorded in `docs/providers/README.md` beside this table, with the
+ * number that refused each of them.
+ *
+ * QuestDB is the entry NOT to add back without re-reading that section. It looks like a
+ * query-only relative from the provider's side and is not one from the product's: the
+ * editor always attaches a `queryId`, the provider then issues `SELECT pg_backend_pid()`
+ * first, and QuestDB has no such function - so `provider.query(sql)` answers three rows
+ * while pressing Run answers a 500. Same shape as Cloud Spanner, found the same way,
+ * and only in a browser.
  */
 export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
   {
@@ -250,6 +259,21 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     ],
   },
   {
+    // The drop-in pair, and they are two entries rather than one because they are served by
+    // two different drivers - the invariant here is one row per (engine, driver) claim.
+    // Read them together anyway: the measurements are identical except for which of the two
+    // publishes its own name where the provider looks.
+    name: "Percona Distribution for PostgreSQL",
+    via: "postgres",
+    tier: "full",
+    probedVersion: "Percona Server for PostgreSQL 18.6.1 on PostgreSQL 18.6",
+    caveats: [
+      "Behaves as PostgreSQL throughout: all fifteen surfaces answer, row counts and sizes are correct (2000 rows read as 2000, 131072 bytes as 131072), and a foreign key is read back with its indexes.",
+      "The version panel names Percona, unlike the MySQL distribution below: version() answers PostgreSQL 18.6 - Percona Server for PostgreSQL 18.6.1, so there is nothing to mistake for stock PostgreSQL.",
+      "Slow queries are empty until pg_stat_statements is enabled, which is stock PostgreSQL behaviour and not a Percona property.",
+    ],
+  },
+  {
     name: "MariaDB",
     via: "mysql",
     tier: "full",
@@ -258,6 +282,16 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "The version shown is MariaDB's full build string, including its OS suffix, not a MySQL-style number.",
       "performance_schema ships OFF (@@performance_schema = 0), so the cache-hit, queries-per-second and buffer-pool figures are absent and the slow-query list is empty until the server is started with performance_schema=ON. Everything the schema tree, sizes, sessions and EXPLAIN need comes from information_schema and is unaffected.",
       "Verified on MariaDB 12.3 only; the 10.x information_schema surface was not probed.",
+    ],
+  },
+  {
+    name: "Percona Server for MySQL",
+    via: "mysql",
+    tier: "full",
+    probedVersion: "Percona Server for MySQL 8.4.11-11 (version() reports 8.4.11-11)",
+    caveats: [
+      "Behaves as MySQL throughout: all fifteen surfaces answer, row counts and sizes are correct (2000 rows read as 2000, 114688 bytes as 114688), indexes and a foreign key are read back, and Analyze, Optimize and Check all succeed.",
+      "Nothing on screen says Percona: version() answers a bare 8.4.11-11 and the product name lives in @@version_comment (Percona Server (GPL), Release 11), which the provider does not read - so the overview is indistinguishable from a stock MySQL 8.4.",
     ],
   },
   {
@@ -395,6 +429,25 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     ],
   },
   {
+    // The fourth Redis relative and the only one that publishes its own version while the
+    // product shows the emulation level anyway: `garnet_version` and `server_name` are both
+    // in its INFO output. Valkey and DragonflyDB publish only an emulation level, and KeyDB
+    // publishes nothing of its own, so on those three the displayed version is the best
+    // available reading. Here it is not.
+    name: "Garnet",
+    via: "redis",
+    tier: "full",
+    probedVersion: "Garnet 2.1.5 (advertises Redis 7.4.3)",
+    caveats: [
+      "The overview shows the Redis emulation level (7.4.3), not Garnet's version. Unlike the other Redis relatives, Garnet does publish its own - garnet_version:2.1.5 and server_name:garnet in INFO - and the provider reads redis_version instead.",
+      "Every size reads 0 B: Garnet's INFO publishes no used_memory field at all, so the database size and the memory storage panel are a derived zero rather than a measurement.",
+      "The cache hit ratio reads 100%: Garnet publishes neither keyspace_hits nor keyspace_misses, and 100 is the fallback both counters being absent produces (D14).",
+      "Max connections reads 0, as on DragonflyDB: Garnet publishes no maxclients.",
+      "Connected clients reads 0 even with a client attached, because Garnet's connected_clients stays 0; the session list itself is correct and shows the connection.",
+      "Key prefixes group as expected: 71 keys across user:*, session:* and queue:* were read back as three patterns.",
+    ],
+  },
+  {
     name: "FerretDB",
     via: "mongodb",
     tier: "full",
@@ -446,7 +499,7 @@ export function compatibleEnginesFor(type: DatabaseType): readonly WireCompatibl
  *
  * Still no runtime consumer: README.md and the docs table are markdown and quote the
  * number as prose, and the login hero prints the two halves separately - fourteen in
- * the proof row, twenty in the relatives line - rather than their sum. This exists
+ * the proof row, twenty-three in the relatives line - rather than their sum. This exists
  * so the arithmetic has one definition, and the unit test pins it.
  */
 export function connectableProductCount(): number {

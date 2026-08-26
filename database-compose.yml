@@ -577,6 +577,28 @@ services:
     ports:
       - "6875:6875"
 
+  # QuestDB speaks the PostgreSQL wire protocol on 8812 and its own HTTP API on 9000.
+  #
+  # This service exists to reproduce a REFUSAL, not a working connection: QuestDB was probed
+  # on 2026-08-26 and earns no registry row, because the editor cannot run anything there -
+  # every run with a `queryId` is preceded by `SELECT pg_backend_pid()`, which QuestDB does
+  # not have. It stays here so that finding can be re-measured rather than trusted; see
+  # `docs/providers/README.md`, "Measured, and refused a row".
+  #
+  # The HTTP port is published because the fixture recipe seeds through it: QuestDB has no
+  # `psql`-friendly bulk insert, and `long_sequence()` over /exec is the documented way.
+  #
+  # PINNED to 10.0.1, which is what the 2026-08-26 probe measured. `:latest` moved during
+  # that probe run - the tag served 10.0.1 while `version()` still answers PostgreSQL 12.3,
+  # so a rolling tag would change the engine under a version string that never moves.
+  questdb:
+    image: questdb/questdb:10.0.1
+    container_name: libredb-questdb
+    profiles: ["compat"]
+    ports:
+      - "18812:8812"
+      - "19000:9000"
+
   risingwave:
     image: risingwavelabs/risingwave:latest
     container_name: libredb-risingwave
@@ -597,6 +619,19 @@ services:
       POSTGRES_DB: probe
     ports:
       - "15432:5432"
+
+  # Percona Distribution for PostgreSQL. Same reasoning as `percona-mysql` above, and the
+  # one measured difference is the opposite of that one's: this build DOES put its own name
+  # in `version()`, so the product displays it.
+  percona-postgresql:
+    image: percona/percona-distribution-postgresql:18.6
+    container_name: libredb-percona-postgresql
+    profiles: ["compat"]
+    environment:
+      POSTGRES_PASSWORD: "Probe123pass!"
+      POSTGRES_DB: probe
+    ports:
+      - "15440:5432"
 
   # `yugabyted` is the single-node launcher: it starts the master and the tserver in
   # one container, and --background=false keeps it in the foreground so Docker owns
@@ -683,6 +718,21 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  # Percona Server for MySQL, a drop-in build of MySQL. Nothing here is Percona-specific:
+  # the point of the entry is that the probe ran against a real one rather than assuming a
+  # drop-in behaves like the thing it drops into.
+  #
+  # PINNED to 8.4: `version()` answers a bare 8.4.11-11 there and the product name is only in
+  # `@@version_comment`, so the tag is the only durable record of which build was measured.
+  percona-mysql:
+    image: percona/percona-server:8.4
+    container_name: libredb-percona-mysql
+    profiles: ["compat"]
+    environment:
+      MYSQL_ROOT_PASSWORD: "Probe123pass!"
+    ports:
+      - "13307:3306"
 
   # TiDB needs no PD and no TiKV to run here: --store=unistore is its embedded
   # single-node storage engine, so this is one container like every other entry, and
@@ -874,6 +924,23 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # Microsoft Garnet, the fourth RESP relative. Single container, no configuration, and it
+  # needs no password - it starts with none, like the `redis` service above.
+  #
+  # PINNED to 2.1.5: Garnet is the one relative here that publishes its own version
+  # (`garnet_version` in INFO), so the tag and the caveat about which version the product
+  # displays have to stay in step.
+  #
+  # No volume, deliberately: Garnet holds everything in memory here and a restart empties it
+  # (measured - `dbsize` 71 before a `docker stop`, 0 after), so re-run the key seeding from
+  # docs/providers/README.md rather than expecting the fixture to survive.
+  garnet:
+    image: ghcr.io/microsoft/garnet:2.1.5
+    container_name: libredb-garnet
+    profiles: ["compat"]
+    ports:
+      - "16380:6379"
 
   # -- MongoDB wire --------------------------------------------------------
 
