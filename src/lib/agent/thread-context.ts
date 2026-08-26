@@ -43,6 +43,9 @@ const SPINE_BUDGET_SHARE = 0.75;
 
 const REPORT_CUT_NOTICE = "[The rest of this step's report is not shown here.]";
 
+/** The whole report, rather than its tail, had no room left. */
+const REPORT_ABSENT_NOTICE = "[This step's report is not shown here at all.]";
+
 const cap = (text: string, max: number): string => (text.length <= max ? text : `${text.slice(0, max - 3)}...`);
 
 /**
@@ -123,15 +126,26 @@ export function deriveThreadContext(
     notices.push(`[${hidden} earlier step${hidden === 1 ? " is" : "s are"} no longer shown here.]`);
   }
 
-  const head = [...notices, ...spineLines].join("\n");
+  // Notices lead, and that is load-bearing rather than tidy: what has to survive a
+  // final `cap` is the account of what is MISSING, and `cap` cuts the tail.
+  const headWith = (extra: readonly string[]): string => [...notices, ...extra, ...spineLines].join("\n");
   const threadId = previous.thread.threadId;
   const carried = droppedSteps === 0 ? {} : { droppedSteps };
   const report = reportOf(previous);
   const reportText = report.join("\n");
+  const head = headWith([]);
   const remaining = budget - head.length - 1;
 
-  if (report.length === 0 || remaining <= 0) {
+  if (report.length === 0) {
     return { threadId, steps, ...carried, text: cap(head, budget) };
+  }
+  // A report existed and there is no room for any of it. Said rather than dropped: the
+  // spine's own share can leave nothing behind at a small operator-set budget, and a
+  // conversation that silently loses its evidence is the one thing the rest of this
+  // module refuses to do. The notice goes at the HEAD, because appending it and then
+  // capping is how it would be the first thing lost.
+  if (remaining <= 0) {
+    return { threadId, steps, ...carried, text: cap(headWith([REPORT_ABSENT_NOTICE]), budget) };
   }
   if (reportText.length <= remaining) {
     return { threadId, steps, ...carried, text: `${head}\n${reportText}` };

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { AGENT_TERMINAL_STATUSES } from "@/lib/agent/types";
 import { assertPersistableState } from "@/lib/agent/state-guard";
 import type {
   AgentArtifactReference,
@@ -352,5 +353,23 @@ describe("contract shapes", () => {
     // policy.ts): a run records who started it, and the execution mode is
     // supplied by the server when a tool call reaches the pipeline.
     expect(Object.keys(RUN.actor).sort()).toEqual(["role", "sessionId"]);
+  });
+
+  test("the terminal statuses are the union's members and nothing else", () => {
+    /*
+      `AGENT_TERMINAL_STATUSES` is built with `satisfies Record<AgentRunTerminalStatus,
+      true>`, so adding a member to the union stops `types.ts` compiling until it is
+      named — which is the half a test cannot assert. What this asserts is the other
+      half: that the set says what the union says today, and that neither non-terminal
+      status has crept into it.
+
+      It matters at one call site in particular. `POST /api/agent/runs` refuses to
+      continue a conversation whose predecessor is not terminal, so a status missing
+      here is a legitimate follow-up refused with a message that names nothing: the
+      caller is told only that the run may not be continued.
+    */
+    expect([...AGENT_TERMINAL_STATUSES].sort()).toEqual(["cancelled", "failed", "succeeded"]);
+    expect(AGENT_TERMINAL_STATUSES.has("queued")).toBe(false);
+    expect(AGENT_TERMINAL_STATUSES.has("running")).toBe(false);
   });
 });

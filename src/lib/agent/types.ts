@@ -245,6 +245,29 @@ export type AgentToolProtocol = "native" | "prompted";
 export type AgentRunStatus = "queued" | "running" | AgentRunTerminalStatus;
 
 /**
+ * The terminal statuses as a set, EXHAUSTIVE by construction.
+ *
+ * `satisfies Record<AgentRunTerminalStatus, true>` is the whole point: adding a member
+ * to that union stops this file compiling until it is named here. A hand-written
+ * `Set<string>` keeps compiling and silently answers "not terminal" for the new one,
+ * and on the follow-up path that is a legitimate conversation refused with a message
+ * that names nothing — the caller is told only that the run may not be continued.
+ *
+ * `LIVE_STATUSES` in the rail is deliberately NOT derived from this: `queued | running`
+ * is drift-safe on its own, since a new terminal status correctly reads as not live.
+ * This one is the direction that needed pinning.
+ */
+const TERMINAL_STATUS_MEMBERS = {
+  succeeded: true,
+  failed: true,
+  cancelled: true,
+} satisfies Record<AgentRunTerminalStatus, true>;
+
+export const AGENT_TERMINAL_STATUSES: ReadonlySet<AgentRunStatus> = new Set(
+  Object.keys(TERMINAL_STATUS_MEMBERS) as AgentRunTerminalStatus[],
+);
+
+/**
  * Why a drive could not carry a run, in terms a user can act on.
  *
  * A closed union rather than the error's own message, and that is the point: the

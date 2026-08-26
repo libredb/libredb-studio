@@ -99,15 +99,21 @@ export async function GET() {
   */
   const modelTuning = isAdmin ? { modelTuning: operatorTuningStatus() } : {};
   if (availability.available) {
-    // Reported to EVERY session, not just an admin one, because the rail renders a
-    // sentence from it: a user who asks a follow-up on a server where conversation
-    // context is switched off has to be told that, rather than left to infer it from
-    // an answer that does not resolve. It names an operator setting and no path, which
-    // is the same line `reason` is on.
+    // ADMIN only, beside `modelTuning`, because an operator is the only reader it has.
+    // The setting exists so somebody who switches it off can confirm the switch took —
+    // the same reason `modelTuning` reports itself — and `curl` is how they check.
+    //
+    // Deliberately NOT sent to every session, and the earlier reasoning for that was
+    // simply false: the rail's "switched off on this server" sentence comes from the
+    // RUN's own `thread.declined`, not from this probe (`use-agent-capability.ts` reads
+    // `enabled` and nothing else). Telling every session on page load would also be the
+    // wrong moment — the user needs it when a follow-up is not read as one, which is
+    // where the run already says it.
+    const operatorState = isAdmin ? { threadContext: isThreadContextEnabled() } : {};
     return NextResponse.json({
       enabled: true,
       ledgerVerified: availability.ledgerVerified,
-      threadContext: isThreadContextEnabled(),
+      ...operatorState,
       ...modelTuning,
     });
   }

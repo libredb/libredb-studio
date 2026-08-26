@@ -261,6 +261,31 @@ describe("deriveThreadContext", () => {
     }
   });
 
+  test("a report with no room left is SAID to be absent rather than dropped", () => {
+    /*
+      The spine's own share can leave nothing behind at a small operator-set budget, and
+      a conversation that silently loses its evidence is the one thing this module
+      refuses to do everywhere else. The model must not read a spine as the whole of what
+      the earlier step produced.
+    */
+    const carried = Array.from({ length: 6 }, (_, index) => ({
+      runId: `arun_${index}`,
+      objective: "z".repeat(AGENT_THREAD_STEP_OBJECTIVE_MAX_CHARS),
+    }));
+    const previous = record({
+      runId: "arun_new",
+      objective: "y".repeat(AGENT_THREAD_STEP_OBJECTIVE_MAX_CHARS),
+      thread: threadOf(carried, "arun_0"),
+      events: [reportEvent("A fact that will not fit")],
+    });
+
+    const { text } = deriveThreadContext(previous, 220);
+
+    expect(text.length).toBeLessThanOrEqual(220);
+    expect(text).toContain("not shown here");
+    expect(text).not.toContain("A fact that will not fit");
+  });
+
   test("an operator-sized budget is honoured over the compiled default", () => {
     const claims = Array.from({ length: 40 }, (_, index) => `Claim body ${index} `.repeat(4));
     const previous = record({ events: [reportEvent(...claims)] });

@@ -8,9 +8,9 @@ import { AgentRunStoreError } from "@/lib/agent/run-store";
 import { driveAgentRun, getAgentRunService } from "@/lib/agent/runtime";
 import { deriveThreadContext } from "@/lib/agent/thread-context";
 import {
+  AGENT_TERMINAL_STATUSES,
   AGENT_WORKFLOW_PRESENTS_ANSWER,
   DEFAULT_AGENT_WORKFLOW_TYPE,
-  type AgentRunStatus,
   type AgentRunMode,
   type AgentRunWorkflowReading,
   type AgentRunWorkflowSource,
@@ -238,7 +238,6 @@ export async function POST(req: Request) {
       collapsed into one refusal before and collapse into one `declined` now, so a caller
       guessing ids learns exactly what it could learn already.
     */
-    const TERMINAL: ReadonlySet<AgentRunStatus> = new Set<AgentRunStatus>(["succeeded", "failed", "cancelled"]);
     let thread: AgentThreadHeader | undefined;
     if (previousRunId !== undefined) {
       if (!isThreadContextEnabled()) {
@@ -265,7 +264,7 @@ export async function POST(req: Request) {
           (previous === null ||
             previous.record.actor.sessionId !== guard.session.username ||
             previous.record.connectionId !== connection.id ||
-            !TERMINAL.has(previous.record.status))
+            !AGENT_TERMINAL_STATUSES.has(previous.record.status))
         ) {
           failed = "unavailable";
         }
