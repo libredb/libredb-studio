@@ -288,7 +288,7 @@ describe("LoginPage showcase (issue #425)", () => {
 
   test("names every verified relative on both surfaces, with the registry's own count", () => {
     // The gap this closes: the page claimed its engine count while the product connects to
-    // thirty-three named products, and the other nineteen were published in README.md and the
+    // thirty-four named products, and the other twenty were published in README.md and the
     // docs compatibility table but nowhere a visitor to the login page could see them.
     const { getByTestId } = renderShowcase();
     expect(WIRE_COMPATIBLE_ENGINES.length).toBeGreaterThan(0);
@@ -384,7 +384,7 @@ describe("LoginPage showcase (issue #425)", () => {
 
   test("counts external engines in the claim, never the embedded provider", () => {
     // The number this page publishes is the one README.md publishes - fourteen drivers
-    // reaching thirty-three named engines - and the embedded store is in neither half of that
+    // reaching thirty-four named engines - and the embedded store is in neither half of that
     // arithmetic. Both counts are interpolated from the registry, so reverting the claim to
     // the showcase length (which includes libredb) fails the second assertion.
     // Matched with a tolerant regex rather than a substring: the desktop figure puts the

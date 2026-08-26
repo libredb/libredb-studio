@@ -38,6 +38,12 @@ test.describe("Wire compatibility hint", () => {
     await expect(hint).toContainText("MariaDB");
     // The version is what makes the claim dated rather than open-ended.
     await expect(hint).toContainText("12.3.2-MariaDB");
+    // Apache Doris is the twentieth relative (#424, probed 2026-08-26) and it arrives here
+    // from the registry with no per-engine code. The tier is asserted beside the name for
+    // the reason MariaDB's is not: MariaDB is `full`, so the name alone is the whole claim,
+    // while a `partial` name next to it would read as parity unless the hint says otherwise.
+    await expect(hint).toContainText("Apache Doris");
+    await expect(hint.getByTestId("wire-compat-tier-Apache Doris")).toContainText("partial support");
   });
 
   test("PostgreSQL marks its reduced-support relatives instead of listing bare names", async ({ page }) => {

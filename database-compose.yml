@@ -707,6 +707,34 @@ services:
     ports:
       - "19030:9030"
 
+  # Apache Doris, the engine StarRocks above was forked from. The all-in-one image is
+  # an FE and a BE in one container and needs no cluster, so this entry is a single
+  # service like the StarRocks one.
+  #
+  # The tag is PINNED. `all-in-one-4.1.3` is what the 2026-08-26 probe measured, and
+  # Doris publishes its real build only in `@@version_comment` - `version()` answers a
+  # fictitious 5.7.99 - so a rolling tag would silently move the version this fixture
+  # reproduces while every panel kept displaying the same 5.7.99.
+  #
+  # `nofile` is raised for the same reason the OceanBase entry raises it: the BE opens
+  # a file handle per tablet and the container default of 1024 is not enough for a
+  # loaded table.
+  #
+  # `root` has no password on a fresh image. Set one before probing - the fixture
+  # recipe in docs/providers/README.md does - because the connection dialog treats an
+  # empty password as a field the user has not filled in yet.
+  doris:
+    image: apache/doris:all-in-one-4.1.3
+    container_name: libredb-doris
+    profiles: ["compat"]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "19035:9030"
+      - "18035:8030"
+
   # vttestserver is Vitess in one container: it brings up the topology, a vtctld, a
   # vtgate and a mysqld for the keyspace named in KEYSPACES, so this entry needs no
   # cluster of its own.

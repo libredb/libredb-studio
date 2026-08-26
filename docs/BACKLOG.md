@@ -22,7 +22,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1–D27, U17 · 7
+- [Drivers and connections](#drivers-and-connections) — D1–D27, D30, U17 · 8
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 10
@@ -298,6 +298,39 @@ selected before a run can be started on it.
 **Done when:** either direction of the borrow is safe by construction — for instance a single-writer
 file has ONE cache entry that both callers key off, with the profile deciding how it is used rather
 than which handle it gets — or the agent-first order is refused with a sentence naming the lock.
+
+### D30. `SHOW STATUS LIKE` costs two panels on an engine that answers `SHOW STATUS`
+
+Measured 2026-08-26 against `apache/doris:all-in-one-4.1.3` (issue #424, Phase 0). `getOverview()`
+and `getHealth()` in `src/lib/db/providers/sql/mysql.ts` read three statements of the form
+`SHOW STATUS LIKE 'Uptime'`, `SHOW STATUS LIKE 'Threads_connected'` and
+`SHOW VARIABLES LIKE 'max_connections'`. On Doris the third is accepted and the first two are a
+**parse error** — `errCode = 2, detailMessage = mismatched input 'LIKE' expecting {<EOF>, ';'}
+(line 1, pos 12)` — because the Doris grammar has no `LIKE` clause on `SHOW STATUS`. Both panels
+therefore fail outright.
+
+The engine is not missing the data by refusing the statement, and that is what makes this ours: a
+bare `SHOW STATUS` **is** accepted there and answers zero rows. So the filter we add for our own
+convenience is the whole difference between a panel that renders absence (`N/A`, "not published",
+per the absence rule of #477) and a panel that renders an error the user cannot act on.
+
+This is the D8 shape one layer up. D8 was a PROTOCOL choice that engines refused; this is a
+STATEMENT-FORM choice that a grammar refuses, and the same reasoning applies: the narrowest fix is
+to ask for what every MySQL-wire engine can answer and filter in the reader. `SHOW STATUS` on a
+stock MySQL 8 returns roughly 500 rows, so the cost is one small result set per panel read, not a
+new round trip.
+
+Not fixed with the Doris registry entry on purpose: that PR publishes a measurement, and this
+changes what two panels read on **every** MySQL-wire engine — MySQL, MariaDB, TiDB, Vitess,
+OceanBase, SingleStore, StarRocks and Doris — so it needs its own probe pass rather than a
+by-the-way edit inside a labelling change.
+
+**Done when:** the overview and health reads ask for something Doris's grammar accepts, the two
+panels on Doris show absence rather than an error, and the reading is unchanged on MySQL, MariaDB
+and one analytics relative — each verified against the live container, not inferred from the
+statement text.
+
+---
 
 ## Value interpolation
 

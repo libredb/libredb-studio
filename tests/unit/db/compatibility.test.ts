@@ -48,6 +48,7 @@ const COMPOSE_SERVICE_BY_ENGINE: Readonly<Record<string, string>> = {
   MariaDB: "mariadb",
   TiDB: "tidb",
   StarRocks: "starrocks",
+  "Apache Doris": "doris",
   Vitess: "vitess",
   OceanBase: "oceanbase",
   SingleStore: "singlestore",
@@ -96,6 +97,49 @@ describe("wire-compatibility registry", () => {
     expect(scylla?.probedVersion).toBe("ScyllaDB 2026.2.4-0.20260810.e54224b8cebb (advertises Cassandra 3.0.8)");
     expect(scylla?.caveats.some((caveat) => caveat.includes("system_views"))).toBe(true);
     expect(WIRE_COMPATIBLE_ENGINES.map((engine) => engine.name.toLowerCase())).toContain("scylladb");
+  });
+
+  test("Apache Doris is recorded as a partial MySQL relative, on what the probe measured", () => {
+    // Probed 2026-08-26 against `apache/doris:all-in-one-4.1.3` (#424 Phase 0). The entry
+    // exists because StarRocks - already registered here - is a FORK of Doris, and this
+    // registry had been carrying the fork while missing the original. It is not a copy of
+    // that row: thirteen of the fifteen surfaces answer where StarRocks manages eleven,
+    // and the numbers are the sharp difference. StarRocks reports hard zeros; Doris reports
+    // 2000 rows and 10187 bytes for a table holding exactly that, so the object browser and
+    // the table-statistics panel are trustworthy here.
+    //
+    // Two surfaces fail, both on ONE statement form: `SHOW STATUS LIKE '...'` is a parse
+    // error in the Doris grammar while a bare `SHOW STATUS` is accepted (and answers zero
+    // rows), which takes the overview and health panels. That cause is ours rather than the
+    // engine's and is filed as a backlog defect - the tier records what a user gets today,
+    // not what a fix could give them.
+    const relatives = compatibleEnginesFor("mysql");
+    const doris = relatives.find((engine) => engine.name === "Apache Doris");
+    expect(doris).toBeDefined();
+    expect(doris?.via).toBe("mysql");
+    expect(doris?.tier).toBe("partial");
+    expect(doris?.probedVersion).toBe("Apache Doris 4.1.3-rc02-7126cf65d96 (version() reports 5.7.99)");
+    // The caveat set has to name the two failures and the two traps, because each one is a
+    // thing a reader would otherwise believe works: the fictitious version, the invisible
+    // foreign key, the absent indexes, and the statement form that costs two panels.
+    const caveats = doris?.caveats.join(" ") ?? "";
+    expect(caveats).toContain("SHOW STATUS");
+    expect(caveats).toContain("5.7.99");
+    expect(caveats).toContain("KEY_COLUMN_USAGE");
+    expect(caveats).toContain("information_schema.statistics");
+  });
+
+  test("the Doris row is not the StarRocks row, and says so where it matters", () => {
+    // A fork's measurements are a PRIOR, never an inheritance. This test pins the one
+    // difference that would be tempting to copy across and would be wrong: StarRocks'
+    // caveats say the row counts and sizes are hard zeros, and Doris's must not, because
+    // the probe read the true numbers there.
+    const byName = new Map(WIRE_COMPATIBLE_ENGINES.map((engine) => [engine.name, engine]));
+    const starrocks = byName.get("StarRocks");
+    const doris = byName.get("Apache Doris");
+    expect(starrocks?.caveats.some((caveat) => caveat.includes("Row counts and sizes are always 0"))).toBe(true);
+    expect(doris?.caveats.some((caveat) => caveat.includes("always 0"))).toBe(false);
+    expect(doris?.caveats.some((caveat) => caveat.includes("2000 rows"))).toBe(true);
   });
 
   test("every entry names a driver we actually ship", () => {

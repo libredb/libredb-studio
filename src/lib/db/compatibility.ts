@@ -73,7 +73,7 @@ export const SHIPPED_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(Obj
  * `libredb` is the embedded store this app carries with it; the other fourteen are
  * external engines you point the product at. Everything published as a database
  * count means the external fourteen - README.md's "fourteen drivers reach
- * thirty-three named engines", the login hero's engine claim - so the split needs a
+ * thirty-four named engines", the login hero's engine claim - so the split needs a
  * definition somewhere, and it belongs beside `SHIPPED` rather than in the UI that
  * prints it. That is the same reason `SHIPPED` itself lives here.
  *
@@ -142,8 +142,8 @@ export interface WireCompatibleEngine {
  * TimescaleDB, YugabyteDB, TiDB and StarRocks added from a second probe run on
  * 2026-08-20, Apache Cloudberry and Vitess from a third run the same day,
  * AlloyDB Omni from a fourth run the same day, OceanBase Community Edition
- * and SingleStore from a fifth run the same day, and ScyllaDB from a sixth run on
- * 2026-08-21/22.
+ * and SingleStore from a fifth run the same day, ScyllaDB from a sixth run on
+ * 2026-08-21/22, and Apache Doris from a seventh on 2026-08-26.
  * Names still awaiting an instance are tracked in issue #424, never here: there
  * is no "pending" state on purpose, because a reader cannot tell a pending entry
  * from a probed one. A name that WAS probed and did not earn an entry has no
@@ -289,6 +289,29 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     ],
   },
   {
+    // Placed next to StarRocks because StarRocks is a FORK of Doris, and this registry
+    // had been carrying the fork while missing the original. The neighbouring rows are
+    // the reason to read both: they share the fictitious version() and the empty index
+    // catalog, and they differ on the numbers, which is the half a reader acts on.
+    // Doris reported 2000 rows and 10187 bytes for a table holding exactly that, where
+    // StarRocks reports hard zeros - so a fork's row is a prior for the next probe and
+    // never an inheritance.
+    name: "Apache Doris",
+    via: "mysql",
+    tier: "partial",
+    probedVersion: "Apache Doris 4.1.3-rc02-7126cf65d96 (version() reports 5.7.99)",
+    caveats: [
+      "The overview and health panels are unavailable, and one statement form is the whole reason: Doris parses SHOW STATUS but rejects the LIKE filter both panels use, so they fail with a syntax error instead of reading an empty result.",
+      "The version shown is MySQL 5.7.99: version() returns a fictitious compatibility number, the real build is only in @@version_comment, and Doris has no current_version() function to read it from.",
+      "No index information at all: information_schema.statistics is empty on Doris, so the index panel and the object browser report none however many keys a table declares.",
+      "A declared foreign key is invisible and unenforced: Doris accepts ADD CONSTRAINT ... FOREIGN KEY and lists it in SHOW CONSTRAINTS, but information_schema.KEY_COLUMN_USAGE is empty, so the ER diagram draws no relationship - and an orphan row inserts successfully, because the constraint is a planner hint there.",
+      "Optimize and Check are unavailable: neither statement exists in the Doris grammar. Analyze works.",
+      "The Explain panel does not work: Doris rejects EXPLAIN FORMAT='json', while a plain EXPLAIN runs in the editor.",
+      "Row counts and sizes are correct but late: a table read 0 rows and 0 B immediately after a 2000-row insert and the true 2000 rows / 10187 bytes about a minute later, with an ANALYZE in between changing nothing. The lag is self-correcting, so a freshly loaded table looks empty for a while.",
+      "A UNIQUE KEY table declares no primary key to the product: information_schema reports COLUMN_KEY as UNI rather than PRI, so the object browser marks no column primary.",
+    ],
+  },
+  {
     name: "Vitess",
     via: "mysql",
     tier: "full",
@@ -422,7 +445,7 @@ export function compatibleEnginesFor(type: DatabaseType): readonly WireCompatibl
  *
  * Still no runtime consumer: README.md and the docs table are markdown and quote the
  * number as prose, and the login hero prints the two halves separately - fourteen in
- * the proof row, nineteen in the relatives line - rather than their sum. This exists
+ * the proof row, twenty in the relatives line - rather than their sum. This exists
  * so the arithmetic has one definition, and the unit test pins it.
  */
 export function connectableProductCount(): number {
