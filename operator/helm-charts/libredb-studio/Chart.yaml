@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting fourteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra
 type: application
-version: 0.1.52
+version: 0.1.53
 appVersion: "0.13.4"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -39,6 +39,10 @@ annotations:
   artifacthub.io/category: database
   artifacthub.io/license: MIT
   artifacthub.io/prerelease: "false"
+  # False: 0.1.53 changes no packaged template and no value - it names one more engine in
+  # the README, libSQL, which is a new provider in the app rather than a chart change. The
+  # README is a packaged file, so #167 costs it a chart version even though nothing an
+  # operator deploys moves.
   # False: 0.1.52 adds one value, config.authCookieSecure, and changes no behaviour on its
   # own - unset (the default) writes no AUTH_COOKIE_SECURE and the app keeps deciding, so
   # every existing install renders exactly as before. It makes an already-supported setting

@@ -41,6 +41,7 @@ describe("resolveSqlGrammar", () => {
     ["oracle", "code"],
     ["mssql", "code"],
     ["sqlite", "code"],
+    ["libsql", "code"],
     // Trino, probed 2026-08-20 on 476: `#` opens nothing in either position.
     // `SELECT 1 AS a # trailing` is "line 1:15: mismatched input '#'" and
     // `SELECT # x` is "line 1:8: mismatched input '#'", so the rest of the line is
@@ -109,7 +110,7 @@ describe("resolveSqlGrammar", () => {
     expect(resolveSqlGrammar("oracle").alternateQuoting).toBe(true);
   });
 
-  test.each<DatabaseType>(["mysql", "clickhouse", "postgres", "mssql", "sqlite", "trino", "cassandra"])(
+  test.each<DatabaseType>(["mysql", "clickhouse", "postgres", "mssql", "sqlite", "libsql", "trino", "cassandra"])(
     "%s does not read `q'…'` as a literal",
     (type) => {
       expect(resolveSqlGrammar(type).alternateQuoting).toBe(false);
@@ -144,6 +145,7 @@ describe("resolveSqlGrammar", () => {
   test.each<[DatabaseType, BracketGrammar]>([
     ["mssql", "quoted-identifier"],
     ["sqlite", "quoted-identifier"],
+    ["libsql", "quoted-identifier"],
     ["clickhouse", "subscript"],
     ["postgres", "subscript"],
     // Trino, probed on 476, and BOTH halves of the rule were measured rather than one
@@ -213,6 +215,7 @@ describe("resolveSqlGrammar", () => {
     ["clickhouse", "nesting"],
     ["mysql", "flat"],
     ["sqlite", "flat"],
+    ["libsql", "flat"],
     ["oracle", "flat"],
     // Trino, probed on 476: `SELECT /* a /* b */ 1 AS a` returns the column, so the
     // FIRST `*/` closed the run. A nesting reader would have seen an unterminated
@@ -282,6 +285,7 @@ describe("resolveSqlGrammar", () => {
     ["mssql", false],
     ["trino", false],
     ["sqlite", false],
+    ["libsql", false],
   ])("%s reads `//` as a line comment: %s", (type, doubleSlashComment) => {
     expect(resolveSqlGrammar(type).doubleSlashComment).toBe(doubleSlashComment);
   });
@@ -347,6 +351,10 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   postgres: "established",
   mysql: "established",
   sqlite: "established",
+  // Re-measured over Hrana rather than inherited from the row above: all four facts
+  // answered the same way on sqld 0.24.33 (#, brackets, nesting, q'…'), which is why
+  // the registry shares SQLite's grammar object.
+  libsql: "established",
   oracle: "established",
   mssql: "established",
   clickhouse: "established",
@@ -391,6 +399,7 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   postgres: true,
   mysql: true,
   sqlite: true,
+  libsql: true,
   oracle: true,
   mssql: true,
   clickhouse: true,

@@ -59,7 +59,7 @@ One umbrella claim, three entry doors into it, three assurance layers underneath
 **The three doors** are three ways into that one claim. A campaign picks a door. It does not argue all three at once, because a piece that opens on three arguments has opened on none.
 
 1. You created the database. The editor is already beside it.
-2. One tab, fourteen databases.
+2. One tab, fifteen databases.
 3. Nothing sits behind an Enterprise wall.
 
 **Door 3 is deliberately third, and stays third.** Leading with it would define LibreDB as another company's opponent rather than as a position of its own, and it would put our credibility at the mercy of their pricing page. Third, the same fact reads as reassurance rather than accusation.
@@ -80,12 +80,12 @@ Each door carries five parts. A promise whose proof does not resolve to a row in
 
 This is the sharpest of the three. It is the one claim no competitor can currently make.
 
-### Door 2 — One tab, fourteen databases.
+### Door 2 — One tab, fifteen databases.
 
 - **Audience:** teams running more than one kind of database, and the engineers who join them.
 - **Pain:** four databases, four clients, four sets of credentials, and a connection-string hunt for anyone new.
-- **Promise:** fourteen engines in one interface, with the same exploration everywhere, and ER diagrams, schema diff and monitoring wherever the engine has something to show. (Not "across all of them": a search cluster declares no foreign keys, so its ER diagram has no edges, and item 4 below forbids the sentence that hides that.)
-- **Proof:** fourteen providers, each with its own reference document under `docs/providers/`.
+- **Promise:** fifteen engines in one interface, with the same exploration everywhere, and ER diagrams, schema diff and monitoring wherever the engine has something to show. (Not "across all of them": a search cluster declares no foreign keys, so its ER diagram has no edges, and item 4 below forbids the sentence that hides that.)
+- **Proof:** fifteen providers, each with its own reference document under `docs/providers/`.
 - **Difference:** CloudBeaver Community bundles 18 driver modules and every one of them is SQL. MongoDB and Redis are not among them.
 
 The claim here is the span, never the count. See the honesty limits.
@@ -124,7 +124,7 @@ Facts drift. Provider counts, channel counts and competitor editions all change,
 
 | Claim | Evidence | Source | Verified |
 | :--- | :--- | :--- | :--- |
-| Fourteen database engines | One reference document per engine: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra. A fifteenth, `libredb.md`, is the embedded provider and is not an external engine. The count is derived, not written: `SHIPPED` in `src/lib/db/compatibility.ts` is an exhaustive record over `DatabaseType`, so the compiler refuses a missing id — read the count from there, minus `libredb` | `docs/providers/`, `src/lib/db/compatibility.ts` | 2026-08-20 |
+| Fifteen database engines | One reference document per engine: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra. A sixteenth, `libredb.md`, is the embedded provider and is not an external engine. The count is derived, not written: `SHIPPED` in `src/lib/db/compatibility.ts` is an exhaustive record over `DatabaseType`, so the compiler refuses a missing id — read the count from there, minus `libredb` | `docs/providers/`, `src/lib/db/compatibility.ts` | 2026-08-20 |
 | Published as an embeddable npm package | `"name": "@libredb/studio"`, version 0.9.66 | `package.json` | 2026-08-07 |
 | MIT licensed | "MIT License / Copyright (c) 2025 LibreDB" | `LICENSE` | 2026-08-07 |
 | 27 distribution channels, 22 live | "27 channels · 22 live · 4 pending · 1 deprecated" | `docs/CHANNELS.md` | 2026-08-07 |
@@ -198,7 +198,7 @@ Documented so the message exists when it is wanted. Not part of the current camp
 An agency that knows what it may not embellish is forced to fill the remaining space with real material. That is the purpose of this section.
 
 1. **Display masking is a presentation feature, not a security control.** It was built for screen sharing, demos and screenshots. It runs in the browser, and the API returns full values to an authorized user. State this as scope, not as a shortcoming. No message may imply that display masking is data protection, access control, or compliance.
-2. **Never claim leadership on the number of SQL engines.** CloudBeaver Community bundles 18 driver modules covering 15 distinct engines, against fourteen here. The claim is the span across SQL, NoSQL, analytics and search in one interface, never the count. The count moves, so read it from `SHIPPED` in `src/lib/db/compatibility.ts` (an exhaustive record over `DatabaseType`, minus the embedded `libredb`) rather than from the last campaign — but a bigger number never becomes the claim.
+2. **Never claim leadership on the number of SQL engines.** CloudBeaver Community bundles 18 driver modules covering 15 distinct engines, against fifteen here. The claim is the span across SQL, NoSQL, analytics and search in one interface, never the count. The count moves, so read it from `SHIPPED` in `src/lib/db/compatibility.ts` (an exhaustive record over `DatabaseType`, minus the embedded `libredb`) rather than from the last campaign — but a bigger number never becomes the claim.
 3. **There is no LDAP.** Single sign-on is delivered through OIDC. Teams that require LDAP are told before they install, not after.
 4. **Elasticsearch and OpenSearch are a read-only query surface, not a managed one.** Both ship as of [#424](https://github.com/libredb/libredb-studio/issues/424), so both belong in an engine list and in a polyglot story. What may not be implied is parity with PostgreSQL or MySQL. The query language is each product's own SQL endpoint — never ES|QL, which exists on one of the two and is deliberately unused, and never the native JSON DSL. Neither product's SQL grammar has `INSERT`, `UPDATE` or `CREATE TABLE`, so what ships is a query editor plus an index and mapped-field browser plus cluster health and per-index document counts and store sizes. There is no EXPLAIN, no maintenance operation, no slow-query panel and no session list; an ER diagram over a search cluster draws boxes and no edges, because the engine has no foreign keys to declare; aliases and data streams are not in the tree; and on Elasticsearch there is no `OFFSET`, so results after the first page cannot be requested at all. Say "query and browse", never "manage" — and never fold these two into a sentence that says a feature works "across all engines". What the story promises, the product has to hold.
 5. **Trino is a query engine, and the story must not sell it as a database.** It ships as of
@@ -223,7 +223,7 @@ An engineer speaking to an engineer.
 - Claim plus proof. Never adjective plus adjective.
 - No emoji. No exclamation marks.
 - Competitors are never disparaged by name. A comparison is a table with sources, and the reader draws the conclusion.
-- Prefer the concrete number to the impressive word. "Fourteen engines" beats "extensive database support".
+- Prefer the concrete number to the impressive word. "Fifteen engines" beats "extensive database support".
 - Say the limitation out loud. Stating scope precisely is what makes the rest of the claims credible to this audience.
 - Product terms stay in English in every language. LibreDB Studio, not a translated variant.
 
@@ -243,7 +243,7 @@ Direction, not copy. This brief contains no finished copy for any surface. It sa
 
 | Surface | Leads with | Why | Current state |
 | :--- | :--- | :--- | :--- |
-| GitHub About | Door 2, in one line | The first thing a repository visitor reads, and the only place a full sentence has to work with no layout around it | Defect: it names four engines against fourteen shipped. Fix before any campaign starts |
+| GitHub About | Door 2, in one line | The first thing a repository visitor reads, and the only place a full sentence has to work with no layout around it | Defect: it names four engines against fifteen shipped. Fix before any campaign starts |
 | README opening | Door 1, then Door 3 | Visitors arriving from search need the claim before the feature list | States a category rather than a claim. Rewrite |
 | Website hero | Door 1 | The site as a whole can carry the story; the hero carries the claim and a single proof | States a category rather than a claim. Rewrite |
 | Website story section | The brand story, both scenes | Nothing on the site currently says why LibreDB exists | Missing entirely. Add |

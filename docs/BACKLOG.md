@@ -402,6 +402,31 @@ than concatenated, and `runMaintenance` on an engine that answers `ANALYZE` with
 reports a result instead of throwing - both verified against the container, and the reading
 unchanged on MySQL, MariaDB and one analytics relative.
 
+### D34. The migration generator emits `ADD CONSTRAINT` for SQLite, which SQLite cannot parse
+
+Found 2026-08-27 while registering the `libsql` type-id (issue #424, Phase 5), and it is the
+`sqlite` dialect's own defect rather than the new one's.
+
+`generateMigrationSQL` declines a foreign key for `cassandra` and, since this run, for `libsql`.
+The `sqlite` dialect falls through to the generic branch and emits
+
+```sql
+ALTER TABLE "users" ADD CONSTRAINT "fk_users_dept_id" FOREIGN KEY ("dept_id") REFERENCES "departments"("id");
+```
+
+SQLite has no ALTER that adds a constraint - a foreign key is declarable only inside `CREATE TABLE` -
+so the statement is a syntax error wherever the file is run. Measured on the sibling engine, which
+shares the grammar exactly: `near CONSTRAINT ... syntax error` on sqld 0.24.33 (SQLite 3.47.0). The
+same file already declines the REMOVED direction for `sqlite` with a comment naming table
+recreation, so only the added half is wrong - which is why it reads as an oversight rather than a
+decision.
+
+Narrow, and it does not throw: the file generates, and the failure happens when someone runs it.
+
+**Done when:** `sqlite` declines an added foreign key the way `libsql` does, with a comment naming
+recreation rather than a statement, and a test pins both directions for it - the way
+`tests/unit/schema-diff/migration-generator.test.ts` now pins them for `libsql` and `cassandra`.
+
 ---
 
 ## Value interpolation

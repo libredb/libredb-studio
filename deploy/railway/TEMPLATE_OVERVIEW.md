@@ -12,7 +12,7 @@ Hosting LibreDB Studio means running a single stateless Next.js container that s
 - Spin up an admin/query UI right next to a Railway PostgreSQL or MySQL database in the same project.
 - Ask the read-only agent a question and get an answer whose every claim cites the result it came from — it executes SQL on PostgreSQL and SQLite only, in a session the database itself enforces as read-only, and on every other connection it drafts a statement for you to run yourself.
 - Draft a statement before anything runs: plan mode executes nothing it drafts, on every engine — its one reach into the database is the schema capture that grounds it, metadata only and no data rows — and the only statement that lands in your editor and runs there is the hand-over you consent to when the run opens.
-- Explain an unfamiliar query in plain English, with the connected schema as context and the engine's own `EXPLAIN` plan as the source — offered on PostgreSQL, MySQL, SQLite, Couchbase, ClickHouse, Apache Druid and Apache Trino, the engines that return a plan.
+- Explain an unfamiliar query in plain English, with the connected schema as context and the engine's own `EXPLAIN` plan as the source — offered on PostgreSQL, MySQL, SQLite, libSQL, Couchbase, ClickHouse, Apache Druid and Apache Trino, the engines that return a plan.
 
 ## Dependencies for libredb-studio Hosting
 

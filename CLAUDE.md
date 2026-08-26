@@ -6,7 +6,7 @@ Guidance for Claude Code in this repo — conventions, rules, and gotchas only. 
 
 ## Project Overview
 
-Web-based SQL IDE for cloud-native teams: PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra (plus the embedded LibreDB) + AI query assistance. Runs **two ways** — a standalone Next.js app AND a published npm package (CLI plus an embeddable library surface); `build:lib` (tsup) produces the package dist. The two modes render different chrome, so a UI change verified in one is not verified in the other.
+Web-based SQL IDE for cloud-native teams: PostgreSQL, MySQL, SQLite, libSQL, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra (plus the embedded LibreDB) + AI query assistance. Runs **two ways** — a standalone Next.js app AND a published npm package (CLI plus an embeddable library surface); `build:lib` (tsup) produces the package dist. The two modes render different chrome, so a UI change verified in one is not verified in the other.
 
 ## Branching & PRs
 
@@ -69,8 +69,8 @@ After every code change, run all six locally before claiming done — they match
 
 ### Rules & patterns
 
-> **⚠️ Providers are the lifeblood of this project — keep the triad in lockstep: code ↔ docs ↔ tests**, 1:1 per canonical type-id — the type-id set is the `DatabaseType` union in [`src/lib/types.ts`](src/lib/types.ts) (`postgres`, `mysql`, `sqlite`, `mongodb`, `redis`, `oracle`, `mssql`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `cassandra`, `trino`, plus the embedded `libredb`):
-> - Code: `src/lib/db/providers/<family>/<type-id>.ts`, or `src/lib/db/providers/<family>/<type-id>/index.ts` when the provider is split across modules, as `couchbase`, `clickhouse`, `druid`, `trino` and `cassandra` are · Docs: `docs/providers/<type-id>.md` · Tests: `tests/integration/db/<type-id>-provider.test.ts`
+> **⚠️ Providers are the lifeblood of this project — keep the triad in lockstep: code ↔ docs ↔ tests**, 1:1 per canonical type-id — the type-id set is the `DatabaseType` union in [`src/lib/types.ts`](src/lib/types.ts) (`postgres`, `mysql`, `sqlite`, `libsql`, `mongodb`, `redis`, `oracle`, `mssql`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `cassandra`, `trino`, plus the embedded `libredb`):
+> - Code: `src/lib/db/providers/<family>/<type-id>.ts`, or `src/lib/db/providers/<family>/<type-id>/index.ts` when the provider is split across modules, as `couchbase`, `clickhouse`, `druid`, `trino`, `cassandra` and `libsql` are · Docs: `docs/providers/<type-id>.md` · Tests: `tests/integration/db/<type-id>-provider.test.ts`
 > - **One directory may serve two type-ids** — `src/lib/db/providers/sql/search/` is both `elasticsearch` and `opensearch` (#424). Docs and tests stay 1:1 anyway: the invariant is per type-id, and each doc is the prime reference for its own product's measured behaviour.
 > - Any change to one side MUST sync the others **in the same PR**. The doc mirrors the code and the code mirrors the doc — never let them drift.
 

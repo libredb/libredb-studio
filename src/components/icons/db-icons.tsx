@@ -359,3 +359,32 @@ export const CassandraIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none" />
   </svg>
 );
+
+/**
+ * libSQL: SQLite's file, reached across a network.
+ *
+ * Deliberately not a copy of either project's logo. What distinguishes this engine
+ * from the SQLite icon above is the whole point of the id - the same store, with a
+ * server in front of it - so the mark is the document outline that icon uses with a
+ * connecting arc and an endpoint drawn to it. Single stroke at weight 1.5, like
+ * every other mark here, and it still reads at 14px.
+ */
+export const LibSQLIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M13 3H7.5A1.5 1.5 0 006 4.5v15A1.5 1.5 0 007.5 21H14" />
+    <polyline points="13 3 13 8 18 8" />
+    <path d="M9 12h4" />
+    <path d="M9 16h2.5" />
+    <path d="M17 12a4 4 0 010 8" />
+    <circle cx="19.5" cy="16" r="1.2" fill="currentColor" stroke="none" />
+  </svg>
+);

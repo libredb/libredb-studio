@@ -32,6 +32,10 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   postgres: true,
   mysql: true,
   sqlite: true,
+  // libSQL (#424 Phase 5): its own provider, doc and integration test. A separate
+  // driver from `sqlite` rather than a relative of it - the two share a dialect and
+  // nothing else, since one holds a file handle and the other speaks HTTP.
+  libsql: true,
   oracle: true,
   mssql: true,
   clickhouse: true,
@@ -85,6 +89,7 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: true,
   mysql: true,
   sqlite: true,
+  libsql: true,
   oracle: true,
   mssql: true,
   clickhouse: true,

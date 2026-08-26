@@ -1,0 +1,294 @@
+{
+  "connect": {
+    "ok": true,
+    "value": "connected"
+  },
+  "query": {
+    "ok": true,
+    "value": {
+      "rows": [
+        {
+          "id": 1,
+          "name": "Ada",
+          "country": "tr"
+        },
+        {
+          "id": 2,
+          "name": "Linus",
+          "country": "de"
+        },
+        {
+          "id": 3,
+          "name": "Grace",
+          "country": "us"
+        }
+      ],
+      "fields": [
+        "id",
+        "name",
+        "country"
+      ],
+      "rowCount": 3,
+      "executionTime": 1,
+      "columnTypes": {
+        "id": "INTEGER",
+        "name": "TEXT",
+        "country": "TEXT"
+      }
+    }
+  },
+  "queryParams": {
+    "ok": true,
+    "value": {
+      "rows": [
+        {
+          "c": 666
+        }
+      ],
+      "fields": [
+        "c"
+      ],
+      "rowCount": 1,
+      "executionTime": 1
+    }
+  },
+  "explain": {
+    "ok": true,
+    "value": {
+      "rows": [
+        {
+          "id": 3,
+          "parent": 0,
+          "notused": 62,
+          "detail": "SEARCH probe_customers USING INDEX idx_customers_country (country=?)"
+        }
+      ],
+      "fields": [
+        "id",
+        "parent",
+        "notused",
+        "detail"
+      ],
+      "rowCount": 1,
+      "executionTime": 1
+    }
+  },
+  "write": {
+    "ok": true,
+    "value": {
+      "rows": [],
+      "fields": [],
+      "rowCount": 1,
+      "executionTime": 4
+    }
+  },
+  "schema": {
+    "ok": true,
+    "value": [
+      {
+        "name": "probe_customers",
+        "rowCount": 3,
+        "size": "8 KB",
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "nullable": true,
+            "isPrimary": true
+          },
+          {
+            "name": "name",
+            "type": "TEXT",
+            "nullable": false,
+            "isPrimary": false
+          },
+          {
+            "name": "country",
+            "type": "TEXT",
+            "nullable": true,
+            "isPrimary": false,
+            "defaultValue": "'tr'"
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_customers_country",
+            "columns": [
+              "country"
+            ],
+            "unique": false
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "probe_orders",
+        "rowCount": 2000,
+        "size": "52 KB",
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "nullable": true,
+            "isPrimary": true
+          },
+          {
+            "name": "customer_id",
+            "type": "INTEGER",
+            "nullable": true,
+            "isPrimary": false
+          },
+          {
+            "name": "amount",
+            "type": "REAL",
+            "nullable": true,
+            "isPrimary": false
+          },
+          {
+            "name": "note",
+            "type": "TEXT",
+            "nullable": true,
+            "isPrimary": false
+          }
+        ],
+        "indexes": [],
+        "foreignKeys": [
+          {
+            "columnName": "customer_id",
+            "referencedTable": "probe_customers",
+            "referencedColumn": "id"
+          }
+        ]
+      }
+    ]
+  },
+  "overview": {
+    "ok": true,
+    "value": {
+      "version": "sqld 0.24.33 (f8fb14f3 2026-08-11) (SQLite 3.47.0)",
+      "uptime": "N/A",
+      "maxConnections": 0,
+      "databaseSize": "64 KB",
+      "databaseSizeBytes": 65536,
+      "tableCount": 2,
+      "indexCount": 1
+    }
+  },
+  "health": {
+    "ok": true,
+    "value": {
+      "databaseSize": "64 KB",
+      "cacheHitRatio": "N/A",
+      "slowQueries": [
+        {
+          "query": "Integrity: OK",
+          "calls": 0,
+          "avgTime": "N/A"
+        },
+        {
+          "query": "Journal Mode: wal",
+          "calls": 0,
+          "avgTime": "N/A"
+        }
+      ],
+      "activeSessions": []
+    }
+  },
+  "performance": {
+    "ok": true,
+    "value": {
+      "deadlocks": 0
+    }
+  },
+  "slowQueries": {
+    "ok": true,
+    "value": []
+  },
+  "activeSessions": {
+    "ok": true,
+    "value": []
+  },
+  "tableStats": {
+    "ok": true,
+    "value": [
+      {
+        "schemaName": "main",
+        "tableName": "probe_customers",
+        "rowCount": 3,
+        "tableSize": "4 KB",
+        "tableSizeBytes": 4096,
+        "indexSize": "4 KB",
+        "indexSizeBytes": 4096,
+        "totalSize": "8 KB",
+        "totalSizeBytes": 8192
+      },
+      {
+        "schemaName": "main",
+        "tableName": "probe_orders",
+        "rowCount": 2000,
+        "tableSize": "52 KB",
+        "tableSizeBytes": 53248,
+        "indexSize": "0 B",
+        "indexSizeBytes": 0,
+        "totalSize": "52 KB",
+        "totalSizeBytes": 53248
+      }
+    ]
+  },
+  "indexStats": {
+    "ok": true,
+    "value": [
+      {
+        "schemaName": "main",
+        "tableName": "probe_customers",
+        "indexName": "idx_customers_country",
+        "columns": [
+          "country"
+        ],
+        "isUnique": false,
+        "isPrimary": false,
+        "indexSize": "4 KB",
+        "indexSizeBytes": 4096,
+        "scans": 0
+      }
+    ]
+  },
+  "storageStats": {
+    "ok": true,
+    "value": [
+      {
+        "name": "main",
+        "size": "64 KB",
+        "sizeBytes": 65536
+      }
+    ]
+  },
+  "maintenanceCheck": {
+    "ok": true,
+    "value": {
+      "success": true,
+      "executionTime": 1,
+      "message": "ok"
+    }
+  },
+  "maintenanceReindex": {
+    "ok": true,
+    "value": {
+      "success": true,
+      "executionTime": 4,
+      "message": "REINDEX completed successfully"
+    }
+  },
+  "maintenanceVacuum": {
+    "ok": false,
+    "error": "libSQL servers do not accept VACUUM: only REINDEX and PRAGMA integrity_check are allowed"
+  },
+  "badStatement": {
+    "ok": false,
+    "error": "SQLite error: no such table: no_such_table"
+  },
+  "disconnect": {
+    "ok": true,
+    "value": "disconnected"
+  }
+}

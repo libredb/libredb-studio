@@ -20,6 +20,9 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // a backslash in a plain literal is data.
   postgres: "standard",
   sqlite: "standard",
+  // Measured on sqld 0.24.33: `SELECT 'it''s'` answers `it's`, and a backslash has no
+  // special meaning - the same standard doubling SQLite defines.
+  libsql: "standard",
   oracle: "standard",
   mssql: "standard",
   // Druid quotes a string with single quotes and puts its backslash escapes in the

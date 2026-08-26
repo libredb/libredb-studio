@@ -814,6 +814,25 @@ describe("generateMigrationSQL: Cassandra spells ADD and DROP without the COLUMN
     expect(sql).toContain("-- Apache Cassandra: Cannot add a foreign key");
     expect(sql).toContain("-- Apache Cassandra: Cannot drop a foreign key");
   });
+
+  test("libSQL declines both directions too, because SQLite declares a key only in CREATE TABLE", () => {
+    // Measured over Hrana on sqld 0.24.33: `ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY
+    // (c) REFERENCES u(id)` is "near CONSTRAINT ... syntax error", and so is the DROP.
+    // The generic branch would emit both, so both are declined here - and the column
+    // statements around them are NOT: libSQL accepts ADD COLUMN and DROP COLUMN, which
+    // is what makes this narrower than the sqlite branch beside it.
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "libsql");
+
+    expect(sql).not.toContain("ADD CONSTRAINT");
+    expect(sql).not.toContain("DROP CONSTRAINT");
+    expect(sql).toContain("-- libSQL: Cannot add a foreign key");
+    expect(sql).toContain("-- libSQL: Cannot drop a foreign key");
+    expect(sql).toContain("ADD COLUMN");
+    expect(sql).toContain("DROP COLUMN");
+    // SQLite runs its own transaction and this provider could not continue one it
+    // emitted, so the file carries no wrapper.
+    expect(sql).not.toContain("BEGIN;");
+  });
 });
 
 describe("generateMigrationSQL: Cassandra declines CREATE TABLE rather than guess the partitioning", () => {
@@ -861,6 +880,13 @@ const MODIFIED_COLUMN_COVERAGE: Record<DatabaseType, { label: string; reason: st
   postgres: "has-own-branch",
   mysql: "has-own-branch",
   sqlite: "has-own-branch",
+  // NOT "has-own-branch": libSQL accepts DROP COLUMN and RENAME COLUMN (measured on
+  // sqld 0.24.33), so it takes the generic branch for those and only the column
+  // MODIFICATION is inexpressible - which is what NO_COLUMN_MODIFICATION records.
+  libsql: {
+    label: "libSQL",
+    reason: "SQLite cannot retype a column; recreate the table and copy the rows.",
+  },
   oracle: "has-own-branch",
   mssql: "has-own-branch",
   clickhouse: "has-own-branch",

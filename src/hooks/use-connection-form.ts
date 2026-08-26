@@ -592,6 +592,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "opensearch",
     "trino",
     "cassandra",
+    "libsql",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

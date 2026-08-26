@@ -107,7 +107,7 @@ The network route is the one to prefer for a real deployment: put Studio and its
 
 ## Supported databases
 
-Fourteen external engines share one interface, and three of them are read-only because their own SQL is. The table below has fifteen rows: the fifteenth is the embedded LibreDB store, which ships inside the image rather than being a server you connect out to.
+Fifteen external engines share one interface, and three of them are read-only because their own SQL is. The table below has sixteen rows: the sixteenth is the embedded LibreDB store, which ships inside the image rather than being a server you connect out to.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -116,6 +116,7 @@ Fourteen external engines share one interface, and three of them are read-only b
 | **Oracle** | `oracledb` (thin) | `FETCH FIRST` pagination, `V$` monitoring, `ANALYZE`, transactions |
 | **SQL Server** | `mssql` | `OFFSET FETCH`, `sys.dm_*` DMVs, `DBCC CHECKDB`, Azure SQL auto-detect |
 | **SQLite** | `bun:sqlite` / `node:sqlite` | File-based or in-memory databases; the driver follows the runtime, with a `LIBREDB_SQLITE_DRIVER` override |
+| **libSQL** | none — HTTP | Full SQL IDE over the Hrana protocol against a libSQL server or Turso Cloud; SQLite's dialect across a network, with real per-table bytes from `dbstat` and an auth token instead of a password |
 | **MongoDB** | `mongodb` | JSON query editor, find/aggregate/insert/update/delete |
 | **Redis** | `ioredis` | Command editor, non-blocking `SCAN` key browser, `INFO` monitoring, per-type command generation |
 | **Couchbase** | none — HTTP | SQL++ query editor, bucket/scope/collection browser, cluster health |
@@ -131,7 +132,7 @@ Fourteen external engines share one interface, and three of them are read-only b
 
 ### Engines with no provider of their own
 
-Twenty-six further engines speak the wire protocol of one of the fourteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has twenty-two rows rather than twenty-six because engines that behave identically share a row; all twenty-six are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+Twenty-six further engines speak the wire protocol of one of the fifteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has twenty-two rows rather than twenty-six because engines that behave identically share a row; all twenty-six are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |

@@ -384,6 +384,50 @@ const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
     "datetimeoffset",
     "year",
   ],
+  // The same list, for the same measured reason: libSQL IS SQLite 3.47.0, and
+  // `pragma_table_info` there answers the declared spelling verbatim too (measured on
+  // sqld 0.24.33). Written out rather than aliased so a future divergence can be
+  // recorded in one row without touching the other.
+  libsql: [
+    "character varying",
+    "varchar",
+    "varchar2",
+    "nvarchar",
+    "nvarchar2",
+    "character",
+    "char",
+    "nchar",
+    "text",
+    "ntext",
+    "tinytext",
+    "mediumtext",
+    "longtext",
+    "clob",
+    "nclob",
+    "binary",
+    "varbinary",
+    "raw",
+    "blob",
+    "tinyblob",
+    "mediumblob",
+    "longblob",
+    "bytea",
+    "image",
+    "numeric",
+    "decimal",
+    "number",
+    "binary_double",
+    "binary_float",
+    "money",
+    "timestamp",
+    "timestamp without time zone",
+    "timestamp with time zone",
+    "datetime",
+    "datetime2",
+    "smalldatetime",
+    "datetimeoffset",
+    "year",
+  ],
   clickhouse: [
     "character varying",
     "varchar",
@@ -524,6 +568,10 @@ const BINARY_LITERAL: Record<DatabaseType, BinaryLiteral> = {
   // Measured through `bun:sqlite`: `select hex(X'0102deadbeef')` -> `0102DEADBEEF`,
   // and `typeof(X'')` -> `blob` with `length(X'')` 0.
   sqlite: "standard-hex",
+  // Measured over Hrana on sqld 0.24.33: `SELECT hex(X'0102deadbeef')` answers
+  // `0102DEADBEEF`, `typeof(X'')` answers `blob` and `length(X'')` answers 0 - the
+  // same readings as the SQLite row above, taken again rather than assumed.
+  libsql: "standard-hex",
   // Trino measured on 476: `SELECT typeof(X'0102')` answers `varbinary`,
   // `to_hex(X'0102deadbeef')` answers `0102DEADBEEF`, `length(X'')` answers 0, and the
   // whole generated pair replays into the memory connector. Druid is the one row here

@@ -19,6 +19,7 @@ const ALL_TYPES: DatabaseType[] = [
   "opensearch",
   "trino",
   "cassandra",
+  "libsql",
 ];
 
 describe("db-ui-config", () => {
@@ -51,7 +52,10 @@ describe("db-ui-config", () => {
       // full URI for; everything else is field-based. Druid is field-based on purpose:
       // it has no URI convention for its HTTP SQL API (its JDBC driver uses
       // `jdbc:avatica:remote:url=...`), so there is no string a user could paste.
-      const withToggle = new Set<DatabaseType>(["mongodb", "couchbase", "clickhouse"]);
+      // libSQL joins them: `libsql://<database>-<org>.turso.io?authToken=<jwt>` is the
+      // URL Turso's own CLI prints, so there is a real string to paste here - unlike
+      // Trino, whose canonical form is a JDBC URL.
+      const withToggle = new Set<DatabaseType>(["mongodb", "couchbase", "clickhouse", "libsql"]);
       for (const type of ALL_TYPES) {
         expect(getDBConfig(type).showConnectionStringToggle).toBe(withToggle.has(type));
       }
@@ -235,6 +239,7 @@ describe("db-showcase", () => {
         "clickhouse",
         "druid",
         "trino",
+        "libsql",
         "libredb",
       ]);
     });

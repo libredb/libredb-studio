@@ -86,6 +86,11 @@ export async function createDatabaseProvider(
       return new SQLiteProvider(connection, options, execution);
     }
 
+    case "libsql": {
+      const { LibSQLProvider } = await import("./providers/sql/libsql");
+      return new LibSQLProvider(connection, options);
+    }
+
     case "oracle": {
       const { OracleProvider } = await import("./providers/sql/oracle");
       return new OracleProvider(connection, options);
@@ -173,7 +178,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/unit/db/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, libsql, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, libredb`,
         connection.type,
       );
   }

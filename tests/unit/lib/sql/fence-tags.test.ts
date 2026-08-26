@@ -43,6 +43,9 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("sqlserver")).toBe("mssql");
     expect(fenceTagEngine("mongo")).toBe("mongodb");
     expect(fenceTagEngine("n1ql")).toBe("couchbase");
+    // The product name a model is likelier to write than the protocol's: a block
+    // tagged `turso` holds a statement for a libSQL connection.
+    expect(fenceTagEngine("turso")).toBe("libsql");
   });
 
   test("a generic tag and an absent one name no engine, so they contradict none", () => {

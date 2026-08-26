@@ -118,13 +118,13 @@ schemas and run queries across PostgreSQL, MySQL, Oracle, SQL Server, SQLite, Mo
 Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and
 Apache Cassandra from a single web interface, with no desktop client to install. Editing
 data follows the engine rather than the IDE: inline row editing on PostgreSQL, MySQL,
-Oracle, SQL Server and SQLite, table creation on those five and Apache Trino, and
+Oracle, SQL Server, SQLite and libSQL, table creation on those six and Apache Trino, and
 everywhere else the controls are reported as unsupported rather than offered and then
 failed — Elasticsearch SQL has no mutation in its grammar at all, OpenSearch's one
 mutation (`DELETE`) is off by default, and Druid SQL has no `UPDATE`, no `DELETE` and no
 `CREATE TABLE`. An optional AI assistant (bring your own key: Gemini, OpenAI, or a local
 model) writes up a query in plain English from the engine's own EXPLAIN plan, on
-PostgreSQL, MySQL, SQLite, Couchbase, ClickHouse, Apache Druid and Apache Trino — the
+PostgreSQL, MySQL, SQLite, libSQL, Couchbase, ClickHouse, Apache Druid and Apache Trino — the
 engines that return one — and runs a read-only investigation agent on PostgreSQL and
 SQLite whose every claim cites the result it came from, and that never writes: the session
 is read-only and the database, not the IDE, refuses writes and DDL. It stays off unless
@@ -147,7 +147,7 @@ versions are documented and validated for every release.
   zero configuration required
 - Optional AI assistance (Gemini, OpenAI, or a self-hosted model; off by default):
   plain-English query explanation on the engines that return an EXPLAIN plan (PostgreSQL,
-  MySQL, SQLite, Couchbase, ClickHouse, Apache Druid, Apache Trino), and a read-only
+  MySQL, SQLite, libSQL, Couchbase, ClickHouse, Apache Druid, Apache Trino), and a read-only
   investigation agent on PostgreSQL and SQLite that never writes — the database enforces
   the read-only session, not the IDE
 - Hardened chart defaults: non-root, read-only root filesystem, NetworkPolicy, PDB,

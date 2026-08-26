@@ -84,7 +84,7 @@ LibreDB Studioは逆向きです。**データをツールのところへ持っ�
 
 ### 14のエンジン、1つのインターフェース
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra
+PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra
 
 スキーマエクスプローラ、ER図、スキーマ差分、モニタリングは全SQLエンジンで共通です。MongoDBとRedisはSQLエンジンではないため、ER図とスキーマ差分はありません。Druid、Elasticsearch、OpenSearch、TrinoはこのビルドがパースできるURI形式を持たないためhostとportで設定する二重の例外で、生成されるマイグレーションもDDLを出力せず制約を明示します（Couchbaseのスキーマレスなコレクションも同様）。検索クラスタのER図は箱だけで線がありません。インデックスは外部キーを宣言せず、エンジンのモデルにも宣言できる外部キーが存在しないためです。
 
@@ -95,6 +95,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 | **Oracle** | `oracledb`（Thinモード） | フルSQL IDE、`FETCH FIRST N ROWS`、`V$`監視ビュー、`ANALYZE TABLE`、`ALTER INDEX REBUILD`、トランザクション |
 | **SQL Server** | `mssql` (tedious) | フルSQL IDE、`TOP N` / `OFFSET FETCH`、`sys.dm_*` DMV、`UPDATE STATISTICS`、`DBCC CHECKDB`、トランザクション、Azure SQL自動判別 |
 | **SQLite** | `bun:sqlite` / `node:sqlite`（実行時選択） | フルSQL IDE、ファイル型・インメモリ型 |
+| **libSQL** | ドライバなし、HTTPのみ（Hranaプロトコル、`POST /v2/pipeline`、8080） | フルSQL IDE。自前運用のlibSQLサーバー（`sqld`）とTurso Cloudの両方に同じtype-idで接続します。ネットワーク越しのSQLite方言で、`dbstat`による実測のテーブル・インデックスサイズが読めます。認証情報はパスワードではなくauthトークンです。メンテナンスはReindexと整合性チェックのみ。`VACUUM`、`ANALYZE`、`PRAGMA optimize`はサーバー側が拒否します |
 | **MongoDB** | `mongodb` | JSONクエリエディタ、コレクション操作（find、aggregate、insert、update、delete） |
 | **Couchbase** | ドライバなし、HTTPのみ（Query + 管理REST） | フルSQL++ IDE、EXPLAIN、bucket/scope/collectionエクスプローラ、`INFER`によるカラム推論 |
 | **ClickHouse** | ドライバなし、HTTPのみ（SQLインターフェース、8123） | フルSQL IDE、JSON EXPLAINツリー、システムテーブルからのスキーマ取得、`OPTIMIZE TABLE` |

@@ -350,6 +350,52 @@ describe("parseConnectionString", () => {
     });
   });
 
+  // ── libSQL ──────────────────────────────────────────────────────────────
+
+  describe("libsql:// URLs", () => {
+    test("parses the URL Turso's own CLI prints, token and all", () => {
+      const result = parseConnectionString(
+        "libsql://libredb-probe-424-cevheri.aws-eu-west-1.turso.io?authToken=jwt-123",
+      );
+
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe("libsql");
+      expect(result!.host).toBe("libredb-probe-424-cevheri.aws-eu-west-1.turso.io");
+      // 443 under required TLS: `libsql://` has no plaintext form, and Turso serves
+      // every database over HTTPS on a hostname that identifies the database.
+      expect(result!.port).toBe("443");
+      expect(result!.sslMode).toBe("require");
+      // The credential is a TOKEN, and it rides in the query string rather than in
+      // the authority - so it lands in `password`, which is the field the provider
+      // sends as a bearer credential.
+      expect(result!.password).toBe("jwt-123");
+    });
+
+    test("keeps an explicit port, for a self-hosted server behind TLS", () => {
+      expect(parseConnectionString("libsql://sqld.internal:8443?authToken=t")!.port).toBe("8443");
+    });
+
+    test("falls back to a token written in the authority", () => {
+      expect(parseConnectionString("libsql://ignored:jwt-456@db.turso.io")!.password).toBe("jwt-456");
+    });
+
+    test("names no database, because on libSQL the database IS the host", () => {
+      expect(parseConnectionString("libsql://db.turso.io?authToken=t")!.database).toBeUndefined();
+    });
+
+    test("carries no token when the URL holds none, rather than an empty one", () => {
+      expect(parseConnectionString("libsql://db.turso.io")!.password).toBeUndefined();
+    });
+
+    test("answers null for a libsql:// string that is not a URL", () => {
+      expect(parseConnectionString("libsql://:::bad")).toBeNull();
+    });
+
+    test("detects the scheme without parsing it", () => {
+      expect(detectConnectionStringType("libsql://db.turso.io?authToken=t")).toBe("libsql");
+    });
+  });
+
   // ── ClickHouse ──────────────────────────────────────────────────────────
 
   describe("clickhouse://, http:// and https:// URLs", () => {
