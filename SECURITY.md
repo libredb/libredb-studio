@@ -132,8 +132,15 @@ When using LibreDB Studio, please follow these security best practices:
   proxy that rewrites `Host` set `ALLOWED_ORIGINS`
 - Every response that passes through the app's request middleware carries `Content-Security-Policy`,
   `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and
-  `Permissions-Policy` (static assets and the storage-config bootstrap path are excluded from the
-  middleware and carry none of these — see `docs/BACKLOG.md`). `/api/db/health` is NOT excluded:
+  `Permissions-Policy`. Static assets and the storage-config bootstrap path are excluded from that
+  middleware by its matcher; the two headers that are meaningful on a subresource,
+  `X-Content-Type-Options` and `X-Frame-Options`, reach them through `next.config.ts`'s `headers()`
+  instead, which reads the same values from `src/lib/security/headers.ts`. The four that act on a
+  document are deliberately not delivered there, because a `next.config` header set is baked at
+  build time: a copy of the CSP or of HSTS would ignore the runtime `CSP_REPORT_ONLY` and
+  `HSTS_INCLUDE_SUBDOMAINS` settings, and for HSTS - which is host-scoped, so the last value
+  received wins - a request for a static file could silently downgrade the policy the document just
+  set. `/api/db/health` is NOT excluded:
   its `POST` handler is a session-gated, provider-reaching route like any other, so it goes through
   the same Origin check and carries the same headers; `GET /api/db/health` is unaffected because
   the Origin check exempts GET by method and the load-balancer/probe path stays a public route. The

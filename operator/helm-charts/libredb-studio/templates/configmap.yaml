@@ -19,6 +19,15 @@ data:
   {{- if .Values.config.authBootstrap }}
   AUTH_BOOTSTRAP: {{ .Values.config.authBootstrap | quote }}
   {{- end }}
+  {{- /* Three-state, on the same rule as agent.enabled: unset writes nothing, so the
+         app keeps its own default (Secure in production, except a loopback host reached
+         over plain http). `false` is the operator's answer for a browser reaching a
+         non-loopback host over plain http, where a Secure cookie is rejected and login
+         silently loops. kindIs "invalid" rather than truthiness, because `false` is the
+         value that matters most here and an `if` would drop it. */}}
+  {{- if not (kindIs "invalid" (get .Values.config "authCookieSecure")) }}
+  AUTH_COOKIE_SECURE: {{ get .Values.config "authCookieSecure" | quote }}
+  {{- end }}
   STORAGE_PROVIDER: {{ include "libredb-studio.storageProvider" . | quote }}
   {{- if eq (include "libredb-studio.storageProvider" .) "sqlite" }}
   STORAGE_SQLITE_PATH: {{ .Values.config.storageSqlitePath | quote }}

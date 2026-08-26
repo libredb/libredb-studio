@@ -192,9 +192,12 @@ export const config = {
      * NextResponse.next() before any auth redirect, so load-balancer probes see no behaviour
      * change.
      *
-     * Residual gap, accepted and recorded in docs/BACKLOG.md: paths containing a dot receive no
-     * headers. They are not documents, and MIME sniffing on assets Next serves with correct
-     * content types is not a live threat.
+     * Paths containing a dot get no headers FROM HERE, by design: header delivery and auth
+     * redirection are two concerns that happen to share this one matcher, and the dot exclusion
+     * is about the redirect. `headers()` in next.config.ts delivers the two headers that are
+     * meaningful on a subresource (X-Content-Type-Options, X-Frame-Options) to those paths; see
+     * the rationale block there for what it excludes and why a build-time header set must not
+     * carry the CSP or HSTS.
      */
     "/((?!api/storage/config|_next/static|_next/image|.*\\..*).*)",
   ],

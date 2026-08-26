@@ -51,6 +51,7 @@ interface FakeRun {
   status: string;
   actor: { sessionId: string; role: string };
   connectionId: string;
+  connectionIdentity?: string;
   objective: string;
   events: unknown[];
   thread: { threadId: string; steps: { runId: string; objective: string }[]; text: string; declined?: string };
@@ -96,6 +97,7 @@ const mockStart = mock(
     autoExecute?: boolean;
     actor: FakeRun["actor"];
     connectionId: string;
+    connectionIdentity?: string;
     objective: string;
     thread?: { threadId: string; steps: { runId: string; objective: string }[]; text: string; declined?: string };
   }) => {
@@ -222,6 +224,78 @@ describe("POST /api/agent/runs", () => {
       thread: { threadId: "arun_1", steps: [{ runId: "arun_1", objective: "why is checkout slow" }] },
     });
     expect(mockStart.mock.calls.at(-1)?.[0].thread?.text).toContain("Claim 1: A fact");
+  });
+
+  /*
+    B68. A conversation was single-connection by INDUCTION: every link checked the
+    connection ID at its own open, which is an identity check on the RECORD. Editing a
+    saved connection to address another server keeps that id, so the follow-up below
+    used to be handed the earlier step's claims about the OLD database while reading the
+    NEW one — nothing refused, nothing wrong to look at, and a report about one database
+    resting on another. What the route writes now is which DATABASE the run read, and
+    what it checks is that.
+  */
+  test("a follow-up on a re-pointed connection declines rather than carrying the conversation", async () => {
+    const original = mockResolveConnection.getMockImplementation();
+    try {
+      // Run one, against the database the connection addressed then. Its identity is
+      // taken from what the route itself wrote, not restated here.
+      await POST(startRequest(VALID_BODY));
+      const establishedIdentity = mockStart.mock.calls.at(-1)?.[0].connectionIdentity;
+      expect(establishedIdentity).toEqual(expect.any(String));
+      runs.set(
+        "arun_1",
+        fakeRun({
+          status: "succeeded",
+          connectionIdentity: establishedIdentity,
+          events: [
+            {
+              kind: "report-composed",
+              atMs: 1,
+              claims: [{ claim: "A fact", evidence: [{ source: "artifact", correlationId: "corr_1" }] }],
+            },
+          ],
+        }),
+      );
+
+      // The user edits the connection to address staging. Same record, same id.
+      mockResolveConnection.mockImplementation(async (body: { connectionId?: string }) => ({
+        id: body.connectionId ?? "seed:sales",
+        name: "Sales",
+        type: "postgres",
+        database: "staging",
+      }));
+
+      const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_1" }));
+
+      expect(res.status).toBe(202);
+      const thread = mockStart.mock.calls.at(-1)?.[0].thread;
+      expect(thread).toMatchObject({ steps: [], text: "", declined: "unavailable" });
+      // Nothing of the earlier step survives: not its objective, and not its claim.
+      expect(thread?.steps).toEqual([]);
+      expect(thread?.text).toBe("");
+      // And the new run records the database it is actually reading, so the conversation
+      // it starts is checkable in its turn.
+      expect(mockStart.mock.calls.at(-1)?.[0].connectionIdentity).not.toBe(establishedIdentity);
+    } finally {
+      // Restored by hand: `mock.module` is re-applied per test with the SAME mock
+      // object, so an implementation left here would outlive this test.
+      if (original !== undefined) mockResolveConnection.mockImplementation(original);
+    }
+  });
+
+  test("an unchanged connection still carries the conversation, so the check above ends no ordinary follow-up", async () => {
+    await POST(startRequest(VALID_BODY));
+    const establishedIdentity = mockStart.mock.calls.at(-1)?.[0].connectionIdentity;
+    runs.set("arun_1", fakeRun({ status: "succeeded", connectionIdentity: establishedIdentity }));
+
+    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_1" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls.at(-1)?.[0].thread).toMatchObject({
+      threadId: "arun_1",
+      steps: [{ runId: "arun_1", objective: "why is checkout slow" }],
+    });
   });
 
   test("a run that starts its own conversation writes no thread, so its ledger is the bytes it always was", async () => {
@@ -427,6 +501,9 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      // The database behind that record, fingerprinted by the route (B68). Asserted as a
+      // presence here and by value in the re-pointing test below.
+      connectionIdentity: expect.any(String),
       objective: "why is checkout slow",
     });
   });
@@ -442,6 +519,9 @@ describe("POST /api/agent/runs", () => {
       workflowType: "query-optimization",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      // The database behind that record, fingerprinted by the route (B68). Asserted as a
+      // presence here and by value in the re-pointing test below.
+      connectionIdentity: expect.any(String),
       objective: "why is checkout slow",
     });
   });
@@ -471,6 +551,9 @@ describe("POST /api/agent/runs", () => {
       autoExecute: true,
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      // The database behind that record, fingerprinted by the route (B68). Asserted as a
+      // presence here and by value in the re-pointing test below.
+      connectionIdentity: expect.any(String),
       objective: "why is checkout slow",
     });
   });
@@ -520,6 +603,9 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      // The database behind that record, fingerprinted by the route (B68). Asserted as a
+      // presence here and by value in the re-pointing test below.
+      connectionIdentity: expect.any(String),
       objective: "why is checkout slow",
     });
   });
@@ -562,6 +648,9 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      // The database behind that record, fingerprinted by the route (B68). Asserted as a
+      // presence here and by value in the re-pointing test below.
+      connectionIdentity: expect.any(String),
       objective: "why is checkout slow",
     });
   });
@@ -577,6 +666,9 @@ describe("POST /api/agent/runs", () => {
       workflowSource: "inferred",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      // The database behind that record, fingerprinted by the route (B68). Asserted as a
+      // presence here and by value in the re-pointing test below.
+      connectionIdentity: expect.any(String),
       objective: "why is checkout slow",
     });
   });
@@ -613,6 +705,9 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      // The database behind that record, fingerprinted by the route (B68). Asserted as a
+      // presence here and by value in the re-pointing test below.
+      connectionIdentity: expect.any(String),
       objective: "why is checkout slow",
     });
   });
@@ -633,6 +728,9 @@ describe("POST /api/agent/runs", () => {
       workflowReading: "unclassified",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      // The database behind that record, fingerprinted by the route (B68). Asserted as a
+      // presence here and by value in the re-pointing test below.
+      connectionIdentity: expect.any(String),
       objective: "why is checkout slow",
     });
   });

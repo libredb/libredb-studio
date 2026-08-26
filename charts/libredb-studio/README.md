@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.51 \
+  --version 0.1.52 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -125,6 +125,27 @@ kubectl exec deploy/libredb-libredb-studio -- cat /app/data/auth-bootstrap.json
 `kubectl logs deployment/...` picks **one** pod arbitrarily, so with more than one replica name the pod that started first explicitly (`kubectl get pods --sort-by=.status.startTime`, then `kubectl logs <pod>`). Deleting `auth-bootstrap.json` makes the next start generate a fresh set.
 
 **Strict mode** (`--set config.authBootstrap=off`) restores fail-closed behavior: `secrets.jwtSecret` is required, and `secrets.adminPassword` is required as well while `authProvider=local` (or use `secrets.existingSecret`); the install fails fast with a clear message when either is missing, and with an existing secret the pod will not start until the referenced keys exist. Under `authProvider=oidc` the admin password is neither required nor referenced as a mandatory Secret key - the issuer authenticates users, so an OIDC `existingSecret` needs no `admin-password` entry. Recommended for production. `secrets.userPassword` stays optional in every mode. Setting `config.authBootstrap=on` is equivalent to the default `""`, just explicit.
+
+### Serving over plain HTTP (LAN or home server)
+
+Auth cookies carry the `Secure` flag in production, and a browser **rejects** a `Secure`
+cookie that arrives over plain `http` on a host that is not loopback. The login form then
+posts, succeeds, and returns you to the login form - the silent loop reported on home-server
+installs. Tell the chart when that is your situation:
+
+```bash
+helm install libredb libredb/libredb-studio \
+  --set config.authCookieSecure=false
+```
+
+The value is three-state and **unset is the default**: the chart writes no
+`AUTH_COOKIE_SECURE`, and the app decides for itself, exactly as it did before this value
+existed. So an upgrade changes nothing until you set it.
+
+You do **not** need this when TLS is terminated at an ingress or a load balancer: the
+browser still speaks `https`, so it accepts the cookie. `false` is only for the case where
+the browser's own connection is cleartext - and it means session cookies travel in
+cleartext, so keep it to a trusted network. `true` forces the flag on.
 
 ## OIDC SSO
 
@@ -558,6 +579,7 @@ helm uninstall libredb
 | `image.pullPolicy` | Pull policy | `IfNotPresent` |
 | `authProvider` | Auth mode: local or oidc | `local` |
 | `config.authBootstrap` | Auth bootstrap: `""` (zero-config, app default), `on` (explicit zero-config), `off` (strict) | `""` |
+| `config.authCookieSecure` | Whether auth cookies carry the `Secure` flag (`AUTH_COOKIE_SECURE`). Unset writes nothing and the app decides (Secure in production, except a loopback host reached over plain http); `false` drops the flag, which is what a browser reaching a non-loopback host over plain http needs - it rejects a Secure cookie and login silently loops; `true` forces it on. TLS terminated at an ingress does not need this | unset |
 | `secrets.jwtSecret` | JWT signing secret: empty (zero-config) or >= 32 chars (schema-enforced) | `""` |
 | `secrets.adminEmail` | Admin email | `admin@libredb.org` |
 | `secrets.adminPassword` | Admin password | `""` |

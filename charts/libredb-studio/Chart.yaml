@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting fourteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra
 type: application
-version: 0.1.51
+version: 0.1.52
 appVersion: "0.13.4"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -39,6 +39,11 @@ annotations:
   artifacthub.io/category: database
   artifacthub.io/license: MIT
   artifacthub.io/prerelease: "false"
+  # False: 0.1.52 adds one value, config.authCookieSecure, and changes no behaviour on its
+  # own - unset (the default) writes no AUTH_COOKIE_SECURE and the app keeps deciding, so
+  # every existing install renders exactly as before. It makes an already-supported setting
+  # discoverable from values.yaml instead of reachable only through extraEnv; `false` is a
+  # deliberate weakening an operator asks for, not one this version applies.
   # False: 0.1.50 changes no packaged template and no value - it corrects the README's own
   # copy-paste recipes, which rendered an unquoted YAML boolean into `core/v1.EnvVar.value`
   # and left bracket arguments a zsh user's shell globs away. The README is a packaged file,
@@ -66,6 +71,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
+    - "config.authCookieSecure is now a first-class value: it writes AUTH_COOKIE_SECURE, the setting a browser reaching Studio over plain HTTP on a LAN or home-server address needs, which previously had to go through extraEnv. Three-state - leave it unset and nothing is written, so the app decides exactly as before"
     - "MySQL: reads no longer go through the prepared protocol unconditionally, which had broken statements MySQL itself only answers on the text protocol - CHECK TABLE and its relatives returned an error instead of a result"
     - "Monitoring: one refused read no longer costs the whole dashboard - the seven panels degrade individually, so a permission the user lacks hides that panel rather than blanking the page, and two panels stop reporting a fabricated zero"
     - "ScyllaDB connections could not be created at all, and an Oracle query touching a LOB column failed in full rather than returning its rows"

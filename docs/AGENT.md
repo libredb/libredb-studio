@@ -293,15 +293,23 @@ measures their own.
 the rail on its own, so a predecessor that cannot be reached must not take down the question the user
 did type: a shape error refuses, and every runtime condition DEGRADES — the run opens carrying no
 conversation, and the header records `declined` as `"unavailable"` (the run does not exist, is not
-this session's, is on another connection, has not ended, or names an id the ledger refuses),
+this session's, is on another connection, was established against another database, has not ended, or
+names an id the ledger refuses),
 `"disabled"` (`LIBREDB_AGENT_THREAD_CONTEXT`) or `"error"` (an unreadable ledger). The value is
 persisted rather than answered once, so a reload still has the notice to show, and the rail says which
 happened rather than going quiet.
 
-**One limit stated rather than glossed:** a connection record repointed at another database keeps its
-id, so a conversation can carry reports about the old database into a run against the new one — the
-same class as the `seed:<id>` concern above, recorded as `docs/BACKLOG.md` B68. What is left of B67 is
-run history across threads.
+**A conversation is checked against the DATABASE, not the record.** Every link used to check
+`connectionId` at its own open, which is an identity check on the RECORD: a saved connection edited to
+address another server keeps its id, so a follow-up was handed the earlier steps' claims about the old
+database while reading the new one — nothing refused, nothing wrong to look at. Each run therefore
+records `connectionIdentity`, the same fingerprint the held context snapshot is filed under: engine,
+host, port, database, service, instance, role and the SSH tunnel the database is reached through, and
+deliberately not the password. A follow-up whose database does not match its predecessor's declines as
+`"unavailable"` rather than carrying it. Rotating a credential or renaming a connection is the same
+database and keeps the conversation, and a predecessor that recorded no identity at all is carried
+rather than refused — no conversation in flight across a deploy is ended by a silence. What is left of
+B67 is run history across threads.
 
 A run emits a closed set of **semantic events**, and they are the whole of what the UI renders:
 `run-started`, `driver-resolved`, `context-captured`, `context-unavailable`, `statement-drafted`,
@@ -1980,14 +1988,30 @@ absent, because the browser asks the probe.
 
 **What green from the ledger probe promises, stated exactly.** The probe runs the same four steps as
 `@workflow/world-local`'s own `ensureDataDir` — create, read-check, write a probe file, remove it —
-so a green answer means *that* check will pass. It does **not** mean the world will build: the world
-calls `initDataDir`, which runs a fifth step the probe does not, reading and parsing `version.txt` in
-an existing ledger. A corrupt or incompatible one throws there, after the rail has already been
-rendered, and the first Start is where the operator meets it (B30).
+and then the fifth step the world's `initDataDir` performs: it READS an existing `version.txt` and
+parses it exactly the way upstream does. A file whose content upstream would refuse — truncated,
+empty, or written by an incompatible release — is reported as `LEDGER_INCOMPATIBLE` before the rail
+renders, rather than throwing a step later with the operator meeting it at the first Start.
+
+Two properties bound that check, and both are load bearing. **It is read-only**: it never creates,
+repairs or rewrites the file, because the only upstream entry point that answers this question is
+`initDataDir`, which writes `version.txt` as a side effect — calling it would turn a page-load
+visibility probe into something that initialises the ledger. And **an ABSENT `version.txt` stays
+green**, because that is the case `initDataDir` itself initialises; a fresh install has no file, and
+refusing one would make every first run report an unavailable agent. A version that parses but
+differs from the running one is green too: upstream hands a mismatch to `upgradeVersion`, which logs
+and returns, so such a ledger builds a world successfully.
+
+The parse mirrors a contract that belongs to another package, which is the accepted cost — kept
+payable by staying as narrow as an equality (no version comparison, no package-name check, no
+repair), so a change upstream shows up as this probe refusing a ledger the world would have accepted,
+naming the file it read, rather than as a silent divergence. Green still does not promise a run
+SUCCEEDS: the ledger directory is shared, so it can be corrupted between this answer and the Start
+that follows. What green rules out is a fault that was already on disk when the rail rendered.
 
 | Route | Purpose |
 | --- | --- |
-| `GET /api/agent/config` | Whether this server runs agents, and if not, which condition failed: `{"enabled": true, "ledgerVerified": …}` or `{"enabled": false, "reason": …, "detail": "…"}`. The reason is one code per operator action — `OPERATOR_DISABLED`, `NO_MODEL_CONFIGURED`, `LEDGER_UNAVAILABLE`, `UNSANCTIONED_WORLD_TARGET`, `IMPLICIT_HOSTED_WORLD`. The last two are backend refusals and keep their own codes deliberately: neither is a disk problem, and `IMPLICIT_HOSTED_WORLD` fires before anything is asked of a filesystem at all. `ledgerVerified` distinguishes the two kinds of yes: `true` after the writable-path probe passed, `false` for the Postgres carve-out, where the backend is accepted without being contacted (B31). Session-verified. `enabled` is a literal boolean because the rail compares `=== true`. `reason` goes to every session — it names an operator action and no path — while `detail` goes to **admin sessions only**, because `LEDGER_UNAVAILABLE`'s detail carries an absolute server path and an OS error string; every other session gets one stable sentence instead, and loses nothing, since the rail renders nothing when the answer is no. Never 500s, and never names a key's value. The ledger half of the answer is memoised for a few seconds, in-flight promise included — the route sits outside the `ai` rate-limit bucket on purpose, so the memo is what stops an authenticated caller turning a page-load probe into a write per request, including a burst that arrives while one probe is still running. |
+| `GET /api/agent/config` | Whether this server runs agents, and if not, which condition failed: `{"enabled": true, "ledgerVerified": …}` or `{"enabled": false, "reason": …, "detail": "…"}`. The reason is one code per operator action — `OPERATOR_DISABLED`, `NO_MODEL_CONFIGURED`, `LEDGER_UNAVAILABLE`, `LEDGER_INCOMPATIBLE`, `UNSANCTIONED_WORLD_TARGET`, `IMPLICIT_HOSTED_WORLD`. `LEDGER_INCOMPATIBLE` is separate from `LEDGER_UNAVAILABLE` deliberately: the path is writable and the action is removing or replacing one `version.txt`, so an operator sent to a permission would find nothing wrong with the directory. The last two are backend refusals and keep their own codes deliberately: neither is a disk problem, and `IMPLICIT_HOSTED_WORLD` fires before anything is asked of a filesystem at all. `ledgerVerified` distinguishes the two kinds of yes: `true` after the writable-path probe passed, `false` for the Postgres carve-out, where the backend is accepted without being contacted (B31). Session-verified. `enabled` is a literal boolean because the rail compares `=== true`. `reason` goes to every session — it names an operator action and no path — while `detail` goes to **admin sessions only**, because the ledger details carry an absolute server path plus an OS error string or a quoted fragment of a file on that disk; every other session gets one stable sentence instead, and loses nothing, since the rail renders nothing when the answer is no. Never 500s, and never names a key's value. The ledger half of the answer is memoised for a few seconds, in-flight promise included — the route sits outside the `ai` rate-limit bucket on purpose, so the memo is what stops an authenticated caller turning a page-load probe into a write per request, including a burst that arrives while one probe is still running. |
 | `POST /api/agent/runs` | Opens a run (mode, optional `workflowType`, objective, `connectionId`, and optional `previousRunId` to continue the conversation a run this session opened belongs to) and returns `202` with the run id, the PERSISTED mode and workflow type, and the `thread` the run actually belongs to. An unrecognised `workflowType` is refused rather than defaulted. An inline connection in the body is refused. A `previousRunId` that is not a non-empty string is refused `400`; one that cannot be reached does **not** refuse the start — the run opens with no conversation and `thread.declined` says so. An agent run whose model was established as unable to call tools is refused `422` before any run is opened. |
 | `GET /api/agent/runs/{runId}` | The run record, folded from its ledger. |
 | `DELETE /api/agent/runs/{runId}` | Requests a stop. Cancellation is enforced by the run loop's own persisted state, not by a driver cancel propagating — so this is "asked to stop", not "has stopped". |
@@ -2428,8 +2452,6 @@ the role's own grants are the whole boundary (A3).
   repointed server-side mid-session is not seen until the next fetch.
 - **B29** — an identifier the model quotes back into its own tool arguments reaches the transcript
   unfenced; an open injection path, bounded only by the server never handing it the raw marker.
-- **B30** — a green ledger probe promises `ensureDataDir` will pass, not that the world will build: a
-  corrupt or incompatible `version.txt` throws a step later, after the rail has rendered.
 - **B31** — the Postgres durable backend is reported available without being contacted, so an
   unreachable `WORKFLOW_POSTGRES_URL` still renders a rail whose first Start fails. Reported as a
   carve-out (`ledgerVerified: false`) rather than fixed; a real check is a connection attempt per page
@@ -2456,9 +2478,13 @@ as they are fixed, and a numeral here goes stale silently.
   continues and lists its steps from the run's own header, but a user cannot see the conversations
   they had yesterday or return to one: the store has no enumeration, there is no list route, and
   pagination and retention have not been decided.
-- **B68** — a connection record repointed at another database keeps its id, so a conversation can
-  carry reports established against the old database into a run reading the new one. The same class
-  as B23, and it fails the same way: nothing is refused and nothing looks wrong.
+- **B75** — a conversation's database is checked when a follow-up OPENS; a run already open is not
+  re-checked, so a resumed drive can read a repointed database while carrying a conversation and a
+  captured schema established against the old one. The record now carries the identity needed to close
+  it; what a run should DO when its connection moves under it is the undecided part.
+- **B76** — `declined: "unavailable"` collapses six causes, so the rail has one sentence for all of
+  them and it is specific about none. The repoint case is the one whose remedy differs, and it is the
+  candidate for a code of its own.
 - **B69** — a reload ends a conversation and the rail does not say so before the next question. The
   result is honest (no thread, no strip); the transition is silent.
 - **B70** — a run writes no summary for the step after it. The conversation carries the previous

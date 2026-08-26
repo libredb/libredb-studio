@@ -22,21 +22,21 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1–D27, D30–D33, U17 · 11
+- [Drivers and connections](#drivers-and-connections)
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 10
-- [Authentication and security headers](#authentication-and-security-headers) — AU2
+- [Authentication and security headers](#authentication-and-security-headers) — AU3
 - [Tests](#tests) — T1–T5 · 4
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC1, DOC3 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
-- [Chart configuration surface](#chart-configuration-surface) — N1–N3 · 3
+- [Chart configuration surface](#chart-configuration-surface) — N1, N3 · 2
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H13 · 9
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C2–C10 · 9
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K2–K4 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A6 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B74 · 46
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B76 · 46
 
 ---
 
@@ -184,32 +184,6 @@ Cassandra fixture does not close it.
 
 **Done when:** each of the four has been taken further or judged settled, and
 `e2e/cassandra-provider.spec.ts` exists or a written reason it cannot exist is recorded here.
-
----
-
-### D11. The SSH tunnel accepts any host key it is offered
-
-`createSSHTunnel` (`src/lib/ssh/tunnel.ts`) builds `connectOptions` from host, port, username and
-one of password or private key, and passes no `hostVerifier`. ssh2 has no default: with the callback
-absent the library does not verify the server's key at all, so the tunnel completes against whatever
-answers on that address. Every byte the tunnel carries - the database password among them - is
-readable to anything that can occupy the bastion's address, and nothing in the product ever shows a
-fingerprint the user could have compared.
-
-This is the layer where the check belongs and the only one that can do it: the database driver sees
-`127.0.0.1` and a local port, so its own TLS settings say nothing about who terminated the SSH hop.
-Found while fixing #457 and deliberately kept out of that PR: the fix there is about whether the
-tunnel is opened at all, and a verification policy is a separate decision with a UI consequence.
-
-The open decision is what to do on first contact, since Studio has no known-hosts store: refuse
-unknown keys and require the expected fingerprint to be configured (safe, and unusable until someone
-pastes a fingerprint), or trust-on-first-use pinned per connection (usable, and only as good as the
-first connection was). `SSHTunnelConfig` in `src/lib/types.ts` would carry the pin either way, which
-puts it in the storage secret walk in `src/lib/storage/connection-secrets.ts`.
-
-**Done when:** a tunnel verifies the bastion's host key against something the connection carries, an
-unverifiable key fails the connection with an error naming the fingerprint it saw, and the chosen
-first-contact policy is written in `docs/providers/`-adjacent documentation the dialog can point to.
 
 ---
 
@@ -675,27 +649,25 @@ recorded reason it is withheld.
 
 ## Authentication and security headers
 
-### AU2. Static assets receive no security headers — decided, not implemented
+### AU3. The two headers that would protect a subresource are the two nobody has decided on
 
-`src/proxy.ts`'s matcher excludes any path matching `.*\..*` so static assets skip the auth redirect:
-`/((?!api/storage/config|_next/static|_next/image|.*\..*).*)`. The dot exclusion is by design for
-auth — nothing under `public/` or `/monaco/vs/*.js` needs a login redirect — but it means `proxy()`
-never runs for those paths at all. Files under `public/`, `/monaco/vs/*.js` and `_next/static` are
-served with none of the Phase 1 security headers, `X-Content-Type-Options` chief among them, while
-every extensionless route gets the full set.
+Closing AU2 delivered `X-Content-Type-Options` and `X-Frame-Options` to the paths `src/proxy.ts`'s
+matcher skips, through `next.config.ts`'s `headers()`. Four of the six document headers were
+deliberately left out of that path and the reasons are recorded beside the rule: a `next.config`
+header set is baked at BUILD time while `src/lib/security/config.ts` reads its env per process, so a
+copy of the CSP would strand the `CSP_REPORT_ONLY` escape hatch, and a copy of HSTS — which is
+host-scoped, so the last value the browser receives wins — would let a request for `/logo.svg`
+silently downgrade the policy the document just set. `Referrer-Policy` and `Permissions-Policy` act
+on a document and are inert on an image or a script.
 
-(`api/db/health` was excluded here too until that was found to exempt `POST /api/db/health`, a
-state-changing route, from the Origin check. It is no longer in the list. GET's load-balancer path is
-unaffected, because the Origin check exempts GET by method.)
+What that leaves is the pair that WOULD add real protection to a subresource and that neither the
+Phase 1 set nor AU2 ever decided on: `Cross-Origin-Resource-Policy` and `Cross-Origin-Opener-Policy`.
+Both are constant values, so the build-time objection above does not apply to them. Neither has been
+measured against this app: CORP restricts who may embed our assets, and the app serves Monaco's
+workers from its own origin, so a wrong value breaks the editor rather than failing quietly.
 
-Weighed during Phase 1 and left as-is: these are not documents, and Next serves them with correct
-content types, so MIME sniffing on them is not a live threat. `Cross-Origin-Opener-Policy` and
-`Cross-Origin-Resource-Policy` belong to the same decision and are outside Phase 1's agreed header set.
-
-**Done when:** a second delivery mechanism covers them (e.g. `next.config`'s `headers()`), or this
-entry is re-affirmed as permanently accepted risk.
-
----
+**Done when:** each of the two is either delivered, with the value measured against a running editor
+and the Monaco worker path, or refused with the reason written next to the header rule.
 
 ## Tests
 
@@ -1038,28 +1010,6 @@ Note the naming collision: `route.*` in `values.yaml` means Gateway API as of #3
 
 **Done when:** an OpenShift cluster can be served by the chart alone, with TLS termination selectable,
 and the README says which of the three exposure mechanisms belongs to which platform.
-
-### N2. `AUTH_COOKIE_SECURE` is reachable in every distribution channel except the chart
-
-`grep -rln AUTH_COOKIE_SECURE charts/ operator/` returns nothing. The variable is read in
-`src/lib/auth.ts` and is the documented answer for a browser reaching the app over plain HTTP on a
-non-loopback host (`docs/OIDC.md`, `docs/DISTRIBUTION.md`), where auth cookies otherwise carry the
-`Secure` flag, the browser rejects them, and — in the words of the comment beside it — "login silently
-loops". The upstream report behind that comment is getumbrel/umbrel-apps#5847.
-
-Every other `config.*` key in this class already has a first-class value (`storageProvider`,
-`llmProvider`, `oidcIssuer`, …) rendered by `templates/configmap.yaml` under the established
-`{{- if .Values.config.X }}` pattern. A chart user has to reach for `extraEnv` instead, so the one
-setting most likely to be needed on a LAN or home-server install is the one that is not discoverable
-from `values.yaml`.
-
-Not hypothetical: plain-HTTP channels shipping without the override has already been diagnosed on
-three separate distribution channels.
-
-**Done when:** `config.authCookieSecure` exists, renders through the configmap like its siblings, is
-in the README's values table, and leaves the app's own default in place when unset. The semantics are
-three-state (`true` / `false` / unset lets the app decide), so a plain boolean with a `false` default
-would silently change behaviour for existing installs.
 
 ### N3. Subpath deployment is build-time only, which is why #369 is deferred rather than scheduled
 
@@ -2036,34 +1986,6 @@ the assistant turn rather than rebuilding them.
 **Done when:** a tool call's arguments are neutralised on the way into the transcript without
 desynchronising the `tool_call_id` pairing the endpoint validates.
 
-### B30. A green ledger probe does not promise the world will build: `version.txt` is checked later
-
-Found while reviewing #331 T5.
-
-`GET /api/agent/config` decides the rail's visibility partly on a writable-path probe, and that probe
-runs `@workflow/world-local`'s `ensureDataDir` steps: create the directory, check it is readable, write
-a probe file, remove it.
-
-The world does not call `ensureDataDir`. It calls `initDataDir`, which calls `ensureDataDir` **and
-then** reads `version.txt` from an existing ledger and parses it — first `parseVersionFile`, which
-throws on content with no `@`, then `parseVersion`, which throws on anything that is not
-`major.minor.patch`. Neither is reached by the probe.
-
-So an existing ledger directory whose `version.txt` is truncated, empty, or written by an incompatible
-release answers **green**. The rail renders, the operator clicks Start, and the run fails when the world
-is built — precisely the failure T5 exists to prevent, surviving in a narrower case.
-
-T5 narrowed the promise rather than widening the probe: `runLedgerProbe`'s docblock and `AGENT.md` now
-say green means `ensureDataDir` will pass, not that `initDataDir` will. Widening was rejected on two
-grounds. Parsing another package's on-disk format in our own probe duplicates a contract that is
-upstream's to change. And calling upstream's `initDataDir` writes `version.txt` as a side effect, which
-turns a read-only visibility probe into something that initialises the ledger on every page load.
-
-**Done when:** the probe can answer for the version file without writing one — either upstream exposes a
-check that does not initialise (worth an issue there), or the probe reads an EXISTING `version.txt`
-itself and reports a `LEDGER_INCOMPATIBLE` reason distinct from `LEDGER_UNAVAILABLE`, leaving the
-absent-file case to the world.
-
 ### B31. The Postgres durable backend is reported available without being contacted
 
 Raised in review of #331 T5.
@@ -2549,25 +2471,6 @@ is a persistence surface, not a rail change.
 **Done when:** a user can see their earlier conversations and open one, with the store's
 enumeration, the route and the retention rule each decided rather than inherited.
 
-### B68. A repointed connection carries a conversation across two databases
-
-A conversation is single-connection by induction: every link checks `connectionId` at its own open.
-That is an identity check on the RECORD, not on the database behind it — so a user who edits a
-connection to address another server keeps the id, and a follow-up asked afterwards is handed the
-earlier steps' reports about the old database while it reads the new one.
-
-The same class as B23 and as the `seed:<id>` comparison `docs/AGENT.md` describes, and it fails the
-same way: nothing is refused, nothing looks wrong, and the run reports on one database using claims
-established against another.
-
-Closing it means a database identity on the thread — something like `connectionIdentity`, which
-`context-snapshot.ts` already computes for its own hold and which fingerprints engine, host, port,
-database, service and role without the password. A follow-up whose identity does not match the
-conversation's would decline rather than carry it, joining `declined: "unavailable"`.
-
-**Done when:** a conversation carried onto a repointed connection declines, with a test that
-repoints between two runs and asserts the second carries no steps.
-
 ### B69. A reload ends a conversation, and nothing says it will
 
 A reload clears the browser's `runId`, so the next question starts a new thread. The rail is honest
@@ -2684,3 +2587,36 @@ at once.
 
 **Done when:** collation is part of what an index column carries, in both readers, and coverage
 accounts for it.
+
+### B75. A connection repointed mid-flight is still carried by a resumed drive
+
+A conversation's database is checked at the point a follow-up OPENS. A run
+already open is not re-checked. The thread text is derived and frozen at open, so a **resumed** drive
+can read the new database while carrying both a conversation and its own captured schema established
+against the old one — the same defect the open-time check closes, displaced from the open to the resume.
+
+The material is now in place to close it: each run records `connectionIdentity`, so `investigation.ts`
+could compare it against `connectionIdentity(context.connection)` at drive start. It was left out of
+the open-time check deliberately, because what a run should DO when its connection moves under it is a design question
+with three plausible answers (drop the thread and continue, refuse the resume, or continue and say
+so), and none of them has been measured.
+
+**Done when:** a resume onto a repointed connection does one stated thing, and the run's own record
+says which.
+
+### B76. `declined: "unavailable"` collapses six causes into one sentence
+
+The thread header records `declined: "unavailable"` for six different situations: the run does not
+exist, is not this session's, is on another connection, was established against another database (new
+the newest), has not ended, or names an id the ledger refuses. The rail therefore has one sentence for
+all six, and adding the database check made that sentence wrong for one of them — the earlier step COULD be reached,
+the database moved — which is why it now reads "could not be carried into this question" rather than
+"could not be reached". True of all six, and specific about none.
+
+The repoint case is the one with a genuinely different remedy: the others are transient or
+session-scoped, while this one persists until the operator changes the connection back or accepts the
+new conversation. A distinct code (`declined: "repointed"`) plus its own sentence is a type, route and
+rail change — the rail already has the sentence shape for the client-side `connectionDropped` case.
+
+**Done when:** a cause whose remedy differs from the others carries its own code, or the collapse is
+recorded as deliberate with the reason.

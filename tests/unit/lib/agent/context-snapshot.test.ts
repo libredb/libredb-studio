@@ -1407,6 +1407,42 @@ describe("the identity a held inventory is filed under", () => {
     expect(repointed({ agentUser: "agent_ro" })).not.toBe(connectionIdentity(CONNECTION));
   });
 
+  /*
+    The tunnel is part of the ROUTE, not part of the credentials: `host:port` is
+    resolved at the far end of it, so the same `db.internal:5432` reached through two
+    different bastions is two different databases, and a connection whose only edit was
+    its bastion is re-pointed exactly as squarely as one whose host changed (B68).
+  */
+  const TUNNEL: NonNullable<DatabaseConnection["sshTunnel"]> = {
+    enabled: true,
+    host: "bastion.eu",
+    port: 22,
+    username: "ops",
+    authMethod: "password",
+  };
+  const TUNNELLED: DatabaseConnection = { ...CONNECTION, sshTunnel: TUNNEL };
+
+  test("a connection re-pointed through another bastion is a different identity", () => {
+    for (const change of [{ host: "bastion.us" }, { port: 2222 }, { username: "deploy" }, { enabled: false }]) {
+      expect(connectionIdentity({ ...TUNNELLED, sshTunnel: { ...TUNNEL, ...change } })).not.toBe(
+        connectionIdentity(TUNNELLED),
+      );
+    }
+  });
+
+  test("a tunnel at all is a different identity from none", () => {
+    expect(connectionIdentity(TUNNELLED)).not.toBe(connectionIdentity(CONNECTION));
+  });
+
+  test("a rotated bastion credential is the same identity, for the same reason a rotated database one is", () => {
+    const rotated: DatabaseConnection = {
+      ...TUNNELLED,
+      sshTunnel: { ...TUNNEL, password: "new", privateKey: "k", passphrase: "p" },
+    };
+
+    expect(connectionIdentity(rotated)).toBe(connectionIdentity(TUNNELLED));
+  });
+
   test("a different auth database is a different identity, because it is a different user record", () => {
     // MongoDB looks the user up in the database `authSource` names, so the same name
     // against `admin` and against the data database is two principals with two catalog

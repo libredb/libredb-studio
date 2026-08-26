@@ -681,6 +681,22 @@ export function connectionIdentity(connection: DatabaseConnection): string {
         // the role fields are in here.
         connection.authSource ?? "",
         connection.agentUser ?? "",
+        // The tunnel is part of the ROUTE and not part of the credentials: `host` and
+        // `port` above are resolved at the FAR END of it, so the same `db:5432` reached
+        // through two different bastions is two different databases, and a connection
+        // whose only edit was its bastion is re-pointed exactly as squarely as one whose
+        // host changed. Its secrets are excluded on the rule the database password
+        // follows - rotating one changes who may reach the database, never which it is -
+        // and so is `hostKeyFingerprint`, which records what this connection TRUSTS
+        // rather than where it goes.
+        connection.sshTunnel === undefined
+          ? ""
+          : [
+              connection.sshTunnel.enabled,
+              connection.sshTunnel.host,
+              connection.sshTunnel.port,
+              connection.sshTunnel.username,
+            ],
       ]),
     )
     .digest("hex");

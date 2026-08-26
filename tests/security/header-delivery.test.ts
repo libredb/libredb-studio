@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import type { NextConfig } from "next";
 import { NextRequest } from "next/server";
 import { SignJWT } from "jose";
+import nextConfig from "../../next.config";
+import { securityHeaders } from "@/lib/security/headers";
 import { proxy } from "@/proxy";
 
 /**
@@ -89,5 +92,129 @@ describe("the matcher", () => {
     // here would silently take that test's protection away again, the same class of gap this
     // assertion exists to catch.
     expect(config.matcher[0]).not.toContain("api/db/health");
+  });
+});
+
+/**
+ * AU2: the matcher above skips every path containing a dot, plus `_next/static` and `_next/image`.
+ * That is correct for AUTH - nothing under `public/` needs a login redirect - but header delivery
+ * and auth redirection are two concerns sharing one matcher, so the assets need a SECOND delivery
+ * path. next.config.ts's `headers()` is it.
+ *
+ * Threat: a `.js` or `.css` served from this origin with no `X-Content-Type-Options`, so a
+ * response whose declared type is wrong or generic can be sniffed into a script; and the `.svg`
+ * files under `public/`, which are document contexts (not images) when reached by top-level
+ * navigation or `<object>`, with no framing defence.
+ */
+
+/** A path the proxy matcher skips, one per exclusion class named in AU2. */
+const SKIPPED_PATHS = ["/logo.svg", "/monaco/vs/loader.js", "/_next/static/chunks/main-abc123.js"];
+
+/**
+ * The `:param*` wildcard form is the only path-to-regexp construct these rules use (it is the
+ * documented "every route" pattern). Anything else in a `source` escapes wrong here and fails the
+ * assertions loudly rather than passing vacuously, which is the intent.
+ */
+function sourceMatcher(source: string): RegExp {
+  return new RegExp(`^${source.replace(/:[A-Za-z]+\*/g, ".*")}$`);
+}
+
+type HeaderRule = Awaited<ReturnType<NonNullable<NextConfig["headers"]>>>[number];
+
+async function configHeaderRules(): Promise<HeaderRule[]> {
+  return await (nextConfig.headers as NonNullable<NextConfig["headers"]>)();
+}
+
+/** Every header name/value pair next.config delivers to `pathname`, last rule winning. */
+function headersFor(rules: HeaderRule[], pathname: string): Record<string, string> {
+  const delivered: Record<string, string> = {};
+  for (const rule of rules) {
+    if (!sourceMatcher(rule.source).test(pathname)) continue;
+    for (const { key, value } of rule.headers) delivered[key] = value;
+  }
+  return delivered;
+}
+
+describe("the paths the proxy matcher skips are covered by a second delivery path", () => {
+  test("the matcher really does skip them, so a second path is necessary and not redundant", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { config } = require("@/proxy") as { config: { matcher: string[] } };
+    const matched = new RegExp(`^${config.matcher[0]}$`);
+
+    for (const pathname of SKIPPED_PATHS) {
+      expect({ pathname, matched: matched.test(pathname) }).toEqual({ pathname, matched: false });
+    }
+  });
+
+  test("next.config delivers nosniff and the framing denial to each of them", async () => {
+    const rules = await configHeaderRules();
+
+    for (const pathname of SKIPPED_PATHS) {
+      const delivered = headersFor(rules, pathname);
+
+      expect({ pathname, delivered }).toEqual({
+        pathname,
+        delivered: { "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY" },
+      });
+    }
+  });
+
+  test("the values are read from securityHeaders(), not spelled a second time", async () => {
+    // The whole value of one source of truth: this goes red the moment next.config carries its own
+    // literal for a header whose value src/lib/security/headers.ts has changed.
+    const authority = securityHeaders();
+    const delivered = headersFor(await configHeaderRules(), "/logo.svg");
+
+    for (const [name, value] of Object.entries(delivered)) {
+      expect({ name, value }).toEqual({ name, value: authority[name] });
+    }
+    expect(Object.keys(delivered).length).toBeGreaterThan(0);
+  });
+
+  test("both chosen headers are option-independent, which is why the baked copy cannot drift", () => {
+    // next.config's headers() is evaluated at BUILD time, so anything an operator can change per
+    // process (CSP_REPORT_ONLY, HSTS_INCLUDE_SUBDOMAINS, NEXT_PUBLIC_MONACO_VS_PATH) must NOT be
+    // delivered from there. These two are constants under every option combination; that is the
+    // property that makes calling securityHeaders() with no options here correct.
+    const relaxed = securityHeaders({
+      reportOnly: true,
+      allowEval: true,
+      hsts: false,
+      monacoVsPath: "https://assets.example.com/monaco/vs",
+    });
+    const shipped = securityHeaders();
+
+    expect(relaxed["X-Content-Type-Options"]).toBe(shipped["X-Content-Type-Options"]);
+    expect(relaxed["X-Frame-Options"]).toBe(shipped["X-Frame-Options"]);
+  });
+});
+
+describe("control: the document surface is unchanged by the static-asset path", () => {
+  test("a document still carries the full six-header set from the proxy", async () => {
+    const response = await proxy(request("/", await createToken("user")));
+
+    expect(Object.keys(securityHeaders()).sort()).toEqual([
+      "Content-Security-Policy",
+      "Permissions-Policy",
+      "Referrer-Policy",
+      "Strict-Transport-Security",
+      "X-Content-Type-Options",
+      "X-Frame-Options",
+    ]);
+    for (const name of Object.keys(securityHeaders())) {
+      expect({ name, present: response.headers.get(name) !== null }).toEqual({ name, present: true });
+    }
+  });
+
+  test("the two headers next.config also delivers are byte-identical, so the overlap is inert", async () => {
+    // The rules match documents too (narrowing the source would mean a second copy of the
+    // matcher's exclusion list, which is exactly the drift this shares a source of truth to
+    // avoid). That is only safe while both deliveries agree byte for byte.
+    const response = await proxy(request("/", await createToken("user")));
+    const delivered = headersFor(await configHeaderRules(), "/");
+
+    for (const [name, value] of Object.entries(delivered)) {
+      expect({ name, value: response.headers.get(name) }).toEqual({ name, value });
+    }
   });
 });

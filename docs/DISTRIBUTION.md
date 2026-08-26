@@ -994,6 +994,8 @@ web UI: **Apps** tab, search for **LibreDB Studio**, then **Install**.
   requirement - see the exception noted under
   [Zero-config first run](#zero-config-first-run).
 - `AUTH_COOKIE_SECURE=false` ships as the default because a LAN install is served over plain HTTP.
+  The Helm chart exposes the same switch as `config.authCookieSecure` rather than shipping it set: a
+  chart install is as likely to sit behind an ingress terminating TLS, where the flag must stay on.
   Set it to `true` once the app sits behind HTTPS (a reverse proxy); leaving it `false` on a
   public host sends the session cookie in cleartext.
 - The container is unprivileged, on `bridge` networking, and needs no other service - databases are
