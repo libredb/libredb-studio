@@ -46,6 +46,7 @@ if it only lists the good news.
 | `POST /api/agent/classify`, **before any run exists** | Your objective, and nothing else. One short completion that asks the model to name one of the five workflows. It fires when you press **Start** with the workflow left on **Automatic**, which is the default; naming a workflow yourself under **Advanced** skips it entirely. See [the classification, before any run](#the-classification-before-any-run) | No — it carries no database content to fence. Your objective is sent as the user message, and the server's instructions tell the model to treat that text as data to classify and never as instructions to it |
 | Any **run**, in either mode, on **any** engine | Your objective, and a schema inventory (table, column, index identifiers and column types) with its relations graph (identifiers only). **Since #414 that inventory leaves on every engine**, where before it left on PostgreSQL and SQLite alone: those two are read with catalog statements the server composes, and the other twelve by asking the connection's own provider to describe its schema. On **MongoDB and Couchbase** the provider works out a collection's fields from a **sample of your own documents** — no value from them is in the message, but the **existence** of a field there is derived from your data rather than read from a catalog, which is a weaker claim than a catalog reading's and is why that reading has its own operation id (`db.schema.read`) an operator can deny alone. When the reading cannot be taken — a refusal, a provider that cannot describe its own schema, a description that overran the time the run granted it — nothing of the schema leaves and a server sentence saying which of those happened goes in its place. See [the schema inventory](#3-the-schema-inventory--identifiers-and-types-fenced) | Everything derived from the database is wrapped in an untrusted-content fence before it reaches a prompt |
 | An **agent run** | The above, plus the rows of each read the model performed, up to 200 per read; engine error text; server-written refusals; server-minted ids | Same fence |
+| Any **run that continues a conversation**, in either mode, on any engine | **In addition to everything above**: the earlier steps' objectives — *your own earlier questions*, capped at 200 characters each — and the most recent step's report, which is a model's claims about your data. No row of any result, and no earlier step's report but the newest. Sent only when the rail attaches a previous run's id, which it does for a follow-up on the same connection; a run that starts its own conversation sends no such message. Bounded to 4000 characters by default and switchable off with `LIBREDB_AGENT_THREAD_CONTEXT=false`. See [the conversation](#2a-the-conversation-when-a-run-continues-one--fenced) | Same fence, identified as `operation agent/thread`: it is prose a user and a model wrote, and none of it is the server's voice |
 | An **agent run opened as Operate** | Your objective; a **schema inventory reduced to its own names and index names** (no column names, no column types, no relations graph), read whichever of the two ways that engine is read and named with whichever noun that engine's provider declares — tables, collections, datasources, key patterns; in Plan mode the engine's **row-count estimates** for those same tables where the engine holds any — PostgreSQL and SQLite — and nothing per column; and the rows of each curated reading — which, for the `sessions` and `slow-queries` kinds, include **other database users' in-flight statement text and their database usernames**. See [the operations workflow](#5a-the-operations-workflow-what-a-curated-reading-sends) | Same fence: the inventory and every reading's rows are database content and are fenced |
 | `POST /api/ai/explain` | Your statement, the EXPLAIN plan, the schema context the browser holds, the engine type | No |
 | `POST /api/ai/query-safety` | Your statement, a filtered schema context, the engine type | No |
@@ -205,6 +206,46 @@ all (see [What never leaves](#what-never-leaves)).
 The first user message is the text you typed, unmodified apart from the trim the rail applies
 (`investigation.ts:698`). Bounded to 4000 characters by the route and by the rail
 (`AGENT_MAX_OBJECTIVE_LENGTH`).
+
+### 2a. The conversation, when a run continues one — fenced
+
+**This is the one message whose content came from an EARLIER question of yours.** It is sent only
+when a run continues a conversation: a follow-up asked on the same connection, where the rail
+attaches the previous run's id and the route derives the block server-side from those runs' own
+ledgers (`thread-context.ts`, `investigation.ts:1923`). A run that starts a conversation of its own
+sends nothing here, and there is no such message at all.
+
+What is in it, and where each half came from:
+
+| Half | Content | Whose words |
+| --- | --- | --- |
+| The **spine** | Every earlier step's objective, oldest first, each capped at 200 characters | **Yours** — the questions you typed, verbatim to the cap |
+| The **evidence** | The most recent step's report: its answer statement, its claims, its closing prose | A **model's**, about your data — a claim is prose a model wrote after reading rows |
+
+**A claim is derived from your rows, and that is the honest way to read this.** No value from any
+row is copied into it, but a claim like *"Sports has the most films (74)"* is a statement ABOUT your
+data that a model composed from a result it read. So a conversation carries derived findings from one
+question into the next one's prompt. That is the whole feature, and it is why there is an operator
+switch for it.
+
+**What is NOT in it.** Not the rows of any result. Not an earlier step's REPORT beyond the most
+recent one — only its objective travels, which is why the block says so in the server's own voice
+outside the fence ("earlier steps may list only what was ASKED, not what was found"). Not the schema
+inventory, which is its own message below. Not a run id of anybody else's: the route refuses to
+continue a run that is not this session's, is on another connection, or has not ended.
+
+**Bounded and fenced.** The whole block is capped
+(`AGENT_THREAD_CONTEXT_MAX_CHARS`, 4000 by default, sizeable per model through
+`AGENT_MODEL_TUNING_PATH`), the spine may take at most 75% of that, and every drop — a step past the
+cap, a report that did not fit, a report with no room at all — is stated in the text rather than
+performed silently. It is wrapped in the same untrusted-content fence every database-derived message
+gets, identified as `operation agent/thread`, because it is prose a user and a model wrote and none
+of it is the server's voice.
+
+**Switched off, nothing here leaves.** `LIBREDB_AGENT_THREAD_CONTEXT=false` and every run opens on
+its own; the run's own record says `declined: "disabled"` and the rail says so when a follow-up was
+not read as one. See [`docs/AGENT.md`](./AGENT.md) for the setting and
+[the conversation a run belongs to](./AGENT.md#the-conversation-a-run-belongs-to) for the model.
 
 ### 3. The schema inventory — identifiers and types, fenced
 

@@ -138,6 +138,29 @@ the next question needs no deleting; the question itself is not lost, since the 
 it and the timeline's first entry quotes it. A start that was *refused* leaves what you typed exactly
 where it was, so retrying is one click rather than one retyping.
 
+**A question you ask next CONTINUES the last one.** Type into the emptied box after a run has
+finished, on the same connection, and the new run is told what the conversation so far asked and what
+its most recent step found — so *"and how many of those?"* resolves instead of being answered as a
+fresh question. The panel says which conversation you are in, above the run:
+
+> Conversation: 2 steps before this one — new conversation
+> 1. count my films by category
+> 2. chart those
+
+It is a list rather than a chat: each step is still its own run, with its own ledger, its own budget
+and its own report. What the next run inherits is a bounded account of the earlier ones — every
+step's question, and the newest step's findings — never the rows of anybody's result.
+
+**"new conversation" is how you leave it.** Press it and the panel says *"Your next question will
+start a new conversation"* until you either ask that question or press *"keep it"*. Two other things
+end a conversation without being asked to: switching connection, which the panel says in its own
+words, and reloading the page, which simply leaves no conversation to show.
+
+**And it can be off.** Where an operator has set `LIBREDB_AGENT_THREAD_CONTEXT=false`, every question
+opens on its own and the panel tells you so the first time you ask a follow-up — rather than leaving
+you to work it out from an answer that does not resolve. The same line appears, worded differently,
+when a conversation could not be reached at all.
+
 Both axes are **fixed when the run opens** and are read from the run's own record for the rest of
 its life (`src/app/api/agent/runs/route.ts:35-56`), so nothing can widen a Plan run into an Agent
 one afterwards. The record also carries **how** the workflow was decided and how that reading went,
