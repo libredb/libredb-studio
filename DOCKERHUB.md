@@ -131,12 +131,14 @@ Fourteen external engines share one interface, and three of them are read-only b
 
 ### Engines with no provider of their own
 
-Twenty-three further engines speak the wire protocol of one of the fourteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has nineteen rows rather than twenty-three because engines that behave identically share a row; all twenty-three are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+Twenty-six further engines speak the wire protocol of one of the fourteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. The table has twenty-two rows rather than twenty-six because engines that behave identically share a row; all twenty-six are named in it. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |
 | MariaDB · Percona Server for MySQL | `mysql` | Full — both are drop-in builds and both were measured rather than assumed: all fifteen surfaces answer and the numbers are correct. Nothing on screen says Percona, though: `version()` answers a bare 8.4.11-11 and the product name is only in `@@version_comment` |
 | Percona Distribution for PostgreSQL | `postgres` | Full — behaves as PostgreSQL throughout, with correct row counts and sizes, and unlike the MySQL build it names itself in `version()` |
+| ParadeDB | `postgres` | Full — correct numbers, but its nine extensions put 41 objects in the object browser for 2 user tables, and agent plan mode fails on a stock install because 539 non-system columns exceed the grounding capture's ceiling. `version()` names PostgreSQL only |
+| OrioleDB | `postgres` | Full — clean object browser and exact row counts, but its own storage is invisible to PostgreSQL's size functions, so every index reads 0 bytes and the cache hit ratio reads N/A. Nightly images only |
 | TiDB | `mysql` | Full — but a freshly loaded table reads 0 rows and 0 B until TiDB's background statistics catch up, the slow-query panel stays empty, and only a standalone `--store=unistore` server was probed |
 | Vitess | `mysql` | Full. Row counts and sizes are exact, but a running query cannot be cancelled: vtgate refuses `KILL QUERY` and the statement runs to completion. Per-index sizes read 0 bytes, and only an unsharded single-shard keyspace was probed |
 | Citus | `postgres` | Full — but statistics describe the coordinator, so a distributed table's row count and size are wrong rather than missing |
@@ -154,6 +156,7 @@ Twenty-three further engines speak the wire protocol of one of the fourteen driv
 | SingleStore | `mysql` | Partial - ten of the fifteen surfaces answer, and five of the failures were ours rather than SingleStore's - the provider's prepared-statement protocol took down Test Connection, health, the overview, the monitoring dashboard and Explain - of which four are now fixed, Explain being the exception because there the grammar wants `EXPLAIN JSON`. Row counts and sizes are missing rather than wrong, a 2000-row table reading 0 rows and 0 B, and foreign keys do not exist at all |
 | ScyllaDB | `cassandra` | Partial - the editor and the object browser work in full, and all 18 CQL types read back byte-identically to the Apache Cassandra 5.0.9 probed in the same pass; Test Connection and the overview, health, performance-metrics, active-session and monitoring panels all read empty because ScyllaDB has no `system_views` keyspace at all - they degrade rather than throw, so Test Connection passes and the dialog saves the connection, which it could not do at all until that change. The object browser lists one extra table per secondary index, no version is displayed anywhere, and creating a keyspace on the 2026.2 line needs `NetworkTopologyStrategy` because `SimpleStrategy` is refused |
 | Materialize · RisingWave | `postgres` | Query editor only |
+| Databend | `mysql` | Query editor only — SQL and a plain `EXPLAIN` run, and its catalogs answer correctly when asked directly, but every parameterised read fails with *Prepare is not support in Databend*, so the object browser and all statistics panels are empty. It also has no `SHOW STATUS` and no `information_schema.processlist` |
 
 Details, probed versions and each caveat: [`docs/providers/README.md`](https://github.com/libredb/libredb-studio/blob/main/docs/providers/README.md).
 

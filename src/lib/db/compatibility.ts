@@ -73,7 +73,7 @@ export const SHIPPED_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(Obj
  * `libredb` is the embedded store this app carries with it; the other fourteen are
  * external engines you point the product at. Everything published as a database
  * count means the external fourteen - README.md's "fourteen drivers reach
- * thirty-seven named engines", the login hero's engine claim - so the split needs a
+ * forty named engines", the login hero's engine claim - so the split needs a
  * definition somewhere, and it belongs beside `SHIPPED` rather than in the UI that
  * prints it. That is the same reason `SHIPPED` itself lives here.
  *
@@ -143,8 +143,8 @@ export interface WireCompatibleEngine {
  * 2026-08-20, Apache Cloudberry and Vitess from a third run the same day,
  * AlloyDB Omni from a fourth run the same day, OceanBase Community Edition
  * and SingleStore from a fifth run the same day, ScyllaDB from a sixth run on
- * 2026-08-21/22, and Apache Doris, Garnet and both Percona distributions from a seventh
- * run on 2026-08-26.
+ * 2026-08-21/22, Apache Doris, Garnet and both Percona distributions from a seventh run
+ * on 2026-08-26, and ParadeDB, OrioleDB and Databend from an eighth on 2026-08-27.
  * Names still awaiting an instance are tracked in issue #424, never here: there
  * is no "pending" state on purpose, because a reader cannot tell a pending entry
  * from a probed one. A name that WAS probed and did not earn an entry has no
@@ -203,6 +203,18 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     ],
   },
   {
+    name: "OrioleDB",
+    via: "postgres",
+    tier: "full",
+    probedVersion: "OrioleDB beta 16 on PostgreSQL 18.4 (nightly of 2026-08-24)",
+    caveats: [
+      "All fifteen surfaces answer, the object browser is clean (2 objects for 2 user tables) and row counts are exact - 2000 read as 2000 - with a foreign key and its indexes read back.",
+      "Every index reads 0 bytes in the object browser and the table statistics: an OrioleDB table keeps its indexes in its own storage and pg_indexes_size() returns 0 for it, the same shape as YugabyteDB's DocDB.",
+      "The cache hit ratio is absent rather than wrong: OrioleDB has its own buffer manager, so pg_statio_user_tables stays at 0 hits and 0 reads and the panel reads N/A.",
+      "version() DOES name OrioleDB, and the string carries the build hash and date, because the project publishes nightly images only - there is no released tag to pin.",
+    ],
+  },
+  {
     name: "TimescaleDB",
     via: "postgres",
     tier: "full",
@@ -256,6 +268,21 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "The columnar engine is off by default and turning it on needs ALTER SYSTEM plus a restart, not a reload. With it on, the on-disk sizes stay exact but do not count the columnar copy.",
       "The agent cannot ground a run: the image's own postgres superuser is refused as too broad, and a least-privilege role acquires both profiles but has its schema capture refused at 536 rows against a 200-row budget, of which only 7 are the user's - 341 of the rest are the 49 extension views installed into public itself, so narrowing the capture to public alone still refuses at 348 rows (B52).",
       "Probed on the 17.9.0 image only; the 15.x and 16.x lines were not probed.",
+    ],
+  },
+  {
+    // Read this entry beside OrioleDB below: both are `full`, and what each costs the user
+    // is the opposite of the other. ParadeDB's cost is WIDTH - nine extensions in the
+    // object browser - and OrioleDB's is DEPTH, its own storage being invisible to
+    // PostgreSQL's size functions. Neither caveat belongs on the other row.
+    name: "ParadeDB",
+    via: "postgres",
+    tier: "full",
+    probedVersion: "ParadeDB 0.25.4 on PostgreSQL 18.6",
+    caveats: [
+      "All fifteen surfaces answer and the numbers are correct, but the object browser lists 41 objects for 2 user tables and 74 indexes: ParadeDB ships nine extensions, and PostGIS, its tiger geocoder, pg_ivm and paradedb's own tables are all in there.",
+      "Agent plan mode WORKS here, and the reason is worth knowing because the opposite was expected: the grounding capture reads what the ROLE can see, and an unprivileged role sees 168 columns where a superuser sees 539 - the tiger geocoder's 425 are not readable - so the capture stays under its 200-row ceiling and a plan run grounded on 21 tables. Connect as a least-privilege role, not as a superuser: the execution profile refuses a superuser outright, on any PostgreSQL.",
+      "version() names PostgreSQL only, so the version panel cannot tell a ParadeDB apart from a stock PostgreSQL 18.6. The release is in the image tag, nowhere the provider reads.",
     ],
   },
   {
@@ -343,6 +370,19 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "The Explain panel does not work: Doris rejects EXPLAIN FORMAT='json', while a plain EXPLAIN runs in the editor.",
       "Row counts and sizes are correct but late: a table read 0 rows and 0 B immediately after a 2000-row insert and the true 2000 rows / 10187 bytes about a minute later, with an ANALYZE in between changing nothing. The lag is self-correcting, so a freshly loaded table looks empty for a while.",
       "A UNIQUE KEY table declares no primary key to the product: information_schema reports COLUMN_KEY as UNI rather than PRI, so the object browser marks no column primary.",
+    ],
+  },
+  {
+    name: "Databend",
+    via: "mysql",
+    tier: "query-only",
+    probedVersion: "Databend v1.2.925-patch-11 (advertises MySQL 8.0.90)",
+    caveats: [
+      "The SQL editor works and a plain EXPLAIN shows Databend's own plan. Nothing else does: the object browser, every statistics panel and the monitoring dashboard are unavailable.",
+      "The cause is ours rather than Databend's, which is why the catalogs are worth naming: asked with literal SQL, information_schema.tables answers the true 3 and 2000 rows with sizes. Every parameterised read fails instead with Prepare is not support in Databend, because those still go through mysql2's prepared protocol.",
+      "Databend has no SHOW STATUS statement at all and no information_schema.processlist, so the overview, health and session panels have no source even once the protocol question is settled.",
+      "Strings must be single-quoted: Databend follows the SQL standard and reads a double-quoted value as an identifier, so a double-quoted literal is an unknown-column error.",
+      "EXPLAIN FORMAT='json' does not parse, and neither Optimize nor Check exists. Analyze runs but the provider mis-reads its reply.",
     ],
   },
   {
@@ -499,7 +539,7 @@ export function compatibleEnginesFor(type: DatabaseType): readonly WireCompatibl
  *
  * Still no runtime consumer: README.md and the docs table are markdown and quote the
  * number as prose, and the login hero prints the two halves separately - fourteen in
- * the proof row, twenty-three in the relatives line - rather than their sum. This exists
+ * the proof row, twenty-six in the relatives line - rather than their sum. This exists
  * so the arithmetic has one definition, and the unit test pins it.
  */
 export function connectableProductCount(): number {

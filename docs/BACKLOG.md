@@ -22,7 +22,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1–D27, D30–D32, U17 · 10
+- [Drivers and connections](#drivers-and-connections) — D1–D27, D30–D33, U17 · 11
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 10
@@ -351,6 +351,12 @@ connection-change effect clears it only in the `else` branch, when the active co
 null - never when the fetch for a new one fails. Storage is not involved: `/api/storage/config`
 answers `serverMode: false`, `libredb_schema_snapshots` was empty, and the tree is React state.
 
+**Reproduced a second time on a different engine, 2026-08-27.** Selecting the Databend connection
+after an OrioleDB one showed OrioleDB's `probe_customers 3` / `probe_orders 2.0k` under Databend's
+name, with `500 POST /api/db/schema/list :: Prepare is not support in Databend` in the network log -
+same shape, different cause for the failing read, which is the point: any failing schema read does
+this.
+
 **Why this is worse than an empty tree, and why it is not a QuestDB problem.** An empty object
 browser is the honest reading the absence rule (#477) asks for. This one attributes real objects,
 with real row counts, to a database that does not contain them - and the tables are clickable, so
@@ -387,6 +393,40 @@ to notice, because a caveat had to be written about a reading that turned out to
 **Done when:** the health panel's slow-query line either carries the rows the slow-query read
 returns or is absent, and the "not available" wording appears only on a server where
 `@@performance_schema` is actually 0 - both arms measured, one server of each kind.
+
+---
+
+### D33. Every parameterised read still prepares, so an engine without PREPARE loses all of them
+
+Measured 2026-08-27 against `datafuselabs/databend:v1.2.925-patch-11` (issue #424, Phase 0).
+Databend replies `Prepare is not support in Databend` to mysql2's prepared protocol, and that one
+answer takes `getTables()`, `getSchema()`, `getActiveSessions()`, `getTableStats()`,
+`getIndexStats()` and `getStorageStats()` - the whole object browser and every statistics panel -
+while the editor keeps working.
+
+**The catalogs are there.** Asked with literal SQL on the same connection,
+`information_schema.tables` returns the true 3 and 2000 rows with `data_length` 124 and 49000, and
+`information_schema.columns` answers in full. So the engine has the data and we cannot read it.
+
+This is **D8 one step further in**, and the remaining step is the harder half. D8 moved every
+*parameterless* statement onto MySQL's text protocol; these six reads carry placeholders
+(`WHERE table_schema = ?`) and therefore still prepare. Moving them means either interpolating the
+schema name into the statement - which is where a placeholder was the safe choice, so it needs an
+identifier-quoting decision rather than a string concat - or asking mysql2 for the text protocol
+with the parameters bound client-side. Neither is a one-line change, which is why this is filed
+rather than done inside a labelling PR, and why Databend's registry row reads `query-only` today.
+
+**A second, smaller defect surfaced on the same engine, and it is a crash rather than a failure.**
+`runMaintenance('analyze')` throws `TypeError: rows.filter is not a function`: Databend answers
+`ANALYZE TABLE` with an object where the reader expects an array of `Msg_type` rows. A provider
+that cannot run a maintenance action should report that, not throw a type error out of the route -
+and this is the same shape already recorded once, a mysql2 reply whose type depends on the
+statement.
+
+**Done when:** the six reads above answer on Databend, with the identifier path decided rather
+than concatenated, and `runMaintenance` on an engine that answers `ANALYZE` with a non-array
+reports a result instead of throwing - both verified against the container, and the reading
+unchanged on MySQL, MariaDB and one analytics relative.
 
 ---
 

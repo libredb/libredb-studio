@@ -633,6 +633,38 @@ services:
     ports:
       - "15440:5432"
 
+  # ParadeDB: PostgreSQL plus nine extensions (pg_search, pgvector, PostGIS, pg_ivm and the
+  # rest). PINNED to a RELEASE tag rather than `latest`, because `version()` names only
+  # PostgreSQL here - the tag is the only record of which ParadeDB was measured.
+  #
+  # Expect a crowded object browser: 41 objects for 2 user tables on a fresh database, and
+  # agent plan mode fails on it (B52). That is the finding, not a misconfiguration.
+  paradedb:
+    image: paradedb/paradedb:0.25.4
+    container_name: libredb-paradedb
+    profiles: ["compat"]
+    environment:
+      POSTGRES_PASSWORD: "Probe123pass!"
+      POSTGRES_DB: probe
+    ports:
+      - "15441:5432"
+
+  # OrioleDB: a storage-engine extension on PostgreSQL, and the tables a fresh database
+  # creates already use it (`default_table_access_method` is `orioledb`) - verified, since a
+  # probe against heap tables would measure PostgreSQL and not OrioleDB.
+  #
+  # The tag is a DATED NIGHTLY on purpose: the project publishes no release tags at all, so
+  # `pg18-nightly-ubuntu` moves under you. This is the build the 2026-08-27 probe measured.
+  orioledb:
+    image: orioledb/orioledb:pg18-nightly-20260824-cc35a80-ubuntu
+    container_name: libredb-orioledb
+    profiles: ["compat"]
+    environment:
+      POSTGRES_PASSWORD: "Probe123pass!"
+      POSTGRES_DB: probe
+    ports:
+      - "15442:5432"
+
   # `yugabyted` is the single-node launcher: it starts the master and the tserver in
   # one container, and --background=false keeps it in the foreground so Docker owns
   # the process and the container does not exit immediately. YSQL listens on 5433,
@@ -733,6 +765,25 @@ services:
       MYSQL_ROOT_PASSWORD: "Probe123pass!"
     ports:
       - "13307:3306"
+
+  # Databend serves a MySQL wire handler on 3307 (not 3306) beside its own HTTP API on 8000.
+  # Connect as `mysql` on the published 13308.
+  #
+  # It earns a `query-only` row and the reason is ours: every parameterised read answers
+  # `Prepare is not support in Databend`. So this service exists to reproduce that, and to
+  # re-measure it when the prepared-protocol question is settled.
+  #
+  # PINNED to a patch release rather than `nightly`, which is what the tag list mostly holds.
+  databend:
+    image: datafuselabs/databend:v1.2.925-patch-11
+    container_name: libredb-databend
+    profiles: ["compat"]
+    environment:
+      QUERY_DEFAULT_USER: root
+      QUERY_DEFAULT_PASSWORD: "Probe123pass!"
+    ports:
+      - "13308:3307"
+      - "18000:8000"
 
   # TiDB needs no PD and no TiKV to run here: --store=unistore is its embedded
   # single-node storage engine, so this is one container like every other entry, and

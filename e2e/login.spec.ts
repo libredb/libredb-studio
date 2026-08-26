@@ -130,7 +130,7 @@ test.describe("Login showcase", () => {
 
   test("hero names every wire-compatible relative, with the registry's own count", async ({ page }) => {
     // The gap this closes: the hero named the shipped drivers and stopped, while the product
-    // connects to thirty-seven named products. The twenty-three relatives were published in
+    // connects to forty named products. The twenty-six relatives were published in
     // README.md and the docs compatibility table but on no surface a visitor sees first.
     const line = page.getByTestId("wire-compatible-desktop");
     await expect(line).toBeVisible();

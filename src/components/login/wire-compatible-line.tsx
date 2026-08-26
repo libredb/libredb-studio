@@ -9,7 +9,7 @@ interface WireCompatibleLineProps {
  * The engines that connect through a driver of their own name's making.
  *
  * The login page named fifteen providers and stopped there, while the product connects to
- * thirty-seven named products: the other twenty-three speak a wire protocol we already ship and
+ * forty named products: the other twenty-six speak a wire protocol we already ship and
  * were published in README.md and the docs compatibility table, but nowhere a visitor to
  * the front door could see them. This line closes that gap and nothing else - the count and
  * every name come from `WIRE_COMPATIBLE_ENGINES`, so a twentieth probed engine joins the
@@ -18,7 +18,7 @@ interface WireCompatibleLineProps {
  * What it deliberately does NOT carry is the per-engine tier. `WireCompatibilityHint` shows
  * it in the connection dialog, where there is room to say that Materialize is query-editor
  * only and that a Citus distributed table reports row counts you should not trust. A hero
- * line has no room for twenty-three qualifications, and the alternative to qualifying them is
+ * line has no room for twenty-six qualifications, and the alternative to qualifying them is
  * not to imply parity: the wording claims a measurement, which is the one thing every entry
  * here really has (issue #424's claim discipline - "connects is not supported"), and the
  * docs table is where a reader finds out how much of the product each one gives them.

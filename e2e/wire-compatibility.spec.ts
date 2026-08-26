@@ -44,6 +44,10 @@ test.describe("Wire compatibility hint", () => {
     // while a `partial` name next to it would read as parity unless the hint says otherwise.
     await expect(hint).toContainText("Apache Doris");
     await expect(hint.getByTestId("wire-compat-tier-Apache Doris")).toContainText("partial support");
+    // Databend (#424, probed 2026-08-27) is the first MySQL-wire relative to be query-only,
+    // so its suffix is asserted for the same reason Doris's is: the tier is the claim.
+    await expect(hint).toContainText("Databend");
+    await expect(hint.getByTestId("wire-compat-tier-Databend")).toContainText("query editor only");
   });
 
   test("PostgreSQL marks its reduced-support relatives instead of listing bare names", async ({ page }) => {
@@ -61,6 +65,13 @@ test.describe("Wire compatibility hint", () => {
     // QuestDB has no such function. This hint is a claim a user acts on, so the absence is
     // asserted rather than left to whoever next reads the registry.
     await expect(hint).not.toContainText("QuestDB");
+    // ParadeDB and OrioleDB are both `full` (#424, probed 2026-08-27), so neither renders a
+    // tier suffix - asserting the absence keeps this honest about which claim is made, and
+    // catches a future entry that quietly downgrades one of them.
+    await expect(hint).toContainText("ParadeDB");
+    await expect(hint).toContainText("OrioleDB");
+    await expect(hint.getByTestId("wire-compat-tier-ParadeDB")).toHaveCount(0);
+    await expect(hint.getByTestId("wire-compat-tier-OrioleDB")).toHaveCount(0);
     await expect(hint.getByTestId("wire-compat-caveat-notice")).toBeVisible();
   });
 

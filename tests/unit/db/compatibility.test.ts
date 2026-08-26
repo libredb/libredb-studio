@@ -46,11 +46,14 @@ const COMPOSE_SERVICE_BY_ENGINE: Readonly<Record<string, string>> = {
   "Apache Cloudberry (incubating)": "cloudberry",
   "AlloyDB Omni": "alloydb",
   "Percona Distribution for PostgreSQL": "percona-postgresql",
+  ParadeDB: "paradedb",
+  OrioleDB: "orioledb",
   MariaDB: "mariadb",
   TiDB: "tidb",
   StarRocks: "starrocks",
   "Apache Doris": "doris",
   "Percona Server for MySQL": "percona-mysql",
+  Databend: "databend",
   Vitess: "vitess",
   OceanBase: "oceanbase",
   SingleStore: "singlestore",
@@ -213,6 +216,66 @@ describe("wire-compatibility registry", () => {
     // The PostgreSQL side must NOT carry that caveat - it does not have the problem, and a
     // copied caveat is how a pair of rows stops describing two different measurements.
     expect(pgSide?.caveats.some((c) => c.includes("@@version_comment"))).toBe(false);
+  });
+
+  test("ParadeDB and OrioleDB are full PostgreSQL relatives that fail for opposite reasons", () => {
+    // Probed 2026-08-27 (#424 Phase 0) against `paradedb/paradedb:0.25.4` and
+    // `orioledb/orioledb:pg18-nightly-20260824-cc35a80-ubuntu`. Both answer all fifteen
+    // surfaces, so both are `full` - and the pair is worth reading together because what
+    // each one costs the user is the opposite of the other.
+    //
+    // ParadeDB's cost is WIDTH: its nine extensions put 41 objects in the object browser
+    // for 2 user tables and 74 indexes.
+    //
+    // That looked like B52 - the grounding capture refusing past 200 rows, as it does on
+    // TimescaleDB - and the measurement refuted it, which is why the caveat says so
+    // explicitly. The capture reads what the ROLE can see: a superuser sees 539 non-system
+    // columns there, an unprivileged role 168, because the tiger geocoder's 425 are not
+    // readable. So gate 7 PASSES under a least-privilege role (21 tables read), and what
+    // fails as a superuser is the execution profile refusing a superuser - true on any
+    // PostgreSQL and not a ParadeDB property at all.
+    //
+    // OrioleDB's cost is DEPTH: the browser is clean (2 objects for 2 tables) and the row
+    // counts are exact, but its own storage is invisible to PostgreSQL's size functions -
+    // `pg_indexes_size()` reads 0 - and `pg_statio_user_tables` stays at 0/0, so the cache
+    // hit ratio is absent rather than wrong. Absent is the honest reading, which is why it
+    // is a caveat and not a defect.
+    const relatives = compatibleEnginesFor("postgres");
+    const parade = relatives.find((engine) => engine.name === "ParadeDB");
+    const oriole = relatives.find((engine) => engine.name === "OrioleDB");
+    expect(parade?.tier).toBe("full");
+    expect(oriole?.tier).toBe("full");
+    expect(parade?.probedVersion).toBe("ParadeDB 0.25.4 on PostgreSQL 18.6");
+    expect(oriole?.probedVersion).toBe("OrioleDB beta 16 on PostgreSQL 18.4 (nightly of 2026-08-24)");
+    expect(parade?.caveats.some((caveat) => caveat.includes("41 objects"))).toBe(true);
+    // The B52 claim must NOT be here: it was measured and refuted (see above).
+    expect(parade?.caveats.some((caveat) => caveat.includes("B52"))).toBe(false);
+    expect(parade?.caveats.some((caveat) => caveat.includes("168 columns"))).toBe(true);
+    expect(oriole?.caveats.some((caveat) => caveat.includes("pg_indexes_size"))).toBe(true);
+    // The width caveat must NOT be copied onto the clean engine, and vice versa.
+    expect(oriole?.caveats.some((caveat) => caveat.includes("41 objects"))).toBe(false);
+    expect(parade?.caveats.some((caveat) => caveat.includes("pg_indexes_size"))).toBe(false);
+  });
+
+  test("Databend is query-editor-only because our own reads cannot run there", () => {
+    // Probed 2026-08-27 against `datafuselabs/databend:v1.2.925-patch-11`. SQL runs: a
+    // 2000-row `count(*)` and a plain `EXPLAIN` both answer, and the catalogs THEMSELVES
+    // answer when asked with literal SQL - `information_schema.tables` reported the true
+    // 3 and 2000 rows with sizes.
+    //
+    // The object browser still gets nothing, and the reason is ours: every parameterised
+    // read goes through mysql2's prepared protocol and Databend replies
+    // `Prepare is not support in Databend`. D8 moved the PARAMETERLESS statements to the
+    // text protocol; the ones carrying placeholders - the table list, the schema, sessions,
+    // table/index/storage stats - still prepare. So this row is `query-only` for what a
+    // user gets today, with the cause recorded as a backlog item rather than as the
+    // engine's fault.
+    const databend = compatibleEnginesFor("mysql").find((engine) => engine.name === "Databend");
+    expect(databend?.tier).toBe("query-only");
+    expect(databend?.probedVersion).toBe("Databend v1.2.925-patch-11 (advertises MySQL 8.0.90)");
+    const caveats = databend?.caveats.join(" ") ?? "";
+    expect(caveats).toContain("Prepare is not support in Databend");
+    expect(caveats).toContain("information_schema.tables");
   });
 
   test("every entry names a driver we actually ship", () => {
