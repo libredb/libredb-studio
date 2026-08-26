@@ -457,8 +457,11 @@ describe("AgentRail", () => {
 
   test.each([
     ["disabled", "switched off on this server"],
-    ["unavailable", "could not be reached"],
-    ["error", "could not be reached"],
+    // Not "could not be reached": one of the six causes folded into `unavailable` is a
+    // connection repointed at another database, where the earlier step CAN be reached and
+    // the database moved. The sentence has to be true of every cause it covers.
+    ["unavailable", "could not be carried into this question"],
+    ["error", "could not be carried into this question"],
   ])("a %s conversation renders its own sentence", async (declined, copy) => {
     mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE], {
       runId: "arun_b",

@@ -292,6 +292,133 @@ describe("resolveAgentAvailability", () => {
   });
 });
 
+// ─── the ledger's own version file (B30) ────────────────────────────────────
+
+/**
+ * The probe answers for `ensureDataDir`'s four steps, but the world calls
+ * `initDataDir`, which runs a fifth: it reads an EXISTING `version.txt` and parses
+ * it — `parseVersionFile` throws on content whose last `@` is not past the first
+ * character, then `parseVersion` throws on anything that is not
+ * `major.minor.patch[-prerelease]`. Every arm below writes a REAL file into a real
+ * directory, because the thing under test is what is on disk.
+ *
+ * Two invariants hold the fix in place: an ABSENT file stays green — that case is
+ * the world's to handle, and a fresh install has no file — and the probe writes
+ * nothing, because the reason a widened probe was rejected before is that
+ * upstream's own `initDataDir` creates `version.txt` as a side effect, which would
+ * turn a read-only visibility probe into one that initialises the ledger on every
+ * page load.
+ */
+describe("resolveAgentAvailability and the ledger version file (B30)", () => {
+  /** A ledger directory holding exactly the given `version.txt` content. */
+  function ledgerWithVersionFile(content: string): { dataDir: string; versionFile: string } {
+    const dataDir = freshLedgerDir();
+    const versionFile = path.join(dataDir, "version.txt");
+    fs.writeFileSync(versionFile, content);
+    process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
+    return { dataDir, versionFile };
+  }
+
+  test.each([
+    ["an empty file, the truncation a killed writer leaves behind", ""],
+    ["whitespace only", "   \n"],
+    ["a package name with no version at all", "@workflow/world-local"],
+    ["a leading @ and nothing before it, which upstream refuses too", "@4.0.1"],
+  ])(
+    "reports LEDGER_INCOMPATIBLE for a version.txt with %s, instead of a green answer whose Start fails later",
+    async (_label, content) => {
+      configureModel();
+      const { versionFile } = ledgerWithVersionFile(content);
+
+      const availability = await resolveAgentAvailability();
+
+      // NOT LEDGER_UNAVAILABLE: the path is perfectly writable, and the operator
+      // action is removing or replacing a file rather than fixing a permission.
+      expect(availability).toMatchObject({ available: false, reason: "LEDGER_INCOMPATIBLE" });
+      expect(String((availability as { detail: string }).detail)).toContain(versionFile);
+      // Read-only: the probe must not have repaired what it refused.
+      expect(fs.readFileSync(versionFile, "utf-8")).toBe(content);
+    },
+  );
+
+  test.each([
+    ["a version that is not major.minor.patch", "@workflow/world-local@bundled"],
+    ["a two-part version", "@workflow/world-local@4.0"],
+    ["a version with a non-numeric part", "@workflow/world-local@4.x.1"],
+  ])(
+    "reports LEDGER_INCOMPATIBLE for %s, matching the only shape upstream's parseVersion accepts",
+    async (_label, content) => {
+      configureModel();
+      const { versionFile } = ledgerWithVersionFile(content);
+
+      expect(await resolveAgentAvailability()).toMatchObject({
+        available: false,
+        reason: "LEDGER_INCOMPATIBLE",
+      });
+      expect(fs.readFileSync(versionFile, "utf-8")).toBe(content);
+    },
+  );
+
+  test("stays GREEN with NO version.txt at all, because a fresh ledger is the world's to initialise", async () => {
+    // The control that keeps every first run working. Without it the fix would make
+    // a brand-new install — the overwhelmingly common case — report an unavailable
+    // agent, and upstream's own `readVersionFile` returns null on ENOENT rather than
+    // refusing.
+    configureModel();
+    const dataDir = freshLedgerDir();
+    process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
+
+    expect(await resolveAgentAvailability()).toEqual({ available: true, ledgerVerified: true });
+    // And the probe did NOT create one. This is the constraint that made widening the
+    // probe unacceptable before, so it is asserted rather than assumed.
+    expect(fs.existsSync(path.join(dataDir, "version.txt"))).toBe(false);
+    expect(fs.readdirSync(dataDir)).toEqual([]);
+  });
+
+  test.each([
+    ["a release version", "@workflow/world-local@4.0.1"],
+    ["a prerelease, which upstream's regex accepts", "@workflow/world-local@4.0.1-beta.20"],
+    ["surrounding whitespace, which upstream trims", "  @workflow/world-local@4.0.1\n"],
+  ])("stays green for %s, and leaves the file byte-for-byte alone", async (_label, content) => {
+    configureModel();
+    const { dataDir, versionFile } = ledgerWithVersionFile(content);
+
+    expect(await resolveAgentAvailability()).toEqual({ available: true, ledgerVerified: true });
+    expect(fs.readFileSync(versionFile, "utf-8")).toBe(content);
+    // Nothing but the file the test wrote: no probe file, no rewritten version.
+    expect(fs.readdirSync(dataDir)).toEqual(["version.txt"]);
+  });
+
+  test("stays green for a version that differs from the running one, because upstream's upgrade path accepts it", async () => {
+    // Deliberately NOT a refusal. `initDataDir` compares versions and calls
+    // `upgradeVersion`, which logs and returns — a parseable older or newer version
+    // builds a world successfully. Refusing it here would take away a rail that
+    // works, which is the mirror image of the bug this entry is about.
+    configureModel();
+    ledgerWithVersionFile("@workflow/world-local@1.0.0");
+
+    expect(await resolveAgentAvailability()).toEqual({ available: true, ledgerVerified: true });
+  });
+
+  test("reports LEDGER_UNAVAILABLE when an existing version.txt cannot be read at all", async () => {
+    // A file that exists and is unreadable is a filesystem-access fault, not an
+    // incompatible ledger: upstream's `readVersionFile` rethrows anything that is not
+    // ENOENT, and the operator action is fixing the path — the same action
+    // LEDGER_UNAVAILABLE already names.
+    configureModel();
+    const dataDir = freshLedgerDir();
+    // A directory where the file belongs: reading it fails with EISDIR on every
+    // platform this runs on, without depending on running as an unprivileged user.
+    fs.mkdirSync(path.join(dataDir, "version.txt"));
+    process.env.WORKFLOW_LOCAL_DATA_DIR = dataDir;
+
+    const availability = await resolveAgentAvailability();
+
+    expect(availability).toMatchObject({ available: false, reason: "LEDGER_UNAVAILABLE" });
+    expect(String((availability as { detail: string }).detail)).toContain("version.txt");
+  });
+});
+
 // ─── two probes at once ─────────────────────────────────────────────────────
 
 describe("resolveAgentAvailability under concurrency", () => {

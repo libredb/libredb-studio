@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { connectionIdentity } from "@/lib/agent/context-snapshot";
 import {
   AGENT_THREAD_CONTEXT_MAX_CHARS,
   AGENT_THREAD_MAX_STEPS,
   AGENT_THREAD_STEP_OBJECTIVE_MAX_CHARS,
 } from "@/lib/agent/execution-policy";
-import { deriveThreadContext } from "@/lib/agent/thread-context";
+import { deriveThreadContext, threadContextFor } from "@/lib/agent/thread-context";
 import type {
   AgentEvidenceReference,
   AgentRunEvent,
@@ -12,6 +13,7 @@ import type {
   AgentThreadContext,
   AgentThreadStep,
 } from "@/lib/agent/types";
+import type { DatabaseConnection } from "@/lib/types";
 
 /**
  * `deriveThreadContext` is pure: it assembles the conversation a follow-up run is
@@ -294,5 +296,94 @@ describe("deriveThreadContext", () => {
 
     expect(text.length).toBeLessThanOrEqual(600);
     expect(text).toContain("The rest of this step's report is not shown here.");
+  });
+});
+
+/*
+  B68: a conversation is single-connection by INDUCTION — every link checks the
+  connection ID at its own open, which is an identity check on the RECORD and not on
+  the database behind it. A user who edits a saved connection to address another
+  server keeps its id, so a follow-up asked afterwards was handed the earlier steps'
+  reports about the OLD database while reading the NEW one.
+
+  The three arms below are one argument. The repoint arm is the defect; the unchanged
+  arm is what stops the fix from ending every conversation; the rotated-credential arm
+  is what proves the identity is about the DATABASE and not about the record, because a
+  password rotation must not cost a user the conversation they were having.
+*/
+describe("the database a conversation was established against", () => {
+  const PROD: DatabaseConnection = {
+    id: "conn-1",
+    name: "primary",
+    type: "postgres",
+    host: "db.internal",
+    port: 5432,
+    database: "production",
+    password: "s3cret",
+    createdAt: new Date(0),
+  };
+
+  /** The predecessor: one step, one claim, established against `PROD`. */
+  const established = record({
+    runId: "arun_1",
+    objective: "count orders by region",
+    connectionIdentity: connectionIdentity(PROD),
+    events: [reportEvent("Orders in EMEA outnumber every other region")],
+  });
+
+  test("a follow-up on a connection re-pointed at another database carries no steps", () => {
+    const repointed = threadContextFor(established, connectionIdentity({ ...PROD, database: "staging" }));
+
+    expect(repointed.steps).toEqual([]);
+    expect(repointed.text).toBe("");
+    expect(repointed.declined).toBe("unavailable");
+    // No thread id, on the rule the route already follows for a refused continuation:
+    // naming the new conversation after the run it was refused would hand a later
+    // follow-up a root that was never part of it.
+    expect(repointed.threadId).toBeUndefined();
+  });
+
+  test("a follow-up on an unchanged connection carries the conversation exactly as before", () => {
+    const carried = threadContextFor(established, connectionIdentity(PROD));
+
+    expect(carried).toEqual(deriveThreadContext(established));
+    expect(carried.steps).toEqual([{ runId: "arun_1", objective: "count orders by region" }]);
+    expect(carried.text).toContain("Orders in EMEA outnumber every other region");
+  });
+
+  test("a rotated credential is the same database, so the conversation survives it", () => {
+    const rotated = threadContextFor(established, connectionIdentity({ ...PROD, password: "rotated" }));
+
+    expect(rotated.declined).toBeUndefined();
+    expect(rotated.steps).toEqual([{ runId: "arun_1", objective: "count orders by region" }]);
+  });
+
+  test("a renamed connection is the same database too", () => {
+    const renamed = threadContextFor(established, connectionIdentity({ ...PROD, name: "primary (prod)" }));
+
+    expect(renamed.declined).toBeUndefined();
+    expect(renamed.steps).toHaveLength(1);
+  });
+
+  test("a predecessor whose ledger recorded no database identity is carried, not refused", () => {
+    /*
+      The compatibility half, and the same rule every other optional header field
+      here follows: a run opened before this field existed says nothing about which
+      database it read, and inventing a mismatch out of that silence would end every
+      conversation in flight across a deploy. Absent is carried; a recorded identity
+      that DISAGREES is what declines.
+    */
+    const older = record({ runId: "arun_1", objective: "count orders by region" });
+
+    expect(threadContextFor(older, connectionIdentity(PROD)).steps).toHaveLength(1);
+  });
+
+  test("the budget still reaches the derivation through the identity check", () => {
+    const claims = Array.from({ length: 40 }, (_, index) => `Claim body ${index} `.repeat(4));
+    const previous = record({ connectionIdentity: connectionIdentity(PROD), events: [reportEvent(...claims)] });
+
+    const { text } = threadContextFor(previous, connectionIdentity(PROD), 600);
+
+    expect(text.length).toBeLessThanOrEqual(600);
   });
 });

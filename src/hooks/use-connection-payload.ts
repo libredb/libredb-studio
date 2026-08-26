@@ -131,6 +131,12 @@ const SSH_TUNNEL_RELEVANCE: Record<keyof SSHTunnelConfig, FieldRelevance> = {
   password: "resolution",
   privateKey: "resolution",
   passphrase: "resolution",
+  // Neither a target nor a credential: it decides whether we VERIFY the bastion we were
+  // already going to use, not which bastion that is or as whom we authenticate there.
+  // Material would be wrong in a way that bites twice - clearing a stale pin would read as
+  // "this connection now reaches a different database", silently breaking seed-copy
+  // eligibility and ending agent conversations for a change that repoints nothing.
+  hostKeyFingerprint: "cosmetic",
 };
 
 /** Derived, never written out twice: a second hand-maintained list is a second thing that drifts. */

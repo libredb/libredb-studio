@@ -147,6 +147,63 @@ PlanetScale, Azure Cosmos DB and Amazon DocumentDB. Their status is tracked in
   [`../API_DOCS.md`](../API_DOCS.md).
 
 
+## SSH tunnels: bastion host key verification
+
+Any connection may reach its database through an SSH tunnel (`sshTunnel` on the connection,
+[`src/lib/ssh/tunnel.ts`](../../src/lib/ssh/tunnel.ts)). This is the only layer that can verify who
+terminated the SSH hop: past it the database driver is handed `127.0.0.1` and a local port, so the
+connection's own SSL settings say nothing about the bastion.
+
+**The policy is trust-on-first-use (TOFU), pinned per connection.** Not "refuse anything unknown":
+requiring a pasted fingerprint before the first connection makes tunnelling unusable for someone
+reaching their own bastion, TOFU is what every SSH client does on first contact, and it is strictly
+better than what it replaced - `ssh2` has no default host verifier, so with the callback absent the
+library accepted whatever key it was offered and the tunnel completed against whatever answered on
+that address.
+
+What happens, in order:
+
+1. **A connection carrying a pin** (`sshTunnel.hostKeyFingerprint`) is verified against it. Durable,
+   per connection, and it always wins.
+2. **No pin, first contact with that bastion** - the key is accepted and remembered for the bastion's
+   address (`host:port`), the same thing `known_hosts` keys on. The accepted fingerprint is reported
+   back on the tunnel.
+3. **No pin, a later contact with that bastion** - verified against what was remembered.
+
+A key that does not match fails the connection outright, naming both fingerprints. Measured
+2026-08-26 against a real `openssh-server` container, all three arms:
+
+```
+no pin        -> accepted, reported SHA256:JWLQciyX8RYEeuK+bwRLW/YSpStz0/L7BlbVcejL1/U
+                 (byte-identical to `ssh-keyscan -p 2226 127.0.0.1 | ssh-keygen -lf -`)
+correct pin   -> connects
+wrong pin     -> SSH host key verification failed for 127.0.0.1:2226: offered SHA256:JWLQ..., expected
+                 SHA256:AAAA... Confirm the bastion's key with `ssh-keyscan <host> | ssh-keygen -lf -`;
+                 if it changed legitimately, clear the pinned fingerprint for this connection.
+```
+
+Fingerprints are printed the way OpenSSH prints them - `SHA256:` followed by unpadded base64 of the
+SHA-256 of the server's public key blob - so what an error shows can be compared directly against
+`ssh-keyscan <bastion> | ssh-keygen -lf -`, against `ssh-keygen -lf` on a `.pub` file, or against an
+existing `known_hosts` entry.
+
+Three deliberate limits, so nobody reads more into this than it does:
+
+- **There is no "accept the new key?" prompt.** A mismatch fails; the remedy is to clear the pin once
+  you have confirmed out of band that the key legitimately changed (a rebuilt bastion). Whether to
+  offer an in-product accept flow is a separate decision.
+- **First-contact memory lasts as long as the server process.** A restart re-enters first contact.
+- **Nothing writes the durable pin yet.** The verifier honours `sshTunnel.hostKeyFingerprint`, but no
+  surface sets it: there is no input for it, seed configs do not model `sshTunnel`, and an accepted
+  fingerprint is not written back. So today's protection is the process-scoped memory above - a key
+  that changes within a server's lifetime is refused, and a restart trusts afresh. Tracked as D32.
+
+The fingerprint is stored and displayed **in the clear**, on purpose. It is public key material: it
+authenticates the bastion to Studio, grants no access, unlocks nothing, and it has to be readable for
+the comparison above to be possible at all. `src/lib/storage/connection-secrets.ts` classifies it
+`public` alongside the certificates in `ssl`; the tunnel's password, private key and passphrase stay
+encrypted at rest.
+
 ## Connecting to the container fixture
 
 What to type into the connection dialog for **every shipped provider**, against

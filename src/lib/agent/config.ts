@@ -1,4 +1,4 @@
-import { access, constants, mkdir, unlink, writeFile } from "fs/promises";
+import { access, constants, mkdir, readFile, unlink, writeFile } from "fs/promises";
 import * as path from "path";
 import { resolveConfig, validateConfig } from "@/lib/llm/utils/config";
 import { AGENT_MODEL_TURN_TIMEOUT_MS, AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
@@ -210,11 +210,19 @@ export type AgentRuntimeConfig =
  * into `LEDGER_UNAVAILABLE`. They are not ledger faults: `IMPLICIT_HOSTED_WORLD`
  * fires before anything is asked of a filesystem, and the fix for both is a
  * variable, not a disk. Sharing a code would send an operator to the wrong one.
+ *
+ * `LEDGER_INCOMPATIBLE` is separate from `LEDGER_UNAVAILABLE` for the same reason
+ * (B30). `LEDGER_UNAVAILABLE` says the ledger PATH is not usable and the action is
+ * a permission or a variable; `LEDGER_INCOMPATIBLE` says the path is fine and the
+ * ledger already sitting there was written by something this release cannot read —
+ * the action is removing or replacing one file. An operator sent to `chmod` by a
+ * corrupt `version.txt` would find nothing wrong with the directory.
  */
 export type AgentUnavailableReason =
   | "OPERATOR_DISABLED"
   | "NO_MODEL_CONFIGURED"
   | "LEDGER_UNAVAILABLE"
+  | "LEDGER_INCOMPATIBLE"
   | AgentConfigDenyCode;
 
 /**
@@ -253,6 +261,12 @@ const operatorDisabledMessage = (): string =>
 
 const ledgerUnwritableMessage = (directory: string, cause: string): string =>
   `the agent's durable ledger cannot be written at "${directory}" (${cause}); point ${AGENT_LOCAL_DATA_DIR_ENV} at a writable directory`;
+
+const ledgerVersionUnreadableMessage = (file: string, cause: string): string =>
+  `the agent's durable ledger keeps its version at "${file}" and it cannot be read (${cause}); point ${AGENT_LOCAL_DATA_DIR_ENV} at a readable directory or repair that file`;
+
+const ledgerIncompatibleMessage = (file: string, found: string): string =>
+  `the agent's durable ledger at "${file}" records a version this release cannot read (${found}); it was written by an incompatible @workflow/world-local, so move the ledger directory aside or delete that file to start a fresh one`;
 
 const unsanctionedTargetMessage = (raw: string): string =>
   `LibreDB Studio: unsupported ${AGENT_WORLD_TARGET_ENV} value "${raw}"; the agent runtime accepts only: ${ACCEPTED_TARGETS}`;
@@ -370,16 +384,102 @@ export function resolveAgentLedgerDirectory(): string {
 let probeSequence = 0;
 
 /**
+ * The file upstream keeps its ledger version in, and the one version shape it accepts.
+ *
+ * `@workflow/world-local`'s `dist/init.js` reads this file inside `initDataDir` and
+ * refuses in two steps: `parseVersionFile` trims the content, takes
+ * `lastIndexOf("@")` and throws unless that index is greater than zero, then
+ * `parseVersion` throws unless what follows the `@` matches
+ * `/^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/`. Both are mirrored below, deliberately and
+ * exactly.
+ *
+ * **The accepted cost, stated rather than hidden:** this duplicates a contract that
+ * belongs to another package and that upstream may change, which is the ground on
+ * which widening the probe was rejected the first time. Two things make the trade
+ * payable. The alternative is worse — the only upstream entry point that answers
+ * this question is `initDataDir`, which WRITES `version.txt` as a side effect, so
+ * calling it would turn a read-only visibility probe into one that initialises the
+ * ledger on every page load. And the mirror is kept as narrow as an equality: no
+ * version comparison, no package-name check, no repair. A change upstream therefore
+ * shows up as this probe refusing a ledger the world would have accepted — a rail
+ * that is absent and says exactly which file it read — rather than as a silent
+ * divergence.
+ */
+const LEDGER_VERSION_FILENAME = "version.txt";
+const UPSTREAM_LEDGER_VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/;
+
+/** How much of a corrupt file is quoted back to the operator. */
+const LEDGER_VERSION_QUOTE_LIMIT = 120;
+
+/**
+ * The fifth step the write probe does not perform: whether an EXISTING ledger
+ * version file is one this release can read (B30). Returns `null` when there is
+ * nothing to refuse, and the refusal itself otherwise.
+ *
+ * **Read-only, and that is the whole design constraint.** It opens one file and
+ * never creates, repairs or rewrites one — see the note above on why calling
+ * upstream's own check was not an option.
+ *
+ * **An ABSENT file is green, not a refusal.** A fresh ledger has no version file,
+ * and upstream's `readVersionFile` returns `null` on `ENOENT` and lets `initDataDir`
+ * write the first one. Refusing here would make every first run report an
+ * unavailable agent.
+ *
+ * A file that exists and cannot be READ is reported as `LEDGER_UNAVAILABLE`, not as
+ * an incompatible one: upstream rethrows anything that is not `ENOENT`, nothing is
+ * known about what the file says, and the operator action is the path — which is
+ * what that code already names.
+ *
+ * A parseable version that DIFFERS from the running one is also green, deliberately.
+ * `initDataDir` hands a mismatch to `upgradeVersion`, which logs and returns, so
+ * such a ledger builds a world successfully; refusing it would take away a rail that
+ * works, which is the same class of error as the one this check exists to fix.
+ */
+async function checkLedgerVersionFile(directory: string): Promise<AgentAvailability | null> {
+  const versionFile = path.join(directory, LEDGER_VERSION_FILENAME);
+
+  let content: string;
+  try {
+    content = await readFile(versionFile, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    const detail = ledgerVersionUnreadableMessage(versionFile, describeCause(error));
+    return { available: false, reason: "LEDGER_UNAVAILABLE", detail };
+  }
+
+  const incompatible = (): AgentAvailability => ({
+    available: false,
+    reason: "LEDGER_INCOMPATIBLE",
+    detail: ledgerIncompatibleMessage(versionFile, JSON.stringify(content.slice(0, LEDGER_VERSION_QUOTE_LIMIT))),
+  });
+
+  const trimmed = content.trim();
+  const lastAtIndex = trimmed.lastIndexOf("@");
+  // Upstream's own bound: `<= 0` rejects both "no @ at all" (-1) and a leading @ with
+  // no package name before it, so a scoped name's own @ cannot be read as the separator.
+  if (lastAtIndex <= 0) return incompatible();
+  if (!UPSTREAM_LEDGER_VERSION_PATTERN.test(trimmed.substring(lastAtIndex + 1))) return incompatible();
+
+  return null;
+}
+
+/**
  * The same four steps `@workflow/world-local`'s own `ensureDataDir` performs —
  * create, read-check, write a probe file, remove it — rather than a cheaper
  * `access(W_OK)`, and including the two details upstream needs for concurrency:
  * the probe filename varies per call, and an `ENOENT` while removing it is not a
  * failure (upstream's comment names this exact race).
  *
- * **What a green answer promises, stated exactly:** the world's own `ensureDataDir`
- * will pass. It does NOT promise that `initDataDir` will, because that runs a fifth
- * step this does not — reading and parsing `version.txt` — and a corrupt or
- * incompatible one throws after this probe has already answered green (B30).
+ * **What a green answer promises, stated exactly:** the world's own `initDataDir`
+ * will pass — its four `ensureDataDir` steps, and its fifth, the version file. That
+ * fifth one is answered by `checkLedgerVersionFile` above, which READS an existing
+ * `version.txt` and never writes one; an absent file stays green because that is the
+ * case `initDataDir` itself initialises (B30).
+ *
+ * It still does not promise that a run SUCCEEDS. The world is built from a directory
+ * that other processes share, so a ledger can be corrupted between this answer and
+ * the Start that follows it; what a green answer rules out is a fault that was
+ * already on disk when the rail rendered.
  */
 async function runLedgerProbe(directory: string): Promise<AgentAvailability> {
   probeSequence += 1;
@@ -394,6 +494,10 @@ async function runLedgerProbe(directory: string): Promise<AgentAvailability> {
     await unlink(probeFile).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== "ENOENT") throw error;
     });
+    // Only now, and only reading: the directory is known to exist, so an ENOENT here
+    // is the version file's own absence rather than the directory's (B30).
+    const incompatibleLedger = await checkLedgerVersionFile(directory);
+    if (incompatibleLedger) return incompatibleLedger;
     return { available: true, ledgerVerified: true };
   } catch (error) {
     const detail = ledgerUnwritableMessage(directory, describeCause(error));

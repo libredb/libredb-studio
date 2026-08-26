@@ -67,6 +67,12 @@ export const SSH_TUNNEL_FIELDS: Record<keyof SSHTunnelConfig, FieldClass> = {
   privateKey: "secret",
   // Encrypting the private key and leaving the passphrase that unlocks it readable protects nothing.
   passphrase: "secret",
+  // A fingerprint of the bastion's PUBLIC host key - the same string `ssh-keygen -lf` prints and
+  // `ssh-keyscan` hands out to anyone who asks. It authenticates the server TO us; it grants no
+  // access and unlocks nothing, so there is nothing to seal. Sealing it would also cost the one
+  // thing it exists for: the user has to be able to READ it to compare it against their own
+  // known_hosts when a mismatch is reported.
+  hostKeyFingerprint: "public",
 };
 
 /**

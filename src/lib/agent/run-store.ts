@@ -178,6 +178,13 @@ export type AgentLedgerEntry =
       readonly thread?: AgentThreadHeader;
       readonly actor: AgentRunActor;
       readonly connectionId: string;
+      /**
+       * Which database `connectionId` addressed at open; see
+       * `AgentRunRecord.connectionIdentity`. Optional on both sides and never
+       * defaulted: a header written before this field says nothing about the database
+       * it read, and the fold must not turn that silence into an answer.
+       */
+      readonly connectionIdentity?: string;
       readonly objective: string;
     }
   | { readonly kind: "event"; readonly event: AgentRunEvent }
@@ -264,6 +271,8 @@ export interface AgentRunOpenInput {
   readonly thread?: AgentThreadHeader;
   readonly actor: AgentRunActor;
   readonly connectionId: string;
+  /** Which database that connection addresses; see `AgentRunRecord.connectionIdentity`. */
+  readonly connectionIdentity?: string;
   readonly objective: string;
   /**
    * Supplied when the run's identity is minted elsewhere — the workflow run id, so
@@ -384,6 +393,10 @@ function foldLedger(runId: string, entries: readonly AgentLedgerEntry[]): AgentR
       status,
       actor: header.actor,
       connectionId: header.connectionId,
+      // Spread rather than defaulted, because absence is a real answer here and not a
+      // missing one: an older header read some database this fold cannot name, and a
+      // placeholder would be a claim about it.
+      ...(header.connectionIdentity === undefined ? {} : { connectionIdentity: header.connectionIdentity }),
       objective: header.objective,
       createdAtMs: header.atMs,
       updatedAtMs: entryAtMs(lastEntry),
@@ -452,6 +465,10 @@ export class AgentRunStore {
       ...(input.thread === undefined ? {} : { thread: input.thread }),
       actor: input.actor,
       connectionId: input.connectionId,
+      // Written only when the opener resolved a connection to fingerprint, so a ledger
+      // opened before this field and one opened by a caller that cannot supply it are
+      // the same bytes.
+      ...(input.connectionIdentity === undefined ? {} : { connectionIdentity: input.connectionIdentity }),
       objective: input.objective,
     };
     if ((await this.read(runId)) !== null) {

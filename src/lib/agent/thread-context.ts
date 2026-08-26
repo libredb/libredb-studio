@@ -30,7 +30,7 @@ import {
   AGENT_THREAD_MAX_STEPS,
   AGENT_THREAD_STEP_OBJECTIVE_MAX_CHARS,
 } from "./execution-policy";
-import type { AgentRunRecord, AgentThreadContext, AgentThreadStep } from "./types";
+import type { AgentRunRecord, AgentThreadContext, AgentThreadHeader, AgentThreadStep } from "./types";
 
 /**
  * The share of the budget the spine may take.
@@ -153,4 +153,47 @@ export function deriveThreadContext(
 
   const kept = fitItems(report, remaining - REPORT_CUT_NOTICE.length - 1);
   return { threadId, steps, ...carried, text: [head, ...kept, REPORT_CUT_NOTICE].join("\n") };
+}
+
+/**
+ * The conversation a follow-up may have, once the DATABASE behind it has been checked.
+ *
+ * Everything above assembles a conversation from a predecessor's ledger. This decides
+ * whether the predecessor was even talking about the same database, which is a separate
+ * question and was not being asked: a conversation was single-connection by INDUCTION,
+ * because every link checked the connection ID at its own open. That is an identity
+ * check on the RECORD. A user who edits a saved connection to address another server
+ * keeps its id — an ordinary thing to do, and nothing about the id says it happened —
+ * so a follow-up asked afterwards was handed the earlier steps' claims about the old
+ * database while reading the new one. Nothing was refused and nothing looked wrong; the
+ * run simply reported on one database using what had been established against another
+ * (`docs/BACKLOG.md` B68).
+ *
+ * The identity is `connectionIdentity`'s and not a second fingerprint, and its two
+ * exclusions are what make it the right one here. It carries engine, host, port,
+ * database, service, instance, role and the SSH tunnel the database is reached through,
+ * so re-pointing any of those ends the conversation. It does NOT carry the password, so rotating a credential does not — a
+ * rotation changes who may reach the database, never which database it is, and it must
+ * not cost a user the conversation they were having.
+ *
+ * Absent on the predecessor is CARRIED rather than refused. A run opened before the
+ * field existed records nothing about the database it read, and a mismatch invented out
+ * of that silence would end every conversation in flight across a deploy — the same
+ * read-side compatibility rule every other optional header field here follows.
+ *
+ * A header rather than a context, and `declined: "unavailable"` rather than a reason of
+ * its own: it joins the shape the route already writes for the five other ways a
+ * continuation does not happen. It carries no `threadId`, so the refused follow-up
+ * starts a conversation of its own named after itself — a later question must not
+ * inherit a root that was never part of it.
+ */
+export function threadContextFor(
+  previous: AgentRunRecord,
+  currentIdentity: string,
+  budget?: number,
+): AgentThreadHeader {
+  if (previous.connectionIdentity !== undefined && previous.connectionIdentity !== currentIdentity) {
+    return { steps: [], text: "", declined: "unavailable" };
+  }
+  return deriveThreadContext(previous, budget);
 }

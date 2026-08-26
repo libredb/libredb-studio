@@ -114,6 +114,29 @@ config:
   # and a missing value fails the install).
   # The zero-config default makes the chart deployable with default values (e.g. Rancher Apps).
   authBootstrap: ""
+  # -- Whether auth cookies carry the `Secure` flag, written to AUTH_COOKIE_SECURE.
+  # Three-state, and unset is the default: the chart then writes no
+  # AUTH_COOKIE_SECURE at all and the app decides for itself (Secure in
+  # production, except on a loopback host reached over plain http).
+  #
+  # Set `false` for the one case the app cannot detect: the BROWSER reaches
+  # Studio over plain http on a host that is not loopback - a LAN address or a
+  # home server. There the browser rejects a Secure cookie outright and login
+  # silently loops. Only an operator can state that; no request-scoped signal
+  # proves it, and x-forwarded-proto is attacker-supplied, so trusting it to
+  # DROP the flag would be a downgrade vector.
+  #
+  # TLS terminated at an ingress does NOT need this: the browser still speaks
+  # https, so it accepts a Secure cookie. Leave it unset there.
+  #
+  # `false` means session cookies travel in cleartext - keep it to trusted
+  # networks. `true` is accepted and explicit, and forces the flag on.
+  #
+  # A YAML boolean (or `--set config.authCookieSecure=false`), not a string: the
+  # value is rendered as a quoted string for the ConfigMap, so no --set-string is
+  # needed, and the app's other spellings ("on"/"off"/"0"/"1") are rejected here
+  # by values.schema.json rather than silently mis-read.
+  authCookieSecure: null
   # -- Storage provider: "local" (browser), "sqlite" (file), or "postgres" (database)
   storageProvider: "local"
   # -- SQLite database file path (when storageProvider=sqlite)

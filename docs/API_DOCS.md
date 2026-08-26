@@ -905,8 +905,8 @@ required" }` without a session). Never `500`, and never names a key's value.
 |-------|---------|
 | `enabled` | A literal boolean. The rail compares `=== true` |
 | `ledgerVerified` | `true` when the durable ledger's writable-path probe passed; `false` for the Postgres backend, which is accepted without being contacted |
-| `reason` | One code per operator action: `OPERATOR_DISABLED`, `NO_MODEL_CONFIGURED`, `LEDGER_UNAVAILABLE`, `UNSANCTIONED_WORLD_TARGET`, `IMPLICIT_HOSTED_WORLD`. Sent to every session |
-| `detail` | The underlying message. **Admin sessions only** — `LEDGER_UNAVAILABLE`'s carries an absolute server path and an OS error string. Every other session gets one stable sentence instead |
+| `reason` | One code per operator action: `OPERATOR_DISABLED`, `NO_MODEL_CONFIGURED`, `LEDGER_UNAVAILABLE`, `LEDGER_INCOMPATIBLE`, `UNSANCTIONED_WORLD_TARGET`, `IMPLICIT_HOSTED_WORLD`. Sent to every session |
+| `detail` | The underlying message. **Admin sessions only** — the ledger codes' carry an absolute server path plus an OS error string or a quoted fragment of a file on that disk. Every other session gets one stable sentence instead |
 
 This route is **not** metered out of the `ai` bucket: a visibility probe must not spend a run's
 budget. Its ledger half is memoised for a few seconds instead.

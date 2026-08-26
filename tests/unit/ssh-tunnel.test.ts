@@ -10,6 +10,14 @@ class MockSSHClient extends EventEmitter {
 
   connect(opts: Record<string, unknown>) {
     this.connectOptions = opts;
+    // Mirror ssh2's own handshake ordering: the verifier is called with the raw K_S blob
+    // during key exchange, and returning false fails the handshake with exactly this
+    // error (node_modules/ssh2/lib/protocol/kex.js: "Host denied (verification failed)").
+    const verifier = opts.hostVerifier as ((key: Buffer) => boolean) | undefined;
+    if (verifier && serverHostKey && verifier(serverHostKey) === false) {
+      setTimeout(() => this.emit("error", new Error("Host denied (verification failed)")), 0);
+      return;
+    }
     // Emit 'ready' asynchronously by default
     setTimeout(() => this.emit("ready"), 0);
   }
@@ -37,6 +45,23 @@ class MockDuplexStream extends EventEmitter {
     return this;
   }
 }
+
+/**
+ * Two REAL ed25519 host keys and the fingerprints `ssh-keygen -lf` prints for them.
+ *
+ * Measured, not hand-written: both pairs were produced by `ssh-keygen -t ed25519` and the
+ * expected strings are verbatim `ssh-keygen -lf <key>.pub` output, so a test asserting them
+ * is asserting OpenSSH's presentation rather than this repo's opinion of it. The blobs are
+ * the base64 payload of the `.pub` line, which is byte-for-byte the K_S blob ssh2 hands
+ * `hostVerifier`. Throwaway keys; the private halves were never kept.
+ */
+const HOST_KEY_A = Buffer.from("AAAAC3NzaC1lZDI1NTE5AAAAIAeWh7W0w/sZuTB3QNIxyLeU/h53RIRJadA4iQcF/YPG", "base64");
+const FINGERPRINT_A = "SHA256:JvC53Gq2xdb+Oi2SId63klTWrE0XS4CrLWqTgOC7B9Y";
+const HOST_KEY_B = Buffer.from("AAAAC3NzaC1lZDI1NTE5AAAAIKLxkWQNUtej2qCJ5kKne53rt00hhrfaws96zdHSB2rw", "base64");
+const FINGERPRINT_B = "SHA256:HNXfCNN9oifxQTL0zxPKCgu0TYROxoRatYNEXsmJUkc";
+
+/** Which host key the fake bastion offers on the next connect. */
+let serverHostKey: Buffer | null = null;
 
 let mockSSHInstance: MockSSHClient;
 
@@ -92,7 +117,9 @@ mock.module("net", () => ({
 }));
 
 // Dynamic import after mocks
-const { createSSHTunnel, closeSSHTunnel, hasTunnel, getTunnelInfo } = await import("@/lib/ssh/tunnel");
+const { createSSHTunnel, closeSSHTunnel, hasTunnel, getTunnelInfo, clearSSHHostKeyPin } = await import(
+  "@/lib/ssh/tunnel"
+);
 
 // We need to clear the activeTunnels map between tests.
 // Since it's a module-level Map, we close tunnels in afterEach.
@@ -101,6 +128,7 @@ let lastConnectionId: string | null = null;
 describe("SSH Tunnel", () => {
   beforeEach(() => {
     lastConnectionId = null;
+    serverHostKey = HOST_KEY_A;
   });
 
   afterEach(async () => {
@@ -139,6 +167,7 @@ describe("SSH Tunnel", () => {
         port: 22,
         username: "admin",
         password: "secret123",
+        hostVerifier: expect.any(Function),
       });
     });
 
@@ -169,6 +198,7 @@ describe("SSH Tunnel", () => {
         username: "deploy",
         privateKey: "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----",
         passphrase: "keypass",
+        hostVerifier: expect.any(Function),
       });
     });
 
@@ -195,6 +225,7 @@ describe("SSH Tunnel", () => {
         port: 22,
         username: "deploy",
         privateKey: "fake-key",
+        hostVerifier: expect.any(Function),
       });
       // No passphrase key present
       expect("passphrase" in (mockSSHInstance.connectOptions || {})).toBe(false);
@@ -658,5 +689,146 @@ describe("SSH Tunnel", () => {
       expect(info!.localPort).toBe(54321);
       expect(typeof info!.close).toBe("function");
     });
+  });
+});
+
+/**
+ * D11: before this, `connectOptions` carried no `hostVerifier` and ssh2 has no default -
+ * `kex.js` logs "Host accepted by default (no verification)" and completes the handshake
+ * against whatever answered. Every test below uses a bastion address of its own, because
+ * the trust-on-first-use memory is keyed by bastion address and sharing one address would
+ * make each test depend on another's first contact.
+ */
+describe("SSH host key verification", () => {
+  const passwordAuth = { enabled: true as const, username: "admin", authMethod: "password" as const, password: "pass" };
+
+  test("reports the fingerprint OpenSSH itself prints for the offered key", async () => {
+    serverHostKey = HOST_KEY_B;
+
+    const tunnel = await createSSHTunnel(
+      "fp-format",
+      { ...passwordAuth, host: "format-bastion.test", port: 22 },
+      "db.internal",
+      5432,
+      { shared: false },
+    );
+
+    // Verbatim `ssh-keygen -lf` output for HOST_KEY_B: SHA256, base64, padding stripped.
+    expect(tunnel.hostKeyFingerprint).toBe(FINGERPRINT_B);
+    await tunnel.close();
+  });
+
+  test("first contact with no pin succeeds and pins the key it accepted", async () => {
+    serverHostKey = HOST_KEY_A;
+
+    const first = await createSSHTunnel(
+      "tofu-first",
+      { ...passwordAuth, host: "tofu-bastion.test", port: 22 },
+      "db.internal",
+      5432,
+      { shared: false },
+    );
+    expect(first.hostKeyFingerprint).toBe(FINGERPRINT_A);
+    await first.close();
+
+    // The pin is only observable through its effect: a LATER contact with the same bastion
+    // offering a different key must now be refused.
+    serverHostKey = HOST_KEY_B;
+    const later = createSSHTunnel(
+      "tofu-later",
+      { ...passwordAuth, host: "tofu-bastion.test", port: 22 },
+      "db.internal",
+      5432,
+      { shared: false },
+    );
+    await expect(later).rejects.toThrow(FINGERPRINT_A);
+  });
+
+  test("a pinned connection offered the same key connects", async () => {
+    serverHostKey = HOST_KEY_A;
+
+    const tunnel = await createSSHTunnel(
+      "pin-match",
+      { ...passwordAuth, host: "match-bastion.test", port: 22, hostKeyFingerprint: FINGERPRINT_A },
+      "db.internal",
+      5432,
+      { shared: false },
+    );
+
+    expect(tunnel.localPort).toBe(54321);
+    expect(tunnel.hostKeyFingerprint).toBe(FINGERPRINT_A);
+    await tunnel.close();
+  });
+
+  test("a pinned connection offered a different key fails naming both fingerprints", async () => {
+    serverHostKey = HOST_KEY_B;
+
+    const promise = createSSHTunnel(
+      "pin-mismatch",
+      { ...passwordAuth, host: "mismatch-bastion.test", port: 22, hostKeyFingerprint: FINGERPRINT_A },
+      "db.internal",
+      5432,
+      { shared: false },
+    );
+
+    const error = await promise.then(
+      () => null,
+      (err: Error) => err,
+    );
+    expect(error).not.toBeNull();
+    expect(error!.message).toContain("mismatch-bastion.test");
+    expect(error!.message).toContain(FINGERPRINT_B); // what it saw
+    expect(error!.message).toContain(FINGERPRINT_A); // what it expected
+    expect(hasTunnel("pin-mismatch")).toBe(false);
+  });
+
+  test("clearing the pin lets the next contact be trusted afresh", async () => {
+    serverHostKey = HOST_KEY_A;
+    const first = await createSSHTunnel(
+      "clear-first",
+      { ...passwordAuth, host: "clear-bastion.test", port: 22 },
+      "db.internal",
+      5432,
+      { shared: false },
+    );
+    await first.close();
+
+    clearSSHHostKeyPin("clear-bastion.test", 22);
+
+    serverHostKey = HOST_KEY_B;
+    const second = await createSSHTunnel(
+      "clear-second",
+      { ...passwordAuth, host: "clear-bastion.test", port: 22 },
+      "db.internal",
+      5432,
+      { shared: false },
+    );
+    expect(second.hostKeyFingerprint).toBe(FINGERPRINT_B);
+    await second.close();
+  });
+
+  test("defaults the pin address to port 22 when the config leaves the port falsy", async () => {
+    serverHostKey = HOST_KEY_A;
+    const first = await createSSHTunnel(
+      "defport-first",
+      { ...passwordAuth, host: "defport-bastion.test", port: 0 },
+      "db.internal",
+      5432,
+      { shared: false },
+    );
+    await first.close();
+
+    // Pinned under :22, so clearing :22 is what un-pins it.
+    clearSSHHostKeyPin("defport-bastion.test", 22);
+    serverHostKey = HOST_KEY_B;
+    const second = await createSSHTunnel(
+      "defport-second",
+      { ...passwordAuth, host: "defport-bastion.test", port: 0 },
+      "db.internal",
+      5432,
+      { shared: false },
+    );
+    expect(second.hostKeyFingerprint).toBe(FINGERPRINT_B);
+    await second.close();
   });
 });

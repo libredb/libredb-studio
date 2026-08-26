@@ -640,7 +640,7 @@ export async function login(role: Role, username?: string) {
 
 `shouldMarkCookieSecure()` also decides the flag on the `oidc-state` cookie, so both cookies of the flow always agree. It resolves in this order:
 
-1. `AUTH_COOKIE_SECURE` when set (`on`/`true`/`1` vs `off`/`false`/`0`) — the operator's explicit answer, needed when the browser itself reaches the app over plain HTTP on a non-loopback host (LAN or home server). TLS terminated at an ingress does not need it: the browser still speaks HTTPS.
+1. `AUTH_COOKIE_SECURE` when set (`on`/`true`/`1` vs `off`/`false`/`0`) — the operator's explicit answer, needed when the browser itself reaches the app over plain HTTP on a non-loopback host (LAN or home server). TLS terminated at an ingress does not need it: the browser still speaks HTTPS. On the Helm chart this is `config.authCookieSecure` (three-state; unset leaves this default in place), added in chart 0.1.52.
 2. Off outside production.
 3. Off for a request that arrived on a loopback host over plain HTTP — WebKitGTK's cookie store discards a `Secure` cookie delivered over HTTP, which would break the desktop shell (issue #232). A proxy that forwarded HTTPS to loopback still gets the flag, via `x-forwarded-proto`.
 4. On otherwise.

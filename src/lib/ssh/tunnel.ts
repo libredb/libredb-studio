@@ -6,6 +6,7 @@
 
 import { Client } from "ssh2";
 import net from "net";
+import crypto from "crypto";
 import type { SSHTunnelConfig } from "@/lib/types";
 import { logger } from "@/lib/logger";
 
@@ -13,10 +14,66 @@ export interface TunnelInfo {
   localHost: string;
   localPort: number;
   close: () => Promise<void>;
+  /**
+   * The bastion host key this tunnel accepted, in OpenSSH's `SHA256:...` presentation.
+   * The only place the product can show a fingerprint the user is able to compare.
+   */
+  hostKeyFingerprint?: string;
 }
 
 // Cache active tunnels by connection ID
 const activeTunnels = new Map<string, TunnelInfo>();
+
+/**
+ * Trust-on-first-use host key memory, keyed by BASTION ADDRESS (`host:port`).
+ *
+ * Why TOFU and not "refuse until a fingerprint is configured": requiring a pasted
+ * fingerprint up front makes the feature unusable for the self-hoster reaching their own
+ * bastion, TOFU is what every SSH client does on first contact, and it is strictly better
+ * than verifying nothing - which is what ssh2 does when `hostVerifier` is absent (it has
+ * no default; `lib/protocol/kex.js` logs "Host accepted by default (no verification)").
+ *
+ * Why keyed by address rather than by connection id: a connection's OWN pin is
+ * `SSHTunnelConfig.hostKeyFingerprint` and is authoritative when set - that is the
+ * per-connection pin. This map is the first-contact memory, and it is the bastion, not the
+ * connection, whose identity is being remembered - exactly what `known_hosts` keys on. It
+ * also has to cover the one-shot callers (test-connection, schema-snapshot), which mint a
+ * fresh connection id per build: keyed by id, their every attempt would be a first contact
+ * and would verify nothing.
+ *
+ * Scope is this server process. A restart re-enters first contact, which is why a durable
+ * pin belongs on the connection.
+ */
+const hostKeyPins = new Map<string, string>();
+
+/** `host:port`, with ssh2's own default port applied so one bastion is not two entries. */
+function pinAddress(host: string, port: number | undefined): string {
+  return `${host}:${port || 22}`;
+}
+
+/**
+ * OpenSSH's fingerprint presentation: SHA256 over the raw public key blob (K_S - the same
+ * bytes base64'd into a `.pub` line, which is what ssh2 hands `hostVerifier` when no
+ * `hostHash` is configured), base64, `=` padding stripped.
+ *
+ * Measured rather than assumed: for generated ed25519 and RSA keys this reproduces
+ * `ssh-keygen -lf <key>.pub` byte for byte, so what an error prints can be compared
+ * against `ssh-keyscan <bastion> | ssh-keygen -lf -` or an existing `known_hosts` entry.
+ */
+function fingerprintOf(hostKey: Buffer): string {
+  const digest = crypto.createHash("sha256").update(hostKey).digest("base64");
+  return `SHA256:${digest.replace(/=+$/, "")}`;
+}
+
+/**
+ * Forget the remembered host key for a bastion, so the next contact is a first contact.
+ *
+ * The remedy for a key that legitimately changed (a rebuilt bastion). Deliberately NOT an
+ * "accept the new key?" prompt: whether to offer that, and where, is a separate decision.
+ */
+export function clearSSHHostKeyPin(host: string, port?: number): void {
+  hostKeyPins.delete(pinAddress(host, port));
+}
 
 export interface CreateSSHTunnelOptions {
   /**
@@ -60,6 +117,11 @@ export async function createSSHTunnel(
   return new Promise((resolve, reject) => {
     const sshClient = new Client();
     let localServer: net.Server | null = null;
+    // What the host key verifier decided, read back after ssh2 reports the handshake
+    // failure. The library's own error ("Host denied (verification failed)") names neither
+    // fingerprint, and the two fingerprints are the whole diagnostic value here.
+    let hostKeyRejection: string | null = null;
+    let acceptedFingerprint: string | undefined;
 
     const cleanup = async () => {
       // Only a pooled tunnel owns its map entry. A one-shot tunnel may share the id of a
@@ -107,6 +169,7 @@ export async function createSSHTunnel(
           localHost: "127.0.0.1",
           localPort: address.port,
           close: cleanup,
+          hostKeyFingerprint: acceptedFingerprint,
         };
         if (shared) {
           activeTunnels.set(connectionId, tunnelInfo);
@@ -122,7 +185,7 @@ export async function createSSHTunnel(
       // Ensure SSH file descriptors are released before rejecting
       sshClient.end();
       cleanup();
-      reject(new Error(`SSH connection error: ${err.message}`));
+      reject(new Error(hostKeyRejection ?? `SSH connection error: ${err.message}`));
     });
 
     // Build SSH connection options
@@ -130,6 +193,26 @@ export async function createSSHTunnel(
       host: sshConfig.host,
       port: sshConfig.port || 22,
       username: sshConfig.username,
+      hostVerifier: (hostKey: Buffer) => {
+        const offered = fingerprintOf(hostKey);
+        const address = pinAddress(sshConfig.host, sshConfig.port);
+        // The connection's own pin wins over the first-contact memory: it is the durable
+        // one, and it is the one a user can inspect and correct.
+        const expected = sshConfig.hostKeyFingerprint || hostKeyPins.get(address);
+        if (expected && expected !== offered) {
+          hostKeyRejection =
+            `SSH host key verification failed for ${address}: offered ${offered}, expected ${expected}. ` +
+            `Confirm the bastion's key with \`ssh-keyscan ${sshConfig.host} | ssh-keygen -lf -\`; ` +
+            `if it changed legitimately, clear the pinned fingerprint for this connection.`;
+          return false;
+        }
+        acceptedFingerprint = offered;
+        if (!expected) {
+          // Trust on first use, and pin what was trusted.
+          hostKeyPins.set(address, offered);
+        }
+        return true;
+      },
     };
 
     if (sshConfig.authMethod === "password") {

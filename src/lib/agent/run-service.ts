@@ -172,6 +172,15 @@ export interface AgentRunStartInput {
   readonly thread?: AgentThreadHeader;
   readonly actor: AgentRunActor;
   readonly connectionId: string;
+  /**
+   * Which database that connection addresses, as `connectionIdentity` fingerprints it.
+   *
+   * The route supplies it because the route is what resolved the connection: this layer
+   * holds an id and never the record behind it. What it buys is on the READ side — a
+   * follow-up can tell that a saved connection has been re-pointed since the
+   * conversation it continues was established. See `AgentRunRecord.connectionIdentity`.
+   */
+  readonly connectionIdentity?: string;
   readonly objective: string;
   readonly runId?: string;
 }

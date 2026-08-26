@@ -1156,6 +1156,26 @@ export interface AgentRunRecord {
   readonly actor: AgentRunActor;
   /** The single connection this run may reach; the server builds the scope from it. */
   readonly connectionId: string;
+  /**
+   * WHICH DATABASE that connection addressed when this run opened, as
+   * `connectionIdentity` fingerprints it: engine, host, port, database, service,
+   * instance, role and the SSH tunnel it is reached through, and deliberately not the
+   * password.
+   *
+   * The id above names the RECORD; this names the database behind it, and the two
+   * are not the same fact. A saved connection edited to address another server keeps
+   * its id, so a conversation checked only on the id carried one database's
+   * established claims into a run reading another — nothing refused, nothing wrong to
+   * look at, and a report about production resting on staging (`docs/BACKLOG.md` B68).
+   *
+   * Optional because a header written before this field records nothing about the
+   * database it read, and a mismatch must not be invented out of that silence: absent
+   * is carried, a recorded identity that DISAGREES is what declines. Excluding the
+   * password is the point of reusing that function rather than hashing the record —
+   * rotating a credential does not change which database this is, and must not cost a
+   * user the conversation they were having.
+   */
+  readonly connectionIdentity?: string;
   /** The user's own question, in their words. */
   readonly objective: string;
   readonly createdAtMs: number;

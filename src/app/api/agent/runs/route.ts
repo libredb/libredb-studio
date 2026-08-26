@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { admitAgentModel } from "@/lib/agent/capability-gate";
 import { isAgentRuntimeEnabled, isThreadContextEnabled } from "@/lib/agent/config";
+import { connectionIdentity } from "@/lib/agent/context-snapshot";
 import { AGENT_MAX_OBJECTIVE_LENGTH } from "@/lib/agent/execution-policy";
 import { threadContextMaxCharsFor } from "@/lib/agent/models";
 import type { AgentRunStatusReport } from "@/lib/agent/run-service";
 import { AgentRunStoreError } from "@/lib/agent/run-store";
 import { driveAgentRun, getAgentRunService } from "@/lib/agent/runtime";
-import { deriveThreadContext } from "@/lib/agent/thread-context";
+import { threadContextFor } from "@/lib/agent/thread-context";
 import {
   AGENT_TERMINAL_STATUSES,
   AGENT_WORKFLOW_PRESENTS_ANSWER,
@@ -199,6 +200,15 @@ export async function POST(req: Request) {
     }
 
     const connection = await resolveConnection({ connectionId }, guard.session);
+    /*
+      WHICH DATABASE this run reads, fingerprinted here because here is the only place
+      that holds the resolved record: everything downstream holds an id. It is written
+      onto the run, so a later follow-up can tell that the connection has been
+      re-pointed since the conversation it continues was established (B68), and it is
+      read below for exactly that. The password is excluded by `connectionIdentity`
+      itself, which is why this is that function and not a hash of the record.
+    */
+    const connectionIdentityOfRun = connectionIdentity(connection);
 
     /*
       Before a run exists, not after one has failed. A model that cannot call tools
@@ -274,7 +284,13 @@ export async function POST(req: Request) {
               // HERE rather than at drive time because the context is derived and
               // persisted at open, and a resumed drive must reason from what its first
               // drive was handed. `resolveConfig` is synchronous and reaches nothing.
-              deriveThreadContext(previous.record, threadContextMaxCharsFor(resolveConfig().model))
+              // The database check is inside: a predecessor that read another database
+              // declines here rather than handing its claims to a run reading this one.
+              threadContextFor(
+                previous.record,
+                connectionIdentityOfRun,
+                threadContextMaxCharsFor(resolveConfig().model),
+              )
             : { steps: [], text: "", declined: failed ?? "unavailable" };
       }
     }
@@ -304,6 +320,7 @@ export async function POST(req: Request) {
       ...(thread === undefined ? {} : { thread }),
       actor: { sessionId: guard.session.username, role: guard.session.role },
       connectionId: connection.id,
+      connectionIdentity: connectionIdentityOfRun,
       objective,
     });
 

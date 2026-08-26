@@ -205,6 +205,40 @@ describe("GET /api/agent/config", () => {
     expect(String(body.detail)).toContain(blocker);
   });
 
+  test("reports an incompatible ledger under its own reason, distinct from an unwritable path (B30)", async () => {
+    // The path here is perfectly writable; what is wrong is the ledger already in it.
+    // An operator filtering on `reason` must not be sent to a permission they would
+    // find nothing wrong with.
+    asAdmin();
+    configureModel();
+    const content = "@workflow/world-local@bundled";
+    const versionFile = path.join(ledgerDir, "version.txt");
+    fs.writeFileSync(versionFile, content);
+
+    const body = await parseResponseJSON<Record<string, unknown>>(await GET());
+
+    expect(body.enabled).toBe(false);
+    expect(body.reason).toBe("LEDGER_INCOMPATIBLE");
+    expect(String(body.detail)).toContain(versionFile);
+    // The probe reads and refuses; it never repairs. A route that rewrote the file
+    // would initialise a ledger on a page load.
+    expect(fs.readFileSync(versionFile, "utf-8")).toBe(content);
+  });
+
+  test("withholds the incompatible ledger's path and quoted file content from an ordinary session", async () => {
+    // The new detail carries an absolute server path AND a quoted fragment of a file
+    // on that disk, so it falls under the same admin-only rule as the unwritable one.
+    configureModel();
+    fs.writeFileSync(path.join(ledgerDir, "version.txt"), "@workflow/world-local@bundled");
+
+    const body = await parseResponseJSON<Record<string, unknown>>(await GET());
+
+    expect(body.reason).toBe("LEDGER_INCOMPATIBLE");
+    const detail = String(body.detail ?? "");
+    expect(detail).not.toContain(ledgerDir);
+    expect(detail).not.toContain("version.txt");
+  });
+
   test("does not hand an ordinary session the server path and OS error the ledger detail carries", async () => {
     // The rail renders nothing when the answer is no, so a non-admin session loses
     // nothing by not being told WHERE on the server disk the ledger was refused.

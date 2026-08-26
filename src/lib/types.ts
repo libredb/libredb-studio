@@ -99,6 +99,15 @@ export interface SSHTunnelConfig {
   password?: string;
   privateKey?: string;
   passphrase?: string;
+  /**
+   * The bastion host key this connection trusts, in OpenSSH's presentation
+   * (`SHA256:` + unpadded base64, exactly what `ssh-keygen -lf` prints).
+   *
+   * The durable half of the trust-on-first-use policy in `src/lib/ssh/tunnel.ts`: when
+   * set it is authoritative and a bastion offering any other key fails the connection.
+   * Public key material, so it is stored and displayed in the clear.
+   */
+  hostKeyFingerprint?: string;
 }
 
 export interface DatabaseConnection {

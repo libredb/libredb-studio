@@ -143,6 +143,10 @@
           "pattern": "^(\\s*([Oo][Nn]|[Oo][Ff][Ff]|[Tt][Rr][Uu][Ee]|[Ff][Aa][Ll][Ss][Ee]|0|1)\\s*)?$",
           "description": "AUTH_BOOTSTRAP for the app: \"\" (chart default: omit the variable, the app's zero-config first run applies), \"on\" (explicit zero-config), or \"off\" (strict: secrets.jwtSecret and secrets.adminPassword are required). The app's synonyms \"true\"/\"1\" (on) and \"false\"/\"0\" (off) are accepted for upgrade compatibility, case-insensitive."
         },
+        "authCookieSecure": {
+          "type": ["boolean", "null"],
+          "description": "AUTH_COOKIE_SECURE for the app: null (default) writes nothing and the app decides (Secure in production, except a loopback host reached over plain http), false drops the Secure flag - the answer for a browser reaching a non-loopback host over plain http, where the cookie is rejected and login silently loops - and true forces it on"
+        },
         "storageSqlitePath": {
           "type": "string",
           "description": "SQLite database file path"

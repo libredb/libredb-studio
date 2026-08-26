@@ -2235,7 +2235,7 @@ export function AgentRail({
                   ? "Connection changed, so this question started a new conversation."
                   : threadDeclined === "disabled"
                     ? "Conversation context is switched off on this server, so every question starts on its own."
-                    : "The earlier step could not be reached, so this question started on its own."}
+                    : "The earlier step could not be carried into this question, so it started on its own."}
               </p>
             )}
           </div>
