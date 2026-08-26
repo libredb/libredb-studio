@@ -29,14 +29,25 @@ own objective is a pronoun and whose report might carry nothing forward:
    drafted `SELECT c.name AS category, MAX(f.rental_rate) … JOIN film_category …` before settling on
    the simpler `SELECT MAX(rental_rate) FROM film`, and answered 4.99.
 
-Step 3 is the one worth reading twice. Its own predecessor's objective is *"chart those"* — a dangling
-pronoun — so a pairwise chain would have handed it nothing to resolve against. What reached it was the
-**spine**: both earlier objectives, in order, off the header.
+**What this drive established, and what it did not.** It establishes that the conversation reached
+step 3 and that the referent resolved: the header carried `Step 1: count my films by category`,
+`Step 2: chart those`, step 2's answer statement and step 2's claim, and the run answered about films.
 
-Recorded as it happened rather than as it flatters: step 3 resolved the referent and read the
-category framing, and then presented the ungrouped maximum rather than the per-category one it had
-also drafted. The conversation reached the model; which of two correct readings it chose to present
-is a question about the model, not about the transport.
+It does **not** establish that the spine was load-bearing, and the drive has to be read carefully to
+see why. Step 2's report was rich rather than thin — its answer statement names `category` and
+`film_category` outright, and its claim reads *"16 distinct film categories, Sports 74, Music 51"*. A
+pairwise chain would therefore have handed step 3 that report, which resolves *"those"* to films on
+its own. The shape this design exists for — a middle step whose report carries nothing forward — is
+the shape this drive did not produce.
+
+So the claim to hold is the narrower one: the transport works, and the conversation is robust to a
+thin middle report *by construction* rather than *by measurement*. Driving a genuinely thin middle
+step (one that charts without re-reading, or fails) is the measurement still owed.
+
+Recorded as it happened rather than as it flatters, on the other axis too: step 3 resolved the
+referent and read the category framing — it drafted the per-category maximum — and then presented the
+ungrouped one. Which of two correct readings a model presents is a question about the model, not
+about the transport.
 
 **Control arm**, driven with that three-step conversation still attached: *"how many customers are
 there in each country?"* — answered about customers and countries in one statement, with no film or
