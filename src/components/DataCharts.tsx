@@ -58,6 +58,21 @@ import { logger } from "@/lib/logger";
 
 type ChartType = "bar" | "line" | "pie" | "area" | "scatter" | "histogram" | "stacked-bar" | "stacked-area";
 
+/*
+  The forms that draw one mark per selected Y field, and so the only ones the palette
+  cap can drop a series from. Histogram buckets `yAxis[0]` on its own and scatter draws
+  X against its own Y, so a cap never applies to either — they keep the whole selection
+  visible in the picker regardless, and must not carry the truncation note. The pie caps
+  rows rather than fields and says so in its own note.
+*/
+const MULTI_SERIES_CHART_TYPES: ReadonlySet<ChartType> = new Set([
+  "bar",
+  "line",
+  "area",
+  "stacked-bar",
+  "stacked-area",
+]);
+
 export type AggregationType = "none" | "sum" | "avg" | "count" | "min" | "max";
 export type DateGrouping = "hour" | "day" | "week" | "month" | "year";
 
@@ -405,7 +420,9 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
   // would repeat an earlier colour and become indistinguishable from it. Cap
   // rendering at the palette size rather than silently reusing a colour, and
   // say so in the footer so a dropped series isn't mistaken for missing data
-  // (it's still in the Results grid).
+  // (it's still in the Results grid). With the cap in place every render site
+  // indexes the palette directly: a wrapping index would only bring the colour
+  // collision back, so `undefined` is the honest outcome if the cap ever slips.
   const MAX_SERIES = CHART_COLORS.length;
 
   // Recharts writes legend entries in the series colour. The coloured icon beside
@@ -938,12 +955,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 <Tooltip content={<CustomTooltip />} />
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
                 {plottedYAxis.map((field, index) => (
-                  <Bar
-                    key={field}
-                    dataKey={field}
-                    fill={CHART_COLORS[index % CHART_COLORS.length]}
-                    radius={[4, 4, 0, 0]}
-                  />
+                  <Bar key={field} dataKey={field} fill={CHART_COLORS[index]} radius={[4, 4, 0, 0]} />
                 ))}
               </BarChart>
             ) : chartType === "line" ? (
@@ -964,9 +976,9 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                     key={field}
                     type="monotone"
                     dataKey={field}
-                    stroke={CHART_COLORS[index % CHART_COLORS.length]}
+                    stroke={CHART_COLORS[index]}
                     strokeWidth={2}
-                    dot={{ fill: CHART_COLORS[index % CHART_COLORS.length], strokeWidth: 0, r: 4 }}
+                    dot={{ fill: CHART_COLORS[index], strokeWidth: 0, r: 4 }}
                     activeDot={{ r: 6, strokeWidth: 0 }}
                   />
                 ))}
@@ -989,8 +1001,8 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                     key={field}
                     type="monotone"
                     dataKey={field}
-                    stroke={CHART_COLORS[index % CHART_COLORS.length]}
-                    fill={CHART_COLORS[index % CHART_COLORS.length]}
+                    stroke={CHART_COLORS[index]}
+                    fill={CHART_COLORS[index]}
                     fillOpacity={0.3}
                     strokeWidth={2}
                   />
@@ -1048,7 +1060,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 <Tooltip content={<CustomTooltip />} />
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
                 {plottedYAxis.map((field, index) => (
-                  <Bar key={field} dataKey={field} stackId="stack" fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                  <Bar key={field} dataKey={field} stackId="stack" fill={CHART_COLORS[index]} />
                 ))}
               </BarChart>
             ) : chartType === "stacked-area" ? (
@@ -1070,8 +1082,8 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                     type="monotone"
                     dataKey={field}
                     stackId="stack"
-                    stroke={CHART_COLORS[index % CHART_COLORS.length]}
-                    fill={CHART_COLORS[index % CHART_COLORS.length]}
+                    stroke={CHART_COLORS[index]}
+                    fill={CHART_COLORS[index]}
                     fillOpacity={0.5}
                   />
                 ))}
@@ -1117,7 +1129,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
         {chartType === "pie" && chartData.length > MAX_SERIES && (
           <span className="text-amber-500">Showing top {MAX_SERIES} values</span>
         )}
-        {chartType !== "pie" && droppedYAxisCount > 0 && (
+        {MULTI_SERIES_CHART_TYPES.has(chartType) && droppedYAxisCount > 0 && (
           <span className="text-amber-500">
             Showing first {MAX_SERIES} of {yAxis.length} series — see the Results grid for the rest
           </span>

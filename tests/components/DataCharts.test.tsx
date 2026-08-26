@@ -685,6 +685,38 @@ describe("DataCharts", () => {
     });
   });
 
+  // Histogram buckets one field (`yAxis[0]`) and scatter draws x against its own Y,
+  // so neither form can lose a series to the palette cap. The footer has to retract
+  // for them rather than keep claiming eight of nine series are drawn (#403).
+  test("series-truncation footer is retracted for chart forms that plot a single series", async () => {
+    const { queryAllByRole, queryByText, container } = render(
+      React.createElement(DataCharts, { result: manySeriesResult }),
+    );
+    fireEvent.click(queryByText("Bar")!);
+
+    const menuItems = queryAllByRole("menuitem");
+    for (const name of ["f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9"]) {
+      const item = menuItems.find((el) => el.textContent?.includes(name));
+      expect(item).not.toBeNull();
+      fireEvent.click(item!);
+    }
+    // Anchors the two negatives below: the footer is provably present here, so its
+    // later absence is the chart form's doing and not a copy change.
+    await waitFor(() => {
+      expect(container.textContent || "").toContain("Showing first 8 of 9 series");
+    });
+
+    fireEvent.click(queryByText("Histogram")!);
+    await waitFor(() => {
+      expect(container.textContent || "").not.toContain("Showing first");
+    });
+
+    fireEvent.click(queryByText("Scatter")!);
+    await waitFor(() => {
+      expect(container.textContent || "").not.toContain("Showing first");
+    });
+  });
+
   // -----------------------------------------------------------------------
   // Save chart flow
   // -----------------------------------------------------------------------
