@@ -40,6 +40,7 @@ const SeedDatabaseType = z.enum([
   "opensearch",
   "trino",
   "cassandra",
+  "libsql",
 ]);
 
 export const SeedDefaultsSchema = z.object({

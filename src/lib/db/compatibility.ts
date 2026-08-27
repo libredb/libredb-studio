@@ -32,6 +32,10 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   postgres: true,
   mysql: true,
   sqlite: true,
+  // libSQL (#424 Phase 5): its own provider, doc and integration test. A separate
+  // driver from `sqlite` rather than a relative of it - the two share a dialect and
+  // nothing else, since one holds a file handle and the other speaks HTTP.
+  libsql: true,
   oracle: true,
   mssql: true,
   clickhouse: true,
@@ -70,10 +74,10 @@ export const SHIPPED_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(Obj
 /**
  * Which shipped ids are databases a user already runs, and which one is not.
  *
- * `libredb` is the embedded store this app carries with it; the other fourteen are
+ * `libredb` is the embedded store this app carries with it; the other fifteen are
  * external engines you point the product at. Everything published as a database
- * count means the external fourteen - README.md's "fourteen drivers reach
- * forty named engines", the login hero's engine claim - so the split needs a
+ * count means the external fifteen - README.md's "fifteen drivers reach
+ * forty-one named engines", the login hero's engine claim - so the split needs a
  * definition somewhere, and it belongs beside `SHIPPED` rather than in the UI that
  * prints it. That is the same reason `SHIPPED` itself lives here.
  *
@@ -85,6 +89,7 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: true,
   mysql: true,
   sqlite: true,
+  libsql: true,
   oracle: true,
   mssql: true,
   clickhouse: true,
@@ -538,7 +543,7 @@ export function compatibleEnginesFor(type: DatabaseType): readonly WireCompatibl
  * app at it, so the embedded store is out of both halves of the sum.
  *
  * Still no runtime consumer: README.md and the docs table are markdown and quote the
- * number as prose, and the login hero prints the two halves separately - fourteen in
+ * number as prose, and the login hero prints the two halves separately - fifteen in
  * the proof row, twenty-six in the relatives line - rather than their sum. This exists
  * so the arithmetic has one definition, and the unit test pins it.
  */

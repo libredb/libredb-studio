@@ -794,6 +794,32 @@ describe("ConnectionModal", () => {
     expect(queryByText(/refuses a password over plain HTTP/)).toBeNull();
   });
 
+  // ── 34b-bis. libSQL asks for a TOKEN, and says where one comes from ───────
+  //
+  // libSQL has no user names at all: the credential a server checks is a JWT it
+  // minted, so the shared `password` field holds a token here. A field labelled
+  // Password invites a password no libSQL server has, and a self-hosted server
+  // started without authentication takes none at all - both measured on sqld 0.24.33
+  // and on Turso Cloud, 2026-08-27.
+
+  test("libSQL type labels the password field Auth Token and says where one comes from", () => {
+    mockFormOverrides = { type: "libsql" };
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText("Auth Token")).not.toBeNull();
+    expect(queryByText("Password")).toBeNull();
+    expect(queryByText(/turso db tokens create/)).not.toBeNull();
+  });
+
+  test("no other type is asked for an Auth Token", () => {
+    const props = createDefaultProps();
+    const { queryByText } = render(React.createElement(ConnectionModal, props));
+
+    expect(queryByText("Auth Token")).toBeNull();
+    expect(queryByText(/turso db tokens create/)).toBeNull();
+  });
+
   // ── 34c. Cassandra asks for the one field its driver cannot start without ──
   //
   // `cassandra-driver` 4.9.0 refuses to connect with no local data centre at all

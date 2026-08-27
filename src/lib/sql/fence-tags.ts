@@ -34,6 +34,10 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   postgres: true,
   mysql: true,
   sqlite: true,
+  // A block tagged `libsql` holds SQLite's own dialect: same tokenizer, same
+  // statements, measured on sqld 0.24.33 (SQLite 3.47.0). `turso` is registered as
+  // an alias below because that is the product name a model is likelier to write.
+  libsql: true,
   mongodb: true,
   redis: true,
   oracle: true,
@@ -79,6 +83,7 @@ const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "plpgsql",
   "mariadb",
   "sqlite3",
+  "turso",
   "plsql",
   "tsql",
   "sqlserver",
@@ -100,6 +105,7 @@ const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.freeze({
   plpgsql: "postgres",
   mariadb: "mysql",
   sqlite3: "sqlite",
+  turso: "libsql",
   plsql: "oracle",
   tsql: "mssql",
   sqlserver: "mssql",

@@ -448,6 +448,57 @@ services:
     # does not catch it.
 
   # ---------------------------------------------------------------------------------------
+  # libSQL server (issue #424, Phase 5). SQLite over a network: one container is the whole
+  # server, and it is the SELF-HOSTED half of the `libsql` type-id. The other half is Turso
+  # Cloud, which cannot be a compose service - it is an account - so the doc records what was
+  # measured there and this service is what anyone can repeat.
+  # ---------------------------------------------------------------------------------------
+  libsql:
+    # Pinned to the exact build the provider was live-verified against, the same rule the
+    # trino and clickhouse services follow: the refusal wording recorded in
+    # docs/providers/libsql.md ("unsupported statement: VACUUM") is a claim about sqld
+    # 0.24.33, and Turso Cloud words the identical refusal differently.
+    #
+    # The tag is needed even though `:latest` reports the same 0.24.33: measured 2026-08-27,
+    # `:latest` is a ROLLING REBUILD of that version - it answers `/version` with
+    # `sqld 0.24.33 (f8fb14f3 2026-08-11)` where `v0.24.33` answers
+    # `sqld 0.24.33 (40a151bd 2025-12-19)`, two different digests under one version number.
+    # So `:latest` is not reproducible even while the number it prints looks pinned.
+    image: ghcr.io/tursodatabase/libsql-server:v0.24.33
+    container_name: libredb-libsql
+    restart: unless-stopped
+    environment:
+      # A single primary with no replica. Without it sqld starts in a mode that expects a
+      # primary to follow, and the first write fails rather than the server failing to start.
+      SQLD_NODE: primary
+    ports:
+      # 8080 carries the Hrana HTTP API AND the version route - one port, and there is no
+      # second protocol port to publish. Mapped to 18080 so it cannot collide with the trino
+      # service above, which owns 8080 on the host.
+      - "18080:8080"
+    healthcheck:
+      # sqld's own route, and it answers WITHOUT a token - which is exactly why it is a
+      # health check and not a connection test: the provider proves the credential with
+      # `SELECT 1` instead (see connect() in the provider).
+      #
+      # Spoken through bash's /dev/tcp rather than curl, because the image ships NEITHER
+      # curl NOR wget (checked before writing this, the same way the trino service's
+      # comment says to: `command -v wget || command -v curl` answers nothing, while
+      # /bin/bash and /bin/sqld are both there). A `CMD curl` here would have marked the
+      # service permanently unhealthy while the server answered every request.
+      # `CMD bash -c`, never `CMD-SHELL`: CMD-SHELL runs /bin/sh, which is dash here, and
+      # dash has no /dev/tcp - measured, the check failed with "cannot create
+      # /dev/tcp/localhost/8080: Directory nonexistent" while the server was answering.
+      test:
+        - CMD
+        - bash
+        - -c
+        - exec 3<>/dev/tcp/localhost/8080 && printf 'GET /health HTTP/1.0\r\n\r\n' >&3 && head -1 <&3 | grep -q 200
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ---------------------------------------------------------------------------------------
   # Apache Trino (issue #424, Phase 2). One container is the whole cluster: the coordinator
   # runs the worker in-process by default, which is enough to answer every statement the
   # provider sends. Nothing else is needed to exercise it.

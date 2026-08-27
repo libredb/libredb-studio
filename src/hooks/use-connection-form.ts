@@ -512,7 +512,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         // ClickHouse there, so listing them would promise a paste this form cannot
         // honour. Trino's own `jdbc:trino://…` is a JDBC URL the parser does not read.
         message:
-          "Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, couchbase://, clickhouse://, http(s)://, redis://, oracle://, mssql://",
+          "Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, couchbase://, clickhouse://, libsql://, http(s)://, redis://, oracle://, mssql://",
       });
       return;
     }
@@ -592,6 +592,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "opensearch",
     "trino",
     "cassandra",
+    "libsql",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

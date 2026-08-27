@@ -146,7 +146,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Fifteen type-ids are supported by fourteen provider modules — `elasticsearch` and `opensearch` share
+Sixteen type-ids are supported by fifteen provider modules — `elasticsearch` and `opensearch` share
 one, `providers/sql/search/`. The count is derived from the exhaustive `SHIPPED` record in
 [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice. For
 the per-provider reference (driver, pooling, query format,

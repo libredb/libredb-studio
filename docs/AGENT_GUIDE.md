@@ -229,7 +229,7 @@ workflow including **Operate**.
 now two different sentences, and the difference is the whole of what changed:
 
 - **Grounding — every engine.** What a Plan run is TOLD about your database. It needs no read-only
-  statement path, because the provider reading sends no statement, so it reaches all fourteen engines.
+  statement path, because the provider reading sends no statement, so it reaches all sixteen engines.
 - **Agent mode — PostgreSQL and SQLite.** What a run may DO by itself. Its tools execute statements
   and need a database-native read-only path, which only those two providers implement, so a
   schema-workflow Agent run on any other engine still ends *"The agent cannot run on this database
@@ -924,7 +924,7 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded
   connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode still opens on
   every connection — the model is toolless there, so no profile has to be acquired for it — and since
-  #414 its **grounding** no longer takes this path at all on the other twelve: it asks the provider to
+  #414 its **grounding** no longer takes this path at all on the other fourteen: it asks the provider to
   describe its schema, which needs no read-only statement profile, so a Plan run on MongoDB or MySQL
   is ordinarily grounded while an Agent run on the same connection still cannot read anything. Where
   the reading does fail — a provider that cannot describe itself, a description that overran its

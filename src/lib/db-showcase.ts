@@ -41,11 +41,15 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   // it is the engine a data platform is usually met THROUGH rather than one more
   // store to choose between.
   trino: 13,
+  // Behind Trino and ahead of the embedded store: libSQL is the newest name on this
+  // page and the one an evaluator is least likely to have met, but it is a product
+  // name (Turso's server) rather than our own, so it goes ahead of `libredb`.
+  libsql: 14,
   // Last on purpose: the embedded store is the least recognisable name here. It is
   // still shown - it is a shipped provider with a doc (docs/providers/libredb.md), an
   // icon and a slot in the connection picker, so omitting it would make the login page
   // contradict the app (issue #425, step 2).
-  libredb: 14,
+  libredb: 15,
 };
 
 /**
@@ -65,7 +69,7 @@ export interface ShowcaseDatabase {
   /**
    * True for the embedded store, false for a database the user already runs.
    *
-   * The showcase shows all fifteen providers while the hero claims fourteen engines,
+   * The showcase shows all sixteen providers while the hero claims fifteen engines,
    * and this flag is how the page carries that difference without any surface typing
    * the word "libredb": the pill it marks is the one the count leaves out.
    */

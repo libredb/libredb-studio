@@ -166,10 +166,10 @@ directly; reshaping rows inside the transport would have broken schema loading. 
 
 ```typescript
 // Before:
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra';
 
 // After (example: adding CockroachDB):
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'cockroachdb';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'cockroachdb';
 ```
 
 ### 1.2 — Add to `QueryTab.type` if needed
@@ -317,7 +317,7 @@ Then add the type to the selectable list that drives the ConnectionModal picker:
 // Append to the existing list - do not retype it, or you will drop a provider from the picker.
 const selectableTypes: DatabaseType[] = [
   'postgres', 'mysql', 'sqlite', 'oracle', 'mssql', 'mongodb', 'couchbase', 'redis', 'libredb',
-  'clickhouse', 'druid', 'elasticsearch', 'opensearch', 'trino', 'cassandra',
+  'clickhouse', 'druid', 'elasticsearch', 'opensearch', 'trino', 'cassandra', 'libsql',
   'cockroachdb',
 ];
 ```
@@ -340,6 +340,7 @@ bun add <driver-package>
 # Apache Druid needs no driver — plain SQL over POST /druid/v2/sql (Router 8888 or Broker 8082)
 # Elasticsearch / OpenSearch need no driver — SQL over _sql / _plugins/_sql (port 9200)
 # Apache Trino needs no driver — SQL over its client protocol, POST /v1/statement (port 8080)
+# libSQL needs no driver — SQLite's dialect over the Hrana protocol, POST /v2/pipeline (port 8080)
 # bun add cassandra-driver  (Apache Cassandra — a binary protocol over TCP, so a driver is not
 #                            optional; this one is pure JS, which is the next best thing)
 ```
@@ -648,7 +649,7 @@ For the authoritative, code-verified reference for each shipped provider (extend
 driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
 docs — they are the single source of truth and are kept in sync with the code:
 
-**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · libredb
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · libsql · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · libredb
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
 provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), or
@@ -769,7 +770,8 @@ The integration points, all of which need an entry. This is the list the Strateg
       published engine count silently undercount; it is listed here because the count in `README.md`
       and `docs/BRAND_MESSAGING.md` is derived from it and has to move in the same PR
 - [ ] `package.json` — the driver, **if** it needs one. A driver-free provider leaves it untouched, and
-      six shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch` and `trino`
+      seven shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`
+      and `libsql`
       each add nothing here
 - [ ] `database-compose.yml` — a service, so the next person can repeat the live pass. A distributed
       engine contributes a `profiles: [...]` set instead, as Druid's seven services do, so the default
@@ -801,6 +803,34 @@ The integration points, all of which need an entry. This is the list the Strateg
       its driver's tokenizer, never from a neighbouring dialect, and leave it at the default rather than
       guess. `tests/unit/sql/grammar.test.ts` holds `Record<DatabaseType, …>` maps for both decisions,
       so the compiler will at least stop you from *forgetting* that a decision exists
+
+**Published where a human reads it, and this is the block with the fewest gates.** `readme:check`
+compares the translated READMEs against `README.md` and `chart:check` compares versions; nothing
+counts the engines in a catalog listing, so an engine can ship while three storefronts still name the
+previous set (measured in the #511 review, which found all of these stale after libSQL had already
+landed everywhere the compiler looks):
+
+- [ ] `charts/libredb-studio/Chart.yaml` — the `description`, which is what **ArtifactHub** shows, AND
+      the `keywords` list, which is what ArtifactHub **searches**. An engine absent from the keywords is
+      an engine nobody finds; the chart's own comment says a new engine's keyword belongs in the release
+      that ships it, because #167 otherwise makes a keyword-only fix cost a chart version of its own.
+      Two names are often right — the type-id and the product a user would type (`libsql` and `turso`)
+- [ ] `operator/helm-charts/libredb-studio/Chart.yaml` — the operator's embedded copy, same edit
+- [ ] `operator/config/manifests/bases/libredb-studio-operator.clusterserviceversion.yaml` — the CSV
+      `description`, which is what **OperatorHub** shows. **Edit only this file and then run
+      `make -C operator bundle`**: `operator/bundle/manifests/...` is generated from it, and the
+      `Verify operator bundle is up to date` step re-runs the generator and diffs, so a hand-wrapped
+      YAML folded scalar fails the gate even when the text is identical to what it wants
+- [ ] `README.md` + `README_zh.md` + `README_ja.md`, `DOCKERHUB.md`, `docs/BRAND_MESSAGING.md` — the
+      engine tables and every prose numeral. **Separate the denominators before touching a numeral**:
+      type-ids the factory builds, external drivers (that set minus the embedded store), wire-compatible
+      relatives, and their sum. `connectableProductCount()` is the arithmetic's one definition — derive
+      from it, and re-read each sentence to see which of the four it counts. A mechanical replace is
+      how a correct number becomes wrong: the agent docs' "the other fourteen" counts type-ids minus
+      the two `CATALOG_PLANS` dialects and moved for a different reason than the driver count did
+- [ ] the marketplace listings under `deploy/` — a claim that enumerates engines is bound to the file
+      that proves it, and the `marketplace-copy` test fails when a plan-capable engine is missing from
+      one
 
 **And the tests for every exhaustive map**, which are the real checklist — several are exhaustive
 *by construction* (`Record<DatabaseType, …>` in `db-ui-config`, `PICKER_COVERAGE` in the

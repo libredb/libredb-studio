@@ -51,7 +51,7 @@ export const HERO_CLAIMS: readonly { key: string; value: number; unit: string; d
     // at, so counting it here claimed one external engine more than the product has and put
     // this page one out of step with the number README.md publishes. The pill for it stays -
     // it is a provider the connection picker offers - marked as embedded so the reader can
-    // see why fifteen pills sit under a claim of fourteen.
+    // see why sixteen pills sit under a claim of fifteen.
     value: EXTERNAL_DATABASE_TYPES.length,
     unit: "database engines",
     detail: "one client, one workspace, every one of them",

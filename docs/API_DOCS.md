@@ -1238,7 +1238,7 @@ interface DatabaseConnection {
   createdAt: Date;         // Creation timestamp
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra';
 ```
 
 ### TableSchema

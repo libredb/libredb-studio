@@ -22,7 +22,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1–D38, U17 · 14
+- [Drivers and connections](#drivers-and-connections)
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 10
@@ -427,6 +427,121 @@ to ssh2 - and the mock was written from reading ssh2's source, which is the thin
 **Done when:** an sshd service exists alongside the other container fixtures and the three arms above
 run against it, or a note beside the mock records that its fidelity to ssh2 is the assumption CI rests
 on and names the source it was derived from.
+
+### D36. The migration generator emits `ADD CONSTRAINT` for SQLite, which SQLite cannot parse
+
+Found 2026-08-27 while registering the `libsql` type-id (issue #424, Phase 5), and it is the
+`sqlite` dialect's own defect rather than the new one's.
+
+`generateMigrationSQL` declines a foreign key for `cassandra` and, since this run, for `libsql`.
+The `sqlite` dialect falls through to the generic branch and emits
+
+```sql
+ALTER TABLE "users" ADD CONSTRAINT "fk_users_dept_id" FOREIGN KEY ("dept_id") REFERENCES "departments"("id");
+```
+
+SQLite has no ALTER that adds a constraint - a foreign key is declarable only inside `CREATE TABLE` -
+so the statement is a syntax error wherever the file is run. Measured on the sibling engine, which
+shares the grammar exactly: `near CONSTRAINT ... syntax error` on sqld 0.24.33 (SQLite 3.47.0). The
+same file already declines the REMOVED direction for `sqlite` with a comment naming table
+recreation, so only the added half is wrong - which is why it reads as an oversight rather than a
+decision.
+
+Narrow, and it does not throw: the file generates, and the failure happens when someone runs it.
+
+**Done when:** `sqlite` declines an added foreign key the way `libsql` does, with a comment naming
+recreation rather than a statement, and a test pins both directions for it - the way
+`tests/unit/schema-diff/migration-generator.test.ts` now pins them for `libsql` and `cassandra`.
+
+### D37. Five HTTP providers read the SSL mode and drop the rest of the TLS panel
+
+Found 2026-08-27 in the #511 review (issue #424, Phase 5). Not libSQL's - libSQL is the
+fifth of five instances of one gap, and the fix already exists in the codebase.
+
+`ssl.caCert`, `ssl.clientCert`, `ssl.clientKey` and `ssl.rejectUnauthorized` reach the
+driver on every provider that uses one. On the providers that speak HTTP through global
+`fetch` they reach nothing: ClickHouse, Druid, Elasticsearch/OpenSearch, Trino and libSQL
+each read `ssl.mode` only, to decide `http:` against `https:`, and Node's `fetch` cannot carry
+a custom CA or relax verification without an undici `Agent` as `dispatcher` - and undici
+must not become a dependency. So a self-hosted server with a private CA is reachable only
+by trusting it at the OS level, and the form's own TLS fields silently do nothing.
+
+**Couchbase already solved this and is the pattern**: `providers/document/couchbase/http-transport.ts`
+sends plaintext through `fetch` and TLS through `node:https`, a built-in that takes
+`ca`/`cert`/`key`/`rejectUnauthorized` directly (D26). Its `CouchbaseTlsMaterial` mapping,
+including `rejectUnauthorized: ssl.rejectUnauthorized ?? ssl.mode !== "require"`, is the
+behaviour the other five need.
+
+Not a defect in what any of them measures - it is a field the form offers and the transport
+discards, which is the kind of silence a security setting must not have.
+
+**Done when:** the TLS material mapping is shared rather than copied, the five `fetch`
+transports route TLS through it, and one test per transport pins that a supplied CA and a
+`verify-*` mode reach the request options - plus one that a `require` mode does not verify.
+
+### D38. `getConnectionInfo` masks a password in a connection string but not a token in a query string
+
+Found 2026-08-27 in the #511 review. Pre-existing, dead today, and cheap to close before it
+is not.
+
+`base-provider.ts`'s `protected getConnectionInfo()` returns
+`connectionString.replace(/:([^:@]+)@/, ":***@")`, which masks `:secret@` in an authority and
+nothing else. A libSQL connection string carries its credential in the query string instead -
+`libsql://db-org.turso.io?authToken=<jwt>` - so the whole token would survive the mask. The
+same is true of any `?password=`/`?sslkey=` form.
+
+It is currently unreachable: the only callers are in `tests/unit/db/base-provider.test.ts`, so
+no production path prints it. That is the reason this is a backlog entry rather than an issue,
+and also the reason it is worth doing - a future health-panel caller would inherit a leak that
+looks redacted.
+
+**Done when:** the mask also strips the value of every credential-shaped query parameter
+(`authToken`, `password`, `token`, `sslkey`), with a test per shape - or the method is deleted,
+since nothing in `src/` calls it.
+
+### U22. The connection form renders fields the engine does not take, and a comment says otherwise
+
+Found 2026-08-27 in the browser while registering `libsql` (issue #424, Phase 5).
+
+`DB_UI_CONFIG[type].connectionFields` decides what a save WRITES
+(`buildConnection` in `src/hooks/use-connection-form.ts`), and its comment there says it is
+"the same list the modal renders inputs from". It is not. `ConnectionModal.tsx` draws Host,
+Username, Password and Database for every engine that is not file-based, so:
+
+- **libSQL** shows a Username box for an engine that has no user names at all,
+- **Druid**, **Elasticsearch** and **OpenSearch** show a Database box none of them takes.
+
+Nothing is written from those boxes, so a connection is not corrupted by typing in one - the
+cost is a user filling a field that is silently discarded, and a comment that misdescribes
+the code beside it. Measured for libSQL: `#user` and `#database` both render, and neither
+value reaches the saved connection.
+
+**Done when:** the modal renders an addressing input only when `connectionFields` names it,
+with the four engines above checked in a browser rather than in a mock - or, if the fields
+are deliberately universal, the comment in `use-connection-form.ts` says so instead. Either
+way `e2e/libsql-provider.spec.ts` has the assertion that pins today's behaviour and must
+move with it.
+
+### U23. The Storage tab names PostgreSQL internals on every engine
+
+Seen 2026-08-27 on a libSQL connection (issue #424, Phase 5), and it is not libSQL's.
+
+`src/components/monitoring/tabs/StorageTab.tsx:179` labels the remainder of the breakdown
+**"Other (TOAST, FSM)"** unconditionally. TOAST and the free space map are PostgreSQL
+storage structures. SQLite and libSQL have neither - what the remainder actually holds
+there is the schema, the freelist and page overhead - and neither do MySQL, Oracle, SQL
+Server, ClickHouse or any of the HTTP engines. On libSQL it read `4.00 KB` under that
+label against a real 64 KB database, so the number is right and the words are another
+engine's.
+
+The same shape as a shared provider's refusal naming the wrong product: the reading is
+sound, the vocabulary is borrowed. Narrow, cosmetic, and it misleads exactly the reader
+who is trying to account for the bytes.
+
+**Done when:** the label is engine-neutral ("Other" / "Overhead"), or comes from the
+provider's own labels the way the maintenance and slow-query wordings already do
+(`ProviderLabels`), with a component test pinning it for one PostgreSQL and one
+non-PostgreSQL engine.
 
 ---
 

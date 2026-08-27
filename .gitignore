@@ -180,6 +180,9 @@ deploy/digitalocean/droplet/scripts/99-img-check.sh
 
 
 
-# local gate-4 probe harness (issue #424), never committed
-/probe-424.ts
+# local gate-4 probe harness (issue #424), never committed. Globbed rather than named:
+# PR #511 committed probe-libsql.ts and two probe-results-*.json files because the harness
+# was named per engine and the literal `/probe-424.ts` matched none of them.
+/probe-*.ts
 /probe-results/
+/probe-results*.json

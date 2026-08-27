@@ -6,10 +6,10 @@ metadata:
     capabilities: Basic Install
     categories: Database, Developer Tools
     containerImage: ghcr.io/libredb/libredb-studio-operator:0.0.0
-    description: Open-source web-based SQL IDE for fourteen engines - PostgreSQL,
-      MySQL, Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Apache
-      Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra - with AI-powered
-      query assistance.
+    description: Open-source web-based SQL IDE for fifteen engines - PostgreSQL, MySQL,
+      Oracle, SQL Server, SQLite, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
+      Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and libSQL - with
+      AI-powered query assistance.
     repository: https://github.com/libredb/libredb-studio
     support: LibreDB
   labels:

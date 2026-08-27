@@ -539,6 +539,14 @@ const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
   oracle: ORACLE_GRAMMAR,
   mssql: MSSQL_GRAMMAR,
   sqlite: SQLITE_GRAMMAR,
+  // The SAME grammar object, and every one of its four facts was re-measured over
+  // Hrana on sqld 0.24.33 rather than inherited: `SELECT 1 # x` is refused ("bad
+  // variable name", so `#` is no comment), `SELECT [id] FROM probe_customers` parses
+  // (so brackets quote an identifier), `/* outer /* inner */ SELECT 1` RUNS (so block
+  // comments do not nest), and `q'[x]'` is a syntax error. Sharing the object rather
+  // than declaring a second identical one is deliberate: a divergence would then have
+  // to be written down as its own grammar, which is the change a reader should see.
+  libsql: SQLITE_GRAMMAR,
   elasticsearch: ELASTICSEARCH_GRAMMAR,
   opensearch: OPENSEARCH_GRAMMAR,
   trino: TRINO_GRAMMAR,

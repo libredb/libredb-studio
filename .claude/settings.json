@@ -1,17 +1,2 @@
 {
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "input=$(cat); cmd=$(printf '%s' \"$input\" | jq -r '.tool_input.command // \"\"'); dir=$(printf '%s' \"$input\" | jq -r '.cwd // \".\"'); cd \"$dir\" 2>/dev/null || exit 0; why=''; if printf '%s\\n' \"$cmd\" | grep -qE '(^|[;&|(]) *(git( +(-[^ ]+|[A-Za-z0-9_.]+=[^ ]*))* +push|gh +pr +create)( |$)'; then why='push / PR'; fi; if [ -z \"$why\" ] && printf '%s\\n' \"$cmd\" | grep -qE '(^|[;&|(]) *git( +(-[^ ]+|[A-Za-z0-9_.]+=[^ ]*))* +commit( |$)' && [ \"$(git symbolic-ref --short -q HEAD 2>/dev/null)\" = 'main' ]; then why='commit on main'; fi; [ -n \"$why\" ] || exit 0; if bun run format && bun run lint && bun run typecheck && bun run knip && bun run test && bun run build; then exit 0; else echo \"Gates failed before $why — format / lint / typecheck / knip / test / build must all pass.\" >&2; exit 2; fi",
-            "timeout": 1800,
-            "statusMessage": "Gates: format, lint, typecheck, knip, test, build…"
-          }
-        ]
-      }
-    ]
-  }
 }

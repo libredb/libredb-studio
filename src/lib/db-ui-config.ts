@@ -15,6 +15,7 @@ import {
   OpenSearchIcon,
   TrinoIcon,
   CassandraIcon,
+  LibSQLIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 
@@ -70,6 +71,30 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     defaultPort: "",
     showConnectionStringToggle: false,
     connectionFields: ["database"],
+  },
+  libsql: {
+    icon: LibSQLIcon,
+    // Turso's own mark is a bright mint green (#4FF8D2). emerald-300 is the nearest
+    // free shade - emerald-400 is MongoDB's, both teals are taken by Couchbase and
+    // Elasticsearch, and the distinct-colour assertion in
+    // tests/unit/lib/db-ui-config.test.ts rules a duplicate out.
+    color: "text-emerald-300",
+    // The protocol's name rather than the product's: one connection here reaches a
+    // self-hosted libSQL server OR Turso Cloud, and naming the managed product would
+    // read as though the self-hosted one belonged somewhere else.
+    label: "libSQL",
+    // sqld's own default HTTP port. A Turso Cloud connection names no port at all -
+    // it is TLS on 443, which the transport picks up from the ssl setting.
+    defaultPort: "8080",
+    // `libsql://<database>-<org>.turso.io?authToken=<jwt>` is the URL Turso's CLI
+    // prints, so there IS a canonical form to paste - unlike Trino's JDBC URL.
+    showConnectionStringToggle: true,
+    // No `user`: libSQL has no user names at all, and the credential is a token the
+    // server mints. No `database` either - the database IS the host on Turso Cloud,
+    // and a self-hosted server serves one per namespace hostname. The form labels
+    // `password` "Auth Token" (see ConnectionModal.tsx), because a field labelled
+    // Password invites a password that no libSQL server has.
+    connectionFields: ["host", "port", "password", "connectionString"],
   },
   mongodb: {
     icon: MongoDBIcon,

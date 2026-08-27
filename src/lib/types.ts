@@ -32,7 +32,23 @@ export type DatabaseType =
   // schema level. PrestoDB is deliberately NOT this id - the transport builds its
   // header names from a dialect descriptor's prefix, so that fork is a descriptor away
   // rather than a rewrite.
-  | "trino";
+  | "trino"
+  // libSQL (issue #424 Phase 5). SQLite's dialect over a network: a self-hosted
+  // libSQL server (`sqld`) and Turso Cloud are the SAME id, because they speak the
+  // same protocol and embed the same SQLite - the cloud is that server managed, and
+  // a connection to either differs only in host and token. It is separate from
+  // `sqlite` for the reason the two cannot share a provider: the SQLite one holds a
+  // FILE handle through a synchronous driver, and this one holds no handle at all.
+  // The credential is a token rather than a password, so the form labels it that
+  // way, and the server refuses `VACUUM`, `ANALYZE` and `PRAGMA query_only` - which
+  // is why this id offers fewer maintenance operations than `sqlite` does.
+  //
+  // Turso Database, the Rust rewrite, is NOT this id and has no row anywhere yet: it
+  // publishes no server image (`tursodatabase/turso`, `tursodb` and `turso-server`
+  // were all unpullable on 2026-08-27) and ships as an in-process npm engine, so
+  // there is nothing to connect to and #424 publishes no name it has not connected
+  // to.
+  | "libsql";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 

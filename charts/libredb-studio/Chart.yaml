@@ -1,8 +1,8 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting fourteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra
+description: Web-based SQL IDE for cloud-native teams supporting fifteen engines - PostgreSQL, MySQL, SQLite, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and libSQL
 type: application
-version: 0.1.52
+version: 0.1.53
 appVersion: "0.13.4"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -31,6 +31,10 @@ keywords:
   # shipped in 0.12.0 (#448) - #167 makes a keyword-only fix cost a chart version
   # of its own, so a new engine's keyword belongs in the release that ships it.
   - cassandra
+  # Two keywords for one engine, and the second is the one that gets searched: the
+  # provider is registered as `libsql`, but the product an evaluator types is Turso.
+  - libsql
+  - turso
   - web-ide
 maintainers:
   - name: cevheri
@@ -39,6 +43,10 @@ annotations:
   artifacthub.io/category: database
   artifacthub.io/license: MIT
   artifacthub.io/prerelease: "false"
+  # False: 0.1.53 changes no packaged template and no value - it names one more engine in
+  # the README, the description and the keywords, libSQL, which is a new provider in the
+  # app rather than a chart change. The README is a packaged file, so #167 costs it a
+  # chart version even though nothing an operator deploys moves.
   # False: 0.1.52 adds one value, config.authCookieSecure, and changes no behaviour on its
   # own - unset (the default) writes no AUTH_COOKIE_SECURE and the app keeps deciding, so
   # every existing install renders exactly as before. It makes an already-supported setting

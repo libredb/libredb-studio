@@ -1045,6 +1045,7 @@ describe("useConnectionForm", () => {
     opensearch: true,
     trino: true,
     cassandra: true,
+    libsql: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

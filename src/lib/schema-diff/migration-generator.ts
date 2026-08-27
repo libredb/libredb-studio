@@ -71,6 +71,17 @@ function clickhouseDefaultKind(value: string): string {
  * this file spell their engine out the same way.
  */
 const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reason: string }>> = {
+  // Measured over Hrana on sqld 0.24.33, and the entry exists because the PostgreSQL
+  // branch this id would otherwise inherit emits text libSQL cannot parse:
+  // `ALTER TABLE t ALTER COLUMN c TYPE integer` is "unexpected end of input" and the
+  // MySQL spelling `MODIFY COLUMN` is "syntax error around `MODIFY`". SQLite has no
+  // column modification at all, and libSQL is SQLite - unlike DROP COLUMN and RENAME
+  // COLUMN, which it DOES accept (both measured), so this row is narrower than the
+  // `sqlite` branch below and deliberately so.
+  libsql: {
+    label: "libSQL",
+    reason: "SQLite cannot retype a column; recreate the table and copy the rows.",
+  },
   couchbase: {
     label: "Couchbase",
     reason: "Collections hold schemaless JSON documents, so there is no column definition to change.",
@@ -369,6 +380,18 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
         );
         return;
       }
+      // libSQL refuses the statement below outright: `ALTER TABLE t ADD CONSTRAINT
+      // fk FOREIGN KEY (c) REFERENCES u(id)` is "near CONSTRAINT ... syntax error"
+      // (measured on sqld 0.24.33). SQLite has no ALTER that adds a constraint - the
+      // key has to be part of the CREATE TABLE - so the honest line names the
+      // recreation. The `sqlite` id has the same limit and still emits the statement
+      // below; that is its own defect rather than something to copy (BACKLOG D36).
+      if (dialect === "libsql") {
+        lines.push(
+          `-- libSQL: Cannot add a foreign key on ${escapeIdentifier(fk.columnName, dialect)}. SQLite declares one only in CREATE TABLE; recreate the table and copy the rows.`,
+        );
+        return;
+      }
       lines.push(
         `ALTER TABLE ${id} ADD CONSTRAINT ${constraintName} FOREIGN KEY (${escapeIdentifier(fk.columnName, dialect)}) REFERENCES ${escapeIdentifier(fk.targetReferencedTable || "", dialect)}(${escapeIdentifier(fk.targetReferencedColumn || "", dialect)});`,
       );
@@ -383,6 +406,12 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
         lines.push(`ALTER TABLE ${id} DROP FOREIGN KEY ${constraintName};`);
       } else if (dialect === "sqlite") {
         lines.push(`-- SQLite: Cannot drop foreign key directly. Requires table recreation.`);
+      } else if (dialect === "libsql") {
+        // The generic `DROP CONSTRAINT` branch below is not parseable here, measured on
+        // sqld 0.24.33: `ALTER TABLE t DROP CONSTRAINT fk_x` is "near CONSTRAINT …
+        // syntax error". Same limit as SQLite, named separately so the comment names
+        // the engine the reader connected to.
+        lines.push(`-- libSQL: Cannot drop a foreign key directly. Requires table recreation.`);
       } else if (dialect === "cassandra") {
         // `DROP CONSTRAINT IF EXISTS fk_x` is "mismatched input 'IF' expecting EOF"
         // (measured), and dropping what was never declarable is not a statement.
@@ -412,7 +441,10 @@ export function generateMigrationSQL(diff: SchemaDiff, dialect: DatabaseType): s
   // to be two independent conditions, which is a shape that can diverge into a `BEGIN;`
   // with no `COMMIT;`.
   //
-  // SQLite runs its own transaction; Cassandra has no transaction at all. Measured on
+  // SQLite runs its own transaction, and libSQL is SQLite - the same reasoning, with
+  // one addition of its own: this provider closes its Hrana stream in the same request
+  // as each statement, so a BEGIN it emitted could not be continued by the app that
+  // generated the file. Cassandra has no transaction at all. Measured on
   // 5.0.9: `BEGIN;` is "line 1:5 mismatched input ';' expecting K_BATCH" and `COMMIT;`
   // is "no viable alternative at input 'COMMIT'". The only grouping CQL has is
   // `BEGIN BATCH ... APPLY BATCH`, which is not a transaction and takes no DDL, so
@@ -420,7 +452,7 @@ export function generateMigrationSQL(diff: SchemaDiff, dialect: DatabaseType): s
   // wrapper is still wrong for the other engines named in the module docstring; that
   // stays tracked there, and unlike them Cassandra emits DDL this generator was taught
   // to spell correctly, so the wrapper would be the only unrunnable line in it.
-  const wrapsInTransaction = dialect !== "sqlite" && dialect !== "cassandra";
+  const wrapsInTransaction = dialect !== "sqlite" && dialect !== "libsql" && dialect !== "cassandra";
 
   if (wrapsInTransaction) {
     sections.push("BEGIN;");

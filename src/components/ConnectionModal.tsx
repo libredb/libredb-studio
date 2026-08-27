@@ -178,11 +178,19 @@ export function ConnectionModal({
   // So the ordinary deployment - users in `admin`, data elsewhere - had no way through
   // the discrete fields at all, and failed as a credentials error.
   const isMongoDB = type === "mongodb";
+  // libSQL has no user names at all: the credential a server checks is a TOKEN it
+  // minted (Turso prints one per database), so the shared `password` field holds a
+  // JWT here. A field labelled Password invites a password no libSQL server has,
+  // which is why this one is relabelled rather than left to be guessed at.
+  const isLibSQL = type === "libsql";
+  const passwordFieldLabel = isLibSQL ? "Auth Token" : "Password";
   const databaseFieldLabel = isCouchbase ? "Bucket" : isTrino ? "Catalog" : isCassandra ? "Keyspace" : "Database";
   const databaseFieldPlaceholder = isTrino ? "tpch" : isCassandra ? "probe" : "db";
   const connectionUriPlaceholder = isCouchbase
     ? "couchbase://localhost:8091/travel-sample  or  couchbases://cb.<id>.cloud.couchbase.com/..."
-    : "mongodb://localhost:27017/mydb  or  mongodb+srv://...";
+    : isLibSQL
+      ? "libsql://<database>-<org>.turso.io?authToken=<jwt>"
+      : "mongodb://localhost:27017/mydb  or  mongodb+srv://...";
 
   const formContent = (
     <>
@@ -465,7 +473,7 @@ export function ConnectionModal({
                       <div className="flex items-center gap-2 mb-1">
                         <ShieldCheck strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                         <Label htmlFor="password" className="text-xs font-mediumr text-fg-muted">
-                          Password
+                          {passwordFieldLabel}
                         </Label>
                       </div>
                       <Input
@@ -488,6 +496,12 @@ export function ConnectionModal({
                         work. The provider refuses the combination outright; this says
                         so before the user reaches that error.
                       */}
+                      {isLibSQL && (
+                        <p className="text-xs text-fg-muted">
+                          Turso Cloud mints this per database (`turso db tokens create`). A self-hosted libSQL server
+                          started without authentication takes none - leave it empty.
+                        </p>
+                      )}
                       {isTrino && (
                         <p className="text-xs text-fg-muted">
                           Trino refuses a password over plain HTTP. Enable TLS below, or leave this empty to connect as

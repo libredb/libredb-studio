@@ -52,7 +52,7 @@ Three properties frame everything below, and each of them is load-bearing rather
   on which of its two readings it takes**: `agent-read-only` on the dialects `CATALOG_PLANS` serves,
   because it composes catalog statements, and `agent-operations` everywhere else, because asking a
   provider to describe its own schema sends nothing an engine has to plan. That is what lets grounding
-  reach the twelve the read-only profile refuses, and it still cannot narrow any workflow's
+  reach the fourteen the read-only profile refuses, and it still cannot narrow any workflow's
   reach: the profile whose acquisition would be refused is never the profile that capture asks for. Everything else about
   the three acquisitions is identical: the same `readOnly: true` open, the same optional
   least-privilege `agentUser`, and the same profiled cache, so neither an operations run nor an
@@ -454,7 +454,7 @@ What a grounded plan run is given, and where each part comes from:
   which process happened to have read a catalog first. They are read from what the engine already
   holds — `pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite — so no column
   is scanned and no value is read out of any row. `ESTIMATE_BUILDERS` serves those two dialects and
-  nothing else, and #414 added no engine to it: on the other twelve `readSchemaStatistics` answers
+  nothing else, and #414 added no engine to it: on the other fourteen `readSchemaStatistics` answers
   `DIALECT_HAS_NO_STATISTICS` — *"this engine does not hold statistics this run knows how to read"* —
   so **a known schema with no statistics is now the ORDINARY combination rather than a rare one**, and
   the two sentences the run is handed agree: the inventory is a record of what exists, and every
@@ -575,7 +575,7 @@ Three consequences worth stating plainly, because each is easy to assume the oth
 
 1. **A plan run costs statements now.** On PostgreSQL and SQLite grounding is catalog reads plus one
    statistics read (two on SQLite: the `sqlite_stat1` availability probe has to be its own statement,
-   because SQLite resolves table names at prepare time). On the other twelve it is **one** — the
+   because SQLite resolves table names at prepare time). On the other fourteen it is **one** — the
    single `db.schema.read` call, with no statistics read to add, since those dialects hold none this
    run knows how to read. They come out of the same per-run statement budget every other read does,
    and they are audited the same way. The ledger-reuse path saves the schema reading and deliberately
@@ -821,7 +821,7 @@ Two consequences worth stating:
   composed path has and the provider path cannot: reads audited statement by statement rather than as
   one opaque call; foreign keys, which no provider can report on an engine that declares none; and
   SQLite's inventory, which is parsed out of the DDL text the engine stored and which its provider
-  does not expose in the same shape. Collapsing the other twelve onto the composed one is the thing
+  does not expose in the same shape. Collapsing the other fourteen onto the composed one is the thing
   #414 exists because nobody can do: a catalog statement has to be written per dialect and verified
   against a live server, and until it is, refusing the dialect was the honest answer and reading the
   provider is a better one.

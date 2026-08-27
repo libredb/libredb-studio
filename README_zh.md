@@ -86,7 +86,7 @@ LibreDB Studio 走另一条路：**工具去找数据，而不是把数据搬来
 
 ### 十四种引擎，一个界面
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra
+PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra
 
 所有 SQL 引擎共用同一套 schema 浏览器、ER 图、schema 对比和监控面板。MongoDB 和 Redis 不属于 SQL 引擎，没有 ER 图和 schema 对比；Druid、Elasticsearch、OpenSearch 和 Trino 都是双重例外：它们的 HTTP SQL 接口没有本构建能解析的 URI 形式，只能按 host/port 配置，而且生成的迁移会直接说明限制，而不是对一个 SQL 里根本没有列变更语句的引擎硬输出 DDL；Couchbase 的 schemaless collection 同理。搜索集群的 ER 图只有方框没有连线：索引不声明外键，引擎模型里也没有外键可声明。
 
@@ -97,6 +97,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · MongoDB · Redis · Cou
 | **Oracle** | `oracledb`（Thin 模式） | 完整 SQL IDE、`FETCH FIRST N ROWS` 分页、`V$` 监控视图、`ANALYZE TABLE`、`ALTER INDEX REBUILD`、事务 |
 | **SQL Server** | `mssql` (tedious) | 完整 SQL IDE、`TOP N` / `OFFSET FETCH` 分页、`sys.dm_*` DMV、`UPDATE STATISTICS`、`DBCC CHECKDB`、事务、自动识别 Azure SQL |
 | **SQLite** | `bun:sqlite` / `node:sqlite`（运行时自选） | 完整 SQL IDE，文件型或内存型数据库 |
+| **libSQL** | 无驱动，纯 HTTP（Hrana 协议，`POST /v2/pipeline`，8080 端口） | 完整 SQL IDE，同一个 type-id 同时连接自建 libSQL 服务器（`sqld`）与 Turso Cloud。就是跨网络的 SQLite 方言，并能通过 `dbstat` 读到真实的表与索引字节数。凭据是 auth token 而不是密码。维护操作只有 Reindex 和完整性检查：`VACUUM`、`ANALYZE`、`PRAGMA optimize` 都被服务端拒绝 |
 | **MongoDB** | `mongodb` | JSON 查询编辑器，集合操作（find、aggregate、insert、update、delete） |
 | **Couchbase** | 无驱动，纯 HTTP（Query + 管理 REST） | 完整 SQL++ IDE、EXPLAIN、bucket/scope/collection 浏览器、`INFER` 字段推断 |
 | **ClickHouse** | 无驱动，纯 HTTP（SQL 接口，8123 端口） | 完整 SQL IDE、JSON EXPLAIN 树、系统表 schema 自省、`OPTIMIZE TABLE` |
