@@ -331,11 +331,24 @@ reports `34` and `330` for its two varchars and `null` for its `bigint`:
  [null,        null, null, null, 5.0, null, null]]     <- the summary row; column_name is null
 ```
 
-So `DatabaseOverview.databaseSize` is the string `"N/A"` with `databaseSizeBytes: 0`, and
-`HealthInfo.cacheHitRatio` is `"N/A"` as well. Both fields are strings precisely so they can decline
-rather than report a zero that reads as a measurement — and `cacheHitRatio` in particular is scored
-`direction: "below"` with `critical: 80` by `DEFAULT_THRESHOLDS`, so a "neutral" `0` would paint
-every healthy cluster red.
+So `DatabaseOverview.databaseSize` is the string `"N/A"`, and `HealthInfo.cacheHitRatio` is `"N/A"`
+as well. Both fields are strings precisely so they can decline rather than report a zero that reads
+as a measurement — and `cacheHitRatio` in particular is scored `direction: "below"` with
+`critical: 80` by `DEFAULT_THRESHOLDS`, so a "neutral" `0` would paint every healthy cluster red.
+
+`DatabaseOverview.databaseSizeBytes` is **not written at all** — the key is absent from the object
+`getOverview()` returns, not present holding `0`. It is an optional field for exactly this reason:
+absence and zero are different facts, a `0` is a measurement, and the Storage tab formats whatever
+number it is given, so a zero rendered as "0 B" beside a 0.0% breakdown would be the fabricated
+footprint this whole section exists to refuse. Until **2026-08-27** the object stated both at once:
+`databaseSize: "N/A"` — the figure is unavailable — on the line above `databaseSizeBytes: 0` — the
+database holds zero bytes. Apache Cassandra's `getOverview()` omits the key on the same argument for
+a different cause (`system_views.disk_usage` reports whole mebibytes), and that is the precedent this
+follows. There is no conditional spread here, unlike `startTime`: no read could ever supply the
+value, so the key is simply never written.
+
+`maxConnections` stays a plain `0` and is untouched by this: for that field `0` and absence are the
+SAME fact — it means "no ceiling published", which is true, and the field is a required number.
 
 ### 3.10 Absent, never zeroed
 
@@ -974,9 +987,11 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request/response contract.
 - **No indexes, no foreign keys, no primary keys — permanently.** Not a gap in the provider
   ([§3.8](#38-no-keys-no-indexes--and-why-that-is-a-fact-about-the-engine)).
 - **No database size, and no per-catalog size**
-  ([§3.9](#39-the-bytes-are-somewhere-else-so-the-size-panels-say-so)). `StorageStats.sizeBytes` is
-  `0` beside `size: "N/A"`; if a panel ever renders that as "0 B", the alternative is returning no
-  rows at all, which would hide the catalog list too.
+  ([§3.9](#39-the-bytes-are-somewhere-else-so-the-size-panels-say-so)).
+  `DatabaseOverview.databaseSizeBytes` is absent rather than `0`, because the field is optional and
+  the absence is the honest answer. `StorageStats.sizeBytes` is still `0` beside `size: "N/A"` — it
+  is a required number, so the row cannot decline; if a panel ever renders that as "0 B", the
+  alternative is returning no rows at all, which would hide the catalog list too.
 - **No uptime without the `jmx` catalog** ([§7](#7-monitoring--health)).
 - **`getTableStats()` describes a scope of at most 25 tables**, and refuses a larger one rather than
   sampling it ([§7.1](#71-a-scope-too-large-for-one-pass-is-refused-not-sampled)). Ask for one schema

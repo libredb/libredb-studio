@@ -560,7 +560,11 @@ describe("Trino getOverview", () => {
     const overview = await getOverview(runner, CATALOG);
 
     expect(overview.databaseSize).toBe(TRINO_UNAVAILABLE_TEXT);
-    expect(overview.databaseSizeBytes).toBe(0);
+    // The key is ABSENT, which is what this test's name has always said. It used to
+    // assert 0 - a measurement, in the same object whose `databaseSize` said the figure
+    // is unavailable (docs/BACKLOG.md D44). `in` is the assertion that distinguishes a
+    // missing key from one present holding `undefined`; `toBeUndefined()` passes for both.
+    expect("databaseSizeBytes" in overview).toBe(false);
   });
 
   test("publishes no connection ceiling and no index count", async () => {

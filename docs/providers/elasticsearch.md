@@ -809,14 +809,14 @@ numbers this table used to carry had drifted, and a method name is greppable and
 
 | Method | Source | Mapping |
 |---|---|---|
-| `getOverview()` | `/`, `_cluster/health`, `_cat/indices` — **three seam calls in parallel** | `version` = `"Elasticsearch <number>"` from the connection's product plus the payload's version; `uptime` = **`"N/A"`**; `activeConnections` / `maxConnections` = **0**; `databaseSize(Bytes)` = the cluster's store from `_cluster/stats`; `tableCount` = **user** indices only; `indexCount` = **0** |
+| `getOverview()` | `/`, `_cluster/health`, `_cat/indices` — **three seam calls in parallel** | `version` = `"Elasticsearch <number>"` from the connection's product plus the payload's version; `uptime` = **`"N/A"`**; `activeConnections` = **absent**; `maxConnections` = **0**; `databaseSize(Bytes)` = the cluster's store from `_cluster/stats`, the **byte key absent** when the cluster publishes no size; `tableCount` = **user** indices only; `indexCount` = **0** |
 | `getPerformanceMetrics()` | — | **`{}`**, and it asks the cluster nothing |
 | `getSlowQueries()` | — | **`[]`**. The slow log is written to the node's **log file**, which no API returns |
 | `getIndexStats()` | — | **`[]`**. No secondary-index object exists |
 | `getActiveSessions()` | — | **`[]`**. A request is one HTTP request; there is no session and no connection catalog |
 | `getTableStats()` | `_cat/indices` | one row per **user** index: `rowCount` = `docs.count`, `tableSize(Bytes)` = `totalSize(Bytes)` = `pri.store.size`, `schemaName` = `""` |
 | `getStorageStats()` | `_cluster/health` + `_cluster/stats` | **one row for the cluster**: `name` = `cluster_name`, `sizeBytes` = `indices.store.size_in_bytes`. **No row at all** when the size was unreported |
-| `getHealth()` | the above, composed | `activeConnections`, `databaseSize`; `cacheHitRatio` = the repo's word for "not measured"; `slowQueries` = `[]`; `activeSessions` = `[]` |
+| `getHealth()` | the above, composed | `databaseSize`; `activeConnections` **omitted**, carrying the overview's absence across; `cacheHitRatio` = the repo's word for "not measured"; `slowQueries` = `[]`; `activeSessions` = `[]` |
 
 **Two vocabulary collisions, both counted wrong by the obvious reading:**
 
@@ -834,6 +834,14 @@ schema tree are **primaries only** (`pri.store.size`, chosen deliberately by `CA
 to it. On the measured single node with one replica requested they happen to be equal, which is
 exactly why the choice had to be made deliberately rather than discovered later.
 
+**An unpublished store size is an absent key, not a 0.** `databaseSizeBytes` is optional, and
+`getOverview()` omits it whenever `_cluster/stats` reported nothing
+([§7.1](#71-the-one-swallowed-failure)) — it used to pair a `0` with the `"N/A"` its own
+`databaseSize` printed from the same input, one object making two different claims.
+`StorageTab.tsx` keys its refusal off the missing key, so the Storage tab now draws that refusal
+instead of a `0 B` total with a 0.0% breakdown under it. A cluster that really stores nothing
+publishes a real `0` and keeps it.
+
 The honest empties, each with its reason:
 
 - **`getPerformanceMetrics()` returns `{}`, not zeroes**, and this is load-bearing. `cacheHitRatio` is
@@ -849,22 +857,29 @@ The honest empties, each with its reason:
 - **`getSlowQueries()` and `getActiveSessions()` return `[]` rather than throwing.** Nothing is broken
   and nothing is misconfigured, so a monitoring tab should render as quiet, not as failed. Only
   `runMaintenance()` throws, because that one is a *request to act*.
-- **`activeConnections` / `maxConnections` are 0**. For the ceiling that is the repo's encoding, which
-  Druid and Trino share: `maxConnections` treats `0` and absence as one fact. For the count beside it
-  the encoding is now this provider's alone - SQL Server, Oracle, MongoDB and Cassandra omit
-  `activeConnections` when nothing was read, and moving this one is
-  [BACKLOG D46](../BACKLOG.md). The cluster counts open HTTP connections per node in its stats API, which is not one of
-  this seam's five calls, and the shard and node counts that *are* here would be a different number
-  wearing this field's name. The Connections card reads a zero maximum as "no limit published" rather
+- **`activeConnections` is absent, not 0.** The cluster counts open HTTP connections per node in its
+  stats API, which is not one of this seam's five calls, and the shard and node counts that *are* here
+  would be a different number wearing this field's name — so nothing is knowable, and the field is
+  optional precisely so that can be said. `getHealth()` carries the missing key across rather than
+  filling it in, and `OverviewTab.tsx` renders the Connections card as `N/A` over *not published*
+  with no share of the limit, instead of a `0` under a healthy tick. This provider held the last
+  unconditional `activeConnections: 0` in the codebase - SQL Server, Oracle, MongoDB and Cassandra had
+  already omitted it - but not the last zero of any kind: Trino, Druid, ClickHouse and Couchbase each
+  degrade an unavailable monitoring read to no rows and then map the absent row to 0 (BACKLOG D51).
+- **`maxConnections` is 0, and that is the correct encoding** — the opposite one, for the opposite
+  reason: for the ceiling `0` and absence are the **same** fact, which is why Druid and Trino cite
+  `mssql.ts` for it and why the Connections card reads a zero maximum as "no limit published" rather
   than dividing by it.
 - **`uptime` is `"N/A"`.** Neither the health nor the version payload carries one, and no other call
   in this seam does either. A `"0s"` would claim the cluster booted this instant.
 
 **A closed index reads as zero in `getTableStats()` and is omitted in the schema tree**, and the
-asymmetry is deliberate: `TableStats.rowCount` and the size fields are *required* numbers with no way
-to say "unknown", while `TableSchema.rowCount` and `size` are optional. So the tree is the surface
-that keeps the distinction (the comment over `toTableStats()` in
-[`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts)).
+asymmetry is only half deliberate. `TableStats.rowCount`, `totalSize` and `totalSizeBytes` are
+*required* numbers, so for those three a closed index has nowhere to read but zero. `tableSize` and
+`tableSizeBytes` are *optional* and this mapper zeroes them anyway, which turns on `StorageTab`'s
+`tableSizeKnown` and draws a `0 B` Data figure for an index that reported nothing (BACKLOG D50).
+`TableSchema.rowCount` and `size` are optional too, which is why the tree keeps the distinction (the
+comment over `toTableStats()` in [`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts)).
 
 **Document counts exceed what a `SELECT` returns when a mapping has `nested` fields.** Measured on the
 fork's `probe_shapes`, whose `items` field is `nested`: `_cat` reports **2** documents while
@@ -882,9 +897,9 @@ health and refuses stats is an ordinary configuration. `storeSizeBytes()`
 its own failure and returns `null` — the seam's "unknown" — because losing the health status over a
 missing byte count would blank a panel that already had the important number.
 
-Its null then propagates honestly: `getOverview()` shows `"N/A"` for the size, and
-`getStorageStats()` returns **no row at all** rather than a row claiming the cluster stores zero
-bytes.
+Its null then propagates honestly: `getOverview()` shows `"N/A"` for the size **and omits
+`databaseSizeBytes`**, and `getStorageStats()` returns **no row at all** rather than a row claiming
+the cluster stores zero bytes.
 
 ---
 

@@ -616,9 +616,13 @@ export async function getOverview(runner: TrinoQueryRunner, catalog: string): Pr
     // Trino stores nothing. The bytes are in the systems its connectors reach, and
     // `SHOW STATS` reports a per-table logical estimate that covers variable-width
     // columns only (shape 2) - summing that into "the database size" would be a
-    // number that is neither a footprint nor complete.
+    // number that is neither a footprint nor complete. So `databaseSizeBytes` is not
+    // written AT ALL, the shape `cassandra/introspect.ts` uses for the same argument:
+    // the key is optional precisely so the absence can be said, and a 0 is a
+    // measurement the Storage tab formats as "0 B" beside a 0.0% breakdown. No
+    // conditional spread here because the value is never knowable - unlike
+    // `startTime` above, there is no reading that could supply it.
     databaseSize: TRINO_UNAVAILABLE_TEXT,
-    databaseSizeBytes: 0,
     tableCount: nonNegative(readNumber(tables?.tableCount)),
     // No index objects exist anywhere in Trino (shape 4).
     indexCount: 0,

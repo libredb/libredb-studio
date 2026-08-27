@@ -1872,7 +1872,12 @@ describe("ElasticsearchProvider monitoring", () => {
     // HTTP connections per node live in a stats API this seam does not carry, and the
     // shard and node counts would be a different number wearing this field's name.
     expect(overview.indexCount).toBe(0);
-    expect(overview.activeConnections).toBe(0);
+    // `in` rather than `toBeUndefined()`: a fabricated 0 and a missing key are the two
+    // outcomes being told apart here, and only a presence check fails on the first.
+    expect("activeConnections" in overview).toBe(false);
+    // The ceiling is the opposite encoding on purpose: `DatabaseOverview.maxConnections`
+    // is a required number where 0 MEANS "no limit published", which is why the
+    // Connections card reads it as "no limit" rather than dividing by it.
     expect(overview.maxConnections).toBe(0);
   });
 
@@ -1897,8 +1902,35 @@ describe("ElasticsearchProvider monitoring", () => {
     const overview = await provider.getOverview();
 
     expect(overview.databaseSize).toBe("N/A");
-    expect(overview.databaseSizeBytes).toBe(0);
+    // The string said "N/A" while the number said 0 bytes, in the SAME object
+    // (docs/BACKLOG.md D44). `databaseSizeBytes` is optional so the absence can be said,
+    // and the Storage tab draws its own refusal rather than a 0.0% breakdown from a 0.
+    expect("databaseSizeBytes" in overview).toBe(false);
     expect(overview.tableCount).toBe(3);
+  });
+
+  test("getOverview OMITS activeConnections rather than sending a 0 that reads as a count", async () => {
+    // Nothing in this seam's five calls carries a connection count: the cluster counts
+    // open HTTP connections per node in a stats API this provider never calls, and the
+    // shard and node counts that ARE here would be a different number wearing this
+    // field's name. So there is no measurement to publish, which is the case the
+    // optional field exists for (#517).
+    const provider = await connectProvider();
+
+    const overview = await provider.getOverview();
+
+    expect("activeConnections" in overview).toBe(false);
+    expect(overview.activeConnections).toBeUndefined();
+  });
+
+  test("getHealth omits the connection count too rather than flattening it to 0", async () => {
+    // `HealthInfo.activeConnections` is optional for the identical reason, so the
+    // absence has to survive the composition instead of being filled in by it.
+    const provider = await connectProvider();
+
+    const health = await provider.getHealth();
+
+    expect("activeConnections" in health).toBe(false);
   });
 
   test("getOverview arms one deadline for the whole panel", async () => {
@@ -2096,7 +2128,7 @@ describe("ElasticsearchProvider monitoring", () => {
     const health = await provider.getHealth();
 
     expect(health.cacheHitRatio).toBe("N/A");
-    expect(health.activeConnections).toBe(0);
+    expect("activeConnections" in health).toBe(false);
     expect(health.databaseSize).toBe("82.72 KB");
     expect(health.slowQueries).toEqual([]);
     expect(health.activeSessions).toEqual([]);

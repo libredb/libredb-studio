@@ -1009,9 +1009,10 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       // present as 0 it drew tables, indexes and an "Other (unattributed)" remainder
       // over a 0 B total, and that remainder is `0 - tables - indexes`, so a table read
       // that answered (it goes through `listCollections` + `collStats`, not
-      // `serverStatus`) drove it negative - and `formatBytes` renders a negative as the
-      // literal "NaN undefined", because `Math.log` of one is `NaN` and the unit indexes
-      // out of its array. Absent, the tab says "No storage size information available."
+      // `serverStatus`) drove it negative - and the tab formats bytes with its own local
+      // threshold cascade, whose last arm returns its input unchanged, so the remainder
+      // read "-1536 B": a negative byte count drawn as a measurement (measured against
+      // the cascade). Absent, the tab says "No storage size information available."
       //
       // The three figures below stay because their types leave nothing else: `0` MEANS
       // "no limit published" for `maxConnections` (its docblock in `types.ts` says

@@ -445,10 +445,10 @@ an *Other (unattributed)* row computed as `totalSize - totalTableSize - totalInd
 remainder is the part a refused `serverStatus` makes visibly wrong rather than merely empty, because
 the table read does **not** share the failure - `getTableStats()` goes through `listCollections` +
 `collStats`, neither of which needs `clusterMonitor` - so its per-table byte figures arrive, both
-`known` flags are true, and the row formats a **negative** byte count. `formatBytes` does not survive
-one: `Math.log` of a negative is `NaN`, so the size unit indexes out of its own array and a 1 KB
-collection with 512 B of indexes renders the literal string `NaN undefined` (measured 2026-08-27
-against `formatBytes` in `src/lib/db/utils/pool-manager.ts`). With the key absent the tab draws its own *"No storage size
+`known` flags are true, and the row draws a **negative** byte count as a measurement. A 1 KB collection
+with 512 B of indexes renders the literal string `-1536 B` (measured 2026-08-27 against the cascade
+itself): the tab formats bytes with its own local threshold cascade, whose last arm returns whatever it
+was given, so a negative passes through intact and reads as a figure the engine reported. With the key absent the tab draws its own *"No storage size
 information available."* instead, and the *Tables* / *Indexes* cards read `N/A`. Both arms are pinned
 in [`tests/components/monitoring/StorageTab.test.tsx`](../../tests/components/monitoring/StorageTab.test.tsx).
 

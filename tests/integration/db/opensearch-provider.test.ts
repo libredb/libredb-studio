@@ -984,6 +984,9 @@ describe("OpenSearchProvider monitoring", () => {
     expect(overview.indexCount).toBe(0);
     expect(overview.databaseSize).toBe("272.56 KB");
     expect(overview.databaseSizeBytes).toBe(279104);
+    // A cluster that publishes the figure keeps it, including a real measured 0: only an
+    // unpublished size is absent.
+    expect("databaseSizeBytes" in overview).toBe(true);
   });
 
   test("excludes the same bookkeeping indices from the table stats", async () => {
@@ -1016,6 +1019,30 @@ describe("OpenSearchProvider monitoring", () => {
     const provider = await connectProvider();
 
     expect(await provider.getStorageStats()).toEqual([]);
-    expect((await provider.getOverview()).databaseSize).toBe("N/A");
+
+    const overview = await provider.getOverview();
+
+    expect(overview.databaseSize).toBe("N/A");
+    // The number used to say 0 bytes while the string beside it said "N/A", in the same
+    // object (docs/BACKLOG.md D44). `in` rather than `toBeUndefined()` because a
+    // fabricated 0 is the other outcome being told apart, and it is not undefined.
+    expect("databaseSizeBytes" in overview).toBe(false);
+  });
+
+  test("OMITS activeConnections rather than sending a 0 that reads as a count", async () => {
+    // Nothing in this seam carries a connection count on either product: the open HTTP
+    // connections per node live in a stats API this provider never calls. Absence is how
+    // the optional field says "not published" (#517), and the composed
+    // health summary has to carry it across rather than fill it in.
+    const provider = await connectProvider();
+
+    const overview = await provider.getOverview();
+    const health = await provider.getHealth();
+
+    expect("activeConnections" in overview).toBe(false);
+    expect("activeConnections" in health).toBe(false);
+    // The ceiling keeps its 0: for `maxConnections` the type says 0 and absence are the
+    // SAME fact, and the Connections card reads it as "no limit published".
+    expect(overview.maxConnections).toBe(0);
   });
 });

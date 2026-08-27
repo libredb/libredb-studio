@@ -138,6 +138,15 @@ function makeLibsqlMonitoringData(): MonitoringData {
   } as unknown as MonitoringData;
 }
 
+// `Progress` draws its share as `translateX(-(100 - value)%)` on the inner indicator, so an
+// empty bar is "-100%" and a full one "-0%". A share drawn from a figure the engine never
+// reported is invisible to every text assertion, which is why the bars are read directly.
+function barTransforms(container: HTMLElement): string[] {
+  return [...container.querySelectorAll('[data-slot="progress-indicator"]')].map(
+    (el) => (el as HTMLElement).style.transform,
+  );
+}
+
 describe("StorageTab", () => {
   afterEach(() => {
     cleanup();
@@ -186,9 +195,16 @@ describe("StorageTab", () => {
   });
 
   test("a measured zero still renders as a zero, because absence is the only new input", () => {
-    // Trino (introspect.ts:615) and Druid send a real 0 for `databaseSizeBytes`. That is
-    // a measurement, so it must keep formatting as "0 B" with a 0.0% share and a drawn
-    // breakdown - only the ABSENT field switches to the unavailable copy.
+    // A real 0 and an absent field are different inputs, and the type says so
+    // (`databaseSizeBytes?: number`): a measured 0 keeps formatting as "0 B" and keeps its
+    // breakdown drawn, and only the ABSENT field switches to the unavailable copy. What it does
+    // NOT keep is a share - 0 bytes is not a denominator, so no "0.0%" is drawn beside the
+    // figures (#517). The remainder is the one figure that still reads "0 B" here, because
+    // `0 - 0 - 0` is arithmetic a measured zero answers honestly. No
+    // provider in the tree is known to send a demonstrably measured 0 today - Trino omits the
+    // key as of this round, and Druid's comes out of a local `asNumber` that returns 0 for an
+    // absent row (backlog D44) - so this arm pins the contract rather than standing in for a
+    // named engine.
     const measuredZero = {
       ...makeMonitoringData(),
       overview: { ...makeMonitoringData().overview, databaseSize: "0 bytes", databaseSizeBytes: 0 },
@@ -200,8 +216,105 @@ describe("StorageTab", () => {
     const { queryByText, queryAllByText } = render(<StorageTab data={measuredZero} loading={false} />);
 
     expect(queryAllByText("0 B").length).toBe(5);
-    expect(queryAllByText("0.0%").length).toBe(2);
+    expect(queryAllByText("0.0%").length).toBe(0);
     expect(queryByText("No storage size information available.")).toBeNull();
+  });
+
+  test("a measured zero total draws no share at all, not a full remainder bar", () => {
+    // The remainder's share is `100 - tablePercent - indexPercent`, and both of those carry a
+    // `totalSize > 0` guard of their own - so a total of 0 forced them to 0 and `100 - 0 - 0`
+    // handed the remainder the whole bar. Measured in the DOM against this very fixture
+    // (#517): Tables and Indexes read `translateX(-100%)` (empty) while the remainder read
+    // `translateX(-0%)`, a full bar over a database with no bytes. Against THIS fixture - which
+    // answers `[]` for the tables - the figure beside it reads "0 B" correctly, so the overclaim
+    // lives entirely in the indicator transform, which is why this test asserts the transform.
+    // That is a property of the fixture and not of the defect: the test below feeds the same
+    // measured zero with per-table bytes that answered, and there the figures are wrong too.
+    const measuredZero = {
+      ...makeMonitoringData(),
+      overview: { ...makeMonitoringData().overview, databaseSize: "0 bytes", databaseSizeBytes: 0 },
+      storage: [],
+      tables: [],
+      indexes: [],
+    } as MonitoringData;
+
+    const { container } = render(<StorageTab data={measuredZero} loading={false} />);
+
+    // The fixture answers `[]` for the tablespace and table lists, so the breakdown's three
+    // rows are the only `Progress` bars on the tab.
+    expect(barTransforms(container)).toEqual(["translateX(-100%)", "translateX(-100%)", "translateX(-100%)"]);
+  });
+
+  test("a real total still draws the remainder's own share", () => {
+    // The control arm for the test above: with a total to divide by, the remainder is the
+    // share the two known figures leave - 2 GB less 700 MB of data and 200 MB of indexes, so
+    // 56.0546875%, drawn as `translateX(-43.9453125%)`. Without this the fix could be a
+    // blanket "never draw the remainder".
+    const { container } = render(<StorageTab data={makeMonitoringData()} loading={false} />);
+
+    expect(barTransforms(container).slice(0, 3)).toEqual([
+      "translateX(-65.8203125%)",
+      "translateX(-90.234375%)",
+      "translateX(-43.9453125%)",
+    ]);
+  });
+
+  test("a measured zero total beside per-table bytes that answered draws no figure it cannot support", () => {
+    // The scenario #517's entry stated, and the one the fixture above cannot show. `getTableStats()` is
+    // a separate read from the overview, so a 0 total can arrive beside real per-table figures.
+    // Then `total - tables - indexes` is 0 - 734003200 - 209715200 = -943718400, and the tab's
+    // local byte cascade returns its input unchanged, so the remainder cell rendered
+    // "-943718400 B" - a negative byte count drawn as a measurement. The two Quick Stats shares
+    // were fabricated the other way: real "700.00 MB" and "200.00 MB" figures over a "0.0%"
+    // computed against a zero denominator.
+    const zeroTotalWithTables = {
+      ...makeMonitoringData(),
+      overview: { ...makeMonitoringData().overview, databaseSize: "0 bytes", databaseSizeBytes: 0 },
+    } as MonitoringData;
+
+    const { container, queryAllByText } = render(<StorageTab data={zeroTotalWithTables} loading={false} />);
+
+    // The honest numerators survive: this tab measured those bytes itself.
+    expect(queryAllByText("700.00 MB").length).toBeGreaterThan(0);
+    expect(queryAllByText("200.00 MB").length).toBeGreaterThan(0);
+    // Nothing divided by zero bytes is published, in either direction.
+    expect(container.textContent).not.toContain("-943718400");
+    expect(container.textContent).not.toContain("0.0%");
+    expect(queryAllByText("N/A").length).toBeGreaterThan(0);
+    // And no share is drawn for any of the three breakdown rows.
+    expect(barTransforms(container).slice(0, 3)).toEqual([
+      "translateX(-100%)",
+      "translateX(-100%)",
+      "translateX(-100%)",
+    ]);
+  });
+
+  test("a panel that answered keeps its figures even when an error was recorded for it", () => {
+    // The three `*Unavailable` guards each read `data?.X === undefined ? data?.errors?.X : undefined`,
+    // and the `=== undefined` half is the load-bearing one: without it a recorded error would hide
+    // a panel that DID answer, which is the mirror of the defect this tab exists to avoid - a
+    // refusal drawn over a measurement. Nothing pinned that half, so all three guards survived
+    // being rewritten as a bare `data?.errors?.X`.
+    const answeredWithErrors = {
+      ...makeMonitoringData(),
+      errors: { overview: "overview refused", storage: "storage refused", tables: "tables refused" },
+    } as unknown as MonitoringData;
+
+    const { container, queryAllByTestId, queryAllByText } = render(
+      <StorageTab data={answeredWithErrors} loading={false} />,
+    );
+
+    expect(queryAllByTestId("panel-unavailable").length).toBe(0);
+    expect(container.textContent).not.toContain("overview refused");
+    expect(container.textContent).not.toContain("storage refused");
+    expect(container.textContent).not.toContain("tables refused");
+    // The measured breakdown is still drawn from the overview that answered.
+    expect(queryAllByText("700.00 MB").length).toBeGreaterThan(0);
+    expect(barTransforms(container).slice(0, 3)).toEqual([
+      "translateX(-65.8203125%)",
+      "translateX(-90.234375%)",
+      "translateX(-43.9453125%)",
+    ]);
   });
 
   test("renders storage cards, breakdown, badges and largest tables", () => {
@@ -429,13 +542,14 @@ describe("a refused table statistics read", () => {
     expect(queryAllByText("2.00 GB").length).toBe(1);
     // The label still renders - the row is drawn, only its figure is an absence.
     expect(getByTestId("storage-breakdown-other-label").textContent).toBe("Other (unattributed)");
-    // And its bar with it: `Progress` draws its share as `translateX(-(100 - value)%)`, so an
-    // empty remainder bar is "-100%". A full one - "-0%", which is what `100 - 0 - 0` used to
-    // produce here - is the same overclaim in a shape no text assertion can see.
-    const bars = [...container.querySelectorAll('[data-slot="progress-indicator"]')].map(
-      (el) => (el as HTMLElement).style.transform,
-    );
-    expect(bars.slice(0, 3)).toEqual(["translateX(-100%)", "translateX(-100%)", "translateX(-100%)"]);
+    // And its bar with it: an empty remainder bar is "-100%", and a full one - "-0%", which is
+    // what `100 - 0 - 0` used to produce here - is the same overclaim in a shape no text
+    // assertion can see.
+    expect(barTransforms(container).slice(0, 3)).toEqual([
+      "translateX(-100%)",
+      "translateX(-100%)",
+      "translateX(-100%)",
+    ]);
   });
 
   test("an answered empty table list still reads 0 B and 0.0%", () => {
@@ -461,5 +575,74 @@ describe("a refused table statistics read", () => {
     // 500 MB + 200 MB of table data, on the Tables card and the breakdown's Tables row.
     expect(queryAllByText("700.00 MB").length).toBe(2);
     expect(queryAllByText("N/A").length).toBe(0);
+  });
+});
+
+// A refused getOverview read costs the byte figure the whole breakdown divides by. The tab
+// carried `errors.storage` for Tablespaces and `errors.tables` for Largest Tables while
+// discarding this third message entirely (2026-08-27).
+describe("a refused overview read", () => {
+  // Scoped here as well, for the same reason as the blocks above: bun:test registers a hook on
+  // the enclosing describe only.
+  afterEach(() => {
+    cleanup();
+  });
+
+  // Whatever `getOverview()` rejected with, recorded verbatim under `errors.overview` by
+  // `BaseProvider.getMonitoringData` (src/lib/db/base-provider.ts) - the same channel the two
+  // panels above read. A neutral stand-in rather than a quoted engine message, for the reason
+  // the block above gives: an error text from memory is not that engine's documented text.
+  const REFUSAL = "this connection cannot read the server's own size catalogs";
+
+  function refusedOverview(): MonitoringData {
+    const rest: MonitoringData = makeMonitoringData();
+    delete rest.overview;
+    return { ...rest, errors: { overview: REFUSAL } } as MonitoringData;
+  }
+
+  test("the breakdown shows the engine's own sentence instead of its empty state", () => {
+    const { getByTestId, queryByText } = render(<StorageTab data={refusedOverview()} loading={false} />);
+
+    expect(getByTestId("panel-unavailable-message").textContent).toBe(REFUSAL);
+    // "No ... available." says the engine answered with nothing, which is not what happened.
+    expect(queryByText("No storage size information available.")).toBeNull();
+  });
+
+  test("no figure is drawn from the refused overview", () => {
+    // The DB Size card has no byte figure and neither do the two cards whose percentages are
+    // taken against it, so all three read "N/A" - and no bar is drawn at all, because the
+    // breakdown is replaced rather than emptied.
+    const { container, queryAllByText } = render(<StorageTab data={refusedOverview()} loading={false} />);
+
+    expect(queryAllByText("N/A").length).toBe(3);
+    expect(queryAllByText("0 B").length).toBe(0);
+    expect(queryAllByText("0.0%").length).toBe(0);
+    expect(barTransforms(container).length).toBe(2); // the two tablespace usage bars only
+  });
+
+  test("an overview absent without a recorded reason keeps the empty state", () => {
+    // The guard is on the message, not on the absence: a payload with no overview and nothing
+    // under `errors` has no sentence to show, so the panel falls back to its own copy rather
+    // than rendering an empty refusal.
+    const rest: MonitoringData = makeMonitoringData();
+    delete rest.overview;
+    const { queryByTestId, queryByText } = render(<StorageTab data={rest} loading={false} />);
+
+    expect(queryByTestId("panel-unavailable")).toBeNull();
+    expect(queryByText("No storage size information available.")).not.toBeNull();
+  });
+
+  test("an overview that answered without a byte figure keeps the empty state", () => {
+    // Apache Cassandra (#424): the read succeeded, so there is no message to show - the engine
+    // simply publishes no byte figure. The empty-state copy is the honest rendering there.
+    const base = makeMonitoringData();
+    const overview = { ...base.overview };
+    delete (overview as { databaseSizeBytes?: number }).databaseSizeBytes;
+    const answered = { ...base, overview: { ...overview, databaseSize: "N/A" } } as MonitoringData;
+
+    const { queryByTestId, queryByText } = render(<StorageTab data={answered} loading={false} />);
+
+    expect(queryByTestId("panel-unavailable")).toBeNull();
+    expect(queryByText("No storage size information available.")).not.toBeNull();
   });
 });
