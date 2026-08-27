@@ -114,7 +114,21 @@ const SEGMENT_END_RE = /\.\s|\n\s*\n|\n\s*[-*]\s/;
  * measured while writing this test.
  */
 function withoutMarkup(text: string): string {
-  return text.replace(/<\/(?:li|p|ul|ol|h[1-6])>|<br\s*\/?>/gi, "\n\n").replace(/<[^>]*>/g, "");
+  const withBlockBreaks = text.replace(/<\/(?:li|p|ul|ol|h[1-6])>|<br\s*\/?>/gi, "\n\n");
+
+  // Stripped to a FIXED POINT rather than in one pass. A single `replace` can splice two
+  // surviving fragments into a fresh tag - `<<p>p>` becomes `<p>` - which is what CodeQL's
+  // `js/incomplete-multi-character-sanitization` rule reports, and it reported it here.
+  // Nothing this function returns is ever rendered: the output is searched for engine names
+  // and counted inside this test. But the rule is right about the behaviour, and a stripper
+  // that can reintroduce a tag is wrong for counting too, because it would leave a tag NAME
+  // in the text being searched. `[^<>]*` rather than `[^>]*` so the inner tag is the match.
+  let stripped = withBlockBreaks;
+  for (let previous = ""; previous !== stripped; ) {
+    previous = stripped;
+    stripped = stripped.replace(/<[^<>]*>/g, "");
+  }
+  return stripped;
 }
 
 function listSegment(text: string, offset: number): string {
@@ -183,6 +197,23 @@ describe("outward-facing catalog copy counts the engines the registry ships", ()
       (segment) => !ABRIDGED_RE.test(segment) && ENGINE_NAMES.filter(({ name }) => segment.includes(name)).length >= 2,
     );
     expect(counted.length).toBeGreaterThanOrEqual(6);
+  });
+});
+
+describe("the markup stripper cannot reintroduce what it removes", () => {
+  test("a spliced tag is stripped, not left as a bare tag name", () => {
+    // One `replace` pass turns `<<p>p>` into `p>` - it removes the inner tag and leaves the
+    // outer fragments touching. For this gate that is a counting fault, not a rendering one:
+    // a tag NAME surviving into the text is a token the engine-name search then reads. The
+    // one-pass form is what CodeQL flagged as `js/incomplete-multi-character-sanitization`.
+    expect(withoutMarkup("<<p>p>PostgreSQL")).toBe("PostgreSQL");
+    expect(withoutMarkup("<<span>span>MySQL")).toBe("MySQL");
+  });
+
+  test("an ordinary tag is still stripped once", () => {
+    // Control: the fixed-point loop must not change the plain case it was already right about.
+    expect(withoutMarkup("<p>PostgreSQL</p>")).toBe("PostgreSQL\n\n");
+    expect(withoutMarkup("no markup at all")).toBe("no markup at all");
   });
 });
 
