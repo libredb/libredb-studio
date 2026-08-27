@@ -158,6 +158,31 @@ const RESOLVED: ResolvedRow[] = [
     turnTimeoutMs: undefined,
   },
   {
+    // The thirteenth model. Its only setting is the clock, and everything else is the compiled
+    // default: it was measured needing one thing, and a setting it did not earn is a guess.
+    id: "nemotron-3.5-lightning:30b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: 150_000,
+  },
+  {
+    // The fourteenth, and the widest set any model carries: three settings for three DIFFERENT
+    // failures, each measured on the cell it was added for.
+    id: "muse-glimmer:latest",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 2,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    suppressesPlanReasoning: true,
+    turnTimeoutMs: 150_000,
+  },
+  {
     id: "nemotron3:33b",
     unreportedCallCeiling: 12,
     reportReminderLimit: 1,
@@ -255,7 +280,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
   test("the table covers every registered model, so a new one cannot arrive unpinned", () => {
     const pinned = new Set(RESOLVED.map((row) => row.id));
     for (const id of Object.keys(modelProfiles())) expect(pinned.has(id)).toBe(true);
-    expect(Object.keys(modelProfiles())).toHaveLength(12);
+    expect(Object.keys(modelProfiles())).toHaveLength(14);
   });
 });
 
@@ -309,6 +334,12 @@ describe("what each model records about the runs that earned its settings", () =
     "nemotron3:33b": "c1693800c32d336e610590e909300df682479247a910a291c9913ba278f26a8d",
     // The twelfth model, whose record is new too; the plan cell is what its setting bought.
     "qwen3.5:4b": "5e873a71f788b8e5cd361dca67faf1397630fd4da43ac8bf6e570453d02aa811",
+    // The thirteenth. Its record is the only one that states a COST as well as a result: the plan
+    // turn's median doubled when the limit rose, and that sentence is load-bearing.
+    "nemotron-3.5-lightning:30b": "9a581f6838f604eaa3bf9fb0e2636635bd878f50d03b135205eac3e2ab7b0678",
+    // The fourteenth. Its record says its cells were read in ONE pass under the settings it
+    // ships with, which is the claim three settings on one model has to earn.
+    "muse-glimmer:latest": "32bf1643caa8ed550066a64c4a231585a3ddbd30286646bef45f5531198d06cb",
   };
 
   test("every model's record survives the move, character for character", () => {

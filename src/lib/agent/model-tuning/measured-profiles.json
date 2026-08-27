@@ -123,6 +123,65 @@
       }
     },
     {
+      "id": "muse-glimmer:latest",
+      "measured": "6/6 locked, 30/30, and every cell read in ONE pass under the settings recorded here rather than carried over from the passes that found them - investigate 103s, optimize 191s, assess 167s, operate 80s, analyze 115s, plan 17s (medians of the passing runs; slowest run 285s). The slowest model measured here by a wide margin. Before these settings it was 3/6 at 23/30: plan 0/5, investigate 4/5, assess 4/5. Every one of those losses was the clock - plan timed out at exactly 90 seconds five times over with no tool invoked, and the two single losses timed out at 159s and 160s against passes at 102-116 and 141-163. One run of the confirmation pass died model-unavailable, which is a serving outage and not a verdict; that cell was re-read clean rather than scored over it.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 2,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": true,
+        "refusalExamples": false,
+        "turnTimeoutMs": 150000
+      },
+      "rationale": {
+        "suppressPlanReasoning": [
+          "Its plan cell was 0/5 and all five losses were one run repeated: model-timeout at exactly 90 seconds, an empty ledger, no tool invoked, unmet=no-plan. The turn was spent thinking rather than answering.",
+          "That is qwen3.5:4b character for character, which is the model this setting was measured on. With it the same five runs finish in 16 to 21 seconds."
+        ],
+        "turnTimeoutMs": [
+          "Its other two open cells lost to the clock and to nothing else: investigate 4/5 with the single loss a model-timeout at 159s against passes at 102 to 116, and assess 4/5 with the single loss a model-timeout at 160s against passes at 141 to 163.",
+          "This is the slowest model measured here - its passing assessments call eleven tools and take two and a half minutes - so 90 seconds a turn is the wrong statement about it rather than the model being wrong."
+        ],
+        "reportReminderLimit": [
+          "With the clock no longer the constraint, assess still lost one run, and to a different failure: model-stopped with unmet=no-report at 105s having called fourteen tools, where the timeout losses used to run past 160s.",
+          "A run holding fourteen readings that files none of them took its one reminder and stopped again, which is the distinction between a model that forgot and one that stops as its habit."
+        ]
+      }
+    },
+    {
+      "id": "nemotron-3.5-lightning:30b",
+      "measured": "6/6 locked, 30/30, with turnTimeoutMs at 150000. At the shipped 90000 it was 5/6 at 29/30: five surfaces cleared and plan lost one run to the clock. Re-measured at 150000 all six surfaces pass five for five - investigate 4s, optimize 20s, assess 57s, operate 38s, analyze 9s, plan 144s (medians of the passing runs; slowest run 145s). The plan turn's median rose from 67s to 144s when the limit rose: both ended model-stopped, so it is not being cut off - it spends the budget it is given. The cell costs twice what it did; it is now won rather than lost.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false,
+        "turnTimeoutMs": 150000
+      },
+      "rationale": {
+        "turnTimeoutMs": [
+          "Its plan turn does not fit the 90 seconds the product allows, and nothing else about it is marginal: the other five surfaces clear 5/5 at the shipped limit, at 4, 20, 57, 38 and 9 seconds.",
+          "At 90 seconds the plan cell read 90s (lost), 67, 67, 69 and 68. The passes sit within three seconds of each other and the loss is the wall - model-timeout with zero tools invoked is a turn that never finished, not an answer that was wrong. It was the first run after a cold load, which is the run with the least margin.",
+          "150000 is the value qwen3.5:9b already carries for the same shape rather than a new number. Per model, so no other model's limit moves."
+        ]
+      }
+    },
+    {
       "id": "nemotron3:33b",
       "measured": "6/6 modes locked, 30/30 runs passed with the setting below. Investigate 5/5 . Optimize 5/5 . Assess 5/5 . Operate 5/5 . Analyze 5/5 . Plan 5/5. Query-optimization was the last cell and took twenty-eight runs across eight sittings: 19 of 28 passed before the stop-without-reading switch, and the five that followed it all passed. It is LOCKED but MARGINAL, and four sweeps are why that is written here: 5/5, 5/5, 4/5, 4/5. Both losses have the same signature as the six before them - the report-composing turn running 172.7 and 244.6 seconds against a 90-second turn, where the passes compose theirs in 24 to 93. Nothing in this entry changed between the sweeps; the cell sits near the line, and saying so is better than a figure that reads as steadier than it is.",
       "settings": {
