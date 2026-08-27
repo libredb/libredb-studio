@@ -189,7 +189,7 @@ export function deriveThreadContext(
  * the earlier steps' claims are about a database this run is not reading. The five are
  * the caller's own bug, transient, or another session's (`types.ts`,
  * `AgentThreadContext.declined`), and a sentence covering all six was true of each and
- * specific about none (`docs/BACKLOG.md` B76).
+ * specific about none (#512).
  *
  * What the split is NOT is a longer-lived remedy. The decline lasts one question: the
  * route writes the current identity onto the run that question opens, and the rail's next

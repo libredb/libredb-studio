@@ -64,7 +64,7 @@ const DATABASE_ERROR: AgentToolRefusal = {
   statementFingerprint: "sha256-8e1b",
   message: 'column "totl" does not exist',
   // The span the tracker charged this failed execution against `maxTotalRunMs`
-  // (`docs/BACKLOG.md` B12). In the fixture rather than left out, because the shape a
+  // (#512). In the fixture rather than left out, because the shape a
   // run written by this build produces is the one worth pinning.
   elapsedMs: 31,
 };
@@ -336,7 +336,7 @@ describe("contract shapes", () => {
   });
 
   /**
-   * `docs/BACKLOG.md` B12. A duration belongs to the two variants the tracker CHARGED
+   * Since #512, a duration belongs to the two variants the tracker CHARGED
    * and to no others, and the boundary is structural rather than a convention a writer
    * has to remember: a policy denial and an approval requirement return before
    * `beginExecution`, so a duration on either would be a spend nobody made.

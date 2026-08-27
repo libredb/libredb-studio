@@ -5,7 +5,7 @@ import packageJson from "./package.json";
 import { securityHeaders, type SecurityHeaderOptions } from "./src/lib/security/headers";
 
 /**
- * The second delivery path for the security headers (backlog AU2, extended by AU3).
+ * The second delivery path for the security headers (backlog AU2, extended by #512).
  *
  * src/proxy.ts hardens every document, but its matcher deliberately skips `_next/static`,
  * `_next/image` and every path containing a dot, so `proxy()` never runs for a file under
@@ -48,12 +48,12 @@ import { securityHeaders, type SecurityHeaderOptions } from "./src/lib/security/
  *   request for `/logo.svg` silently downgrade the policy the document just set. One authority for
  *   HSTS beats delivering it twice.
  *
- * Excluded by DOCUMENT_ONLY_HEADER_NAMES: `Referrer-Policy`, `Permissions-Policy` and - AU3's
- * answer for the first of its two headers - `Cross-Origin-Opener-Policy`. See that Set.
+ * Excluded by DOCUMENT_ONLY_HEADER_NAMES: `Referrer-Policy`, `Permissions-Policy` and - settled
+ * by #512 - `Cross-Origin-Opener-Policy`. See that Set.
  *
  * Deliberately NOT delivered, and not excluded by either rule because it never enters
  * securityHeaders() at all:
- * - `Cross-Origin-Resource-Policy`: REFUSED (AU3). CORP is the mirror image of the document-only
+ * - `Cross-Origin-Resource-Policy`: REFUSED (#512). CORP is the mirror image of the document-only
  *   class - it acts ONLY on a subresource, so this file is the only path that could carry it, and
  *   the refusal is about the delivery architecture rather than about the header.
  *
@@ -77,8 +77,8 @@ import { securityHeaders, type SecurityHeaderOptions } from "./src/lib/security/
  *   hypothetical.
  *
  *   What refuses it is the VALUE. `same-origin`, `same-site` and `cross-origin` are each a
- *   constant string, so AU3 is right that the build-time objection above does not apply to the
- *   string - but the CHOICE is the only one in this set that is a property of the deployment
+ *   constant string, so the build-time objection above does not apply to the string - but the
+ *   CHOICE is the only one in this set that is a property of the deployment
  *   TOPOLOGY rather than of the application. `nosniff` is correct for every operator;
  *   `CORP: same-origin` is correct for the operator whose origin is the only one reading its own
  *   subresources and breaks any deployment that serves them to a second origin, cross-origin
@@ -88,7 +88,8 @@ import { securityHeaders, type SecurityHeaderOptions } from "./src/lib/security/
  *   Making it operator-configurable instead moves it into src/lib/security/config.ts, which by the
  *   rule above bars it from this file - and this file is the only path that reaches a subresource.
  *   Under the current two-path split there is no place a configurable CORP can land where it would
- *   act; widening src/proxy.ts's matcher for header-only paths is the way out, and is not in AU3.
+ *   act; widening src/proxy.ts's matcher for header-only paths is the way out, and is tracked as
+ *   `docs/BACKLOG.md` AU4 rather than done here.
  *
  *   The protection given up is narrow, and that is read off this repository's own code rather than
  *   waved at. A cross-SITE no-cors subresource request already arrives without `auth-token`
@@ -106,7 +107,7 @@ import { securityHeaders, type SecurityHeaderOptions } from "./src/lib/security/
 
 /**
  * Header names that act on a DOCUMENT and are inert on a subresource. AU2 established the class
- * for the first two; AU3 settles the third.
+ * for the first two; #512 settles the third.
  *
  * `Cross-Origin-Opener-Policy` is here rather than in the delivered set because the specification
  * gates it, not because of a judgement call. HTML's "create navigation params by fetching" obtains
@@ -120,7 +121,7 @@ import { securityHeaders, type SecurityHeaderOptions } from "./src/lib/security/
  * constant, which is exactly what makes baking it next to `nosniff` tempting - and would put a
  * header on /logo.svg that no algorithm consults.
  *
- * securityHeaders() has carried it since AU3, per request, applied by src/proxy.ts; naming it here
+ * securityHeaders() has carried it since #512, per request, applied by src/proxy.ts; naming it here
  * is what keeps it out of the build-time baked set. WHY `same-origin` rather than the weaker
  * `same-origin-allow-popups`, and why it is deliberately not paired with
  * `Cross-Origin-Embedder-Policy`, is argued once - beside the header itself in
@@ -153,7 +154,7 @@ export const DOCUMENT_ONLY_HEADER_NAMES = new Set([
  * option surface. That is the property worth having: the next option added - one that may well
  * move a non-CSP header - is probed on the day it lands instead of rotting here unnoticed, which
  * is what happened to `extra`, declared on `CspOptions` and varied by no probe field at all until
- * AU3.
+ * #512.
  *
  * Exported for that test: totality is a property of this object, and nothing else can check it.
  *

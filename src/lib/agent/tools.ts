@@ -1595,7 +1595,7 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
 
   /*
     What the tracker had charged this run BEFORE this execution, so a refusal below can
-    say what this one cost it (`docs/BACKLOG.md` B12).
+    say what this one cost it (#512).
 
     Read off the tracker rather than measured here with `context.clock`. The figure the
     meter owes a user is the one the ENFORCER charged against `maxTotalRunMs`, and a
@@ -1612,7 +1612,8 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
     sibling can reach `endExecution` inside this span. `endRun` cannot land in it
     either — it refuses while an execution is live. Raise that ceiling above 1 and this
     delta becomes a sum over whatever settled alongside; read the tracker per execution
-    then, rather than around the call.
+    then, rather than around the call. Nothing FAILS if it is raised, though — the premise
+    is stated here and pinned by no test, which is what `docs/BACKLOG.md` B78 is open for.
   */
   const chargedBeforeMs = context.tracker.usage(context.runId).totalElapsedMs;
 
@@ -1682,7 +1683,7 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
       kind: "refused",
       // `elapsedMs` is the tracker's own charge for this failed execution, recorded so
       // the meter folded from the ledger cannot sit below the bound being enforced
-      // (B12). It is data, unlike `message`, which is the engine's text and is fenced
+      // (#512). It is data, unlike `message`, which is the engine's text and is fenced
       // wherever it re-enters a prompt.
       refusal: {
         class: "database-error",
@@ -2376,6 +2377,10 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
           activeConnections: health.activeConnections ?? null,
           databaseSize: health.databaseSize,
           cacheHitRatio: health.cacheHitRatio,
+          // The LENGTH of a list the provider caps, not a count of slow statements:
+          // an engine whose health read returns its limit reports that limit forever.
+          // Named where it is produced rather than fixed here, because every capped
+          // provider feeds the same projection (`docs/BACKLOG.md` B77).
           slowQueryCount: health.slowQueries.length,
           activeSessionCount: health.activeSessions.length,
         },

@@ -539,7 +539,7 @@ export type AgentReadingDenyCode = "KIND_UNSUPPORTED_BY_PROVIDER" | "READING_OVE
  * variant's is.
  *
  * `elapsedMs` is on exactly the two variants that COST the run database time, and the
- * split is the accounting's and not a style choice (B12). Both are decided inside the
+ * split is the accounting's and not a style choice (#512). Both are decided inside the
  * invoke callback, so `tracker.beginExecution` has run and `endExecution` charges the
  * span against `maxTotalRunMs` on the failure path exactly as it does on the success
  * one; a policy denial and an approval requirement return before `beginExecution` and
@@ -1160,7 +1160,7 @@ export interface AgentThreadContext {
    * itself when the editor has moved and owns a specific sentence for it (`AgentRail.tsx`,
    * `connectionDropped`). Splitting them would also start telling a caller guessing ids
    * which of its guesses were wrong, which is the leak `"repointed"` does not have
-   * (`docs/BACKLOG.md` B76).
+   * (#512).
    */
   readonly declined?: "unavailable" | "disabled" | "error" | "repointed";
 }

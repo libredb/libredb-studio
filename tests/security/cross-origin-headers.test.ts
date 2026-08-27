@@ -7,7 +7,7 @@ import packageJson from "../../package.json";
 import { securityHeaders } from "@/lib/security/headers";
 
 /**
- * AU3: the two cross-origin headers AU2 left undecided, settled.
+ * The two cross-origin headers AU2 left undecided, settled (#512).
  *
  * `Cross-Origin-Opener-Policy` is SENT, on the document path only: it is set in
  * src/lib/security/headers.ts, applied per request by src/proxy.ts, and classified document-only
@@ -94,7 +94,7 @@ async function bakedHeaderNames(): Promise<string[]> {
   return rules.flatMap((rule) => rule.headers).map(({ key }) => key);
 }
 
-describe("AU3: every header securityHeaders() sends is classified, and the class is measured", () => {
+describe("#512: every header securityHeaders() sends is classified, and the class is measured", () => {
   test("a header with no declared class fails here, which is what the exclusion form cannot do alone", () => {
     // The fail-open guard. Adding a header to securityHeaders() and nothing else leaves it BAKED
     // by default - onto /logo.svg and every _next/static chunk - with no decision recorded.
@@ -155,7 +155,7 @@ describe("AU3: every header securityHeaders() sends is classified, and the class
     // next.config.ts's comment used to claim - the test below measures how little that is - but so
     // that the next option added, one that may well move a non-CSP header, is probed on the day it
     // lands rather than rotting unnoticed. `extra` had rotted exactly that way: declared on the
-    // exported `CspOptions` interface and varied by no probe field at all until AU3.
+    // exported `CspOptions` interface and varied by no probe field at all until #512.
     const declared = declaredOptionSurface();
 
     expect(Object.keys(OPTION_PROBE).sort()).toEqual(declared);
@@ -182,7 +182,7 @@ describe("AU3: every header securityHeaders() sends is classified, and the class
   });
 });
 
-describe("AU3: Cross-Origin-Resource-Policy is refused, not forgotten", () => {
+describe("#512: Cross-Origin-Resource-Policy is refused, not forgotten", () => {
   test("neither delivery path carries it", async () => {
     const baked = await bakedHeaderNames();
 

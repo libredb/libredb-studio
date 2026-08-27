@@ -170,7 +170,7 @@ function readThread(value: unknown): AgentThreadContext | null {
     // the server writes and this narrowing does not know leaves the rail with no
     // `declined` at all, so a continuation that was refused renders no notice rather
     // than the wrong one. That is how `"repointed"` had to be added here as well as to
-    // the union (`docs/BACKLOG.md` B76).
+    // the union (#512).
     ...(declined === "unavailable" || declined === "disabled" || declined === "error" || declined === "repointed"
       ? { declined }
       : {}),

@@ -126,7 +126,7 @@ function planPosture(): AgentPosture {
  *
  * The body says the refusal happens AT START, which is what `POST /api/agent/runs` now
  * does: a run whose workflow sends a statement is refused from the connection's own type
- * before a run id exists (`docs/BACKLOG.md` B38). It used to say the run ends
+ * before a run id exists (#512). It used to say the run ends
  * `engine-unsupported` before its first statement, which was true while the refusal was
  * the provider factory's alone - and would now describe a run this build does not open.
  */

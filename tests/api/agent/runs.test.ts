@@ -273,10 +273,10 @@ describe("POST /api/agent/runs", () => {
 
       expect(res.status).toBe(202);
       const thread = mockStart.mock.calls.at(-1)?.[0].thread;
-      // B76: its own code, because it is the only decline that is not a failure - every
-      // check above passed and the carry was refused on purpose, while the five under
-      // `unavailable` are the caller's own bug, transient, or another session's. How long
-      // it lasts is the next test's subject, not this one's.
+      // Since #512 the re-pointed carry has its own code, because it is the only decline
+      // that is not a failure - every check above passed and the carry was refused on
+      // purpose, while the five under `unavailable` are the caller's own bug, transient,
+      // or another session's. How long it lasts is the next test's subject, not this one's.
       expect(thread).toMatchObject({ steps: [], text: "", declined: "repointed" });
       // Nothing of the earlier step survives: not its objective, and not its claim.
       expect(thread?.steps).toEqual([]);
@@ -292,7 +292,7 @@ describe("POST /api/agent/runs", () => {
   });
 
   /*
-    B76. The SCOPE of the decline, which is what the rail's sentence had wrong: it read
+    The SCOPE of the decline (#512), which is what the rail's sentence had wrong: it read
     as a persisting condition, and the route makes it a one-question event. The run
     opened by the declined question records the connection as it points NOW
     (`connectionIdentity: connectionIdentityOfRun` in the `start` call below the check),
@@ -535,7 +535,7 @@ describe("POST /api/agent/runs", () => {
 
   /*
     An engine that has no read-only statement path is refused when the run is OPENED,
-    not after a model turn (`docs/BACKLOG.md` B38).
+    not after a model turn (#512).
 
     Driven live on 2026-08-15 before this landed: a run on the bundled `libredb` sample
     opened, captured a schema, drafted a statement, called `run_read_query` and ended

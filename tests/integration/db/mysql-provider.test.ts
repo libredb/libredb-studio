@@ -109,7 +109,7 @@ function makeMySQLConfig(overrides: Partial<DatabaseConnection> = {}): DatabaseC
  * does not have on any build.
  *
  * Every fixture here that models the digest table answers WITH THIS rather than a row,
- * and that is the repair D32 needed in the test file: a mock that answers a statement no
+ * and that is the repair the test file needed (#512): a mock that answers a statement no
  * server accepts is how the defect survived every gate. The health line asked for
  * `LEFT(sql_text, 100)`, the fixture invented a `query` column for it, and the read looked
  * like a working one for as long as it was only mocked. The fields are the ones `mysql2`
@@ -194,14 +194,19 @@ function defaultMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
 
   // performance_schema.events_statements_summary_by_digest (slow queries)
   //
-  // THE SHARED FIXTURE REFUSES `sql_text` TOO, and that is the repair D32 needed here:
-  // about a hundred of the tests in this file run against this function, and while it
-  // answered a row for ANY statement over the digest table it answered the health line's
-  // `LEFT(sql_text, 100)` as readily as the real one - which is how a statement no
-  // server has ever executed passed every gate. `sqlTextRefusal()` says what a server
-  // says instead. The columns below are the aliases the real statement asks for; the
-  // former `avgTime: "12.5ms"` is gone with it, an invention of the same kind (that
+  // THE SHARED FIXTURE REFUSES `sql_text` TOO, and that is the repair this fixture
+  // needed (#512): about a hundred of the tests in this file run against this function,
+  // and while it answered a row for ANY statement over the digest table it answered the
+  // health line's `LEFT(sql_text, 100)` as readily as the real one - which is how a
+  // statement no server has ever executed passed every gate. `sqlTextRefusal()` says what
+  // a server says instead. The columns below are the aliases the real statement asks for;
+  // the former `avgTime: "12.5ms"` is gone with it, an invention of the same kind (that
   // alias belonged to the broken health statement, and nothing reads it now).
+  //
+  // Routing every digest fixture through the one refusal helper is prophylactic: reverting
+  // this function to its unfaithful shape leaves the suite green, because the tests that
+  // need the refusal use dedicated fixtures. Nothing here can tell whether the shared mock
+  // is honest - `docs/BACKLOG.md` T6.
   if (normalized.includes("events_statements_summary_by_digest")) {
     if (normalized.includes("sql_text")) {
       return Promise.reject(sqlTextRefusal());
@@ -503,10 +508,10 @@ function perfSchemaDisabledMockExecute(sql: string): Promise<[unknown[], unknown
  * The digest table with the columns a real server gives it, and the refusal a real
  * server answers for the one column it does not have.
  *
- * `defaultMockExecute` invents a `query`/`calls`/`avgTime` row for ANY statement over
- * `events_statements_summary_by_digest`, which is exactly how D32 survived every gate:
- * the health line asked for `LEFT(sql_text, 100)` and the mock answered it, while no
- * MySQL-family server will. Measured 2026-08-27 via `information_schema.columns` on
+ * `defaultMockExecute` used to invent a `query`/`calls`/`avgTime` row for ANY statement
+ * over `events_statements_summary_by_digest`, which is exactly how the defect survived
+ * every gate (#512): the health line asked for `LEFT(sql_text, 100)` and the mock
+ * answered it, while no MySQL-family server will. Measured 2026-08-27 via `information_schema.columns` on
  * MySQL 26.7.0, Percona Server 8.4.11-11 and MariaDB 12.3.2 - the digest table carries
  * `DIGEST_TEXT`, never `SQL_TEXT` (that one belongs to `events_statements_current`,
  * MySQL 9.4 manual 29.12.20.1 / 29.12.20.3) - and asking for it answers
@@ -939,8 +944,9 @@ describe("MySQLProvider", () => {
       // with one honest gap in it.
       expect(health.cacheHitRatio).toBe(CACHE_HIT_RATIO_UNAVAILABLE);
       expect(health.activeConnections).toBe(5);
-      // EMPTY, not a sentence about the Performance Schema: see D32 below and the
-      // reason recorded next to the read in `mysql.ts`. A row here is counted
+      // EMPTY, not a sentence about the Performance Schema: see the slow-query line
+      // section below and the reason recorded next to the read in `mysql.ts`. A row here
+      // is counted
       // (`slowQueryCount` in the agent's curated health reading), so a sentence
       // wearing a row's clothes is a fabricated measurement.
       expect(health.slowQueries).toEqual([]);
@@ -948,7 +954,7 @@ describe("MySQLProvider", () => {
     });
 
     // ------------------------------------------------------------------------
-    // D32: the slow-query line stated a capability as absent on servers that had it
+    // #512: the slow-query line stated a capability as absent on servers that had it
     // ------------------------------------------------------------------------
 
     test("the health slow-query line carries the digest rows the panel reads, not a capability sentence", async () => {
@@ -1045,7 +1051,7 @@ describe("MySQLProvider", () => {
       // field, so an unreadable source is indistinguishable here from a source that
       // measured nothing. Empty is the least-wrong shape - a row saying "Performance
       // schema not available" was what representing it anyway looked like, and it was
-      // counted as a slow query (D32). Everything else the connection can read still
+      // counted as a slow query (#512). Everything else the connection can read still
       // answers.
       const health = await provider.getHealth();
       expect(health.slowQueries).toEqual([]);

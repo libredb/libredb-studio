@@ -357,7 +357,7 @@ export interface AgentRunTimeline {
   readonly budget: readonly AgentBudgetGauge[];
   /**
    * How many of this run's CHARGED statements carry no duration on the ledger, so the
-   * database-time gauge above is missing whatever they cost (`docs/BACKLOG.md` B12).
+   * database-time gauge above is missing whatever they cost (#512).
    *
    * A count rather than a flag, and a fact rather than an estimate: it is the number of
    * settled steps whose entry the tracker charged and which record no `elapsedMs`. That
@@ -1329,7 +1329,7 @@ function reportOf(claims: readonly AgentReportClaim[], index: LedgerIndex): Agen
  *    could have changed the answer, so the repair ledger does not.
  *  - Database time is the elapsed time each CHARGED statement recorded: a completed
  *    read's own `summary.elapsedMs`, and, for the two refusal classes the tracker
- *    charged, the span it charged them (`docs/BACKLOG.md` B12). An entry carrying no
+ *    charged, the span it charged them (#512). An entry carrying no
  *    duration — every refusal written before that field existed — contributes nothing
  *    rather than a zero, and is counted into `statementsWithoutDuration` so the rail
  *    can name what the figure is missing instead of presenting an invented one (#477).
@@ -1351,7 +1351,7 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
   let failureReason: AgentRunFailureReason | null = null;
   let statements = 0;
   let databaseMs = 0;
-  /** Charged statements whose entry records no duration (B12). See the field's doc. */
+  /** Charged statements whose entry records no duration (#512). See the field's doc. */
   let statementsWithoutDuration = 0;
   let repairs = 0;
   let claims: readonly AgentReportClaim[] | null = null;
@@ -1483,7 +1483,7 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
       } else if (event.kind === "tool-refused" && event.refusal.class === "database-error") {
         statements += 1;
         repairs += 1;
-        // The span the tracker charged this failed execution (B12), which it charges
+        // The span the tracker charged this failed execution (#512), which it charges
         // exactly as it charges a completed one's. An entry from before the refusal
         // carried it adds nothing and is counted as unmeasured instead: a zero here
         // would claim the statement cost the database no time.

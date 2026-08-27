@@ -275,9 +275,9 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
   test("a statement-carrying tool is offered exactly where AGENT_WORKFLOW_SENDS_STATEMENTS says so", () => {
     /*
       The binding that lets `POST /api/agent/runs` refuse a run BEFORE it opens on an
-      engine whose provider implements no read-only statement path (`docs/BACKLOG.md`
-      B38). The route reads that record and nothing else, so this is what keeps it equal
-      to the tool sets: a workflow that gained a statement tool without the flag would
+      engine whose provider implements no read-only statement path (#512). The route reads
+      that record and nothing else, so this is what keeps it equal to the tool sets: a
+      workflow that gained a statement tool without the flag would
       open there and end `engine-unsupported` after a model turn, and one that gained the
       flag without such a tool would be withheld from an engine it runs on today.
 
@@ -1495,10 +1495,11 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
   });
 
   /**
-   * `docs/BACKLOG.md` B12. `executeAuditedOperation` charges `maxTotalRunMs` from a
-   * failed execution exactly as it does from a completed one, and the refusal used to
-   * carry no duration at all — so a meter folded from the ledger sat BELOW the bound
-   * the server was already enforcing on the run, which is the direction that misleads.
+   * Since #512 (`docs/BACKLOG.md` B78 for what that left open). `executeAuditedOperation`
+   * charges `maxTotalRunMs` from a failed execution exactly as it does from a completed
+   * one, and the refusal used to carry no duration at all — so a meter folded from the
+   * ledger sat BELOW the bound the server was already enforcing on the run, which is the
+   * direction that misleads.
    *
    * The figure is read off the tracker rather than measured a second time here: what
    * the meter owes a user is what the enforcer charged, and two measurements of one
@@ -1522,7 +1523,7 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
   });
 
   /**
-   * The same B12 figure on a run that has ALREADY spent time — the case that separates
+   * The same figure on a run that has ALREADY spent time — the case that separates
    * "what this execution cost" from "what the run has spent so far".
    *
    * The test above cannot separate them: its failing execution is the run's first, so
@@ -3308,9 +3309,9 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     if (outcome.kind !== "refused") throw new Error("expected refused");
     /*
       Whole-object, so a field arriving on this variant has to be decided rather than
-      slip in. `elapsedMs` is what the tracker charged this execution (`docs/BACKLOG.md`
-      B12) — the refusal is raised inside the invoke callback, after `beginExecution`,
-      so the charge is real and the ledger records it.
+      slip in. `elapsedMs` is what the tracker charged this execution (#512) — the
+      refusal is raised inside the invoke callback, after `beginExecution`, so the charge
+      is real and the ledger records it.
     */
     const charged = h.tracker.usage(h.context.runId).totalElapsedMs;
     expect(charged).toBeGreaterThan(0);
@@ -3323,7 +3324,7 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
   });
 
   /**
-   * The `reading-refused` half of the same B12 delta, on a run that has ALREADY spent
+   * The `reading-refused` half of the same delta (#512), on a run that has ALREADY spent
    * time. Both tests that pin this field elsewhere use a run's FIRST execution, so
    * `chargedBeforeMs` is 0 there and the delta cannot be told apart from the run's
    * cumulative total: replacing it with a literal 0 leaves them green while turning the
@@ -3401,7 +3402,7 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     if (outcome.kind !== "refused") throw new Error("expected refused");
     // The provider method RAN and returned rows before the byte cap refused them, so
     // this is the variant with the most database time behind it — and the entry now
-    // carries what the tracker charged for it rather than nothing (B12).
+    // carries what the tracker charged for it rather than nothing (#512).
     const overBudgetCharge = h.tracker.usage(h.context.runId).totalElapsedMs;
     expect(overBudgetCharge).toBeGreaterThan(0);
     expect(outcome.refusal).toEqual({

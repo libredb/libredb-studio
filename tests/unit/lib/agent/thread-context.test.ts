@@ -337,10 +337,10 @@ describe("the database a conversation was established against", () => {
     expect(repointed.steps).toEqual([]);
     expect(repointed.text).toBe("");
     /*
-      B76: its OWN code, not the `unavailable` the other five share. What differs is that
-      this is the only one that is not a failure — it is reached only after the route's
-      five checks have passed, and the carry is refused on purpose — so a shared sentence
-      would report a deliberate refusal as something that went wrong. It is NOT split out
+      Since #512 it has its OWN code, not the `unavailable` the other five share. What
+      differs is that this is the only one that is not a failure — it is reached only
+      after the route's five checks have passed, and the carry is refused on purpose — so
+      a shared sentence would report a deliberate refusal as something that went wrong. It is NOT split out
       for a remedy that outlasts the question: the route writes the current identity onto
       the run this question opens, so the follow-up after it carries (`runs.test.ts`, "the
       decline lasts one question").

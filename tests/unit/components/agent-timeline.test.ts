@@ -1524,8 +1524,9 @@ describe("foldLedgerEntries — the budget meter", () => {
     expect(gauge(view, "statements").used).toBe(1);
     expect(gauge(view, "repairs").used).toBe(1);
     /*
-      An entry with no duration on it (B12): every ledger written before the refusal
-      carried one, and every hand-written fixture. The meter adds nothing for it
+      An entry with no duration on it — the shape every refusal had before #512, and
+      the shape a ledger written by an older build still holds: every entry written
+      before the refusal here carries one, and every hand-written fixture. The meter adds nothing for it
       rather than a zero — a zero would say this statement cost the database no time,
       which is not what the absence records — and the run is COUNTED as holding an
       unmeasured statement, so the rail can say so rather than presenting a total it
@@ -1536,9 +1537,10 @@ describe("foldLedgerEntries — the budget meter", () => {
   });
 
   /**
-   * `docs/BACKLOG.md` B12. The tracker charges a failed execution's elapsed time
-   * against `maxTotalRunMs` exactly as it charges a completed one's, so a meter that
-   * skipped it reported less than the bound the server was enforcing.
+   * Since #512 a failed statement carries the span the tracker charged it. The tracker
+   * charges a failed execution's elapsed time against `maxTotalRunMs` exactly as it
+   * charges a completed one's, so a meter that skipped it reported less than the bound
+   * the server was enforcing.
    */
   test("a failed statement that recorded its duration is counted, like the read that succeeded", () => {
     const view = foldLedgerEntries([

@@ -66,7 +66,7 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
  *    different sentences and a reloaded rail can only know which it owes from the run.
  *  - **A run whose workflow sends a statement is refused on an engine whose provider
  *    has no read-only statement path**, from the connection's own type and before a run
- *    id exists (`docs/BACKLOG.md` B38). It is the one refusal here that is about the
+ *    id exists (#512). It is the one refusal here that is about the
  *    DATABASE rather than the request's own consistency, and it is narrowed by the
  *    workflow: `operations` sends no statement, so it opens on every engine.
  *  - **Auto-execute is fixed at start, and that is the reason it is a run field at
@@ -212,7 +212,7 @@ export async function POST(req: Request) {
 
     /*
       An engine whose provider implements no database-native read-only statement path,
-      refused at the point the run is OPENED (`docs/BACKLOG.md` B38).
+      refused at the point the run is OPENED (#512).
 
       Driven live on 2026-08-15 before this existed: a run on the bundled `libredb`
       sample opened, captured a schema, drafted a statement, called `run_read_query` and
@@ -328,7 +328,7 @@ export async function POST(req: Request) {
       leaks nothing. It is NOT split out for a longer remedy - see the `connectionIdentity`
       field of the `start` call below, which writes the identity of the connection as it
       points NOW even for the declined run, so the follow-up after this one continues that
-      run and carries (`docs/BACKLOG.md` B76).
+      run and carries (#512).
     */
     let thread: AgentThreadHeader | undefined;
     if (previousRunId !== undefined) {
@@ -409,7 +409,7 @@ export async function POST(req: Request) {
       // makes the decline one question long: the rail's next follow-up continues this
       // run, and this identity is the one it will be compared against. Writing the
       // predecessor's instead would keep declining, which is what the rail's copy used
-      // to promise and the code never did (`docs/BACKLOG.md` B76).
+      // to promise and the code never did (#512).
       connectionIdentity: connectionIdentityOfRun,
       objective,
     });

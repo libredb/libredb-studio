@@ -294,7 +294,7 @@ const QUERIES_PER_SECOND_SQL = `
  * the LIMIT interpolated at each call site.
  *
  * It is shared because the two used to be separate statements and the health one was
- * wrong (D32): it asked for `LEFT(sql_text, 100)`, and this table has no `sql_text`
+ * wrong (#512): it asked for `LEFT(sql_text, 100)`, and this table has no `sql_text`
  * column. `SQL_TEXT` belongs to `events_statements_current`/`_history`; the digest table
  * carries the normalised `DIGEST_TEXT` (MySQL 9.4 manual, "Statement Summary Tables",
  * and the server's own `information_schema.columns` on every build below). So that
@@ -968,7 +968,7 @@ export class MySQLProvider extends SQLBaseProvider {
         // Nothing to read, so nothing is reported.
       }
 
-      // The digest rows, or none - never a sentence dressed as a row (D32).
+      // The digest rows, or none - never a sentence dressed as a row (#512).
       //
       // This used to report `[{ query: "Performance schema not available", calls: 0,
       // avgTime: "N/A" }]` whenever its statement threw, and the statement threw on every
@@ -988,7 +988,8 @@ export class MySQLProvider extends SQLBaseProvider {
       // being OFF does not raise here at all. Measured on the same pass, MySQL 26.7.0
       // started `--performance-schema=OFF` and MariaDB 12.3.2 (which ships it off) both
       // keep the digest table selectable and answer 0 rows. A marker keyed on the throw
-      // would therefore be emitted for something other than off-ness - D32 one level up.
+      // would therefore be emitted for something other than off-ness - the same fabrication
+      // as the row it replaces, one level up.
       // What remains in the catch is a genuine refusal: no `performance_schema` DATABASE
       // at all (ER_1049 on the OceanBase tenant above), or a grant denied on it.
       //

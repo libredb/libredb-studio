@@ -2190,7 +2190,7 @@ export function AgentRail({
           the rail owns the connection change (deliberate, and it is the layer that saw
           it), the server owns `declined` — its own switch, an unreadable ledger, a
           re-pointed connection, and five causes it may not tell apart under
-          `unavailable` (`docs/BACKLOG.md` B76) — and the step list is the run's own
+          `unavailable` (#512) — and the step list is the run's own
           header.
         */}
         {(threadSteps.length > 0 || threadDeclined !== undefined || connectionDropped) && (
@@ -2254,7 +2254,7 @@ export function AgentRail({
                           it was false in both directions: nothing keeps declining, and
                           pointing back does not restore the old conversation either, because
                           by then the run this question opened is the one being followed
-                          (`docs/BACKLOG.md` B76).
+                          (#512).
                         */
                         "This connection was re-pointed after the earlier step ran, so this question started a new conversation. Follow-ups from here continue on the connection as it points now."
                       : "The earlier step could not be carried into this question, so it started on its own."}
@@ -2584,7 +2584,7 @@ export function AgentRail({
                   charged. So a spend shown here is a floor, never a ceiling.
                   {/*
                     The one remaining gap in the database-time figure, and it is per RUN
-                    rather than a standing claim (`docs/BACKLOG.md` B12). A failed
+                    rather than a standing claim (#512). A failed
                     statement now records the span the tracker charged it, so a run driven
                     by this build has nothing missing here and is told nothing — a caveat
                     that fires on every run is one a reader stops seeing. A run folded from

@@ -125,7 +125,7 @@ const OVERSPENT_LINE = `${JSON.stringify({
 
 /**
  * A statement that failed and whose entry carries no duration — the shape every ledger
- * written before `docs/BACKLOG.md` B12 has. The meter cannot count what it does not
+ * written before #512 has. The meter cannot count what it does not
  * hold, so the rail says the figure is missing one rather than summing a zero (#477).
  */
 const UNTIMED_FAILURE_LINE = `${JSON.stringify({
@@ -473,8 +473,8 @@ describe("AgentRail", () => {
   test.each([
     ["disabled", ["switched off on this server"]],
     /*
-      B76: the re-pointed connection carries its own code, because it is the only decline
-      that is not a failure — every check the route makes passed, and the server refused
+      Since #512 the re-pointed connection carries its own code, because it is the only
+      decline that is not a failure — every check the route makes passed, and the server refused
       the carry on purpose. Both halves are pinned, because the half that was wrong was
       the second one: it claimed the decline persists until the connection is pointed
       back, and the route writes the CURRENT identity onto the run it opens, so the next
@@ -511,7 +511,7 @@ describe("AgentRail", () => {
   /*
     The persistence claim, pinned as an ABSENCE, because that is the shape the defect had:
     the sentence's first half was true and its second half was not, and a test asserting
-    only the first half stayed green through it (`docs/BACKLOG.md` B76).
+    only the first half stayed green through it (#512).
 
     The negative is anchored on the positive in the same assertion pair, so it cannot go
     vacuous: rename the testid or the copy and the `toContain` fails before the `not`
@@ -2130,8 +2130,9 @@ describe("AgentRail", () => {
     });
 
     /**
-     * The ledger records less than the tracker charges, in three known ways
-     * (`docs/BACKLOG.md` B12 and B13) — the largest being that the run's schema
+     * The ledger records less than the tracker charges, in known ways
+     * (`docs/BACKLOG.md` B13, and a ledger written before #512, whose failed statements
+     * carry no duration) — the largest being that the run's schema
      * capture reaches `executeAuditedOperation` without going through `runStep`, so
      * its two-to-three catalog reads are paid for and never itemized. A meter that
      * did not say so would read as exact while sitting two statements low from the
@@ -2144,16 +2145,16 @@ describe("AgentRail", () => {
       expect(caveats).toContain("schema capture's catalog reads are not itemized");
       expect(caveats).toContain("a floor, never a ceiling");
       /*
-        `docs/BACKLOG.md` B12 is closed, so the blanket claim is GONE: a failed
-        statement now records the duration the tracker charged it, and a caveat that
-        still said otherwise would be describing a defect the run does not have. What
+        The blanket claim is GONE since #512: a failed statement now records the
+        duration the tracker charged it, and a caveat that still said otherwise would
+        be describing a defect the run does not have. What
         replaces it is per-run and conditional, asserted below.
       */
       expect(caveats).not.toContain("records no duration");
     });
 
     /**
-     * `docs/BACKLOG.md` B12's residue. A failed statement records its duration from
+     * #512's residue. A failed statement records its duration from
      * here on, but a ledger written BEFORE it did carries none, and a fold cannot
      * invent one — so the run says how many of its statements have no duration on
      * record instead of summing them as zero and calling the total measured (#477).
