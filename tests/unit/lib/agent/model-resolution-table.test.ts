@@ -128,6 +128,19 @@ const RESOLVED: ResolvedRow[] = [
     turnTimeoutMs: 150_000,
   },
   {
+    // The fifteenth. Two settings, both for the clock: twelve losses across three cells and every
+    // one of them a model-timeout.
+    id: "qwen3.6:27b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    suppressesPlanReasoning: true,
+    turnTimeoutMs: 150_000,
+  },
+  {
     id: "qwen3.8:latest",
     unreportedCallCeiling: 12,
     reportReminderLimit: 1,
@@ -280,7 +293,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
   test("the table covers every registered model, so a new one cannot arrive unpinned", () => {
     const pinned = new Set(RESOLVED.map((row) => row.id));
     for (const id of Object.keys(modelProfiles())) expect(pinned.has(id)).toBe(true);
-    expect(Object.keys(modelProfiles())).toHaveLength(14);
+    expect(Object.keys(modelProfiles())).toHaveLength(15);
   });
 });
 
@@ -340,6 +353,9 @@ describe("what each model records about the runs that earned its settings", () =
     // The fourteenth. Its record says its cells were read in ONE pass under the settings it
     // ships with, which is the claim three settings on one model has to earn.
     "muse-glimmer:latest": "32bf1643caa8ed550066a64c4a231585a3ddbd30286646bef45f5531198d06cb",
+    // The fifteenth. Its record states the outlier as well as the result: assess read 4/5 once
+    // and 5/5 on a second read of the same cell at the same setting.
+    "qwen3.6:27b": "d0ebde3fdf25b9c56ab7bcad4adc3b54510a413285e51edcb46aec261e661157",
   };
 
   test("every model's record survives the move, character for character", () => {

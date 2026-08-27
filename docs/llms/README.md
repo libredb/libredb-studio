@@ -8,13 +8,13 @@ writes beautiful prose about a database and never calls a tool answers nothing h
 question these pages answer is not what a model knows but what it DOES on a run, and every figure
 comes from a run whose ledger is on disk.
 
-**Fourteen models are supported.** Each cleared all six surfaces — Investigate, Optimize, Assess,
-Operate, Analyze and Plan — five consecutive times: 420 runs, 420 passes.
+**Fifteen models are supported.** Each cleared all six surfaces — Investigate, Optimize, Assess,
+Operate, Analyze and Plan — five consecutive times: 450 runs, 450 passes.
 
-Eleven of the fourteen cleared them at the 90-second per-turn limit the product ships. Three carry
-a 150-second limit of their own — `qwen3.5:9b`, `nemotron-3.5-lightning:30b` and
-`muse-glimmer:latest` — because one turn of theirs does not fit inside 90 while every other
-surface does. The limit stays 90 for every other model, and each page says what its model needed.
+Eleven of the fifteen cleared them at the 90-second per-turn limit the product ships. Four carry a
+150-second limit of their own — `qwen3.5:9b`, `nemotron-3.5-lightning:30b`, `muse-glimmer:latest`
+and `qwen3.6:27b` — because one turn of theirs does not fit inside 90 while every other surface
+does. The limit stays 90 for every other model, and each page says what its model needed.
 
 | Model | Served through | Disk | Median run | Slowest run |
 | --- | --- | --- | --- | --- |
@@ -31,11 +31,12 @@ surface does. The limit stays 90 for every other model, and each page says what 
 | [`qwen3:14b`](qwen/qwen3.md) | Ollama | 9.3 GB | 41s | 303s |
 | [`qwen3:4b`](qwen/qwen3.md) | Ollama | 2.5 GB | 72s | 160s |
 | [`qwen3.8:latest`](qwen/qwen3.8.md) | Ollama | 19 GB | 72s | 195s |
+| [`qwen3.6:27b`](qwen/qwen3.6.md) | Ollama | 17 GB | 82s | 252s |
 | [`muse-glimmer:latest`](muse/muse-glimmer.md) | Ollama | 18 GB | 115s | 285s |
 
 The durations are from one machine and are comparable with each other rather than portable: every
 figure was taken the same way, on the same database, through the same six surfaces. What they are
-for is choosing between these fourteen — the fastest reaches the same verdicts as the slowest in a
+for is choosing between these fifteen — the fastest reaches the same verdicts as the slowest in a
 twelfth of the time.
 
 One page per model version. Sizes are rows inside it, because `ollama pull qwen3:4b` is how a

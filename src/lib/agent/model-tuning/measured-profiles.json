@@ -289,6 +289,34 @@
       }
     },
     {
+      "id": "qwen3.6:27b",
+      "measured": "6/6 locked, 30/30, with turnTimeoutMs at 150000 and no reasoning on the plan turn. Investigate 26s, optimize 238s, assess 216s, operate 68s, analyze 82s, plan 20s (medians of the passing runs). Before these settings it was 3/6 at 18/30, and every one of its twelve losses was a model-timeout - plan 0/5, optimize 1/5, assess 2/5, with nothing lost to a wrong answer. The settings closed all three. They also made the three cells that already passed FASTER: investigate 51s to 26s, operate 102s to 68s, analyze 110s to 82s - a model that is not racing a limit it cannot meet finishes sooner. Assess read 4/5 on the first pass, losing one run to model-timeout at 252s, and 5/5 on a second read of the same cell at the same setting; the cell is reported from the five consecutive passes rather than from the pass that contained the outlier.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": true,
+        "refusalExamples": false,
+        "turnTimeoutMs": 150000
+      },
+      "rationale": {
+        "suppressPlanReasoning": [
+          "Its plan cell is 0/5 and every loss is a model-timeout with no tool invoked - the turn spent thinking rather than answering, which is what this setting was measured on for qwen3.5:4b and again for muse-glimmer:latest."
+        ],
+        "turnTimeoutMs": [
+          "Twelve losses across three cells and ALL TWELVE are model-timeout: optimize 1/5 with passes at 169s, assess 2/5 with passes at 230s, plan 0/5. Nothing here loses to a wrong answer; everything loses to the wall.",
+          "The shipped 90 seconds a turn is a statement about how long a person waits, and this is one of the slowest models measured. Per model, so no other limit moves."
+        ]
+      }
+    },
+    {
       "id": "qwen3.8:latest",
       "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 5/5 · Optimize 5/5 · Assess 5/5 · Operate 5/5 · Analyze 5/5 · Plan 5/5.",
       "settings": {
