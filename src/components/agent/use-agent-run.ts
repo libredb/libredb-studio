@@ -623,8 +623,16 @@ export function useAgentRun(): AgentRunFollower {
 
     A start writes the new conversation to the store, so the snapshot moves to it — and
     `runId` is what keeps that from being announced as interrupted the moment it begins.
+
+    `runId` alone was not enough. `start()` clears it BEFORE it fetches, so for as long as
+    the POST was in flight this read the previous conversation out of the store and the rail
+    said it "ended when the page reloaded" — about the conversation the user was in the act
+    of continuing, and with no page having reloaded. `isBusy` is the missing half: while a
+    start is in flight a run IS being opened, so nothing is un-followed. It also restores
+    what this property documents about itself, because `thread` keeps its previous value
+    across that same window and the two would otherwise both name one conversation.
   */
-  const interrupted = runId === null ? storedThread : null;
+  const interrupted = runId === null && !isBusy ? storedThread : null;
 
   return { runId, thread, interrupted, isBusy, isStopping, timeline, error, errorCode, refusal, start, cancel };
 }

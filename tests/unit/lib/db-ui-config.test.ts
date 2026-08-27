@@ -240,6 +240,17 @@ describe("db-ui-config", () => {
     providers split across files) says whether it ever reads the field. Comments and
     docblocks are stripped first, so a docblock that merely DISCUSSES `config.user` does not
     count as a read.
+
+    Two ways the `config.<field>` pattern can be wrong, and they are not symmetric:
+
+    - A FALSE POSITIVE - the token inside a SQL string literal, say - makes this test fail
+      loudly with a name in the message. Someone reads it and adds the exclusion. Safe.
+    - A FALSE NEGATIVE is the dangerous one: a provider reading the field some other way
+      (`const { user } = this.config`, or `this.config` bound to a local first) would be
+      seen as not reading it, and a list that omits the field would pass. Measured
+      2026-08-27 across every provider directory: there are no destructured reads of `user`
+      or `database` and `this.config` is never aliased to a bare variable, so the pattern
+      catches every real read today. If you add one of those shapes, widen this first.
   */
   describe("the write list names every addressing field its provider reads", () => {
     const FACTORY = readFileSync(path.join(ROOT, "src/lib/db/factory.ts"), "utf8");

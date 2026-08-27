@@ -1,7 +1,7 @@
 import "../../setup-dom";
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import React from "react";
 import ReactDOMServer from "react-dom/server";
 import { useAgentRun } from "@/components/agent/use-agent-run";
@@ -53,6 +53,40 @@ describe("useAgentRun — the conversation a reload interrupted", () => {
     const { result } = renderHook(() => useAgentRun());
 
     expect(result.current.interrupted).toEqual({ threadId: "arun_a", steps: 3 });
+  });
+
+  test("says nothing about a conversation while the run that continues it is being opened", async () => {
+    // The window between `setRunId(null)` and the server's answer. `start()` clears
+    // `runId` before it fetches (so the previous run's entries and verdict go), and
+    // `interrupted` was derived from `runId === null` alone - so for as long as the POST
+    // was in flight the rail rendered "The conversation this browser was in (N questions,
+    // <id>) ended when the page reloaded. Your next question starts a new one." about the
+    // conversation the user was in the act of continuing. Two false claims at once: no
+    // page reloaded, and that conversation had not ended.
+    //
+    // It also broke the invariant this property documents about itself - "null whenever
+    // `thread` is set: the two never describe the same conversation" - because `thread`
+    // keeps its previous value across the same window.
+    localStorage.setItem(KEY, JSON.stringify({ threadId: "arun_previous", steps: 2 }));
+
+    const originalFetch = globalThis.fetch;
+    // Never resolves: the assertion is about the in-flight window, so the window is held
+    // open rather than raced.
+    globalThis.fetch = (() => new Promise(() => {})) as unknown as typeof globalThis.fetch;
+
+    try {
+      const { result } = renderHook(() => useAgentRun());
+      expect(result.current.interrupted).toEqual({ threadId: "arun_previous", steps: 2 });
+
+      await act(async () => {
+        void result.current.start({ mode: "agent", objective: "count the rows", connectionId: "conn-1" });
+      });
+
+      expect(result.current.isBusy).toBe(true);
+      expect(result.current.interrupted).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("reports nothing when this browser has held no conversation", () => {
