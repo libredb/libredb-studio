@@ -1568,6 +1568,38 @@ describe("foldLedgerEntries — the budget meter", () => {
   });
 
   /**
+   * A MEASURED zero is a measurement, and `0` is the one duration that can be mistaken for
+   * an absence: the fold asks `refusal.elapsedMs === undefined`, and rewriting that as a
+   * truthiness check would move a statement the tracker charged 0 ms into the count of
+   * statements that recorded nothing - a refusal reported as "we do not know" about a span
+   * the server does know. The two tests above separate `undefined` from `30`, which a
+   * falsy check passes either way, so neither of them can see that inversion.
+   */
+  test("a failed statement charged zero milliseconds is measured, not counted as unmeasured", () => {
+    const view = foldLedgerEntries([
+      completed("s1", "corr_1", 12),
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-refused",
+          atMs: 8,
+          stepId: "s2",
+          refusal: {
+            class: "reading-refused",
+            reasonCode: "READING_OVER_BUDGET",
+            elapsedMs: 0,
+          },
+        },
+      }),
+    ]);
+
+    expect(gauge(view, "statements").used).toBe(2);
+    // 12 + 0: the zero is added as a span, which is why the sum does not move.
+    expect(gauge(view, "database-time").used).toBe(12);
+    expect(view.statementsWithoutDuration).toBe(0);
+  });
+
+  /**
    * The same sum, but reached the way the rail really reaches it. Every other test in
    * this describe folds object literals, and the only fixture here that carried a
    * duration through `parseLedgerLine` is a `tool-completed` — so `refusal.elapsedMs`

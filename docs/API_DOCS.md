@@ -1014,6 +1014,7 @@ could arrive twice.
 { "error": "mode must be \"planning\" or \"agent\"" }
 { "error": "An agent run needs a server-resolvable connectionId; an inline connection cannot be resumed" }
 { "error": "previousRunId must be a non-empty string when provided" }
+{ "error": "Agent mode executes only where the provider implements a database-native read-only statement path — PostgreSQL and SQLite. On MySQL a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine." }
 
 // 404 Not Found — this server runs no agents
 { "error": "The agent runtime is not enabled on this server" }
@@ -1025,6 +1026,15 @@ could arrive twice.
   "disproved": []
 }
 ```
+
+> **The engine refusal is a `400`, and it changed this contract.** Since #512 an `agent` run whose
+> `workflowType` sends a statement — every workflow but `operations` — is refused here when the
+> connection's engine implements no database-native read-only statement path, and `error` carries the
+> posture's whole paragraph. It is refused **before a run id exists**: a client that used to receive
+> `202` for `investigation` on MySQL and then read `engine-unsupported` off the run receives `400`
+> and no run. `operations` is admitted on every engine because it sends no statement at all, and a
+> `planning` run is never refused this way — it executes nothing anywhere. The refusal reads the
+> same fact the provider factory does (`typeof provider.queryReadOnly`), so the two cannot disagree.
 
 > `422` rather than `400`: the request is well-formed and it is the server's configuration that
 > cannot honour it. Only a **positively established** incapability refuses this way — a bad key, a

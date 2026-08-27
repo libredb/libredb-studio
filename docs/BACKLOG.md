@@ -27,7 +27,7 @@ None of it is a GitHub issue.
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 10
 - [Authentication and security headers](#authentication-and-security-headers) — AU4
-- [Tests](#tests) — T1–T6 · 5
+- [Tests](#tests) — T1–T7 · 6
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC1, DOC3 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -404,7 +404,8 @@ editing and re-saving a connection would silently clear its pin. Inert today —
 restart and a round trip through the connection dialog, and the accept/reject decision for a key that
 legitimately changed has an answer in the product rather than only in a doc.
 
-Filed as D32 when the verifier landed in #509 and lost the same day: #510 branched before that
+Filed as D32 when the verifier landed in #509 - an id this file has since reused for an unrelated
+entry, which is why citing it is no longer safe - and lost the same day: #510 branched before that
 merge and its copy of this file overwrote both entries, which is also why they are renumbered.
 Restored 2026-08-27 from `35294140`.
 
@@ -676,7 +677,7 @@ recorded reason it is withheld.
 
 ### AU4. A sibling subdomain can time an authenticated endpoint, and the fix has nowhere to land
 
-Left open by AU3, which answered both of the cross-origin headers it was filed for:
+Left open by the cross-origin header work in #512, which answered both headers it was filed for:
 `Cross-Origin-Opener-Policy: same-origin` is delivered from `securityHeaders()` and classified
 document-only in `next.config.ts`, and `Cross-Origin-Resource-Policy` is refused with the reason
 recorded beside the header rule. This entry is what the refusal gives up.
@@ -689,7 +690,7 @@ coarse-timing signal against an authenticated response. `nosniff` stops executio
 stops state change, `X-Frame-Options` and `frame-ancestors` stop framing; none of them stops the
 oracle. Recorded in `docs/SECURITY.md` under Known limits.
 
-`Cross-Origin-Resource-Policy: same-origin` is the control, and AU3 refused it for a structural
+`Cross-Origin-Resource-Policy: same-origin` is the control, and #512 refused it for a structural
 reason rather than a doubt about the value: CORP acts only on subresources, `src/proxy.ts`'s matcher
 skips subresources, and the one path that does reach them - `next.config.ts`'s `headers()` - is baked
 at BUILD time. The correct value is the one header in the set that depends on deployment topology
@@ -775,7 +776,7 @@ itself pinned so a new one cannot appear unnoticed.
 
 ### T6. A shared mock still answers a statement no server would answer
 
-Found 2026-08-27 while closing D32. `defaultMockExecute` in
+Found 2026-08-27 while closing the MySQL health defect in #512. `defaultMockExecute` in
 `tests/integration/db/mysql-provider.test.ts` used to invent `query`/`calls`/`avgTime` rows for ANY
 statement against the digest table - including one naming `sql_text`, a column that table does not
 have - and about a hundred of that file's tests run against it. That fixture unfaithfulness is
@@ -792,6 +793,26 @@ statement the engine would reject makes every test built on it a test of the moc
 
 **Done when:** a mock that answers a statement its engine refuses fails something - by construction
 (one shared refusal path every fixture must go through) or by a test that drives the fixture itself.
+
+### T7. A user-facing sentence nobody tests, under a smell that hides it
+
+Found 2026-08-27 while verifying two external reviews of #512. `src/components/agent/AgentRail.tsx`
+selects the conversation-decline sentence in a four-arm nested ternary, and SonarCloud reports the
+nesting (`typescript:S3358`) because #512 added the fourth arm. The cosmetic complaint is not the
+finding. Three of the four sentences are asserted by `tests/components/agent/AgentRail.test.tsx`; the
+fourth - `connectionDropped`, *"Connection changed, so this question started a new conversation."* -
+is asserted nowhere, and `connectionDropped` appears in no test in the repository. It is live copy:
+`AgentRail.tsx:1112` sets it whenever a follow-up target exists and the rail is no longer on the
+connection the previous run opened on.
+
+The coverage gate cannot see this. All four arms are ONE expression, so a single covered line covers
+every arm, and 100% line coverage is reached with three of the four sentences never rendered in a
+test. Extracting the selection - which is what the smell asks for - gives each arm its own line and
+would fail the gate until the fourth is driven, which is the honest order to do it in and the reason
+#512 declined to extract it as a review nit.
+
+**Done when:** each of the four decline sentences is rendered by a test that names its trigger, and
+the selection is extracted so a fifth arm cannot be added without one.
 
 ## Dependencies
 
@@ -2622,13 +2643,24 @@ traffic. The provider now records the cap where it is produced (`HEALTH_SLOW_QUE
 Not MySQL's alone: any provider whose `getHealth()` caps this list feeds the same projection, so the
 fix belongs with the curated reading rather than with one engine.
 
+**A source that could not be read reaches the model as the same zero.** Where the digest table
+cannot be read at all - a grant denied on it, or no `performance_schema` database at all
+(`ERROR 1049`, measured on an OceanBase tenant) - `getHealth()` leaves the list empty on purpose,
+because `HealthInfo.slowQueries` is a `SlowQuery[]` with no field a reason could travel in and a row
+carrying one is the fabrication #512 removed. The projection then hands the model
+`slowQueryCount: 0`, which says *this server has no slow queries* where the truth is *nobody could
+look*. The operator does get the reason, on the path that has a channel for it
+(`errors.slowQueries` -> `PanelUnavailable`); the model does not. So this is the absence rule (#477)
+one level up from the row, and it is the same fix site: the curated reading, not the provider.
+
 **Done when:** the curated health reading either carries a figure that is a measurement (a count
-under a stated threshold, or the digest total) or names the cap it is reporting, and no engine's
-capped list can be read as a count.
+under a stated threshold, or the digest total) or names the cap it is reporting, no engine's capped
+list can be read as a count, and a source that could not be read is ABSENT from the projection
+rather than present as a zero.
 
 ### B78. The delta a failed statement records is unambiguous only because one constant says so
 
-Left open by B12's close. A failed execution now records its own span, computed as
+Left open by #512. A failed execution now records its own span, computed as
 `tracker.usage(runId).totalElapsedMs` before the call subtracted from after
 (`src/lib/agent/tools.ts`), and a two-execution harness test pins that it is a delta rather than the
 run's running total. What makes the delta correct is `maxConcurrentExecutions: 1`
@@ -2672,7 +2704,7 @@ sentence names the configuration it belongs to.
 
 ### B80. The engine refusal renders the same paragraph twice, in two different registers
 
-Measured 2026-08-27 in Chrome, closing B38. Starting an agent-mode run on the bundled LibreDB sample
+Measured 2026-08-27 in Chrome, closing the engine refusal in #512. Starting an agent-mode run on the bundled LibreDB sample
 returns 400 and the rail renders `body.error` in the `agent-error` line - the posture's full body,
 about 350 characters. The amber pre-start card two elements above is showing the identical paragraph,
 because both read the same posture. So the operator is told the same four sentences twice, once as a

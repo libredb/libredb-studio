@@ -1056,7 +1056,7 @@ describe("MySQLProvider", () => {
       const health = await provider.getHealth();
       expect(health.slowQueries).toEqual([]);
       expect(health.activeConnections).toBe(5);
-      expect(health.activeSessions.length).toBe(2);
+      expect(health.activeSessions).toHaveLength(2);
 
       // The reason is not lost to the operator, because the panel path has a channel for
       // it: `getSlowQueries()` rejects rather than swallowing, `getMonitoringData()`
