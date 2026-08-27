@@ -132,6 +132,25 @@ export interface AgentModelProfile {
    */
   readonly suppressPlanReasoning?: boolean;
   /**
+   * Whether this model's AGENT turns ask the endpoint for no reasoning at all.
+   *
+   * The same remedy as the field above, on the surfaces it deliberately does not reach, and a
+   * separate switch rather than a widening of it: a model measured needing quiet on plan was not
+   * measured needing it while holding tools, and reading one field for both would move cells
+   * nobody re-measured. `qwen3.5:4b` carries the plan one and must not acquire this by
+   * association.
+   *
+   * Measured on `gemma4:12b`, whose investigate cell read 5/5 at 9 seconds and, on a later
+   * serving engine, 1/5: four losses spending the whole turn without invoking a single tool
+   * before the clock ended them, against passing runs that still finish in 9. Bimodal — it
+   * either answers at once or thinks until the wall — which is the shape this addresses and
+   * `turnTimeoutMs` does not: a turn spent thinking finds the new wall too.
+   *
+   * Reaches the OPENAI-COMPATIBLE adapter only, exactly as its sibling does, and is silently a
+   * no-op on `gemini`.
+   */
+  readonly suppressAgentReasoning?: boolean;
+  /**
    * How many times a report may be held to ask for the answer that belongs beside it.
    *
    * One is enough for a model that forgot. One evaluated model did not forget: held once
@@ -254,6 +273,14 @@ export const DEFAULT_RETRY_UNREAD_STOP = false;
  * won, so the switch stays per-model and per-mode.
  */
 export const DEFAULT_SUPPRESS_PLAN_REASONING = false;
+
+/**
+ * Off, for the same reason and with the same blast radius as its sibling above.
+ *
+ * Separate from it rather than one field read twice: a model measured needing quiet on plan was
+ * not measured needing it while holding tools, and the two populations are not the same one.
+ */
+export const DEFAULT_SUPPRESS_AGENT_REASONING = false;
 
 /**
  * One, which is what every locked answer-presenting cell was measured against.

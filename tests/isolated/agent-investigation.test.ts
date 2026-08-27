@@ -5107,3 +5107,69 @@ describe("a model that thinks instead of answering is told not to", () => {
     },
   );
 });
+
+describe("a model that thinks instead of CALLING is told not to, on its agent turns too", () => {
+  /*
+    `gemma4:12b` is the measured case, and it is a different one from the plan-only setting
+    above. Its investigate cell read 5/5 at 9 seconds; on a later serving engine it reads 1/5,
+    and four of the five losses spend the WHOLE turn without invoking a single tool before the
+    clock ends them — 90 seconds, empty ledger, `no-report`. The passing runs still finish in 9.
+    Bimodal: it either answers at once or thinks until the wall.
+
+    That is the same illness `suppressPlanReasoning` was measured on and the same remedy, on a
+    surface that setting deliberately does not reach. So it is a SECOND switch rather than a
+    widening of the first: a model measured needing quiet on plan was not measured needing it
+    while holding tools, and reading one field for both would move cells nobody re-measured.
+
+    Off by default, like its sibling, and for the reason its sibling records: a drive-wide change
+    here is how this repository has twice handed back cells it had already won.
+  */
+  test.each(["native", "prompted"] as const)(
+    "the field reaches an agent turn of a model measured needing it, on the %s protocol",
+    async (protocol) => {
+      // Both protocols, because a prompted agent turn is handed no tools and would otherwise be
+      // indistinguishable from a planning turn at the gate.
+      const b = boot(freshDataDir());
+      const run = await startRun(b, "agent", undefined, undefined, protocol);
+      const script = scriptedModel(answersProse("nothing to add"));
+
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch, "https://api.openai.com/v1", "gemma4:12b"),
+        resources: b.resources,
+      });
+
+      expect(script.turns[0]?.body?.reasoning_effort).toBe(PLAN_NO_REASONING_EFFORT);
+    },
+  );
+
+  test("a model measured needing quiet only on PLAN keeps its agent turns thinking", async () => {
+    // The two switches are separate, and this is the test that says so: `qwen3.5:4b` carries the
+    // plan one and must not acquire the agent one by association.
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent");
+    const script = scriptedModel(answersProse("nothing to add"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, "https://api.openai.com/v1", "qwen3.5:4b"),
+      resources: b.resources,
+    });
+
+    expect(script.turns[0]?.body?.reasoning_effort).toBeUndefined();
+  });
+
+  test("a model nobody measured is left thinking on both", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "agent");
+    const script = scriptedModel(answersProse("nothing to add"));
+
+    await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, "https://api.openai.com/v1", "gemma4:26b"),
+      resources: b.resources,
+    });
+
+    expect(script.turns[0]?.body?.reasoning_effort).toBeUndefined();
+  });
+});

@@ -91,6 +91,13 @@ const settingsShape = {
   retryEmptyTurn: z.boolean(),
   retryUnreadStop: z.boolean(),
   suppressPlanReasoning: z.boolean(),
+  /**
+   * Absent means off, which is what every entry written before this switch existed was measured
+   * under — the field did not exist, so those runs had reasoning on. Optional rather than
+   * required for that reason: making it required would put a `false` in fifteen entries to say
+   * what their absence already says, and none of those measurements would change.
+   */
+  suppressAgentReasoning: z.boolean().optional(),
   refusalExamples: z.boolean(),
   /** Absent means the product's own limit, which the environment can still move. */
   turnTimeoutMs: z.int().min(1_000).max(179_999).optional(),
@@ -144,6 +151,7 @@ const measuredAgainstSchema = z.strictObject({
     retryEmptyTurn: z.boolean(),
     retryUnreadStop: z.boolean(),
     suppressPlanReasoning: z.boolean(),
+    suppressAgentReasoning: z.boolean().optional(),
     refusalExamples: z.boolean(),
   }),
 });

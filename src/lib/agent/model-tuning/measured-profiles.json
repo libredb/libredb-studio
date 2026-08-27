@@ -45,6 +45,38 @@
       }
     },
     {
+      "id": "gemma4:12b",
+      "measured": "6/6 locked, 30/30. Investigate 4s, optimize 24s, assess 21s, operate 14s, analyze 11s, plan 2s (medians of the passing runs). It arrived at 2/6 and 15/30 and the settings did not merely close the four open cells - they made every cell faster, several of them by most of their length: analyze 102s to 11s, assess 118s to 21s, operate 75s to 14s, investigate 9s to 4s. suppressAgentReasoning is what did it, and nothing else reached the illness: on a later serving engine its investigate cell read 1/5 with four losses spending the whole turn without invoking a single tool, and turnTimeoutMs at 150000 read 1/5 again with the losses simply longer - a turn spent thinking finds the new wall too. Assess read 4/5 on the first pass, its one loss a model-timeout at 162s against a median of 18s, and 5/5 on a second read of the same cell at the same settings. The tool count was checked before blaming it and does not separate the two: the losing run called eleven and so did two of the passing ones.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": true,
+        "refusalExamples": false,
+        "turnTimeoutMs": 150000,
+        "suppressAgentReasoning": true
+      },
+      "rationale": {
+        "suppressAgentReasoning": [
+          "Its investigate cell read 5/5 at 9s on one serving engine and 1/5 on the next, with four losses spending the whole turn without invoking a single tool before the clock ended them, against passing runs that still finish in 9. Bimodal: it answers at once or thinks until the wall.",
+          "turnTimeoutMs does not reach this shape - a turn spent thinking finds the new wall too, which is what the same cell measured at 150000 showed: 1/5 again, the losses simply longer."
+        ],
+        "suppressPlanReasoning": [
+          "Its plan cell was 0/5 with the same signature and reads 5/5 at 2s with reasoning off."
+        ],
+        "turnTimeoutMs": [
+          "Assess and operate lost to model-timeout with tools called and work done, which is the clock rather than the thinking."
+        ]
+      }
+    },
+    {
       "id": "gemma4:26b",
       "measured": "database-assessment, fifteen runs across three configurations: 4/5 at the defaults, 3/5 with an unreported-call ceiling of 9 (never fired, every run made 8 calls), 2/5 with two report reminders (calls rose from 8 to 11 and two runs hit the deadline). The losing runs gather evidence and then produce a turn with neither a call nor a report. The second reminder does reach the model and it goes back to reading rather than filing, so the cause is not a forgotten call or a shortage of turns. Call count does not separate winners from losers either: a run that reported in 26 seconds made 11 calls, as many as one that reported nothing. Its other five surfaces lock 5/5 at these defaults. Measured again at 4/5 once the stopping turn became readable: the losing run profiled nine tables, ran two queries, then returned an EMPTY completion — no call, no text — at eleven calls, one under the general ceiling. Its ceiling is 10 on that reading.",
       "settings": {

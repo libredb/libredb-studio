@@ -43,6 +43,7 @@ import {
   DEFAULT_PRESENT_REMINDER_LIMIT,
   DEFAULT_RETRY_EMPTY_TURN,
   DEFAULT_RETRY_UNREAD_STOP,
+  DEFAULT_SUPPRESS_AGENT_REASONING,
   DEFAULT_SUPPRESS_PLAN_REASONING,
   DEFAULT_SAMPLING,
   DEFAULT_UNREPORTED_CALL_CEILING,
@@ -136,6 +137,13 @@ export function retriesUnreadStop(modelId: string): boolean {
  */
 export function suppressesPlanReasoning(modelId: string): boolean {
   return resolve(modelId, "suppressPlanReasoning") ?? DEFAULT_SUPPRESS_PLAN_REASONING;
+}
+
+/**
+ * Whether this model's AGENT turns ask for no reasoning; see the field's own note in `profile.ts`.
+ */
+export function suppressesAgentReasoning(modelId: string): boolean {
+  return resolve(modelId, "suppressAgentReasoning") ?? DEFAULT_SUPPRESS_AGENT_REASONING;
 }
 
 /**

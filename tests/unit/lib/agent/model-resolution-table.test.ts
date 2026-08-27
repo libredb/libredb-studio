@@ -31,6 +31,7 @@ import {
   retriesEmptyTurn,
   retriesUnreadStop,
   samplingFor,
+  suppressesAgentReasoning,
   suppressesPlanReasoning,
   turnTimeoutMsFor,
 } from "@/lib/agent/models";
@@ -59,6 +60,8 @@ interface ResolvedRow {
   readonly retriesUnreadStop?: boolean;
   /** Optional, and PLAN-only; see the field's own note in `profile.ts`. */
   readonly suppressesPlanReasoning?: boolean;
+  /** Optional, and AGENT-only; its sibling above does not imply it. */
+  readonly suppressesAgentReasoning?: boolean;
   readonly refusalExamples: boolean;
   readonly turnTimeoutMs: number | undefined;
   /** Only the surfaces that differ from `PINNED`; every other surface resolves to it. */
@@ -76,6 +79,20 @@ const RESOLVED: ResolvedRow[] = [
     retriesEmptyTurn: true,
     refusalExamples: false,
     turnTimeoutMs: undefined,
+  },
+  {
+    // The sixteenth entry and the fourth model closed on this branch. The only one carrying
+    // suppressAgentReasoning, which was written for it: nothing else reached its illness.
+    id: "gemma4:12b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    suppressesPlanReasoning: true,
+    suppressesAgentReasoning: true,
+    turnTimeoutMs: 150_000,
   },
   {
     id: "gemma4:26b",
@@ -277,6 +294,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
     expect(retriesEmptyTurn(row.id)).toBe(row.retriesEmptyTurn);
     expect(retriesUnreadStop(row.id)).toBe(row.retriesUnreadStop ?? false);
     expect(suppressesPlanReasoning(row.id)).toBe(row.suppressesPlanReasoning ?? false);
+    expect(suppressesAgentReasoning(row.id)).toBe(row.suppressesAgentReasoning ?? false);
     expect(offersRefusalExamples(row.id)).toBe(row.refusalExamples);
     expect(turnTimeoutMsFor(row.id)).toBe(row.turnTimeoutMs);
   });
@@ -293,7 +311,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
   test("the table covers every registered model, so a new one cannot arrive unpinned", () => {
     const pinned = new Set(RESOLVED.map((row) => row.id));
     for (const id of Object.keys(modelProfiles())) expect(pinned.has(id)).toBe(true);
-    expect(Object.keys(modelProfiles())).toHaveLength(15);
+    expect(Object.keys(modelProfiles())).toHaveLength(16);
   });
 });
 
@@ -356,6 +374,9 @@ describe("what each model records about the runs that earned its settings", () =
     // The fifteenth. Its record states the outlier as well as the result: assess read 4/5 once
     // and 5/5 on a second read of the same cell at the same setting.
     "qwen3.6:27b": "d0ebde3fdf25b9c56ab7bcad4adc3b54510a413285e51edcb46aec261e661157",
+    // The fourth closed here, and the one the new switch was written for. Its record states the
+    // refuted hypothesis too: the tool count does not separate its passing runs from its loss.
+    "gemma4:12b": "9a49a9323c21ffe507698ca2ca852cc1b59647a206e73c448afeea7f1a0a674b",
   };
 
   test("every model's record survives the move, character for character", () => {
