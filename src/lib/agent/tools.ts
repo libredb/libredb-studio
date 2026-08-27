@@ -2393,7 +2393,7 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
     // push a sentence wearing a row's clothes, and SQLite's list is two integrity rows).
     // No name fixes a figure with no referent: the `slow-queries` and `sessions` kinds
     // carry those facts with their rows visible, which is the only form in which they
-    // mean anything (`docs/BACKLOG.md` B77).
+    // mean anything (#513).
     fields: ["activeConnections", "databaseSize", "cacheHitRatio"],
     read: async (provider) => {
       const health = await provider.getHealth();
@@ -2434,7 +2434,7 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
  * request, and the reading is delivered cut. A `limit` at or above the ceiling is not
  * the model's own bound — the cut would sit where the budget's cut sits — so it refuses
  * with the rest. Reporting a ceiling-sized slice as `rowCount` would publish a cap the
- * model reads as a count, which is `docs/BACKLOG.md` B77's defect one reading over.
+ * model reads as a count, which is the defect #513 closed, one reading over.
  *
  * `limit` and `schema` are applied HERE, to the projected rows, and not merely passed
  * to the provider. That is not defensive duplication: only `getActiveSessions` and
@@ -2484,7 +2484,7 @@ async function runCuratedRead(
   // The ceiling REFUSES; the model's own limit CUTS. Slicing to the ceiling instead would
   // report the cap as `rowCount`, and the model's carrier for a reading is
   // `<label>, <rowCount> row(s)` with nothing in it saying rows were dropped — a cap read
-  // as a count, which is B77's defect one reading over. So an unnarrowed reading that
+  // as a count, which is that same defect one reading over (#513). So an unnarrowed reading that
   // overflows is refused the way the byte bound refuses below and the way the read path
   // refuses a row overflow (`postgres.ts`, `sqlite.ts`), while a reading the model asked to
   // cut is delivered cut, because ten rows asked for and ten delivered is a complete

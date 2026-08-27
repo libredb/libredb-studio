@@ -182,7 +182,7 @@ const DEFAULT_PROPS = {
  * The paragraph the route answers a refused engine start with, read from the same module
  * the rail's amber card reads.
  *
- * Built rather than quoted, because the point of B80 is that ONE paragraph reaches the
+ * Built rather than quoted, because the point of #513 is that ONE paragraph reaches the
  * panel twice: a hand-copied second literal here would keep passing after the posture
  * was reworded and stop being about the duplication at all. `tests/api/agent/runs.test.ts`
  * builds the same fixture the same way, which is what keeps the two suites from drifting.
@@ -662,7 +662,7 @@ describe("AgentRail", () => {
 
   /*
     The sentence the rail owns, and the only one of the four the rail writes for itself
-    (T7). It used to be asserted as a two-word `toContain` riding on the test above,
+    (#513). It used to be asserted as a two-word `toContain` riding on the test above,
     whose subject is `previousRunId` - so every rewording after the second word survived
     it, and the arm it selects shared one expression with the other three, which is why
     the coverage gate could not see the gap either.
@@ -702,7 +702,7 @@ describe("AgentRail", () => {
   });
 
   /*
-    The precedence, pinned in the only direction that can be wrong (T7): the rail's own
+    The precedence, pinned in the only direction that can be wrong (#513): the rail's own
     reason and one of the server's codes are both true of this render, and the rail's is
     the one that must be said.
 
@@ -5389,7 +5389,7 @@ describe("AgentRail", () => {
       Counted rather than queried by id, because the defect this suite keeps catching is
       never a testid: it is the same words rendered twice, and a reworded second copy
       would be the same defect. Shared by the strip's suite (L7) and the engine notice's
-      (B80), which found the identical shape in a different register.
+      (#513), which found the identical shape in a different register.
     */
     const occurrences = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
 
@@ -5758,7 +5758,7 @@ describe("AgentRail", () => {
       });
 
       /*
-        B80, measured in Chrome on 2026-08-27: a refused agent start on the bundled
+        #513, measured in Chrome on 2026-08-27: a refused agent start on the bundled
         LibreDB sample rendered the posture's whole 406-character paragraph in the red
         error line, while the amber card two elements above was showing the identical
         paragraph. The operator was told the same four sentences twice, once as a standing
@@ -5779,7 +5779,7 @@ describe("AgentRail", () => {
         because it is the `aria-describedby` target for the mode pill and may never be
         reachable only by clicking. So on an unsupported engine in agent mode the paragraph
         is in the DOM twice before any start is refused, once as that description and once
-        as the amber card's visible reading. B80 is about the THIRD copy, in the red line.
+        as the amber card's visible reading. #513 is about the THIRD copy, in the red line.
       */
       const panelOutsideSafetyClaim = (view: RenderResult): string => {
         const clone = view.container.cloneNode(true) as HTMLElement;

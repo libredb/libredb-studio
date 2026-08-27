@@ -1495,7 +1495,7 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
   });
 
   /**
-   * Since #512 (`docs/BACKLOG.md` B78 for what that left open). `executeAuditedOperation`
+   * Since #512, and #513 closed what that left open. `executeAuditedOperation`
    * charges `maxTotalRunMs` from a failed execution exactly as it does from a completed
    * one, and the refusal used to carry no duration at all — so a meter folded from the
    * ledger sat BELOW the bound the server was already enforcing on the run, which is the
@@ -1562,7 +1562,7 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
   });
 
   /**
-   * The premise `chargedBeforeMs` rests on, made observable (`docs/BACKLOG.md` B78).
+   * The premise `chargedBeforeMs` rests on, made observable (#513).
    *
    * `refusal.elapsedMs` is a delta over the tracker's RUNNING TOTAL — read in `tools.ts`
    * before the call and subtracted after it — so it is this execution's own span only
@@ -3305,7 +3305,7 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     // every provider that fills them (5 slow-query rows, 10 sessions), so a length was
     // the limit rather than a count on any server with that many digests. A default
     // empty-list fixture cannot tell "the field is gone" from "the field is 0", which
-    // is exactly the reading this projection must no longer offer (B77).
+    // is exactly the reading this projection must no longer offer (#513).
     const h = curatedHarness(
       {},
       {
@@ -3566,7 +3566,7 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
 
   test("a reading whose rows exceed the run's ROW budget is refused, not cut to the cap", async () => {
     // The ceiling is not a request. Answering 200 of 500 rows and reporting
-    // `rowCount: 200` hands the model a cap it reads as a count — B77's defect one
+    // `rowCount: 200` hands the model a cap it reads as a count — the defect #513 closed, one
     // reading over, since the carrier the model sees is `result, N row(s)` and nothing
     // in it says rows were dropped. The four optionless curated methods are where this
     // bites: `getStorageStats` ignores the limit the projection passes it, so the

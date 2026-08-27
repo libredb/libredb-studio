@@ -756,7 +756,7 @@ describe("AgentRunService — a tool execution is in the ledger before its effec
   });
 
   /**
-   * The write half of the duration (`docs/BACKLOG.md` B78). `elapsedMs` is OPTIONAL on
+   * The write half of the duration (#513). `elapsedMs` is OPTIONAL on
    * both refusal variants that carry it (`types.ts`), and it crosses this layer as a
    * whole-object pass-through: `settlementEvent` puts `settlement.refusal` on the event
    * and the store's `append` JSON.stringifies the entry, so a projection that dropped

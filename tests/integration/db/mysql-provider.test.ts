@@ -1013,7 +1013,7 @@ describe("MySQLProvider", () => {
       // section below and the reason recorded next to the read in `mysql.ts`. A sentence
       // wearing a row's clothes is a fabricated measurement whatever counts it; when this
       // was written the agent's curated health reading also forwarded the list's length,
-      // and that projection has since been removed (B77).
+      // and that projection has since been removed (#513).
       expect(health.slowQueries).toEqual([]);
       expect(Array.isArray(health.activeSessions)).toBe(true);
     });
@@ -1099,7 +1099,7 @@ describe("MySQLProvider", () => {
       // schema the list is five rows whatever their times are, so `health.slowQueries.length`
       // reports 5 forever. It saturates at the cap; it is not a count, and no threshold
       // makes a member of it "slow". The agent's curated health reading used to forward
-      // that length to the model and no longer projects any length at all (B77), which is
+      // that length to the model and no longer projects any length at all (#513), which is
       // why this stays pinned here: the cap is a property of the statement, not of the
       // consumer that happened to count it.
       expect(normalized).toContain("order by sum_timer_wait desc");

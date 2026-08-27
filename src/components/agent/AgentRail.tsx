@@ -359,7 +359,7 @@ const ENGINE_UNSUPPORTED_CODE: AgentStartRefusalCode = "engine-unsupported";
 
 /**
  * A refused start, said in the register an error line owes: what happened to the REQUEST,
- * and a pointer to the explanation the panel is already showing (B80).
+ * and a pointer to the explanation the panel is already showing (#513).
  *
  * It states no engine fact of its own on purpose. The card above is the one author of
  * that fact - it is `posture.ts`, verbatim - and a third phrasing beside it is the defect
@@ -399,7 +399,7 @@ type ThreadDeclineReason = NonNullable<AgentThreadContext["declined"]> | "connec
  * in the test file: `DECLINE_SENTENCES` is a `Record` over the union, so a member with no
  * entry is a TS2741 there whatever arm it is folded onto.
  *
- * The four arms were one nested ternary until T7 (SonarCloud `typescript:S3358`), and
+ * The four arms were one nested ternary until #513 (SonarCloud `typescript:S3358`), and
  * the cosmetic complaint was not the finding: a single covered line covered all four, so
  * the gate read 100% while the fourth sentence's only assertion was a two-word
  * `toContain` riding on a test about `previousRunId`. A `default` clause would take the
@@ -1124,7 +1124,7 @@ export function AgentRail({
   /*
     Computed here rather than inside the JSX guard below, and that is a coverage
     decision as much as a readability one: under the guard, `threadDeclineNotice`'s
-    `return null` line would be unreachable and would sit uncovered forever (T7).
+    `return null` line would be unreachable and would sit uncovered forever (#513).
   */
   const declineNotice = threadDeclineNotice({ connectionDropped, declined: threadDeclined });
 
@@ -1855,7 +1855,7 @@ export function AgentRail({
 
   /*
     Whether the amber card above is ALREADY saying what the refused start would say, which
-    is the only condition under which the error line may say less (B80).
+    is the only condition under which the error line may say less (#513).
 
     Both halves are load-bearing. The code is what makes this the engine's refusal rather
     than one of the route's other `400`s - the mode validation, an unresolvable connection,

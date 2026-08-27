@@ -111,7 +111,7 @@ export interface AgentRunFollower {
    * Only for a refused START, and only for a code this build has words for. It exists
    * because a surface may already be explaining the same fact for itself — the rail's
    * amber engine card is, verbatim — and a second copy of that explanation in an error
-   * line is not an error message (B80). A reader that ignores this field renders `error`
+   * line is not an error message (#513). A reader that ignores this field renders `error`
    * and is correct, which is why it is a code beside the sentence rather than a
    * replacement for it.
    */
@@ -403,7 +403,7 @@ export function useAgentRun(): AgentRunFollower {
           }
           // A code the server named, when this build knows it. It rides beside the
           // sentence rather than replacing it: a surface that has no use for the code
-          // renders `error` and is right (B80).
+          // renders `error` and is right (#513).
           if (isStartRefusalCode(body.refused)) throw new StartRefusedError(said, body.refused);
           throw new Error(said);
         }

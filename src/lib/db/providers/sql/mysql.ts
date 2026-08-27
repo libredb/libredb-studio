@@ -339,7 +339,7 @@ const SLOW_QUERIES_BODY_SQL = `
  * permanently, and about statements no threshold has called slow. The agent's curated
  * health reading used to forward that length to the model as `slowQueryCount`; it no
  * longer projects any length at all, because a figure whose value is a cap has no
- * referent (`src/lib/agent/tools.ts`, and B77 in `docs/BACKLOG.md`). The cap is still
+ * referent (`src/lib/agent/tools.ts`, and #513). The cap is still
  * written here: nothing downstream can tell a cap from a count, so the only place the
  * distinction can be recorded is where the limit is applied.
  *
@@ -383,7 +383,7 @@ function toSlowQueryStats(r: RowDataPacket): SlowQueryStats {
  * `POST /api/db/health` - the 60s connection pulse in `src/hooks/use-connection-manager.ts` -
  * reads `res.ok` and discards the body. The agent's curated health reading
  * (`src/lib/agent/tools.ts`) was the last live consumer and read only the list's LENGTH -
- * never `query`, never `avgTime` - and it no longer reads the list at all (B77). So this
+ * never `query`, never `avgTime` - and it no longer reads the list at all (#513). So this
  * shape now has no consumer in the app beyond the serialised route body.
  *
  * So `toFixed(2)` plus `"ms"` is here for one reason: it is the string the statement this
@@ -988,7 +988,7 @@ export class MySQLProvider extends SQLBaseProvider {
       // took, and it was COUNTED - the agent's curated health reading then forwarded
       // `health.slowQueries.length` as `slowQueryCount` (src/lib/agent/tools.ts), so the
       // invented row told the model "1 slow query" about every MySQL-family server. That
-      // projection carries no length any more (B77), so a row invented here would now be
+      // projection carries no length any more (#513), so a row invented here would now be
       // silent rather than counted - a reason to keep it out, not a reason it could return.
       //
       // Why an empty list rather than a marker that says "unavailable": the capability

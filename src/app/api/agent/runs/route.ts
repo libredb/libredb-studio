@@ -106,7 +106,7 @@ const WORKFLOW_READINGS: ReadonlySet<string> = new Set<AgentRunWorkflowReading>(
 
 /**
  * A refusal a CLIENT has to be able to tell apart from the route's other `400`s, as a
- * code rather than as prose (B80).
+ * code rather than as prose (#513).
  *
  * One member, and adding a second is a decision rather than a convenience: every other
  * refusal here is a rule the caller can read off the message, and the rail renders the
@@ -299,7 +299,7 @@ export async function POST(req: Request) {
           handover: false,
         }).body,
         // The only refusal here that a client can already be explaining for itself, so
-        // the only one that carries a code (B80).
+        // the only one that carries a code (#513).
         "engine-unsupported",
       );
     }

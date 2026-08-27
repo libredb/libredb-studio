@@ -1052,7 +1052,7 @@ could arrive twice.
 > the shared error mapper. The engine refusal is different again because a client may already be
 > showing the same paragraph itself: the studio's agent rail stands an amber card carrying it, so it
 > needs to know WHICH refusal this is in order to answer with the consequence and a pointer instead
-> of a second copy (B80). A client that ignores the field and renders `error` is correct; a client
+> of a second copy (#513). A client that ignores the field and renders `error` is correct; a client
 > that discriminates on the `400` alone is not, and would relabel a malformed `mode`, or an
 > `autoExecute` asked for on a workflow that presents no answer, as the engine's refusal.
 
