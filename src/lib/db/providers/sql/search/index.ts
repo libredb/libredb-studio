@@ -354,23 +354,23 @@ function toQueryResult(result: SearchQueryResult, executionTime: number): QueryR
  * as JSON null while the listing still names the index). `TableStats.rowCount`,
  * `totalSize` and `totalSizeBytes` are required numbers, so for those three a closed
  * index has nowhere to read but zero. `tableSize` and `tableSizeBytes` are OPTIONAL,
- * and this mapper fills them with the same zero anyway - a fabricated measurement
- * rather than a forced one, which turns on `StorageTab`'s `tableSizeKnown` and draws
- * a `0 B` Data figure for an index that reported nothing (docs/BACKLOG.md D50). The
- * schema tree is the surface that keeps the distinction today: its `rowCount` and
- * `size` are optional, so it OMITS them instead.
+ * so they are OMITTED instead: a 0 there would be a fabricated measurement rather
+ * than a forced one. The cost is deliberate and cluster-wide - `StorageTab` gates its
+ * Data figure on `tables.every((t) => t.tableSizeBytes !== undefined)`, so ONE closed
+ * index takes that figure to N/A for every open index beside it - and that is what the
+ * optional field prescribes, because a partial sum reads as a measurement. The schema
+ * tree makes the same distinction with its own optional `rowCount` and `size`.
  */
 function toTableStats(index: SearchIndexInfo): TableStats {
-  const sizeBytes = index.sizeBytes ?? 0;
+  const { sizeBytes } = index;
 
   return {
     schemaName: SEARCH_SCHEMA_NAME,
     tableName: index.name,
     rowCount: index.docCount ?? 0,
-    tableSize: formatBytes(sizeBytes),
-    tableSizeBytes: sizeBytes,
-    totalSize: formatBytes(sizeBytes),
-    totalSizeBytes: sizeBytes,
+    ...(sizeBytes === null ? {} : { tableSize: formatBytes(sizeBytes), tableSizeBytes: sizeBytes }),
+    totalSize: formatBytes(sizeBytes ?? 0),
+    totalSizeBytes: sizeBytes ?? 0,
   };
 }
 

@@ -30,6 +30,17 @@ export function useConnectionManager(storageReady = false) {
    */
   const [servedSeeds, setServedSeeds] = useState<ServedSeeds>(NO_SERVED_SEEDS);
   const [schema, setSchema] = useState<TableSchema[]>([]);
+  /**
+   * Why the object browser is empty, in the engine's own words, or null when it is
+   * empty because the database really has nothing in it.
+   *
+   * Kept because a failed read used to leave the PREVIOUS connection's tables on
+   * screen under the new connection's name, row counts and all (D31, measured in
+   * Chrome across two connections). Clearing the tree alone would fix the lie and
+   * leave a second one: an empty explorer reads as "no tables here", which is not
+   * what happened.
+   */
+  const [schemaError, setSchemaError] = useState<string | null>(null);
   const [isLoadingSchema, setIsLoadingSchema] = useState(false);
   const [pulseState, setConnectionPulse] = useState<"healthy" | "degraded" | "error" | null>(null);
 
@@ -58,8 +69,13 @@ export function useConnectionManager(storageReady = false) {
         }
         const list: TableSchema[] = await response.json();
         setSchema(list);
+        setSchemaError(null);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        // Nothing read for THIS connection, so nothing may stay on screen as its
+        // tables — the previous connection's list is not evidence about this one.
+        setSchema([]);
+        setSchemaError(errorMessage);
         toast({ title: "Schema Error", description: errorMessage, variant: "destructive" });
         return; // finally still clears the loading flag; skip relations
       } finally {
@@ -304,6 +320,7 @@ export function useConnectionManager(storageReady = false) {
     setActiveConnection,
     schema,
     setSchema,
+    schemaError,
     isLoadingSchema,
     // Derived rather than reset in the pulse effect: with no active connection
     // there is nothing to report on, and the render already knows that.

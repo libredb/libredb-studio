@@ -376,9 +376,16 @@ For the state of the data itself — where it is incomplete, inconsistent or sur
 reading before you point it at a table of personal data:
 
 **A profile records counts, never values.** Row counts, present counts, distinct counts, and how
-many values match a shape — computed inside the database with `count(CASE WHEN … LIKE …)`, so no
+many values match a shape — computed inside the database with `count(CASE WHEN <predicate> …)`, so no
 matching value leaves it. There is deliberately no `min`/`max`, because on a text column those
-return real values (`src/lib/agent/table-profile.ts:1-27`). The findings — `high_null`, `constant`,
+return real values (`src/lib/agent/table-profile.ts:1-30`).
+
+Two shapes are tested at `pattern` depth, and each is the **dialect's own** predicate rather than one
+shared operator: an email address (`LIKE '%_@_%._%'`, spelled the same on both engines) and a run of
+nine or more digits — a phone number, a national id, a card — which PostgreSQL spells `~ '[0-9]{9,}'`
+and SQLite spells `GLOB '*[0-9]…*'`. Nine is the shortest of the identifiers worth suspecting, so a
+shorter bound would match years, prices and quantities. `LIKE` cannot express a digit run at all: `_`
+in it means "any character". The findings — `high_null`, `constant`,
 `low_cardinality`, `suspected_pii`, `fk_unindexed` — are the server's own mechanical predicates over
 those counts, with stated thresholds; the model may interpret them and cannot invent one.
 
@@ -806,8 +813,9 @@ gauges it is about:
 - **Every ceiling is per drive.** A run resumed after a restart starts each of them again, so these
   totals can read past a single drive's ceiling.
 - **Every figure is a floor, never a ceiling.** The ledger records less than the server charges: the
-  schema capture's catalog reads are not itemized, and a completed read reports the engine's own
-  elapsed time rather than the span the budget was charged (`docs/BACKLOG.md` B13). A statement that
+  schema capture now contributes the statements and the span it was charged, but a call that failed
+  while acquiring its provider settles no step and so cannot be seen, and a completed read reports the
+  engine's own elapsed time rather than the span the budget was charged. A statement that
   failed at the database DOES record its span since #512; a refusal written before that build
   carries none, and those are counted rather than summed as zero.
 - **On SQLite a statement over its timeout is refused once it returns, not interrupted while it
@@ -848,9 +856,9 @@ start the run and are reported by the drive as `model-unauthorized`, `model-rate
 
 Ollama is a first-class path: `LLM_PROVIDER=ollama` with `LLM_API_URL=http://localhost:11434/v1`
 reaches the OpenAI-compatible endpoint through the same adapter as the `openai` and `custom` kinds
-(`src/lib/agent/provider-registry.ts:121-132,154-159`), and no key is required — the adapter sends a
+(`src/lib/agent/provider-registry.ts:123-134,156-161`), and no key is required — the adapter sends a
 placeholder rather than leaving `apiKey` undefined, so an ambient `OPENAI_API_KEY` cannot leak in
-(`provider-registry.ts:86,107,110`).
+(`provider-registry.ts:88,109,112`).
 
 **The model decides whether a local deployment can run the agent — not the endpoint.** This is
 worth stating precisely, because it is the opposite of what the mechanism suggests. The capability

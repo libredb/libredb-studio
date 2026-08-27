@@ -1,7 +1,11 @@
 import { describe, test, expect } from "bun:test";
-import { getDBConfig, getDBIcon, getDBColor, isFileBased } from "@/lib/db-ui-config";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import { getDBConfig, getDBIcon, getDBColor, isFileBased, takesConnectionField } from "@/lib/db-ui-config";
 import { SHOWCASE_DATABASE_ORDER, SHOWCASE_RANK, listShowcaseDatabases } from "@/lib/db-showcase";
 import type { DatabaseType } from "@/lib/types";
+
+const ROOT = path.resolve(import.meta.dir, "../../..");
 
 const ALL_TYPES: DatabaseType[] = [
   "postgres",
@@ -214,6 +218,108 @@ describe("db-ui-config", () => {
       expect(isFileBased("couchbase")).toBe(false);
       expect(isFileBased("clickhouse")).toBe(false);
       expect(isFileBased("druid")).toBe(false);
+    });
+  });
+
+  /*
+    `connectionFields` decides what a save WRITES: `buildConnection` in
+    `src/hooks/use-connection-form.ts` spreads `host`/`port`/`user`/`password`/`database`
+    only when this list names them. So an engine whose provider authenticates with a field
+    the list omits discards the value between the box the user typed it into and the driver
+    that needed it, and nothing fails - the connection simply acts as a principal the user
+    did not choose.
+
+    That is not hypothetical. #502 taught `RedisProvider.connect()` to pass `config.user` to
+    ioredis as `username`, measured on both arms against `redis:latest` (without it
+    `ACL WHOAMI` answered `default` and a restricted principal reported full health). The
+    repair was correct and unreachable: `redis` did not name `user` here, so the form threw
+    the value away before the provider could ever see it.
+
+    These tests derive the answer rather than restating the table: the factory says which
+    module implements each type-id, and the module (with its directory siblings, for the
+    providers split across files) says whether it ever reads the field. Comments and
+    docblocks are stripped first, so a docblock that merely DISCUSSES `config.user` does not
+    count as a read.
+  */
+  describe("the write list names every addressing field its provider reads", () => {
+    const FACTORY = readFileSync(path.join(ROOT, "src/lib/db/factory.ts"), "utf8");
+
+    /** `case "redis": ... await import("./providers/keyvalue/redis")` */
+    const moduleForType = (type: DatabaseType): string => {
+      const pattern = new RegExp(`case "${type}":[\\s\\S]{0,400}?await import\\("\\./providers/([^"]+)"\\)`);
+      const match = pattern.exec(FACTORY);
+      if (match === null) throw new Error(`factory.ts declares no module for ${type}`);
+      return match[1].replace(/\/index$/, "");
+    };
+
+    const providerSource = (type: DatabaseType): string => {
+      const base = path.join(ROOT, "src/lib/db/providers", moduleForType(type));
+      const files = existsSync(`${base}.ts`)
+        ? [`${base}.ts`]
+        : readdirSync(base, { recursive: true, encoding: "utf8" })
+            .map((entry) => path.join(base, entry))
+            .filter((entry) => entry.endsWith(".ts"));
+      const source = files.map((file) => readFileSync(file, "utf8")).join("\n");
+      return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    };
+
+    test("the factory names a readable module for every type", () => {
+      // Every assertion below is vacuously true if the source comes back empty.
+      for (const type of ALL_TYPES) expect(providerSource(type).length).toBeGreaterThan(200);
+    });
+
+    test.each(["user", "database"] as const)("a provider that reads config.%s is given it", (field) => {
+      const diverging = ALL_TYPES.filter(
+        (type) =>
+          new RegExp(`config\\.${field}\\b`).test(providerSource(type)) !==
+          getDBConfig(type).connectionFields.includes(field),
+      );
+      expect(diverging).toEqual([]);
+    });
+
+    /*
+      The predicate the modal reads. It has to be exercised here rather than through
+      `ConnectionModal`, because both component test files mock `@/lib/db-ui-config` - so a
+      test driving the modal never runs this function at all, and the coverage gate is what
+      said so.
+    */
+    describe("takesConnectionField", () => {
+      test("answers for the engines whose field set is not the networked default", () => {
+        // libSQL: a token, not a user name; and the database IS the host.
+        expect(takesConnectionField("libsql", "user")).toBe(false);
+        expect(takesConnectionField("libsql", "database")).toBe(false);
+        expect(takesConnectionField("libsql", "host")).toBe(true);
+        expect(takesConnectionField("libsql", "password")).toBe(true);
+
+        // The three HTTP-Basic engines take a credential but name their datasource or
+        // index in the statement.
+        for (const type of ["druid", "elasticsearch", "opensearch"] as const) {
+          expect(takesConnectionField(type, "user")).toBe(true);
+          expect(takesConnectionField(type, "database")).toBe(false);
+        }
+
+        // Redis takes both, which is the fix this round made.
+        expect(takesConnectionField("redis", "user")).toBe(true);
+        expect(takesConnectionField("redis", "database")).toBe(true);
+      });
+
+      test("agrees with the list it reads, for every type and every field", () => {
+        // Derived rather than enumerated: the predicate must not develop an opinion of its
+        // own about any engine.
+        const FIELDS = ["host", "port", "user", "password", "database", "connectionString"] as const;
+        for (const type of ALL_TYPES) {
+          for (const field of FIELDS) {
+            expect(takesConnectionField(type, field)).toBe(getDBConfig(type).connectionFields.includes(field));
+          }
+        }
+      });
+    });
+
+    test("redis names the ACL user, because its provider authenticates with it", () => {
+      // Pinned by name as well as by the rule above: this is the one the rule was written
+      // for, and a rule can be weakened by a future edit without anyone noticing which
+      // case it existed to catch.
+      expect(getDBConfig("redis").connectionFields).toContain("user");
     });
   });
 });

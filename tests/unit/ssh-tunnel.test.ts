@@ -3,6 +3,14 @@ import { mock, describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { EventEmitter } from "events";
 
 // --- Mock ssh2 Client ---
+// CI rests on this mock's FIDELITY to ssh2, and nothing here measures it. The handshake
+// ordering, the `hostVerifier` contract and the refusal message below were derived by
+// reading ssh2's own source - `node_modules/ssh2/lib/protocol/kex.js` and
+// `lib/client.js` - so an ssh2 upgrade that changes any of them leaves this suite green
+// while the product regresses. The live arm exists but does not stand: the three arms
+// (no pin, correct pin, wrong pin) were driven once by hand on 2026-08-26 against a real
+// `openssh-server` on port 2226, recorded in `docs/providers/README.md`; there is no sshd
+// container fixture, so that is a one-time observation rather than a property the suite holds.
 class MockSSHClient extends EventEmitter {
   connectOptions: Record<string, unknown> | null = null;
   forwardOutCalls: Array<{ bindAddr: string; bindPort: number; host: string; port: number }> = [];

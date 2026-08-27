@@ -17,6 +17,28 @@ const DEFAULT_PORTS: Record<string, string> = {
   couchbase: "8091",
 };
 
+// The engines whose addressing fields diverge from the networked default. Spelled out
+// rather than collapsed to "everything but the file-based ones": `connectionFields` is what
+// `buildConnection` writes from, so a mock that hands every type the full set cannot fail
+// when the real list is wrong - which is how Redis came to have its ACL user discarded by a
+// list that omitted `user` while the provider authenticated with it. The real table is the
+// authority; tests/unit/lib/db-ui-config.test.ts derives it from the provider sources.
+const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
+  sqlite: ["database"],
+  libredb: ["database"],
+  duckdb: ["database"],
+  libsql: ["host", "port", "password", "connectionString"],
+  // Named explicitly even though it matches the default: it is the one this table exists
+  // for, and `user` being present here is a statement about the real config, not a
+  // convenience.
+  redis: ["host", "port", "user", "password", "database"],
+  druid: ["host", "port", "user", "password"],
+  elasticsearch: ["host", "port", "user", "password"],
+  opensearch: ["host", "port", "user", "password"],
+};
+const mockFields = (type: string): string[] =>
+  MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
+
 mock.module("@/lib/db-ui-config", () => ({
   getDBConfig: (type: string) => ({
     label: type.charAt(0).toUpperCase() + type.slice(1),
@@ -29,9 +51,9 @@ mock.module("@/lib/db-ui-config", () => ({
     // else. A mock that gave every type the full network field set would hide what
     // the editor does to a SQLite or LibreDB connection, which is exactly where it
     // went wrong.
-    connectionFields:
-      type === "sqlite" || type === "libredb" ? ["database"] : ["host", "port", "user", "password", "database"],
+    connectionFields: mockFields(type),
   }),
+  takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
 }));
 
 import { useConnectionForm } from "@/hooks/use-connection-form";
@@ -1772,5 +1794,72 @@ describe("useConnectionForm", () => {
     expect(defaultProps.onConnect).toHaveBeenCalledTimes(1);
     // Form is reset after a successful connect
     expect(result.current.name).toBe("");
+  });
+
+  // ── an addressing field is written when, and only when, the engine takes it ───
+
+  test("a Redis ACL username reaches the saved connection", async () => {
+    // `RedisProvider.connect()` passes `config.user` to ioredis as `username`, and its
+    // docblock records the two-arm measurement behind it (#502): without it `ACL WHOAMI`
+    // answered `default`, so a restricted principal reported full health. That repair is
+    // only reachable if the write list names the field, and it did not - the value was
+    // discarded between the box the user typed it into and the driver that needed it.
+    //
+    // What this test pins is the MECHANISM: given a list that names `user`, the field
+    // survives the save. It cannot pin the list itself, because this file mocks
+    // `@/lib/db-ui-config` - that is what
+    // tests/unit/lib/db-ui-config.test.ts does, deriving each engine's fields from
+    // whether its provider source ever reads them.
+    mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+
+    const onConnect = mock(() => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect }));
+
+    act(() => {
+      result.current.setType("redis");
+      result.current.setUser("probe");
+      result.current.setPassword("probepw");
+    });
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    const saved = (onConnect.mock.calls as unknown[][])[0][0] as DatabaseConnection;
+    expect(saved.user).toBe("probe");
+    expect(saved.password).toBe("probepw");
+  });
+
+  test("a user name and database typed for libSQL are not saved, because it takes neither", async () => {
+    // The modal renders no box for either now, so this is the write half of the same
+    // rule: were a value to arrive anyway - a stale form state, a future edit to the
+    // modal - nothing carries it onto a libSQL connection. The engine authenticates with
+    // a token the server minted and is addressed entirely by URL.
+    mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+
+    const onConnect = mock(() => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect }));
+
+    act(() => {
+      result.current.setType("libsql");
+      result.current.setUser("ignored");
+      result.current.setDatabase("also-ignored");
+      result.current.setHost("db.turso.io");
+    });
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    const saved = (onConnect.mock.calls as unknown[][])[0][0] as DatabaseConnection;
+    expect(saved.user).toBeUndefined();
+    expect(saved.database).toBeUndefined();
+    // Non-vacuous: the connection WAS built, and the fields libSQL does take survived.
+    expect(saved.host).toBe("db.turso.io");
+    expect(saved.type).toBe("libsql");
   });
 });

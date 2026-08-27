@@ -189,6 +189,64 @@ describe("useConnectionManager", () => {
     expect(mockToastError).toHaveBeenCalledWith("Schema Error", { description: "Connection refused" });
   });
 
+  // A failing read must not leave the PREVIOUS connection's tables on screen (D31).
+  // The assertion above is vacuous on its own — `schema` starts empty — so this one
+  // loads a schema first and then fails the next read, which is the measured sequence.
+  test("a failed read clears the schema loaded for the previous connection", async () => {
+    mockGlobalFetch({
+      "/api/db/schema/list": { ok: true, json: makeSchema() },
+      "/api/db/schema/relations": { ok: false, status: 500, json: {} },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+    expect(result.current.schema.map((t) => t.name)).toEqual(["users", "orders"]);
+    expect(result.current.schemaError).toBeNull();
+
+    restoreGlobalFetch();
+    mockGlobalFetch({
+      "/api/db/schema/list": { ok: false, status: 500, json: { error: "'(' expected" } },
+    });
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ id: "conn-2", name: "Other DB" }));
+    });
+
+    expect(result.current.schema).toEqual([]);
+    // The engine's own words, so the empty tree can say why it is empty rather than
+    // reading as "this database has no tables".
+    expect(result.current.schemaError).toBe("'(' expected");
+  });
+
+  test("a read that succeeds after a failure drops the previous error", async () => {
+    mockGlobalFetch({
+      "/api/db/schema/list": { ok: false, status: 500, json: { error: "Prepare is not support in Databend" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+    expect(result.current.schemaError).toBe("Prepare is not support in Databend");
+
+    restoreGlobalFetch();
+    mockGlobalFetch({
+      "/api/db/schema/list": { ok: true, json: makeSchema() },
+      "/api/db/schema/relations": { ok: false, status: 500, json: {} },
+    });
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection({ id: "conn-2" }));
+    });
+
+    expect(result.current.schemaError).toBeNull();
+    expect(result.current.schema.map((t) => t.name)).toEqual(["users", "orders"]);
+  });
+
   // ── Two-phase schema loading (list + relations) ───────────────────────────
   // The schema fetch was split so a slow/failing FK+index query can never block
   // (or wipe) the table list. These tests lock in that contract.

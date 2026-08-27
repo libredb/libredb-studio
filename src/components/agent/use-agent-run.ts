@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { isAgentModelCapability } from "@/lib/agent/capability-labels";
 // Type-only, so nothing of the probe — or of the AI SDK it runs — reaches this bundle.
 import type { AgentModelCapability } from "@/lib/agent/capability-probe";
@@ -93,6 +93,16 @@ export interface AgentRunFollower {
    * inferred: the thread has one writer, and it is the route.
    */
   readonly thread: AgentThreadContext | null;
+  /**
+   * The conversation this browser was in when it last held one, and that nothing here is
+   * following now — the stored id, while `runId` is still null.
+   *
+   * It exists because a reload clears `runId`, so the next question is answered as a
+   * fresh one. The rail was honest about the RESULT — no thread, no strip — and silent
+   * about the TRANSITION, which is the half a user mid-conversation needs (#B69). Null
+   * whenever `thread` is set: the two never describe the same conversation.
+   */
+  readonly interrupted: AgentInterruptedThread | null;
   /** A start is in flight, or its ledger is still open. */
   readonly isBusy: boolean;
   /**
@@ -183,6 +193,115 @@ const ENGINE_UNSUPPORTED_CODE: AgentStartRefusalCode = "engine-unsupported";
  * which reaches for the hook rather than the rail for exactly that reason.
  */
 const isStartRefusalCode = (value: unknown): value is AgentStartRefusalCode => value === ENGINE_UNSUPPORTED_CODE;
+
+/**
+ * Where this browser remembers which conversation it was in.
+ *
+ * localStorage only, and per browser rather than per user: it is a resumption hint, not
+ * user data, so it must never reach the storage layer or a server — the rule
+ * `lib/community/star-prompt.ts` states for the same reason. Every access is wrapped, and
+ * every failure degrades to "nothing was interrupted", which is the behaviour before this
+ * existed: a rail that cannot say a conversation ended is strictly better than one that
+ * cannot open a run (#B69).
+ */
+const THREAD_STORAGE_KEY = "libredb_agent_thread";
+
+/** A conversation this browser was in and is no longer following. */
+export interface AgentInterruptedThread {
+  /** The conversation the server named, as this browser last saw it. */
+  readonly threadId: string;
+  /**
+   * How many questions it had asked by then: the steps the server reported before the
+   * last run, plus that run itself.
+   */
+  readonly steps: number;
+}
+
+/*
+  Held as an external store rather than read into state by a mount effect, which is the
+  same shape `use-line-numbers-preference.ts` uses and for the same reason: the value has
+  to be SSR-stable and only become the stored one at hydration. React provides
+  `useSyncExternalStore` for exactly that, and an effect that called `setState` would be a
+  cascading render the React Compiler rules refuse (#488).
+
+  localStorage's own `storage` event fires only in OTHER tabs, so the writer below is what
+  notifies this one. Deliberately NOT subscribed to `storage`: picking up another tab's
+  conversation would be new behaviour, and a tab is not the thing the notice is about.
+*/
+const threadListeners = new Set<() => void>();
+
+function subscribeStoredThread(onStoreChange: () => void): () => void {
+  threadListeners.add(onStoreChange);
+  return () => {
+    threadListeners.delete(onStoreChange);
+  };
+}
+
+/**
+ * The last raw value read, and what it parsed to.
+ *
+ * `useSyncExternalStore` calls the snapshot on every render and compares by identity, so a
+ * fresh object each time is an infinite loop rather than a slow read. Keyed on the raw
+ * string, which is also what makes a write visible: the bytes change, so the object does.
+ */
+let cachedRaw: string | null = null;
+let cachedThread: AgentInterruptedThread | null = null;
+
+/** The stored conversation, or null — absent, unreadable, and off-shape all mean the same here. */
+function storedThreadSnapshot(): AgentInterruptedThread | null {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(THREAD_STORAGE_KEY);
+  } catch {
+    // A store that cannot be read holds no conversation, as far as anything here can say.
+    raw = null;
+  }
+  if (raw === cachedRaw) return cachedThread;
+  cachedRaw = raw;
+  cachedThread = parseStoredThread(raw);
+  return cachedThread;
+}
+
+/** No localStorage on the server, and nothing there was interrupted. */
+function serverThreadSnapshot(): AgentInterruptedThread | null {
+  return null;
+}
+
+function parseStoredThread(raw: string | null): AgentInterruptedThread | null {
+  if (raw === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const candidate = parsed as Record<string, unknown> | null;
+  // Narrowed rather than trusted, for the reason `readThread` narrows the wire: this value
+  // survives an upgrade, so a build that shaped it differently must read as absent instead
+  // of putting a half-read object behind a sentence about it.
+  if (candidate === null || typeof candidate.threadId !== "string" || typeof candidate.steps !== "number") return null;
+  return { threadId: candidate.threadId, steps: candidate.steps };
+}
+
+/** Remember the conversation this run belongs to, or forget the one that no longer applies. */
+function rememberThread(thread: AgentThreadContext | null): void {
+  try {
+    // Removed rather than left standing when a run belongs to no conversation: a stale
+    // entry would tell the next mount a conversation was interrupted that had already ended.
+    if (thread === null) localStorage.removeItem(THREAD_STORAGE_KEY);
+    // `steps + 1` counts the run just opened as well. The server reports the steps BEFORE
+    // it, so storing that number verbatim would have the notice say "two questions" about a
+    // conversation whose strip the user had just read as three.
+    else
+      localStorage.setItem(
+        THREAD_STORAGE_KEY,
+        JSON.stringify({ threadId: thread.threadId, steps: thread.steps.length + 1 }),
+      );
+  } catch {
+    // A store that refuses a write costs the notice, never the run.
+  }
+  for (const listener of threadListeners) listener();
+}
 
 /**
  * The conversation the SERVER says this run belongs to.
@@ -307,6 +426,7 @@ function messageFor(error: unknown): string {
 export function useAgentRun(): AgentRunFollower {
   const [runId, setRunId] = useState<string | null>(null);
   const [thread, setThread] = useState<AgentThreadContext | null>(null);
+  const storedThread = useSyncExternalStore(subscribeStoredThread, storedThreadSnapshot, serverThreadSnapshot);
   const [entries, setEntries] = useState<readonly AgentLedgerEntry[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
@@ -426,6 +546,11 @@ export function useAgentRun(): AgentRunFollower {
 
       setRunId(openedRunId);
       setThread(openedThread);
+      // Written from what the SERVER said this run belongs to, like everything else about
+      // the thread. The notice this feeds is about the ABSENCE of a run, so nothing has to
+      // clear it: `runId` above is what stops the conversation just begun being announced
+      // as one that ended.
+      rememberThread(openedThread);
 
       try {
         await follow(openedRunId, controller.signal);
@@ -491,5 +616,15 @@ export function useAgentRun(): AgentRunFollower {
   */
   const timeline = useMemo(() => foldLedgerEntries(entries), [entries]);
 
-  return { runId, thread, isBusy, isStopping, timeline, error, errorCode, refusal, start, cancel };
+  /*
+    Derived rather than held: what makes a stored conversation INTERRUPTED is that nothing
+    here is following one, and `runId` is that fact. Held in state it would need clearing
+    from the start path, which is a second writer for something already knowable.
+
+    A start writes the new conversation to the store, so the snapshot moves to it — and
+    `runId` is what keeps that from being announced as interrupted the moment it begins.
+  */
+  const interrupted = runId === null ? storedThread : null;
+
+  return { runId, thread, interrupted, isBusy, isStopping, timeline, error, errorCode, refusal, start, cancel };
 }

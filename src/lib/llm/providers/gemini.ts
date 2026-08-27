@@ -13,6 +13,7 @@ import {
   LLMSafetyError,
   LLMStreamError,
 } from "../types";
+import { resolveGeminiChatBaseUrl } from "../utils/gemini-endpoint";
 import { encodeText, streamFromAsyncIterable } from "../utils/streaming";
 
 // ============================================================================
@@ -41,10 +42,13 @@ export class GeminiProvider extends BaseLLMProvider {
       const prompt = messages.map((m) => m.content).join("\n\n");
 
       try {
-        const generativeModel = this.client.getGenerativeModel({
-          model,
-          systemInstruction,
-        });
+        const generativeModel = this.client.getGenerativeModel(
+          { model, systemInstruction },
+          // B20: `LLM_API_URL` reaches this SDK only here — the constructor takes
+          // the key and nothing else. An unset value leaves `baseUrl` undefined,
+          // which is what selects the SDK's own Google endpoint.
+          { baseUrl: resolveGeminiChatBaseUrl(this.config.apiUrl) },
+        );
 
         const result = await generativeModel.generateContentStream(prompt);
 

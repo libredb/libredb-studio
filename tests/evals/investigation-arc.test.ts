@@ -202,9 +202,16 @@ describe("a planning run is judged by what planning mode can produce", () => {
     expect(reading.statements).toHaveLength(3);
     // No capture, and no catalog re-read: the inventory was given for free. The one
     // statement it did send is the statistics read, which no hold carries.
+    //
+    // The reuse is NOT free of the ledger, though, and `context-reused` is where this
+    // test now says so. A held inventory has no expiry, so a run inheriting one could
+    // be reasoning over a schema read hours ago and the ledger could not tell that
+    // apart from a capture taken this second. The event carries the reading's age, so
+    // the saving is still recorded as a saving rather than as silence.
     expect(drive.kinds).toEqual([
       "run-started",
       "driver-resolved",
+      "context-reused",
       "closing-statement",
       "plan-statement-drafted",
       "run-finished",

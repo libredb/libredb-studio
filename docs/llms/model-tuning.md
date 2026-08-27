@@ -26,21 +26,33 @@ you never have to guess which one it was.
 
 ## Checking that it took effect
 
-**Do this rather than assume it.** A document that is missing, unreadable or off-schema is
-IGNORED and the shipped measurements stand — which is what stops a bad file from breaking a
-working agent, and also what makes silence ambiguous. `GET /api/agent/config`, as an **admin**
-session, says which happened:
+**Do this rather than assume it.** A document that is missing, unreadable or off-schema in its
+ENVELOPE is IGNORED and the shipped measurements stand — which is what stops a bad file from
+breaking a working agent, and also what makes silence ambiguous. `GET /api/agent/config`, as an
+**admin** session, says which happened:
 
 ```jsonc
 { "modelTuning": { "state": "applied",  "path": "/etc/libredb/model-tuning.json",
-                   "models": 1, "ignoredKeys": [], "digest": "9f2c…" } }
-{ "modelTuning": { "state": "ignored",  "path": "...", "reason": "models.0.settings.turnTimeoutMs: ..." } }
+                   "models": 1, "ignoredKeys": [], "skippedEntries": [], "digest": "9f2c…" } }
+{ "modelTuning": { "state": "ignored",  "path": "...", "reason": "schemaVersion: Invalid input: expected 1" } }
 { "modelTuning": { "state": "unset" } }
 ```
 
 `ignoredKeys` is the one to read on a successful load: it lists what your document said that this
 Studio does not implement — a misspelling, or a setting from a newer Studio. The entry was applied
 around those keys rather than because of them.
+
+`skippedEntries` is the other one, and it is the difference between `models` and how many entries
+you wrote. An entry that does not read is dropped and named here; the entries beside it apply. So a
+`"state": "applied"` with `"models": 49` on a fifty-model document is not a success — read this
+list, and it will tell you which entry and which value:
+
+```jsonc
+{ "skippedEntries": ["qwen3:8b: settings.turnTimeoutMs: Too big: expected number to be <=179999"] }
+```
+
+An entry whose `id` is what is wrong is named by its POSITION instead — `#37: id: ...` — because
+there is no id to search the file for, and inventing one would name a model you never configured.
 
 `digest` is SHA-256 of the document's bytes as they were read, and it is the same value a run
 records. The path says which file drove a run; only the digest says which VERSION of it, and a
@@ -135,9 +147,15 @@ written for a newer Studio keep working on an older one, and a document written 
 after Studio gains a setting. It is also why you should read `ignoredKeys`: a misspelled
 `retryEmtpyTurn` lands there rather than doing anything.
 
+**Refused per ENTRY, not per document.** The whole-and-nothing rule above is about MERGING, so it
+protects the entry and stops there. An entry that breaks a bound, misses `measured` or repeats an
+id already taken is skipped and listed in `skippedEntries`; the rest of the document applies. Until
+this changed, a fifty-model document lost all fifty to a typo in the thirty-seventh — tolerable for
+a short overlay you wrote, not for a catalog somebody else mounted.
+
 **What does not relax:** every bound in the table above, `measured` on every entry, and one entry
-per model id — two spellings of one id is refused rather than last-wins, because no reader of the
-file could say which had been used.
+per model id — two spellings of one id skips the second rather than last-wins, because no reader of
+the file could say which had been used.
 
 **Wording never travels.** The sentences Studio says to a model live in Studio. A document has
 nowhere to put one, and that is deliberate: those sentences are pushed verbatim into the model's

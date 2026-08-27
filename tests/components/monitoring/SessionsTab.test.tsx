@@ -6,7 +6,7 @@ import { mock, describe, test, expect, afterEach } from "bun:test";
 import React from "react";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { SessionsTab } from "@/components/monitoring/tabs/SessionsTab";
-import type { MonitoringData } from "@/lib/db/types";
+import type { MonitoringData, ProviderLabels } from "@/lib/db/types";
 
 mock.module("@/components/ui/tooltip", () => ({
   TooltipProvider: ({ children }: { children: React.ReactNode }) => React.createElement("div", {}, children),
@@ -213,6 +213,63 @@ describe("a refused activeSessions read", () => {
 
     expect(queryByTestId("panel-unavailable")).toBeNull();
     expect(queryByText("No active sessions found.")).not.toBeNull();
+  });
+});
+
+// #D48. "No active sessions found." reads as "nothing is running right now", which is
+// false on an engine that publishes no session list and can never show a row. Both
+// branches are pinned so the fallback cannot quietly become the only path again.
+describe("an engine that publishes no session list says so in its own words", () => {
+  const DUCKDB = "DuckDB publishes no session list - there is no duckdb_connections() table function.";
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("prefers the provider's sessionsEmptyState over the default sentence", () => {
+    const data = { ...makeData(), activeSessions: [] } as MonitoringData;
+    const { queryByText } = render(
+      <SessionsTab
+        data={data}
+        loading={false}
+        onKillSession={mock(async () => true)}
+        labels={{ sessionsEmptyState: DUCKDB } as ProviderLabels}
+      />,
+    );
+
+    expect(queryByText(DUCKDB)).not.toBeNull();
+    expect(queryByText("No active sessions found.")).toBeNull();
+  });
+
+  test("keeps the default sentence for a provider that declares no label", () => {
+    const data = { ...makeData(), activeSessions: [] } as MonitoringData;
+    const { queryByText } = render(
+      <SessionsTab data={data} loading={false} onKillSession={mock(async () => true)} labels={{} as ProviderLabels} />,
+    );
+
+    expect(queryByText("No active sessions found.")).not.toBeNull();
+  });
+
+  test("a refused read still carries the failure reason, not the label", () => {
+    // The label explains an absence; the failure branch explains a refusal. They are
+    // different facts and the refusal wins where both could apply.
+    const { getByTestId, queryByText } = render(
+      <SessionsTab
+        data={
+          {
+            ...makeData(),
+            activeSessions: undefined,
+            errors: { activeSessions: "permission denied" },
+          } as unknown as MonitoringData
+        }
+        loading={false}
+        onKillSession={mock(async () => true)}
+        labels={{ sessionsEmptyState: DUCKDB } as ProviderLabels}
+      />,
+    );
+
+    expect(getByTestId("panel-unavailable-message").textContent).toBe("permission denied");
+    expect(queryByText(DUCKDB)).toBeNull();
   });
 });
 

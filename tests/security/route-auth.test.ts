@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, spyOn, beforeEach } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { discoverRoutes } from "./helpers/discover-routes";
 
@@ -170,7 +170,8 @@ describe("guardRoute", () => {
 // no denial audit, sitting undetected next to routes that had already been fixed. Walking the
 // whole tree and requiring an explicit reason for every exemption is what makes a newly added
 // provider-reaching route red by default instead of invisible by default.
-const API_ROOT_DIR = join(import.meta.dir, "..", "..", "src", "app", "api");
+const SRC_ROOT_DIR = join(import.meta.dir, "..", "..", "src");
+const API_ROOT_DIR = join(SRC_ROOT_DIR, "app", "api");
 
 const ALL_ROUTES = discoverRoutes(API_ROOT_DIR);
 
@@ -324,6 +325,156 @@ describe("routes that reach a provider require a session", () => {
     }
 
     expect(violations).toEqual([]);
+  });
+
+  // ─── The residual the check above leaves: what the route's IMPORTS reach ────
+  //
+  // Reading a route's own source proves it names no provider entry point itself. It does not
+  // prove the module it delegates to names none either, so a route that obtained a provider
+  // through a NEW indirect helper would still pass. `@/lib/api/schema-route` is the one such
+  // helper that exists on the non-allowlisted side, and it is only covered above because
+  // somebody thought to name it.
+  //
+  // Resolving the import graph transitively was measured 2026-08-27 and rejected: it flags four
+  // of the fifteen allowlisted routes, all of them wrongly. The three `agent/runs/*` routes reach
+  // `@/lib/agent/runtime`, which does import `@/lib/db` - but for the in-process
+  // `ExecutionArtifactStore` the route reads, not for a provider; `agent/config` reaches
+  // `@/lib/llm/utils/config` to validate a model id. A module-level graph cannot tell an import
+  // used on this route's path from a sibling in the same file, so transitively it answers "reaches
+  // a provider" for every route that touches a shared module - a guard that is red for correct
+  // code teaches people to widen it.
+  //
+  // So the SET of indirect helpers is pinned instead. A new one cannot appear unnoticed: it has to
+  // be added here with a reason, and adding it is where the judgement gets made.
+  //
+  // Each reason also carries whether the helper names a provider module of its own, and both
+  // directions are enforced below - a helper that GROWS a provider import fails until its reason
+  // says so, and a stale marker on a helper that lost one fails too, so the marker cannot rot into
+  // a blanket exemption.
+  const PROVIDER_NAMING_HELPER = "names a provider module";
+
+  const ALLOWLISTED_ROUTE_HELPERS: Record<string, string> = {
+    "@/hooks/use-connection-payload": "shapes a connection record for the client; opens nothing",
+    "@/lib/agent/config": `reads the agent runtime's env config and ${PROVIDER_NAMING_HELPER} (@/lib/llm/utils/config) to validate the model id, which resolves config rather than calling a model`,
+    "@/lib/agent/model-tuning": "the per-model tuning table; data only",
+    "@/lib/agent/runtime": `the run loop, and it ${PROVIDER_NAMING_HELPER} - but the artifacts route imports only readAgentArtifact, which reads the in-process ExecutionArtifactStore`,
+    "@/lib/api/agent-run-access": "resolves a run id to its ledger behind guardRoute; reads no provider",
+    "@/lib/api/client-address": "parses the forwarded-for chain for the audit record",
+    "@/lib/api/errors": `maps a thrown error to a response and ${PROVIDER_NAMING_HELPER} (@/lib/db/errors, @/lib/llm/types) for the error CLASSES alone - nearly every route imports it, and treating it as an entry point would fire on all fifteen`,
+    "@/lib/api/rate-limit": "the in-process token buckets",
+    "@/lib/api/require-session": "guardRoute itself",
+    "@/lib/audit": "the in-process audit ring buffer",
+    "@/lib/auth": "session cookie minting and reading",
+    "@/lib/auth-compare": "constant-time credential comparison",
+    "@/lib/auth-errors": "the auth failure taxonomy",
+    "@/lib/local-auth": "the local email/password credential store",
+    "@/lib/logger": "structured logging",
+    "@/lib/oidc": "the OIDC discovery and PKCE exchange",
+    "@/lib/seed": "reads seed connection metadata from config; never connects",
+    "@/lib/storage/factory": "the app's own storage backend (STORAGE_PROVIDER), not a user database",
+    "@/lib/storage/types": "the storage backend's interfaces",
+  };
+
+  /**
+   * The `@/`-aliased modules this source imports at runtime, one level deep.
+   *
+   * A `from "@/…"` on a continuation line of a multi-line `import type` block reads as a runtime
+   * import here. That errs toward demanding a pin entry for a module that could reach nothing,
+   * which is the safe direction: the guard fails loudly rather than falling silent.
+   */
+  function aliasedImports(source: string): string[] {
+    const specifiers = new Set<string>();
+
+    for (const line of withoutComments(source).split("\n")) {
+      if (line.trimStart().startsWith("import type ")) {
+        continue;
+      }
+      const match = line.match(/from\s+"(@\/[^"]+)"/);
+      if (match !== null) {
+        specifiers.add(match[1]);
+      }
+    }
+
+    return [...specifiers];
+  }
+
+  /** Where `@/x` lives on disk, or null. Both shapes are in use: `@/lib/auth`, `@/lib/seed`. */
+  function resolveAliasedModule(specifier: string): string | null {
+    const relative = specifier.slice("@/".length);
+
+    for (const candidate of [`${relative}.ts`, join(relative, "index.ts")]) {
+      const path = join(SRC_ROOT_DIR, candidate);
+      if (existsSync(path)) {
+        return path;
+      }
+    }
+
+    return null;
+  }
+
+  function allowlistedRouteKeys(): string[] {
+    return Object.keys(ROUTES_WITHOUT_A_PROVIDER).filter((key) => !ALLOWLISTED_BUT_REACHES_A_PROVIDER.includes(key));
+  }
+
+  test("every module an allowlisted route imports is pinned", () => {
+    const unpinned: string[] = [];
+
+    for (const key of allowlistedRouteKeys()) {
+      const source = readFileSync(join(API_ROOT_DIR, key, "route.ts"), "utf8");
+      for (const specifier of aliasedImports(source)) {
+        if (!(specifier in ALLOWLISTED_ROUTE_HELPERS)) {
+          unpinned.push(
+            `"${key}" imports "${specifier}", which is not pinned: add it to ALLOWLISTED_ROUTE_HELPERS with a reason it reaches no provider on this route's path, or stop importing it`,
+          );
+        }
+      }
+    }
+
+    expect(unpinned).toEqual([]);
+  });
+
+  // A pin nobody imports any more is the same drift as a stale allowlist key: it keeps a reason
+  // alive for a path that no longer exists, and the next reader trusts it.
+  test("every pinned module is still imported by an allowlisted route", () => {
+    const imported = new Set(
+      allowlistedRouteKeys().flatMap((key) =>
+        aliasedImports(readFileSync(join(API_ROOT_DIR, key, "route.ts"), "utf8")),
+      ),
+    );
+
+    expect(Object.keys(ALLOWLISTED_ROUTE_HELPERS).filter((specifier) => !imported.has(specifier))).toEqual([]);
+  });
+
+  test("every pinned module resolves to a file", () => {
+    for (const specifier of Object.keys(ALLOWLISTED_ROUTE_HELPERS)) {
+      expect(resolveAliasedModule(specifier), specifier).not.toBeNull();
+    }
+  });
+
+  test("a pinned module's reason says whether the module names a provider module", () => {
+    const wrong: string[] = [];
+
+    for (const [specifier, reason] of Object.entries(ALLOWLISTED_ROUTE_HELPERS)) {
+      const path = resolveAliasedModule(specifier);
+      if (path === null) {
+        continue;
+      }
+      const source = withoutComments(readFileSync(path, "utf8"));
+      const named = source
+        .split("\n")
+        .filter((line) => !line.trimStart().startsWith("import type "))
+        .some((line) => PROVIDER_ENTRY_POINTS.some(({ pattern }) => pattern.test(line)));
+      const claimed = reason.includes(PROVIDER_NAMING_HELPER);
+
+      if (named && !claimed) {
+        wrong.push(`"${specifier}" now names a provider module; its reason has to say so and explain the path`);
+      }
+      if (!named && claimed) {
+        wrong.push(`"${specifier}" no longer names a provider module; drop the claim from its reason`);
+      }
+    }
+
+    expect(wrong).toEqual([]);
   });
 
   for (const [route, load] of PROVIDER_ROUTES) {

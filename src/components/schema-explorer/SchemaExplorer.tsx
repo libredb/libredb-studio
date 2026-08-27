@@ -12,6 +12,12 @@ import { TableItem } from "./TableItem";
 interface SchemaExplorerProps {
   schema: TableSchema[];
   isLoadingSchema: boolean;
+  /**
+   * Why the schema read produced nothing, in the engine's own words. Optional so the
+   * embedded shell, which has no error to hand over, is unchanged — undefined and null
+   * both mean "nothing failed", not "nothing was wrong".
+   */
+  schemaError?: string | null;
   onTableClick?: (tableName: string) => void;
   onGenerateSelect?: (tableName: string) => void;
   onCreateTableClick?: () => void;
@@ -27,6 +33,7 @@ interface SchemaExplorerProps {
 export function SchemaExplorer({
   schema,
   isLoadingSchema,
+  schemaError = null,
   onTableClick,
   onGenerateSelect,
   onCreateTableClick,
@@ -73,6 +80,25 @@ export function SchemaExplorer({
           <Database strokeWidth={1.5} className="w-3.5 h-3.5 absolute inset-0 m-auto text-blue-500 animate-pulse" />
         </div>
         <span className="text-xs font-medium animate-pulse">Scanning Schema...</span>
+      </div>
+    );
+  }
+
+  // A failed read is not an empty database (D31). The tree is empty either way, so
+  // the message is the only thing that can say which happened — and it is checked
+  // BEFORE the empty state, because "no tables found" over a refused read attributes
+  // an absence to the database that was never measured.
+  if (schemaError !== null && schema.length === 0) {
+    return (
+      <div
+        data-testid="schema-read-failed"
+        className="flex flex-col items-center justify-center py-12 px-6 text-center"
+      >
+        <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4 border border-border">
+          <CircleAlert strokeWidth={1.5} className="w-6 h-6 text-amber-400" />
+        </div>
+        <h3 className="text-foreground text-xs font-medium mb-1">Schema could not be read</h3>
+        <p className="text-xs text-muted-foreground leading-relaxed break-words">{schemaError}</p>
       </div>
     );
   }

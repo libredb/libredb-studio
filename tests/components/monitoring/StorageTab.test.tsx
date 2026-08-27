@@ -262,21 +262,25 @@ describe("StorageTab", () => {
   test("a measured zero total beside per-table bytes that answered draws no figure it cannot support", () => {
     // The scenario #517's entry stated, and the one the fixture above cannot show. `getTableStats()` is
     // a separate read from the overview, so a 0 total can arrive beside real per-table figures.
-    // Then `total - tables - indexes` is 0 - 734003200 - 209715200 = -943718400, and the tab's
-    // local byte cascade returns its input unchanged, so the remainder cell rendered
-    // "-943718400 B" - a negative byte count drawn as a measurement. The two Quick Stats shares
-    // were fabricated the other way: real "700.00 MB" and "200.00 MB" figures over a "0.0%"
-    // computed against a zero denominator.
+    // Then `total - tables - indexes` is 0 - 734003200 - 209715200 = -943718400, and the byte
+    // cascade this tab formatted with returned its input unchanged, so the remainder cell
+    // rendered "-943718400 B" - a negative byte count drawn as a measurement. The two Quick
+    // Stats shares were fabricated the other way: real "700 MB" and "200 MB" figures over a
+    // "0.0%" computed against a zero denominator.
     const zeroTotalWithTables = {
       ...makeMonitoringData(),
       overview: { ...makeMonitoringData().overview, databaseSize: "0 bytes", databaseSizeBytes: 0 },
     } as MonitoringData;
 
-    const { container, queryAllByText } = render(<StorageTab data={zeroTotalWithTables} loading={false} />);
+    const { container, getByTestId, queryAllByText } = render(
+      <StorageTab data={zeroTotalWithTables} loading={false} />,
+    );
 
-    // The honest numerators survive: this tab measured those bytes itself.
-    expect(queryAllByText("700.00 MB").length).toBeGreaterThan(0);
-    expect(queryAllByText("200.00 MB").length).toBeGreaterThan(0);
+    // The honest numerators survive: this tab measured those bytes itself. Read by testid
+    // because the fixture's own `totalSize` strings share the shared formatter's spelling -
+    // `orders` reports "700 MB" - so a text query would pass even with the card blanked.
+    expect(getByTestId("storage-breakdown-tables").textContent).toBe("700 MB");
+    expect(getByTestId("storage-breakdown-indexes").textContent).toBe("200 MB");
     // Nothing divided by zero bytes is published, in either direction.
     expect(container.textContent).not.toContain("-943718400");
     expect(container.textContent).not.toContain("0.0%");
@@ -300,7 +304,7 @@ describe("StorageTab", () => {
       errors: { overview: "overview refused", storage: "storage refused", tables: "tables refused" },
     } as unknown as MonitoringData;
 
-    const { container, queryAllByTestId, queryAllByText } = render(
+    const { container, getByTestId, queryAllByTestId } = render(
       <StorageTab data={answeredWithErrors} loading={false} />,
     );
 
@@ -309,7 +313,7 @@ describe("StorageTab", () => {
     expect(container.textContent).not.toContain("storage refused");
     expect(container.textContent).not.toContain("tables refused");
     // The measured breakdown is still drawn from the overview that answered.
-    expect(queryAllByText("700.00 MB").length).toBeGreaterThan(0);
+    expect(getByTestId("storage-breakdown-tables").textContent).toBe("700 MB");
     expect(barTransforms(container).slice(0, 3)).toEqual([
       "translateX(-65.8203125%)",
       "translateX(-90.234375%)",
@@ -343,7 +347,7 @@ describe("StorageTab", () => {
     const { queryByText, queryAllByText } = render(<StorageTab data={makeMonitoringData()} loading={false} />);
 
     // 120 MB + 80 MB from the two tables, on a 2 GB database.
-    expect(queryAllByText("200.00 MB").length).toBe(2); // Indexes card and breakdown row
+    expect(queryAllByText("200 MB").length).toBe(2); // Indexes card and breakdown row
     expect(queryAllByText("9.8%").length).toBe(1);
     expect(queryByText("1.12 GB")).not.toBeNull(); // the remainder, still positive
     expect(queryAllByText("2.00 GB").length).toBe(1); // the DB Size card, and nothing else
@@ -355,7 +359,7 @@ describe("StorageTab", () => {
     // draws beside the measured database size. With the guess gone, a provider may
     // report a table it has no byte figure for, and summing the rest as 0 publishes a
     // number no engine reported. The fixture keeps `orders` at 500 MB and strips
-    // `users`, so a regression to `?? 0` renders "500.00 MB" as the table total -
+    // `users`, so a regression to `?? 0` renders "500 MB" as the table total -
     // visible here rather than only against a server.
     const base = makeMonitoringData();
     const partial = {
@@ -370,7 +374,7 @@ describe("StorageTab", () => {
 
     const { queryAllByText } = render(<StorageTab data={partial} loading={false} />);
 
-    expect(queryAllByText("500.00 MB").length).toBe(0);
+    expect(queryAllByText("500 MB").length).toBe(0);
     // Tables card, the breakdown's Tables row, and the remainder that cannot be
     // computed without them - plus the % under the card is not drawn at all.
     expect(queryAllByText("N/A").length).toBe(3);
@@ -421,8 +425,9 @@ describe("StorageTab", () => {
   });
 
   test("a libSQL database gets the same remainder label as PostgreSQL, not another engine's", () => {
-    // Measured for #515: a real 64 KB libSQL database read "4.00 KB" under "Other (TOAST,
-    // FSM)". The number is right and the words belong to PostgreSQL - libSQL has neither
+    // Measured for #515: a real 64 KB libSQL database read 4 KB (then spelled "4.00 KB")
+    // under "Other (TOAST, FSM)". The number is right and the words belong to PostgreSQL -
+    // libSQL has neither
     // structure. The label must be identical on both engines because this tab is given no
     // provider labels to vary it by.
     const { container, getByTestId, queryAllByText } = render(
@@ -433,8 +438,8 @@ describe("StorageTab", () => {
     expect(getByTestId("storage-breakdown-other-label-compact").textContent).toBe("Other");
     expect(container.textContent).not.toMatch(/TOAST|FSM|free space map/i);
     // 65536 bytes less 49152 of data and 12288 of indexes; no other figure in this fixture
-    // formats to 4.00 KB, so the remainder is pinned as well as its label.
-    expect(queryAllByText("4.00 KB").length).toBe(1);
+    // formats to 4 KB, so the remainder is pinned as well as its label.
+    expect(queryAllByText("4 KB").length).toBe(1);
   });
 
   test("a table reported without an index size does not turn the totals into a measurement", () => {
@@ -456,7 +461,38 @@ describe("StorageTab", () => {
 
     // Indexes card, breakdown row and the now-uncomputable remainder.
     expect(queryAllByText("N/A").length).toBe(3);
-    expect(queryAllByText("200.00 MB").length).toBe(0);
+    expect(queryAllByText("200 MB").length).toBe(0);
+  });
+
+  // This tab formats five figures, and until now it did so with a private threshold cascade
+  // byte-identical to `TablesTab`'s: no guard and no rung above GB, so a negative rendered
+  // "-1 B", a non-finite "NaN B" and an exabyte "1073741824.00 GB". The negative was reachable
+  // here - a 0 total beside per-table bytes that answered - and is refused one layer up by
+  // `remainderKnown`; these arms pin what the formatter itself now does with each input.
+  test.each<[string, number, string]>([
+    ["a negative", -1, "N/A"],
+    ["a NaN", Number.NaN, "N/A"],
+    ["an Infinity", Number.POSITIVE_INFINITY, "N/A"],
+    ["a PB-scale figure", 1024 ** 5, "1 PB"],
+    ["an EB-scale figure", 1024 ** 6, "1 EB"],
+  ])("draws %s as the formatter's own answer, never as a gigabyte figure", (_label, bytes, expected) => {
+    // One table carrying the whole table total, so the Tables card's sum IS the input under
+    // test. The database total is left alone, which keeps `sizeKnown` true - so the figure
+    // below comes from the formatter and not from an absence gate.
+    const base = makeMonitoringData();
+    const [first] = base.tables ?? [];
+    const single = {
+      ...base,
+      tables: [{ ...first, tableSizeBytes: bytes }],
+    } as MonitoringData;
+
+    const { getByTestId } = render(<StorageTab data={single} loading={false} />);
+
+    expect(getByTestId("storage-stat-tables").textContent).toBe(expected);
+    expect(getByTestId("storage-breakdown-tables").textContent).toBe(expected);
+    // The Indexes figure is untouched by this input, which is what proves the card above is
+    // reading the formatter rather than a tab-wide refusal.
+    expect(getByTestId("storage-stat-indexes").textContent).toBe("120 MB");
   });
 });
 
@@ -565,15 +601,19 @@ describe("a refused table statistics read", () => {
     expect(queryAllByText("0 B").length).toBe(4);
     expect(queryAllByText("0.0%").length).toBe(2);
     // The remainder is the entire database, and that is the arithmetic, not a fabrication.
-    expect(queryAllByText("2.00 GB").length).toBe(2);
+    // The DB Size card renders the provider's own "2.00 GB" string; the remainder is this
+    // tab's own formatting of the same bytes, which spells the trailing zeros away.
+    expect(queryAllByText("2.00 GB").length).toBe(1);
+    expect(queryAllByText("2 GB").length).toBe(1);
   });
 
   test("a populated table list keeps its measured figures", () => {
     const { queryAllByText, queryByTestId } = render(<StorageTab data={makeMonitoringData()} loading={false} />);
 
     expect(queryByTestId("panel-unavailable")).toBeNull();
-    // 500 MB + 200 MB of table data, on the Tables card and the breakdown's Tables row.
-    expect(queryAllByText("700.00 MB").length).toBe(2);
+    // 500 MB + 200 MB of table data, on the Tables card and the breakdown's Tables row -
+    // plus the `orders` row, whose engine-reported `totalSize` string is "700 MB" too.
+    expect(queryAllByText("700 MB").length).toBe(3);
     expect(queryAllByText("N/A").length).toBe(0);
   });
 });

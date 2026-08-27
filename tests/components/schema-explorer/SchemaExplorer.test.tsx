@@ -113,6 +113,26 @@ describe("SchemaExplorer", () => {
     expect(view.queryByText("No structures found")).not.toBeNull();
   });
 
+  // D31: an empty tree after a FAILED read must not read as "this database has
+  // nothing in it". The engine's own message is what tells the two apart.
+  test("a failed read states the engine's error instead of claiming nothing was found", () => {
+    const props = createDefaultProps({ schema: emptySchema, schemaError: "'(' expected" });
+    const { container } = render(<SchemaExplorer {...props} />);
+    const view = within(container);
+
+    expect(view.queryByText("No structures found")).toBeNull();
+    expect(view.queryByTestId("schema-read-failed")).not.toBeNull();
+    expect(view.queryByText("'(' expected")).not.toBeNull();
+  });
+
+  test("a schema that loaded is rendered even when a previous read had failed", () => {
+    const props = createDefaultProps({ schemaError: "'(' expected" });
+    const { container } = render(<SchemaExplorer {...props} />);
+
+    expect(container.querySelector('[data-testid="schema-read-failed"]')).toBeNull();
+    expect(within(container).queryByPlaceholderText("Search tables or columns...")).not.toBeNull();
+  });
+
   // ── Renders table items ───────────────────────────────────────────────────
 
   test("renders table items from schema", () => {

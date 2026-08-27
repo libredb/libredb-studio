@@ -82,11 +82,19 @@ describe("the file was parsed at all", () => {
   // Every assertion below is a containment or an equality that an empty parse would satisfy
   // vacuously, so the parse is pinned first.
   test("the section headings were found", () => {
-    expect(sections.length).toBeGreaterThan(15);
+    expect(sections.length).toBe([...BACKLOG.matchAll(/^## /gm)].length);
+    expect(sections.length).toBeGreaterThan(1);
   });
 
   test("the entries were found", () => {
-    expect(sections.flatMap((section) => section.ids).length).toBeGreaterThan(100);
+    // Derived, not a floor. This used to assert "more than 100", which pinned the parse by
+    // pinning the backlog's SIZE - so the settlement that took the file from 129 entries to
+    // 90 failed a test whose subject is whether the regex matched. The count the parse found
+    // has to equal the count in the raw text, and that stays true at any size, including a
+    // file with one entry left.
+    const headings = [...BACKLOG.matchAll(/^### [A-Z]+\d+\./gm)].length;
+    expect(sections.flatMap((section) => section.ids).length).toBe(headings);
+    expect(headings).toBeGreaterThan(1);
   });
 
   test("the index block was found", () => {

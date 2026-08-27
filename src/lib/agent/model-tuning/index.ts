@@ -17,8 +17,10 @@
  * field to it. Half of one measurement beside half of another is a configuration nobody has ever
  * run, and it would resolve without anybody being able to say what it was.
  *
- * A BAD OPERATOR DOCUMENT IS IGNORED, AND SAYS SO. It is refused whole, the bundled document
- * stands — which is a measured configuration, where a half-applied one is not — and the reason is
+ * A BAD OPERATOR DOCUMENT IS IGNORED, AND SAYS SO. Whole where nothing in it survives — bad JSON,
+ * a wrong `schemaVersion`, an unreadable path — and per ENTRY otherwise: an entry that does not
+ * read is dropped and reported by id, and the entries beside it apply (`schema.ts` rule 3). Where
+ * the document is refused whole the bundled document stands — which is a measured configuration, where a half-applied one is not — and the reason is
  * both logged AND returned by `operatorTuningStatus()`. Two surfaces because they answer to
  * different people: the log is for whoever is tailing it at the moment it happens, and the status
  * is for the operator who mounted a file, sees the shipped behaviour instead, and has to find out
@@ -59,6 +61,15 @@ export type OperatorTuningStatus =
        * an operator's `retryEmtpyTurn` would do nothing and say nothing.
        */
       readonly ignoredKeys: readonly string[];
+      /**
+       * Entries that did not read, by id, and so were not applied — `"<id>: <what was wrong>"`.
+       *
+       * Reported for the reason `ignoredKeys` is: the document was applied AROUND them, and
+       * `models` above counts what DID apply, so without this an entry would vanish silently.
+       * Empty is the ordinary case, and it is not the same statement as an absent field: this is
+       * present on every applied document, so an empty list means every entry read.
+       */
+      readonly skippedEntries: readonly string[];
       /**
        * SHA-256 of the document's bytes AS READ.
        *
@@ -143,12 +154,16 @@ export function activeTuning(): ModelTuning {
     measuredAgainst: base.measuredAgainst,
     undocumentedOverrides: [...base.undocumentedOverrides, ...read.doc.undocumentedOverrides],
     ignoredKeys: read.doc.ignoredKeys,
+    skippedEntries: read.doc.skippedEntries,
   };
+  // `applied` even when every entry was skipped: the document parsed and was layered on, which is
+  // a different fact from `ignored`, and `models` plus `skippedEntries` say exactly what it added.
   operatorStatus = {
     state: "applied",
     path,
     models: Object.keys(read.doc.models).length,
     ignoredKeys: read.doc.ignoredKeys,
+    skippedEntries: read.doc.skippedEntries,
     digest: read.digest,
   };
   logger.info("Operator model tuning applied over the measurements Studio ships with", {
@@ -156,6 +171,7 @@ export function activeTuning(): ModelTuning {
     path,
     models: operatorStatus.models,
     ignoredKeys: read.doc.ignoredKeys.length,
+    skippedEntries: read.doc.skippedEntries.length,
   });
   return active;
 }

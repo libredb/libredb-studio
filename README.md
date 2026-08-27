@@ -423,6 +423,49 @@ journalctl -u libredb-studio
    ```
    Open [http://localhost:3000](http://localhost:3000)
 
+  ### Embedding in your own app (`@libredb/studio`)
+
+  Studio is published as an npm package as well as a server, so the editor can live inside your own
+  product:
+
+  ```bash
+  npm i @libredb/studio
+  ```
+
+  **Adopt Studio's security headers from your own Next.js config.** The `@libredb/studio/security`
+  subpath publishes the header policy as pure data — `securityHeaders()` returns a plain
+  `Record<string, string>`, and the module it comes from imports nothing, so it is safe to load from
+  a `next.config.ts` where no path alias and no Studio runtime exist yet:
+
+  ```ts
+  // next.config.ts
+  import { securityHeaders } from "@libredb/studio/security";
+
+  export default {
+    async headers() {
+      return [
+        {
+          source: "/:path*",
+          headers: Object.entries(securityHeaders()).map(([key, value]) => ({ key, value })),
+        },
+      ];
+    },
+  };
+  ```
+
+  Options: `reportOnly` emits `Content-Security-Policy-Report-Only` instead of the enforcing header;
+  `hsts: false` disables HSTS (or an object customises it); `allowEval` adds `'unsafe-eval'`, which
+  React's *development* build needs; `monacoVsPath` adds the origin serving Monaco's bundle when it
+  is not same-origin; and `extra` merges your own sources per directive. `studioCspDirectives()` and
+  `HSTS_MAX_AGE_SECONDS` are exported too, for a config that needs to compose the policy rather than
+  send it.
+
+  Read the policy before you inherit it: the CSP permits inline scripts, because every document
+  route is statically prerendered with nonce-less hydration scripts, so what it contains is where an
+  injected script could *send* data, not whether one can run. That trade-off, and the two delivery
+  paths a Next.js app has for these headers, are argued in
+  [`docs/SECURITY.md`](docs/SECURITY.md).
+
 ---
 
 ## Development Databases

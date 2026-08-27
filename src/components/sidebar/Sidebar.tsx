@@ -16,6 +16,8 @@ interface SidebarProps {
   activeConnection: DatabaseConnection | null;
   schema: TableSchema[];
   isLoadingSchema: boolean;
+  /** Why the schema read produced nothing, passed straight to the explorer (D31). */
+  schemaError?: string | null;
   onSelectConnection: (connection: DatabaseConnection) => void;
   onDeleteConnection: (id: string) => void;
   onEditConnection?: (conn: DatabaseConnection) => void;
@@ -38,6 +40,7 @@ export function Sidebar({
   activeConnection,
   schema,
   isLoadingSchema,
+  schemaError,
   onSelectConnection,
   onDeleteConnection,
   onEditConnection,
@@ -101,6 +104,7 @@ export function Sidebar({
             <SchemaExplorer
               schema={schema}
               isLoadingSchema={isLoadingSchema}
+              schemaError={schemaError}
               onTableClick={onTableClick}
               onGenerateSelect={onGenerateSelect}
               onCreateTableClick={onCreateTableClick}

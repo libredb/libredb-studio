@@ -149,7 +149,8 @@ mock.module("@/lib/storage", () => ({
 // ---- Now import bun:test, testing-library, and the component ----
 
 import { describe, test, expect, afterEach, beforeAll } from "bun:test";
-import { render, fireEvent, cleanup, act } from "@testing-library/react";
+import { render, fireEvent, cleanup, act, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import React from "react";
 
 import { BottomPanel } from "@/components/studio/BottomPanel";
@@ -676,13 +677,57 @@ describe("BottomPanel", () => {
       expect(capturedResultsGridProps.result).toEqual(ARTIFACT_RESULT);
     });
 
-    test("a hydrated result is read-only: nothing offers to edit it or export it as the tab's own", () => {
+    test("a hydrated result is read-only: nothing offers to edit it or page it", () => {
       const props = hydratedProps({ editingEnabled: true });
-      const { queryByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+      render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
 
       expect(capturedResultsGridProps.editingEnabled).toBe(false);
       expect(capturedResultsGridProps.onLoadMore).toBeUndefined();
-      expect(queryByText("Export")).toBeNull();
+    });
+
+    // B34: the menu used to be hidden here, because the export serialized the tab's
+    // own rows. It is now retargeted — the artifact travels with the format, so the
+    // file is the rows on screen and is named after the run that produced them.
+    test("the export menu is offered over a hydrated result and carries the artifact", async () => {
+      const onExportResults = mock(() => {});
+      const artifact = {
+        runId: "arun_1",
+        correlationId: "corr_9",
+        operationId: "sql.query.read",
+        surface: "results",
+        result: ARTIFACT_RESULT,
+        explainPlan: null,
+      };
+      const props = hydratedProps({ onExportResults, agentArtifact: artifact });
+      const { getByText, getByTestId } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+
+      // The count is the artifact's rows, not the tab's — two, not one.
+      expect(getByTestId("export-row-count").textContent).toBe("2");
+      // The menu's items are portalled into the body, so they are queried there.
+      await userEvent.click(getByText("Export"));
+      const menu = within(document.body as HTMLElement);
+      // Said in the menu as well as in the name, because the name is the only part of
+      // a file that survives being renamed by whoever receives it. Read while the menu
+      // is still open: choosing a format closes it.
+      expect(menu.getByTestId("export-provenance").textContent).toContain("arun_1");
+      await userEvent.click(menu.getByText("Export as CSV"));
+
+      expect(onExportResults).toHaveBeenCalledWith("csv", artifact);
+    });
+
+    test("without an artifact the export menu carries none, and stays the tab's own", async () => {
+      const onExportResults = mock(() => {});
+      const props = hydratedProps({ agentArtifact: null, onExportResults });
+      const { getByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      await userEvent.click(getByText("Export"));
+      const menu = within(document.body as HTMLElement);
+      await userEvent.click(menu.getByText("Export as JSON"));
+
+      expect(onExportResults).toHaveBeenCalledWith("json", null);
+      expect(menu.queryByTestId("export-provenance")).toBeNull();
     });
 
     test("dismissing it is a user action, and the tab's own result is what returns", () => {

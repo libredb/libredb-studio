@@ -263,7 +263,10 @@ facts was re-measured over Hrana rather than assumed:
 | `ssl` | no | Any mode other than `disable` selects HTTPS |
 | `connectionString` | no | A `libsql://` URL, resolved into the fields above |
 
-There is no `user` (libSQL has no user names) and no `database` (the database is the host).
+There is no `user` (libSQL has no user names) and no `database` (the database is the host), and the
+connection form renders no input for either: it gates its Username and Database boxes on this same
+list, so a box appears exactly where a value is written. It used to draw both regardless, and the save
+discarded whatever was typed into them.
 
 ### 4.2 Connection strings
 

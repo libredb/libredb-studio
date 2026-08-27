@@ -815,10 +815,15 @@ The integration points, all of which need an entry. This is the list the Strateg
       so the compiler will at least stop you from *forgetting* that a decision exists
 
 **Published where a human reads it, and this is the block with the fewest gates.** `readme:check`
-compares the translated READMEs against `README.md` and `chart:check` compares versions; nothing
-counts the engines in a catalog listing, so an engine can ship while three storefronts still name the
-previous set (measured in the #511 review, which found all of these stale after libSQL had already
-landed everywhere the compiler looks):
+compares the translated READMEs against `README.md` and `chart:check` compares versions. Nine of the
+catalog files below are now counted as well:
+[`tests/unit/lib/catalog-copy-engine-count.test.ts`](../tests/unit/lib/catalog-copy-engine-count.test.ts)
+walks them, refuses a numeral qualifying "engines" that is not `EXTERNAL_DATABASE_TYPES.length`, and
+where that numeral introduces a list, refuses a list that does not name every one of them by its
+`DB_UI_CONFIG` label (#D47 - added after three consecutive PRs corrected the same class by hand; the
+#511 review found all nine stale after libSQL had already landed everywhere the compiler looks). The
+files NOT in that walk have no gate at all, and an abridged list ("and more", or a "from X to Y"
+range) is still checked on its numeral only, deliberately, so that no numeral goes stale (#445):
 
 - [ ] `charts/libredb-studio/Chart.yaml` — the `description`, which is what **ArtifactHub** shows, AND
       the `keywords` list, which is what ArtifactHub **searches**. An engine absent from the keywords is

@@ -31,13 +31,14 @@
  * `responses()` is deliberately not used: it is OpenAI's own API shape and a
  * self-hosted OpenAI-compatible endpoint does not serve it.
  *
- * Gemini deliberately does NOT take `LLM_API_URL`: `src/lib/llm/providers/gemini.ts`
- * ignores it, and `.env.example` documents the variable as needed for the Ollama
- * and custom kinds only. Honouring it here would mean a value left over from a
- * custom setup silently redirects Gemini traffic — carrying the configured key —
- * to that host on the agent path while the chat surface still talks to Google.
- * Same variables, same precedence means matching what the chat surface does with
- * them, not just where they come from.
+ * Gemini takes `LLM_API_URL` too, on both surfaces at once (B20): the chat
+ * provider passes it as this SDK family's origin-shaped `RequestOptions.baseUrl`
+ * and this adapter passes the versioned form `@ai-sdk/google` expects, both
+ * derived from the one variable by `src/lib/llm/utils/gemini-endpoint.ts`. Same
+ * variables, same precedence means matching what the chat surface does with them,
+ * not just where they come from — and the earlier arrangement, where only the
+ * OpenAI-compatible kinds read the variable, meant an operator behind an egress
+ * proxy configured Gemini, saw no error, and was routed to Google anyway.
  *
  * Not here: an Anthropic kind. Its package is ratified and installed, but the
  * settings surface has no `anthropic` kind, and adding one is a change to
@@ -49,6 +50,7 @@
 
 import type { LanguageModel } from "ai";
 import { type LLMConfig, type LLMProviderType, LLMConfigError } from "@/lib/llm/types";
+import { resolveGeminiSdkBaseUrl } from "@/lib/llm/utils/gemini-endpoint";
 
 /**
  * A constructed model instance.
@@ -139,8 +141,10 @@ async function createGeminiModel(config: LLMConfig, fetchImpl?: AgentFetch): Pro
     // is unreachable and no test pins it; it exists so the `string | undefined`
     // the type allows can never reach the SDK and re-open its env fallback.
     apiKey: config.apiKey ?? "",
-    // No baseURL: see the header. Leaving it undefined selects the SDK's own
-    // Google endpoint, and this provider has no base-URL env fallback to leak into.
+    // The versioned spelling this SDK expects; undefined when nothing is
+    // configured, which selects the SDK's own Google endpoint. That is safe here
+    // because this provider has no base-URL env fallback to leak into.
+    baseURL: resolveGeminiSdkBaseUrl(config.apiUrl),
     fetch: asSdkFetch(fetchImpl),
   }).chat(config.model);
 }

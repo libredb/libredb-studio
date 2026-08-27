@@ -30,9 +30,14 @@
  *    "undocumented overrides" at once. That the recorded and compiled defaults still agree is
  *    its own assertion, in its own test, where the failure is a question for a person.
  *
- * 3. ALL OR NOTHING. A document that fails anywhere is refused entirely. Partial acceptance
- *    would leave a run driven by a configuration that is half one source and half another, which
- *    is a combination nobody has ever measured.
+ * 3. ALL OR NOTHING, PER ENTRY. An entry is taken whole or not at all: partial acceptance would
+ *    leave a run driven by a configuration that is half one source and half another, which is a
+ *    combination nobody has ever measured. That is an argument about MERGING, so it protects
+ *    whole-ENTRY replacement and nothing wider. Studio's own document is still refused whole,
+ *    because a fault in it is a repo fault this suite catches before anybody runs it; a document
+ *    from outside applies the entries that read and reports the rest — a fifty-model document
+ *    used to lose all fifty to a typo in the thirty-seventh, and once these are published as a
+ *    catalog that failure lands on everyone who mounted it.
  */
 import { z } from "zod";
 import type { AgentRunWorkflowType } from "../types";
@@ -230,7 +235,15 @@ const operatorDocumentSchema = z.strictObject({
     a compiled default moves. The discipline belongs to the document this repository writes.
   */
   measuredAgainst: operatorMeasuredAgainstSchema.optional(),
-  models: z.array(operatorModelSchema),
+  /*
+    UNREAD here, and validated one entry at a time in `parseOperatorTuning`.
+
+    `z.array(operatorModelSchema)` fails the array on its first bad element, which is the
+    whole-document rejection this document is not held to any more (rule 3). The envelope around
+    the entries stays strict: a wrong `schemaVersion` means Studio cannot say what ANY entry in the
+    file means, and a `models` that is not an array leaves nothing to walk.
+  */
+  models: z.array(z.unknown()),
 });
 
 type TuningDocument = z.infer<typeof documentSchema>;
@@ -271,6 +284,15 @@ export interface ModelTuning {
    * was for. So it is reported, and `GET /api/agent/config` carries it to the operator.
    */
   readonly ignoredKeys: readonly string[];
+  /**
+   * `"<id>: <what was wrong>"` for every entry that did not read, and so was not applied.
+   *
+   * Always empty for the bundled document, which is refused whole rather than walked around. It
+   * exists for the same reason `ignoredKeys` does, one level up: the document was applied AROUND
+   * the fault, so an entry that vanished silently would be the quietness the strict schema was
+   * written to prevent. Named by `id`, or by `#<position>` when the id is itself what is wrong.
+   */
+  readonly skippedEntries: readonly string[];
 }
 
 /** Every setting a model may state, so the justification rule can walk them by name. */
@@ -349,8 +371,13 @@ interface ReadDocument {
   }[];
 }
 
-/** Turns a validated document into the register, applying the rules that do not depend on origin. */
-function assemble(doc: ReadDocument, origin: string): ModelTuning {
+/**
+ * Turns a validated document into the register, applying the rules that do not depend on origin.
+ *
+ * `skipped` is passed in rather than produced here: only the operator path walks entries one at a
+ * time, and Studio's own document reaches this with every entry already known to read.
+ */
+function assemble(doc: ReadDocument, origin: string, skipped: readonly string[] = []): ModelTuning {
   const models: Record<string, AgentModelProfile> = {};
   /** Collected rather than thrown on; see rule 2 in this file's header. */
   const unjustified: string[] = [];
@@ -383,13 +410,37 @@ function assemble(doc: ReadDocument, origin: string): ModelTuning {
     measuredAgainst: doc.measuredAgainst,
     undocumentedOverrides: unjustified,
     ignoredKeys: ignored,
+    skippedEntries: skipped,
   };
 }
 
-function refuse(origin: string, error: z.ZodError): never {
+/**
+ * The first issue as `"<path>: <message>"`.
+ *
+ * Shared by the whole-document refusal and by a skipped entry, so the two read alike: an operator
+ * comparing a refusal to a skip is looking at the same fault described the same way.
+ */
+function firstIssue(error: z.ZodError): string {
   const first = error.issues[0];
   const where = first === undefined ? "unknown" : first.path.join(".");
-  throw new ModelTuningError(origin, `${where}: ${first?.message ?? "invalid"}`);
+  return `${where}: ${first?.message ?? "invalid"}`;
+}
+
+function refuse(origin: string, error: z.ZodError): never {
+  throw new ModelTuningError(origin, firstIssue(error));
+}
+
+/**
+ * How an entry that did not read is named.
+ *
+ * By `id` wherever there is one, because that is the string the operator wrote and the one they
+ * will search the file for. By POSITION when the id is itself what is wrong — `#3` is checkable,
+ * where inventing an id would name a model nobody configured. The entry is `unknown` at this
+ * point, so a bare number or a `null` in the array reaches here and must not throw.
+ */
+function entryLabel(entry: unknown, index: number): string {
+  const id = (entry as { id?: unknown } | null | undefined)?.id;
+  return typeof id === "string" && id.length > 0 ? id : `#${index}`;
 }
 
 /**
@@ -414,5 +465,33 @@ export function parseTuning(document: unknown, origin: string): ModelTuning {
 export function parseOperatorTuning(document: unknown, origin: string): ModelTuning {
   const parsed = operatorDocumentSchema.safeParse(document);
   if (!parsed.success) refuse(origin, parsed.error);
-  return assemble(parsed.data as ReadDocument, origin);
+
+  const models: ReadDocument["models"][number][] = [];
+  const skipped: string[] = [];
+  /** Lower-cased, because the register is keyed that way and two spellings are one entry. */
+  const seen = new Set<string>();
+
+  for (const [index, entry] of parsed.data.models.entries()) {
+    const read = operatorModelSchema.safeParse(entry);
+    if (!read.success) {
+      skipped.push(`${entryLabel(entry, index)}: ${firstIssue(read.error)}`);
+      continue;
+    }
+    const key = read.data.id.toLowerCase();
+    // Skipped rather than last-wins, for the reason `assemble` throws on Studio's own: two
+    // spellings of one id is a document nobody can read, and collapsing them would apply settings
+    // the other entry argues against. Only the blast radius changes.
+    if (seen.has(key)) {
+      skipped.push(`${read.data.id}: appears twice`);
+      continue;
+    }
+    seen.add(key);
+    models.push(read.data as ReadDocument["models"][number]);
+  }
+
+  return assemble(
+    { measuredAgainst: parsed.data.measuredAgainst as RecordedBasis | undefined, models },
+    origin,
+    skipped,
+  );
 }

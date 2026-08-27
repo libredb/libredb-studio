@@ -23,7 +23,10 @@
  *    the column NAME, and at `pattern` depth from the RATIO of values matching a
  *    shape — computed inside the database by a `count(CASE WHEN …)`, so the values
  *    that matched never leave it. Neither test establishes that a column holds
- *    personal data; both establish that it is worth a human looking.
+ *    personal data; both establish that it is worth a human looking. The shape tests
+ *    are PER-DIALECT predicates rather than one shared operator, because the shapes
+ *    worth suspecting are not all expressible in the intersection of the two
+ *    grammars (B26; see `PROFILE_SHAPES`).
  */
 
 import { quoteIdentifier } from "@/lib/sql/identifier";
@@ -41,9 +44,10 @@ export type AgentProfileDepth = "basic" | "distribution" | "pattern";
  * Columns one profile may cover.
  *
  * Bounded because the composed statement grows with it: at `pattern` depth each
- * column contributes four aggregates, so an unbounded table would compose a
- * statement whose cost nobody chose. A wider table is profiled in more than one
- * call, which the statement budget accounts for honestly.
+ * column contributes four aggregates — present, distinct and one per shape test — so
+ * an unbounded table would compose a statement whose cost nobody chose. A wider table
+ * is profiled in more than one call, which the statement budget accounts for
+ * honestly.
  */
 export const MAX_PROFILE_COLUMNS = 16;
 
@@ -89,18 +93,69 @@ const PII_NAME_WORDS: readonly string[] = Object.freeze([
 /** Declared types this module is willing to apply a text shape test to. */
 const TEXTUAL_TYPE = /char|text|string|clob|varying/i;
 
-/**
- * The one shape tested inside the database, so no matching value ever leaves it:
- * something, an `@`, something, a `.`, something.
- *
- * ONE shape, because `LIKE` is the only pattern operator both engines spell the
- * same way and `_` in it means "any character" rather than "any digit". A test for
- * a run of digits — a phone number, a national id — needs `~` on PostgreSQL and
- * `GLOB` on SQLite, so it is a dialect-specific predicate rather than a wider
- * pattern here, and it is deferred (`docs/BACKLOG.md` B26) instead of being
- * approximated by a length test that would match almost any text.
- */
+/** Dialects with a verified profile composition; enforced by `composeTableProfile`. */
+type ProfileDialect = "postgres" | "sqlite";
+
+/** Something, an `@`, something, a `.`, something. Both engines spell `LIKE` alike. */
 const EMAIL_SHAPE = "%_@_%._%";
+
+/**
+ * How many consecutive digits make a run worth suspecting.
+ *
+ * Nine, because that is the shortest of the identifiers `PII_NAME_WORDS` already
+ * names: an `ssn` is nine digits, and a `tckn`, a phone number or a `card` is longer.
+ * A shorter bound would start matching years, prices and quantities — the failure the
+ * earlier `LIKE '%_________%'` draft would have had for every text column.
+ */
+export const DIGIT_RUN_LENGTH = 9;
+
+/** SQLite has no quantifier, so the run is spelled out one class at a time. */
+const SQLITE_DIGIT_RUN = `*${"[0-9]".repeat(DIGIT_RUN_LENGTH)}*`;
+
+/** One value shape, and how each engine spells the test for it. */
+interface ProfileShape {
+  /** Alias prefix for this shape's count. Generated, never taken from a column name. */
+  readonly alias: string;
+  /** The app's own words for the shape, read back into a `suspected_pii` finding. */
+  readonly words: string;
+  /** The predicate, per dialect, over an already-quoted column reference. */
+  readonly predicate: Readonly<Record<ProfileDialect, (quotedColumn: string) => string>>;
+}
+
+/**
+ * The shapes tested inside the database, so no matching value ever leaves it.
+ *
+ * PER-DIALECT predicates rather than one shared `LIKE` (B26). `LIKE` is the only
+ * pattern operator both engines spell the same way, and `_` in it means "any
+ * character" rather than "any digit" — so a digit run cannot be expressed in the
+ * intersection at all, and an earlier draft's `LIKE '%_________%'` would have
+ * reported `suspected_pii` for essentially every text column. PostgreSQL spells the
+ * run `~ '[0-9]{9,}'` and SQLite spells it `GLOB '*[0-9]…*'`.
+ *
+ * Both spellings were run against live engines over the same four rows and returned
+ * the same counts — PostgreSQL 18 and SQLite 3.53 — so the two dialects agree about
+ * what a run is rather than merely both being accepted. The SQLite arm is executed
+ * end to end in `tests/unit/lib/agent/table-profile.test.ts`.
+ */
+const EMAIL_SHAPE_TEST: ProfileShape = Object.freeze({
+  alias: "shaped",
+  words: "an email address",
+  predicate: Object.freeze({
+    postgres: (quoted: string) => `${quoted} LIKE '${EMAIL_SHAPE}'`,
+    sqlite: (quoted: string) => `${quoted} LIKE '${EMAIL_SHAPE}'`,
+  }),
+});
+
+const DIGIT_RUN_SHAPE_TEST: ProfileShape = Object.freeze({
+  alias: "digits",
+  words: `a run of ${DIGIT_RUN_LENGTH} or more digits`,
+  predicate: Object.freeze({
+    postgres: (quoted: string) => `${quoted} ~ '[0-9]{${DIGIT_RUN_LENGTH},}'`,
+    sqlite: (quoted: string) => `${quoted} GLOB '${SQLITE_DIGIT_RUN}'`,
+  }),
+});
+
+const PROFILE_SHAPES: readonly ProfileShape[] = Object.freeze([EMAIL_SHAPE_TEST, DIGIT_RUN_SHAPE_TEST]);
 
 export type AgentProfileFindingCode =
   /** At least `HIGH_NULL_RATIO` of the rows have no value in this column. */
@@ -131,8 +186,10 @@ export interface AgentColumnProfile {
   readonly present: number;
   /** Distinct present values, at `distribution` depth and deeper. */
   readonly distinct?: number;
-  /** Rows whose value matches a personal-data shape, at `pattern` depth. */
+  /** Rows shaped like an email address, at `pattern` depth. */
   readonly shaped?: number;
+  /** Rows carrying a run of `DIGIT_RUN_LENGTH` or more digits, at `pattern` depth. */
+  readonly digitRun?: number;
 }
 
 export interface AgentTableProfile {
@@ -189,9 +246,9 @@ const isComparable = (column: ColumnSchema): boolean => !INCOMPARABLE_TYPE.test(
  * on a single table. Everything here is an aggregate over one scan, which is also
  * the shape an engine can plan best.
  *
- * `LIKE` is applied only to columns whose DECLARED type reads as textual: comparing
- * an integer column to a string pattern is an error on PostgreSQL, and casting
- * every column to text to avoid that would turn a bounded read into a full
+ * The shape tests are applied only to columns whose DECLARED type reads as textual:
+ * comparing an integer column to a string pattern is an error on PostgreSQL, and
+ * casting every column to text to avoid that would turn a bounded read into a full
  * conversion of the table.
  */
 export function composeTableProfile(
@@ -220,7 +277,10 @@ export function composeTableProfile(
     }
     if (selector.depth === "pattern" && isTextual(column)) {
       // Counted inside the database: the rows that matched are never returned.
-      parts.push(`count(CASE WHEN ${quoted} LIKE '${EMAIL_SHAPE}' THEN 1 END) AS ${alias("shaped", index)}`);
+      for (const shape of PROFILE_SHAPES) {
+        const test = shape.predicate[dialect](quoted);
+        parts.push(`count(CASE WHEN ${test} THEN 1 END) AS ${alias(shape.alias, index)}`);
+      }
     }
   });
 
@@ -257,12 +317,14 @@ export function readTableProfile(
 
   const profiled: AgentColumnProfile[] = columns.map((column, index) => {
     const distinct = count(row, alias("distinct", index));
-    const shaped = count(row, alias("shaped", index));
+    const shaped = count(row, alias(EMAIL_SHAPE_TEST.alias, index));
+    const digitRun = count(row, alias(DIGIT_RUN_SHAPE_TEST.alias, index));
     return {
       column: column.name,
       present: count(row, alias("present", index)) ?? 0,
       ...(distinct === undefined ? {} : { distinct }),
       ...(shaped === undefined ? {} : { shaped }),
+      ...(digitRun === undefined ? {} : { digitRun }),
     };
   });
 
@@ -274,6 +336,30 @@ const ratio = (part: number, whole: number): string => `${Math.round((part / who
 function namesPersonalData(column: string): boolean {
   const lowered = column.toLowerCase();
   return PII_NAME_WORDS.some((word) => lowered.includes(word));
+}
+
+/**
+ * The shapes that are the column's NORM rather than an accident, in the app's own
+ * words and carrying the ratio each was derived from.
+ *
+ * A shape the engine did not report is absent rather than zero, so a profile read at
+ * `basic` depth contributes no shape suspicion at all — which is exactly true.
+ */
+function matchedShapes(profile: AgentColumnProfile): readonly string[] {
+  if (profile.present < MIN_ROWS_FOR_RATIO_FINDINGS) return [];
+
+  const counted: readonly (readonly [number | undefined, string])[] = [
+    [profile.shaped, EMAIL_SHAPE_TEST.words],
+    [profile.digitRun, DIGIT_RUN_SHAPE_TEST.words],
+  ];
+
+  const matched: string[] = [];
+  for (const [matches, words] of counted) {
+    if (matches !== undefined && matches / profile.present >= PII_SHAPE_RATIO) {
+      matched.push(`${ratio(matches, profile.present)} of the values are shaped like ${words}`);
+    }
+  }
+  return matched;
 }
 
 /**
@@ -320,17 +406,15 @@ function deriveFindings(
       });
     }
 
-    const shapedEnough =
-      profile.shaped !== undefined &&
-      profile.present >= MIN_ROWS_FOR_RATIO_FINDINGS &&
-      profile.shaped / profile.present >= PII_SHAPE_RATIO;
-    if (declared !== undefined && (namesPersonalData(profile.column) || shapedEnough)) {
+    const shapes = matchedShapes(profile);
+    if (declared !== undefined && (namesPersonalData(profile.column) || shapes.length > 0)) {
       findings.push({
         code: "suspected_pii",
         column: profile.column,
-        detail: shapedEnough
-          ? `${ratio(profile.shaped ?? 0, profile.present)} of the values are shaped like an email address. No value was read out of the database to establish this.`
-          : "The column's name suggests personal data. Its values were not inspected to establish this.",
+        detail:
+          shapes.length > 0
+            ? `${shapes.join(", and ")}. No value was read out of the database to establish this.`
+            : "The column's name suggests personal data. Its values were not inspected to establish this.",
       });
     }
   });

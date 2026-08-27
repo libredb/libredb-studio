@@ -228,6 +228,23 @@ mock.module("@/hooks/use-connection-form", () => ({
 }));
 
 // ── Mock @/lib/db-ui-config ─────────────────────────────────────────────────
+// Mirrors the real table for the engines that diverge from the networked default. A mock
+// that gave every type the full field set is what let the modal draw a Username box for
+// libSQL and a Database box for Druid unnoticed: the assertion that the box is absent
+// passes or fails against THIS list, not against src/lib/db-ui-config.ts. The real table is
+// the authority and tests/unit/lib/db-ui-config.test.ts derives it from the providers.
+const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
+  sqlite: ["database"],
+  libredb: ["database"],
+  duckdb: ["database"],
+  libsql: ["host", "port", "password", "connectionString"],
+  druid: ["host", "port", "user", "password"],
+  elasticsearch: ["host", "port", "user", "password"],
+  opensearch: ["host", "port", "user", "password"],
+};
+const mockFields = (type: string): string[] =>
+  MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
+
 mock.module("@/lib/db-ui-config", () => ({
   getDBConfig: (type: string) => ({
     icon: () => null,
@@ -236,8 +253,9 @@ mock.module("@/lib/db-ui-config", () => ({
     defaultPort: type === "mysql" ? "3306" : type === "mongodb" ? "27017" : "5432",
     // Mirrors the real config: the URI-addressed providers offer the toggle.
     showConnectionStringToggle: type === "mongodb" || type === "couchbase",
-    connectionFields: ["host", "port", "user", "password", "database"],
+    connectionFields: mockFields(type),
   }),
+  takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
   getDBIcon: () => () => null,
   getDBColor: () => "text-blue-400",
   // `isFileBased` must be mocked now that `DB_UI_CONFIG` is an exported binding (#425 made
@@ -245,7 +263,7 @@ mock.module("@/lib/db-ui-config", () => ({
   // binding, and this mock replaces it with `{}`, so leaving the function to the real module
   // makes it throw on `DB_UI_CONFIG[type].connectionFields` for every render. Mirrors the
   // real rule: a file-based provider carries only a path.
-  isFileBased: (type: string) => type === "sqlite" || type === "libredb",
+  isFileBased: (type: string) => mockFields(type).length === 1 && mockFields(type)[0] === "database",
   DB_UI_CONFIG: {},
 }));
 
@@ -745,6 +763,54 @@ describe("ConnectionModal", () => {
     const uriInput = container.querySelector("#connectionString") as HTMLInputElement | null;
     expect(uriInput).not.toBeNull();
     expect(uriInput!.placeholder).toContain("couchbase://");
+  });
+
+  // ── an addressing input exists exactly where a value is written ──────────
+  //
+  // `connectionFields` decides what `buildConnection` saves. The modal used to draw
+  // Username and Database for every networked engine regardless, so four engines asked
+  // for a value that was then discarded on save - a box that collects nothing is the UI
+  // form of reporting an absence as a measurement.
+
+  test("libSQL renders neither a Username nor a Database box, because it takes neither", () => {
+    // libSQL authenticates with a token the server minted - it has no user names at all -
+    // and addresses the whole database by URL. Its `connectionFields` say so, and nothing
+    // carried either box's value before this.
+    mockFormOverrides = { type: "libsql" };
+    const props = createDefaultProps();
+    const { container } = render(React.createElement(ConnectionModal, props));
+
+    expect(container.querySelector("#user")).toBeNull();
+    expect(container.querySelector("#database")).toBeNull();
+    // Not a blanket removal: the engine is still addressed, and still takes a credential.
+    expect(container.querySelector("#host")).not.toBeNull();
+    expect(container.querySelector("#password")).not.toBeNull();
+  });
+
+  test.each(["druid", "elasticsearch", "opensearch"] as const)(
+    "%s renders a Username but no Database box, matching what it takes",
+    (type) => {
+      // These three authenticate with HTTP Basic - their transports build the header from
+      // `config.user` - and name the datasource or index in the statement instead of on
+      // the connection. So exactly one of the two boxes belongs.
+      mockFormOverrides = { type };
+      const props = createDefaultProps();
+      const { container } = render(React.createElement(ConnectionModal, props));
+
+      expect(container.querySelector("#user")).not.toBeNull();
+      expect(container.querySelector("#database")).toBeNull();
+    },
+  );
+
+  test("redis renders a Username box, because its provider authenticates with one", () => {
+    // The Redis 6 ACL user. #502 taught the provider to send it to ioredis as `username`,
+    // measured on both arms, and the box has to be here for a value to reach it.
+    mockFormOverrides = { type: "redis" };
+    const props = createDefaultProps();
+    const { container } = render(React.createElement(ConnectionModal, props));
+
+    expect(container.querySelector("#user")).not.toBeNull();
+    expect(container.querySelector("#database")).not.toBeNull();
   });
 
   test("non-Couchbase types keep the Database Name label", () => {

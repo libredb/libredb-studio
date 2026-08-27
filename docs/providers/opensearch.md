@@ -813,7 +813,7 @@ numbers this table used to carry had drifted, and a method name is greppable and
 | `getSlowQueries()` | — | **`[]`** — and on this product that is a *choice*, not an absence. See below |
 | `getIndexStats()` | — | **`[]`**. No secondary-index object exists |
 | `getActiveSessions()` | — | **`[]`**. A request is one HTTP request; there is no session and no connection catalog |
-| `getTableStats()` | `_cat/indices` | one row per **user** index: `rowCount` = `docs.count`, `tableSize(Bytes)` = `totalSize(Bytes)` = `pri.store.size`, `schemaName` = `""` |
+| `getTableStats()` | `_cat/indices` | one row per **user** index: `rowCount` = `docs.count`, `tableSize(Bytes)` = `totalSize(Bytes)` = `pri.store.size`, `schemaName` = `""`; `tableSize(Bytes)` **omitted** when the index published no size ([§7](#7-monitoring--health)) |
 | `getStorageStats()` | `_cluster/health` + `_cluster/stats` | **one row for the cluster**: `name` = `cluster_name`, `sizeBytes` = `indices.store.size_in_bytes`. **No row at all** when the size was unreported |
 | `getHealth()` | the above, composed | `databaseSize`; `activeConnections` **omitted**, carrying the overview's absence across; `cacheHitRatio` = the repo's word for "not measured"; `slowQueries` = `[]`; `activeSessions` = `[]` |
 
@@ -880,13 +880,22 @@ The honest empties, each with its reason:
 - **`uptime` is `"N/A"`.** No call in this seam carries one; a `"0s"` would claim the cluster booted
   this instant.
 
-**A closed index reads as zero in `getTableStats()` and is omitted in the schema tree**, and the
-asymmetry is only half deliberate. `TableStats.rowCount`, `totalSize` and `totalSizeBytes` are
-*required* numbers, so for those three a closed index has nowhere to read but zero. `tableSize` and
-`tableSizeBytes` are *optional* and this mapper zeroes them anyway, which turns on `StorageTab`'s
-`tableSizeKnown` and draws a `0 B` Data figure for an index that reported nothing (BACKLOG D50).
-`TableSchema.rowCount` and `size` are optional too, which is why the tree keeps the distinction (the
-comment over `toTableStats()` in [`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts)).
+**A closed index zeroes only the *required* `getTableStats()` fields, and omits the optional ones.**
+`TableStats.rowCount`, `totalSize` and `totalSizeBytes` are required numbers, so for those three a
+closed index has nowhere to read but zero. `tableSize` and `tableSizeBytes` are *optional*, so they
+are **absent** rather than `0`: a zero there would be a fabricated measurement rather than a forced
+one. The schema tree makes the same distinction with its own optional `TableSchema.rowCount` and
+`size` (the comment over `toTableStats()` in
+[`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts)).
+
+**One closed index takes the Data figure away from the whole cluster**, and that cost is deliberate.
+`StorageTab` gates that figure on `tables.every((t) => t.tableSizeBytes !== undefined)`, so as soon
+as one index publishes no size the Tables card reads **N/A** for every open index beside it instead
+of a sum over the indices that did answer. A partial sum would read as a measurement of the cluster,
+which is the same lie the `0 B` it replaced told about the one index, one digit larger. The
+open-beside-closed pair is pinned in
+[`opensearch-provider.test.ts`](../../tests/integration/db/opensearch-provider.test.ts) so the
+aggregate is asserted, not inferred.
 
 **Document counts exceed what a `SELECT` returns when a mapping has `nested` fields**, and this was
 measured here: `probe_shapes` reports **2** documents in `_cat/indices` while `SELECT COUNT(*)` answers

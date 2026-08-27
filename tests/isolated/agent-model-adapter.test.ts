@@ -237,16 +237,15 @@ describe("createAgentModel reads the existing LLM settings surface", () => {
     expect(recording.requests[0]?.headers["x-goog-api-key"]).toBe("gemini-key");
   });
 
-  test("Gemini ignores LLM_API_URL, exactly as the chat surface's provider does", async () => {
-    // .env.example documents LLM_API_URL for the Ollama and custom kinds, and
-    // src/lib/llm/providers/gemini.ts never reads it. Honouring it here would let
-    // a value left over from a custom setup redirect a keyed Gemini request.
+  test("Gemini reads LLM_API_URL, exactly as the chat surface's provider now does (B20)", async () => {
+    // Both Gemini consumers take the variable; src/lib/llm/utils/gemini-endpoint.ts
+    // is what turns one value into the two spellings the SDKs disagree about.
     process.env.LLM_API_KEY = "gemini-key";
-    process.env.LLM_API_URL = "https://left-over-proxy.example.com/v1";
+    process.env.LLM_API_URL = "https://gemini-proxy.example.com/v1beta";
 
     const request = await firstRequest({}, geminiCompletion("pong"));
 
-    expect(request.url).toStartWith("https://generativelanguage.googleapis.com/v1beta/");
+    expect(request.url).toStartWith("https://gemini-proxy.example.com/v1beta/");
     expect(request.headers["x-goog-api-key"]).toBe("gemini-key");
   });
 

@@ -47,7 +47,7 @@ import type { LLMProviderType } from "@/lib/llm/types";
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
 import type { AgentChartSpec, DatabaseType, TableSchema } from "@/lib/types";
-import type { AgentContextRowBudget, AgentContextUnavailableCode } from "./context-snapshot";
+import type { AgentContextCharge, AgentContextRowBudget, AgentContextUnavailableCode } from "./context-snapshot";
 import type { AgentGoalShortfall, AgentGoalVerifierId } from "./goal-verifier";
 import type { AgentToolName } from "./tools";
 import type { AgentInventoryNoun } from "./inventory-noun";
@@ -577,6 +577,70 @@ interface AgentRunEventBase {
 }
 
 /**
+ * Every sentence the drive says to a run, named — and the ONE place a new one has to
+ * state itself (B51).
+ *
+ * Each notice is one-shot or count-bounded per DRIVE, and the flags that bound them are
+ * `let`s inside `runInvestigation` — which is also what RESUMES a run a dead process left
+ * running. So "once" meant once per drive, and a resumed drive could say again what the
+ * previous drive already said. The flags are now SEEDED from the deliveries the ledger
+ * already holds (`guidanceDelivered`), which is why every notice needs an id here: a
+ * delivery nothing records cannot bound anything.
+ *
+ * Two kinds of entry carry these ids, and which one a notice lands on follows from HOW it
+ * is delivered rather than from a second decision:
+ *
+ *  - a notice delivered as a `user` message, on a turn where nothing was refused, is a
+ *    `guidance-issued` entry — the drive said something and the model acts on it next
+ *    turn;
+ *  - a notice delivered as a TOOL RESULT, instead of running the call, is the `notice`
+ *    field of the `call-held` entry that already records the hold. A second entry for one
+ *    delivery would be the only place in this ledger where one thing writes twice, and the
+ *    rail would render both.
+ *
+ * The rail's own reading of these ids is `GUIDANCE_HEADLINE`; the wording lives in
+ * `models/notices.ts` and in `investigation.ts` for the two that name artifact ids.
+ */
+export type AgentGuidanceNotice =
+  /**
+   * A prose turn after a tool this run holds was called. Delivered as a `user` message,
+   * and the turn is taken again. Bounded by the model's own `reportReminderLimit`.
+   */
+  | "report-reminder"
+  /**
+   * A plan run whose prose named neither statement nor refusal. Delivered as a `user`
+   * message; bounded by the model's own `planStatementRetries`.
+   */
+  | "plan-statement"
+  /**
+   * A run within the turn or time reserve of a ceiling. Delivered as a `user` message
+   * riding the turn about to be taken; once per run.
+   */
+  | "report-reserve"
+  /**
+   * A run that stopped having read nothing, on a set holding both reading tools.
+   * Delivered as a `user` message; once per run, and only where the model's profile
+   * says the retry earned its turn.
+   */
+  | "unread-stop"
+  /**
+   * A `compose_report` on an answering workflow with a presentable read and no
+   * presentation. Delivered as a TOOL RESULT instead of running the call, so it rides
+   * the `call-held` entry; bounded by the model's own `presentReminderLimit`.
+   */
+  | "present-before-report"
+  /**
+   * A `compose_report` resting on no citation, or on nothing but empty readings.
+   * Delivered as a TOOL RESULT instead of running the call; once per run.
+   */
+  | "cite-what-you-read"
+  /**
+   * A `compose_report` from a run holding the two plans a comparison would use.
+   * Delivered as a TOOL RESULT instead of running the call; once per run.
+   */
+  | "compare-before-report";
+
+/**
  * The semantic events one run emits, in the vocabulary a user reads in the rail
  * and a resumed run replays. Deliberately coarse: one entry per thing that
  * HAPPENED, not per token or per SDK stream chunk.
@@ -662,6 +726,68 @@ export type AgentRunEvent =
        * claiming a vocabulary nobody recorded.
        */
       readonly noun?: AgentInventoryNoun;
+      /**
+       * What the reading COST this run, measured off the tracker around the capture
+       * (B13).
+       *
+       * The capture's catalog reads are charged against exactly the ceilings the rail
+       * shows and go through `executeAuditedOperation` rather than the run loop's
+       * `runStep`, which is the only writer of `tool-completed` — so a run that had
+       * spent three statements before its first model turn folded to a meter reading
+       * zero. This is what the fold adds instead of itemising reads it never saw.
+       *
+       * The tracker's own delta and not a count of the catalog kinds this dialect has:
+       * a denied read charges nothing while an acquisition failure charges a statement
+       * for a call that never ran, so a derived figure would state the reads the server
+       * INTENDED rather than the ones the run paid for.
+       *
+       * Optional, and the absence is the honest reading rather than a hedge: a ledger
+       * written before this field records a capture whose spend nobody measured, and a
+       * `{ statements: 0, elapsedMs: 0 }` there would state that the reading was free
+       * (#477). A reader folds an entry without one exactly as it always folded it.
+       */
+      readonly charged?: AgentContextCharge;
+    })
+  | (AgentRunEventBase & {
+      /**
+       * An inventory this run did not read, because the PROCESS already held one for
+       * its connection, and how old that reading was when this run took it (B56).
+       *
+       * `heldSnapshotForConnection` is consulted before any capture and has no expiry:
+       * newest reading wins, eviction is by use, nothing re-reads. Measured 2026-08-22,
+       * twice in one session — MongoDB's schema inference was changed, the schema tree
+       * showed the new dotted paths immediately, and two plan runs afterwards still
+       * grouped by the old field. Their ledgers carried NO context event at all, so the
+       * record could not distinguish "held, hours old" from "captured just now", and the
+       * only diagnosis available was restarting the process.
+       *
+       * Its own kind rather than a `context-captured`, for the reason
+       * `context-unavailable` is one: every reader that asks `kind === "context-captured"`
+       * treats the entry as this run's own reading — `reusableSnapshot` re-derives a
+       * snapshot from it and would hand a later drive an inventory this run never read,
+       * and the timeline would say "Schema captured" of a capture that did not happen.
+       *
+       * `ageMs` is what the entry exists for. The fingerprint says WHICH reading, and a
+       * user who has just added a collection needs to know it was taken before they did.
+       * It is the age at the moment of REUSE and not a timestamp difference a reader has
+       * to compute: the reading's own `capturedAtMs` belongs to whichever run captured it,
+       * and that run may not be in this ledger at all.
+       *
+       * No snapshot on the entry, deliberately. The inventory is not this run's reading,
+       * and recording it here would make `reusableSnapshot` reachable from a reuse — which
+       * is the reading that ages, so a resumed drive would keep re-deriving it for as long
+       * as the run lived.
+       */
+      readonly kind: "context-reused";
+      readonly fingerprint: string;
+      readonly tableCount: number;
+      /** How old the reading was when this run took it, in milliseconds. */
+      readonly ageMs: number;
+      /**
+       * What this engine calls the rows of that inventory, from the same source the
+       * capture entry takes it from (#414) and optional for the same reason.
+       */
+      readonly noun?: AgentInventoryNoun;
     })
   | (AgentRunEventBase & {
       /**
@@ -698,14 +824,23 @@ export type AgentRunEvent =
        * carries an engine's message.
        *
        * NOT recorded: the statements the capture composed, and no noun. The first
-       * belongs to the audit stream and to B13; the second describes rows, and there
-       * are none to describe.
+       * belongs to the audit stream — what those reads COST is a different question and
+       * `charged` answers it; the second describes rows, and there are none to describe.
        */
       readonly kind: "context-unavailable";
       readonly reasonCode: AgentContextUnavailableCode;
       readonly detail: string;
       /** Present only when the row budget is what refused it. */
       readonly rowBudget?: AgentContextRowBudget;
+      /**
+       * What the refused reading cost this run, measured off the tracker (B13).
+       *
+       * A refusal is not a free capture: the pipeline admitted the call, charged the
+       * statement and only then answered, and on the row-budget case the engine had
+       * already produced the rows. Same reading as the captured entry's, same reason for
+       * being optional there.
+       */
+      readonly charged?: AgentContextCharge;
     })
   | (AgentRunEventBase & {
       readonly kind: "statement-drafted";
@@ -750,6 +885,20 @@ export type AgentRunEvent =
       readonly tool: AgentToolName;
       readonly reason: string;
       readonly shortfall?: AgentGoalShortfall;
+      /**
+       * WHICH sentence the hold answered with, from the one vocabulary every delivery is
+       * named in (`AgentGuidanceNotice`, B51).
+       *
+       * `reason` is the prose the model was sent and names artifact ids in two of the
+       * three cases, so it cannot be matched against: a resumed drive reading it back to
+       * decide whether a notice had already been delivered would be pattern-matching a
+       * paragraph. This is the id that reading uses.
+       *
+       * Absent on the verdict-preview holds, which speak for a `shortfall` rather than for
+       * a notice, and on every entry written before the field existed — where the absence
+       * says "this delivery was not recorded under a name", not "no notice was sent".
+       */
+      readonly notice?: AgentGuidanceNotice;
     })
   | (AgentRunEventBase & {
       /**
@@ -834,7 +983,22 @@ export type AgentRunEvent =
        * badly and read as this server's own prose.
        */
       readonly kind: "guidance-issued";
-      readonly notice: "report-reminder" | "plan-statement" | "report-reserve" | "unread-stop";
+      readonly notice: AgentGuidanceNotice;
+      /**
+       * What the run had DONE when the sentence arrived (B51).
+       *
+       * The question `docs/llms/` exists to answer is "did this model do that by itself?",
+       * and after #416 and #417 a ledger could say a notice was delivered without saying
+       * where in the run it landed — a reminder on the second turn and one on the last are
+       * different facts about a model. Both figures are the drive's own counters at the
+       * moment of delivery.
+       *
+       * Optional, because a ledger written before they were recorded holds neither, and a
+       * zero would say the notice arrived before the run did anything.
+       */
+      readonly atTurn?: number;
+      /** Tool calls this run had made when it arrived. */
+      readonly toolCalls?: number;
     })
   | (AgentRunEventBase & {
       /**

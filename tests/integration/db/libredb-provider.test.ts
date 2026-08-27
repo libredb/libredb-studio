@@ -156,6 +156,32 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
     expect(slowQueriesEmptyState).toContain("LibreDB keeps no statistics");
     expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
   });
+
+  // `statementLanguage` is the sentence the agent's plan contract states verbatim
+  // (`ProviderLabels.statementLanguage`), and this engine needs one for the reason
+  // Redis did: a plan run on 2026-08-22, asked to list every entry under the `users`
+  // prefix, drafted `GET users:*`. `dispatchCommand` gives `get` exactly one meaning
+  // - `kv.get(parts[1])`, an exact-key lookup with no glob - so that command answers
+  // zero rows and no error, which on a key-value store reads as "nothing stored
+  // there" (#B55). So the sentence names all five verbs AND says a key is exact,
+  // because the inventory's rows are named `users:*` and that reads as a wildcard
+  // the grammar does not have.
+  test("getLabels() declares the five verbs as the statement language and that a key is exact", () => {
+    const { statementLanguage } = new LibreDBProvider(makeConn(tmpFile)).getLabels();
+
+    expect(statementLanguage).toBeString();
+    // Every verb `dispatchCommand` matches; a verb left out is one a model must guess.
+    for (const verb of ["get", "put", "delete", "prefix", "range"]) {
+      expect(statementLanguage).toContain(verb);
+    }
+    // The two words that stop `users:*` being read as a pattern, and the runnable
+    // form for that objective - the one `generateTableQuery` already emits.
+    expect(statementLanguage).toContain("exact");
+    expect(statementLanguage).toContain("no wildcard");
+    expect(statementLanguage).toContain("prefix users:");
+    // Neither SQL nor a shell: the grammar is line-oriented and one command per line.
+    expect(statementLanguage).toContain("SQL");
+  });
 });
 
 describe("LibreDBProvider — getSchema", () => {

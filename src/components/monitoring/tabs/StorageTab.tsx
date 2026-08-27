@@ -8,6 +8,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { MonitoringData } from "@/lib/db/types";
+// The formatter is shared with `TablesTab` and every provider rather than local to this
+// tab: both tabs used to keep a byte-identical threshold cascade that stopped at GB and
+// guarded nothing, so a negative rendered as "-1 B", a non-finite as "NaN B" and an
+// exabyte as "1073741824.00 GB". The shared one refuses a negative or a non-finite with
+// "N/A" and spells PB and EB, which is the distinction this whole tab is about.
+import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { PanelUnavailable } from "../PanelUnavailable";
 
 interface StorageTabProps {
@@ -74,13 +80,6 @@ export function StorageTab({ data, loading }: StorageTabProps) {
   const indexSizeKnown = !statsRefused && tables.every((t) => t.indexSizeBytes !== undefined);
   const walStorage = storage.find((s) => s.name === "WAL");
 
-  const formatBytes = (bytes: number) => {
-    if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(2)} GB`;
-    if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(2)} MB`;
-    if (bytes >= 1024) return `${(bytes / 1024).toFixed(2)} KB`;
-    return `${bytes} B`;
-  };
-
   // Calculate storage breakdown. Absence and zero are different inputs: a provider that
   // OMITS `databaseSizeBytes` is saying no byte figure is knowable - Apache Cassandra's
   // `system_views.disk_usage` publishes whole mebibytes, measured as "1 MiB" for a
@@ -111,8 +110,10 @@ export function StorageTab({ data, loading }: StorageTabProps) {
   // measured 0 total and no tables, `0 - 0 - 0` is an honest 0 B and stays one. What it cannot
   // survive is a NEGATIVE, which a 0 total beside per-table figures that answered produces -
   // `getTableStats()` is a separate read and does not share the overview's failure - and the
-  // cascade below returns its input unchanged, so the cell drew "-943718400 B": a negative byte
-  // count presented as a measurement (measured in the DOM). A negative remainder says the two
+  // local cascade this tab used to format with returned its input unchanged, so the cell drew
+  // "-943718400 B": a negative byte count presented as a measurement (measured in the DOM). The
+  // shared formatter now answers "N/A" for a negative, which is the same refusal one layer down
+  // and no reason to stop refusing here. A negative remainder says the two
   // reads disagree, not that the unattributed share is below zero, so there is no figure to
   // print. Gating this on the share instead would refuse the honest 0 B as well.
   const otherBytes = totalSize - totalTableSize - totalIndexSize;
@@ -146,7 +147,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
               real per-table bytes this line used to read "700.00 MB" over "0.0%", which is a
               fabricated denominator under an honest numerator (measured in the DOM).
             */}
-            <div className="text-lg sm:text-2xl font-medium truncate">
+            <div className="text-lg sm:text-2xl font-medium truncate" data-testid="storage-stat-tables">
               {sizeKnown && tableSizeKnown ? formatBytes(totalTableSize) : "N/A"}
             </div>
             {totalSize > 0 && tableSizeKnown && (
@@ -161,7 +162,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
             <Archive strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-purple-500" />
           </CardHeader>
           <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium truncate">
+            <div className="text-lg sm:text-2xl font-medium truncate" data-testid="storage-stat-indexes">
               {sizeKnown && indexSizeKnown ? formatBytes(totalIndexSize) : "N/A"}
             </div>
             {totalSize > 0 && indexSizeKnown && (
@@ -202,7 +203,9 @@ export function StorageTab({ data, loading }: StorageTabProps) {
                     <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-green-500" />
                     Tables
                   </span>
-                  <span className="font-medium">{tableSizeKnown ? formatBytes(totalTableSize) : "N/A"}</span>
+                  <span className="font-medium" data-testid="storage-breakdown-tables">
+                    {tableSizeKnown ? formatBytes(totalTableSize) : "N/A"}
+                  </span>
                 </div>
                 <Progress value={tablePercent} className="h-1.5 sm:h-2" />
               </div>
@@ -213,7 +216,9 @@ export function StorageTab({ data, loading }: StorageTabProps) {
                     <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-purple-500" />
                     Indexes
                   </span>
-                  <span className="font-medium">{indexSizeKnown ? formatBytes(totalIndexSize) : "N/A"}</span>
+                  <span className="font-medium" data-testid="storage-breakdown-indexes">
+                    {indexSizeKnown ? formatBytes(totalIndexSize) : "N/A"}
+                  </span>
                 </div>
                 <Progress value={indexPercent} className="h-1.5 sm:h-2 [&>div]:bg-purple-500" />
               </div>
@@ -240,7 +245,9 @@ export function StorageTab({ data, loading }: StorageTabProps) {
                       Other
                     </span>
                   </span>
-                  <span className="font-medium">{remainderKnown ? formatBytes(otherBytes) : "N/A"}</span>
+                  <span className="font-medium" data-testid="storage-breakdown-other">
+                    {remainderKnown ? formatBytes(otherBytes) : "N/A"}
+                  </span>
                 </div>
                 <Progress value={otherPercent} className="h-1.5 sm:h-2 [&>div]:bg-muted-foreground" />
               </div>

@@ -342,17 +342,132 @@ describe("what a document from outside Studio is held to instead", () => {
   });
 
   test("the bounds still hold, so a tolerant schema is not an unchecked one", () => {
+    // Held per ENTRY rather than per document (B55/B57): the out-of-range entry is not applied,
+    // which is the rule, and it is named so the operator can find the number that broke it.
     const outOfRange = {
-      models: [{ id: "some-model:9b", measured: "m", settings: { turnTimeoutMs: 400_000 } }],
+      models: [
+        { id: "some-model:9b", measured: "m", settings: { turnTimeoutMs: 400_000 } },
+        { id: "other-model:9b", measured: "m", settings: { retryEmptyTurn: true } },
+      ],
     };
-    expect(() => parseOperatorTuning(document(outOfRange), "test")).toThrow(ModelTuningError);
+    const tuning = parseOperatorTuning(document(outOfRange), "test");
+    expect(tuning.models["some-model:9b"]).toBeUndefined();
+    expect(tuning.models["other-model:9b"]?.retryEmptyTurn).toBe(true);
+    expect(tuning.skippedEntries).toEqual([
+      "some-model:9b: settings.turnTimeoutMs: Too big: expected number to be <=179999",
+    ]);
   });
 
   test("wording is still refused, which is the one rule that does not relax", () => {
     // Tolerance is about settings Studio may not know yet. Prompt text is not a setting Studio
-    // might add later: it is the thing a mounted document must never be able to say.
-    const withWording = { models: [{ id: "some-model:9b", measured: "m", notices: { ...BASELINE_NOTICES } }] };
-    expect(() => parseOperatorTuning(document(withWording), "test")).toThrow(ModelTuningError);
+    // might add later: it is the thing a mounted document must never be able to say. Per-entry
+    // validation does not soften that — the entry carrying it is refused whole, so no wording it
+    // named can reach a run — it only stops the entry beside it paying for the attempt.
+    const withWording = {
+      models: [
+        // `settings` is stated, and that is deliberate: it is a REQUIRED key, so the entry this
+        // test used to carry — wording and nothing else — was refused for the missing settings and
+        // never reached the `notices` rule at all. The assertion below now names the fault.
+        { id: "some-model:9b", measured: "m", settings: { retryEmptyTurn: true }, notices: { ...BASELINE_NOTICES } },
+        { id: "other-model:9b", measured: "m", settings: { retryEmptyTurn: true } },
+      ],
+    };
+    const tuning = parseOperatorTuning(document(withWording), "test");
+    expect(tuning.models["some-model:9b"]).toBeUndefined();
+    expect(tuning.models["other-model:9b"]).toBeDefined();
+    expect(tuning.skippedEntries[0]).toContain("notices");
+    // And Studio's own document refuses the same entry whole, as it always did.
+    expect(() => parseTuning(document(withWording), "test")).toThrow(ModelTuningError);
+  });
+
+  /*
+    Per-ENTRY validation, which is where the all-or-nothing rule actually belongs (B57).
+
+    The argument for refusing whole was always about MERGING — half of one measurement beside half
+    of another is a configuration nobody has run — and that argument protects whole-ENTRY
+    replacement, not whole-document rejection. A document holding fifty models lost all fifty to a
+    typo in the thirty-seventh, and the day these are published as a catalog that failure lands on
+    everyone who mounted it for a fault in an entry nobody else is using.
+  */
+  test("one bad entry loses only that entry, and the rest apply", () => {
+    const mixed = {
+      models: [
+        { id: "first:9b", measured: "m", settings: { retryEmptyTurn: true } },
+        { id: "broken:9b", measured: "m", settings: { unreportedCallCeiling: "twelve" } },
+        { id: "third:9b", measured: "m", settings: { retryUnreadStop: true } },
+      ],
+    };
+    const tuning = parseOperatorTuning(document(mixed), "test");
+
+    expect(Object.keys(tuning.models)).toEqual(["first:9b", "third:9b"]);
+    expect(tuning.skippedEntries[0]).toContain("broken:9b: settings.unreportedCallCeiling");
+  });
+
+  test("an entry whose id is what is wrong is reported by its position, not by an invented name", () => {
+    // Reported by `id` everywhere there is one, because that is what the operator wrote and what
+    // they will search the file for. When the id is the fault there is nothing to search for, so
+    // the position is the only honest handle — naming a model nobody configured would be worse.
+    const noId = { models: [{ measured: "m", settings: { retryEmptyTurn: true } }, { ...ENTRY }] };
+    const tuning = parseOperatorTuning(document(noId), "test");
+
+    expect(tuning.models["some-model:9b"]).toBeDefined();
+    expect(tuning.skippedEntries[0]).toContain("#0: id");
+  });
+
+  test("an entry that is not an object at all is skipped by position too", () => {
+    // The array's element type is unread until the entry is validated, so a bare number reaches
+    // the labeller. It has no `id` to read, and reading one off a non-object must not throw.
+    const notAnObject = { models: [7, { ...ENTRY }] };
+    const tuning = parseOperatorTuning(document(notAnObject), "test");
+
+    expect(tuning.models["some-model:9b"]).toBeDefined();
+    expect(tuning.skippedEntries[0]).toContain("#0");
+  });
+
+  test("a duplicate id skips the second entry rather than refusing the document", () => {
+    // Still not last-wins: two spellings of one id is a document nobody can read, and collapsing
+    // them would apply settings the other entry argues against. What changes is the blast radius.
+    const twice = {
+      models: [
+        { id: "some-model:9b", measured: "first", settings: { retryEmptyTurn: true } },
+        { id: "SOME-MODEL:9B", measured: "second", settings: { retryEmptyTurn: false } },
+        { id: "other:9b", measured: "m", settings: { retryUnreadStop: true } },
+      ],
+    };
+    const tuning = parseOperatorTuning(document(twice), "test");
+
+    expect(tuning.models["some-model:9b"]?.measured).toBe("first");
+    expect(tuning.models["other:9b"]).toBeDefined();
+    expect(tuning.skippedEntries).toEqual(["SOME-MODEL:9B: appears twice"]);
+  });
+
+  test("a document whose ENVELOPE is wrong is still refused whole, because nothing in it survives", () => {
+    // Per-entry tolerance is about entries. A wrong `schemaVersion` means Studio cannot say what
+    // any entry in the file means, and `models` not being an array leaves no entries to walk.
+    expect(() => parseOperatorTuning(document({ schemaVersion: 99 }), "test")).toThrow(ModelTuningError);
+    expect(() => parseOperatorTuning(document({ models: "some-model:9b" }), "test")).toThrow(ModelTuningError);
+  });
+
+  test("Studio's own document is still refused whole on a bad entry and on a duplicate", () => {
+    // The asymmetry, again: a fault in the document this repository ships is a repo fault, caught
+    // by the test suite before anybody runs it, so there is nothing to keep working around.
+    const oneBad = { models: [{ ...ENTRY }, { ...ENTRY, id: "x:1b", settings: { ...COMPLETE, retryEmptyTurn: 3 } }] };
+    expect(() => parseTuning(document(oneBad), "test")).toThrow(ModelTuningError);
+    expect(() => parseTuning(document({ models: [ENTRY, ENTRY] }), "test")).toThrow(/appears twice/);
+  });
+
+  test("a document with no readable entry at all applies nothing and names every one it dropped", () => {
+    // The degenerate case stated rather than left to be discovered: the document parsed, so it is
+    // not "ignored"; it simply contributed no entry, and the list says which faults cost it.
+    const allBad = {
+      models: [
+        { id: "a:1b", measured: "m", settings: { retryEmptyTurn: 3 } },
+        { id: "b:1b", measured: "", settings: { retryEmptyTurn: true } },
+      ],
+    };
+    const tuning = parseOperatorTuning(document(allBad), "test");
+    expect(tuning.models).toEqual({});
+    expect(tuning.skippedEntries).toHaveLength(2);
   });
 
   test("the bundled document is still held to completeness, so the discipline is not lost", () => {
@@ -497,6 +612,31 @@ describe("a document an operator supplies", () => {
     const status = operatorTuningStatus();
     expect(status.state).toBe("applied");
     expect(status.state === "applied" && status.models).toBe(1);
+    expect(status.state === "applied" && status.skippedEntries).toEqual([]);
+  });
+
+  test("reports the entries it skipped by id, the way it reports ignored keys", () => {
+    /*
+      The reporting surface a per-entry refusal needs (B57), and it is the one `ignoredKeys`
+      already had for the same reason: the document was applied AROUND the fault, so without this
+      an operator's thirty-seventh entry would do nothing and say nothing — which is exactly the
+      quietness the strict schema existed to prevent.
+    */
+    process.env[ENV] = writeDocument(
+      document({
+        models: [
+          { id: "applied:9b", measured: "m", settings: { retryEmptyTurn: true } },
+          { id: "dropped:9b", measured: "m", settings: { retryEmptyTurn: "yes" } },
+        ],
+      }),
+    );
+    resetTuning();
+    const status = operatorTuningStatus();
+
+    expect(status.state).toBe("applied");
+    expect(status.state === "applied" && status.models).toBe(1);
+    expect(status.state === "applied" && status.skippedEntries?.[0]).toContain("dropped:9b: settings.retryEmptyTurn");
+    expect(activeTuning().models["applied:9b"]?.retryEmptyTurn).toBe(true);
   });
 
   test("reports a relative path as the absolute one it actually looked at", () => {

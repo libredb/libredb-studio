@@ -618,6 +618,23 @@ The label map relabels the generic schema-explorer UI for key-value semantics: e
 "Key Prefix", row -> "key", select -> "Scan Keys", generate -> "Generate Command",
 analyze -> "Key Info", search placeholder -> "Search keys...", etc.
 
+`statementLanguage` is the one label no person sees: the agent's plan contract states it verbatim to
+the model. It exists for the reason Redis's does. Measured 2026-08-22 in plan mode against the
+embedded sample, objective *"list every entry under the users prefix and read one user by key"*: the
+run was grounded — three prefixes captured, `articles:*`, `config:*`, `users:*` — and drafted
+
+```
+GET users:*
+```
+
+`dispatchCommand` gives `get` exactly one meaning, `kv.get(parts[1])`, an exact-key lookup with no
+glob of any kind ([§5.1](#51-command-grammar)), so that command answers **zero rows and no error** —
+which on a key-value store reads as "nothing stored there" rather than as a mistake. The label
+therefore names all five verbs, so none has to be guessed, and states that a key is matched exactly
+with no wildcard, repeating in words what `tablesAreDerivedGroupings` says in a flag: a `users:*` row
+is this engine's grouping, so every entry under it is reached with `prefix users:` — the form
+`generateTableQuery` already emits when a person clicks the same row.
+
 One label is about the monitoring tab instead: `slowQueriesEmptyState` -> *"LibreDB keeps no
 statistics about finished statements in this version."* `getSlowQueries()` answers `[]`
 unconditionally ([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)), so the

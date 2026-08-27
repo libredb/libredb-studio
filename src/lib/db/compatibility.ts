@@ -115,7 +115,14 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   libredb: false,
 });
 
-/** The shipped ids that are databases a user already runs, in registry order. */
+/**
+ * The shipped ids that are databases a user already runs, in registry order.
+ *
+ * Also the DENOMINATOR the outward-facing catalog copy is counted against:
+ * `tests/unit/lib/catalog-copy-engine-count.test.ts` compares this length with every
+ * numeral qualifying "engines" in nine storefront files, which until #D47 were only ever
+ * corrected by somebody noticing.
+ */
 export const EXTERNAL_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(
   SHIPPED_DATABASE_TYPES.filter((type) => EXTERNAL[type]),
 );

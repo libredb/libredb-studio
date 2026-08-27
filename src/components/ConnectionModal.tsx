@@ -30,7 +30,7 @@ import {
   Server,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getDBConfig, isFileBased } from "@/lib/db-ui-config";
+import { getDBConfig, isFileBased, takesConnectionField } from "@/lib/db-ui-config";
 import { motion, AnimatePresence } from "framer-motion";
 import { useConnectionForm } from "@/hooks/use-connection-form";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -453,23 +453,30 @@ export function ConnectionModal({
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Key strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                        <Label htmlFor="user" className="text-xs font-mediumr text-fg-muted">
-                          Username
-                        </Label>
+                    {/*
+                      Only when the engine takes it. libSQL authenticates with a token the
+                      server minted and has no user names at all, so a Username box there
+                      collected a value `buildConnection` then discarded.
+                    */}
+                    {takesConnectionField(type, "user") && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Key strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                          <Label htmlFor="user" className="text-xs font-mediumr text-fg-muted">
+                            Username
+                          </Label>
+                        </div>
+                        <Input
+                          id="user"
+                          value={user}
+                          onChange={(e) => setUser(e.target.value)}
+                          placeholder="user"
+                          autoComplete="off"
+                          className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs"
+                        />
                       </div>
-                      <Input
-                        id="user"
-                        value={user}
-                        onChange={(e) => setUser(e.target.value)}
-                        placeholder="user"
-                        autoComplete="off"
-                        className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs"
-                      />
-                    </div>
-                    <div className="space-y-2">
+                    )}
+                    <div className={takesConnectionField(type, "user") ? "space-y-2" : "space-y-2 md:col-span-2"}>
                       <div className="flex items-center gap-2 mb-1">
                         <ShieldCheck strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                         <Label htmlFor="password" className="text-xs font-mediumr text-fg-muted">
@@ -511,32 +518,40 @@ export function ConnectionModal({
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                      <Label htmlFor="database" className="text-xs font-mediumr text-fg-muted">
-                        {databaseFieldLabel} Name
-                      </Label>
+                  {/*
+                    Only when the engine takes it. Druid and the two search engines address
+                    a datasource or an index by name in the statement, and libSQL addresses
+                    the whole database by URL, so none of the four has a database to name
+                    here - and `buildConnection` never wrote what this box collected.
+                  */}
+                  {takesConnectionField(type, "database") && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="database" className="text-xs font-mediumr text-fg-muted">
+                          {databaseFieldLabel} Name
+                        </Label>
+                      </div>
+                      <Input
+                        id="database"
+                        value={database}
+                        onChange={(e) => setDatabase(e.target.value)}
+                        placeholder={databaseFieldPlaceholder}
+                        className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
+                      />
+                      {isTrino && (
+                        <p className="text-xs text-fg-muted">
+                          The Trino catalog to open, such as tpch or hive. Its schemas are the level below.
+                        </p>
+                      )}
+                      {isCassandra && (
+                        <p className="text-xs text-fg-muted">
+                          The keyspace to open. Tables inside it are the level below; statements can still name any
+                          keyspace in full.
+                        </p>
+                      )}
                     </div>
-                    <Input
-                      id="database"
-                      value={database}
-                      onChange={(e) => setDatabase(e.target.value)}
-                      placeholder={databaseFieldPlaceholder}
-                      className="h-10 bg-panel border-hairline focus:border-blue-500/50 transition-all text-xs font-mono"
-                    />
-                    {isTrino && (
-                      <p className="text-xs text-fg-muted">
-                        The Trino catalog to open, such as tpch or hive. Its schemas are the level below.
-                      </p>
-                    )}
-                    {isCassandra && (
-                      <p className="text-xs text-fg-muted">
-                        The keyspace to open. Tables inside it are the level below; statements can still name any
-                        keyspace in full.
-                      </p>
-                    )}
-                  </div>
+                  )}
 
                   {/*
                     In the open rather than behind the Advanced accordion for the

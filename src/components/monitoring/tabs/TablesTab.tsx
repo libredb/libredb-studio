@@ -24,6 +24,7 @@ import {
   type MonitoringData,
   type ProviderCapabilities,
 } from "@/lib/db/types";
+import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { PanelUnavailable } from "../PanelUnavailable";
 
 /**
@@ -53,14 +54,14 @@ const MAINTENANCE_ACTIONS: { type: MaintenanceType; label: string; Icon: LucideI
  * Pure formatters, at module scope rather than re-created inside `TablesTab` on every
  * render. They also keep the component's own cognitive complexity to the decisions it
  * actually makes about absence, which is what this panel is about.
+ *
+ * `formatBytes` is NOT one of them and is imported instead: this tab and `StorageTab`
+ * each carried a byte-identical threshold cascade that stopped at GB and had no guard,
+ * so a negative rendered as "-1 B", a non-finite as "NaN B" and an exabyte as
+ * "1073741824.00 GB" - a non-magnitude drawn as a figure, in the panel whose whole
+ * subject is telling a reading from an absence. The shared one refuses a negative or a
+ * non-finite with "N/A" and spells PB and EB.
  */
-function formatBytes(bytes: number): string {
-  if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(2)} GB`;
-  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(2)} MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(2)} KB`;
-  return `${bytes} B`;
-}
-
 function formatNumber(n: number): string {
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;

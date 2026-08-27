@@ -162,6 +162,15 @@ export interface AgentStatementOptions {
  * Whether a span is the statement's own text rather than trivia between tokens.
  * The same four kinds `statement-end.ts` treats as statement text — a literal, a
  * quoted name and a bracketed subscript are tokens a statement is made of.
+ *
+ * Only two of the four are reachable from this file's single caller, measured
+ * 2026-08-27 by deleting each disjunct in turn: `scanStatementShape` reads with
+ * `DEFAULT_SQL_GRAMMAR`, whose brackets are quoted names rather than subscripts,
+ * and a `dollar-string` span has already set `dialectAmbiguous`, which
+ * `inspectAgentStatement` answers before it looks at the tail. So no fixture can
+ * pin `dollar-string` or `subscript` here; the list is kept whole anyway because
+ * it is the shared reading of what a statement is made of, and a caller passing
+ * a named grammar would reach both.
  */
 function isStatementText(kind: SqlSpanKind): boolean {
   return kind === "string" || kind === "quoted-identifier" || kind === "dollar-string" || kind === "subscript";

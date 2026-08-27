@@ -129,6 +129,23 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
     // And the word the engine used for those rows (#414), which is two strings and
     // therefore as inert as the rest of the entry.
     noun: { singular: "key pattern", plural: "key patterns" },
+    // What the reading cost this run, measured off the tracker (B13). In the fixture
+    // because it is what a run driven by this build records: the capture's catalog reads
+    // are charged against the ceilings the rail shows and write no `tool-completed`.
+    charged: { statements: 3, elapsedMs: 41 },
+  },
+  // The inventory the run did NOT read, because this process already held one (B56). Its
+  // own kind rather than the entry above, because every reader that finds a capture treats
+  // it as this run's own reading — and `ageMs` is the field the entry exists for: the hold
+  // has no expiry, so a plan run can be grounded on a reading taken before the user added
+  // the collection they are asking about.
+  "context-reused": {
+    kind: "context-reused",
+    atMs: 2,
+    fingerprint: SNAPSHOT.fingerprint,
+    tableCount: SNAPSHOT.tables.length,
+    ageMs: 3_600_000,
+    noun: { singular: "key pattern", plural: "key patterns" },
   },
   // The capture that was REFUSED (B54). Its own kind rather than the entry above
   // carrying an absence, and the fixture is the row-budget case because that is the
@@ -142,6 +159,9 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
     reasonCode: "CATALOG_READ_REFUSED",
     detail: "This run's schema inventory was refused.",
     rowBudget: { projected: 536, allowed: 200 },
+    // A refusal is not a free capture: the read was admitted and charged before it was
+    // answered, and on this shape the engine had already produced the rows (B13).
+    charged: { statements: 1, elapsedMs: 18 },
   },
   "statement-drafted": {
     kind: "statement-drafted",

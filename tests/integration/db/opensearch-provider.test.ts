@@ -307,6 +307,39 @@ const CAT_INDICES_BODY = JSON.stringify([
   },
 ]);
 
+/**
+ * The same listing with one OPEN index and one CLOSED one, so the cluster-wide
+ * aggregate has both inputs. Constructed from this product's measured closed-index
+ * shape (status word `close`, counts as JSON `null` - docs/providers/opensearch.md
+ * §6); the open row is the captured `probe_orders` verbatim.
+ */
+const CAT_INDICES_MIXED_BODY = JSON.stringify([
+  {
+    health: "yellow",
+    status: "open",
+    index: "probe_orders",
+    uuid: "e4QJ354KTqyCX763SC2eag",
+    pri: "1",
+    rep: "1",
+    "docs.count": "1",
+    "docs.deleted": "0",
+    "store.size": "4807",
+    "pri.store.size": "4807",
+  },
+  {
+    health: "yellow",
+    status: "close",
+    index: "probe_closed",
+    uuid: "Pjif3CuaTwW2pmgHmRr8iQ",
+    pri: "1",
+    rep: "1",
+    "docs.count": null,
+    "docs.deleted": null,
+    "store.size": null,
+    "pri.store.size": null,
+  },
+]);
+
 /** `GET /probe_orders/_mapping`. */
 const ORDERS_MAPPING_BODY = JSON.stringify({
   probe_orders: {
@@ -1000,6 +1033,44 @@ describe("OpenSearchProvider monitoring", () => {
     // provider made up.
     expect(stats.every((row) => row.schemaName === "")).toBe(true);
     expect(stats[1]).toMatchObject({ rowCount: 2, tableSizeBytes: 6070, totalSizeBytes: 6070 });
+  });
+
+  test("omits the optional size fields for a closed index, which takes the cluster's Data figure away", async () => {
+    // The closed row's shape is this product's own, documented in docs/providers/opensearch.md
+    // §6: the status word is `close` and `docs.count` / `pri.store.size` arrive as JSON null
+    // while the listing still names the index. `TableStats.rowCount`, `totalSize` and
+    // `totalSizeBytes` are required, so a closed index has nowhere to read but zero there;
+    // `tableSize` and `tableSizeBytes` are OPTIONAL and are omitted, because a 0 would be a
+    // fabricated measurement.
+    const provider = await connectProvider();
+    overridePath("/_cat/indices", ok(CAT_INDICES_MIXED_BODY));
+
+    const stats = await provider.getTableStats();
+
+    expect(stats).toEqual([
+      {
+        schemaName: "",
+        tableName: "probe_orders",
+        rowCount: 1,
+        tableSize: "4.69 KB",
+        tableSizeBytes: 4807,
+        totalSize: "4.69 KB",
+        totalSizeBytes: 4807,
+      },
+      {
+        schemaName: "",
+        tableName: "probe_closed",
+        rowCount: 0,
+        totalSize: "0 B",
+        totalSizeBytes: 0,
+      },
+    ]);
+    // The cluster-wide consequence, asserted rather than inferred: `StorageTab` gates its
+    // Data figure on `tables.every((t) => t.tableSizeBytes !== undefined)`, so the open
+    // index's measured 4807 bytes stop being drawn as a total the moment one index beside it
+    // published nothing. A partial sum would read as a measurement.
+    expect(stats.every((row) => row.tableSizeBytes !== undefined)).toBe(false);
+    expect("tableSizeBytes" in stats[1]).toBe(false);
   });
 
   test("reports the cluster as the one storage unit there is", async () => {

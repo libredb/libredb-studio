@@ -71,6 +71,7 @@ describe("readStatementEnd", () => {
       ["a comment marker in a quoted identifier", 'SELECT "a -- b"'],
       ["a comment marker in a backtick identifier", "SELECT `a -- b`"],
       ["a comment marker in a dollar-quoted body", "SELECT $$ ; -- $$"],
+      ["a comment marker in a TAGGED dollar-quoted body", "SELECT $tag$ ; -- $tag$"],
       ["a doubled quote inside a string", "SELECT 'it''s -- fine'"],
     ])("keeps %s inside the statement", (_label, sql) => {
       expect(split(sql)).toEqual([sql, ""]);
@@ -83,6 +84,24 @@ describe("readStatementEnd", () => {
 
     test("a semicolon that separates statements is not trailing trivia", () => {
       expect(split("SELECT 1; SELECT 2;")).toEqual(["SELECT 1; SELECT 2", ";"]);
+    });
+
+    // ── A dollar-quoted body is the statement's own text ───────────────────
+    //
+    // Same shape as the bracketed run below, and pinned the same way: only a
+    // fixture where the two readings DISAGREE decides it. With code after the
+    // body the end reaches the same index either way, so the body has to be the
+    // LAST token - either ending the input or with nothing but trivia after it.
+    // Read as trivia instead, the body would join the trailing run and the end
+    // would fall back to the last code character before it, so the
+    // insert-before-trivia rewrite would emit `SELECT $$body$$` as
+    // `SELECT LIMIT 500 $$body$$` - the corrupted-statement class, not a missed
+    // bound.
+    test("splits the trailing trivia off after a dollar-quoted body, not before it", () => {
+      expect(readStatementEnd("SELECT $$a$$")).toEqual({ end: 12, rewritable: true });
+      expect(split("SELECT $$a$$ -- daily")).toEqual(["SELECT $$a$$", " -- daily"]);
+      expect(split("SELECT $tag$a$tag$;")).toEqual(["SELECT $tag$a$tag$", ";"]);
+      expect(split("SELECT $$ ; -- $$ /* c */")).toEqual(["SELECT $$ ; -- $$", " /* c */"]);
     });
   });
 

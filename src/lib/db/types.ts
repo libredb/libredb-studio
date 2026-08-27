@@ -484,6 +484,22 @@ export interface ProviderLabels {
    * is dropped where this label is set instead of being re-worded from it.
    */
   slowQueriesEmptyState?: string;
+
+  /**
+   * Why the monitoring Sessions panel and the admin Operations session list are
+   * empty on this engine, in that engine's own terms.
+   *
+   * The counterpart of `slowQueriesEmptyState` for the other half of the same
+   * absence (#D48). Both panels default to "No active sessions found.", which a
+   * reader takes as "nothing is running right now" - true on PostgreSQL, and false
+   * on an engine that publishes no session list at all and can never show a row.
+   *
+   * A provider sets this when its `getActiveSessions()` can only ever answer `[]`.
+   * The failure branch beside it is a different fact: it renders a reason only when
+   * the READ failed (`activeSessions` absent from the payload, the reason under
+   * `errors`), and an absence is not an error.
+   */
+  sessionsEmptyState?: string;
 }
 
 /**

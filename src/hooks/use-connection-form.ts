@@ -316,7 +316,12 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
 
     /*
       Write only the addressing fields this engine actually takes — the same list the
-      modal renders inputs from. A file-addressed engine (SQLite, LibreDB) takes a
+      modal renders inputs from, which is now true: `ConnectionModal` gates its Username
+      and Database inputs on `takesConnectionField`, so a box exists exactly where a value
+      is written. It did not hold when this comment was first written, and the gap was
+      silent in both directions — libSQL and the search engines drew boxes nothing carried,
+      while Redis had its ACL user discarded by a list that omitted the field its own
+      provider authenticates with. A file-addressed engine (SQLite, LibreDB) takes a
       path and nothing else, yet this used to write `host: "localhost"`, an empty user
       and password, and a port parsed out of an empty string. That looks harmless and
       is not: a seed descriptor carries none of them, so a copy the editor had touched

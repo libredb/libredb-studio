@@ -65,20 +65,24 @@ test.describe("libSQL in the connection dialog", () => {
     await expect(dialog.locator('input[placeholder*="turso.io"]')).toBeVisible();
   });
 
-  test("renders the Username and Database inputs even though libSQL takes neither", async ({ page }) => {
-    // Pinned as it IS rather than as it should be, because the browser is what settled
-    // it: `connectionFields` in `db-ui-config.ts` decides what a save WRITES, not what
-    // the form renders - `ConnectionModal` draws Host, Username, Password and Database
-    // for every engine that is not file-based. So libSQL shows a Username box it has no
-    // user names for, exactly as Druid and the two search engines show a Database box
-    // they do not take. Nothing is written from either (BACKLOG U22), and a test that
-    // asserted these were absent would have been asserting a comment rather than the
-    // product.
+  test("renders neither a Username nor a Database input, because libSQL takes neither", async ({ page }) => {
+    // This assertion is the inverse of the one it replaces, and the inversion is the fix.
+    // `connectionFields` in `db-ui-config.ts` decides what a save WRITES, and the modal
+    // now gates its Username and Database inputs on the same list, so a box exists
+    // exactly where a value is carried. Before, libSQL showed a Username box for an
+    // engine that has no user names at all - it authenticates with a token the server
+    // minted - and a Database box for one addressed entirely by URL, and a save silently
+    // dropped both.
+    //
+    // Host and Password are asserted present in the same breath so this cannot pass by
+    // the dialog having failed to render its addressing section at all.
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "libSQL", exact: true }).click();
 
-    await expect(dialog.locator("#user")).toHaveCount(1);
-    await expect(dialog.locator("#database")).toHaveCount(1);
+    await expect(dialog.locator("#host")).toHaveCount(1);
+    await expect(dialog.locator("#password")).toHaveCount(1);
+    await expect(dialog.locator("#user")).toHaveCount(0);
+    await expect(dialog.locator("#database")).toHaveCount(0);
   });
 
   test("claims no wire-compatible relative it has not probed", async ({ page }) => {

@@ -43,6 +43,33 @@ export interface ResultExportFile {
 /** The table name used when the tab's own name cannot safely be one. */
 export const FALLBACK_TABLE_NAME = "table_name";
 
+/** What the file is called when the rows on screen are the tab's own. */
+const USER_EXPORT_STEM = "query_result_export";
+/** How much of a run id the file name carries, so a long id cannot dominate it. */
+const MAX_RUN_ID_CHARS = 64;
+/** Everything a file name may not carry, collapsed to a single separator. */
+const UNNAMEABLE = /[^A-Za-z0-9_]+/g;
+
+/**
+ * What an export is saved as.
+ *
+ * A run's rows are named after the RUN, not after the tab they were read in (B34):
+ * these files leave the product, and one carrying an agent's rows that is
+ * indistinguishable from one the user ran is a file nobody can attribute later. The
+ * id is reduced to characters a file name can hold — it reaches a path, so a `/` or a
+ * `..` in it is not a naming problem — and an id that survives that as nothing at all
+ * still leaves the attribution behind, because "an agent run produced this" is the
+ * part that matters.
+ */
+export function resultExportFileName(extension: string, runId?: string): string {
+  if (runId === undefined) return `${USER_EXPORT_STEM}.${extension}`;
+  const safe = runId
+    .replace(UNNAMEABLE, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, MAX_RUN_ID_CHARS);
+  return safe === "" ? `agent_run_export.${extension}` : `agent_run_${safe}_export.${extension}`;
+}
+
 /**
  * The prefix `use-tab-manager` puts on a generated tab name — `Query 1`, `Query: users`.
  *

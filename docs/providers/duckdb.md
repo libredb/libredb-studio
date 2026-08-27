@@ -275,20 +275,20 @@ SELECT * FROM duckdb_queries();      -- Catalog Error: Table Function with name 
 SELECT * FROM duckdb_connections();  -- Catalog Error: Table Function with name duckdb_connections does not exist!
 ```
 
-Both therefore answer `[]`, and neither fabricates a zero. **What the two empties say to the reader
-differs, and only one of them is DuckDB's own words:**
+Both therefore answer `[]`, and neither fabricates a zero. **Both empties are DuckDB's own words on
+screen**, through the two `ProviderLabels` fields the provider declares:
 
 - `getSlowQueries()` returns `[]` and the provider declares `slowQueriesEmptyState`, so the Queries
   panel prints *"DuckDB keeps no store of finished statements — it publishes no `duckdb_queries()`
   table function — so there is nothing to enable."* Without it that panel tells every engine to
   install `pg_stat_statements`, which for DuckDB is nonsense (#U12).
-- `getActiveSessions()` returns `[]` and there **is no sessions equivalent of that label in this
-  product**: `ProviderLabels` has no `sessionsEmptyState`, and `SessionsTab` / `OperationsTab` fall
-  back to the generic **"No active sessions found."** for any provider that answers with an empty
-  list. (Their `sessionsUnavailable` path renders a reason only when the reading *failed*, which is
-  not this case.) So the Sessions panel is permanently empty in the product's generic wording, and
-  the reason lives here rather than on screen — filed as **D48** in
-  [`docs/BACKLOG.md`](../BACKLOG.md).
+- `getActiveSessions()` returns `[]` and the provider declares `sessionsEmptyState`, so `SessionsTab`
+  and `OperationsTab` print *"DuckDB publishes no session list — there is no `duckdb_connections()`
+  table function — so this panel can never show a row."* in place of the generic **"No active
+  sessions found."** they used for every provider until D48. That generic sentence reads as "nothing
+  is running right now", which is a different claim from "this panel can never show a row". A
+  provider that declares neither label keeps the generic wording. (The `sessionsUnavailable` path
+  beside it is a third fact again: it renders a reason only when the reading *failed*.)
 
 `sqlite.ts` answers this panel with a row describing its own handle. That row would be true here
 too, but it would be the only row the panel could ever show, and "the engine reports one session"
@@ -537,7 +537,7 @@ and one index.
 | Temporary files | Empty, from `duckdb_temporary_files()` — a real reading, not a gap |
 | Settings | `access_mode`, `memory_limit`, `threads`, from `duckdb_settings()` |
 | Slow queries | **Empty, permanently** — `duckdb_queries()` does not exist, and the panel says so in DuckDB's own words through `slowQueriesEmptyState` (§3.7) |
-| Active sessions | **Empty, permanently** — `duckdb_connections()` does not exist. The panel prints the product's generic *"No active sessions found."*: there is no `sessionsEmptyState` label to carry the reason (§3.7, BACKLOG D48) |
+| Active sessions | **Empty, permanently** — `duckdb_connections()` does not exist, and the panel says so in DuckDB's own words through `sessionsEmptyState` (§3.7) |
 | Table bytes | Only via `PRAGMA storage_info('<table>')`, per column segment |
 
 Where a reading is absent it is reported as absent with the reason, never as `0`: a zero on a size

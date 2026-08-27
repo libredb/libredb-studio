@@ -578,13 +578,34 @@ describe("BaseDatabaseProvider", () => {
       expect(infoFor(given)).toBe(expected);
     });
 
-    test("leaves a password containing an unencoded '/' unmasked, which is the documented limit", () => {
-      // Pinned so the gap is visible rather than assumed closed. RFC 3986 wants that '/'
-      // percent-encoded, and `postgres://host:5432/tenant@acme` - a path holding an '@',
-      // pinned above - has the identical shape, so masking one masks the other. Hiding a
-      // port behind a `***` that asserts a credential the string never carried is the
-      // worse error of the two, so this case is left to the parse-based fix in D42.
-      expect(infoFor("postgres://user:p/w@db.example.com/mydb")).toBe("postgres://user:p/w@db.example.com/mydb");
+    test("masks a password containing an unencoded '@'", () => {
+      // The authority is parsed, and the credential ends at the LAST '@' inside it: '@' is
+      // a legal password character while a host name cannot hold one. A single-'@' pattern
+      // left everything after the first one in the clear.
+      expect(infoFor("postgres://user:p@ss@db.example.com/mydb")).toBe("postgres://user:***@db.example.com/mydb");
+      expect(infoFor("mongodb://admin:a@b@c@cluster0.example.com:27017/db")).toBe(
+        "mongodb://admin:***@cluster0.example.com:27017/db",
+      );
+    });
+
+    test("masks an authority that no delimiter follows", () => {
+      // Nothing bounds the authority on the right here, so its end is the end of the
+      // string; a parse that required a '/' would return this password verbatim.
+      expect(infoFor("postgres://user:s3cret@db.example.com")).toBe("postgres://user:***@db.example.com");
+    });
+
+    test.each([
+      // RFC 3986 wants each of these percent-encoded in userinfo, and each one ENDS the
+      // authority - so the '@' falls outside it and the parse sees no credential. Pinned
+      // so the gap is visible rather than assumed closed. '/' is why: the path-holding
+      // '@' pinned above (`postgres://host:5432/tenant@acme`) has the identical shape, and
+      // hiding a port behind a `***` that asserts a credential the string never carried is
+      // the worse error of the two.
+      ["postgres://user:p/w@db.example.com/mydb"],
+      ["postgres://user:p?w@db.example.com/mydb"],
+      ["postgres://user:p#w@db.example.com/mydb"],
+    ])("leaves %s unmasked, which is the documented limit", (given) => {
+      expect(infoFor(given)).toBe(given);
     });
 
     test("masks the authority of a string whose scheme carries its own prefix", () => {
@@ -599,6 +620,12 @@ describe("BaseDatabaseProvider", () => {
       // and hide nothing - and a mask that eats the '//' is how a scheme goes missing.
       expect(infoFor("postgres://user@db.example.com/mydb")).toBe("postgres://user@db.example.com/mydb");
       expect(infoFor("postgres://host/db:owner@example.com")).toBe("postgres://host/db:owner@example.com");
+      // The ':' here belongs to the PORT, which sits after the '@'. Masking from the
+      // authority's first ':' without checking that it precedes the '@' would replace the
+      // user name and the host with one '***'.
+      expect(infoFor("postgres://user@db.example.com:5432/mydb")).toBe("postgres://user@db.example.com:5432/mydb");
+      // An empty password stays empty, as it does in the parameter half.
+      expect(infoFor("postgres://user:@db.example.com/mydb")).toBe("postgres://user:@db.example.com/mydb");
     });
 
     test("masks a credential a fragment delimits", () => {

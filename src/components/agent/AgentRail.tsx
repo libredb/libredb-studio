@@ -1122,6 +1122,12 @@ export function AgentRail({
   const threadSteps = run.thread?.steps ?? [];
   const threadDeclined = run.thread?.declined;
   /*
+    A conversation this browser was in and is not following any more: the stored thread id
+    while no run has opened. The hook owns the reading; the rail owns the sentence, because
+    what is lost is a rail affordance — the follow-up id it would have sent (#B69).
+  */
+  const interruptedThread = run.interrupted;
+  /*
     Computed here rather than inside the JSX guard below, and that is a coverage
     decision as much as a readability one: under the guard, `threadDeclineNotice`'s
     `return null` line would be unreachable and would sit uncovered forever (#513).
@@ -2315,8 +2321,27 @@ export function AgentRail({
           `unavailable` (#512) — and the step list is the run's own
           header.
         */}
-        {(threadSteps.length > 0 || declineNotice !== null) && (
+        {(threadSteps.length > 0 || declineNotice !== null || interruptedThread !== null) && (
           <div data-testid="agent-thread" className="mt-2 text-[0.625rem] text-fg-muted">
+            {/*
+              Said BEFORE the next question rather than discovered after it. A reload clears
+              the run this rail was following, so the id a follow-up would have carried is
+              gone and the next question opens a fresh conversation — which the rail used to
+              be silent about, leaving a user mid-conversation to find out from an answer
+              that had forgotten what they asked (#B69).
+
+              It names the conversation and how many questions it had reached, because those
+              are the two things a person can check against the strip they were reading. It
+              does not offer to resume: the runs behind a stored thread may have been
+              evicted, so an offer this rail cannot keep would be worse than the notice.
+            */}
+            {interruptedThread !== null && (
+              <p data-testid="agent-thread-ended" className="text-amber-400/80">
+                {`The conversation this browser was in (${interruptedThread.steps} question${
+                  interruptedThread.steps === 1 ? "" : "s"
+                }, ${interruptedThread.threadId}) ended when the page reloaded. Your next question starts a new one.`}
+              </p>
+            )}
             {threadSteps.length > 0 && (
               <>
                 <p>

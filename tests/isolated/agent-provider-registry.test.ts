@@ -110,6 +110,32 @@ describe("each resolved adapter builds a model for its own endpoint", () => {
     expect(request.headers["x-goog-api-key"]).toBe("gemini-key");
   });
 
+  // B20: the adapter used to pass no baseURL at all, so an operator behind an
+  // egress proxy set LLM_API_URL, saw no error, and was routed to Google.
+  test("gemini reaches a configured endpoint, keeping the version segment it was given", async () => {
+    const request = await firstRequestThroughRegistry(
+      {
+        provider: "gemini",
+        apiKey: "gemini-key",
+        model: "gemini-2.5-flash",
+        apiUrl: "https://gemini-proxy.internal/v1beta",
+      },
+      geminiTextStream("pong"),
+    );
+
+    expect(request.url).toStartWith("https://gemini-proxy.internal/v1beta/");
+    expect(request.headers["x-goog-api-key"]).toBe("gemini-key");
+  });
+
+  test("gemini reaches a configured bare origin, the version segment composed for it", async () => {
+    const request = await firstRequestThroughRegistry(
+      { provider: "gemini", apiKey: "gemini-key", model: "gemini-2.5-flash", apiUrl: "https://gemini-proxy.internal" },
+      geminiTextStream("pong"),
+    );
+
+    expect(request.url).toStartWith("https://gemini-proxy.internal/v1beta/");
+  });
+
   test("openai reaches the configured OpenAI-compatible endpoint with a bearer key", async () => {
     const request = await firstRequestThroughRegistry(
       { provider: "openai", apiKey: "sk-configured", model: "gpt-4o-mini", apiUrl: "https://api.openai.com/v1" },

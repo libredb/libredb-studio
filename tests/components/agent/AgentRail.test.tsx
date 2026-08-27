@@ -391,6 +391,10 @@ describe("AgentRail", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     window.matchMedia = originalMatchMedia;
+    // The rail now stores the conversation a run belongs to (#B69), and it is read at
+    // MOUNT — so a key left behind by one test puts an amber notice over the next test's
+    // first render, before any start it makes.
+    localStorage.clear();
     cleanup();
   });
 
@@ -600,6 +604,115 @@ describe("AgentRail", () => {
     // The start happened, so the absent strip is a decision rather than an accident.
     expect(runCalls).toHaveLength(1);
     expect(view.queryByTestId("agent-thread")).toBeNull();
+  });
+
+  /*
+    The transition a reload used to be silent about (#B69).
+
+    The rail was honest about the RESULT — no thread, no strip — and said nothing about the
+    change: a user mid-conversation who reloaded was not told that what they were doing had
+    ended, and their next question was answered as a fresh one. The conversation id lives in
+    localStorage, the same per-browser store every other browser-local preference uses.
+  */
+  test("a conversation this browser was in is stated before the next question is asked", async () => {
+    localStorage.setItem("libredb_agent_thread", JSON.stringify({ threadId: "arun_a", steps: 3 }));
+    mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    const notice = await view.findByTestId("agent-thread-ended");
+    // The two facts a person can check against the strip they had been reading, and the
+    // consequence stated rather than left to be discovered from the next answer.
+    expect(notice.textContent).toContain("3 questions");
+    expect(notice.textContent).toContain("arun_a");
+    expect(notice.textContent).toContain("starts a new one");
+
+    // And it is about the ABSENCE of a live run, so opening one ends it.
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+    await view.findByTestId("agent-run-id");
+    expect(view.queryByTestId("agent-thread-ended")).toBeNull();
+  });
+
+  test("one question reads as one question, not as a plural nobody wrote", async () => {
+    localStorage.setItem("libredb_agent_thread", JSON.stringify({ threadId: "arun_a", steps: 1 }));
+    mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    expect((await view.findByTestId("agent-thread-ended")).textContent).toContain("(1 question,");
+  });
+
+  test("a start records the conversation it opened, counting itself", async () => {
+    // Counting itself is the point: the server reports the steps BEFORE this run, so
+    // storing that number verbatim would have the notice say "one question" about a
+    // conversation whose strip the user had just read as two.
+    mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE], {
+      runId: "arun_b",
+      status: "queued",
+      mode: "planning",
+      thread: { threadId: "arun_a", steps: [{ runId: "arun_a", objective: "count by department" }], text: "Step 1" },
+    });
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "chart those" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+    await view.findByTestId("agent-thread");
+
+    expect(JSON.parse(localStorage.getItem("libredb_agent_thread") ?? "null")).toEqual({
+      threadId: "arun_a",
+      steps: 2,
+    });
+  });
+
+  test("a start that belongs to no conversation forgets the one stored", async () => {
+    // Otherwise the next mount would announce that a conversation had been interrupted
+    // when the run after it had already been answered on its own.
+    localStorage.setItem("libredb_agent_thread", JSON.stringify({ threadId: "arun_a", steps: 3 }));
+    mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE]);
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+    await view.findByTestId("agent-run-id");
+
+    expect(localStorage.getItem("libredb_agent_thread")).toBeNull();
+  });
+
+  test("a store that refuses the write costs the notice, never the run", async () => {
+    // Safari private mode and a full quota both land here. The bookkeeping is a nudge; the
+    // run is the work, and the same policy is written into `star-prompt.ts`.
+    const realSetItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = () => {
+      throw new Error("QuotaExceededError");
+    };
+    const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE], {
+      runId: "arun_b",
+      status: "queued",
+      mode: "planning",
+      thread: { threadId: "arun_a", steps: [{ runId: "arun_a", objective: "count by department" }], text: "Step 1" },
+    });
+
+    try {
+      const view = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "chart those" } });
+      await act(async () => {
+        fireEvent.click(view.getByTestId("agent-start"));
+      });
+      await view.findByTestId("agent-run-id");
+      // The start happened, so the swallowed write is a decision rather than an accident.
+      expect(
+        (fetchMock.mock.calls as [RequestInfo | URL, RequestInit?][]).filter(
+          ([url]) => String(url) === "/api/agent/runs",
+        ),
+      ).toHaveLength(1);
+    } finally {
+      localStorage.setItem = realSetItem;
+    }
   });
 
   test("a follow-up start names the run it follows on the same connection", async () => {
@@ -2254,13 +2367,16 @@ describe("AgentRail", () => {
     });
 
     /**
-     * The ledger records less than the tracker charges, in known ways
-     * (`docs/BACKLOG.md` B13, and a ledger written before #512, whose failed statements
-     * carry no duration) — the largest being that the run's schema
-     * capture reaches `executeAuditedOperation` without going through `runStep`, so
-     * its two-to-three catalog reads are paid for and never itemized. A meter that
-     * did not say so would read as exact while sitting two statements low from the
-     * first turn.
+     * The ledger records less than the tracker charges, in known ways. The largest used
+     * to be the run's schema capture: it reaches `executeAuditedOperation` without going
+     * through `runStep`, so its two-to-three catalog reads were paid for and never
+     * itemized, and a meter that did not say so read as exact while sitting two statements
+     * low from the first turn. The capture now carries the charge it was billed and the
+     * fold adds it. What is still uncounted is a call that failed while acquiring its
+     * provider (charged, but it settles no step, so nothing here can see it), the
+     * difference between an engine's own elapsed time and the span measured around the
+     * whole call, and a ledger written before #512, whose failed statements carry no
+     * duration at all.
      */
     test("the meter says its figures are a floor, and names what the ledger leaves out", () => {
       const { getByTestId } = render(<AgentRail {...DEFAULT_PROPS} />);

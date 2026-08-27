@@ -18,7 +18,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import type { MonitoringData, ActiveSessionDetails } from "@/lib/db/types";
+import type { MonitoringData, ActiveSessionDetails, ProviderLabels } from "@/lib/db/types";
 import { PanelUnavailable } from "../PanelUnavailable";
 
 interface SessionsTabProps {
@@ -26,9 +26,14 @@ interface SessionsTabProps {
   loading: boolean;
   onKillSession: (pid: number | string) => Promise<boolean>;
   isAdmin?: boolean;
+  /**
+   * The connected provider's own labels. Absent while /api/db/provider-meta is in
+   * flight, so every read of it stays optional.
+   */
+  labels?: ProviderLabels;
 }
 
-export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: SessionsTabProps) {
+export function SessionsTab({ data, loading, onKillSession, isAdmin = true, labels }: SessionsTabProps) {
   const [killingPid, setKillingPid] = useState<number | string | null>(null);
   const [confirmKill, setConfirmKill] = useState<ActiveSessionDetails | null>(null);
 
@@ -157,7 +162,11 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true }: Se
           ) : sessions.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Users strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-xs">No active sessions found.</p>
+              {/* An engine that publishes no session list says so in its own words
+                  (#D48). The default reads as "nothing is running right now", which is
+                  false on a panel that can never show a row. Absent label = today's
+                  wording, so `postgres` is unchanged. */}
+              <p className="text-xs">{labels?.sessionsEmptyState ?? "No active sessions found."}</p>
             </div>
           ) : (
             <div className="overflow-x-auto">

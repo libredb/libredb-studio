@@ -14,6 +14,8 @@ import {
 // ============================================================================
 
 let mockGenerateContentStream: (prompt: string) => Promise<unknown>;
+let capturedModelParams: Record<string, unknown> | undefined;
+let capturedRequestOptions: Record<string, unknown> | undefined;
 
 // ============================================================================
 // Module Mocks (must be before await import)
@@ -22,7 +24,9 @@ let mockGenerateContentStream: (prompt: string) => Promise<unknown>;
 mock.module("@google/generative-ai", () => ({
   GoogleGenerativeAI: function () {
     return {
-      getGenerativeModel: function () {
+      getGenerativeModel: function (modelParams: Record<string, unknown>, requestOptions?: Record<string, unknown>) {
+        capturedModelParams = modelParams;
+        capturedRequestOptions = requestOptions;
         return {
           generateContentStream: async (prompt: string) => mockGenerateContentStream(prompt),
         };
@@ -81,6 +85,8 @@ function makeStreamOptions(overrides?: Partial<LLMStreamOptions>): LLMStreamOpti
 
 describe("GeminiProvider", () => {
   beforeEach(() => {
+    capturedModelParams = undefined;
+    capturedRequestOptions = undefined;
     mockGenerateContentStream = async () => ({
       stream: mockStreamChunks(["Hello", " World"]),
     });
@@ -133,6 +139,24 @@ describe("GeminiProvider", () => {
         }),
       );
       expect(stream).toBeInstanceOf(ReadableStream);
+    });
+
+    // B20: an operator behind an egress proxy or on a regional endpoint sets
+    // LLM_API_URL and this SDK's RequestOptions.baseUrl is where it has to land.
+    test("routes through config.apiUrl when one is configured", async () => {
+      const provider = new GeminiProvider(makeConfig({ apiUrl: "https://proxy.example.com/v1beta" }));
+      await provider.stream(makeStreamOptions());
+
+      // The origin, not the versioned URL: this SDK appends the version itself.
+      expect(capturedRequestOptions?.baseUrl).toBe("https://proxy.example.com");
+    });
+
+    test("leaves baseUrl unset when no apiUrl is configured, keeping the SDK's Google default", async () => {
+      const provider = new GeminiProvider(makeConfig());
+      await provider.stream(makeStreamOptions());
+
+      expect(capturedRequestOptions?.baseUrl).toBeUndefined();
+      expect(capturedModelParams?.model).toBe("gemini-2.0-flash");
     });
 
     test("handles empty stream", async () => {

@@ -1637,7 +1637,7 @@ async function streamAIExplanation(query: string, explainPlan: string) {
 | `LLM_PROVIDER` | No | AI provider: gemini, openai, ollama, custom |
 | `LLM_API_KEY` | No | AI provider API key |
 | `LLM_MODEL` | No | AI model name |
-| `LLM_API_URL` | No | Custom AI endpoint URL. Read for the `openai`, `ollama` and `custom` kinds, on the chat surface and in the agent alike; **unread for `gemini`** ([`docs/BACKLOG.md`](BACKLOG.md) B20) |
+| `LLM_API_URL` | No | Custom AI endpoint URL. Read for every kind, on the chat surface and in the agent alike. For `gemini` give the versioned URL (`https://host/v1beta`); a bare origin also works, the version segment is composed for it (`src/lib/llm/utils/gemini-endpoint.ts`) |
 | `LIBREDB_AGENT_ENABLED` | No | The agent's explicit **off**-switch. Availability is otherwise derived from the AI configuration and a writable ledger — see [`docs/AGENT.md`](AGENT.md) |
 | `WORKFLOW_TARGET_WORLD` | No | Durable backend for agent run state: `local` (default, single instance) or `@workflow/world-postgres` |
 | `WORKFLOW_LOCAL_DATA_DIR` | No | Where the `local` backend keeps run state (`/app/data/workflow` in the container image) |

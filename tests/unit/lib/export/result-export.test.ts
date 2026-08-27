@@ -1,5 +1,10 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { buildResultExport, deriveTableName, FALLBACK_TABLE_NAME } from "@/lib/export/result-export";
+import {
+  buildResultExport,
+  deriveTableName,
+  FALLBACK_TABLE_NAME,
+  resultExportFileName,
+} from "@/lib/export/result-export";
 
 const source = (over: Partial<Parameters<typeof buildResultExport>[1]> = {}) => ({
   rows: [{ id: 1, name: "Ada" }],
@@ -980,5 +985,33 @@ describe("buildResultExport - Oracle date and timestamp literals", () => {
       source({ rows: [{ at: instant }], fields: ["at"], dialect: "postgres", columnTypes: { at: "DATE" } }),
     );
     expect(file.content).toContain(`VALUES ('2026-08-24T17:11:12.345Z');`);
+  });
+});
+
+describe("resultExportFileName", () => {
+  test("names a file the user's own query produced after the result", () => {
+    expect(resultExportFileName("csv")).toBe("query_result_export.csv");
+  });
+
+  // B34: a file carrying an agent run's rows must not be indistinguishable from one
+  // the user ran, so the run it came from is in the name.
+  test("names a run's own file after the run", () => {
+    expect(resultExportFileName("json", "arun_7f3c")).toBe("agent_run_arun_7f3c_export.json");
+  });
+
+  test("keeps a run id out of the path and off the extension", () => {
+    expect(resultExportFileName("csv", "../../etc/passwd")).toBe("agent_run_etc-passwd_export.csv");
+    expect(resultExportFileName("csv", "run.2026/08")).toBe("agent_run_run-2026-08_export.csv");
+  });
+
+  test("still says the file came from a run when the id contributes nothing nameable", () => {
+    // The attribution is the point; a run id made entirely of characters a file name
+    // cannot carry leaves the attribution and drops the id.
+    expect(resultExportFileName("csv", "///")).toBe("agent_run_export.csv");
+  });
+
+  test("caps how much of a run id reaches the name", () => {
+    const name = resultExportFileName("csv", "r".repeat(200));
+    expect(name).toBe(`agent_run_${"r".repeat(64)}_export.csv`);
   });
 });

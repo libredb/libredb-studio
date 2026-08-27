@@ -48,6 +48,9 @@ export interface DatabaseUIConfig {
   )[];
 }
 
+/** One addressing field, named by the same list that decides whether a save writes it. */
+export type ConnectionField = DatabaseUIConfig["connectionFields"][number];
+
 export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   postgres: {
     icon: PostgreSQLIcon,
@@ -129,7 +132,12 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     label: "Redis",
     defaultPort: "6379",
     showConnectionStringToggle: false,
-    connectionFields: ["host", "port", "password", "database"],
+    // `user` is the Redis 6 ACL user. It belongs here because `RedisProvider.connect()`
+    // authenticates with it (as ioredis's `username`) and docs/providers/redis.md has
+    // documented it as a connection field all along - this list was the one place that
+    // disagreed, and since it decides what a save WRITES, the value never reached the
+    // driver that #502 taught to send it.
+    connectionFields: ["host", "port", "user", "password", "database"],
   },
   oracle: {
     icon: OracleIcon,
@@ -302,4 +310,18 @@ export function getDBColor(type: DatabaseType): string {
 export function isFileBased(type: DatabaseType): boolean {
   const fields = DB_UI_CONFIG[type].connectionFields;
   return fields.length === 1 && fields[0] === "database";
+}
+
+/**
+ * Whether this engine takes a given addressing field at all.
+ *
+ * One list, two readers: `buildConnection` writes a field only when this says so, and the
+ * connection modal renders an input for it only when this says so. They used to disagree -
+ * the modal drew Username and Database for every networked engine while the write list
+ * discarded them - so libSQL asked for a user name it has none of, and Druid and the two
+ * search engines asked for a database they do not take. A box whose value is thrown away is
+ * the UI equivalent of reporting an absence as a measurement.
+ */
+export function takesConnectionField(type: DatabaseType, field: ConnectionField): boolean {
+  return DB_UI_CONFIG[type].connectionFields.includes(field);
 }

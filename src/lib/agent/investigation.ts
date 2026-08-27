@@ -122,6 +122,7 @@ import {
 import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
   type AgentContextSnapshot,
+  type AgentGuidanceNotice,
   type AgentReportClaim,
   type AgentRunEvent,
   type AgentRunMode,
@@ -2411,6 +2412,44 @@ type CallResult =
  *         anything — cannot reach the database at all. Same reasoning: the run stays
  *         running because the failure is not the run's own decision.
  */
+/**
+ * How many times each notice has already been delivered to this run (B51).
+ *
+ * The half of B51 that makes "once" mean once. Every notice bound is a `let` inside
+ * `runInvestigation`, and that function is also what RESUMES a run a dead process left
+ * running — so a resumed drive started with every flag false and could deliver a notice
+ * the previous drive had already delivered. Two of the three had a partial durable guard
+ * by accident, and only by accident: the present-before-report notice read `answer-composed`
+ * off the ledger, which meant a run whose `present_answer` was REFUSED writes no event and
+ * was told again.
+ *
+ * It reads BOTH kinds that carry a notice id, because a delivery lands on the entry that
+ * records what happened to the call: a sentence sent as a `user` message writes
+ * `guidance-issued`, and one sent INSTEAD of running a call is the `notice` on that hold.
+ * A `call-held` with no notice on it — a verdict-preview hold, or an entry written before
+ * the field existed — counts towards nothing, which is the honest reading: it says a hold
+ * happened, not which sentence it carried.
+ *
+ * A total record rather than a lookup that can answer `undefined`, so a new notice id
+ * cannot be added to `AgentGuidanceNotice` and silently read as "never delivered" here.
+ */
+export function guidanceDelivered(events: readonly AgentRunEvent[]): Readonly<Record<AgentGuidanceNotice, number>> {
+  const counts: Record<AgentGuidanceNotice, number> = {
+    "report-reminder": 0,
+    "plan-statement": 0,
+    "report-reserve": 0,
+    "unread-stop": 0,
+    "present-before-report": 0,
+    "cite-what-you-read": 0,
+    "compare-before-report": 0,
+  };
+  for (const event of events) {
+    if (event.kind === "guidance-issued") counts[event.notice] += 1;
+    else if (event.kind === "call-held" && event.notice !== undefined) counts[event.notice] += 1;
+  }
+  return counts;
+}
+
 export async function runInvestigation(
   runId: string,
   options: AgentInvestigationOptions,
@@ -2577,8 +2616,15 @@ export async function runInvestigation(
     let narrowedAtEvent = Number.POSITIVE_INFINITY;
     /** Whether this drive has already re-asked an empty turn; see `retryEmptyTurn`. */
     let emptyTurnRetried = false;
-    /** Whether this drive has already answered a stop that read nothing; see `retryUnreadStop`. */
-    let unreadStopRetried = false;
+    /*
+    Every notice this run has already been delivered, read once (B51). The counters it
+    seeds are declared in two places — this one and the block before the turn loop — and
+    both are bounds on the RUN rather than on the drive, which is the whole point of
+    reading them back.
+    */
+    const delivered = guidanceDelivered(record.events);
+    /** Whether this RUN has already answered a stop that read nothing; see `retryUnreadStop`. */
+    let unreadStopRetried = delivered["unread-stop"] > 0;
     const priorProgress = describePriorProgress(record);
     if (priorProgress !== null) messages.push({ role: "user", content: priorProgress });
 
@@ -2676,6 +2722,10 @@ export async function runInvestigation(
         reasonCode: capture.reasonCode,
         detail: capture.detail,
         ...(capture.rowBudget === undefined ? {} : { rowBudget: capture.rowBudget }),
+        // What the refused reading cost anyway (B13). Spread rather than defaulted: a
+        // capture that carries no measurement records none, because a zero here would
+        // say the refusal was free.
+        ...(capture.charged === undefined ? {} : { charged: capture.charged }),
       });
     };
 
@@ -2687,6 +2737,33 @@ export async function runInvestigation(
       // own earlier drive, and telling the model otherwise would be a false
       // self-description of exactly the kind this mode keeps being caught in.
       const readBy: PlanningGrounding["readBy"] = held === null ? "this-run" : "earlier-run";
+
+      if (held !== null) {
+        /*
+          The reading this run took instead of taking one of its own, written down (B56).
+
+          `heldSnapshotForConnection` has no expiry, so a plan run can be grounded on an
+          inventory read before the user added the collection they are asking about — and
+          until this entry such a run's ledger held NOTHING between the drive starting and
+          the run ending, which reads as a run that needed no grounding. The model is
+          already told (`readBy: "earlier-run"`); this tells the record, with the one fact
+          the model is not given because it cannot act on it: how old the reading is.
+
+          The age is measured HERE, against this drive's own clock, because the entry is
+          about the moment of reuse. `Math.max` guards the only way in a negative could
+          arrive — a clock reading that went backwards — rather than recording an age that
+          says the reading has not been taken yet.
+        */
+        await service.recordEvent(runId, {
+          kind: "context-reused",
+          fingerprint: held.fingerprint,
+          tableCount: held.tables.length,
+          ageMs: Math.max(0, (context.clock?.() ?? Date.now()) - held.capturedAtMs),
+          // The same noun the capture entry records, and from the same source: what this
+          // engine calls these rows is part of what the run was shown.
+          noun: engine.noun,
+        });
+      }
 
       if (snapshot === null) {
         const capture = await captureContextSnapshot(context);
@@ -2709,6 +2786,9 @@ export async function runInvestigation(
           // The same noun this run's own prompt blocks are written with, recorded
           // where the timeline can read it: the rail has no provider to ask.
           noun: engine.noun,
+          // And what the reading cost, so the meter is not short by the two or three
+          // catalog statements this run has already spent (B13).
+          ...(capture.charged === undefined ? {} : { charged: capture.charged }),
         });
       }
       // After the ledger on the capture path, for the reason the agent path records:
@@ -2870,6 +2950,8 @@ export async function runInvestigation(
         // As on the planning path: what the engine calls these rows is part of what was
         // read, so it is written down with the reading rather than guessed at later.
         noun: engine.noun,
+        // As on the planning path, and for the same reason (B13).
+        ...(capture.charged === undefined ? {} : { charged: capture.charged }),
       });
       // After the ledger, never before it: what a plan run may later be handed is an
       // inventory that is durably part of some run's own history, not one this process
@@ -2882,16 +2964,21 @@ export async function runInvestigation(
     let turns = 0;
     let text = "";
     /*
-    The three notice flags below are one-shots per DRIVE, not per run, and the
-    distinction is worth stating where they are declared: this function is also what
-    RESUMES a run a dead process left running (`service.resume`, at its head), so a
-    resumed drive starts with all three false and can say again what the previous drive
-    already said. Nothing durable bounds them, because a delivery writes no ledger entry
-    — `docs/BACKLOG.md` B51 records both halves as one item, since recording delivery is
-    what would make "once" mean once.
+    The notice bounds below are per RUN and not per drive, and that is what B51 changed.
+
+    This function is also what RESUMES a run a dead process left running (`service.resume`,
+    at its head), so every one of these used to start false on a resumed drive and could
+    say again what the previous drive already said — and nothing durable bounded them,
+    because a delivery wrote no ledger entry at all. Now every delivery is recorded under a
+    name from one vocabulary (`AgentGuidanceNotice`) and the counters are SEEDED from what
+    this run's ledger already holds. A drive that is not a resume reads zeroes, which is
+    exactly what it used to start with.
+
+    What is NOT seeded is `anyToolCalled` and the narrowing: those are read from the run's
+    own settled steps and its event count, and are not deliveries.
     */
-    /** The reserve notice is a one-shot: a drive tells the run once that it is out of room. */
-    let reserveAnnounced = false;
+    /** The reserve notice is a one-shot: a run is told once that it is out of room. */
+    let reserveAnnounced = delivered["report-reserve"] > 0;
     /** Whether a tool this run HOLDS has been called; see `remindToReport`. */
     let anyToolCalled = false;
     /**
@@ -2905,17 +2992,17 @@ export async function runInvestigation(
      * A count rather than a flag because the limit is the model's, not the drive's:
      * `reportReminderLimitFor` reads it, and it is 1 for every model but one.
      */
-    let reportReminders = 0;
-    /** The present-before-report notice, once per drive; see `notices.presentBeforeReport`. */
-    let presentReminders = 0;
-    /** The compare-before-report notice, once per drive; see `compareBeforeReportNotice`. */
-    let compareReminders = 0;
-    /** The cite-what-you-read notice, once per drive; see `citeWhatYouReadNotice`. */
-    let citeReminded = false;
+    let reportReminders = delivered["report-reminder"];
+    /** The present-before-report notice; see `notices.presentBeforeReport`. */
+    let presentReminders = delivered["present-before-report"];
+    /** The compare-before-report notice, once per run; see `compareBeforeReportNotice`. */
+    let compareReminders = delivered["compare-before-report"];
+    /** The cite-what-you-read notice, once per run; see `citeWhatYouReadNotice`. */
+    let citeReminded = delivered["cite-what-you-read"] > 0;
     /** How many times a report has been held for the verdict it would earn; see `shortfallsIfReported`. */
     let previewHolds = 0;
-    /** How many times this drive has asked a PLAN run for its statement; see `askForPlanStatement`. */
-    let planStatementAsks = 0;
+    /** How many times this run has been asked for its statement; see `askForPlanStatement`. */
+    let planStatementAsks = delivered["plan-statement"];
     /**
      * Whether the run has been narrowed to what would finish it; see
      * `AGENT_NARROWED_EXTRA_TOOLS`. Set once and never cleared — a run narrowed for
@@ -2925,6 +3012,23 @@ export async function runInvestigation(
     let narrowed = false;
     /** Tool calls made so far, which is what this model's own ceiling is read against. */
     let toolCallsMade = 0;
+
+    /**
+     * Records a sentence the drive said on a turn where it refused nothing (B51).
+     *
+     * One function for all of them, because the fields are not the caller's to choose:
+     * every such delivery is the same fact — this notice, at this point in the run — and a
+     * site that recorded the id and forgot where it landed would be the gap this closes
+     * reopening one field at a time. A hold is the other delivery shape and records itself,
+     * on the `call-held` entry that says the call was not run.
+     *
+     * The counters are the drive's own at the moment of delivery, which is what makes the
+     * entry answer the question `docs/llms/` asks of a ledger: a reminder on the second
+     * turn and one on the last are different facts about a model.
+     */
+    const issueGuidance = async (notice: AgentGuidanceNotice): Promise<void> => {
+      await service.recordEvent(runId, { kind: "guidance-issued", notice, atTurn: turns, toolCalls: toolCallsMade });
+    };
 
     /**
      * Tells the run, once, that it has come within the reserve of a ceiling.
@@ -2940,7 +3044,7 @@ export async function runInvestigation(
       if (maxTurns - turns > AGENT_REPORT_RESERVE_TURNS && remainingMs > AGENT_REPORT_RESERVE_MS) return;
       reserveAnnounced = true;
       messages.push({ role: "user", content: notice(AGENT_REPORT_RESERVE_NOTICE) });
-      await service.recordEvent(runId, { kind: "guidance-issued", notice: "report-reserve" });
+      await issueGuidance("report-reserve");
     };
 
     /**
@@ -2966,12 +3070,25 @@ export async function runInvestigation(
      * It cost real time to lack: a notice measured as having no effect on two models could
      * not be told apart from a notice that never fired, because neither leaves a trace.
      */
-    const holdCall = async (tool: AgentToolName, reason: string, shortfall?: AgentGoalShortfall): Promise<void> => {
+    const holdCall = async (
+      tool: AgentToolName,
+      reason: string,
+      shortfall?: AgentGoalShortfall,
+      /*
+        Which NOTICE the hold answered with (B51). The three purpose-written sentences are
+        deliveries of a named notice and are bounded across a resume by this entry; the
+        verdict-preview holds speak for a `shortfall` instead and pass none, which is why
+        this is a parameter and not derived from `reason` — two of the three name artifact
+        ids, so the prose cannot be matched against later.
+      */
+      notice?: AgentGuidanceNotice,
+    ): Promise<void> => {
       await service.recordEvent(runId, {
         kind: "call-held",
         tool,
         reason,
         ...(shortfall === undefined ? {} : { shortfall }),
+        ...(notice === undefined ? {} : { notice }),
       });
     };
 
@@ -2987,7 +3104,7 @@ export async function runInvestigation(
       narrowed = true;
       messages.push(...assistant);
       messages.push({ role: "user", content: notice(BASELINE_NOTICES.reportReminder) });
-      await service.recordEvent(runId, { kind: "guidance-issued", notice: "report-reminder" });
+      await issueGuidance("report-reminder");
       return true;
     };
 
@@ -3012,7 +3129,7 @@ export async function runInvestigation(
       planStatementAsks += 1;
       messages.push(...assistant);
       messages.push({ role: "user", content: notice(BASELINE_NOTICES.planStatement) });
-      await service.recordEvent(runId, { kind: "guidance-issued", notice: "plan-statement" });
+      await issueGuidance("plan-statement");
       return true;
     };
 
@@ -3290,7 +3407,7 @@ export async function runInvestigation(
           unreadStopRetried = true;
           messages.push(...turn.assistantMessages);
           messages.push({ role: "user", content: notice(BASELINE_NOTICES.unreadStop) });
-          await service.recordEvent(runId, { kind: "guidance-issued", notice: "unread-stop" });
+          await issueGuidance("unread-stop");
           return null;
         }
         return conclude("succeeded", "model-stopped");
@@ -3306,7 +3423,7 @@ export async function runInvestigation(
         if (reportReminders === 0) {
           reportReminders += 1;
           messages.push({ role: "user", content: notice(BASELINE_NOTICES.reportReminder) });
-          await service.recordEvent(runId, { kind: "guidance-issued", notice: "report-reminder" });
+          await issueGuidance("report-reminder");
         }
       }
 
@@ -3384,7 +3501,7 @@ export async function runInvestigation(
             // This model's own wording, from its own file.
             const text = BASELINE_NOTICES.presentBeforeReport;
             presentReminders += 1;
-            await holdCall(call.toolName, text);
+            await holdCall(call.toolName, text, undefined, "present-before-report");
             messages.push(prompted ? promptedResultMessage(call, notice(text)) : toolResultMessage(call, text));
             continue;
           }
@@ -3487,7 +3604,7 @@ export async function runInvestigation(
             const offer = useful.length > 0 ? useful : [...held.keys()];
             citeReminded = true;
             const text = citeWhatYouReadNotice(offer, citedOnlyEmpty);
-            await holdCall(call.toolName, text);
+            await holdCall(call.toolName, text, undefined, "cite-what-you-read");
             messages.push(prompted ? promptedResultMessage(call, notice(text)) : toolResultMessage(call, text));
             continue;
           }
@@ -3533,7 +3650,7 @@ export async function runInvestigation(
                 : compareBeforeReportNotice(before, after);
           if (text !== null) {
             compareReminders += 1;
-            await holdCall(call.toolName, text);
+            await holdCall(call.toolName, text, undefined, "compare-before-report");
             messages.push(prompted ? promptedResultMessage(call, notice(text)) : toolResultMessage(call, text));
             continue;
           }

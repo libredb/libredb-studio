@@ -22,21 +22,21 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1–D51, U17, U22 · 21
+- [Drivers and connections](#drivers-and-connections) — D1–D51, U17 · 14
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U26 · 10
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U26 · 9
 - [Authentication and security headers](#authentication-and-security-headers) — AU4
-- [Tests](#tests) — T1–T5 · 3
+- [Tests](#tests) — T4
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC3, DOC4 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
 - [Chart configuration surface](#chart-configuration-surface) — N1, N3 · 2
-- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H8 · 4
+- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H8 · 3
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C10 · 8
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A5 · 4
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B79 · 40
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2–B79 · 30
 
 ---
 
@@ -277,48 +277,6 @@ panels on Doris show absence rather than an error, and the reading is unchanged 
 and one analytics relative — each verified against the live container, not inferred from the
 statement text.
 
-### D31. A failed schema read leaves the previous connection's tables on screen as this one's
-
-Measured 2026-08-26 in Chrome against the built app, with the network captured (issue #424, the
-QuestDB probe). The sequence needs no unusual state - a fresh browser context reproduces it:
-
-1. the workspace auto-selects the first connection and loads its schema
-   (`200 POST /api/db/schema/list {"connectionId":"seed:doris-probe"}` -> `probe_customers`,
-   `probe_orders`);
-2. the user clicks a second connection whose schema read fails
-   (`500 POST /api/db/schema/list {"connectionId":"seed:questdb-probe"}` -> `'(' expected`);
-3. the header switches to the second connection and **the object browser keeps showing the first
-   connection's tables, with its row counts** - measured: `probe_customers 3` and
-   `probe_orders 2.0k` under a header reading *QuestDB 10.0.1 (probe)*, while QuestDB's own
-   `questdb_only_marker` never appears and QuestDB has no `probe_customers` at all.
-
-`fetchSchema` in `src/hooks/use-connection-manager.ts` toasts the error and `return`s without
-touching `schema`, so the previous value survives the connection change. `Studio.tsx`'s
-connection-change effect clears it only in the `else` branch, when the active connection becomes
-null - never when the fetch for a new one fails. Storage is not involved: `/api/storage/config`
-answers `serverMode: false`, `libredb_schema_snapshots` was empty, and the tree is React state.
-
-**Reproduced a second time on a different engine, 2026-08-27.** Selecting the Databend connection
-after an OrioleDB one showed OrioleDB's `probe_customers 3` / `probe_orders 2.0k` under Databend's
-name, with `500 POST /api/db/schema/list :: Prepare is not support in Databend` in the network log -
-same shape, different cause for the failing read, which is the point: any failing schema read does
-this.
-
-**Why this is worse than an empty tree, and why it is not a QuestDB problem.** An empty object
-browser is the honest reading the absence rule (#477) asks for. This one attributes real objects,
-with real row counts, to a database that does not contain them - and the tables are clickable, so
-the next query is written against a schema the connection does not have. Every engine whose object
-browser fails inherits it: CockroachDB (no `pg_total_relation_size()`), Materialize and RisingWave
-(reserved `MATERIALIZED`), QuestDB (both), and any engine having a bad day.
-
-Noticed in the same capture and not filed separately: one connection selection issues the same
-`schema/list` read **two or three times** - two for the auto-selected connection, three for the
-clicked one. Worth confirming while this is open, since the fix touches the same call.
-
-**Done when:** selecting a connection whose schema read fails shows an empty object browser
-carrying the engine's own error, never the previous connection's tables - verified in a browser
-across two connections where the second one's read fails, not through the hook in isolation.
-
 ---
 
 ### D33. Every parameterised read still prepares, so an engine without PREPARE loses all of them
@@ -382,25 +340,6 @@ entry, which is why citing it is no longer safe - and lost the same day: #510 br
 merge and its copy of this file overwrote both entries, which is also why they are renumbered.
 Restored 2026-08-27 from `35294140`.
 
-### D35. The live SSH arm was driven once by hand, and no fixture keeps it true
-
-The mismatch arm HAS been measured against a real server. 2026-08-26, `openssh-server` on port 2226,
-through the real `createSSHTunnel`, three arms: no pin accepted and reported
-`SHA256:JWLQciyX8RYEeuK+bwRLW/YSpStz0/L7BlbVcejL1/U`, byte-identical to
-`ssh-keyscan -p 2226 127.0.0.1 | ssh-keygen -lf -`; the correct pin connected; a wrong pin was refused
-with both fingerprints in the message. So the fingerprint format and the refusal are confirmed
-end-to-end against a live sshd, not only against generated key files and a mocked handshake, and
-`docs/providers/README.md` records that measurement.
-
-What does not exist is a STANDING fixture. `tests/unit/ssh-tunnel.test.ts` still drives a mocked `ssh2`,
-which is what runs in CI, so the live result is a one-time observation rather than a property the suite
-holds. A regression in the verifier would be caught by the mock only to the extent the mock is faithful
-to ssh2 - and the mock was written from reading ssh2's source, which is the thing most likely to drift.
-
-**Done when:** an sshd service exists alongside the other container fixtures and the three arms above
-run against it, or a note beside the mock records that its fidelity to ssh2 is the assumption CI rests
-on and names the source it was derived from.
-
 ### D37. Five HTTP providers read the SSL mode and drop the rest of the TLS panel
 
 Found 2026-08-27 in the #511 review (issue #424, Phase 5). Not libSQL's - libSQL is the
@@ -426,29 +365,6 @@ discards, which is the kind of silence a security setting must not have.
 **Done when:** the TLS material mapping is shared rather than copied, the five `fetch`
 transports route TLS through it, and one test per transport pins that a supplied CA and a
 `verify-*` mode reach the request options - plus one that a `require` mode does not verify.
-
-### U22. The connection form renders fields the engine does not take, and a comment says otherwise
-
-Found 2026-08-27 in the browser while registering `libsql` (issue #424, Phase 5).
-
-`DB_UI_CONFIG[type].connectionFields` decides what a save WRITES
-(`buildConnection` in `src/hooks/use-connection-form.ts`), and its comment there says it is
-"the same list the modal renders inputs from". It is not. `ConnectionModal.tsx` draws Host,
-Username, Password and Database for every engine that is not file-based, so:
-
-- **libSQL** shows a Username box for an engine that has no user names at all,
-- **Druid**, **Elasticsearch** and **OpenSearch** show a Database box none of them takes.
-
-Nothing is written from those boxes, so a connection is not corrupted by typing in one - the
-cost is a user filling a field that is silently discarded, and a comment that misdescribes
-the code beside it. Measured for libSQL: `#user` and `#database` both render, and neither
-value reaches the saved connection.
-
-**Done when:** the modal renders an addressing input only when `connectionFields` names it,
-with the four engines above checked in a browser rather than in a mock - or, if the fields
-are deliberately universal, the comment in `use-connection-form.ts` says so instead. Either
-way `e2e/libsql-provider.spec.ts` has the assertion that pins today's behaviour and must
-move with it.
 
 ---
 
@@ -494,29 +410,6 @@ queries" where the truth is that the profiler is off.
 provider answers a sentence as a row, and no provider answers `[]` for a read that failed - and the
 count of type-ids the type change touched is stated in the PR rather than discovered during it.
 
-### D42. The connection-string mask cannot cover a password holding a character RFC 3986 reserves
-
-Found 2026-08-27 while closing the query-string half of the same mask (`getConnectionInfo`, PR
-round 17). The mask now covers the authority and every credential-shaped parameter, in any position.
-What it cannot cover is an authority password containing `@`, `/`, `?` or `#` unencoded:
-`postgres://user:p/w@host/db` is returned in the clear.
-
-The reason is not an oversight and is written into `redactConnectionString`'s docblock
-(`src/lib/db/base-provider.ts`): `postgres://host:5432/tenant@acme` - a path holding an `@`, which
-carries no secret at all - has the identical shape, and no regular expression separates the two. The
-round chose the safe arm deliberately: drawing `***` over a port asserts a credential the string never
-carried, which is a fabricated reading rather than a mask, and this repo's absence rule (#477) forbids
-the fabrication more strongly than it forbids the miss. `tests/unit/db/base-provider.test.ts` pins the
-gap explicitly, so it is visible rather than assumed closed.
-
-RFC 3986 §3.2.1 requires each of those characters to be percent-encoded in userinfo, so every string
-this misses is malformed - but the drivers accept them, which is why the gap is real rather than
-theoretical.
-
-**Done when:** the authority is masked by PARSING rather than by pattern - split on the last `@`
-before the first `/`, `?` or `#` that follows `://`, then mask between the first `:` and that `@` -
-with the two colliding shapes above pinned as separate cases, and the docblock's list of uncovered
-shapes reduced to what remains. The parameter half needs no change.
 ### D44. `databaseSizeBytes` is fabricated as 0 wherever the size is unknown, in 11 of 17 type-ids
 
 Found 2026-08-27 by the sweep that closed the overview connection count's fabricated zero (D40, PR
@@ -612,75 +505,6 @@ current database, and that permission cannot be granted in `master`.
 rather than published. Measured on a real instance with a login that has neither grant, because the
 whole entry rests on a permission boundary no fixture can prove.
 
-### D47. Nine outward-facing enumerations name the engines by hand, and nothing counts them
-
-Found 2026-08-27 while registering `duckdb` (issue #424). Not DuckDB's defect - DuckDB is the
-second engine in a row to walk into it, and the first (libSQL, #511) left nine files still
-naming the previous set. Measured on this branch's parent commit, every one of these was
-missing libSQL two weeks after it shipped everywhere the compiler looks:
-
-| File | What it said | True at the time |
-| --- | --- | --- |
-| `packaging/linux/nfpm.yaml` | "fourteen engines", 14 names | 15 external engines |
-| `packaging/winget/LibreDB.Studio.locale.en-US.yaml.tmpl` | 14 names in `Description` | 15 |
-| `packaging/chocolatey/libredb-studio.nuspec.tmpl` | 14 names in `<description>` | 15 |
-| `desktop/src-tauri/tauri.conf.json` | 14 names in `longDescription` | 15 |
-| `deploy/caprover/libredb-studio.yml` | "fourteen engines" twice | 15 |
-| `deploy/railway/template.json` | "fourteen engines" | 15 |
-| `deploy/azure/listing/listing-fields.md` | "14 engines" / "Fourteen engines" / "fourteen engines" | 15 |
-| `deploy/azure/listing/description.html` | "fourteen engines" | 15 |
-| `deploy/rancher/CATALOG_LISTING.md` (key-features bullet) | "Fourteen database engines" | 15 |
-
-All nine are corrected in this PR, which is the third consecutive PR to correct the same
-class by hand. `scripts/readme-check.mjs` proves the mechanism works - it locates the engine
-table structurally and fails when the three READMEs disagree - and `chart:check` proves a
-version can be pinned across files. Nothing does the equivalent for the catalog copy, and
-`docs/ADDING_A_PROVIDER.md` says so in as many words: *"nothing counts the engines in a
-catalog listing, so an engine can ship while three storefronts still name the previous set"*.
-
-The gate has to be tolerant of abridgement, because these files are not all exhaustive by
-design: the winget and chocolatey **summaries** deliberately name a few engines and "and
-more" (#445, so that no numeral goes stale), while their **descriptions** are exhaustive. So
-the check is not "every file names every engine" - it is "a file that publishes a NUMERAL
-must publish the right one, and a list introduced by that numeral must have that many names",
-with the numeral derived from `EXTERNAL_DATABASE_TYPES.length` and the names from
-`DB_UI_CONFIG` labels.
-
-**Done when:** one test walks a declared list of outward-facing copy files, extracts each
-English or digit numeral that qualifies the word "engines", compares it to
-`EXTERNAL_DATABASE_TYPES.length`, and - where that numeral introduces a list - counts the
-`DB_UI_CONFIG` labels in it; with a non-vacuity assertion that a fixture naming one engine
-too few fails.
-
-### D48. There is no `sessionsEmptyState`, so an engine with no session list cannot say so
-
-Found 2026-08-27 while registering `duckdb` (issue #424), and it is not DuckDB's defect.
-
-`ProviderLabels` carries `slowQueriesEmptyState` (#U12), so a provider whose engine keeps no store
-of finished statements replaces the Queries panel's PostgreSQL sentence - *"Enable
-pg_stat_statements extension to see query stats."* - with its own. **There is no equivalent for
-sessions.** `SessionsTab.tsx:160` and `OperationsTab.tsx:612` print the hardcoded *"No active
-sessions found."* for every provider that answers `getActiveSessions()` with an empty list. The
-`sessionsUnavailable` branch beside it is not a way in: it renders a reason only when the reading
-FAILED (`data.activeSessions === undefined`, the reason taken from `data.errors.activeSessions`),
-which is a different fact from an engine that has no sessions to publish.
-
-So the two halves of the same absence read differently on the same connection. On DuckDB the
-Queries panel says why in DuckDB's own words, and the Sessions panel says *"No active sessions
-found."* - which a reader takes as "nothing is running right now", when the truth is that
-`duckdb_connections()` does not exist and the panel can never show a row (measured: `Catalog Error:
-Table Function with name duckdb_connections does not exist!`). The same wrong reading is available
-today on every engine that publishes no session list.
-
-Not urgent, and deliberately not solved by making `getActiveSessions()` throw: an absence is not an
-error, and the failure branch already means something else.
-
-**Done when:** `ProviderLabels` gains an optional `sessionsEmptyState`, both panels prefer it over
-their hardcoded sentence, DuckDB declares one naming `duckdb_connections()`, and a component test
-pins both branches - a provider that declares the label and one that does not - so the fallback
-cannot quietly become the only path again. `docs/providers/duckdb.md` §3.7 states today's behaviour
-and must move with it.
-
 ### D49. Per-table maintenance drops the schema, so every table outside the default one refuses
 
 Found 2026-08-27 in the BROWSER while registering `duckdb` (issue #424). Not DuckDB's defect - the
@@ -721,33 +545,6 @@ change.
 **Done when:** the row passes the qualified name, every one of the twelve providers has been
 measured against a table outside its default schema (or recorded as having no such concept), and a
 component test pins the target the row sends so it cannot silently revert to the bare name.
-
-### D50. The search seam zeroes two OPTIONAL `TableStats` size fields for an index that reported nothing
-
-Found 2026-08-27 in the #517 review, inside the file that PR was already fixing. `toTableStats()`
-(`src/lib/db/providers/sql/search/index.ts`) reads `const sizeBytes = index.sizeBytes ?? 0` and writes
-that zero into `tableSize`, `tableSizeBytes`, `totalSize` and `totalSizeBytes`. Its docblock justified
-all four with "`TableStats` has no way to say 'unknown' - both fields are required numbers".
-
-**That justification was false for half of them.** Measured against `src/lib/db/types.ts`: `rowCount`,
-`totalSize` and `totalSizeBytes` are required, so for those three a closed index genuinely has nowhere
-to read but zero. `tableSize`, `tableSizeBytes`, `indexSize` and `indexSizeBytes` are **optional**, and
-their own docblock says why in as many words - "A `0` would be the same lie in a different digit, so
-absence is the answer, and every consumer of the aggregate gates on it - see `StorageTab`'s
-`tableSizeKnown`". The doc sentence and the docblock were corrected in #517; the code was not, because
-the consequence needs a decision rather than a patch.
-
-**The consequence, and why it is not obvious.** A CLOSED index reports neither a document count nor a
-size (measured: both arrive as JSON null while the listing still names the index). Filling
-`tableSizeBytes` with 0 keeps `StorageTab`'s `tableSizeKnown` true, so the Data figure reads `0 B` for
-that index rather than N/A. But omitting it flips `tableSizeKnown` false for the WHOLE cluster -
-`tables.every(...)` - so one closed index takes the Data figure away from every open one. That is the
-behaviour the type prescribes and SQLite-under-Bun already gets, and it is still a visible change to a
-panel, which is why it is an entry.
-
-**Done when:** the two optional fields are omitted for an index that published no size, both search
-docs record what one closed index does to the cluster's Data figure, and both test files pin an open
-index beside a closed one so the aggregate's behaviour is asserted rather than inferred.
 
 ### D51. Four providers degrade a refused monitoring read to no rows, then read the absent row as 0
 
@@ -1016,32 +813,6 @@ is not a free read.
 **Done when:** an operation a provider declares globally runnable either has its own card copy or a
 recorded reason it is withheld.
 
-### U25. One byte formatter exists three times, and the two local copies draw non-magnitudes as figures
-
-Found 2026-08-27 in the #517 review, which fixed the shared one. `formatBytes` exists in three places:
-the exported `src/lib/db/utils/pool-manager.ts` one that every provider calls, and a private
-threshold-cascade copy inside `src/components/monitoring/tabs/StorageTab.tsx` and another inside
-`src/components/monitoring/tabs/TablesTab.tsx`. The two components do NOT import the shared one, which
-is how the closed entry's claim that the Storage remainder rendered `NaN undefined` came to be wrong: that is the
-shared function's output, and the cell that was measured runs the local cascade.
-
-#517 gave the shared one a guard (a negative or non-finite input returns `"N/A"`, and the unit index is
-clamped). The cascade copies have no guard, and their failure is quieter because the output looks like a
-reading. Measured against `TablesTab`'s copy: `-1` renders `"-1 B"`, `NaN` renders `"NaN B"`, `Infinity`
-renders `"Infinity GB"`, and 1 EB renders `"1073741824.00 GB"`. The Storage copy behaves identically;
-#517 closed its one reachable negative by refusing to compute a contradictory remainder at all, so that
-tab no longer feeds it one, but the formatter is unchanged.
-
-`TablesTab` reads the numeric twins (`tableSizeBytes` and its siblings) rather than the engine's own
-strings, so its input is whatever a provider computed - and D44 and D51 are both about providers that
-compute those numbers from an absent row.
-
-**Done when:** one formatter serves all three call sites, or the two copies carry the same guard as the
-shared one; the units agree (the cascade stops at GB, so it spells an exabyte in gigabytes); and a unit
-test pins a negative, a non-finite and a PB-scale input for whatever survives. Deleting the copies is
-the smaller change but not free: they exist at module scope with a comment saying they are there to keep
-the components' cognitive complexity down, and the shared module is a pool manager.
-
 ### U26. The fleet total sums display strings, so a terabyte counts as one byte
 
 Found 2026-08-27 in the #517 review. `totalDBSize` in `src/components/admin/tabs/OverviewTab.tsx`
@@ -1110,16 +881,6 @@ or the exposure is accepted in writing with the sibling-subdomain trust assumpti
 
 ## Tests
 
-### T1. Two disjuncts are pinned by almost nothing
-
-`isStatementText` (`src/lib/sql/statement-end.ts`) has a `dollar-string` disjunct pinned by exactly
-one assertion. That is the same hole that, for the `subscript` disjunct, let a statement-corrupting
-emission through the full gate, CI, 100% line coverage and five reviews — deleting the disjunct failed
-zero tests. Line coverage cannot see a missing disjunct in a one-line predicate. Only a fixture where
-the two readings *disagree* can pin it.
-
-**Done when:** deleting any single disjunct of `isStatementText` fails a test.
-
 ---
 
 ### T4. Eight backlog ids cited in `src/` name entries that no longer exist
@@ -1145,23 +906,6 @@ can do honestly.
 
 **Done when:** no id cited in `src/` is missing from this file, and the drift guard covers source
 citations the way it already covers `docs/AGENT.md`.
-
-### T5. The allowlist's provider-free check reads one level deep
-
-`tests/security/route-auth.test.ts` now verifies that every route on `ROUTES_WITHOUT_A_PROVIDER` is
-still provider-free, rather than merely naming a real route (this closed H10). It does that by
-reading each allowlisted route's own source and matching the provider entry points: the `@/lib/db`
-and `@/lib/llm` module specifiers by PREFIX, so a new factory export is covered the day it lands,
-plus the one indirect helper that exists today - `@/lib/api/schema-route`, which is how
-`db/schema/list` and `db/schema/relations` reach a provider without naming `@/lib/db` at all.
-
-The residual is transitive reach. A future route that obtains a provider through a NEW indirect
-helper module would still pass, because nothing follows the import graph. Measured at the time it was
-written: zero allowlisted routes reach a provider, with or without comment stripping, so this is a
-gap in the guard rather than a defect it is hiding.
-
-**Done when:** the check resolves a route's imports transitively, or the set of indirect helpers is
-itself pinned so a new one cannot appear unnoticed.
 
 ## Dependencies
 
@@ -1512,19 +1256,6 @@ the channels that serve Studio from a small box.
 
 **Done when:** the measurement says the trade is worth it and the nonce ships, or the measurement is
 recorded here as the reason it does not.
-
-### H4. The `@libredb/studio/security` usage note is not in the published README
-
-An npm consumer reading `README.md` on npmjs.com sees nothing about `securityHeaders()`.
-
-It used to live in `.claude/rules/platform-integration.md`, which was deleted with the
-platform/studio decoupling, so there is no longer a second home for it at all.
-
-It is out of `README.md` because `README_zh.md` and `README_ja.md` (`scripts/readme-check.mjs`'s
-`LOCALIZED` pair) would then drift, and that script guards the pair structurally rather than by
-heading.
-
-**Done when:** the note lands in all three READMEs together.
 
 ### H7. `sanitizeAuditInput` does not recurse, so a nested secret survives inside the coerced string
 
@@ -2054,40 +1785,6 @@ is the path B6 already complicates.
 **Done when:** either control exists in the service with its own ledger record, and the rail renders it
 because the service can honour it.
 
-### B13. Three spends the agent run ledger never records, so the budget meter reads low
-
-Opened by #329 T10b, found by the task's own fresh-context review.
-
-**The schema capture is the largest.** `captureContextSnapshot` calls `inspectSchemaTool` directly, once
-per catalog kind — three reads on PostgreSQL, two on SQLite — and each goes through
-`executeAuditedOperation` and is charged `statements: 1` plus its elapsed time against exactly the
-budget the meter displays. What it does NOT go through is `runStep`, the only writer of
-`tool-completed`. The capture records one summary `context-captured` entry instead.
-
-So on an agent-mode drive with no reusable snapshot, a ledger-folded meter reads "0 / 20 statements"
-when two or three are already spent, before the model's first turn. A capture that FAILS records no
-entry at all while still having paid for its reads (see B54).
-
-Two smaller mismatches belong with it:
-
-- An acquisition failure is accounted as one executed statement although nothing ran. `tools.ts`
-  acquires the provider inside the allowed callback deliberately, so a denied call never opens a pool,
-  and the failure propagates out of the tool leaving the step with a `tool-invoked` entry and no
-  settlement. The fold cannot see it.
-- A `tool-completed` entry carries the provider's own `summary.elapsedMs`, while `maxTotalRunMs` is
-  charged the span the execution layer measured around the whole call, which also covers acquisition.
-
-All three run in the same direction — the meter under-reports — which is why the rail states its figures
-as a floor, and why the caveat it shows is a list of what is known rather than a proof the list is
-complete.
-
-Either half closes the same way: give the capture path a durable per-read record, or read the meter
-from the tracker's own accounting. The second is not a drop-in, because the tracker is process-local
-and `releaseExecutionRun` drops a run's accounting when it ends, so a finished run would report zero.
-
-**Done when:** a run that has captured its schema shows the catalog reads it paid for, with a test that
-fails on the current under-count.
-
 ### B15. A run's stored results are gone once the run ends, so a report's citations can outlive its rows
 
 Surfaced by #329 T11 rather than introduced by it. `ExecutionArtifactStore` holds results in process
@@ -2138,24 +1835,6 @@ The remedy pattern already exists here: the explicit copies in `Dockerfile` and
 (`tests/unit/packaging-payload-prune.test.ts` is the nearest existing home), and `docs/AGENT.md`'s
 deployment section loses the caveat that points here.
 
-### B20. A Gemini deployment behind a proxy is not configurable, on either surface
-
-`resolveApiUrl` (`src/lib/llm/utils/config.ts`) returns `LLM_API_URL` for every provider kind, so the
-resolved configuration carries it — and both Gemini consumers ignore it. The chat provider constructs
-`new GoogleGenerativeAI(apiKey)`, which has no base-URL option at all. The agent's adapter deliberately
-passes no `baseURL`, because leaving it undefined is what keeps the SDK's own environment fallback
-unreachable.
-
-So an operator who must reach Gemini through an egress proxy or a regional endpoint can set the
-variable, see no error, and be routed to Google directly.
-
-Pre-existing behaviour the agent inherited; noticed in #329 T4. Fixing it means threading
-`config.apiUrl` into both consumers and deciding what an explicitly-set `LLM_API_URL` means for a
-provider whose SDK has no base-URL seam — a settings-surface change.
-
-**Done when:** a proxied Gemini endpoint is reachable from the configuration the user already entered,
-or the settings surface says plainly that the variable does not apply to that kind.
-
 ### B23. Seed eligibility is decided against a browser snapshot, not the live descriptor
 
 `resolveAgentRunConnectionId` (`src/hooks/use-connection-payload.ts`) decides whether an editable seed
@@ -2178,21 +1857,6 @@ overstates.
 **Done when:** the run-start route validates the descriptor the browser believed it was starting
 against — a fingerprint sent with the request and compared server-side, refusing with a distinct reason
 when it has moved. Until then `docs/AGENT.md` says the comparison is against the last fetch.
-
-### B26. A profile can test for an email shape and not for a digit run
-
-`table-profile.ts` tests one value shape inside the database, `LIKE '%_@_%._%'`, and derives
-`suspected_pii` from the ratio of matches. A run of digits — a phone number, a national id, a card
-number — is the other shape worth suspecting, and `LIKE` cannot express it: `_` means "any character",
-so a length test would match almost any text. PostgreSQL spells it `~ '[0-9]{9}'`; SQLite spells it
-`GLOB '*[0-9][0-9][0-9]…*'`.
-
-An earlier draft shipped `LIKE '%_________%'` as a "nine digits" test, which would have produced a
-`suspected_pii` finding for essentially every text column. It was removed before it landed rather than
-approximated.
-
-**Done when:** the shape tests are per-dialect predicates rather than one shared `LIKE`, with the digit
-run among them and each verified against that engine's grammar.
 
 ### B28. A profile that times out reports nothing rather than falling back to catalog statistics
 
@@ -2315,23 +1979,6 @@ depends on it and no user is waiting on it.
 **Done when:** the event model has settled and somebody is running Studio beside a stack that wants
 agent runs in it. #332 holds the full scope.
 
-### B34. A hydrated agent result cannot be exported, because Export serializes the tab's own rows
-
-A run's rows now reach the results grid, the explain view and the charts view, each with a provenance
-badge naming the run. But `exportResults` in `src/components/Studio.tsx` serializes
-`currentTab.result`, so offering the Export menu over a hydrated view would write the tab's rows to a
-file while the user is looking at the run's.
-
-The menu is therefore hidden while an artifact is shown, which is correct and is not the same thing as
-being able to export what is on screen.
-
-The pivot and dashboard views are unhydrated for a related reason and are not part of this: both are
-configured against the columns of the result they were opened on.
-
-**Done when:** the export path can take an explicitly hydrated result, with the file still attributable
-to the run. An exported file that came from an agent run and is indistinguishable from one the user ran
-is the thing to avoid.
-
 ### B35. A resumed run can evict its own still-cited results: the artifact cap is per drive
 
 `AGENT_MAX_ARTIFACTS` (`src/lib/agent/runtime.ts`) is `45 × 4 = 180`: the largest per-workflow statement
@@ -2384,67 +2031,6 @@ database has answered it, and should be able to say so without inventing a query
 
 **Done when:** a data-analysis run can conclude "not answerable here" and be scored `answered` for it,
 with the rule stated in `WORKFLOW_TOOL_RULES` and an eval asserting no fabricated statement is sent.
-
-### B48. The composed grounding path still loses a plan run to an environment failure
-
-`captureFromProvider` (`src/lib/agent/context-snapshot.ts`) converts a `DatabaseError` or an
-`ExecutionProfileError` raised before the reading leaves into an unavailable capture. So a plan run on
-one of the nine provider-path engines survives an unreachable host, a wrong password or a
-half-configured `agentUser`, and answers ungrounded with the capture's own diagnosis.
-
-The composed path — PostgreSQL and SQLite — does not. The same failure propagates out of
-`readCatalogForGrounding`, through `captureContextSnapshot` and `establishPlanningContext`, and ends the
-run `internal`, or `engine-unsupported` on the profile error (see B47).
-
-The asymmetry was deliberate at #414: those two engines have never reached the new line, and changing
-their failure mode is a second decision about a path #414 did not touch. It is still an asymmetry a
-reader will trip over.
-
-**Done when:** both grounding paths answer an environment failure the same way.
-
-### B51. The run loop nudges a model three times and records none of it
-
-`runInvestigation` delivers three notices, each one-shot per DRIVE, each with its own boolean, guard set
-and delivery mechanism:
-
-| Notice | When | Delivered as |
-| --- | --- | --- |
-| `AGENT_REPORT_RESERVE_NOTICE` | within the turn or time reserve of a ceiling | a `user` message, riding the turn about to be taken |
-| `AGENT_REPORT_REMINDER_NOTICE` | a prose turn after a tool this run holds was called | a `user` message, and the turn is taken again |
-| `AGENT_PRESENT_BEFORE_REPORT_NOTICE` | a `compose_report` on an answering workflow with a presentable read and no presentation | a `tool` result, INSTEAD of running the call |
-
-None of the three writes to the ledger. `service.recordEvent` is called for the schema capture, the
-drafted statement, the closing prose, the recommendation, the answer and the report — and for nothing the
-server said to the model. So a run's timeline shows a model that read, narrated and then reported, with
-no entry saying it was told to report. And a `compose_report` the loop withheld leaves no record that a
-call was made at all.
-
-**"Once" means once per drive, and the missing entry is why.** All three booleans are `let`s inside
-`runInvestigation`, and that function is what RESUMES an already-running run. A resumed drive starts with
-every flag false and can deliver a notice the previous drive already delivered. Two of the three have a
-partial durable guard by accident: the present-before-report notice reads `answer-composed` off the
-ledger, so a run that presented is not told to again — but a run whose `present_answer` was REFUSED
-writes no event, and is. Nothing bounds the report reminder or the reserve notice across a resume.
-
-**That is a measurement problem before it is a design one.** `docs/llms/` is built by reading run
-ledgers out of `.workflow-data`, and its whole claim is that each figure comes from an observed run.
-After #416 and #417 a ledger can no longer answer "did this model do that by itself?" — the exact
-question those pages exist to answer, and the question that decides whether a nudge is worth keeping.
-`methodology.md` already warns that one run per cell is the weakest part of the method; an
-unattributable rescue is weaker still, because re-running does not reveal it either.
-
-**The second half is the shape.** Each notice's GUARDS are the load-bearing part, and the part that keeps
-being got wrong. #416 arrived without the tool-set bound (a planning run, which holds no tools, was told
-to call `compose_report`) and without the turn bound (a run narrating at the ceiling was turned from
-`succeeded` / `model-stopped` into `failed` / `turn-limit`). #417 arrived with a condition that named "a
-result this run can present" and read an operation id that `inspect_schema` shares. Both were caught in
-review rather than by a gate, and a fourth notice will be written by someone reading the third.
-
-**Done when:** a delivery is an entry on the ledger — one event kind, carrying which notice and what the
-run had done when it arrived — read back at the head of a drive so a resumed run is not told twice, and
-the three share one declared shape so a new one states its condition, scope and delivery in the same
-place. Whether the rail SHOWS the entry is a separate question and probably a no: the notices exist to
-be invisible to a user, and the timeline is not the same surface as the ledger.
 
 ### B52. The grounding capture's row cap is reached by what the image ships, not by a wide user schema
 
@@ -2505,79 +2091,6 @@ extension views before the user creates anything.
 
 **Done when:** a plan run against a stock TimescaleDB, one against a stock Cloudberry and one against a
 stock AlloyDB Omni all report a captured schema naming the user's tables.
-
-### B55. A LibreDB plan run drafts `GET users:*`, a command that answers zero rows rather than failing
-
-Measured 2026-08-22 on the embedded LibreDB sample, plan mode, objective *"list every entry under the
-users prefix and read one user by key"*. The run was grounded — `context-captured`, three prefixes
-(`articles:*`, `config:*`, `users:*`) — and drafted:
-
-```libredb
-GET users:*
-```
-
-`dispatchCommand` gives `get` exactly one meaning: `kv.get(parts[1])`, an exact-key lookup with no glob
-of any kind. The key `users:*` does not exist, so the command returns **zero rows and no error** — the
-same silently-wrong class as the MongoDB `$shipping.region` case, and harder to notice because an empty
-result on a key-value store reads as "nothing stored there". The runnable form is `prefix users:`, which
-is what `generateTableQuery` already emits for the same row when a person clicks it.
-
-The cause is the one Redis has too: the inventory's rows are named `users:*`, which reads as a glob the
-grammar does not have. Redis's half was fixed by declaring `ProviderLabels.statementLanguage`
-(`redis.ts`); LibreDB declares none, so the plan contract tells the model only "this engine speaks no
-SQL" and leaves the five verbs — `get`, `put`, `delete`, `prefix`, `range` — to be guessed.
-
-Deferred by the owner on 2026-08-22, explicitly: LibreDB's agent and plan-mode behaviour waits until the
-other providers are done. Recorded here so the deferral is a decision rather than an omission.
-
-**Done when:** `LibreDbProvider.getLabels()` declares a `statementLanguage` that names the five verbs and
-says a key is exact (no glob, no wildcard), with a test pinning it the way `mongodb.ts` and `redis.ts` are
-pinned — and a live plan run on the embedded sample drafts `prefix users:` for this objective.
-
-### B56. Plan grounding is held for the process lifetime, so a schema change is invisible until a restart
-
-`holdSnapshotForConnection` keeps one inventory per connection identity in a bounded map with **no
-expiry**: newest reading wins, eviction is by use, and nothing re-reads. `heldSnapshotForConnection` is
-one of the three places a planning run's grounding comes from, and it is consulted before any capture.
-
-Measured 2026-08-22, twice in one session. MongoDB's schema inference was changed to expand subdocuments
-into dotted paths; `POST /api/db/schema/list` returned `shipping.city` immediately, and the schema tree
-showed it. Two plan runs afterwards still grouped by `$shipping.region`, and their ledgers carry **no**
-`context-captured` event at all — the hold answered, from an inventory read before the change. Restarting
-the process fixed it on the first run: `context-captured` appeared and the draft named `$shipping.city`.
-
-The same shape hit Redis: keys seeded into an empty database were invisible to a plan run until a restart,
-which is what "NO STATEMENT: the `session:*` key pattern is not present in the inventory" meant — a
-correct refusal against a stale inventory.
-
-Two properties make this hard to see rather than merely stale. The hold has no TTL, so on a long-lived
-server the window is unbounded; and B54's gap means a run that used the hold records nothing about where
-its inventory came from, so the ledger cannot distinguish "held, hours old" from "captured just now".
-
-The design intent is real and documented (`context-snapshot.ts`: a run reasons over the inventory its
-claims cite, and a mid-run re-read would leave those claims describing a schema the report no longer
-shows). What is not intended is that a NEW run inherits it indefinitely.
-
-**Done when:** a new run's grounding is either re-captured or explicitly recorded as reused with the age
-of the reading it reused, so a user who just added a collection is not silently planned against the
-database as it was.
-
-### B57. A tuning document is refused whole, which is the wrong granularity for a catalog
-
-`parseOperatorTuning` refuses a document that fails anywhere. The argument for that is real and is
-about MERGING — half of one measurement beside half of another is a configuration nobody has run —
-but it justifies whole-**entry** replacement, not whole-**document** rejection. A document holding
-fifty models loses all fifty to a typo in the thirty-seventh.
-
-That is tolerable while a document is a short overlay an operator wrote. It stops being tolerable if
-these are ever published as a catalog: the failure lands on everyone who mounted it, for a fault in
-one entry nobody using the other forty-nine cares about.
-
-The rule that actually matters survives per-entry validation intact — an entry is still taken whole
-or not at all — so the change is where the refusal is thrown, not what it protects.
-
-**Done when:** a document with one bad entry applies the rest, and the skipped entries are reported
-by id through `operatorTuningStatus()` the way `ignoredKeys` already is.
 
 ### B59. Per-model instructions have nowhere to go, and the mechanism that held them is gone
 
@@ -2676,21 +2189,6 @@ is a persistence surface, not a rail change.
 
 **Done when:** a user can see their earlier conversations and open one, with the store's
 enumeration, the route and the retention rule each decided rather than inherited.
-
-### B69. A reload ends a conversation, and nothing says it will
-
-A reload clears the browser's `runId`, so the next question starts a new thread. The rail is honest
-about the RESULT — with no thread there is no strip, which is the correct signal — but it is silent
-about the transition: a user mid-conversation who reloads is not told that what they were doing has
-ended, and their next question is answered as a fresh one.
-
-Accepted deliberately when the conversation model landed, because the alternative opens two
-questions this work did not want to answer: where a thread id lives client-side (`localStorage`, the
-same write-through cache every other preference uses), and what "resume this conversation?" should
-do when the runs behind it may have been evicted. Worth doing; not worth bundling.
-
-**Done when:** either a reload resumes the conversation it interrupted, or the rail says the
-conversation ended before the next question is asked.
 
 ### B70. A run writes no summary for the step after it
 

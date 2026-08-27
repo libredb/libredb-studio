@@ -1436,6 +1436,40 @@ describe("OperationsTab", () => {
     expect(getByTestId("operations-sessions-empty").textContent).toBe("No active sessions found.");
   });
 
+  // #D48. The default sentence reads as "nothing is running right now", which is false
+  // on an engine whose session list does not exist. Both branches are pinned so the
+  // fallback cannot quietly become the only path again.
+  test("an engine declaring sessionsEmptyState replaces the empty-state copy", async () => {
+    const duckdb = "DuckDB publishes no session list - there is no duckdb_connections() table function.";
+    mockMetadata = {
+      capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze"] },
+      labels: { sessionsEmptyState: duckdb },
+    };
+    monitoringOverride = { data: { activeSessions: [], tables: defaultTables } };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+
+    expect(renderResult!.getByTestId("operations-sessions-empty").textContent).toBe(duckdb);
+  });
+
+  test("a refused read outranks the label, because a refusal is not an absence", async () => {
+    mockMetadata = {
+      capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze"] },
+      labels: { sessionsEmptyState: "DuckDB publishes no session list." },
+    };
+    monitoringOverride = {
+      data: { tables: defaultTables, errors: { activeSessions: "permission denied" } },
+    };
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+
+    expect(renderResult!.getByTestId("operations-sessions-empty").textContent).toBe("permission denied");
+  });
+
   test("a refused tables read shows the engine's own sentence", async () => {
     monitoringOverride = {
       data: { activeSessions: defaultSessions, errors: { tables: "permission denied for relation pg_class" } },

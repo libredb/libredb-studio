@@ -26,12 +26,18 @@ import { DatabaseConnection, SavedQuery } from "@/lib/types";
 import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
 import { lazyRetry } from "@/lib/lazy";
 import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
-import { buildResultExport, type ResultExportFormat } from "@/lib/export/result-export";
+import {
+  buildResultExport,
+  FALLBACK_TABLE_NAME,
+  resultExportFileName,
+  type ResultExportFormat,
+} from "@/lib/export/result-export";
 import { downloadText } from "@/lib/export/download";
 import { newLocalId } from "@/lib/ids";
 import { resolveAgentRunConnectionId } from "@/hooks/use-connection-payload";
 import { isMobileViewport, useIsMobile } from "@/hooks/use-mobile";
 import { useAgentCapability } from "@/hooks/use-agent-capability";
+import type { AgentArtifactHydration } from "@/components/agent/hydration";
 import { useAgentArtifact } from "@/components/agent/use-agent-artifact";
 import { useAgentPrefill } from "@/components/agent/use-agent-prefill";
 import { useToast } from "@/hooks/use-toast";
@@ -349,28 +355,40 @@ export default function Studio() {
     toast({ title: "Query Saved", description: `"${name}" has been added to your saved queries.` });
   };
 
-  const exportResults = (format: ResultExportFormat) => {
-    if (!tabMgr.currentTab.result) return;
+  /**
+   * Write what is on screen to a file.
+   *
+   * `hydrated` is the agent artifact the bottom panel is showing, or null when the
+   * tab's own rows are what the user is looking at. It is passed in rather than read
+   * back off the tab because the two disagree exactly when it matters (B34): a run's
+   * result is hydrated into the grid without touching the tab, so an export that read
+   * `currentTab.result` wrote rows nobody was looking at. That is why the menu used to
+   * be hidden over a hydrated view instead of retargeted.
+   */
+  const exportResults = (format: ResultExportFormat, hydrated: AgentArtifactHydration | null = null) => {
+    const source = hydrated?.result ?? tabMgr.currentTab.result;
+    if (!source) return;
     // The columns the engine declared for THIS result. The writers read every row by
     // these names rather than by whatever keys row 0 happens to carry, so a row with
     // a different key order — or a document store's row missing a field entirely —
     // lands in the right column instead of shifting the rest.
-    const fields = tabMgr.currentTab.result.fields;
+    const fields = source.fields;
     const sensitiveColumns = detectSensitiveColumnsFromConfig(fields, maskingConfig);
-    const rows = effectiveMasking
-      ? applyMaskingToRows(tabMgr.currentTab.result.rows, fields, sensitiveColumns)
-      : tabMgr.currentTab.result.rows;
+    const rows = effectiveMasking ? applyMaskingToRows(source.rows, fields, sensitiveColumns) : source.rows;
 
     const file = buildResultExport(format, {
       rows,
       fields,
-      tabName: tabMgr.currentTab.name,
+      // A run's rows did not come from this tab, so the SQL forms take the neutral
+      // fallback name: naming the tab's table would attribute them to a table that
+      // never produced them.
+      tabName: hydrated === null ? tabMgr.currentTab.name : FALLBACK_TABLE_NAME,
       dialect: conn.activeConnection?.type,
       // The types the engine declared for THIS result, which is what the DDL form
       // writes when they are there — the only source for a computed column.
-      columnTypes: tabMgr.currentTab.result.columnTypes,
+      columnTypes: source.columnTypes,
     });
-    downloadText(file.content, file.mimeType, `query_result_export.${file.extension}`);
+    downloadText(file.content, file.mimeType, resultExportFileName(file.extension, hydrated?.runId));
   };
 
   const onTableClick = (tableName: string) => {
@@ -455,6 +473,7 @@ export default function Studio() {
                 activeConnection={conn.activeConnection}
                 schema={conn.schema}
                 isLoadingSchema={conn.isLoadingSchema}
+                schemaError={conn.schemaError}
                 onSelectConnection={conn.setActiveConnection}
                 onDeleteConnection={handleDeleteConnection}
                 onEditConnection={(c) => {
@@ -587,6 +606,7 @@ export default function Studio() {
                     <SchemaExplorer
                       schema={conn.schema}
                       isLoadingSchema={conn.isLoadingSchema}
+                      schemaError={conn.schemaError}
                       onTableClick={(tableName) => {
                         onTableClick(tableName);
                         setActiveMobileTab("editor");

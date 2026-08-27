@@ -33,6 +33,7 @@ mock.module("@/components/schema-explorer", () => ({
       {
         "data-testid": "schema-explorer",
         "data-schema-count": String(schema?.length ?? 0),
+        "data-schema-error": String(props.schemaError ?? ""),
       },
       "SchemaExplorer Mock",
     );
@@ -156,6 +157,15 @@ describe("Sidebar", () => {
     const propsNoConn = createDefaultProps({ activeConnection: null });
     const result2 = render(<Sidebar {...propsNoConn} />);
     expect(result2.queryByTestId("schema-explorer")).toBeNull();
+  });
+
+  // D31: the explorer's empty state says WHY it is empty, so the reason has to reach
+  // it — the sidebar is the only path between the hook that read it and the tree.
+  test("the schema read's error reaches the explorer", () => {
+    const props = createDefaultProps({ schema: [], schemaError: "'(' expected" });
+    const { getByTestId } = render(<Sidebar {...props} />);
+
+    expect(getByTestId("schema-explorer").getAttribute("data-schema-error")).toBe("'(' expected");
   });
 
   test("ERD button only appears when activeConnection exists", () => {

@@ -132,8 +132,47 @@ export type AgentContextUnavailableCode =
    */
   | "PROVIDER_INVENTORY_TIMED_OUT";
 
+/**
+ * What a capture SPENT, taken from the tracker's own accounting (B13).
+ *
+ * The capture's reads reach `executeAuditedOperation` through
+ * `readCatalogForGrounding` and `readProviderSchemaForGrounding` rather than through
+ * the run loop's `runStep`, and `runStep` is the only writer of `tool-completed`. So
+ * two or three catalog statements were charged against exactly the ceilings the rail
+ * displays and left no entry the rail could fold: an agent-mode drive with no
+ * reusable snapshot read "0 of 20 statements" with three already spent, before the
+ * model's first turn.
+ *
+ * MEASURED rather than counted here, and the difference is the whole reason this is a
+ * delta of `tracker.usage` around the reading instead of `plan.kinds.length`: what the
+ * budget enforces is what the tracker holds, and a read the pipeline denied before
+ * `beginExecution` charges nothing while an acquisition failure charges a statement
+ * for a call that never ran. A figure composed from the plan would state the reads
+ * this module INTENDED; this one states the reads the run paid for.
+ *
+ * `elapsedMs` is the span the tracker charged the whole capture, which is what
+ * `maxTotalRunMs` is measured against — not the engine's own elapsed time, which is
+ * the narrower figure a `tool-completed` entry carries.
+ */
+export interface AgentContextCharge {
+  /** Statements the tracker charged this run while the capture was reading. */
+  readonly statements: number;
+  /** The span it charged them, in milliseconds. */
+  readonly elapsedMs: number;
+}
+
 export type AgentContextCapture =
-  | { readonly kind: "captured"; readonly snapshot: AgentContextSnapshot }
+  | {
+      readonly kind: "captured";
+      readonly snapshot: AgentContextSnapshot;
+      /**
+       * What the reading cost, so the caller can record it (B13). Absent only where
+       * a capture was composed by something other than `captureContextSnapshot` —
+       * a fixture, or a test driving one of the two inner paths — and an absent
+       * charge is recorded as no charge at all rather than as a zero spend.
+       */
+      readonly charged?: AgentContextCharge;
+    }
   | {
       readonly kind: "unavailable";
       readonly reasonCode: AgentContextUnavailableCode;
@@ -143,6 +182,12 @@ export type AgentContextCapture =
        * policy allows. Present only for that reason — see `rowBudgetIn`.
        */
       readonly rowBudget?: AgentContextRowBudget;
+      /**
+       * What the refused reading cost anyway (B13). A read the engine rejected was
+       * admitted, charged and only then answered, so the spend is real even where the
+       * inventory is not.
+       */
+      readonly charged?: AgentContextCharge;
       /**
        * WHY this run has no inventory, in one sentence and with no advice in it.
        *
@@ -433,7 +478,9 @@ export function reusableSnapshot(events: readonly AgentRunEvent[], connectionId:
  * Runs before the first model turn of a drive that has no recorded inventory to
  * reuse. It costs one statement per catalog kind out of the run's budget on the
  * composed path and exactly one on the provider path, which is why the result is
- * persisted rather than re-read.
+ * persisted rather than re-read — and what it actually cost is returned with the
+ * snapshot, measured off the tracker, so the caller can record it (see
+ * `AgentContextCharge`).
  *
  * PLANNING RUNS REACH THIS TOO, since the plan-mode grounding design of 2026-08-15.
  * Until then a planning run was refused here by the mode gate in `tools.ts` and was
@@ -446,6 +493,31 @@ export function reusableSnapshot(events: readonly AgentRunEvent[], connectionId:
  * mode.
  */
 export async function captureContextSnapshot(context: AgentToolContext): Promise<AgentContextCapture> {
+  // Around the reading and not inside either path, because the two paths spend
+  // differently — one statement per catalog kind against exactly one — and the
+  // question the meter asks is what the capture cost, not which route it took.
+  const before = context.tracker.usage(context.runId);
+  const capture = await readInventory(context);
+  const after = context.tracker.usage(context.runId);
+  // A REFUSED capture is charged too, and that is the half of B13 the ledger's own
+  // `context-unavailable` docblock deferred: a read the engine rejected, and a read
+  // whose rows overran the budget, both spent a statement before saying no.
+  return {
+    ...capture,
+    charged: {
+      statements: after.executedStatements - before.executedStatements,
+      elapsedMs: after.totalElapsedMs - before.totalElapsedMs,
+    },
+  };
+}
+
+/**
+ * The reading itself, through whichever of the two paths this dialect has.
+ *
+ * Separate from the measurement above so the delta cannot be taken around part of a
+ * capture: every `return` in here and in `captureFromProvider` is inside the span.
+ */
+async function readInventory(context: AgentToolContext): Promise<AgentContextCapture> {
   const plan = CATALOG_PLANS[context.connection.type];
   const nowMs = context.clock?.() ?? Date.now();
   // No composed catalog for this dialect, which used to end the capture here with
@@ -455,17 +527,31 @@ export async function captureContextSnapshot(context: AgentToolContext): Promise
 
   const rows = new Map<AgentCatalogKind, readonly Record<string, unknown>[]>();
 
-  for (const kind of plan.kinds) {
-    const outcome = await readCatalogForGrounding(context, { kind });
-    if (outcome.kind !== "completed") return unavailable("CATALOG_READ_REFUSED", outcome.modelText);
-    const artifact = context.artifacts.get(outcome.artifact.correlationId, nowMs);
-    if (artifact === undefined) {
-      return unavailable(
-        "CATALOG_RESULT_UNAVAILABLE",
-        `The ${kind} inventory was read but its rows are no longer held by this run.`,
-      );
+  // The same catch the provider path has, and B48 is the record of it having been
+  // absent here: a failure raised BEFORE the statement left — an unreachable host, a
+  // wrong password, a refused execution profile — propagates out of
+  // `readCatalogForGrounding` by design (`tools.ts`), so on PostgreSQL and SQLite it
+  // ended the whole run `internal`, or `engine-unsupported` on the profile error,
+  // where the same environment on the other nine engines lost only the grounding.
+  // `environmentFailure` is shared with `captureFromProvider` so the two paths cannot
+  // come to answer one environment in two voices.
+  try {
+    for (const kind of plan.kinds) {
+      const outcome = await readCatalogForGrounding(context, { kind });
+      if (outcome.kind !== "completed") return unavailable("CATALOG_READ_REFUSED", outcome.modelText);
+      const artifact = context.artifacts.get(outcome.artifact.correlationId, nowMs);
+      if (artifact === undefined) {
+        return unavailable(
+          "CATALOG_RESULT_UNAVAILABLE",
+          `The ${kind} inventory was read but its rows are no longer held by this run.`,
+        );
+      }
+      rows.set(kind, artifact.value.rows);
     }
-    rows.set(kind, artifact.value.rows);
+  } catch (error) {
+    const failure = environmentFailure(error, context);
+    if (failure === null) throw error;
+    return failure;
   }
 
   const tables = finalize(plan.build(rows));
@@ -509,8 +595,9 @@ export async function captureContextSnapshot(context: AgentToolContext): Promise
  * complete is the failure this module exists to avoid, and it is no less one for
  * having been read a second way.
  *
- * A failure raised BEFORE the reading left is caught here and becomes an unavailable
- * capture, rather than propagating and ending the run. That is a decision, and the
+ * A failure raised BEFORE the reading left becomes an unavailable capture, rather than
+ * propagating and ending the run — `environmentFailure` is where that is read, and the
+ * composed path asks it too now (B48). That is a decision, and the
  * reason is what plan mode promises: it opens and answers on every engine, and it did
  * on these nine before this change, because nothing was reached at all. Letting an
  * unreachable host, a wrong password, a refused `connect()` or an `ExecutionProfileError`
@@ -524,10 +611,10 @@ export async function captureContextSnapshot(context: AgentToolContext): Promise
  * a `TypeError` here is this server's bug and must not be reported to a user as a
  * property of their database.
  *
- * The COMPOSED path still propagates such a failure, and this change deliberately
- * leaves it alone: PostgreSQL and SQLite have never reached this line and changing
- * their failure mode is not what #414 is about. The asymmetry is filed in
- * `docs/BACKLOG.md` rather than resolved here.
+ * The COMPOSED path answers the same environment the same way, which it did not when
+ * this was written: #414 left PostgreSQL and SQLite propagating such a failure on the
+ * argument that they had never reached this line, and B48 is the record of a reader
+ * tripping over the asymmetry. Both paths now read it through `environmentFailure`.
  *
  * Neither sentence carries the error's own message. `detail` is spliced into the note
  * a plan run reads as the server's own voice, and a driver message is text the database
@@ -539,19 +626,9 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
   try {
     read = await readProviderSchemaForGrounding(context);
   } catch (error) {
-    if (error instanceof ExecutionProfileError) {
-      return unavailable(
-        "CATALOG_READ_REFUSED",
-        `This server could not open a connection to this ${context.connection.type} database under the execution profile a grounding read takes, so its schema was not read for this run.`,
-      );
-    }
-    if (error instanceof DatabaseError) {
-      return unavailable(
-        "CATALOG_READ_REFUSED",
-        `This run could not reach this ${context.connection.type} database to ask it for its schema, so nothing was read for this run.`,
-      );
-    }
-    throw error;
+    const failure = environmentFailure(error, context);
+    if (failure === null) throw error;
+    return failure;
   }
   if (read.kind === "timed-out") {
     return unavailable(
@@ -572,6 +649,38 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
       readVia: "provider-inventory",
     },
   };
+}
+
+/**
+ * An environment failure read as an unavailable capture, or `null` when it is not one.
+ *
+ * BOTH grounding paths ask this, which is the whole of B48: the same unreachable host
+ * lost only the grounding on the nine provider-path engines and lost the RUN on
+ * PostgreSQL and SQLite, and the difference was one catch block. One reading rather
+ * than two also means the sentence a plan run is shown does not depend on which route
+ * its dialect takes.
+ *
+ * Two classes and no others. Anything else is this server's bug — a `TypeError` here is
+ * not a property of the user's database and must not be reported to them as one — so it
+ * is handed back for the caller to rethrow rather than swallowed.
+ *
+ * Neither sentence carries the error's own message: `detail` is spliced into a note the
+ * run reads as the server's own voice, and a driver message is text the database wrote.
+ */
+function environmentFailure(error: unknown, context: AgentToolContext): AgentContextCapture | null {
+  if (error instanceof ExecutionProfileError) {
+    return unavailable(
+      "CATALOG_READ_REFUSED",
+      `This server could not open a connection to this ${context.connection.type} database under the execution profile a grounding read takes, so its schema was not read for this run.`,
+    );
+  }
+  if (error instanceof DatabaseError) {
+    return unavailable(
+      "CATALOG_READ_REFUSED",
+      `This run could not reach this ${context.connection.type} database to ask it for its schema, so nothing was read for this run.`,
+    );
+  }
+  return null;
 }
 
 /**

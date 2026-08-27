@@ -468,7 +468,41 @@ describe("tables that carry no per-table bytes", () => {
       <TablesTab data={makeData()} loading={false} onRunMaintenance={mock(async () => true)} />,
     );
 
-    expect(getByTestId("tables-stat-size").textContent).toBe("820.00 MB");
+    expect(getByTestId("tables-stat-size").textContent).toBe("820 MB");
+  });
+
+  // The Size card is this tab's only formatted figure, so it is where the formatter's own
+  // refusals are visible. The cascade this tab used to carry drew all three of these as
+  // figures: "-1 B", "NaN B" and, for an exabyte, "1073741824.00 GB" - a magnitude spelled
+  // in the wrong unit because the ladder stopped at GB.
+  test.each<[string, number, string]>([
+    ["a negative total", -1, "N/A"],
+    ["a non-finite total", Number.NaN, "N/A"],
+    ["an infinite total", Number.POSITIVE_INFINITY, "N/A"],
+    ["a PB-scale total", 1024 ** 5, "1 PB"],
+    ["an EB-scale total", 1024 ** 6, "1 EB"],
+  ])("the Size card refuses %s rather than drawing it as a reading", (_label, bytes, expected) => {
+    // One table carrying the whole total, so the card's sum IS the input under test. A
+    // negative and a NaN are not reachable from a provider in this tree today; the point of
+    // the shared formatter is that they cannot be drawn as measurements if one ever sends one,
+    // and the PB and EB arms are reachable now (ClickHouse sums bytes over every active part).
+    const data = makeData();
+    const [first] = data.tables ?? [];
+    const single = {
+      ...data,
+      tables: [{ ...first, tableSizeBytes: bytes, totalSizeBytes: bytes }],
+    } as MonitoringData;
+
+    const { getByTestId, queryByText } = render(
+      <TablesTab data={single} loading={false} onRunMaintenance={mock(async () => true)} />,
+    );
+
+    expect(getByTestId("tables-stat-size").textContent).toBe(expected);
+    // And the "N/A" arms come from the FORMATTER, not from the card's own absence gate:
+    // `tableSizeBytes` is present on the row, so `sizeAbsent` is false and the "Total"
+    // caption below the figure is still drawn. Without this the two refusal arms would pass
+    // against a card that had simply given up.
+    expect(queryByText("Total")).not.toBeNull();
   });
 });
 

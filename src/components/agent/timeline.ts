@@ -1,3 +1,4 @@
+import type { AgentContextCharge } from "@/lib/agent/context-snapshot";
 import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentGoalShortfall } from "@/lib/agent/goal-verifier";
 import { type AgentInventoryNoun, TABLE_INVENTORY_NOUN } from "@/lib/agent/inventory-noun";
@@ -75,6 +76,16 @@ const GUIDANCE_HEADLINE: Record<Extract<AgentRunEvent, { kind: "guidance-issued"
   "plan-statement": "Asked for a runnable statement",
   "report-reserve": "Told this is its last turn",
   "unread-stop": "Asked to read the database itself",
+  /*
+    The three notices delivered INSTEAD of running a call. They reach a reader through the
+    `call-held` entry that records the hold, which is where the rail shows them — one entry
+    per delivery, and the tone that says the server did not run the call. Their names are
+    here because the vocabulary is one union (B51) and a reader of a ledger written by a
+    later build must not meet an id this table has no word for.
+  */
+  "present-before-report": "Asked to present the result first",
+  "cite-what-you-read": "Asked to cite what it read",
+  "compare-before-report": "Asked to compare the plans it holds",
 };
 
 /**
@@ -849,6 +860,27 @@ function describeRefusal(refusal: AgentToolRefusal): Omit<AgentTimelineItem, "id
 }
 
 /**
+ * How old a reused inventory was, in the coarsest unit that is still true (B56).
+ *
+ * Coarse on purpose. What a reader has to decide is whether the reading predates a
+ * change they made, and "3 hours old" answers that where "11,437,208 ms" does not.
+ * Every step rounds DOWN, so the line never claims the reading is older than it is.
+ *
+ * Under a minute is said in words rather than as "0 minutes old": a capture taken in
+ * this same drive is not a stale one, and a zero would read as a measurement that
+ * failed.
+ */
+function ageText(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return "under a minute old";
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? "minute" : "minutes"} old`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} ${hours === 1 ? "hour" : "hours"} old`;
+  const days = Math.floor(hours / 24);
+  return `${days} ${days === 1 ? "day" : "days"} old`;
+}
+
+/**
  * `stopRequested` is the fold's state at THIS entry, not the run's final state, and
  * it can only be true for an entry that follows the request — which is the only
  * ordering that makes the sentence it produces true.
@@ -890,6 +922,23 @@ function describeEvent(
         // had been told key patterns — the same defect the prompt half of #414 fixed,
         // in the half a user actually reads.
         detail: `${event.tableCount} ${event.tableCount === 1 ? noun.singular : noun.plural}, fingerprint ${event.fingerprint.slice(0, 8)}`,
+      };
+    case "context-reused":
+      return {
+        /*
+          The inventory this run did NOT read (B56). `progress` for the same reason a
+          capture is: the run is grounded and got there, and the entry exists so a reader
+          can see WHERE the ground came from.
+
+          The age is the whole point of the line. `heldSnapshotForConnection` has no
+          expiry, so on a long-lived server a plan run can be grounded on a reading taken
+          before the user added the collection they are now asking about — and until this
+          entry the ledger held nothing at all about such a run's grounding, which reads as
+          a run that needed none.
+        */
+        tone: "progress",
+        headline: "Schema reused",
+        detail: `${event.tableCount} ${event.tableCount === 1 ? noun.singular : noun.plural}, fingerprint ${event.fingerprint.slice(0, 8)}, read by an earlier run and ${ageText(event.ageMs)}`,
       };
     case "context-unavailable":
       /*
@@ -1319,7 +1368,7 @@ function reportOf(claims: readonly AgentReportClaim[], index: LedgerIndex): Agen
  *    this is wider than "reached the database": `tools.ts` acquires the provider
  *    inside the allowed callback on purpose, so an acquisition failure is accounted
  *    as a spent statement although nothing ran — and it settles no step, so this
- *    fold cannot see it either (`docs/BACKLOG.md` B13).
+ *    fold cannot see it either.
  *  - A policy denial and an approval requirement charge nothing at all:
  *    `execution.ts` returns before `tracker.beginExecution` on any non-allow, and
  *    `AgentRepairLedger` consumes a repair attempt only for a database error.
@@ -1327,6 +1376,10 @@ function reportOf(claims: readonly AgentReportClaim[], index: LedgerIndex): Agen
  *    inside the invoke callback, after the pipeline allowed the call and
  *    `beginExecution` ran, so the tracker has already counted it; and no rewording
  *    could have changed the answer, so the repair ledger does not.
+ *  - A schema capture contributes the statements and the span the TRACKER charged it,
+ *    read off its own entry (B13). Its reads settle no step and write no
+ *    `tool-completed`, so before that measurement was recorded a run whose first two or
+ *    three statements were catalog reads folded to zero.
  *  - Database time is the elapsed time each CHARGED statement recorded: a completed
  *    read's own `summary.elapsedMs`, and, for the two refusal classes the tracker
  *    charged, the span it charged them (#512). An entry carrying no
@@ -1335,14 +1388,14 @@ function reportOf(claims: readonly AgentReportClaim[], index: LedgerIndex): Agen
  *    can name what the figure is missing instead of presenting an invented one (#477).
  *
  * Every figure this produces is therefore a FLOOR on what the run has spent, and
- * the rail says so rather than presenting it as exact. The ledger is narrower than
- * the tracker in three known ways, all recorded in B13: the run's schema capture
- * reaches `executeAuditedOperation` through `captureContextSnapshot` rather than
- * through the run loop's `runStep`, so its two-to-three catalog reads are charged
- * without writing a `tool-completed` entry; an acquisition failure is charged a
- * statement and settles no step; and a completed read reports the engine's own
- * elapsed time while the tracker charges the span around the whole call. The list is
- * what is KNOWN, not a proof that nothing else is missing.
+ * the rail says so rather than presenting it as exact. Two of the three ways B13
+ * recorded the ledger as narrower than the tracker remain: an acquisition failure is
+ * charged a statement and settles no step, so nothing here can see it; and a completed
+ * read reports the engine's own elapsed time while the tracker charges the span around
+ * the whole call. The third — the schema capture's charged reads — is folded above from
+ * the measurement the capture now records, which leaves a ledger written before that
+ * field as the case where a capture still contributes nothing. The list is what is
+ * KNOWN, not a proof that nothing else is missing.
  */
 export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRunTimeline {
   const items: AgentTimelineItem[] = [];
@@ -1355,6 +1408,29 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
   let statementsWithoutDuration = 0;
   let repairs = 0;
   let claims: readonly AgentReportClaim[] | null = null;
+
+  /**
+   * What a schema capture spent, folded from the entry's own measurement (B13).
+   *
+   * The capture's catalog reads never wrote a `tool-completed` entry — they reach the
+   * execution layer through `captureContextSnapshot` rather than through `runStep` —
+   * so a run that had spent two or three statements before its first model turn read
+   * "0 statements" here. There is one figure per capture and not one per read, because
+   * the tracker charges the run and not the statement, and an itemised list would be
+   * this fold inventing reads it never saw.
+   *
+   * An entry carrying NO charge contributes nothing, which is the same rule the missing
+   * durations follow: a ledger written before the field measured no spend, and folding a
+   * zero would state that its reading was free (#477).
+   *
+   * A refused capture is folded too. It was admitted and charged before it was answered,
+   * so leaving it out would put the meter below the ceiling being enforced.
+   */
+  const chargeCapture = (charged: AgentContextCharge | undefined): void => {
+    if (charged === undefined) return;
+    statements += charged.statements;
+    databaseMs += charged.elapsedMs;
+  };
 
   const artifacts = new Map<string, CitedArtifact>();
   const statementsByStep = new Map<string, string>();
@@ -1470,7 +1546,21 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
         // Overwritten rather than kept, so a run that captured twice reports the
         // reading that was in hand when it finished. See `AgentCaptureView`.
         capture = { fingerprint: event.fingerprint, tableCount: event.tableCount, noun };
-      } else if (event.kind === "statement-drafted") statementsByStep.set(event.stepId, event.sql);
+        chargeCapture(event.charged);
+      } else if (event.kind === "context-reused") {
+        /*
+          A reused inventory grounds the run exactly as a captured one does, so the
+          provenance surfaces read it the same way (B56): the fingerprint a claim cites
+          resolves, and the word the later entries are written in is this reading's own.
+
+          It charges NOTHING, and that is the fact rather than an omission — the reuse is
+          why the run performed no catalog read at all.
+        */
+        noun = event.noun ?? TABLE_INVENTORY_NOUN;
+        captures.set(event.fingerprint, { tableCount: event.tableCount, noun });
+        capture = { fingerprint: event.fingerprint, tableCount: event.tableCount, noun };
+      } else if (event.kind === "context-unavailable") chargeCapture(event.charged);
+      else if (event.kind === "statement-drafted") statementsByStep.set(event.stepId, event.sql);
       else if (event.kind === "report-composed") claims = event.claims;
       else if (event.kind === "tool-completed") {
         statements += 1;

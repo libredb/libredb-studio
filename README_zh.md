@@ -227,6 +227,28 @@ npm i @libredb/studio
 
 Studio 同时以 npm 包形式发布，可以直接嵌进你的应用。如果你的产品会替用户创建数据库，这是编辑器最该待的地方。
 
+**在你自己的 Next.js 配置里复用 Studio 的安全响应头。** `@libredb/studio/security` 这个子路径把整套策略以纯数据的形式发布出来：`securityHeaders()` 返回一个普通的 `Record<string, string>`，而它所在的模块不 import 任何东西，所以可以直接在 `next.config.ts` 里加载——那里还没有路径别名，也没有 Studio 运行时。
+
+```ts
+// next.config.ts
+import { securityHeaders } from "@libredb/studio/security";
+
+export default {
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: Object.entries(securityHeaders()).map(([key, value]) => ({ key, value })),
+      },
+    ];
+  },
+};
+```
+
+可选项：`reportOnly` 发送 `Content-Security-Policy-Report-Only` 而不是强制生效的那个头；`hsts: false` 关闭 HSTS（传对象则是自定义）；`allowEval` 加上 `'unsafe-eval'`，React 的**开发**构建需要它；`monacoVsPath` 在 Monaco 的产物不同源时把那个 origin 加进来；`extra` 按指令合并你自己的来源。另外还导出了 `studioCspDirectives()` 和 `HSTS_MAX_AGE_SECONDS`，供需要自己拼装策略而不是直接下发的配置使用。
+
+继承之前请先读一遍这套策略：CSP 是允许内联脚本的，因为每个文档路由都是静态预渲染的、水合脚本没有 nonce。所以它约束的是被注入的脚本能把数据**发到哪里**，而不是能不能跑起来。这个取舍，以及 Next.js 应用下发这些头的两条路径，都写在 [`docs/SECURITY.md`](docs/SECURITY.md) 里。
+
 ## 关于收费的那条线
 
 Studio 是 MIT，因为它必须能去任何地方。付费的是 libredb-platform，它卖的是“别人替你运维”：托管、多租户、计费和支持，而不是某个被挪到付费墙后面的功能。

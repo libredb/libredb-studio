@@ -231,6 +231,28 @@ npm i @libredb/studio
 
 Studioはnpmパッケージとしても配布されているので、自分のアプリケーションの中に直接埋め込めます。ユーザーのためにデータベースを作る製品なら、エディタが最も役に立つのはその内側です。
 
+**Studioのセキュリティヘッダを自分のNext.js設定から使う。** `@libredb/studio/security` サブパスは、このポリシーを純粋なデータとして公開しています。`securityHeaders()` が返すのはただの `Record<string, string>` で、その定義元モジュールは何もimportしていません。パスエイリアスもStudioのランタイムもまだ存在しない `next.config.ts` から読み込んでも安全です。
+
+```ts
+// next.config.ts
+import { securityHeaders } from "@libredb/studio/security";
+
+export default {
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: Object.entries(securityHeaders()).map(([key, value]) => ({ key, value })),
+      },
+    ];
+  },
+};
+```
+
+オプション：`reportOnly` は強制ではなく `Content-Security-Policy-Report-Only` を送ります。`hsts: false` はHSTSを無効化（オブジェクトを渡せばカスタマイズ）。`allowEval` は `'unsafe-eval'` を追加するもので、Reactの**開発**ビルドがこれを必要とします。`monacoVsPath` はMonacoのバンドルが同一オリジンでない場合にそのoriginを追加します。`extra` はディレクティブごとに独自のソースをマージします。`studioCspDirectives()` と `HSTS_MAX_AGE_SECONDS` もエクスポートされており、ポリシーをそのまま送るのではなく組み立てたい設定で使えます。
+
+継承する前にポリシーそのものを読んでください。このCSPはインラインスクリプトを許可します。すべてのドキュメントルートが静的にプリレンダされ、ハイドレーション用のインラインスクリプトにnonceを付けられないからです。したがってこのポリシーが縛るのは、注入されたスクリプトがデータを**どこへ送れるか**であって、実行できるかどうかではありません。このトレードオフと、Next.jsアプリがこれらのヘッダを配送する2つの経路については [`docs/SECURITY.md`](docs/SECURITY.md) で論じています。
+
 ## 有料との線引きについて
 
 StudioがMITなのは、あらゆる場所に置ける必要があるからです。有料なのはlibredb-platformで、そこで売っているのは「運用の代行」、つまりホスティング、テナント管理、課金、サポートであって、有料の壁の向こうに移された機能ではありません。

@@ -191,6 +191,21 @@ mock.module("@/hooks/use-connection-form", () => ({
 }));
 
 // ── Mock @/lib/db-ui-config ─────────────────────────────────────────────────
+// See the same table in ConnectionModal.test.tsx: the engines that diverge from the
+// networked default are spelled out, because an "the input is absent" assertion is only as
+// true as this list.
+const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
+  sqlite: ["database"],
+  libredb: ["database"],
+  duckdb: ["database"],
+  libsql: ["host", "port", "password", "connectionString"],
+  druid: ["host", "port", "user", "password"],
+  elasticsearch: ["host", "port", "user", "password"],
+  opensearch: ["host", "port", "user", "password"],
+};
+const mockFields = (type: string): string[] =>
+  MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
+
 mock.module("@/lib/db-ui-config", () => ({
   getDBConfig: (type: string) => ({
     icon: () => null,
@@ -198,14 +213,15 @@ mock.module("@/lib/db-ui-config", () => ({
     label: type,
     defaultPort: type === "mysql" ? "3306" : type === "mongodb" ? "27017" : "5432",
     showConnectionStringToggle: type === "mongodb",
-    connectionFields: ["host", "port", "user", "password", "database"],
+    connectionFields: mockFields(type),
   }),
+  takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
   getDBIcon: () => () => null,
   getDBColor: () => "text-blue-400",
   // See the same note in ConnectionModal.test.tsx: `DB_UI_CONFIG` became an exported
   // binding in #425, so this mock's `{}` now reaches the real `isFileBased` unless the
   // function is mocked here too.
-  isFileBased: (type: string) => type === "sqlite" || type === "libredb",
+  isFileBased: (type: string) => mockFields(type).length === 1 && mockFields(type)[0] === "database",
   DB_UI_CONFIG: {},
 }));
 

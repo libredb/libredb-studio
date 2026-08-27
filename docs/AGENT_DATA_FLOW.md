@@ -65,8 +65,8 @@ that can disagree (`src/lib/agent/model-adapter.ts`).
 
 | Kind | Endpoint | Call site |
 | --- | --- | --- |
-| `gemini` | Google's own Generative AI endpoint. **No `baseURL` is passed, deliberately**, so an `LLM_API_URL` left over from another setup cannot redirect Gemini traffic — carrying your key — to that host | `src/lib/agent/provider-registry.ts:134-146` |
-| `openai`, `ollama`, `custom` | `{LLM_API_URL}/chat/completions` — whatever host you named | `src/lib/agent/provider-registry.ts:121-132` |
+| `gemini` | `{LLM_API_URL}` when you set one, Google's own Generative AI endpoint otherwise. The variable is read on both Gemini surfaces, so a proxy configured for the chat surface is also where a run goes — nothing routes to a host you did not name, and nothing silently keeps talking to Google either | `src/lib/agent/provider-registry.ts:136-150`, `src/lib/llm/utils/gemini-endpoint.ts` |
+| `openai`, `ollama`, `custom` | `{LLM_API_URL}/chat/completions` — whatever host you named | `src/lib/agent/provider-registry.ts:123-134` |
 
 Two properties of that seam are enforced rather than assumed:
 
@@ -74,14 +74,18 @@ Two properties of that seam are enforced rather than assumed:
   `OPENAI_BASE_URL` when they are undefined, and `@ai-sdk/google` reads
   `GOOGLE_GENERATIVE_AI_API_KEY`. Every setting is therefore passed explicitly, so none of those
   reads can happen — a keyless Ollama gets a placeholder token and a keyless custom endpoint gets no
-  `Authorization` header at all (`provider-registry.ts:81-111`, asserted on the wire in
+  `Authorization` header at all (`provider-registry.ts:83-113`, asserted on the wire in
   `tests/isolated/agent-model-adapter.test.ts`).
 - **The SDK's hosted gateway is unreachable by construction.** The AI SDK also accepts a bare model
   id, which it resolves through its own gateway — a third party nothing in this repository
-  configures. The type excludes that arm (`AgentLanguageModel`, `provider-registry.ts:53-61`).
+  configures. The type excludes that arm (`AgentLanguageModel`, `provider-registry.ts:55-63`).
 
-`LLM_API_URL` is unread for the `gemini` kind, on the agent path exactly as on the chat surface. A
-Gemini deployment behind a proxy is therefore not configurable (`docs/BACKLOG.md` B20).
+`LLM_API_URL` reaches the `gemini` kind on the agent path exactly as on the chat surface, so a Gemini
+deployment behind an egress proxy or on a regional endpoint is configurable from the one variable. The
+two installed SDKs disagree about whether the version segment belongs to the base URL —
+`@google/generative-ai` appends it, `@ai-sdk/google` does not — so one value is normalised into both
+spellings in `src/lib/llm/utils/gemini-endpoint.ts`. Give the versioned URL; a bare origin also works,
+`/v1beta` is composed for it.
 
 ---
 
@@ -572,11 +576,11 @@ output cap, and what it sends is one objective — see
   **One credential does leave, necessarily: your `LLM_API_KEY`.** It is not in a prompt — it is in
   the request's authentication metadata, because that is how the provider authenticates you. The
   OpenAI-compatible kinds send it as the `Authorization` header
-  (`src/lib/agent/provider-registry.ts:106,123-126`) and Gemini passes it to the Google provider
-  (`:141`). Two consequences worth stating: a keyless Ollama gets a placeholder token and a keyless
-  custom endpoint gets no `Authorization` header at all (`:107,110`), so neither invents a
-  credential; and Gemini is deliberately given no `baseURL`, so a stale `LLM_API_URL` cannot
-  redirect that key to another host (`:134-146`). "No credentials leave" would be the wrong claim
+  (`src/lib/agent/provider-registry.ts:108,125-128`) and Gemini passes it to the Google provider
+  (`:143`). Two consequences worth stating: a keyless Ollama gets a placeholder token and a keyless
+  custom endpoint gets no `Authorization` header at all (`:109,112`), so neither invents a
+  credential; and Gemini's `baseURL` comes from `LLM_API_URL` — the host you configured for the chat
+  surface and no other (`:136-150`). "No credentials leave" would be the wrong claim
   here — the accurate one is that **no database credential** reaches the model, while the model
   provider's own key reaches the model provider and nothing else.
 - **Cell values from a table's own columns.** No agent path reads a row out of a user table and

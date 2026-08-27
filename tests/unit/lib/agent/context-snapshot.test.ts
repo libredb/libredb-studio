@@ -487,6 +487,155 @@ describe("captureContextSnapshot — when no honest inventory can be built", () 
 });
 
 /**
+ * An environment failure on the COMPOSED path, which used to end the run (B48).
+ *
+ * `captureFromProvider` has converted an unreachable host and a refused execution
+ * profile into an unavailable capture since #414; PostgreSQL and SQLite propagated the
+ * same failure out of `captureContextSnapshot` and ended the run `internal`, or
+ * `engine-unsupported` on the profile error. The asymmetry was one catch block wide.
+ */
+describe("captureContextSnapshot — an environment failure on the composed path", () => {
+  test("a database that cannot be reached loses the grounding, not the run", async () => {
+    const h = harness("postgres");
+
+    const capture = await captureContextSnapshot({
+      ...h.context,
+      acquireProvider: async () => {
+        throw new ConnectionError("connect ECONNREFUSED 127.0.0.1:5432", "postgres");
+      },
+    });
+
+    expect(capture.kind).toBe("unavailable");
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+    // The same sentence the provider path answers with, because it is the same reading:
+    // one voice per environment, whichever route the dialect takes.
+    expect(capture.detail).toContain("could not reach this postgres database to ask it for its schema");
+    // The driver's own message stays out of the note a run reads as the server's voice.
+    expect(capture.detail).not.toContain("ECONNREFUSED");
+  });
+
+  test("a credential the profile layer will not grant loses the grounding, not the run", async () => {
+    const h = harness("sqlite");
+
+    const capture = await captureContextSnapshot({
+      ...h.context,
+      acquireProvider: async () => {
+        throw new ExecutionProfileError(
+          "agent credential for this connection could not be decrypted",
+          "AGENT_CREDENTIAL_UNRESOLVABLE",
+        );
+      },
+    });
+
+    expect(capture.kind).toBe("unavailable");
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
+    expect(capture.detail).toContain("under the execution profile a grounding read takes");
+    expect(capture.detail).not.toContain("could not be decrypted");
+  });
+
+  test("anything that is not one of those two is this server's own bug, and propagates", async () => {
+    // The bound on the catch, asserted on this path as it is on the provider one: a
+    // `TypeError` is not a property of the user's database.
+    const h = harness("postgres");
+
+    await expect(
+      captureContextSnapshot({
+        ...h.context,
+        acquireProvider: async () => {
+          throw new TypeError("acquireProvider is not a function");
+        },
+      }),
+    ).rejects.toThrow(TypeError);
+  });
+});
+
+/**
+ * What a capture SPENT, and where the meter used to read zero (B13).
+ *
+ * The capture's reads go through `executeAuditedOperation` and never through the run
+ * loop's `runStep`, which is the only writer of `tool-completed` — so the whole cost of
+ * grounding a run was charged against the ceilings the rail displays and folded to
+ * nothing. What is asserted here is that the figure is the TRACKER's, because that is
+ * what the budget is enforced from.
+ */
+describe("captureContextSnapshot — what the reading charged", () => {
+  test("carries the statements the tracker charged, which is one per composed catalog read", async () => {
+    const h = harness("postgres");
+
+    const capture = await captureContextSnapshot(h.context);
+
+    if (capture.kind !== "captured") throw new Error("expected a snapshot");
+    expect(capture.charged?.statements).toBe(3);
+    // The tracker's own figure and not a count of `plan.kinds`: a derived number would
+    // state the reads this module intended rather than the ones the run paid for.
+    expect(capture.charged?.statements).toBe(h.context.tracker.usage("run-1").executedStatements);
+  });
+
+  test("charges two on SQLite, because the dialect has two catalog reads and not three", async () => {
+    const h = harness("sqlite");
+
+    const capture = await captureContextSnapshot(h.context);
+
+    if (capture.kind !== "captured") throw new Error("expected a snapshot");
+    expect(capture.charged?.statements).toBe(2);
+  });
+
+  test("carries the span the tracker charged, not the engine's own elapsed time", async () => {
+    // An advancing clock, because the frozen one measures every execution as free and a
+    // zero there would be indistinguishable from the figure never having been taken.
+    let now = 1_000;
+    const h = harness("postgres");
+    const capture = await captureContextSnapshot({ ...h.context, clock: () => (now += 7) });
+
+    if (capture.kind !== "captured") throw new Error("expected a snapshot");
+    expect(capture.charged?.elapsedMs).toBeGreaterThan(0);
+    expect(capture.charged?.elapsedMs).toBe(h.context.tracker.usage("run-1").totalElapsedMs);
+    // The result's own `executionTime` is 3ms per read in this harness; the charge is the
+    // span around the whole call, so the two are deliberately not the same number.
+    expect(capture.charged?.elapsedMs).not.toBe(9);
+  });
+
+  test("is the DELTA around the reading, so a run that had already spent is not charged twice", async () => {
+    const h = harness("postgres");
+    // One statement this run spent before it was grounded at all.
+    h.context.tracker.beginExecution("run-1");
+    h.context.tracker.endExecution("run-1", { statements: 1, elapsedMs: 40 });
+
+    const capture = await captureContextSnapshot(h.context);
+
+    if (capture.kind !== "captured") throw new Error("expected a snapshot");
+    expect(capture.charged?.statements).toBe(3);
+    expect(h.context.tracker.usage("run-1").executedStatements).toBe(4);
+  });
+
+  test("a refused capture carries what it paid anyway: the read was charged before it was answered", async () => {
+    const h = harness("postgres", async (sql: string) => {
+      if (sql.includes("pg_index")) throw new QueryError("permission denied for relation pg_index");
+      return answerPostgres(sql);
+    });
+
+    const capture = await captureContextSnapshot(h.context);
+
+    if (capture.kind !== "unavailable") throw new Error("expected no snapshot");
+    // Three admitted executions: two that answered and the one the engine refused.
+    expect(capture.charged?.statements).toBe(3);
+  });
+
+  test("the provider path reports its own charge, whatever the reading came to", async () => {
+    // `mysql` composes no catalog, so this is the provider reading — and the harness's
+    // fake provider cannot describe itself, which is the refusal it answers with.
+    const h = harness("mysql");
+
+    const capture = await captureContextSnapshot(h.context);
+
+    if (capture.kind !== "unavailable") throw new Error("expected no snapshot");
+    expect(capture.charged?.statements).toBe(h.context.tracker.usage("run-1").executedStatements);
+  });
+});
+
+/**
  * The second reading (#414): the engine's own schema inspection, for the dialects no
  * catalog statement is composed for.
  *

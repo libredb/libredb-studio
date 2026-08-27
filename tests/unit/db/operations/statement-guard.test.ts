@@ -67,6 +67,16 @@ describe("inspectAgentStatement — multi-statement input", () => {
     ["no whitespace after the terminator", "SELECT 1;SELECT 2"],
     ["transaction control between reads", "SELECT 1; COMMIT; SELECT 2"],
     ["a literal after the terminator", "SELECT 1; 'tail'"],
+    // A quoted name after the terminator is a token too, and it is the only
+    // other span kind this walk can reach: `scanStatementShape` reads with
+    // `DEFAULT_SQL_GRAMMAR`, whose brackets are quoted names rather than
+    // subscripts, and a dollar-quoted run is refused a step earlier as text the
+    // engines read differently. Measured 2026-08-27: without the
+    // `quoted-identifier` reading these two answer `null` - the guard's own
+    // one-statement rule bypassed by a quote.
+    ["a quoted name after the terminator", 'SELECT 1; "tail"'],
+    ["a backtick name after the terminator", "SELECT 1; `tail`"],
+    ["a bracketed name after the terminator", "SELECT 1; [tail]"],
     ["a leading terminator", "; SELECT 1"],
     ["a comment hiding the terminator's tail", "SELECT 1; -- x\nDROP TABLE t"],
   ])("denies %s", (_label, sql) => {

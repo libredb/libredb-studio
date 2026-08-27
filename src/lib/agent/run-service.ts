@@ -94,6 +94,11 @@ export type AgentRunNarrativeEvent = Extract<
       // its own operation id, and this entry is the run's own account of being left
       // ungrounded.
       | "context-unavailable"
+      // The inventory the run did not read, because this process already held one (B56).
+      // Narrative for the same reason both entries above are: no catalog was read, no step
+      // was settled, and the run is recording where its ground came from — which is the one
+      // thing a reused inventory left no trace of.
+      | "context-reused"
       | "statement-drafted"
       | "report-composed"
       // A call the drive turned back, with what it asked for instead. It belongs here

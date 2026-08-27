@@ -61,30 +61,53 @@ const CREDENTIAL_PARAM_SUBSTRINGS = ["password", "token", "sslkey", "secret"];
  * Nothing here parses the input as a URL: a connection string is not always a valid one,
  * and a redaction that throws on the input it was handed is worse than none.
  *
- * What is NOT covered is an authority password containing a character RFC 3986 requires
- * to be percent-encoded there, because each one collides with a shape that carries no
- * secret and no regex separates them:
- * - `@` (`scheme://user:p@ss@host`) leaves the tail after the first `@` visible, because
- *   the authority's end cannot be located without it;
- * - `/`, `?` or `#` (`scheme://user:p/w@host/db`) is not masked at all. `/` is the
- *   instructive one: `scheme://host:5432/tenant@acme` has exactly the same shape, and
- *   masking it would hide the port behind a `***` asserting a credential the string never
- *   carried - a fabricated reading rather than a mask, which is the worse of the two. `?`
- *   and `#` end the authority for the same reason and are excluded with it.
+ * What is NOT covered is an authority password containing an unencoded `/`, `?` or `#`
+ * (`scheme://user:p/w@host/db`). Each of those ENDS the authority, so the `@` falls
+ * outside it and the parse below never sees a credential. `/` is the instructive one:
+ * `scheme://host:5432/tenant@acme` has exactly the same shape, and masking it would hide
+ * the port behind a `***` asserting a credential the string never carried - a fabricated
+ * reading rather than a mask, which is the worse of the two. `?` and `#` end the authority
+ * for the same reason and are excluded with it. An unencoded `@` IS covered, because the
+ * authority is parsed rather than pattern-matched (see `maskAuthorityPassword`).
  *
  * A scheme-relative string (`//user:pass@host/db`) is not covered either, and no driver
  * here accepts one.
  */
+/**
+ * Mask the password an authority carries, by PARSING it rather than by matching a pattern.
+ *
+ * The authority begins after `://` - anchoring there is what keeps this off a path: in
+ * `postgres://host/db:owner@example.com` the only `:`+text+`@` sits in the path, and a mask
+ * that matched it would replace a path segment while hiding no secret. It ENDS at the first
+ * `/`, `?` or `#`. Inside it the credential ends at the LAST `@`, not the first: `@` is a
+ * legal password character while a host name cannot hold one, so `scheme://user:p@ss@host`
+ * is masked whole where a single-`@` pattern left the tail visible.
+ */
+function maskAuthorityPassword(connectionString: string): string {
+  const schemeIndex = connectionString.indexOf("://");
+  if (schemeIndex === -1) return connectionString;
+
+  const authorityStart = schemeIndex + "://".length;
+  const delimiter = /[/?#]/.exec(connectionString.slice(authorityStart));
+  const authorityEnd = delimiter ? authorityStart + delimiter.index : connectionString.length;
+  const authority = connectionString.slice(authorityStart, authorityEnd);
+
+  const atIndex = authority.lastIndexOf("@");
+  if (atIndex === -1) return connectionString;
+
+  const colonIndex = authority.indexOf(":");
+  // No ':' before that '@' means the authority carries a user name and no password
+  // (`scheme://user@host`, `scheme://user@host:5432`), and a ':' immediately before it
+  // means the password is empty. Both stay verbatim for the reason the parameter half
+  // gives below: '***' over a value the string never carried asserts a secret.
+  if (colonIndex === -1 || colonIndex > atIndex || colonIndex + 1 === atIndex) return connectionString;
+
+  const masked = `${authority.slice(0, colonIndex + 1)}***${authority.slice(atIndex)}`;
+  return connectionString.slice(0, authorityStart) + masked + connectionString.slice(authorityEnd);
+}
+
 function redactConnectionString(connectionString: string): string {
-  // Anchoring the userinfo to `://` is what keeps this off a path: in
-  // `postgres://host/db:owner@example.com` the only `:`+text+`@` sits in the path, and a
-  // pattern that matched it would replace a path segment while hiding no secret. The
-  // password is bounded by '/' as well for the reason the docblock gives, and the userinfo
-  // before the ':' is bounded by it too, or the host would be swallowed.
-  const withAuthorityMasked = connectionString.replace(
-    /:\/\/([^:@/?#]*):([^@/?#]+)@/,
-    (_whole: string, userinfo: string) => `://${userinfo}:***@`,
-  );
+  const withAuthorityMasked = maskAuthorityPassword(connectionString);
 
   // Replace the VALUE of a credential-shaped parameter and keep its name, so the reader
   // can still see which knobs were set. Matching the name between a delimiter and '=' is

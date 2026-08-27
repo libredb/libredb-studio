@@ -609,7 +609,10 @@ export function OperationsTab() {
               </div>
             ) : sessions.length === 0 ? (
               <div className="p-8 text-center text-fg-subtle text-sm" data-testid="operations-sessions-empty">
-                {sessionsUnavailable ?? "No active sessions found."}
+                {/* The order is deliberate: `sessionsUnavailable` is set only when the
+                    READ failed, while `sessionsEmptyState` explains an engine that
+                    publishes no session list at all (#D48). */}
+                {sessionsUnavailable ?? labels?.sessionsEmptyState ?? "No active sessions found."}
               </div>
             ) : (
               <Table>

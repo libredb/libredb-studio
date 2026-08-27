@@ -186,6 +186,12 @@ describe("DuckDBProvider labels", () => {
     expect(labels.slowQueriesEmptyState).not.toContain("pg_stat_statements");
   });
 
+  test("the sessions panel says the list can never have a row, not that none is running", () => {
+    // #D48: the default "No active sessions found." reads as "nothing is running right
+    // now", and duckdb_connections() does not exist, so no row can ever appear.
+    expect(labels.sessionsEmptyState).toContain("duckdb_connections()");
+  });
+
   test("the global vacuum wording says what VACUUM actually does on this engine", () => {
     expect(labels.vacuumGlobalDesc).toContain("checkpoint");
   });

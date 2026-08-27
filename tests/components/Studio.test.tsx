@@ -973,6 +973,119 @@ describe("Studio", () => {
     expect(mockCreateObjectURL).not.toHaveBeenCalled();
   });
 
+  // --- exportResults over an agent run's rows (B34) ---
+  //
+  // The panel hands the artifact to the export rather than the export reading the tab
+  // back, so what leaves the product is what was on screen — and the file says which
+  // run produced it.
+  const withCapturedDownloadName = async (run: () => void): Promise<string[]> => {
+    const names: string[] = [];
+    const originalClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+      names.push(this.download);
+    };
+    try {
+      run();
+      // The revoke is scheduled a task later; drain it so nothing leaks into the next test.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    } finally {
+      HTMLAnchorElement.prototype.click = originalClick;
+    }
+    return names;
+  };
+
+  const hydratedArtifact = {
+    runId: "arun_42",
+    correlationId: "corr_1",
+    operationId: "sql.query.read",
+    surface: "results" as const,
+    result: {
+      rows: [{ id: 9, city: "Ankara" }],
+      fields: ["id", "city"],
+      rowCount: 1,
+      executionTime: 3,
+      columnTypes: { id: "bigint", city: "text" },
+    },
+    explainPlan: null,
+    chartSpec: null,
+  };
+
+  test("exportResults writes the run's rows, not the tab's, when it is given the artifact", async () => {
+    tabMgrOverride = {
+      currentTab: {
+        id: "tab-1",
+        name: "Users",
+        query: "SELECT 1",
+        result: testResult,
+        isExecuting: false,
+        type: "sql",
+      },
+    };
+    render(<Studio />);
+    const exportFn = capturedBottomPanelProps.onExportResults as (
+      format: string,
+      hydrated: typeof hydratedArtifact | null,
+    ) => void;
+
+    const names = await withCapturedDownloadName(() => act(() => exportFn("json", hydratedArtifact)));
+
+    const blob = (mockCreateObjectURL.mock.calls[0] as unknown[])[0] as Blob;
+    expect(JSON.parse(await blob.text())).toEqual([{ id: 9, city: "Ankara" }]);
+    // Named after the run, so the file is not indistinguishable from one the user ran.
+    expect(names).toEqual(["agent_run_arun_42_export.json"]);
+  });
+
+  test("a run's rows take the neutral table name, not the tab's", async () => {
+    tabMgrOverride = {
+      currentTab: {
+        id: "tab-1",
+        name: "Users",
+        query: "SELECT 1",
+        result: testResult,
+        isExecuting: false,
+        type: "sql",
+      },
+    };
+    render(<Studio />);
+    const exportFn = capturedBottomPanelProps.onExportResults as (
+      format: string,
+      hydrated: typeof hydratedArtifact | null,
+    ) => void;
+
+    await withCapturedDownloadName(() => act(() => exportFn("sql-ddl", hydratedArtifact)));
+
+    const blob = (mockCreateObjectURL.mock.calls[0] as unknown[])[0] as Blob;
+    const content = await blob.text();
+    // The rows came from a run, so naming the tab's table would attribute them to a
+    // table that never produced them. The declared types are the artifact's own.
+    expect(content).toContain("CREATE TABLE table_name (");
+    expect(content).toContain("bigint");
+  });
+
+  test("the tab's own export is unchanged and keeps its own file name", async () => {
+    tabMgrOverride = {
+      currentTab: {
+        id: "tab-1",
+        name: "Users",
+        query: "SELECT 1",
+        result: testResult,
+        isExecuting: false,
+        type: "sql",
+      },
+    };
+    render(<Studio />);
+    const exportFn = capturedBottomPanelProps.onExportResults as (
+      format: string,
+      hydrated: typeof hydratedArtifact | null,
+    ) => void;
+
+    const names = await withCapturedDownloadName(() => act(() => exportFn("csv", null)));
+
+    expect(names).toEqual(["query_result_export.csv"]);
+  });
+
   // --- CommandPalette callbacks ---
   test("CommandPalette onLoadSavedQuery loads query and switches to results", () => {
     render(<Studio />);

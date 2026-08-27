@@ -162,7 +162,11 @@ interface BottomPanelProps {
   isLoadingMore: boolean | undefined;
   // The writer's own type, so a format added there cannot silently fail to reach this
   // menu — the drift between two spellings of one list is what this PR is about.
-  onExportResults: (format: ResultExportFormat) => void;
+  //
+  // The second argument is the artifact the rows on screen came from, or null when
+  // they are the tab's own: the export writes what it is GIVEN rather than reading the
+  // tab back, which is what lets the menu stay open over a hydrated result (B34).
+  onExportResults: (format: ResultExportFormat, hydrated: AgentArtifactHydration | null) => void;
   /**
    * A result an agent run stored, shown in the surface that already renders that
    * kind of result (#329 T11). Optional so every other caller — the embedded shell
@@ -210,8 +214,9 @@ export function BottomPanel({
 
     While one is shown the view is read-only: inline editing writes rows back through
     the tab's connection and pagination continues the tab's own query, so neither
-    means anything for a stored result. Export is absent for the same reason — it
-    exports the tab's result, which is not what the user is looking at.
+    means anything for a stored result. Export is the exception, and used to be hidden
+    with them: it is retargeted instead (B34), handed the artifact so it writes the
+    rows on screen into a file named after the run.
   */
   const hydratedResult = agentArtifact?.surface === "results" ? agentArtifact.result : null;
   const hydratedPlan = useMemo(
@@ -233,6 +238,12 @@ export function BottomPanel({
       (mode === "explain" && hydratedPlan !== null) ||
       (mode === "charts" && hydratedChart !== null));
   const displayedResult = hydratedResult ?? currentTab.result;
+  /**
+   * What an export must be attributed to: the artifact when the run's rows are the
+   * ones on screen, null when they are the tab's own. Only the results surface has an
+   * export, so this is the grid's artifact and no other's.
+   */
+  const exportArtifact = mode === "results" && hydratedResult !== null ? agentArtifact : null;
   // How much of the result an export would write — the count the button carries and
   // the shortfall the menu states. Derived here so both read the same numbers.
   const exportScope = describeExportScope(displayedResult ?? { rows: [] });
@@ -338,49 +349,67 @@ export function BottomPanel({
             <span className="hidden @4xl/panel:inline text-xs font-mono text-fg-muted mr-2">
               {displayedResult.rowCount} rows • {displayedResult.executionTime}ms
             </span>
-            {!hydratedHere && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-2"
-                  >
-                    {/*
-                      The count belongs ON the button because it is what the button
-                      does: an export writes the rows the grid HOLDS, which is one
-                      page, and a file of 500 rows off a table of two million looks
-                      exactly like a complete answer once it has left the product.
-                    */}
-                    <Download strokeWidth={1.5} className="w-3 h-3" /> Export
-                    <span data-testid="export-row-count" className="font-mono text-fg-subtle">
-                      {exportScope.countLabel}
-                    </span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="bg-raised border-hairline-strong text-fg-secondary">
-                  <div data-testid="export-scope" className="px-2 py-1.5 text-xs text-fg-muted max-w-[15rem]">
-                    {exportScope.summary}
-                    {exportScope.shortfall !== null && (
-                      <span className="block mt-1 text-amber-400/80">{exportScope.shortfall}</span>
-                    )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-2"
+                >
+                  {/*
+                    The count belongs ON the button because it is what the button
+                    does: an export writes the rows the grid HOLDS, which is one
+                    page, and a file of 500 rows off a table of two million looks
+                    exactly like a complete answer once it has left the product.
+                  */}
+                  <Download strokeWidth={1.5} className="w-3 h-3" /> Export
+                  <span data-testid="export-row-count" className="font-mono text-fg-subtle">
+                    {exportScope.countLabel}
+                  </span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="bg-raised border-hairline-strong text-fg-secondary">
+                <div data-testid="export-scope" className="px-2 py-1.5 text-xs text-fg-muted max-w-[15rem]">
+                  {exportScope.summary}
+                  {exportScope.shortfall !== null && (
+                    <span className="block mt-1 text-amber-400/80">{exportScope.shortfall}</span>
+                  )}
+                </div>
+                {exportArtifact !== null && (
+                  // Stated before the formats, because it changes what the file IS:
+                  // these are a run's rows, and the name will say so.
+                  <div data-testid="export-provenance" className="px-2 pb-1.5 text-xs text-blue-300/90">
+                    Saved as agent run <span className="font-mono text-[0.625rem]">{exportArtifact.runId}</span>&apos;s
+                    own file.
                   </div>
-                  <DropdownMenuSeparator className="bg-hairline" />
-                  <DropdownMenuItem onClick={() => onExportResults("csv")} className="text-xs cursor-pointer">
-                    Export as CSV
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onExportResults("json")} className="text-xs cursor-pointer">
-                    Export as JSON
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onExportResults("sql-insert")} className="text-xs cursor-pointer">
-                    Export as SQL INSERT
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onExportResults("sql-ddl")} className="text-xs cursor-pointer">
-                    Export as DDL (CREATE TABLE)
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+                )}
+                <DropdownMenuSeparator className="bg-hairline" />
+                <DropdownMenuItem
+                  onClick={() => onExportResults("csv", exportArtifact)}
+                  className="text-xs cursor-pointer"
+                >
+                  Export as CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => onExportResults("json", exportArtifact)}
+                  className="text-xs cursor-pointer"
+                >
+                  Export as JSON
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => onExportResults("sql-insert", exportArtifact)}
+                  className="text-xs cursor-pointer"
+                >
+                  Export as SQL INSERT
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => onExportResults("sql-ddl", exportArtifact)}
+                  className="text-xs cursor-pointer"
+                >
+                  Export as DDL (CREATE TABLE)
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         )}
       </div>

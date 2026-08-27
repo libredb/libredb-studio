@@ -947,9 +947,11 @@ and that is a reversal of a product decision rather than an oversight: epic #325
 set at three and #330 T3 reopened it. Its own id is what lets an operator see profiling in the audit
 stream, and deny it, without denying every read the agent makes.
 
-Two honest limits, each with a backlog entry: only an email shape is tested, because `LIKE`
-cannot express a digit run (**B26**); and a profile that times out reports the failure rather than
-falling back to catalog statistics (**B28**). A third is closed: SQLite stores no DDL for the index
+One honest limit, with a backlog entry: a profile that times out reports the failure rather than
+falling back to catalog statistics (**B28**). Two others are closed. A digit run is now asked for in
+each dialect's own spelling — PostgreSQL `~ '[0-9]{9,}'`, SQLite `GLOB '*[0-9]...*'` — because `LIKE`
+can say "any character" but not "any digit", and testing an email shape alone was the consequence of
+that rather than a decision. And SQLite stores no DDL for the index
 it builds to enforce a `UNIQUE` constraint, so the composed index read cannot see it - the capture
 now reads those out of the table's own `CREATE TABLE` and lists them as `(unique constraint)`, plain
 words rather than a name that could be mistaken for a user's `CREATE INDEX`. `fk_unindexed` remains a
@@ -2205,9 +2207,9 @@ Two further rules govern it:
   repair attempts — and states the SQLite non-preemption caveat rather than implying that an
   overrunning statement is cut short. It reports no token budget because none is enforced (B10). A statement that
   failed at the database now carries the span the tracker charged for it, so the database-time figure
-  no longer counts completed reads only; what is left uncounted is the catalog capture's own reads
-  and the difference between an engine's elapsed time and the span measured around the call (B13),
-  which is why the figure is still stated as a floor.
+  no longer counts completed reads only, and a schema capture contributes the statements and the span
+  the tracker charged it. What is left uncounted is the difference between an engine's elapsed time
+  and the span measured around the whole call, which is why the figure is still stated as a floor.
 
 Results the agent stored **hydrate the existing surfaces**: the results grid, the explain view and the
 charts view in the bottom panel, carrying a read-only provenance badge that names the run. There is
@@ -2222,9 +2224,10 @@ specification the model emitted is validated against the artifact's columns befo
 validated again in the browser against the rows actually delivered — two guards, because
 `DataCharts` turns a column it cannot read into `0` rather than into an error, and a chart of the
 wrong column draws a confident flat line rather than failing. A specification that does not survive the
-second check is dropped and the view's own inference draws the chart instead. Exporting a hydrated
-result is not wired (B34), and a run's stored results are released when the run ends, so a report can
-outlive the rows its citations point at (B15).
+second check is dropped and the view's own inference draws the chart instead. A hydrated result can be
+exported: the menu is retargeted rather than hidden, the file is named after the run that produced
+the rows, and the SQL forms are not attributed to the tab's own table. A run's stored results are
+still released when the run ends, so a report can outlive the rows its citations point at (B15).
 
 **Those results live in process memory, and the store that holds them is bounded.** It keeps 180
 entries at once — the largest statement ceiling any workflow may be given (45) times the four
@@ -2443,7 +2446,6 @@ the role's own grants are the whole boundary (A3).
 - **B9** — nothing enqueues a drive, so an interrupted run is resumable but never resumed.
 - **B10** — no token budget is enforced, so the meter reports none.
 - **B11** — the rail can stop a run but cannot pause or resume one.
-- **B13** — three spends the ledger never records, so the meter reads low.
 - **B79** — the re-pointed decline has never been reached from the UI: in the default storage mode
   the only server-held connections are the seeds, and editing a seed makes it browser-local, which
   the rail refuses before any thread check.
@@ -2451,8 +2453,6 @@ the role's own grants are the whole boundary (A3).
   rows.
 - **B16** — the opt-in `@workflow/world-postgres` backend is not present in the standalone payload,
   so it cannot load in the container image or the npx payload.
-- **B20** — a Gemini deployment behind a proxy is not configurable: `LLM_API_URL` is unread for that
-  kind, in the chat surface as much as in the agent.
 - **B23** — seed eligibility is decided against the browser's last descriptor fetch, so a seed
   repointed server-side mid-session is not seen until the next fetch.
 - **B29** — an identifier the model quotes back into its own tool arguments reaches the transcript
@@ -2468,17 +2468,6 @@ the role's own grants are the whole boundary (A3).
 - **B33** — a run is observable only from its own ledger. There is no OpenTelemetry export and no
   metrics: the record described above is complete, and getting it into a stack the operator already
   runs is designed (#332) and deliberately unbuilt.
-- **B34** — a hydrated result cannot be exported: the Export menu serializes the tab's own rows, so it
-  is hidden while a run's result is shown.
-
-The entries below were found by driving the product against a live model in a browser, which is the
-only way any of them could have been found: every one of them passes every gate. A few were found
-later and by other routes, and are listed here because they are the same kind of thing — a defect no
-gate in this repository objects to. Several came from repeating that exercise against the inference
-surface (#407) — twenty-six runs over `docs/AGENT_DEMO.md`, which is also where the classifier's
-real-world agreement rate was measured. The count is deliberately not stated: entries leave this list
-as they are fixed, and a numeral here goes stale silently.
-
 - **B67** — there is no run history across conversations. The rail names the conversation a run
   continues and lists its steps from the run's own header, but a user cannot see the conversations
   they had yesterday or return to one: the store has no enumeration, there is no list route, and
@@ -2487,8 +2476,6 @@ as they are fixed, and a numeral here goes stale silently.
   re-checked, so a resumed drive can read a repointed database while carrying a conversation and a
   captured schema established against the old one. The record now carries the identity needed to close
   it; what a run should DO when its connection moves under it is the undecided part.
-- **B69** — a reload ends a conversation and the rail does not say so before the next question. The
-  result is honest (no thread, no strip); the transition is silent.
 - **B70** — a run writes no summary for the step after it. The conversation carries the previous
   step's claims verbatim and truncates at a claim boundary; a model-written `carryForward` sentence
   was considered and declined, because a claim is evidence and a summary is a lossy compression of
@@ -2496,14 +2483,6 @@ as they are fixed, and a numeral here goes stale silently.
 - **B39** — a data-analysis run has no honest way to conclude that the question is not about this
   database. Its only route to `answered` is a reading of the data, so a run that establishes the
   question is unanswerable fabricates one — the #356 shape again, in a new place.
-- **B48** — the two grounding paths fail differently. Since #414 a plan run on one of the nine
-  provider-path engines survives an unreachable host, a wrong password or a half-configured
-  `agentUser`: `captureFromProvider` converts a `DatabaseError` or an `ExecutionProfileError` raised
-  before the reading leaves into an unavailable capture, and the run answers ungrounded with that
-  diagnosis. The composed path — PostgreSQL and SQLite — still lets the same failure out, ending the
-  run `internal` or, on the profile error, `agent-credential-unusable`. Deliberate at #414, which had
-  no business changing how the two engines it did not touch fail, and an asymmetry a reader will
-  trip over until it is resolved.
 - **B72** — plans are exempt from the emptiness census for `query-optimization` only. The
   investigation, database-assessment and data-analysis verifiers still judge a plan-only report by a
   row count that measures nothing, and `inspect_plan` is offered to all three. Closing it changes what
@@ -2518,17 +2497,6 @@ as they are fixed, and a numeral here goes stale silently.
   fix,
   left unmodelled because the user-index reader drops `COLLATE` too and honouring it in one reader
   only would make the inventory disagree with itself.
-- **B51** — the loop delivers three notices to a model (the reserve warning, the report reminder of
-  #416, the present-before-report notice of #417) and records none of them. `recordEvent` is called
-  for what the RUN did and never for what the server said to it, so a rescued run and a run that never
-  needed rescuing leave the same ledger — and a `compose_report` the loop withheld leaves no trace
-  that a call was made. That is a measurement problem first: [`docs/llms/`](./llms/) is built by
-  reading those ledgers, and its whole claim is that each figure comes from an observed run. Each
-  notice is sent once per DRIVE and not once per run, and the missing entry is why: the three booleans
-  live inside `runInvestigation`, which is also what resumes a run a dead process left running, so a
-  resumed drive starts with all three false. The guards are the part that keeps being got wrong —
-  both new notices shipped with a condition that named one thing and read another, and both were
-  caught in review rather than by a gate.
 - **B52** — the composed PostgreSQL grounding capture is refused by what the IMAGE ships rather
   than by a wide user schema, and it has now been measured on three different servers.
   `composeCatalogRead` projects one row per COLUMN against `maxResultRows: 200` and refuses rather
@@ -2562,27 +2530,6 @@ as they are fixed, and a numeral here goes stale silently.
   baseline, so it is PostgreSQL's privilege rule and not an AlloyDB property. The agent is therefore
   unusable out of the box on all three, and the same shape will appear on any PostgreSQL whose image
   ships wide catalogs or wide extension views before the user has created anything.
-- **B55** — a grounded LibreDB plan run drafts `GET users:*`, and `get` is an exact-key lookup with no
-  glob: the key does not exist, so the command answers zero rows and no error. The inventory's rows are
-  NAMED `users:*`, which reads as a glob the grammar does not have, and LibreDB declares no
-  `statementLanguage`, so the five verbs (`get`, `put`, `delete`, `prefix`, `range`) are left to be
-  guessed. MongoDB and Redis were fixed the same way in 0.13.1 - each declares the sentence its
-  statement form needs - and LibreDB's turn was deferred by the owner on 2026-08-22 until the other
-  providers are done.
-- **B56** — a planning run's grounding is HELD for the process lifetime, so a schema that changes is
-  invisible to plan mode until a restart. `holdSnapshotForConnection` keeps one inventory per
-  connection identity with no expiry, and it is consulted before any capture. Measured twice on
-  2026-08-22: after MongoDB's inference began expanding subdocuments, `schema/list` returned
-  `shipping.city` at once and the schema tree showed it, while two plan runs still grouped by
-  `$shipping.region` and recorded no `context-captured` event at all; a restart fixed it on the first
-  run. Redis showed the same shape, refusing an objective about keys that had just been seeded. The
-  design intent - a run reasons over the inventory its claims cite - is not the problem; a NEW run
-  inheriting it indefinitely is, and a reused snapshot writes no capture event of its own, so the
-  ledger cannot tell "held, hours old" from "captured just now".
-- **B57** — an operator's tuning document is refused WHOLE when any part of it fails. The argument
-  behind that is about merging (half of one measurement beside half of another is a configuration
-  nobody has run), and it justifies whole-**entry** replacement rather than whole-**document**
-  rejection: fifty models would be lost to a typo in the thirty-seventh.
 - **B59** — per-model WORDING has nowhere to go. A sentence is a measured value here (twice a shared
   change won cells and lost others, and had to be reverted whole), and the per-model override is
   gone: the document refuses wording and nothing else can populate it. Refusing unsigned prompt text

@@ -262,6 +262,41 @@ const CAT_INDICES_CLOSED_BODY = JSON.stringify([
 ]);
 
 /**
+ * The same closed index BESIDE an open one, so the cluster-wide aggregate can be
+ * asserted rather than inferred: `StorageTab`'s `tableSizeKnown` is
+ * `tables.every((t) => t.tableSizeBytes !== undefined)`, so one index that
+ * published no size takes the Data figure away from every index that did.
+ */
+const CAT_INDICES_MIXED_BODY = JSON.stringify([
+  {
+    health: "yellow",
+    status: "open",
+    index: "probe_orders",
+    uuid: "ArZ2X__TSEqj8KjbAtIhvg",
+    pri: "1",
+    rep: "1",
+    "docs.count": "1",
+    "docs.deleted": "0",
+    "store.size": "5913",
+    "pri.store.size": "5913",
+    "dataset.size": "5913",
+  },
+  {
+    health: "yellow",
+    status: "close",
+    index: "probe_closed",
+    uuid: "Pjif3CuaTwW2pmgHmRr8iQ",
+    pri: "1",
+    rep: "1",
+    "docs.count": null,
+    "docs.deleted": null,
+    "store.size": null,
+    "pri.store.size": null,
+    "dataset.size": null,
+  },
+]);
+
+/**
  * An index the engine keeps for itself, CONSTRUCTED - and the one listing row here
  * that is not a capture, because it cannot be: this node runs with security
  * disabled, so it has created no `.security-*` index and `_cat` lists no system
@@ -2053,10 +2088,11 @@ describe("ElasticsearchProvider monitoring", () => {
     ]);
   });
 
-  test("getTableStats reads a closed index as zero, where the schema tree omits it", async () => {
-    // `TableStats` has no way to say "unknown" - both fields are required numbers - so a
-    // closed index reads as zero here, and the schema tree is the surface that keeps the
-    // distinction because its `rowCount` and `size` are optional.
+  test("getTableStats omits the optional size fields for a closed index, and zeroes only the required ones", async () => {
+    // A closed index reports neither a count nor a size. `TableStats.rowCount`, `totalSize`
+    // and `totalSizeBytes` are required numbers, so those three have nowhere to read but
+    // zero; `tableSize` and `tableSizeBytes` are OPTIONAL, and a 0 there is a fabricated
+    // measurement rather than a forced one, so they are absent.
     const provider = await connectProvider();
     overridePath("/_cat/indices?format=json&bytes=b", ok(CAT_INDICES_CLOSED_BODY));
 
@@ -2067,12 +2103,47 @@ describe("ElasticsearchProvider monitoring", () => {
         schemaName: "",
         tableName: "probe_closed",
         rowCount: 0,
-        tableSize: "0 B",
-        tableSizeBytes: 0,
         totalSize: "0 B",
         totalSizeBytes: 0,
       },
     ]);
+    // Absent, not zero: `toEqual` ignores an undefined value, so the key itself is the
+    // assertion.
+    expect("tableSize" in stats[0]).toBe(false);
+    expect("tableSizeBytes" in stats[0]).toBe(false);
+  });
+
+  test("getTableStats lets one closed index take the cluster's Data figure away from an open one", async () => {
+    // The visible consequence of the omission above, and why it needed a decision rather
+    // than a patch: `StorageTab` gates its Data figure on
+    // `tables.every((t) => t.tableSizeBytes !== undefined)`, so the open index's measured
+    // bytes stop being summed as soon as one index in the cluster published nothing. That
+    // is what the optional field prescribes - a partial sum reads as a measurement - and it
+    // is still a change a user sees, so the aggregate is asserted here, not inferred.
+    const provider = await connectProvider();
+    overridePath("/_cat/indices?format=json&bytes=b", ok(CAT_INDICES_MIXED_BODY));
+
+    const stats = await provider.getTableStats();
+
+    expect(stats).toEqual([
+      {
+        schemaName: "",
+        tableName: "probe_orders",
+        rowCount: 1,
+        tableSize: "5.77 KB",
+        tableSizeBytes: 5913,
+        totalSize: "5.77 KB",
+        totalSizeBytes: 5913,
+      },
+      {
+        schemaName: "",
+        tableName: "probe_closed",
+        rowCount: 0,
+        totalSize: "0 B",
+        totalSizeBytes: 0,
+      },
+    ]);
+    expect(stats.every((row) => row.tableSizeBytes !== undefined)).toBe(false);
   });
 
   test("getTableStats answers a named schema without a round trip", async () => {
