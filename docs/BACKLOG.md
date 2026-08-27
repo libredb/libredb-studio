@@ -22,7 +22,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections)
+- [Drivers and connections](#drivers-and-connections) — D1–D41, U17, U22–U23 · 19
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 10
@@ -545,7 +545,7 @@ non-PostgreSQL engine.
 
 ---
 
-### D36. A slow-query source nobody could read is still a row, and on the other path it is silence
+### D39. A slow-query source nobody could read is still a row, and on the other path it is silence
 
 Found 2026-08-27 by the audit that closed the curated health projection's cap-as-count defect. #512
 removed MySQL's fabricated "Performance schema not available" row; three providers still ship the
@@ -587,7 +587,7 @@ queries" where the truth is that the profiler is off.
 provider answers a sentence as a row, and no provider answers `[]` for a read that failed - and the
 count of type-ids the type change touched is stated in the PR rather than discovered during it.
 
-### D37. The Overview panel still shows a fabricated zero for a connection count nobody could read
+### D40. The Overview panel still shows a fabricated zero for a connection count nobody could read
 
 Found 2026-08-27, one field over from the health fix in the same pass. `HealthInfo.activeConnections`
 is now absent rather than 0 on MSSQL, Oracle and MongoDB when the read is refused. The identical
@@ -619,7 +619,7 @@ becomes false the moment `mssql.ts` stops encoding it that way.
 zero still reads as zero, each provider's doc records it, and the two search docs no longer cite an
 encoding that is gone.
 
-### D38. Two more surfaces read a capped list as a count, one of them to a person
+### D41. Two more surfaces read a capped list as a count, one of them to a person
 
 Found 2026-08-27 by the review round that closed the same defect in the agent's curated health
 reading: the projection stopped counting a capped list, and the shape's remaining instances were then
