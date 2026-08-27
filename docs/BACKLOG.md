@@ -471,6 +471,52 @@ provider's own labels the way the maintenance and slow-query wordings already do
 (`ProviderLabels`), with a component test pinning it for one PostgreSQL and one
 non-PostgreSQL engine.
 
+### D35. Five HTTP providers read the SSL mode and drop the rest of the TLS panel
+
+Found 2026-08-27 in the #511 review (issue #424, Phase 5). Not libSQL's - libSQL is the
+fifth of five instances of one gap, and the fix already exists in the codebase.
+
+`ssl.caCert`, `ssl.clientCert`, `ssl.clientKey` and `ssl.rejectUnauthorized` reach the
+driver on every provider that uses one. On the providers that speak HTTP through global
+`fetch` they reach nothing: ClickHouse, Druid, Elasticsearch/OpenSearch, Trino and libSQL
+each read `ssl.mode` only, to decide `http:` against `https:`, and Node's `fetch` cannot carry
+a custom CA or relax verification without an undici `Agent` as `dispatcher` - and undici
+must not become a dependency. So a self-hosted server with a private CA is reachable only
+by trusting it at the OS level, and the form's own TLS fields silently do nothing.
+
+**Couchbase already solved this and is the pattern**: `providers/document/couchbase/http-transport.ts`
+sends plaintext through `fetch` and TLS through `node:https`, a built-in that takes
+`ca`/`cert`/`key`/`rejectUnauthorized` directly (D26). Its `CouchbaseTlsMaterial` mapping,
+including `rejectUnauthorized: ssl.rejectUnauthorized ?? ssl.mode !== "require"`, is the
+behaviour the other five need.
+
+Not a defect in what any of them measures - it is a field the form offers and the transport
+discards, which is the kind of silence a security setting must not have.
+
+**Done when:** the TLS material mapping is shared rather than copied, the five `fetch`
+transports route TLS through it, and one test per transport pins that a supplied CA and a
+`verify-*` mode reach the request options - plus one that a `require` mode does not verify.
+
+### D36. `getConnectionInfo` masks a password in a connection string but not a token in a query string
+
+Found 2026-08-27 in the #511 review. Pre-existing, dead today, and cheap to close before it
+is not.
+
+`base-provider.ts`'s `protected getConnectionInfo()` returns
+`connectionString.replace(/:([^:@]+)@/, ":***@")`, which masks `:secret@` in an authority and
+nothing else. A libSQL connection string carries its credential in the query string instead -
+`libsql://db-org.turso.io?authToken=<jwt>` - so the whole token would survive the mask. The
+same is true of any `?password=`/`?sslkey=` form.
+
+It is currently unreachable: the only callers are in `tests/unit/db/base-provider.test.ts`, so
+no production path prints it. That is the reason this is a backlog entry rather than an issue,
+and also the reason it is worth doing - a future health-panel caller would inherit a leak that
+looks redacted.
+
+**Done when:** the mask also strips the value of every credential-shaped query parameter
+(`authToken`, `password`, `token`, `sslkey`), with a test per shape - or the method is deleted,
+since nothing in `src/` calls it.
+
 ---
 
 ## Value interpolation

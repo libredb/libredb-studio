@@ -458,7 +458,13 @@ services:
     # trino and clickhouse services follow: the refusal wording recorded in
     # docs/providers/libsql.md ("unsupported statement: VACUUM") is a claim about sqld
     # 0.24.33, and Turso Cloud words the identical refusal differently.
-    image: ghcr.io/tursodatabase/libsql-server:latest
+    #
+    # The tag is needed even though `:latest` reports the same 0.24.33: measured 2026-08-27,
+    # `:latest` is a ROLLING REBUILD of that version - it answers `/version` with
+    # `sqld 0.24.33 (f8fb14f3 2026-08-11)` where `v0.24.33` answers
+    # `sqld 0.24.33 (40a151bd 2025-12-19)`, two different digests under one version number.
+    # So `:latest` is not reproducible even while the number it prints looks pinned.
+    image: ghcr.io/tursodatabase/libsql-server:v0.24.33
     container_name: libredb-libsql
     restart: unless-stopped
     environment:

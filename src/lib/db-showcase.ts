@@ -69,7 +69,7 @@ export interface ShowcaseDatabase {
   /**
    * True for the embedded store, false for a database the user already runs.
    *
-   * The showcase shows all fifteen providers while the hero claims fourteen engines,
+   * The showcase shows all sixteen providers while the hero claims fifteen engines,
    * and this flag is how the page carries that difference without any surface typing
    * the word "libredb": the pill it marks is the one the count leaves out.
    */
