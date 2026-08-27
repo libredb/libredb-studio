@@ -427,6 +427,50 @@ Narrow, and it does not throw: the file generates, and the failure happens when 
 recreation rather than a statement, and a test pins both directions for it - the way
 `tests/unit/schema-diff/migration-generator.test.ts` now pins them for `libsql` and `cassandra`.
 
+### U22. The connection form renders fields the engine does not take, and a comment says otherwise
+
+Found 2026-08-27 in the browser while registering `libsql` (issue #424, Phase 5).
+
+`DB_UI_CONFIG[type].connectionFields` decides what a save WRITES
+(`buildConnection` in `src/hooks/use-connection-form.ts`), and its comment there says it is
+"the same list the modal renders inputs from". It is not. `ConnectionModal.tsx` draws Host,
+Username, Password and Database for every engine that is not file-based, so:
+
+- **libSQL** shows a Username box for an engine that has no user names at all,
+- **Druid**, **Elasticsearch** and **OpenSearch** show a Database box none of them takes.
+
+Nothing is written from those boxes, so a connection is not corrupted by typing in one - the
+cost is a user filling a field that is silently discarded, and a comment that misdescribes
+the code beside it. Measured for libSQL: `#user` and `#database` both render, and neither
+value reaches the saved connection.
+
+**Done when:** the modal renders an addressing input only when `connectionFields` names it,
+with the four engines above checked in a browser rather than in a mock - or, if the fields
+are deliberately universal, the comment in `use-connection-form.ts` says so instead. Either
+way `e2e/libsql-provider.spec.ts` has the assertion that pins today's behaviour and must
+move with it.
+
+### U23. The Storage tab names PostgreSQL internals on every engine
+
+Seen 2026-08-27 on a libSQL connection (issue #424, Phase 5), and it is not libSQL's.
+
+`src/components/monitoring/tabs/StorageTab.tsx:179` labels the remainder of the breakdown
+**"Other (TOAST, FSM)"** unconditionally. TOAST and the free space map are PostgreSQL
+storage structures. SQLite and libSQL have neither - what the remainder actually holds
+there is the schema, the freelist and page overhead - and neither do MySQL, Oracle, SQL
+Server, ClickHouse or any of the HTTP engines. On libSQL it read `4.00 KB` under that
+label against a real 64 KB database, so the number is right and the words are another
+engine's.
+
+The same shape as a shared provider's refusal naming the wrong product: the reading is
+sound, the vocabulary is borrowed. Narrow, cosmetic, and it misleads exactly the reader
+who is trying to account for the bytes.
+
+**Done when:** the label is engine-neutral ("Other" / "Overhead"), or comes from the
+provider's own labels the way the maintenance and slow-query wordings already do
+(`ProviderLabels`), with a component test pinning it for one PostgreSQL and one
+non-PostgreSQL engine.
+
 ---
 
 ## Value interpolation

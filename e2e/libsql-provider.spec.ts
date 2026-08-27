@@ -17,8 +17,12 @@ import { test, expect } from "@playwright/test";
 test.describe("libSQL in the connection dialog", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/login");
-    await page.locator('input[type="email"]').fill("user@libredb.org");
-    await page.locator('input[type="password"]').fill("test-user");
+    // `.first()` on both, unlike the older provider specs: a second, hidden pair of
+    // inputs exists for a moment after hydration, and a strict locator fails on it
+    // locally while passing in CI. Pinning the first match makes the spec verifiable in
+    // both places rather than in CI alone.
+    await page.locator('input[type="email"]').first().fill("user@libredb.org");
+    await page.locator('input[type="password"]').first().fill("test-user");
     await page.getByRole("button", { name: "Sign In" }).click();
     await page.waitForURL("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
@@ -51,14 +55,30 @@ test.describe("libSQL in the connection dialog", () => {
     await expect(dialog.getByText(/turso db tokens create/)).toBeVisible();
   });
 
-  test("offers no user field, because libSQL has no user names", async ({ page }) => {
+  test("offers the URL form Turso prints, so a pasted connection is a real one", async ({ page }) => {
+    const dialog = page.locator('[role="dialog"]');
+    await dialog.getByRole("button", { name: "libSQL", exact: true }).click();
+    await dialog.getByText("Connection String", { exact: true }).first().click();
+
+    // The placeholder is the shape `turso db show --url` prints, token and all - the
+    // one string a user has in front of them.
+    await expect(dialog.locator('input[placeholder*="turso.io"]')).toBeVisible();
+  });
+
+  test("renders the Username and Database inputs even though libSQL takes neither", async ({ page }) => {
+    // Pinned as it IS rather than as it should be, because the browser is what settled
+    // it: `connectionFields` in `db-ui-config.ts` decides what a save WRITES, not what
+    // the form renders - `ConnectionModal` draws Host, Username, Password and Database
+    // for every engine that is not file-based. So libSQL shows a Username box it has no
+    // user names for, exactly as Druid and the two search engines show a Database box
+    // they do not take. Nothing is written from either (BACKLOG U22), and a test that
+    // asserted these were absent would have been asserting a comment rather than the
+    // product.
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "libSQL", exact: true }).click();
 
-    await expect(dialog.locator("#user")).toHaveCount(0);
-    // No database field either: on Turso Cloud the database IS the hostname, and a
-    // self-hosted server serves one per namespace hostname.
-    await expect(dialog.locator("#database")).toHaveCount(0);
+    await expect(dialog.locator("#user")).toHaveCount(1);
+    await expect(dialog.locator("#database")).toHaveCount(1);
   });
 
   test("claims no wire-compatible relative it has not probed", async ({ page }) => {
