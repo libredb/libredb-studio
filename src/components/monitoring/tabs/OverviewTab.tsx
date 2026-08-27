@@ -319,7 +319,7 @@ function PerformanceSummaryCard({
  * count lost, in a second place.
  *
  * The ceiling on a list that DID answer is the other half of the same rule, and the
- * paragraph above never covered it - the shape D41 names in QueriesTab.tsx survived here
+ * paragraph above never covered it - the shape #515 removed from QueriesTab.tsx survived here
  * three more times. Both lists this card reads are capped in
  * src/lib/db/base-provider.ts: `slowQueryLimit = 10` and `sessionLimit = 50`, passed into
  * `getSlowQueries` and `getActiveSessions`, and MonitoringDashboard overrides neither (it

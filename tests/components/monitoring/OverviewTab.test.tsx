@@ -388,7 +388,7 @@ function atCap(): MonitoringData {
 // The other half of the rule the block above pins. A refused read was already an absence
 // rather than a zero, but a list that ANSWERED still had its length published as a count:
 // "Slow Queries" read 10 on a server holding 59 digests, and "Active" plus "Idle" split one
-// 50-row sample under labels that read as the server's session totals. Same defect as D41 in
+// 50-row sample under labels that read as the server's session totals. Same defect as #515 in
 // QueriesTab.tsx, three more times, and the fix is that file's vocabulary: every figure is
 // stated as a property of the listed rows.
 describe("Quick Stats publishes no cap-bounded figure as a count", () => {

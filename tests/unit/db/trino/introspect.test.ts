@@ -801,7 +801,7 @@ describe("Trino getTableStats", () => {
   });
 
   /*
-    D41: the pass used to describe the first 25 tables of an oversized scope and return
+    #515: the pass used to describe the first 25 tables of an oversized scope and return
     them as the answer, and no consumer could see that anything had been dropped -
     `TableStats[]` has no field for "there were more", `MonitoringData.tables` is that
     same array, and the agent's curated reading published its length as `rowCount`. A cap

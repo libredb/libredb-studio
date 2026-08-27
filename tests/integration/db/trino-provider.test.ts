@@ -1123,7 +1123,7 @@ describe("TrinoProvider monitoring", () => {
   });
 
   /*
-    D41: the pass used to describe the first 25 tables of a bigger catalog and hand those
+    #515: the pass used to describe the first 25 tables of a bigger catalog and hand those
     rows back as the reading. Nothing in `TableStats[]` or in `MonitoringData.tables`
     could say more had been dropped, so the panel's count and the agent's `rowCount` both
     read 25 for a catalog of any size. The provider now refuses the oversized scope, which

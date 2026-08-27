@@ -533,7 +533,7 @@ agent: its curated `health` reading forwards this figure to the model, so a refu
 *measured* "no connections open" about a server SQL Server had said nothing about.
 
 `DatabaseOverview.activeConnections` is **optional** for the identical reason, and `getOverview()`
-now omits it on the same refusal. It did not until D40: the block was guarded, but the local was
+now omits it on the same refusal. It did not until #515: the block was guarded, but the local was
 initialised to `0`, so the denial was swallowed into a reading and travelled on as one. The count
 itself is the *same* `COUNT(*) FROM sys.dm_exec_sessions`, only bundled with the `sys.configurations`
 ceiling lookup - and that bundling is not cosmetic: it gives the statement a second object carrying
@@ -588,7 +588,7 @@ refusal at all:
 
 - **SQL Server 2022 and later** - the `sys.configurations` subquery alone needs the server grant, so
   the whole statement is refused, the guard runs, and the count is correctly **absent**. This is the
-  path D40 fixes, and it is why the ceiling is absent-shaped too: one statement, one catch.
+  path #515 fixes, and it is why the ceiling is absent-shaped too: one statement, one catch.
 - **SQL Server 2019 and earlier** - `sys.configurations` needs only `public`, so the ceiling lookup
   succeeds; and the session DMV is not documented as *refusing* an ungranted login at all, only as
   showing it its own session. Taken literally, that login gets a row-filtered `COUNT(*)` - its own
@@ -596,7 +596,7 @@ refusal at all:
   bar. **That is a wrong measurement, not an absence, and nothing here catches it: the statement
   succeeded.**
 
-The second case is **not fixed** by D40 and is **not measured** on a live instance - it is what
+The second case is **not fixed** by #515 and is **not measured** on a live instance - it is what
 Microsoft's Permissions wording implies, not an observation. What this round did measure is the
 sibling performance-counter DMV's refusal on 2022 CU26, which is why the caveat above stands
 unchanged: the refusal on `sys.dm_exec_sessions` itself is not measured here, and neither is its

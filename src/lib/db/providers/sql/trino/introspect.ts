@@ -759,7 +759,7 @@ function readTableStatistics(rows: TrinoRow[]): TableStatistics {
  * `tables` is what the scope holds or nothing at all, because the consumers of this
  * reading - `MonitoringData.tables` and the agent's curated reading - are both a plain
  * `TableStats[]` with nowhere for a partial marker to travel, and a sample they cannot
- * tell from a whole is read as the whole (D41).
+ * tell from a whole is read as the whole (#515).
  */
 export interface TrinoTableStatsReading {
   readonly tables: TableStats[];
@@ -774,7 +774,7 @@ function tableListRefusal(catalog: string, reason: string): string {
 /**
  * Why a scope too large for one pass is refused rather than sampled.
  *
- * The cut this replaces was invisible to every consumer of the reading (D41), which
+ * The cut this replaces was invisible to every consumer of the reading (#515), which
  * is what made it worse than a refusal: `getTableStats` answers `TableStats[]`,
  * `MonitoringData.tables` is that same array, and neither has a field a "there were
  * more" marker could travel in, so 25 rows reached the panel - and reached the

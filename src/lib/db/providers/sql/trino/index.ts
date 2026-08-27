@@ -638,7 +638,7 @@ export class TrinoProvider extends SQLBaseProvider {
    * connector supplies no statistics at all), so that panel reported nothing about a
    * catalog full of data.
    *
-   * The fourth is D41 and used to render as something worse than an empty table: a scope
+   * The fourth (#515) used to render as something worse than an empty table: a scope
    * holding more tables than one pass describes was silently CUT to the first 25, and
    * `TableStats[]` has no field in which the cut could have been declared, so the panel
    * and the agent's curated reading both published 25 as the count. It is now refused

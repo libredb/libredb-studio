@@ -100,7 +100,7 @@ function makeMonitoringData(): MonitoringData {
   } as unknown as MonitoringData;
 }
 
-// A libSQL database as measured for U23: 64 KB total, of which the two tables account for
+// A libSQL database as measured for #515: 64 KB total, of which the two tables account for
 // 48 KB of data and 12 KB of indexes, leaving a 4.00 KB remainder. libSQL and SQLite have
 // neither TOAST nor a free space map - their remainder is the schema, the freelist and page
 // overhead - so this fixture is the non-PostgreSQL arm of the breakdown-label test.
@@ -308,7 +308,7 @@ describe("StorageTab", () => {
   });
 
   test("a libSQL database gets the same remainder label as PostgreSQL, not another engine's", () => {
-    // Measured for U23: a real 64 KB libSQL database read "4.00 KB" under "Other (TOAST,
+    // Measured for #515: a real 64 KB libSQL database read "4.00 KB" under "Other (TOAST,
     // FSM)". The number is right and the words belong to PostgreSQL - libSQL has neither
     // structure. The label must be identical on both engines because this tab is given no
     // provider labels to vary it by.

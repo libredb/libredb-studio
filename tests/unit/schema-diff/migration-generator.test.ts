@@ -871,7 +871,7 @@ describe("generateMigrationSQL: Cassandra declines CREATE TABLE rather than gues
 });
 
 /**
- * D36. Both directions, both ids, because the generator got each of the four cases from a different
+ * #515. Both directions, both ids, because the generator got each of the four cases from a different
  * place and only one of them was right.
  *
  * SQLite's ALTER TABLE page enumerates every schema change the engine has - "rename table", "rename

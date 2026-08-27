@@ -206,7 +206,7 @@ const CASSANDRA_NO_CREATE_TABLE =
  * statement over Hrana on sqld 0.24.33 is `near CONSTRAINT ... syntax error`. Two tokens, one verdict.
  *
  * Both emission paths read this map and answer it DIFFERENTLY, which is the point of naming the fact
- * once (BACKLOG D36). `generateCreateTable` is building the table right there, so it moves the key
+ * once (#515). `generateCreateTable` is building the table right there, so it moves the key
  * INSIDE the statement, where SQLite's grammar does take it; `generateAlterTable` has no such place
  * to put it and declines with a comment. Declining on both paths would throw away a key the engine
  * can perfectly well hold.

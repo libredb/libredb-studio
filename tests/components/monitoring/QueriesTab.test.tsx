@@ -231,7 +231,7 @@ describe("QueriesTab", () => {
   });
 
   test("no card publishes a call total, because the list it would total is a cap", () => {
-    // D41. `MonitoringData.slowQueries` is capped - `slowQueryLimit = 10` in
+    // #515. `MonitoringData.slowQueries` is capped - `slowQueryLimit = 10` in
     // src/lib/db/base-provider.ts, applied by every provider that fills the list and never
     // overridden by MonitoringDashboard - so summing `calls` over it is bounded by ten
     // digests however many the server recorded. The card labelled "Queries" published that
@@ -261,7 +261,7 @@ describe("QueriesTab", () => {
   });
 
   test("a list saturated at the cap prints neither the cap nor a sum over it", () => {
-    // The saturating case D41 was measured on: MySQL 26.7.0 held 59 digests for one
+    // The saturating case #515 was measured on: MySQL 26.7.0 held 59 digests for one
     // connected schema, of which the panel receives ten. Every figure on screen must be a
     // property of those ten and nothing else, so neither the list length (10) nor the call
     // total (70) may appear anywhere.

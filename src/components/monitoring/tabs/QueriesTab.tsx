@@ -49,7 +49,7 @@ interface StatCard {
  * The stat cards, in order, and the only place their number is written down: the loaded
  * view and QueriesSkeleton both map over this list, so a card added or removed here moves
  * both grids at once. Two hand-written counts do not stay in step - when this panel dropped
- * its third card (D41) the skeleton kept `[...Array(3)]` and every gate stayed green, because
+ * its third card (#515) the skeleton kept `[...Array(3)]` and every gate stayed green, because
  * `Array(2)` and `Array(3)` are the same executable line to the coverage gate and the only
  * loading test asserted the absence of a string the skeleton never rendered in either shape.
  */
@@ -129,7 +129,7 @@ export function QueriesTab({ data, loading, labels }: QueriesTabProps) {
   // and keeps today's arithmetic.
   //
   // The same list is also a CAP, which is the other way a figure here can promise more
-  // than it measured, and the paragraph above did not cover it (D41): `slowQueryLimit`
+  // than it measured, and the paragraph above did not cover it (#515): `slowQueryLimit`
   // defaults to 10 in src/lib/db/base-provider.ts, MonitoringDashboard overrides nothing,
   // and every provider that fills the list applies that ceiling - `LIMIT` in postgres.ts
   // and mysql.ts, `SELECT TOP` in mssql.ts, `ROWNUM <=` in oracle.ts, `.limit()` in

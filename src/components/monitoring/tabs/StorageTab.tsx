@@ -192,7 +192,7 @@ export function StorageTab({ data, loading }: StorageTabProps) {
                       differs per engine: TOAST and the free space map on PostgreSQL, the schema,
                       the freelist and page overhead on SQLite and libSQL, which have neither.
                       Labelled "Other (TOAST, FSM)" it read "4.00 KB" of PostgreSQL structures
-                      against a real 64 KB libSQL database (U23) - the number was right and the
+                      against a real 64 KB libSQL database (#515) - the number was right and the
                       words were another engine's. The label now names the arithmetic. Varying the
                       wording per engine would have to come from `ProviderLabels`, the way the
                       slow-query empty state does, and this tab is passed no labels.
