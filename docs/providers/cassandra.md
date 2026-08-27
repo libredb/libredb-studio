@@ -876,7 +876,7 @@ because there are no table statistics to list at all.)
   supportsExternalQueryLimiting: true,
   supportsCreateTable: false,        // the modal cannot emit valid CQL, and a diff cannot derive the partition key (§5.5)
   supportsInlineRowEdit: false,      // one guessed key column is not a CQL primary key (§5.5)
-  supportsTransactions: false,       // CQL has no transaction; BATCH is not one (#U13)
+  supportsTransactions: false,       // CQL has no transaction; BATCH is not one (#464)
   declaresForeignKeys: false,        // the clause does not exist (§6.2)
   supportsMaintenance: false,        // every operation is a nodetool action (§8)
   maintenanceOperations: [],
@@ -900,7 +900,7 @@ SQL, and each of those three is a syntax error here.
 slow-query threshold writes to the node's log file rather than to a table."* — because
 `getSlowQueries()` is empty by design ([§7](#7-monitoring--health)), so the monitoring Queries panel
 is **always** empty here, and its hardcoded sentence used to tell the reader to enable
-`pg_stat_statements` (`docs/BACKLOG.md` U12).
+`pg_stat_statements` (#463).
 
 ---
 

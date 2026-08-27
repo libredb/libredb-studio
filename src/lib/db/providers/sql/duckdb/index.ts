@@ -352,7 +352,7 @@ export class DuckDBProvider extends SQLBaseProvider {
       // offered at all rather than offered and failed.
       maintenanceOperations: ["vacuum", "analyze", "optimize"],
       // Every declared operation gets a spec, and each placement comes from the probe
-      // rather than from the operation's name (#U9): `VACUUM` and `ANALYZE` accept a
+      // rather than from the operation's name (#496): `VACUUM` and `ANALYZE` accept a
       // bare table AND run over everything without one, while `CHECKPOINT` takes no
       // object at all - a per-table control for it would name a table and act on the
       // database.
@@ -370,11 +370,11 @@ export class DuckDBProvider extends SQLBaseProvider {
    *
    * `getSlowQueries()` answers `[]` unconditionally, so the monitoring Queries panel is
    * ALWAYS empty here - and the default sentence tells the reader to install a
-   * PostgreSQL extension (#U12). `getActiveSessions()` is the same shape for the same
+   * PostgreSQL extension (#463). `getActiveSessions()` is the same shape for the same
    * reason: measured on DuckDB v1.5.5, `duckdb_connections()` answers
    * `Catalog Error: Table Function with name duckdb_connections does not exist!`, so the
    * default "No active sessions found." would read as "nothing is running right now" on a
-   * panel that can never show a row (#D48).
+   * panel that can never show a row (#518).
    */
   public override getLabels(): ProviderLabels {
     return {

@@ -329,7 +329,7 @@ describe("CouchbaseProvider metadata", () => {
   // The Operations tab's global Reindex card was hardcoded to PostgreSQL's "Run
   // Reindex / Rebuild Indexes / Reconstructs all indexes in the database." Couchbase's
   // `reindex` is `BUILD INDEX` over the DEFERRED GSI indexes of one keyspace
-  // (`buildDeferredIndexes()`), so none of those three strings described it (#U6).
+  // (`buildDeferredIndexes()`), so none of those three strings described it (#464).
   test("names the deferred GSI build, not a table reindex, in the global reindex card", () => {
     const labels = new CouchbaseProvider(makeConnection()).getLabels();
 

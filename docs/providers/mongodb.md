@@ -491,7 +491,7 @@ Declaring that an operation EXISTS is not enough to put a button on it: two engi
 declare the same `MaintenanceType` take different kinds of target, so each provider also
 declares what its own operations may be pointed at. The monitoring Tables tab renders a
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
-card only where `global` is true, and both take the wording from `label` (#U9).
+card only where `global` is true, and both take the wording from `label` (#496).
 
 `POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
 REFUSES rather than hides: it takes the placement from whether the request carries a `target`
@@ -521,7 +521,7 @@ request here.
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — the query language is JSON commands, so there is no `UPDATE ... SET` for the results grid's inline editor to emit |
-| `supportsTransactions` | `false` — multi-document transactions need a client session this provider does not hold, so BEGIN/COMMIT/ROLLBACK and SANDBOX are not offered; they used to be, and answered HTTP 400 (#U13) |
+| `supportsTransactions` | `false` — multi-document transactions need a client session this provider does not hold, so BEGIN/COMMIT/ROLLBACK and SANDBOX are not offered; they used to be, and answered HTTP 400 (#464) |
 | `declaresForeignKeys` | `false` — MongoDB has no foreign key constraint at all, so an empty `foreignKeys` list here is the engine's model and not this database's shape |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['vacuum', 'analyze', 'check']` |
@@ -548,7 +548,7 @@ language *is* did not survive contact with the model's prior; naming what it is 
 `slowQueriesEmptyState` (*"Query stats come from the database profiler - run db.setProfilingLevel()
 to start recording into system.profile."*) is the monitoring Queries panel's empty state. That
 sentence was hardcoded to PostgreSQL's `pg_stat_statements` advice on every engine
-(`docs/BACKLOG.md` U12); here `getSlowQueries()` reads `system.profile`
+(#463); here `getSlowQueries()` reads `system.profile`
 ([§7](#7-monitoring--health)), which does not exist until the profiler is switched on.
 
 ---

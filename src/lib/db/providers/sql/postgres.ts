@@ -643,7 +643,7 @@ export class PostgresProvider extends SQLBaseProvider {
       // Every statement below has both forms - `VACUUM ANALYZE <table>` and bare
       // `VACUUM ANALYZE`, `REINDEX TABLE <table>` and `REINDEX DATABASE` - so
       // PostgreSQL is the engine whose per-row and global controls were both already
-      // right, and declaring them changes nothing here (#U9). `kill` takes a backend
+      // right, and declaring them changes nothing here (#496). `kill` takes a backend
       // PID, which only the Sessions panel can supply.
       maintenanceOperationSpecs: {
         vacuum: { label: "Vacuum Table", perEntity: true, global: true },
@@ -658,7 +658,7 @@ export class PostgresProvider extends SQLBaseProvider {
    * Only the global reindex triad; every other label is the SQL default and right.
    *
    * The Operations tab's reindex card was hardcoded to this wording for every engine
-   * (#U6), so declaring it here changes nothing on PostgreSQL and lets the two other
+   * (#464), so declaring it here changes nothing on PostgreSQL and lets the two other
    * providers that declare `reindex` say what theirs does instead.
    */
   public override getLabels(): ProviderLabels {

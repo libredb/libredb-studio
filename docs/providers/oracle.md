@@ -882,7 +882,7 @@ Declaring that an operation EXISTS is not enough to put a button on it: two engi
 declare the same `MaintenanceType` take different kinds of target, so each provider also
 declares what its own operations may be pointed at. The monitoring Tables tab renders a
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
-card only where `global` is true, and both take the wording from `label` (#U9).
+card only where `global` is true, and both take the wording from `label` (#496).
 
 `POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
 REFUSES rather than hides: it takes the placement from whether the request carries a `target`
@@ -960,7 +960,7 @@ is what lets the Operations tab render those words and send an operation Oracle 
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core Oracle DML |
-| `supportsTransactions` | `true` — Oracle is always in a transaction and the held connection commits or rolls back, so the trio and the SANDBOX toggle are offered (#U13) |
+| `supportsTransactions` | `true` — Oracle is always in a transaction and the held connection commits or rolls back, so the trio and the SANDBOX toggle are offered (#464) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; read from `ALL_CONSTRAINTS`, so an empty list is about the schema or the owner, not the engine |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze', 'optimize', 'kill']` |
@@ -976,7 +976,7 @@ global labels (*"Gather Stats"*, *"Rebuild All Indexes"*).
 
 `slowQueriesEmptyState` → *"Query stats come from V$SQL, which this user needs SELECT on to read."*
 The monitoring Queries panel's empty state was hardcoded to PostgreSQL's `pg_stat_statements` advice
-on every engine (`docs/BACKLOG.md` U12); `getSlowQueries()` here reads `V$SQL`
+on every engine (#463); `getSlowQueries()` here reads `V$SQL`
 ([§8](#8-monitoring--health)) and returns `[]` when that read is refused, so the grant is the thing a
 DBA can act on.
 

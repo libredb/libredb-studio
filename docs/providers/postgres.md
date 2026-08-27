@@ -565,7 +565,7 @@ disconnects without committing would otherwise hold locks indefinitely.
 `supportsTransactions: true` ([§10](#10-capabilities--labels)) is what tells the editor toolbar to
 offer BEGIN/COMMIT/ROLLBACK and the auto-rolled-back SANDBOX toggle at all. It is declared rather
 than inferred because the route's own gate is `isTransactionProvider(provider)`, a runtime shape
-check no client can read, so before `docs/BACKLOG.md` U13 those controls rendered on every
+check no client can read, so before #464 those controls rendered on every
 connection — including the ten providers that answer HTTP 400.
 
 ---
@@ -591,7 +591,7 @@ Declaring that an operation EXISTS is not enough to put a button on it: two engi
 declare the same `MaintenanceType` take different kinds of target, so each provider also
 declares what its own operations may be pointed at. The monitoring Tables tab renders a
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
-card only where `global` is true, and both take the wording from `label` (#U9).
+card only where `global` is true, and both take the wording from `label` (#496).
 
 `POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
 REFUSES rather than hides: it takes the placement from whether the request carries a `target`
@@ -628,7 +628,7 @@ Overrides the SQL base defaults:
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsCreateTable` | `true` |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core PostgreSQL DML |
-| `supportsTransactions` | `true` — `beginTransaction()` holds one pool client and runs `BEGIN` / `COMMIT` / `ROLLBACK` on it, so the editor's transaction trio and the auto-rolled-back SANDBOX toggle are offered here (#U13) |
+| `supportsTransactions` | `true` — `beginTransaction()` holds one pool client and runs `BEGIN` / `COMMIT` / `ROLLBACK` on it, so the editor's transaction trio and the auto-rolled-back SANDBOX toggle are offered here (#464) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; an empty `foreignKeys` list is then a fact about the schema or the reading role, never about the engine |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'kill']` |
@@ -644,7 +644,7 @@ already fits.
 
 `getLabels()` is overridden for **one** triad only: the Operations tab's global Reindex card, which
 was hardcoded to *"Run Reindex"* / *"Rebuild Indexes"* / *"Reconstructs all indexes in the database."*
-for every engine (`docs/BACKLOG.md` U6). That wording was written for this engine — the global card
+for every engine (#464). That wording was written for this engine — the global card
 sends no target, so `runMaintenance('reindex')` here runs `REINDEX DATABASE`
 ([§9](#9-maintenance)) — so declaring it changes nothing on PostgreSQL and lets the two
 other providers that offer `reindex` (SQLite, Couchbase) say what theirs does instead:

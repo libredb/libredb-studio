@@ -738,7 +738,7 @@ describe("OpenSearchProvider shares the Elasticsearch implementation", () => {
     expect(esQuoting).toBe("double");
     expect(opensearch.queryLanguage).toBe("sql");
     expect(opensearch.supportsExplain).toBe(false);
-    // Neither grammar has BEGIN and both are reached over stateless HTTP (#U13).
+    // Neither grammar has BEGIN and both are reached over stateless HTTP (#464).
     expect(opensearch.supportsTransactions).toBe(false);
     expect(opensearch.defaultPort).toBe(9200);
   });

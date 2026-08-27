@@ -1905,7 +1905,7 @@ describe("PostgresProvider", () => {
 
     test("the vacuum label really means vacuum here", () => {
       // Absent is the default, so the four engines whose vacuum wording names
-      // something else are the ones that have to say so (#U9).
+      // something else are the ones that have to say so (#496).
       expect(new PostgresProvider(makePgConfig()).getLabels().vacuumActionOperation).toBeUndefined();
     });
     test("returns correct PostgreSQL capabilities", () => {
@@ -1922,7 +1922,7 @@ describe("PostgresProvider", () => {
       // statement shape the inline row editor builds (#269).
       expect(caps.supportsInlineRowEdit).toBe(true);
       // BEGIN/COMMIT/ROLLBACK run over one held pool client here, so the toolbar's
-      // transaction trio and the sandbox toggle are offered (#U13).
+      // transaction trio and the sandbox toggle are offered (#464).
       expect(caps.supportsTransactions).toBe(true);
       // Inherited from the base capabilities: this engine declares foreign keys, so
       // an empty `foreignKeys` list is a fact about the schema or the role, never
@@ -1943,7 +1943,7 @@ describe("PostgresProvider", () => {
     // The Operations tab's global reindex card was hardcoded to exactly this wording
     // for every engine. PostgreSQL is the engine it was written for - `runMaintenance`
     // sends `REINDEX DATABASE` with no target - so declaring it here changes nothing
-    // on this provider and lets SQLite and Couchbase say what theirs does (#U6).
+    // on this provider and lets SQLite and Couchbase say what theirs does (#464).
     test("declares the global reindex wording the card used to hardcode", () => {
       const labels = new PostgresProvider(makePgConfig()).getLabels();
 

@@ -272,7 +272,7 @@ describe("StudioMobileHeader", () => {
     expect(queryByText("Import Data")).not.toBeNull();
   });
 
-  test("BEGIN Transaction not rendered when the trio is withheld (#U13)", () => {
+  test("BEGIN Transaction not rendered when the trio is withheld (#464)", () => {
     // The positive is asserted by "BEGIN Transaction click calls onBeginTransaction"
     // above, on the same defaults; here only the three callbacks are removed.
     const { queryByText } = render(
@@ -305,7 +305,7 @@ describe("StudioMobileHeader", () => {
     expect(queryByText("Import Data")).not.toBeNull();
   });
 
-  test("Enable Sandbox not rendered when onTogglePlayground is withheld (#U13)", () => {
+  test("Enable Sandbox not rendered when onTogglePlayground is withheld (#464)", () => {
     const { queryByText } = render(<StudioMobileHeader {...defaults} onTogglePlayground={undefined} />);
     expect(queryByText("Enable Sandbox")).toBeNull();
     expect(queryByText("BEGIN Transaction")).not.toBeNull();

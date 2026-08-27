@@ -167,7 +167,7 @@ export function deriveThreadContext(
  * so a follow-up asked afterwards was handed the earlier steps' claims about the old
  * database while reading the new one. Nothing was refused and nothing looked wrong; the
  * run simply reported on one database using what had been established against another
- * (`docs/BACKLOG.md` B68).
+ * (#509).
  *
  * The identity is `connectionIdentity`'s and not a second fingerprint, and its two
  * exclusions are what make it the right one here. It carries engine, host, port,

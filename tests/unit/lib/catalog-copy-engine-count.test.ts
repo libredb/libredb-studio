@@ -1,5 +1,5 @@
 /**
- * The accuracy gate for the engine COUNT in outward-facing catalog copy (#D47).
+ * The accuracy gate for the engine COUNT in outward-facing catalog copy (#518).
  *
  * Nine files outside `src/` name the engine set by hand, and until this test nothing
  * counted them: `scripts/readme-check.mjs` locates the engine table in the three

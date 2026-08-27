@@ -180,7 +180,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
       // `validate` and `compact` are both per-collection commands that this provider
       // also loops over `listCollections()` when no target is named, so both
       // placements are real. `dbCheck` is not looped and refuses to run without a
-      // collection name, so it is offered on a collection row only (#U9).
+      // collection name, so it is offered on a collection row only (#496).
       maintenanceOperationSpecs: {
         vacuum: { label: "Compact Collection", perEntity: true, global: true },
         analyze: { label: "Validate Collection", perEntity: true, global: true },
@@ -222,7 +222,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
         'the JSON command object this editor executes - {"collection": "<name>", "operation": "find" | "findOne" | "aggregate" | "count" | "distinct", "filter": {...}, "pipeline": [...], "field": "<name>" (distinct only), "options": {"limit": 50}} - and NOT mongosh shell syntax: a statement that starts with `db.` cannot be run here',
       // `getSlowQueries()` reads `system.profile`, which does not exist until the
       // profiler is switched on - so the empty panel is the ordinary case here, and it
-      // used to name a PostgreSQL extension (#U12).
+      // used to name a PostgreSQL extension (#463).
       slowQueriesEmptyState:
         "Query stats come from the database profiler - run db.setProfilingLevel() to start recording into system.profile.",
     };

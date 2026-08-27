@@ -1124,7 +1124,7 @@ export function AgentRail({
   /*
     A conversation this browser was in and is not following any more: the stored thread id
     while no run has opened. The hook owns the reading; the rail owns the sentence, because
-    what is lost is a rail affordance — the follow-up id it would have sent (#B69).
+    what is lost is a rail affordance — the follow-up id it would have sent (#518).
   */
   const interruptedThread = run.interrupted;
   /*
@@ -2328,7 +2328,7 @@ export function AgentRail({
               the run this rail was following, so the id a follow-up would have carried is
               gone and the next question opens a fresh conversation — which the rail used to
               be silent about, leaving a user mid-conversation to find out from an answer
-              that had forgotten what they asked (#B69).
+              that had forgotten what they asked (#518).
 
               It names the conversation and how many questions it had reached, because those
               are the two things a person can check against the strip they were reading. It

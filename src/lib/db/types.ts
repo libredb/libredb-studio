@@ -306,7 +306,7 @@ export interface ProviderCapabilities {
    *
    * It exists because three code paths open a SECOND handle on a file the connection's
    * own cached provider is already holding, and on this engine the lock defeated every
-   * one of them every time (`docs/BACKLOG.md` D3 and B49): `POST /api/db/test-connection`
+   * one of them every time (#498): `POST /api/db/test-connection`
    * reported the lock as a failed connection test - which made the built-in LibreDB
    * sample impossible to EDIT, because the dialog tests before it saves;
    * `acquireExecutionProfileProvider` lost every agent grounding read on the
@@ -490,7 +490,7 @@ export interface ProviderLabels {
    * empty on this engine, in that engine's own terms.
    *
    * The counterpart of `slowQueriesEmptyState` for the other half of the same
-   * absence (#D48). Both panels default to "No active sessions found.", which a
+   * absence (#518). Both panels default to "No active sessions found.", which a
    * reader takes as "nothing is running right now" - true on PostgreSQL, and false
    * on an engine that publishes no session list at all and can never show a row.
    *
@@ -738,7 +738,7 @@ export interface DatabaseOverview {
    * rather than send a fabricated 0. ScyllaDB is the case that forced this - the
    * count lives in Cassandra's `system_views` keyspace, which ScyllaDB does not
    * have - and a Cassandra role denied that same grant has answered a fabricated 0
-   * since the provider shipped (docs/BACKLOG.md D17). `HealthInfo.activeConnections`
+   * since the provider shipped (#476). `HealthInfo.activeConnections`
    * is optional for the identical reason and the absence travels THROUGH that seam:
    * a provider composing one from the other must carry the missing key across rather
    * than flatten it with `?? 0`, which is what the docblock on that field says and

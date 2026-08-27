@@ -5,7 +5,7 @@
  * The programme design specified "assert that each linked file exists". That is not enough, and
  * Phase 2 is the evidence: its digest-pinning guard - protecting the one scanner allowed to block a
  * merge - inspected a single physical line and stayed green against the exact downgrade it existed
- * to catch. docs/BACKLOG.md H10 records the same shape on the route-guard allowlist. A check that
+ * to catch. #502 fixed the same shape on the route-guard allowlist. A check that
  * cannot fail is worse than no check, because it is believed.
  *
  * Seven checks, each of which a deliberate sabotage turns red:

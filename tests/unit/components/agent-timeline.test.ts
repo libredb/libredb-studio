@@ -147,7 +147,7 @@ describe("foldLedgerEntries", () => {
 
   /*
     The two causes of one profile refusal, each pinned to the sentence a user reads
-    (docs/BACKLOG.md B47). Both used to render the engine sentence, so a PostgreSQL
+    (#459). Both used to render the engine sentence, so a PostgreSQL
     run whose agent credential no longer decrypted was told its engine offers no
     read-only execution profile.
   */

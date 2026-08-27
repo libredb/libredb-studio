@@ -532,7 +532,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
       // `OPTIMIZE TABLE ... FINAL` names ONE table and `dispatchMaintenance` requires
       // that target, so the whole-database form is withheld: ClickHouse has no
       // "optimize database", and looping every table would merge the entire dataset
-      // behind one click (#U9). `describeParts` deliberately accepts no target as
+      // behind one click (#496). `describeParts` deliberately accepts no target as
       // well as one, which is why analyze is offered in both placements.
       maintenanceOperationSpecs: {
         optimize: { label: "Optimize Table", perEntity: true, global: false },
@@ -558,7 +558,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
       // The vacuum slot names `optimize`, not a vacuum ClickHouse does not have. The
       // global card stays withheld even so - `optimize` declares `global: false`
       // above, because OPTIMIZE names one table - and this is what stops the surface
-      // reading the slot as a `vacuum` this provider rejects (#U9).
+      // reading the slot as a `vacuum` this provider rejects (#496).
       vacuumActionOperation: "optimize",
       analyzeGlobalLabel: "Table Statistics",
       analyzeGlobalTitle: "Table Statistics",
@@ -578,7 +578,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
         "Runs OPTIMIZE TABLE ... FINAL, which merges a table's parts and applies pending mutations. ClickHouse reclaims space by merging, so there is no VACUUM equivalent.",
       // `getSlowQueries()` reads system.query_log, which records nothing while
       // `log_queries` is off - a different fact from the PostgreSQL extension the panel
-      // used to advertise (#U12).
+      // used to advertise (#463).
       slowQueriesEmptyState: "Query stats come from system.query_log, which records nothing while log_queries is off.",
     };
   }

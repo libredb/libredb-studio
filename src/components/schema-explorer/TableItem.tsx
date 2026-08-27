@@ -92,7 +92,7 @@ function renderMenuItems({
   const rowsAreAddressable = capabilities?.tablesAreDerivedGroupings !== true;
 
   // The SAME question the monitoring Tables tab and the admin Operations tab ask, so
-  // that three surfaces cannot disagree about what a provider declared (#U9). Gating
+  // that three surfaces cannot disagree about what a provider declared (#496). Gating
   // on `supportsMaintenance` alone is what put "Vacuum Table" on ONE SQLite table
   // while the Tables tab correctly withheld it - SQLite's VACUUM takes no target, and
   // the page this item deep-links to therefore has no such control. Unknown
@@ -151,7 +151,7 @@ function renderMenuItems({
           "Merge Segments" landed on a page with no maintenance controls, no error and
           no explanation. `maintenanceControl` above closes the rest of it: an engine
           that declares the operation but not for a single table (SQLite's VACUUM) is
-          the same dead end with the capability flag switched on (#U9).
+          the same dead end with the capability flag switched on (#496).
 
           Global maintenance is unaffected wherever an engine has any: it lives on the
           admin Operations page and still runs there.

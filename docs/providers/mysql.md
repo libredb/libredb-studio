@@ -783,7 +783,7 @@ Declaring that an operation EXISTS is not enough to put a button on it: two engi
 declare the same `MaintenanceType` take different kinds of target, so each provider also
 declares what its own operations may be pointed at. The monitoring Tables tab renders a
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
-card only where `global` is true, and both take the wording from `label` (#U9).
+card only where `global` is true, and both take the wording from `label` (#496).
 
 `POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
 REFUSES rather than hides: it takes the placement from whether the request carries a `target`
@@ -803,7 +803,7 @@ MySQL has no `VACUUM`, and the base labels put *"Vacuum Table"* in the explorer'
 and *"Run Vacuum" / "Reclaim Space"* on the Operations tab anyway. The labels now say
 *"Optimize Table"* / *"Run Optimize" / "Optimize Tables"*, and `vacuumActionOperation:
 'optimize'` is what makes the surfaces send `optimize` for them - the global card used to be
-gated on the literal `vacuum`, so MySQL's own wording was written and never shown (#U9).
+gated on the literal `vacuum`, so MySQL's own wording was written and never shown (#496).
 
 ---
 
@@ -819,7 +819,7 @@ gated on the literal `vacuum`, so MySQL's own wording was written and never show
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core MySQL DML |
-| `supportsTransactions` | `true` — the transaction runs on one held connection through the driver's own `beginTransaction()`, so the trio and the SANDBOX toggle are offered (#U13) |
+| `supportsTransactions` | `true` — the transaction runs on one held connection through the driver's own `beginTransaction()`, so the trio and the SANDBOX toggle are offered (#464) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; InnoDB declares them, so an empty list means this schema (or this role) has none, not the engine |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze', 'optimize', 'check', 'kill']` |
@@ -846,7 +846,7 @@ wording MySQL could have declared would have been shown (#U9,
 `slowQueriesEmptyState` → *"Query stats come from
 performance_schema.events_statements_summary_by_digest - enable the Performance Schema to see them."*
 The monitoring Queries panel's empty state was hardcoded to PostgreSQL's `pg_stat_statements` advice
-on every engine (`docs/BACKLOG.md` U12) — an extension MySQL does not have under any name, while the
+on every engine (#463) — an extension MySQL does not have under any name, while the
 digest table this provider actually reads ([§8](#8-monitoring--health)) is a server switch a DBA can
 act on.
 

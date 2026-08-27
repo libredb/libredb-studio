@@ -318,7 +318,7 @@ describe("foreign keys with no covering index", () => {
 
   test("a composite key is SKIPPED rather than guessed at", () => {
     // PostgreSQL's catalog read returns a composite foreign key as the cross
-    // product of both sides (docs/BACKLOG.md B8), so its columns cannot be
+    // product of both sides (#463), so its columns cannot be
     // regrouped into the key they belong to — and a covering test over the wrong
     // grouping would be an answer about a key that does not exist.
     const findings = findUnindexedForeignKeys(
@@ -387,7 +387,7 @@ describe("types with no equality operator", () => {
   });
 });
 
-describe("a foreign key covered by a constraint-created index (docs/BACKLOG.md B25)", () => {
+describe("a foreign key covered by a constraint-created index (#502)", () => {
   /**
    * The SQLite blind spot, end to end and against a real engine.
    *

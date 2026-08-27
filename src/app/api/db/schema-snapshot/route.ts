@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
     return await withOneShotTunnel(connection, async (effective) => {
       /*
         The handle already holding this connection's file, on an engine that admits
-        only one (`ProviderCapabilities.singleWriterFile`; `docs/BACKLOG.md` D3).
+        only one (`ProviderCapabilities.singleWriterFile`; #498).
 
         This route is the third caller of that shape, after `test-connection` and the
         profiled acquisition, and it failed the same way: measured 2026-08-25 against

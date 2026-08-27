@@ -642,7 +642,7 @@ Declaring that an operation EXISTS is not enough to put a button on it: two engi
 declare the same `MaintenanceType` take different kinds of target, so each provider also
 declares what its own operations may be pointed at. The monitoring Tables tab renders a
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
-card only where `global` is true, and both take the wording from `label` (#U9).
+card only where `global` is true, and both take the wording from `label` (#496).
 
 `POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
 REFUSES rather than hides: it takes the placement from whether the request carries a `target`
@@ -678,7 +678,7 @@ stays absent, and that card never renders either.
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — SQL++ has `UPDATE <keyspace> SET ... WHERE ...`, but the shared editor's `WHERE <pk> = <value>` would filter on `__id`, the key **projection alias**, which is not a document field ([§13](#13-known-limitations--future-work)) |
-| `supportsTransactions` | `false` — the query service is reached over stateless HTTP and no session spans two requests, so the transaction trio and SANDBOX are not offered (#U13) |
+| `supportsTransactions` | `false` — the query service is reached over stateless HTTP and no session spans two requests, so the transaction trio and SANDBOX are not offered (#464) |
 | `declaresForeignKeys` | `false` — SQL++ has no referential constraint; collections are schemaless and the columns reported here are inferred from a document sample |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze', 'reindex', 'kill']` |
@@ -700,10 +700,10 @@ placeholder -> *Search collections or fields...*.
 One label is about the monitoring tab instead: `slowQueriesEmptyState` -> *"Query stats come from
 system:completed_requests, which keeps only requests over the query service's threshold."* The
 Queries panel's empty state was hardcoded to PostgreSQL's `pg_stat_statements` advice on every engine
-(`docs/BACKLOG.md` U12), and the completed-requests catalog ([§7](#7-monitoring--health)) is what
+(#463), and the completed-requests catalog ([§7](#7-monitoring--health)) is what
 this cluster actually keeps.
 
-The global Reindex card gets its own triad (`docs/BACKLOG.md` U6). It was hardcoded to PostgreSQL's
+The global Reindex card gets its own triad (#464). It was hardcoded to PostgreSQL's
 *"Run Reindex"* / *"Rebuild Indexes"* / *"Reconstructs all indexes in the database."*, and this
 provider's `reindex` is none of those things: it is `BUILD INDEX` over the **deferred** GSI indexes of
 one keyspace ([§8](#8-maintenance)).
@@ -714,10 +714,14 @@ one keyspace ([§8](#8-maintenance)).
 | `reindexGlobalTitle` | *Build Deferred GSI Indexes* |
 | `reindexGlobalDesc` | *Runs BUILD INDEX for the deferred global secondary indexes of one collection; it needs a collection, so run it from the collection rather than here.* |
 
-The last clause is a fact about the control, not a hedge: `dispatchMaintenance()` sends `reindex`
-through `requireTarget()`, while the Operations tab's global card sends no target, so the global card
-answers *"The reindex operation requires a target"* on Couchbase. The card's targeting is
-`docs/BACKLOG.md` U9's business; the wording at least says where the operation does work.
+The last clause was a fact about a control that no longer renders. `dispatchMaintenance()` sends
+`reindex` through `requireTarget()` while the Operations tab's global card sends no target, so the
+card used to answer *"The reindex operation requires a target"* here. #496 settled that by
+withdrawing the card rather than by rewording it — `maintenanceOperationSpecs.reindex` declares
+`global: false`, and `maintenanceControl(..., "global")` therefore offers nothing. The per-collection
+control is the only one on this provider, which is what the operation itself requires. The three
+`reindexGlobal*` labels above are consequently read by nobody today; they are the wording the card
+would carry if it ever returns.
 
 ---
 

@@ -84,7 +84,7 @@ export class RedisProvider extends BaseDatabaseProvider {
       // `runMaintenance(type)` takes no target parameter at all: the operation is
       // `INFO`, which reports on the server and cannot be pointed at a key pattern.
       // A per-row control here would have named one grouping and answered with
-      // server-wide metrics - the dead end #427 reported for "Key Info" (#U9).
+      // server-wide metrics - the dead end #427 reported for "Key Info" (#496).
       maintenanceOperationSpecs: {
         analyze: { label: "Server Info", perEntity: false, global: true },
       },
@@ -128,7 +128,7 @@ export class RedisProvider extends BaseDatabaseProvider {
         'exactly one Redis command, in the plain form `SCAN 0 MATCH session:* COUNT 50` or the lossless form {"command": "GET", "args": ["session:1"]} - one command and no more, with no list numbering, no bullet, no `redis-cli` prefix and no trailing semicolon; and the inventory\'s `prefix:*` rows are groupings this server summarised, not keys, so reach a prefix with SCAN ... MATCH and a key by its real name',
       // `getSlowQueries()` maps SLOWLOG GET, so an empty panel means the log is empty
       // rather than absent - a different fact from the PostgreSQL extension this used
-      // to advertise (#U12), and the one a Redis operator can act on.
+      // to advertise (#463), and the one a Redis operator can act on.
       slowQueriesEmptyState:
         "Redis lists what SLOWLOG holds, and nothing has yet run slower than slowlog-log-slower-than.",
     };

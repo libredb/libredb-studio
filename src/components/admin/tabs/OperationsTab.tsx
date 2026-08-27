@@ -51,7 +51,7 @@ import { useProviderMetadata } from "@/hooks/use-provider-metadata";
  * `optimize` and `check` are candidates because five providers declare those
  * operations and no per-row control anywhere offered them; each is filtered out again
  * wherever the provider says its statement takes no object (SQL Server's
- * `DBCC CHECKDB`, SQLite's `VACUUM`) - see `maintenanceControl` (#U9).
+ * `DBCC CHECKDB`, SQLite's `VACUUM`) - see `maintenanceControl` (#496).
  */
 const TABLE_ACTIONS: { type: MaintenanceType; label: string; Icon: LucideIcon; hover: string }[] = [
   { type: "analyze", label: "Analyze", Icon: Search, hover: "hover:text-yellow-500" },
@@ -120,7 +120,7 @@ export function OperationsTab() {
 
   // The row an Explorer deep link named (`onOpenMaintenance("tables", name)` →
   // /admin/operations?table=...). It seeds the filter and marks the row, so the
-  // named row is the one the operator lands on (#U5).
+  // named row is the one the operator lands on (#459).
   const deepLinkedTable = useSearchParams().get("table");
 
   // Offer only the maintenance the connected provider declares it can perform:
@@ -374,7 +374,7 @@ export function OperationsTab() {
       {/* Global Operations — hidden entirely where not one operation has a
           whole-database form. On Couchbase every operation needs a keyspace, so this
           section is absent rather than three cards that answer "requires a
-          target" (#U9). */}
+          target" (#496). */}
       {anyMaintenance && (
         <div>
           <div className="flex items-center gap-2 mb-3">
@@ -436,9 +436,9 @@ export function OperationsTab() {
 
             {/* Reindex — the triad is OPTIONAL on ProviderLabels (only the three
                 providers that declare the `reindex` operation set it), so the
-                hardcoded strings below stay as the fallback (#U6). Withheld where the
+                hardcoded strings below stay as the fallback (#464). Withheld where the
                 vacuum slot above already names `reindex`: one operation, two sets of
-                words, is a second card that does the same thing (#U9). */}
+                words, is a second card that does the same thing (#496). */}
             {globalReindex && (
               <div className="p-4 rounded-xl border border-hairline bg-fill-subtle hover:bg-fill transition-colors">
                 <div className="flex items-start justify-between mb-3">
@@ -611,7 +611,7 @@ export function OperationsTab() {
               <div className="p-8 text-center text-fg-subtle text-sm" data-testid="operations-sessions-empty">
                 {/* The order is deliberate: `sessionsUnavailable` is set only when the
                     READ failed, while `sessionsEmptyState` explains an engine that
-                    publishes no session list at all (#D48). */}
+                    publishes no session list at all (#518). */}
                 {sessionsUnavailable ?? labels?.sessionsEmptyState ?? "No active sessions found."}
               </div>
             ) : (

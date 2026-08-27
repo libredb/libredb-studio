@@ -559,7 +559,7 @@ export async function readHealth(client: DuckDBClient): Promise<HealthInfo> {
  * no `pg_stat_statements` equivalent to install, and the profiler writes to a file the
  * user configures per session rather than to a catalog. `ProviderLabels
  * .slowQueriesEmptyState` carries that sentence to the Queries panel, which otherwise
- * tells the reader to install a PostgreSQL extension (#U12).
+ * tells the reader to install a PostgreSQL extension (#463).
  */
 export async function readSlowQueries(): Promise<SlowQueryStats[]> {
   return [];

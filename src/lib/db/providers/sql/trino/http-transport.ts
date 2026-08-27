@@ -360,7 +360,7 @@ function parseJson(text: string): unknown {
  * `prepareQuery()` in `index.ts`, which transposes `LIMIT n OFFSET m` into the one
  * order the grammar has; absorbing that and not this would leave a library
  * consumer calling `query("SELECT 1;")` with an engine-specific failure and no hint
- * that the semicolon caused it (`docs/BACKLOG.md` D5).
+ * that the semicolon caused it (#463).
  */
 const LONE_TERMINATOR = /^\s*;\s*$/;
 

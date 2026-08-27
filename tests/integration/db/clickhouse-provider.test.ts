@@ -432,7 +432,7 @@ describe("ClickHouseProvider metadata", () => {
       supportsMaintenance: true,
       maintenanceOperations: ["optimize", "analyze", "kill"],
       // OPTIMIZE names one table and `dispatchMaintenance` requires that target, so
-      // there is no whole-database form to offer; `describeParts` accepts both (#U9).
+      // there is no whole-database form to offer; `describeParts` accepts both (#496).
       maintenanceOperationSpecs: {
         optimize: { label: "Optimize Table", perEntity: true, global: false },
         analyze: { label: "Table Statistics", perEntity: true, global: true },

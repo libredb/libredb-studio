@@ -231,7 +231,7 @@ function composePostgresRelations(selector: AgentCatalogSelector): string {
  * EXPRESSION has no attribute to match: `indkey` stores 0 for it, so the old inner
  * join dropped `CREATE INDEX … ON t (lower(name))` from the inventory entirely and
  * returned `(status, lower(name))` carrying only `status` — which a reader could take
- * for an index on `status` alone (`docs/BACKLOG.md` B7). Every key position is now a
+ * for an index on `status` alone (#463). Every key position is now a
  * row, and `pg_get_indexdef(indexrelid, n, true)` names what sits in position n. That
  * is the shape the SQLite side already produces: `parseSqliteIndexDdl` keeps an
  * expression's written form in the same column list as the plain names, so both

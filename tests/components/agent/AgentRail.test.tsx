@@ -391,7 +391,7 @@ describe("AgentRail", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     window.matchMedia = originalMatchMedia;
-    // The rail now stores the conversation a run belongs to (#B69), and it is read at
+    // The rail now stores the conversation a run belongs to (#518), and it is read at
     // MOUNT — so a key left behind by one test puts an amber notice over the next test's
     // first render, before any start it makes.
     localStorage.clear();
@@ -607,7 +607,7 @@ describe("AgentRail", () => {
   });
 
   /*
-    The transition a reload used to be silent about (#B69).
+    The transition a reload used to be silent about (#518).
 
     The rail was honest about the RESULT — no thread, no strip — and said nothing about the
     change: a user mid-conversation who reloaded was not told that what they were doing had

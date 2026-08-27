@@ -442,7 +442,7 @@ describe("MonitoringDashboard", () => {
 
   test("hands the selected connection's own labels to the queries tab", async () => {
     // Without this the "Slowest Queries" empty state can only be Postgres's: the tab
-    // holds the copy, but only the dashboard has the provider metadata (#U12).
+    // holds the copy, but only the dashboard has the provider metadata (#463).
     const user = userEvent.setup();
     queriesTabProps.length = 0;
 

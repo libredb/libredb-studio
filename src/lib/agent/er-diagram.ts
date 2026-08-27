@@ -19,8 +19,8 @@
  *    database does not have is worse than no diagram.
  *  - **A pairing this inventory cannot know is not invented.** More than one edge
  *    between the same two tables may be several separate keys, or one composite key
- *    the catalog read returned as the cross product of its sides (`docs/BACKLOG.md`
- *    B8) — and nothing here can tell those apart. Rendering them as exact joins would
+ *    the catalog read returned as the cross product of its sides (#463) — and
+ *    nothing here can tell those apart. Rendering them as exact joins would
  *    assert relations the database does not have, which is the same failure the
  *    quoting exists to prevent, arrived at by arithmetic instead of by a hostile name.
  *    So such a group is one line that names the columns and says the pairing is
@@ -128,7 +128,7 @@ function relationsOf(snapshot: AgentContextSnapshot): readonly Relation[] {
   for (const table of snapshot.tables) {
     for (const key of table.foreignKeys ?? []) {
       // Deduplicated on the whole edge: PostgreSQL's catalog read returns a
-      // composite key as the cross product of its sides (`docs/BACKLOG.md` B8), so
+      // composite key as the cross product of its sides (#463), so
       // the same pair can arrive more than once.
       const identity = JSON.stringify([table.name, key.columnName, key.referencedTable, key.referencedColumn]);
       if (seen.has(identity)) continue;
@@ -184,7 +184,7 @@ function renderRelation(snapshot: AgentContextSnapshot, relation: Relation, deta
  * Edges between the same pair of tables, rendered as ONE ambiguous line.
  *
  * PostgreSQL's catalog read returns a composite foreign key as the cross product of
- * its sides (`docs/BACKLOG.md` B8): `FOREIGN KEY (x, y) REFERENCES parents(a, b)`
+ * its sides (#463): `FOREIGN KEY (x, y) REFERENCES parents(a, b)`
  * arrives as four edges, two of which are false. Rendering them as exact joins would
  * have this block assert `x -> b` — a relation the database does not have, which is
  * precisely what the quoting elsewhere in this file exists to prevent. Found by

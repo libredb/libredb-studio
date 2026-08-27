@@ -229,7 +229,7 @@ describe("BaseDatabaseProvider", () => {
       // The opposite default to the line above, and deliberately: this class
       // implements no transaction methods, so a subclass that does not add them has
       // none and POST /api/db/transaction refuses the call. Only the four providers
-      // that hold a session for one declare `true` (#U13).
+      // that hold a session for one declare `true` (#464).
       expect(caps.supportsTransactions).toBe(false);
       // Compile-time pin, checked by `bun run typecheck`: `ProviderCapabilities` is
       // published (`src/exports/types.ts`), so a capability added later must be
@@ -296,7 +296,7 @@ describe("BaseDatabaseProvider", () => {
       // required field added after the fact stops every external implementer of the
       // type compiling. Only the three providers that declare the `reindex`
       // maintenance operation set it, and `OperationsTab` falls back to the wording
-      // the card had (#U6). The literal below is the compile-time half of that,
+      // the card had (#464). The literal below is the compile-time half of that,
       // checked by `bun run typecheck`.
       const externalImplementer: ProviderLabels = {
         entityName: "Node",
@@ -956,7 +956,7 @@ describe("getMonitoringData partial failures", () => {
 });
 
 // ============================================================================
-// maintenanceControl() — the one gate both maintenance surfaces ask (#U9)
+// maintenanceControl() — the one gate both maintenance surfaces ask (#496)
 // ============================================================================
 
 describe("maintenanceControl", () => {

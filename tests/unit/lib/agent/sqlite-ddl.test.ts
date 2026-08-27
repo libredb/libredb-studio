@@ -276,7 +276,7 @@ describe("parseSqliteIndexDdl", () => {
   });
 });
 
-describe("parseSqliteTableDdl — constraint-created indexes (docs/BACKLOG.md B25)", () => {
+describe("parseSqliteTableDdl — constraint-created indexes (#502)", () => {
   /**
    * The measurement this whole group exists for: SQLite stores NO DDL for the index
    * it builds to enforce a `UNIQUE` constraint, so the composed index read — which

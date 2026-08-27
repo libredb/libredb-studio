@@ -26,10 +26,13 @@
  *    would fail every planning run that did exactly what the mode is for. M3's
  *    workflow types extend this registry rather than widening one predicate.
  *  - **Nothing here is persisted, and that is a decision rather than an omission.**
- *    Writing a verdict into the ledger means spending the terminal-status
- *    vocabulary, which `docs/BACKLOG.md` B24 hands to the owner rather than to the
- *    implementer. The verdict is computed and reported; where it is RECORDED is one
- *    call site, and it moves when B24 is ratified.
+ *    Writing a verdict into the ledger meant spending the terminal-status vocabulary,
+ *    which was the owner's call rather than the implementer's. It was ratified on
+ *    2026-08-13 (#347) in the shape this module was built for: a field beside the
+ *    status, not a fourth status word. So the verdict is computed and reported here
+ *    and RECORDED at one call site - `finalize` in `src/lib/agent/run-service.ts`,
+ *    which writes `goalVerdict` onto the `run-finished` event, and only for a run that
+ *    left `queued`: a run that never entered the loop is not judged.
  *
  * The honest limit: `empty-evidence` is mechanical, and it has to be. Whether a
  * model "stated uncertainty" about an empty result is a judgement about prose, and

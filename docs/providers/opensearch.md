@@ -1008,7 +1008,7 @@ SQL endpoint (measured in the browser, 2026-08-19). See
 `slowQueriesEmptyState` is the monitoring Queries panel's empty state, and it says what §7 already
 says about `getSlowQueries()`. That sentence was hardcoded to PostgreSQL's `pg_stat_statements`
 advice on every engine, measured in the browser on 2026-08-19 against **this** panel on a search
-connection (`docs/BACKLOG.md` U12) - the #427 defect in another panel, and fixed the same way: by
+connection (#463) - the #427 defect in another panel, and fixed the same way: by
 reading the label.
 
 These are not decoration. `inventory-noun.ts` lowercases `entityName` into the noun the **agent**

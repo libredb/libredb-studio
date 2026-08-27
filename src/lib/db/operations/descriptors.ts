@@ -114,7 +114,7 @@ export const sqlTableProfileDescriptor: RegistrableOperationDescriptor = {
   // satisfy the statement guard exactly as a model-drafted read does.
   inputSchema: agentReadSqlInput,
   verification: {
-    reviewedBy: "issue #330 T3 (epic #325 product decision, reversing docs/BACKLOG.md B17)",
+    reviewedBy: "issue #330 T3 (epic #325 product decision, reversing the monitoring-tools deferral)",
     boundary: BOUNDED_READ_BOUNDARY,
     verifiedOn: "2026-08-12",
   },
@@ -169,9 +169,10 @@ const CURATED_OPERATION_READ_ID = "db.operations.read";
 /**
  * The curated operational read: what the engine says about ITSELF.
  *
- * A FIFTH descriptor, and the one `docs/BACKLOG.md` B27 said would need its own
- * shape — "a metrics read needs a descriptor shape for non-SQL reads". This is that
- * shape: an input contract that carries no statement at all.
+ * A FIFTH descriptor. The gap was an assessment that reported no monitor snapshot,
+ * and what closing it needed was named there — "a metrics read needs a descriptor
+ * shape for non-SQL reads" (#372). This is that shape: an input contract that carries
+ * no statement at all.
  *
  * **R0/`metadata-read`, and that is a claim rather than a convenience.** R1 requires
  * a `RiskVerification` naming the database-native mechanism that bounds the

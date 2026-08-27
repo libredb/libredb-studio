@@ -64,14 +64,14 @@ interface StudioMobileHeaderProps {
    * The transaction trio, supplied together or not at all — the same contract
    * `QueryToolbar` states. A caller whose provider declares no transaction session
    * omits all three and BEGIN/COMMIT/ROLLBACK do not render, instead of offering
-   * three items that answer HTTP 400 (#U13).
+   * three items that answer HTTP 400 (#464).
    */
   onBeginTransaction?: () => void;
   onCommitTransaction?: () => void;
   onRollbackTransaction?: () => void;
   /**
    * Omitted where the caller cannot run sandboxed queries: the sandbox auto-rolls-back
-   * through the same transaction route, so it is withheld with the trio (#U13).
+   * through the same transaction route, so it is withheld with the trio (#464).
    */
   onTogglePlayground?: () => void;
   /** Omitted where the provider declares no inline row editing (issue #269). */

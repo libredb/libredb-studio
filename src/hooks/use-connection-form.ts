@@ -117,7 +117,7 @@ function degradedSentence(result: TestOutcome): string {
 
 /**
  * The banner's three renderings. `success` and `error` are the two outcomes the
- * banner always had; `warning` is the missing third one (#U19) - a caution that is
+ * banner always had; `warning` is the missing third one (#498) - a caution that is
  * neither a completed action nor a refusal, such as a degraded connect/save offer or
  * a paste that filled the form but could not apply one setting. A single field
  * instead of `success` plus a `degraded` flag, because two booleans read together is
@@ -473,7 +473,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         setTestResult({
           // The save is being OFFERED, not refused, and not yet completed either - a
           // sentence that asks the user to click again does not belong under a
-          // "success" tick (#U19). This is the same class as the degraded
+          // "success" tick (#498). This is the same class as the degraded
           // `handleTestConnection` message above: connected, but the server answered
           // no health data.
           tone: "warning",

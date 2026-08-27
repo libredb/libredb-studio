@@ -430,7 +430,7 @@ function deriveFindings(
  * Stated that precisely because the inventory still has a known blind spot, and a
  * finding worded as "this foreign key is unindexed" would overstate it:
  * **PostgreSQL expression indexes are absent**, and a partly-expression index
- * appears carrying only its plain columns (`docs/BACKLOG.md` B7).
+ * appears carrying only its plain columns (#463).
  *
  * SQLite's constraint-created indexes WERE a second blind spot (B25) and are not
  * one any more: SQLite stores no DDL for them, so the composed index read cannot

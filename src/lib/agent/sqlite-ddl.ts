@@ -44,7 +44,7 @@ export interface SqliteTableDefinition {
    * the composed index read (`sql IS NOT NULL`) cannot see them, and the table's own
    * DDL — where the constraint is declared — is the only place the agent path can
    * learn they exist. Leaving them out made a foreign key covered by a `UNIQUE`
-   * constraint read as unindexed (`docs/BACKLOG.md` B25).
+   * constraint read as unindexed (#502).
    */
   readonly indexes: readonly IndexSchema[];
 }

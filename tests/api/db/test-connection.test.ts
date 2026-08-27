@@ -15,7 +15,7 @@ const mockCreateDatabaseProvider = mock(async (connection?: unknown) => {
 
 /**
  * The writable provider already holding a single-writer file, when one is open
- * (`docs/BACKLOG.md` D3). Null by default: every engine but LibreDB is in that state.
+ * (#498). Null by default: every engine but LibreDB is in that state.
  */
 const borrowedProvider = createMockProvider();
 const mockFindOpenSingleWriterProvider = mock((): unknown => null);
@@ -380,7 +380,7 @@ describe("POST /api/db/test-connection", () => {
 
     expect(disconnectsAtScopeExit).toBe(1);
   });
-  // ─── Single-writer files (docs/BACKLOG.md D3) ─────────────────────────────
+  // ─── Single-writer files (#498) ───────────────────────────────────────────
   // An engine that declares `ProviderCapabilities.singleWriterFile` admits ONE handle
   // per file, so building a second provider to test it is refused by the lock the live
   // connection itself holds. The dialog tests before it saves, so that made the

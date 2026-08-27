@@ -96,7 +96,7 @@ const libredbCaps = caps({
  */
 const searchCaps = caps({ supportsMaintenance: false, maintenanceOperations: [] });
 /**
- * SQLite-shaped (#U9): `VACUUM` rewrites the whole file and takes no target, so the
+ * SQLite-shaped (#496): `VACUUM` rewrites the whole file and takes no target, so the
  * provider declares `vacuum: { perEntity: false }` — and the monitoring Tables tab
  * already withholds that control while this menu still offered it for ONE table.
  */
@@ -109,7 +109,7 @@ const sqliteCaps = caps({
   },
 });
 /**
- * MySQL-shaped (#U9): no `vacuum` at all, and the vacuum SLOT names `optimize` —
+ * MySQL-shaped (#496): no `vacuum` at all, and the vacuum SLOT names `optimize` —
  * which is the operation whose `perEntity` decides whether the item may appear.
  */
 const mysqlCaps = caps({
@@ -728,7 +728,7 @@ describe("TableItem", () => {
     });
 
     /*
-      A THIRD surface renders the same wording (#U9). This menu gated both items on
+      A THIRD surface renders the same wording (#496). This menu gated both items on
       `supportsMaintenance` alone, so on SQLite it offered "Vacuum Table" for ONE table
       while the monitoring Tables tab correctly withheld that control — SQLite declares
       `vacuum: { perEntity: false }` because `VACUUM` rewrites the whole file and

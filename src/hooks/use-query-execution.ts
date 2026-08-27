@@ -106,7 +106,7 @@ export function useQueryExecution({
    * the common case (the plan still describes the results on screen) and wrong for
    * the one that mattered: run A finishes, run B runs and finishes, then A's slow
    * EXPLAIN resolves, finds nothing, and writes A's plan over B's results
-   * (docs/BACKLOG.md U1). This map is never cleared per run, so it answers for that
+   * (#422). This map is never cleared per run, so it answers for that
    * window too.
    */
   const lastRunRef = useRef(new Map<string, string>());
@@ -409,7 +409,7 @@ export function useQueryExecution({
           const errorCode = error.code as string | undefined;
           // A 429's own body may say nothing about the wait, but its header always
           // carries one — name it, so the user retries when the budget is back instead
-          // of hammering a closed door (docs/BACKLOG.md H2). Only the 429 is rephrased:
+          // of hammering a closed door (#459). Only the 429 is rephrased:
           // a Retry-After on any other status says nothing about this query's failure.
           const retryAfter = response.status === 429 ? retryAfterSeconds(response) : null;
           const errorMessage =

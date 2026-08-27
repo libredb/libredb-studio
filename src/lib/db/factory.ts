@@ -259,7 +259,7 @@ interface CachedProvider {
 const providerCache = new Map<string, CachedProvider>();
 
 // ============================================================================
-// Single-writer file reuse (docs/BACKLOG.md D3 and B49)
+// Single-writer file reuse (#498)
 // ============================================================================
 
 /**

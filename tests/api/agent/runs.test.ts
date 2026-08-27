@@ -474,7 +474,7 @@ describe("POST /api/agent/runs", () => {
 
   /*
     A model that cannot call tools is refused BEFORE a run exists, which is the whole
-    point of the gate (`docs/BACKLOG.md` B18): otherwise the run opens, spends a drive
+    point of the gate (#340): otherwise the run opens, spends a drive
     and ends having answered in prose, and the user is left reading a failed run to
     learn something the server could have said at the start. 422 because the request is
     well-formed — it is the configuration that cannot honour it — and no ledger is

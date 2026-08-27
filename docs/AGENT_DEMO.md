@@ -241,7 +241,7 @@ really declares none is described the same way — as a graph this run cannot vo
 price of not stating the negative, and the cheaper of the two errors.
 
 **Run it from a production build** (`bun run build` then `bun run start`). In development React needs
-`eval`, which the CSP does not allow, so the login page does not hydrate (`docs/BACKLOG.md` B40).
+`eval`, which the CSP does not allow, so the login page does not hydrate (#459).
 
 **Two axes, and you now choose only one of them.** Plan or Agent decides whether the run may touch
 the database, and that is still a button you press. What the run is *for* — Investigate / Analyze /
@@ -591,10 +591,14 @@ are worth knowing before you show this:
 - *"How many users are stored, and how do I look one up?"* → drafted **`KEYS user:*`**, and explained
   the lookup as `HGETALL user:<id>` — a whole key, which is the new rule working. `KEYS` is not: it is
   the blocking O(N) command Studio's own provider refuses to use, and the product is offering it with
-  an Apply-to-editor button. Nothing runs unless the user applies and runs it, and this is recorded as
-  `docs/BACKLOG.md` **B50** rather than fixed, because whether the rules should speak about
-  operational cost at all is an open question the owner has not ruled on. Do not show this one, and do
-  not claim the Redis drafts are safe to run unread.
+  an Apply-to-editor button. Nothing runs unless the user applies and runs it, and whether the
+  planning rules should speak about operational cost at all was **ruled on and declined** on
+  2026-08-22 (#459): a rule naming one command is engine trivia that goes stale, teaches nothing about
+  the next command, and buys nothing plan mode does not already have - plan mode holds no tools, so
+  reaching the hazard takes the user applying the draft and running it on their own connection. The
+  reasoning is recorded at `planningDerivedGroupingsRule` in `src/lib/agent/investigation.ts` so the
+  question is not reopened. Show this one only alongside that ruling, and do not claim the Redis
+  drafts are safe to run unread.
 
 *One thing to watch for on stage, because it was there when this script was driven and is not now:*
 a plan-mode Operate run used to name the **wrong engine's** readings with complete confidence — a

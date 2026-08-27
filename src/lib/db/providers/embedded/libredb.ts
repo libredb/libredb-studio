@@ -197,14 +197,14 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       // `users` prefix, drafted `GET users:*`. `dispatchCommand` gives `get` exactly
       // one meaning - `kv.get(parts[1])`, an exact-key lookup with no glob of any kind
       // - so that command answers zero rows and NO error, which on a key-value store
-      // reads as "nothing stored there" rather than as a mistake (#B55). The cause is
+      // reads as "nothing stored there" rather than as a mistake (#518). The cause is
       // the one Redis has: the inventory's rows are named `users:*`, which reads as a
       // wildcard this grammar does not have, so the sentence names all five verbs and
       // says in words what `tablesAreDerivedGroupings` says in a flag.
       statementLanguage:
         "LibreDB's own command grammar - exactly one command on one line, in one of the five forms `get <key>`, `put <key> <value>`, `delete <key>`, `prefix <p>` or `range <start> <end>` - and NOT SQL and not a shell: every key is matched EXACTLY, with no glob and no wildcard, so `get users:*` looks up a key literally named `users:*` and answers nothing; the inventory's `prefix:*` rows are groupings this engine summarised, not keys, so reach every entry under one with `prefix users:` and a single entry by its real name",
       // `getSlowQueries()` answers `[]` unconditionally, so the monitoring Queries
-      // panel is ALWAYS empty here - and it used to name a PostgreSQL extension (#U12).
+      // panel is ALWAYS empty here - and it used to name a PostgreSQL extension (#463).
       slowQueriesEmptyState: "LibreDB keeps no statistics about finished statements in this version.",
     };
   }

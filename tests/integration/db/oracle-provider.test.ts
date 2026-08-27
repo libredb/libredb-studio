@@ -995,7 +995,7 @@ describe("OracleProvider", () => {
       // `UPDATE t SET c = v WHERE pk = v` is core Oracle DML — the shape the inline
       // row editor builds (#269).
       expect(caps.supportsInlineRowEdit).toBe(true);
-      // One held connection carries the transaction, so the trio is offered (#U13).
+      // One held connection carries the transaction, so the trio is offered (#464).
       expect(caps.supportsTransactions).toBe(true);
       // Inherited from the base capabilities: this engine declares foreign keys, so
       // an empty `foreignKeys` list is a fact about the schema or the role, never
@@ -1404,7 +1404,7 @@ describe("OracleProvider", () => {
     // The target is a TABLE name, because a table name is the only thing either
     // maintenance surface has to send. Building `ALTER INDEX "<target>" REBUILD` from
     // it answered ORA-01418 for every table there is - measured against Oracle AI
-    // Database 26ai Free on 2026-08-25, then re-run after this fix (#U9).
+    // Database 26ai Free on 2026-08-25, then re-run after this fix (#496).
     test("optimize with a table target rebuilds the indexes THAT TABLE owns", async () => {
       const captured: string[] = [];
       let indexQueryBinds: unknown;

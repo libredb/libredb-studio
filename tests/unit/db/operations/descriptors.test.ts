@@ -29,7 +29,7 @@ describe("canonical operation registry", () => {
     // Six since #414, which gave the provider's own schema inspection an id so that
     // grounding on an engine with no composed catalog goes through the audited path
     // rather than beside it. Five since the `operations` workflow, which added the
-    // first descriptor carrying no statement at all (`docs/BACKLOG.md` B27). Four
+    // first descriptor carrying no statement at all (#372). Four
     // since #330 T3, which reopened a decision epic #325 had pinned at three.
     // The assertion is exact-array equality on purpose: it is the one place a
     // descriptor can be added without somebody noticing.

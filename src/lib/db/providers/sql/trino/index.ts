@@ -279,7 +279,7 @@ export class TrinoProvider extends SQLBaseProvider {
       maintenanceOperations: ["kill"],
       // Trino owns no storage and computes no statistics, so the only operation it
       // has is terminating a statement - and that needs the query id the Sessions
-      // panel lists, which is neither a table nor a whole database (#U9).
+      // panel lists, which is neither a table nor a whole database (#496).
       maintenanceOperationSpecs: {
         kill: { label: "Terminate Query", perEntity: false, global: false },
       },
@@ -329,7 +329,7 @@ export class TrinoProvider extends SQLBaseProvider {
         "Trino is a query engine: the bytes live in the systems its connectors reach, and reclaiming them is done there. Nothing runs from here.",
       // `getSlowQueries()` reads system.runtime.queries, which is the coordinator's own
       // bounded history rather than a persisted store - a different fact from the
-      // PostgreSQL extension the panel used to advertise (#U12).
+      // PostgreSQL extension the panel used to advertise (#463).
       slowQueriesEmptyState:
         "Query stats come from system.runtime.queries, which holds only what this coordinator still remembers.",
     };

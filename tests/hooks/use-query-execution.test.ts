@@ -1749,7 +1749,7 @@ describe("useQueryExecution", () => {
     expect(tabWithPlan?.explainPlan).toEqual({ format: "postgres-json", raw: { plan: "Seq Scan" } });
   });
 
-  // ── a background EXPLAIN that outlives BOTH runs (docs/BACKLOG.md U1) ──────
+  // ── a background EXPLAIN that outlives BOTH runs (#422) ────────────────────
   //
   // Ownership cannot be read from the in-flight map: the run deletes its own entry
   // when it settles, so an EXPLAIN resolving after its query finished AND after a
@@ -2648,7 +2648,7 @@ describe("useQueryExecution", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
-  // ── A 429 names the wait (docs/BACKLOG.md H2) ──────────────────────────────
+  // ── A 429 names the wait (#459) ────────────────────────────────────────────
 
   describe("rate-limited runs", () => {
     test("a 429 with Retry-After tells the user how long to wait", async () => {

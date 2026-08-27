@@ -99,7 +99,7 @@ export interface AgentRunFollower {
    *
    * It exists because a reload clears `runId`, so the next question is answered as a
    * fresh one. The rail was honest about the RESULT — no thread, no strip — and silent
-   * about the TRANSITION, which is the half a user mid-conversation needs (#B69). Null
+   * about the TRANSITION, which is the half a user mid-conversation needs (#518). Null
    * whenever `thread` is set: the two never describe the same conversation.
    */
   readonly interrupted: AgentInterruptedThread | null;
@@ -202,7 +202,7 @@ const isStartRefusalCode = (value: unknown): value is AgentStartRefusalCode => v
  * `lib/community/star-prompt.ts` states for the same reason. Every access is wrapped, and
  * every failure degrades to "nothing was interrupted", which is the behaviour before this
  * existed: a rail that cannot say a conversation ended is strictly better than one that
- * cannot open a run (#B69).
+ * cannot open a run (#518).
  */
 const THREAD_STORAGE_KEY = "libredb_agent_thread";
 

@@ -457,7 +457,7 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("libredb");
   });
 
-  // ─── supportsTransactions agrees with the route's own shape check (#U13) ───
+  // ─── supportsTransactions agrees with the route's own shape check (#464) ───
   //
   // `POST /api/db/transaction` gates on `isTransactionProvider(provider)` — the three
   // methods being present — which no client can read, so `Studio.tsx` reads the
@@ -1318,7 +1318,7 @@ describe("acquireExecutionProfileProvider", () => {
 });
 
 // ============================================================================
-// Single-writer file reuse (docs/BACKLOG.md D3 and B49)
+// Single-writer file reuse (#498)
 // ----------------------------------------------------------------------------
 // A provider that declares `singleWriterFile` admits ONE open handle per file, so
 // the two callers that build a SECOND provider on a file the writable cache is
@@ -1632,7 +1632,7 @@ describe("withOneShotTunnel", () => {
 });
 
 /**
- * Grounding a plan run on a file the editor already has open (`docs/BACKLOG.md` B49).
+ * Grounding a plan run on a file the editor already has open (#498).
  *
  * The real package, the real factory and a real file: the lock these assert against is
  * the driver's own. `acquireExecutionProfileProvider` used to open a SECOND handle here

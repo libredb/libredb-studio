@@ -148,7 +148,7 @@ export default function Studio() {
     : undefined;
 
   // The transaction trio and the sandbox toggle are offered only where the provider
-  // declares it holds a transaction session (#U13). The server's gate is
+  // declares it holds a transaction session (#464). The server's gate is
   // `isTransactionProvider(provider)` — a runtime shape check no client can read — so
   // both shells used to supply all four unconditionally and POST /api/db/transaction
   // answered 400 "Transaction control is not supported for this database type"
@@ -327,7 +327,7 @@ export default function Studio() {
   const userCanToggle = canToggleMasking(user?.role, maskingConfig);
 
   // The Explorer's per-row items call this with the row's name; without carrying it
-  // the tab opened with nothing selected (#U5). The name rides the query string —
+  // the tab opened with nothing selected (#459). The name rides the query string —
   // the admin section is routed, so a param is what a section page can read. The
   // non-admin /monitoring route has no such reader, so it keeps the bare path.
   const openMaintenance = (_tab?: "global" | "tables" | "sessions", table?: string) => {

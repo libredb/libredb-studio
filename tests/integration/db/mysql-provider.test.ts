@@ -852,7 +852,7 @@ describe("MySQLProvider", () => {
       // The base default put "Vacuum Table" in the explorer's per-row menu and
       // "Run Vacuum / Reclaim Space" on the Operations tab for an engine that has
       // neither, and the global card was gated on the literal `vacuum`, so MySQL's
-      // own wording could never appear (#U9).
+      // own wording could never appear (#496).
       const labels = new MySQLProvider(makeMySQLConfig()).getLabels();
 
       expect(labels.vacuumAction).toBe("Optimize Table");
@@ -873,7 +873,7 @@ describe("MySQLProvider", () => {
       // `UPDATE t SET c = v WHERE pk = v` is core MySQL DML — the shape the inline
       // row editor builds (#269).
       expect(caps.supportsInlineRowEdit).toBe(true);
-      // One held connection carries the transaction, so the trio is offered (#U13).
+      // One held connection carries the transaction, so the trio is offered (#464).
       expect(caps.supportsTransactions).toBe(true);
       // Inherited from the base capabilities: this engine declares foreign keys, so
       // an empty `foreignKeys` list is a fact about the schema or the role, never

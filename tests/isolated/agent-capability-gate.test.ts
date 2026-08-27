@@ -1,5 +1,5 @@
 /**
- * The start path's model gate (`docs/BACKLOG.md` B18).
+ * The start path's model gate (#340).
  *
  * `probeAgentModel` establishes positively that a configured model calls tools, honours
  * the schema its arguments are declared against, and streams — and until now nothing

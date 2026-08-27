@@ -306,7 +306,7 @@ describe("bounds and empty shapes", () => {
 
   test("the same edge arriving twice is rendered once", () => {
     // PostgreSQL's catalog read returns a composite key as the cross product of its
-    // sides (docs/BACKLOG.md B8), so a pair can genuinely arrive more than once.
+    // sides (#463), so a pair can genuinely arrive more than once.
     const duplicated = table("orders", {
       foreignKeys: [
         { columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" },
@@ -321,7 +321,7 @@ describe("bounds and empty shapes", () => {
 describe("a pairing this inventory cannot know is not invented", () => {
   /**
    * PostgreSQL's catalog read returns a composite foreign key as the cross product
-   * of its sides (`docs/BACKLOG.md` B8): `FOREIGN KEY (x, y) REFERENCES p(a, b)`
+   * of its sides (#463): `FOREIGN KEY (x, y) REFERENCES p(a, b)`
    * arrives as four edges, of which two are false. Rendering them as exact joins
    * would have this block assert a relation the database does not have — the very
    * thing the quoting exists to prevent. Found by review on #347.

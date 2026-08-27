@@ -555,12 +555,12 @@ export class MySQLProvider extends SQLBaseProvider {
    *
    * MySQL rendered the base default *"Vacuum Table"* in the explorer's per-row menu
    * and the base *"Run Vacuum" / "Reclaim Space"* copy on the Operations tab, for an
-   * engine whose operations are `analyze`/`optimize`/`check`/`kill` (#U9). The words
+   * engine whose operations are `analyze`/`optimize`/`check`/`kill` (#496). The words
    * below name what MySQL actually runs, and `vacuumActionOperation` says which
    * operation the surfaces should send for them.
    *
    * `getSlowQueries()` reads `performance_schema.events_statements_summary_by_digest`,
-   * and the panel used to name PostgreSQL's extension in its empty state (#U12) - a
+   * and the panel used to name PostgreSQL's extension in its empty state (#463) - a
    * statement store MySQL does not have under any name.
    *
    * The sentence describes the SOURCE and what an empty list means about it, and stops

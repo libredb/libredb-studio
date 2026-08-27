@@ -420,7 +420,7 @@ export class OracleProvider extends SQLBaseProvider {
       vacuumAction: "Rebuild Indexes",
       // Oracle has no VACUUM; this slot has always said "Rebuild Indexes", which is
       // `optimize`. Saying so is what lets the two surfaces send that operation
-      // instead of a `vacuum` this provider rejects (#U9).
+      // instead of a `vacuum` this provider rejects (#496).
       vacuumActionOperation: "optimize",
       analyzeGlobalLabel: "Gather Stats",
       analyzeGlobalTitle: "Gather Statistics",
@@ -430,7 +430,7 @@ export class OracleProvider extends SQLBaseProvider {
       vacuumGlobalDesc: "Rebuilds all indexes to reclaim space and improve performance.",
       // `getSlowQueries()` reads V$SQL, and a user without SELECT on the V$ views gets
       // `[]` from the swallowed failure. The panel used to name a PostgreSQL extension
-      // there (#U12); the grant is the thing an Oracle DBA can act on.
+      // there (#463); the grant is the thing an Oracle DBA can act on.
       slowQueriesEmptyState: "Query stats come from V$SQL, which this user needs SELECT on to read.",
     };
   }

@@ -163,7 +163,7 @@ export function SessionsTab({ data, loading, onKillSession, isAdmin = true, labe
             <div className="text-center py-8 text-muted-foreground">
               <Users strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
               {/* An engine that publishes no session list says so in its own words
-                  (#D48). The default reads as "nothing is running right now", which is
+                  (#518). The default reads as "nothing is running right now", which is
                   false on a panel that can never show a row. Absent label = today's
                   wording, so `postgres` is unchanged. */}
               <p className="text-xs">{labels?.sessionsEmptyState ?? "No active sessions found."}</p>

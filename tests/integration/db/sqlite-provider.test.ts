@@ -296,7 +296,7 @@ describe("SQLiteProvider", () => {
       expect(caps.supportsInlineRowEdit).toBe(true);
       // False although SQLite HAS transactions: this provider holds no session for
       // one, so POST /api/db/transaction refuses the call and the controls must not
-      // be offered (#U13). The flag describes the provider's surface, not the engine.
+      // be offered (#464). The flag describes the provider's surface, not the engine.
       expect(caps.supportsTransactions).toBe(false);
       // Inherited from the base capabilities: this engine declares foreign keys, so
       // an empty `foreignKeys` list is a fact about the schema or the role, never
@@ -972,7 +972,7 @@ describe("SQLiteProvider", () => {
 
     // SQLite declares the `reindex` maintenance operation and `runMaintenance()`
     // sends a bare `REINDEX` for the global card, which rebuilds every index in the
-    // FILE - not in a database of tables the way the hardcoded copy read (#U6).
+    // FILE - not in a database of tables the way the hardcoded copy read (#464).
     test("declares the global reindex wording the bare REINDEX it runs deserves", () => {
       const labels = new SQLiteProvider(makeSQLiteConfig()).getLabels();
 

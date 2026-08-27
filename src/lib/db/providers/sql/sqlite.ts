@@ -302,7 +302,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       // `VACUUM` rewrites the whole database file and takes no object at all, and
       // `PRAGMA integrity_check` reads the whole file the same way - `runMaintenance`
       // ignores the target for both, so a per-table control there named one table and
-      // acted on the database (#U9). `ANALYZE` and `REINDEX` do take a bare name and
+      // acted on the database (#496). `ANALYZE` and `REINDEX` do take a bare name and
       // also run over everything without one.
       maintenanceOperationSpecs: {
         vacuum: { label: "Vacuum Database", perEntity: false, global: true },
@@ -319,7 +319,7 @@ export class SQLiteProvider extends SQLBaseProvider {
    *
    * `getSlowQueries()` answers `[]` unconditionally, so the monitoring Queries panel
    * is ALWAYS empty here - and it used to tell the reader to install a PostgreSQL
-   * extension (#U12).
+   * extension (#463).
    */
   public override getLabels(): ProviderLabels {
     return {

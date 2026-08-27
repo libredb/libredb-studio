@@ -439,7 +439,7 @@ shared query generators emit statements this engine refuses.
 whitespace and a newline after the semicolon count as trailing, which is what a statement pasted out
 of a file carries. This is the second Trino grammar quirk the provider absorbs for the caller — the
 first is the `OFFSET`/`LIMIT` transposition ([§3.5](#35-offset-comes-before-limit)) — and absorbing
-one and not the other was the inconsistency (`docs/BACKLOG.md` D5). Nothing inside the product was
+one and not the other was the inconsistency (#463). Nothing inside the product was
 affected either way: `splitStatements()` consumes the semicolon as its delimiter, so the caller who
 hit this was a consumer of the published package calling `query()` directly.
 
@@ -759,7 +759,7 @@ Declaring that an operation EXISTS is not enough to put a button on it: two engi
 declare the same `MaintenanceType` take different kinds of target, so each provider also
 declares what its own operations may be pointed at. The monitoring Tables tab renders a
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
-card only where `global` is true, and both take the wording from `label` (#U9).
+card only where `global` is true, and both take the wording from `label` (#496).
 
 `POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
 REFUSES rather than hides: it takes the placement from whether the request carries a `target`
@@ -792,7 +792,7 @@ are undeclared.
 | `supportsExternalQueryLimiting` | `true` | `LIMIT` is injected by the shared limiter, transposed ([§3.5](#35-offset-comes-before-limit)) |
 | `supportsCreateTable` | `true` | In the grammar, live-verified on `memory` ([§5.5](#55-writes-belong-to-the-connector-not-to-the-engine)) |
 | `supportsInlineRowEdit` | `false` | No primary key exists to build a one-row `WHERE` ([§3.8](#38-no-keys-no-indexes--and-why-that-is-a-fact-about-the-engine)) |
-| `supportsTransactions` | `false` | Trino has `START TRANSACTION`, but a transaction lives in an HTTP session header this provider does not carry between statements, so the trio and SANDBOX are not offered (#U13) |
+| `supportsTransactions` | `false` | Trino has `START TRANSACTION`, but a transaction lives in an HTTP session header this provider does not carry between statements, so the trio and SANDBOX are not offered (#464) |
 | `declaresForeignKeys` | `false` | Not in the model at all ([§3.8](#38-no-keys-no-indexes--and-why-that-is-a-fact-about-the-engine)) |
 | `supportsMaintenance` | `true` | |
 | `maintenanceOperations` | `["kill"]` | The only operation the engine itself can promise ([§8](#8-maintenance)) |
@@ -818,7 +818,7 @@ nor the storage.
 | `slowQueriesEmptyState` | *Query stats come from system.runtime.queries, which holds only what this coordinator still remembers.* |
 
 The last one is about the monitoring tab rather than maintenance: the Queries panel's empty state was
-hardcoded to PostgreSQL's `pg_stat_statements` advice on every engine (`docs/BACKLOG.md` U12), and
+hardcoded to PostgreSQL's `pg_stat_statements` advice on every engine (#463), and
 what Trino has instead is the coordinator's own bounded history ([§7](#7-monitoring--health)).
 
 ---

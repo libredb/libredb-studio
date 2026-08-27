@@ -415,7 +415,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       maintenanceOperations: ["analyze", "check", "optimize", "kill"],
       // `optimize` is `ALTER INDEX ALL ON [<t>] REBUILD`, so its target is a TABLE
       // even though the wording says indexes - the same words Oracle uses for an
-      // operation that needed a different kind of name (#U9). `check` is
+      // operation that needed a different kind of name (#496). `check` is
       // `DBCC CHECKDB`, which takes no object: `runMaintenance` ignores the target,
       // so only a global control can honestly offer it.
       maintenanceOperationSpecs: {
@@ -434,7 +434,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       vacuumAction: "Rebuild Indexes",
       // The vacuum slot has said "Rebuild Indexes" since this provider shipped, and
       // that is `optimize`, not `vacuum` - so the global card gated on the literal
-      // `vacuum` never rendered these words at all (#U9).
+      // `vacuum` never rendered these words at all (#496).
       vacuumActionOperation: "optimize",
       analyzeGlobalLabel: "Update Stats",
       analyzeGlobalTitle: "Update Statistics",
@@ -444,7 +444,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       vacuumGlobalDesc: "Rebuilds all indexes to reclaim space and reduce fragmentation.",
       // `getSlowQueries()` reads sys.dm_exec_query_stats, and a login without VIEW
       // SERVER STATE gets `[]` from the swallowed failure. The panel used to name a
-      // PostgreSQL extension there (#U12); the permission is what a DBA can act on.
+      // PostgreSQL extension there (#463); the permission is what a DBA can act on.
       slowQueriesEmptyState:
         "Query stats come from sys.dm_exec_query_stats, which needs the VIEW SERVER STATE permission.",
     };

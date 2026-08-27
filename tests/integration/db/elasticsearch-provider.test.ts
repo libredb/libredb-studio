@@ -815,7 +815,7 @@ describe("ElasticsearchProvider metadata", () => {
 
   test("the empty slow-query panel says the slow log is a node file, not a missing extension", () => {
     // Measured 2026-08-19 in Chrome on an OpenSearch connection: the monitoring Queries
-    // tab told a search cluster to enable `pg_stat_statements` (#U12). `getSlowQueries()`
+    // tab told a search cluster to enable `pg_stat_statements` (#463). `getSlowQueries()`
     // is empty by design on both products, so this panel is ALWAYS empty here, and the
     // sentence is the one §7 of the provider doc already used.
     const { slowQueriesEmptyState } = new ElasticsearchProvider(makeConnection()).getLabels();

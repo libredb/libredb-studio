@@ -1506,7 +1506,7 @@ describe("the inventories a process holds", () => {
 });
 
 /**
- * The identity a held inventory is filed under (`docs/BACKLOG.md` B45).
+ * The identity a held inventory is filed under (#509).
  *
  * The hold was keyed on the connection ID alone, and nothing in an
  * `AgentContextSnapshot` records WHICH database a reading came from — it carries an id,

@@ -710,7 +710,7 @@ describe("Studio", () => {
   });
 
   // The Explorer's row items call this with the row's name; it rides the admin
-  // route's query string so the Operations tab lands on that row (#U5).
+  // route's query string so the Operations tab lands on that row (#459).
   test("openMaintenance carries the named row to the operations tab", () => {
     render(<Studio />);
     const fn = capturedSidebarProps.onOpenMaintenance as (tab?: string, table?: string) => void;
@@ -1179,7 +1179,7 @@ describe("Studio", () => {
     expect(capturedBottomPanelProps.editingEnabled).toBe(true);
   });
 
-  // --- Transaction capability gate (#U13) ---
+  // --- Transaction capability gate (#464) ---
   test("passes the transaction trio and the sandbox toggle through when supportsTransactions is true", () => {
     // The positive first: the default mock declares the capability, so both shells
     // must receive all four callbacks and they must reach the hook.

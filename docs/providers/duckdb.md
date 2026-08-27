@@ -281,7 +281,7 @@ screen**, through the two `ProviderLabels` fields the provider declares:
 - `getSlowQueries()` returns `[]` and the provider declares `slowQueriesEmptyState`, so the Queries
   panel prints *"DuckDB keeps no store of finished statements — it publishes no `duckdb_queries()`
   table function — so there is nothing to enable."* Without it that panel tells every engine to
-  install `pg_stat_statements`, which for DuckDB is nonsense (#U12).
+  install `pg_stat_statements`, which for DuckDB is nonsense (#463).
 - `getActiveSessions()` returns `[]` and the provider declares `sessionsEmptyState`, so `SessionsTab`
   and `OperationsTab` print *"DuckDB publishes no session list — there is no `duckdb_connections()`
   table function — so this panel can never show a row."* in place of the generic **"No active

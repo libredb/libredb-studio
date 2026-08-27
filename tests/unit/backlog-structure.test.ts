@@ -187,3 +187,142 @@ describe("every index line is derived from the entries it summarises", () => {
     }
   });
 });
+
+/**
+ * Every `docs/BACKLOG.md <ID>` citation in the tree names an entry that is still there.
+ *
+ * The file is a work list, so an entry LEAVES it when the work lands. 208 citations across 101
+ * files had outlived their entries that way - 30 dead ids - and nothing measured it: the guard
+ * above this one asks whether the index is derived from the bodies, and the one in
+ * `tests/unit/agent-documentation.test.ts` asks the same question of `docs/AGENT.md` alone,
+ * scoped to the M2 section's `B` ids. A citation from a source comment was checked by nobody,
+ * so a reader who followed one found an empty grep and had to decide whether the comment or the
+ * file was wrong.
+ *
+ * The count arrived in three instalments, and both jumps were the pattern's fault rather than
+ * the tree's - worth recording, because a guard that under-reports reads exactly like a clean
+ * one:
+ *
+ *  - Matching line by line found 77. Three citations wrap across a line break in a block
+ *    comment (`(\`docs/BACKLOG.md\`\n * B24, ...)`), so the scan now runs over whole files and
+ *    derives the line from the match offset.
+ *  - Those 80 were all of ONE form. An id written in the syntax of a PR reference - `#U9`,
+ *    parenthesised - accounted for another 128, more than the form anyone was looking for, and
+ *    43 of them named a single dead id.
+ *
+ * Three of the 208 were not pointer faults at all but stale CLAIMS, and they are the reason the
+ * two kinds are worth separating: each said an entry was open when it had been settled, so the
+ * comment argued for behaviour the code no longer had. One told a reader the held snapshot could
+ * not tell two databases apart, four paragraphs above the comment describing the key that tells
+ * them apart; one deferred a decision to the owner that the owner had ratified; one told a demo
+ * driver not to show a Redis draft because an open question hung over it, when the question had
+ * been ruled on and declined.
+ *
+ * The rule this pins is that the two kinds of reference are not interchangeable. A citation of
+ * `docs/BACKLOG.md` says *this is open* and has to resolve; a claim about work already done
+ * cites the PR that did it (`#463`), which is immutable and carries the reasoning. So closing an
+ * entry now means rewriting its citations in the same PR — the same lockstep the provider triad
+ * already runs on, and the reason this is a test rather than a convention.
+ *
+ * Non-vacuity is a positive control on the extractor plus a floor on the SCAN, never on the
+ * number of citations: that number falls every time an entry closes, and a floor under it would
+ * become a floor under the backlog itself.
+ *
+ * **The limit, stated rather than implied.** A THIRD form is not checked here and cannot be: the
+ * bare parenthesised id, `(U22)`. 232 of those are in the tree and 47 distinct ids among them
+ * name no live entry, but the shape is not the backlog's alone - `(S256)` is a PKCE
+ * code-challenge method and
+ * `(T6)` is a task number from issue #331, both indistinguishable from an entry id by pattern. A
+ * bare id that matches a live entry is a citation and needs no help; one that does not is either a
+ * dead citation or not a citation at all, and nothing in the text says which. So the two forms
+ * above are the ones with a machine-checkable answer, and the bare form is left to the reader on
+ * purpose.
+ */
+describe("no citation outlives the entry it names", () => {
+  /**
+   * `docs/BACKLOG.md <ID> and <ID>` cites two entries. Chains join on `and`, a comma or a slash.
+   *
+   * The ids in the control below are interpolated rather than written out, and that is the point:
+   * a literal example here would be a citation like any other, so this test's own fixtures were
+   * five of the eighty-four dangling sites it first reported. Interpolation keeps the source text
+   * unscannable while the runtime string still exercises the real shape, and taking the ids from
+   * the document means no example is pinned to an entry that will close.
+   */
+  const CITATION = /BACKLOG\.md`?[\s*]+((?:[A-Z]+\d+)(?:[\s*]*(?:and|,|\/)[\s*]*`?[A-Z]+\d+`?)*)/g;
+
+  const citedIn = (text: string): string[] =>
+    [...text.matchAll(CITATION)].flatMap((match) => match[1].match(/[A-Z]+\d+/g) ?? []);
+
+  /** Which line a match index falls on, since a citation may not start on the line it names. */
+  const lineOf = (text: string, index: number): number => text.slice(0, index).split("\n").length;
+
+  const SCAN_ROOTS = [
+    "src/**/*.{ts,tsx}",
+    "tests/**/*.{ts,tsx}",
+    "docs/**/*.md",
+    "scripts/**/*.mjs",
+    ".github/**/*.yml",
+  ];
+  const scanned = SCAN_ROOTS.flatMap((pattern) => [...new Bun.Glob(pattern).scanSync(ROOT)]).filter(
+    (file) => file !== BACKLOG_PATH,
+  );
+
+  const present = new Set(sections.flatMap((section) => section.ids.map((entry) => entry.id)));
+
+  /**
+   * The other citation form, and the one that outnumbers the first: `(#496)` — a backlog id written
+   * in the syntax of a PR reference. GitHub renders no link for it and a reader reasonably takes it
+   * for a pull request, so it is worse than a bare id and it was never valid.
+   *
+   * Told apart from a hex colour (`#FFF000` is in `src/lib/db-ui-config.ts`) by the PREFIX, taken
+   * from the document rather than listed here: `FFF` is not a prefix any entry uses, `B` is. A
+   * prefix that stops being used stops being scanned, which is the right failure — the ids under it
+   * are gone too.
+   */
+  const PREFIXES = new Set([...present].map((id) => /^([A-Z]+)/.exec(id)?.[1] ?? ""));
+  const AS_PR = /\(#([A-Z]+)(\d+)\)/g;
+
+  const idsWrittenAsPr = (text: string): { id: string; index: number }[] =>
+    [...text.matchAll(AS_PR)]
+      .filter((match) => PREFIXES.has(match[1]))
+      .map((match) => ({ id: `${match[1]}${match[2]}`, index: match.index }));
+
+  test("an id written as a PR reference is read, and a hex colour is not", () => {
+    const [one] = [...present];
+    expect(idsWrittenAsPr(`the same shape (#${one}) again`).map((hit) => hit.id)).toEqual([one]);
+    expect(idsWrittenAsPr("border: 1px solid #FFF000")).toEqual([]);
+    expect(idsWrittenAsPr("(#FFF000)")).toEqual([]);
+  });
+
+  test("the extractor reads a single citation and a chain", () => {
+    const [one, two] = [...present];
+    expect(citedIn(`filed as \`docs/BACKLOG.md\` ${one} for now`)).toEqual([one]);
+    expect(citedIn(`(docs/BACKLOG.md ${one} and ${two})`)).toEqual([one, two]);
+    expect(citedIn("nothing to see")).toEqual([]);
+  });
+
+  test("the scan reached the tree", () => {
+    // A mistyped glob returns nothing, and an empty scan makes the assertion below pass for the
+    // wrong reason. The floor is on files in the repo, which does not shrink when an entry closes.
+    expect(scanned.length).toBeGreaterThan(200);
+    expect(present.size).toBeGreaterThan(0);
+  });
+
+  test("every cited entry exists", () => {
+    const dangling = scanned.flatMap((file) => {
+      const text = readFileSync(path.join(ROOT, file), "utf8");
+      return [...text.matchAll(CITATION)].flatMap((match) =>
+        (match[1].match(/[A-Z]+\d+/g) ?? [])
+          .filter((id) => !present.has(id))
+          .map((id) => `${file}:${lineOf(text, match.index)} cites ${id}`),
+      );
+    });
+    const asPr = scanned.flatMap((file) => {
+      const text = readFileSync(path.join(ROOT, file), "utf8");
+      return idsWrittenAsPr(text)
+        .filter((hit) => !present.has(hit.id))
+        .map((hit) => `${file}:${lineOf(text, hit.index)} cites ${hit.id} as if it were a PR`);
+    });
+    expect([...dangling, ...asPr]).toEqual([]);
+  });
+});

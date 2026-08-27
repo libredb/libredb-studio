@@ -235,7 +235,7 @@ describe("POST /api/db/schema-snapshot", () => {
     expect(mockCreateDatabaseProvider.mock.calls[0]?.[0]).toMatchObject({ host: "127.0.0.1", port: 54321 });
   });
 
-  // ─── Single-writer file reuse (docs/BACKLOG.md D3) ────────────────────────
+  // ─── Single-writer file reuse (#498) ──────────────────────────────────────
   // Measured 2026-08-25 against the released 0.13.4 image: with the built-in LibreDB
   // sample connected, this route answered HTTP 503 "LibreDB file is already open by
   // another process (exclusive lock)" - so the Schema Diff tab's Snapshot button, its

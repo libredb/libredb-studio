@@ -653,7 +653,7 @@ Declaring that an operation EXISTS is not enough to put a button on it: two engi
 declare the same `MaintenanceType` take different kinds of target, so each provider also
 declares what its own operations may be pointed at. The monitoring Tables tab renders a
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
-card only where `global` is true, and both take the wording from `label` (#U9).
+card only where `global` is true, and both take the wording from `label` (#496).
 
 `POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
 REFUSES rather than hides: it takes the placement from whether the request carries a `target`
@@ -684,7 +684,7 @@ no control offers it.
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — Redis commands are not SQL, so there is no `UPDATE ... SET` for the results grid's inline editor to emit |
-| `supportsTransactions` | `false` — `MULTI`/`EXEC` exists in Redis and is not exposed through this provider, so the transaction trio and SANDBOX are not offered (#U13) |
+| `supportsTransactions` | `false` — `MULTI`/`EXEC` exists in Redis and is not exposed through this provider, so the transaction trio and SANDBOX are not offered (#464) |
 | `declaresForeignKeys` | `false` — Redis has no constraints at all, and the "tables" here are key prefixes this provider grouped rather than objects anyone declared |
 | `tablesAreDerivedGroupings` | `true` — `getSchema()` SCANs a bounded slice of the keyspace and groups the real key names it found by their prefix, so a `user:*` row is this server's own summary and not a key any command can be given. The agent layer states this to a plan run, in one sentence, so a grounded run does not draft a command against a grouping |
 | `supportsMaintenance` | `true` |
@@ -727,7 +727,7 @@ a `prefix:*` row is this server's grouping, not a key, so a prefix is reached wi
 slowlog-log-slower-than."*) is the monitoring Queries panel's empty state. It exists for the same
 reason the `analyzeGlobal*` triad had to be read rather than merely declared (#427): that panel's
 sentence was hardcoded to PostgreSQL's `pg_stat_statements` advice on every engine
-(`docs/BACKLOG.md` U12), while what is empty here is the `SLOWLOG` (§7).
+(#463), while what is empty here is the `SLOWLOG` (§7).
 
 `analyzeGlobalLabel` / `analyzeGlobalTitle` / `analyzeGlobalDesc` (*"Run Info"*, *"Server Info"*,
 *"Get Redis server information and statistics."*) are rendered by the admin Operations tab. The

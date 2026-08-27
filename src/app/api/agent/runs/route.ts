@@ -317,7 +317,7 @@ export async function POST(req: Request) {
     /*
       Before a run exists, not after one has failed. A model that cannot call tools
       would otherwise open a run, spend a drive and end having answered in prose — the
-      diagnosis gap `docs/BACKLOG.md` B18 describes. The gate refuses only what the
+      diagnosis gap #340 describes. The gate refuses only what the
       probe positively ESTABLISHED, so nothing that merely went wrong (a quota, a bad
       key, an unreachable endpoint) reaches here as a refusal; those still start, and
       the drive reports them in its own vocabulary. 422 rather than 400: the request is

@@ -278,7 +278,7 @@ condition as a clear `ConnectionError` (see [§10](#10-error-handling)):
   writer gets `LOCKED`.
 - **Studio's own second openers reuse the handle instead.** Inside this server the lock used to
   defeat three callers that build a provider outside the writable cache, and it did so every time
-  (`docs/BACKLOG.md` D3 and B49):
+  (#498):
   - `POST /api/db/test-connection` reported the lock as a failed connection test. The connection
     dialog tests before it saves, so **the built-in sample could not be edited at all**: the edit
     was discarded with a toast about a connection error, as if the sample were broken.
@@ -599,7 +599,7 @@ for a different reason — the rows are derived groupings, see 5.3.
 | `supportsExternalQueryLimiting` | `false` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — the command grammar (`get`/`put`/`delete`/`prefix`/`range`) has no `UPDATE ... SET` for the results grid's inline editor to emit |
-| `supportsTransactions` | `false` — the command grammar has no transaction verb at all, so the trio and SANDBOX are not offered (#U13) |
+| `supportsTransactions` | `false` — the command grammar has no transaction verb at all, so the trio and SANDBOX are not offered (#464) |
 | `declaresForeignKeys` | `false` — the catalog declares namespaces and columns and nothing that references another namespace, so there is no foreign key to read |
 | `tablesAreDerivedGroupings` | `true` — the namespaces come from a bounded `kv.range` over 10000 keys, grouped by prefix, so they are this server's summary of what one scan reached rather than objects the engine declares. The agent layer states this to a plan run in one sentence |
 | `singleWriterFile` | `true` — `lib.open({ path })` takes an exclusive `<path>.lock`, so this file admits ONE handle and a second open throws `LOCKED`. The three callers that used to open a second one reuse the open handle instead ([§4.2.1](#421-on-disk-format-locking-and-version-compatibility-02x)). The only engine that declares it: SQLite, the other file engine, takes its locks per transaction rather than at open |
@@ -640,7 +640,7 @@ statistics about finished statements in this version."* `getSlowQueries()` answe
 unconditionally ([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)), so the
 Queries panel is always empty here — and this label is why that emptiness is allowed to stand where
 the Sessions and Indexes panels refuse instead. Its sentence was hardcoded to PostgreSQL's
-`pg_stat_statements` advice (`docs/BACKLOG.md` U12).
+`pg_stat_statements` advice (#463).
 
 ---
 

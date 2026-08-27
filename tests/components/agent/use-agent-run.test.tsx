@@ -31,7 +31,7 @@ describe("useAgentRun — the fold is memoised on the entries", () => {
 });
 
 /**
- * What this browser remembers about the conversation it was in (#B69).
+ * What this browser remembers about the conversation it was in (#518).
  *
  * A reload clears `runId`, so the next question starts a new thread. The hook holds the
  * READING — the stored id, and nothing inferred from it — and the rail owns the sentence.

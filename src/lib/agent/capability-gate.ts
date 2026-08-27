@@ -1,5 +1,5 @@
 /**
- * Whether a configured model may drive an agent run (`docs/BACKLOG.md` B18).
+ * Whether a configured model may drive an agent run (#340).
  *
  * `capability-probe.ts` has always been able to answer "can this model call tools",
  * and its docblock has always said "the run service asks this module first" — which

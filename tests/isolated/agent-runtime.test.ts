@@ -324,7 +324,7 @@ describe("a drive that fails before the loop", () => {
 
   test("records a misconfigured agent credential as itself, not as an unsupported engine", async () => {
     // `resolveAgentCredential` throws the SAME error type as an engine with no
-    // read-only profile, on ANY engine (docs/BACKLOG.md B47). Classified by type
+    // read-only profile, on ANY engine (#459). Classified by type
     // alone, an operator who rotated the secret key under a sealed `agentPassword`
     // was told PostgreSQL offers no read-only execution profile — pointing away from
     // the one thing they could fix. The reason code is what tells the two apart.

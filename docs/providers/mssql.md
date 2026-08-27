@@ -633,7 +633,7 @@ Declaring that an operation EXISTS is not enough to put a button on it: two engi
 declare the same `MaintenanceType` take different kinds of target, so each provider also
 declares what its own operations may be pointed at. The monitoring Tables tab renders a
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
-card only where `global` is true, and both take the wording from `label` (#U9).
+card only where `global` is true, and both take the wording from `label` (#496).
 
 `POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
 REFUSES rather than hides: it takes the placement from whether the request carries a `target`
@@ -650,7 +650,7 @@ that request here.
 
 `vacuumAction` has said *"Rebuild Indexes"* since this provider shipped, and that is
 `optimize`: `vacuumActionOperation: 'optimize'` says so, which is what lets the global card
-render those words and send an operation SQL Server declares (#U9).
+render those words and send an operation SQL Server declares (#496).
 
 ---
 
@@ -665,7 +665,7 @@ render those words and send an operation SQL Server declares (#U9).
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core T-SQL DML |
-| `supportsTransactions` | `true` — the `mssql` package's `Transaction` over one held pool connection, so the trio and the SANDBOX toggle are offered (#U13) |
+| `supportsTransactions` | `true` — the `mssql` package's `Transaction` over one held pool connection, so the trio and the SANDBOX toggle are offered (#464) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; read from `sys.foreign_keys`, so an empty list is about the schema or the role, not the engine |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze', 'check', 'optimize', 'kill']` |
@@ -680,7 +680,7 @@ global labels. The UI display name for the database type is *"SQL Server"* (`db-
 
 `slowQueriesEmptyState` → *"Query stats come from sys.dm_exec_query_stats, which needs the VIEW
 SERVER STATE permission."* The monitoring Queries panel's empty state was hardcoded to PostgreSQL's
-`pg_stat_statements` advice on every engine (`docs/BACKLOG.md` U12); `getSlowQueries()` here reads
+`pg_stat_statements` advice on every engine (#463); `getSlowQueries()` here reads
 that DMV ([§8](#8-monitoring--health)) and returns `[]` when the read is refused, so the permission
 is the thing a DBA can act on.
 

@@ -186,7 +186,7 @@ Unlike every networked SQL provider, SQLite exposes **no** `beginTransaction`/`c
 `queryInTransaction`, **no** `cancelQuery`, and **no** pool/`getPoolStats`. It is a single embedded
 handle. (`POST /api/db/transaction` and `/api/db/cancel` are therefore not applicable to SQLite.)
 
-Since `docs/BACKLOG.md` U13 the client can see that: `supportsTransactions: false`
+Since #464 the client can see that: `supportsTransactions: false`
 ([§9](#9-capabilities--labels)) is what withholds BEGIN/COMMIT/ROLLBACK and the auto-rolled-back
 SANDBOX toggle from the editor toolbar here. Before that flag existed the only gate was
 `isTransactionProvider(provider)` inside the route — a runtime shape check the browser cannot read —
@@ -432,7 +432,7 @@ Declaring that an operation EXISTS is not enough to put a button on it: two engi
 declare the same `MaintenanceType` take different kinds of target, so each provider also
 declares what its own operations may be pointed at. The monitoring Tables tab renders a
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
-card only where `global` is true, and both take the wording from `label` (#U9).
+card only where `global` is true, and both take the wording from `label` (#496).
 
 `POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
 REFUSES rather than hides: it takes the placement from whether the request carries a `target`
@@ -470,7 +470,7 @@ answers with nothing both while it is in flight and when it failed.
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core SQLite DML |
-| `supportsTransactions` | **`false`** — SQLite HAS `BEGIN`, but this provider holds no session across two requests, so `POST /api/db/transaction` refuses the call. The flag describes the provider's surface, not the engine, and the trio and SANDBOX toggle are withheld rather than offered and then failed (#U13) |
+| `supportsTransactions` | **`false`** — SQLite HAS `BEGIN`, but this provider holds no session across two requests, so `POST /api/db/transaction` refuses the call. The flag describes the provider's surface, not the engine, and the trio and SANDBOX toggle are withheld rather than offered and then failed (#464) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; `PRAGMA foreign_key_list` reads them whether or not enforcement is on |
 | `singleWriterFile` | **absent (not `true`)** — SQLite is a file engine and is *not* single-writer at OPEN. Measured 2026-08-25 on `bun:sqlite`: a second `new Database(path, { readwrite: true })` on a WAL file this process already holds both opens and writes, because SQLite takes its file locks per transaction. LibreDB declares the flag and SQLite must not: the whole point of the agent profile here is a SECOND, `readonly: true` handle on the same file ([§12.1](#121-where-the-boundary-is)), and declaring it would have made the factory hand the agent the writable one instead |
 | `supportsMaintenance` | `true` |
@@ -490,10 +490,10 @@ their wording from that `label` rather than from this field.
 One field is overridden: `slowQueriesEmptyState` → *"SQLite keeps no statistics about finished
 statements, so there is nothing to enable."* `getSlowQueries()` answers `[]` unconditionally
 ([§7](#7-monitoring--health)), so the monitoring Queries panel is always empty here, and its sentence
-was hardcoded to PostgreSQL's `pg_stat_statements` advice (`docs/BACKLOG.md` U12).
+was hardcoded to PostgreSQL's `pg_stat_statements` advice (#463).
 
 Two overrides in total. The second is the Operations tab's global Reindex card, hardcoded to
-PostgreSQL's *"Reconstructs all indexes in the database."* until `docs/BACKLOG.md` U6. The global card
+PostgreSQL's *"Reconstructs all indexes in the database."* until #464. The global card
 sends no target, so `runMaintenance('reindex')` here runs a bare `REINDEX`
 ([§8](#8-maintenance)), which rebuilds every index in the database **file**:
 

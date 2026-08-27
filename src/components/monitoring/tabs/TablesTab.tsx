@@ -40,7 +40,7 @@ import { PanelUnavailable } from "../PanelUnavailable";
  * `optimize` and `check` are candidates at all because the operations exist on five
  * providers and had no per-table control anywhere; the ones whose statement takes no
  * object (SQL Server's `DBCC CHECKDB`, SQLite's `PRAGMA integrity_check`) declare
- * `perEntity: false` and are filtered out here (#U9).
+ * `perEntity: false` and are filtered out here (#496).
  */
 const MAINTENANCE_ACTIONS: { type: MaintenanceType; label: string; Icon: LucideIcon; className: string }[] = [
   { type: "analyze", label: "Analyze", Icon: Search, className: "h-6 w-6 sm:h-8 sm:w-8" },
@@ -239,7 +239,7 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
   // rejects the table name the button sends — SQLite's VACUUM ignores it and rewrote the whole
   // database from a control that named one table, Oracle's index rebuild answered ORA-01418
   // for every table name there is. `maintenanceControl` reads the provider's own
-  // `perEntity` declaration for each, and hands back the engine's own wording with it (#U9).
+  // `perEntity` declaration for each, and hands back the engine's own wording with it (#496).
   const availableActions = MAINTENANCE_ACTIONS.flatMap((action) => {
     const control = maintenanceControl(capabilities, action.type, "perEntity");
     return control.offered ? [{ ...action, label: control.label ?? action.label }] : [];

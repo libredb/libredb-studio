@@ -1203,8 +1203,8 @@ export type AgentRunEvent =
        */
       readonly reason?: AgentRunFailureReason;
       /**
-       * Whether the run met the goal its workflow was opened for (`docs/BACKLOG.md`
-       * B24, ratified 2026-08-13).
+       * Whether the run met the goal its workflow was opened for (ratified 2026-08-13
+       * in #347).
        *
        * A field beside the status rather than a fourth status word, and the reason is
        * an observation rather than a preference: the two axes are genuinely
@@ -1435,7 +1435,7 @@ export interface AgentRunRecord {
    * are not the same fact. A saved connection edited to address another server keeps
    * its id, so a conversation checked only on the id carried one database's
    * established claims into a run reading another — nothing refused, nothing wrong to
-   * look at, and a report about production resting on staging (`docs/BACKLOG.md` B68).
+   * look at, and a report about production resting on staging (#509).
    *
    * Optional because a header written before this field records nothing about the
    * database it read, and a mismatch must not be invented out of that silence: absent

@@ -59,7 +59,7 @@ const defaultTables = [
 ];
 
 // The options the tab asked for, so a test can assert that a provider whose rows
-// are derived groupings never requests tables at all (#U5).
+// are derived groupings never requests tables at all (#459).
 let lastMonitoringOptions: Record<string, unknown> | undefined;
 
 mock.module("@/hooks/use-monitoring-data", () => ({
@@ -378,7 +378,7 @@ describe("OperationsTab", () => {
     expect(queryByText("Removes dead rows and returns space to the OS.")).not.toBeNull();
   });
 
-  test("renders the provider's own global reindex wording (#U6)", async () => {
+  test("renders the provider's own global reindex wording (#464)", async () => {
     // Couchbase's `reindex` builds deferred GSI indexes for one keyspace, which the
     // hardcoded PostgreSQL copy described in none of its three strings.
     mockMetadata = {
@@ -1329,7 +1329,7 @@ describe("OperationsTab", () => {
     expect(container.textContent).toContain("users");
     expect(container.textContent).toContain("1234");
   });
-  // ── Derived groupings have no Tables panel (#U5) ───────────────────────────
+  // ── Derived groupings have no Tables panel (#459) ──────────────────────────
   //
   // Redis and the embedded engine declare `tablesAreDerivedGroupings`: their rows
   // are prefix/namespace groupings, not addressable tables, so the panel could
@@ -1374,7 +1374,7 @@ describe("OperationsTab", () => {
     expect(lastMonitoringOptions?.includeTables).toBe(true);
   });
 
-  // ── A deep link from an Explorer row arrives selected (#U5) ────────────────
+  // ── A deep link from an Explorer row arrives selected (#459) ───────────────
 
   test("deep-linked table name arrives filtered and selected", async () => {
     monitoringOverride = { data: { activeSessions: defaultSessions, tables: multiTables } };
@@ -1494,7 +1494,7 @@ describe("OperationsTab", () => {
 
     expect(getByTestId("operations-tables-empty").textContent).toBe("No tables found.");
   });
-  // ── Every control is gated and titled by the provider's own declaration (#U9) ──
+  // ── Every control is gated and titled by the provider's own declaration (#496) ─
   //
   // #427 reverted a generic label-to-operation mapping, and the reason is here: two
   // engines that declare the same `MaintenanceType` take different kinds of target,

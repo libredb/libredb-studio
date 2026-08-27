@@ -415,7 +415,7 @@ reads as an unbounded query inside a comment — measured on 26.7.1, that return
 result claimed it was limited to 5**. It now emits `... LIMIT 5 // note` and returns 5. Apache
 Cassandra is the other engine with this form ([`cassandra.md`](cassandra.md)); every other dialect this
 product reads treats the characters where they stand, PostgreSQL as an operator that does not exist
-(#S1). A `;` behind the comment is not a separator either, which is what stops the multi-statement
+(#496). A `;` behind the comment is not a separator either, which is what stops the multi-statement
 route inventing a fragment out of commented-out text.
 
 The same reading reaches the **destructive-statement confirmation**, because that predicate reads the
@@ -793,7 +793,7 @@ Declaring that an operation EXISTS is not enough to put a button on it: two engi
 declare the same `MaintenanceType` take different kinds of target, so each provider also
 declares what its own operations may be pointed at. The monitoring Tables tab renders a
 per-row control only where `perEntity` is true, the admin Operations tab a whole-database
-card only where `global` is true, and both take the wording from `label` (#U9).
+card only where `global` is true, and both take the wording from `label` (#496).
 
 `POST /api/db/maintenance` reads the same declaration since #U20, and it is the one reader that
 REFUSES rather than hides: it takes the placement from whether the request carries a `target`
@@ -836,7 +836,7 @@ rather than silent.
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsCreateTable` | `false` |
 | `supportsInlineRowEdit` | `false` — a bare `UPDATE ... SET` is code `48` `NOT_IMPLEMENTED` here ([§13](#13-known-limitations--future-work)) |
-| `supportsTransactions` | `false` — reached over stateless HTTP, and ClickHouse has no general transaction to wrap anyway, so the trio and SANDBOX are not offered (#U13) |
+| `supportsTransactions` | `false` — reached over stateless HTTP, and ClickHouse has no general transaction to wrap anyway, so the trio and SANDBOX are not offered (#464) |
 | `declaresForeignKeys` | `false` — `REFERENCES` parses in a column definition and enforces nothing, and `system.*` holds no constraint catalog to read one back from |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['optimize', 'analyze', 'kill']` |
@@ -862,7 +862,7 @@ have. Of those, only `analyzeAction`/`analyzeGlobal*` and `vacuumAction` are rea
 One more label, and it is about the monitoring tab rather than maintenance:
 `slowQueriesEmptyState` → *"Query stats come from system.query_log, which records nothing while
 log_queries is off."* The Queries panel's empty state was hardcoded to PostgreSQL's
-`pg_stat_statements` advice for every engine (`docs/BACKLOG.md` U12), and `system.query_log`
+`pg_stat_statements` advice for every engine (#463), and `system.query_log`
 ([§7](#7-monitoring--health)) is what an operator here can actually act on.
 
 ---

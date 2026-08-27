@@ -123,7 +123,7 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
     // The query language is a small JSON command grammar, not SQL, so the inline
     // row editor's `UPDATE ... SET` cannot be expressed here (#269).
     expect(caps.supportsInlineRowEdit).toBe(false);
-    // The command grammar has no transaction verb at all (#U13).
+    // The command grammar has no transaction verb at all (#464).
     expect(caps.supportsTransactions).toBe(false);
     // The catalog declares namespaces and columns and nothing that references
     // another namespace, so there is no foreign key to read (#414).
@@ -163,7 +163,7 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
   // prefix, drafted `GET users:*`. `dispatchCommand` gives `get` exactly one meaning
   // - `kv.get(parts[1])`, an exact-key lookup with no glob - so that command answers
   // zero rows and no error, which on a key-value store reads as "nothing stored
-  // there" (#B55). So the sentence names all five verbs AND says a key is exact,
+  // there" (#518). So the sentence names all five verbs AND says a key is exact,
   // because the inventory's rows are named `users:*` and that reads as a wildcard
   // the grammar does not have.
   test("getLabels() declares the five verbs as the statement language and that a key is exact", () => {

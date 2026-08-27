@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     return await withOneShotTunnel(connection, async (effective) => {
       /*
         The handle already holding this connection's file, on an engine that admits
-        only one (`ProviderCapabilities.singleWriterFile`; `docs/BACKLOG.md` D3).
+        only one (`ProviderCapabilities.singleWriterFile`; #498).
 
         Building a second provider there does not test the connection - it is refused
         by the exclusive lock the LIVE connection holds, and this route reported that

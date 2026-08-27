@@ -547,7 +547,7 @@ describe("ConnectionModal", () => {
     expect(getByTestId("connection-test-result").getAttribute("data-tone")).toBe("error");
   });
 
-  // ── 21b. Test result warning displayed (#U19) ────────────────────────────
+  // ── 21b. Test result warning displayed (#498) ────────────────────────────
 
   test("test result warning message renders as neither success nor failure", () => {
     // A degraded save/connect asks the user to act again - it is not a completed

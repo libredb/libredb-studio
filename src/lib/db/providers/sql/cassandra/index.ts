@@ -294,7 +294,7 @@ export class CassandraProvider extends SQLBaseProvider {
       // same reason.
       statementLanguage: "CQL (Cassandra Query Language) - no JOIN, no subquery, no OFFSET",
       // `getSlowQueries()` is empty by design here (introspect.ts), so this panel is
-      // ALWAYS empty on Cassandra - and it used to name a PostgreSQL extension (#U12).
+      // ALWAYS empty on Cassandra - and it used to name a PostgreSQL extension (#463).
       slowQueriesEmptyState:
         "Cassandra keeps no aggregate of finished statements: the slow-query threshold writes to the node's log file rather than to a table.",
     };

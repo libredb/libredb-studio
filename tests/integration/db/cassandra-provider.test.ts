@@ -454,7 +454,7 @@ describe("capabilities", () => {
     // amount = 1 WHERE customer_id = 3` - a plausible guess on a real table - is
     // "Some partition key parts are missing: id".
     expect(capabilities.supportsInlineRowEdit).toBe(false);
-    // CQL has no transaction; BATCH is not one (#U13).
+    // CQL has no transaction; BATCH is not one (#464).
     expect(capabilities.supportsTransactions).toBe(false);
   });
 

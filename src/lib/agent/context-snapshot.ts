@@ -329,7 +329,7 @@ function buildSqliteTables(rows: ReadonlyMap<AgentCatalogKind, readonly Record<s
       columns: [...definition.columns],
       // The constraint-created indexes SQLite stores no DDL for: the composed index
       // read below cannot see them, and they are what kept a UNIQUE-covered foreign
-      // key reading as unindexed (docs/BACKLOG.md B25).
+      // key reading as unindexed (#502).
       indexes: [...definition.indexes],
       foreignKeys: [...definition.foreignKeys],
     });
@@ -727,14 +727,15 @@ function providerTables(tables: readonly TableSchema[]): TableIndex {
  *    produces**, exactly as `reusableSnapshot` refuses a ledger entry. A snapshot
  *    that fingerprints as something else is not held at all, so a reader never has
  *    to decide whether to trust one.
- *  - **It is keyed by connection**, which is the same boundary the run loop already
- *    enforces (`RUN_CONNECTION_MISMATCH`). Everyone who can open a run on a
- *    connection can read its catalog through that run anyway. What the key does NOT
- *    carry is the database that connection currently points at, or its dialect: a
- *    connection record re-pointed at another database while keeping its id would be
- *    served the old inventory here. That is recorded as `docs/BACKLOG.md` B45 rather
- *    than left for a reader to find, and it matters more now that a plan run both
- *    fills this and reads it.
+ *  - **It is keyed by connection IDENTITY**, which is a stricter boundary than the
+ *    one the run loop enforces (`RUN_CONNECTION_MISMATCH`) and deliberately so.
+ *    Everyone who can open a run on a connection can read its catalog through that
+ *    run anyway, so the id would have been enough for access; what it is not enough
+ *    for is TRUTH. The original key was the connection id alone, and a connection
+ *    record re-pointed at another database while keeping its id was served the old
+ *    one's inventory. The key is now a hash over the fields that decide which
+ *    database a reading came from and whose view of it (`connectionIdentity` below,
+ *    #509), and it matters more now that a plan run both fills this and reads it.
  *
  * What it deliberately is NOT: durable. This is process memory, like the run-scoped
  * artifact store and for the same reason. Losing it on a restart no longer costs a
@@ -749,7 +750,7 @@ const heldSnapshots = new Map<string, AgentContextSnapshot>();
 /**
  * The fields that decide WHICH database a reading came from, and whose view of it.
  *
- * The hold used to be keyed on the connection id alone (`docs/BACKLOG.md` B45). Neither
+ * The hold used to be keyed on the connection id alone (#509). Neither
  * the key nor the snapshot carried any database identity — `AgentContextSnapshot` holds
  * an id, a fingerprint, a time and the tables — so a connection record re-pointed at
  * another database while keeping its id was served the old one's inventory until the

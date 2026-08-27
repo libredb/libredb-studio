@@ -521,7 +521,7 @@ describe("per-row controls follow the provider's own declaration", () => {
 
   test("MySQL gets its own three verbs and no vacuum control at all", () => {
     // MySQL has no VACUUM: the generic list offered "Analyze" alone and named nothing
-    // it could run for the OPTIMIZE and CHECK it does have (#U9).
+    // it could run for the OPTIMIZE and CHECK it does have (#496).
     const { container } = render(
       <TablesTab
         data={makeData()}

@@ -614,7 +614,7 @@ describe("useConnectionForm", () => {
 
     // Nothing saved yet - but the user is told what was found, in the server's words.
     // The sentence asks the user to click again, which is neither a success nor a
-    // failure, so it renders neither (#U19): the warning tone, not the green tick.
+    // failure, so it renders neither (#498): the warning tone, not the green tick.
     expect(onConnect).not.toHaveBeenCalled();
     expect(result.current.testResult!.tone).toBe("warning");
     expect(result.current.testResult!.message).toContain("Keyspace system_views does not exist");
@@ -683,7 +683,7 @@ describe("useConnectionForm", () => {
 
     // It connected, so this is not an error - but it is not a plain success either:
     // the sentence says what is missing instead of the "Connected successfully" that
-    // hid it, so it gets the warning tone (#U19).
+    // hid it, so it gets the warning tone (#498).
     expect(result.current.testResult!.tone).toBe("warning");
     expect(result.current.testResult!.message).toContain("no health data");
   });
