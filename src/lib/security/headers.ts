@@ -212,6 +212,40 @@ export function securityHeaders(options: SecurityHeaderOptions = {}): Record<str
     // Duplicates frame-ancestors 'none' deliberately, for engines that predate CSP Level 2.
     // Verified safe: zero <iframe> in src, and the desktop shell navigates rather than frames.
     "X-Frame-Options": "DENY",
+    // `same-origin`, not `same-origin-allow-popups`: the weaker value exists for a page that opens
+    // a popup and then scripts it, and nothing here does. The OIDC flow is a top-level redirect in
+    // both directions (src/app/login/login-form.tsx sets `window.location.href =
+    // "/api/auth/oidc/login"`; src/hooks/use-auth.ts assigns the logout redirectUrl the same way),
+    // and the one window.open in the repository — src/lib/community/star-prompt-toast.ts — already
+    // passes "noopener,noreferrer", so it has no opener relationship left for COOP to sever.
+    //
+    // Document-only, which is why it is set HERE (per request, applied by src/proxy.ts) and is
+    // named in next.config.ts's DOCUMENT_ONLY_HEADER_NAMES so it can never join the build-time
+    // baked set. HTML's "create navigation params by fetching" obtains a response's opener policy
+    // under exactly one step - "If navigable is a top-level traversable: Set responseCOOP to the
+    // result of obtaining an opener policy given response and request's reserved client"
+    // (https://html.spec.whatwg.org/multipage/browsing-the-web.html#create-navigation-params-by-fetching).
+    // Quoted whole because the opening clause alone occurs twice on that page, the other time in an
+    // unrelated step about the top-level navigation initiator origin. So no algorithm consults this
+    // header on a subresource, and it is ignored even for a framed document. Note the spec's own
+    // vocabulary: the algorithm is "obtain an opener policy" - "cross-origin opener policy" now
+    // survives only as the header field name.
+    //
+    // Inert rather than harmful on the plain-HTTP distribution channels: "obtain an opener policy"
+    // returns the default `unsafe-none` policy before it looks at the header at all — "If
+    // reservedEnvironment is a non-secure context, then return policy"
+    // (https://html.spec.whatwg.org/multipage/browsers.html#obtain-coop). Loopback is a secure
+    // context, so the desktop shell is not among those.
+    //
+    // Deliberately NOT paired with `Cross-Origin-Embedder-Policy: require-corp`. Under
+    // `require-corp` a response carrying no `Cross-Origin-Resource-Policy` header has its policy
+    // set to `same-origin` by the cross-origin resource policy internal check
+    // (https://fetch.spec.whatwg.org/#cross-origin-resource-policy-internal-check), so every
+    // cross-origin subresource would have to serve CORP itself — which the documented off-origin
+    // NEXT_PUBLIC_MONACO_VS_PATH setup cannot promise. The capability that would buy is
+    // cross-origin isolation (SharedArrayBuffer, `crossOriginIsolated`), which nothing here uses,
+    // so `same-origin` alone is the whole of the decision.
+    "Cross-Origin-Opener-Policy": "same-origin",
     [cspHeader]: policy,
   };
 

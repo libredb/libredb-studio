@@ -181,11 +181,28 @@ export function deriveThreadContext(
  * of that silence would end every conversation in flight across a deploy — the same
  * read-side compatibility rule every other optional header field here follows.
  *
- * A header rather than a context, and `declined: "unavailable"` rather than a reason of
- * its own: it joins the shape the route already writes for the five other ways a
- * continuation does not happen. It carries no `threadId`, so the refused follow-up
- * starts a conversation of its own named after itself — a later question must not
- * inherit a root that was never part of it.
+ * A header rather than a context, and `declined: "repointed"` rather than the
+ * `"unavailable"` the five other ways a continuation does not happen share. The line is
+ * that this is the only one that is not a FAILURE. It is reached only after the
+ * predecessor was found, was this session's, was on this connection and had ended — every
+ * check the route makes has passed — and the carry is then refused on purpose, because
+ * the earlier steps' claims are about a database this run is not reading. The five are
+ * the caller's own bug, transient, or another session's (`types.ts`,
+ * `AgentThreadContext.declined`), and a sentence covering all six was true of each and
+ * specific about none (#512).
+ *
+ * What the split is NOT is a longer-lived remedy. The decline lasts one question: the
+ * route writes the current identity onto the run that question opens, and the rail's next
+ * follow-up continues that run, so it matches and carries. Pointing the connection back
+ * afterwards declines once more rather than restoring anything.
+ *
+ * It leaks nothing the route was withholding either, for the same reason the split is
+ * earned: a caller told `"repointed"` has already been told everything a carried
+ * conversation would have told it. That is why the five stay collapsed and this one does
+ * not have to.
+ *
+ * It carries no `threadId`, so the refused follow-up starts a conversation of its own
+ * named after itself — a later question must not inherit a root that was never part of it.
  */
 export function threadContextFor(
   previous: AgentRunRecord,
@@ -193,7 +210,7 @@ export function threadContextFor(
   budget?: number,
 ): AgentThreadHeader {
   if (previous.connectionIdentity !== undefined && previous.connectionIdentity !== currentIdentity) {
-    return { steps: [], text: "", declined: "unavailable" };
+    return { steps: [], text: "", declined: "repointed" };
   }
   return deriveThreadContext(previous, budget);
 }

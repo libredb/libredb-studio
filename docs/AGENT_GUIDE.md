@@ -806,9 +806,10 @@ gauges it is about:
 - **Every ceiling is per drive.** A run resumed after a restart starts each of them again, so these
   totals can read past a single drive's ceiling.
 - **Every figure is a floor, never a ceiling.** The ledger records less than the server charges: the
-  schema capture's catalog reads are not itemized, a statement that failed at the database records
-  no duration, and a completed read reports the engine's own elapsed time rather than the span the
-  budget was charged (`docs/BACKLOG.md` B12, B13).
+  schema capture's catalog reads are not itemized, and a completed read reports the engine's own
+  elapsed time rather than the span the budget was charged (`docs/BACKLOG.md` B13). A statement that
+  failed at the database DOES record its span since #512; a refusal written before that build
+  carries none, and those are counted rather than summed as zero.
 - **On SQLite a statement over its timeout is refused once it returns, not interrupted while it
   runs.** PostgreSQL preempts with `SET LOCAL statement_timeout`; SQLite does not, so there the
   timeout is a post-execution deadline.

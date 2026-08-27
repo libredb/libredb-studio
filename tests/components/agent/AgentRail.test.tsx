@@ -123,6 +123,21 @@ const OVERSPENT_LINE = `${JSON.stringify({
   },
 })}\n`;
 
+/**
+ * A statement that failed and whose entry carries no duration — the shape every ledger
+ * written before #512 has. The meter cannot count what it does not
+ * hold, so the rail says the figure is missing one rather than summing a zero (#477).
+ */
+const UNTIMED_FAILURE_LINE = `${JSON.stringify({
+  kind: "event",
+  event: {
+    kind: "tool-refused",
+    atMs: 1_003,
+    stepId: "s2",
+    refusal: { class: "database-error", statementFingerprint: "fp_1", message: 'relation "custmers"' },
+  },
+})}\n`;
+
 const DRAFTED_LINE = `${JSON.stringify({
   kind: "event",
   event: {
@@ -456,13 +471,26 @@ describe("AgentRail", () => {
   });
 
   test.each([
-    ["disabled", "switched off on this server"],
-    // Not "could not be reached": one of the six causes folded into `unavailable` is a
-    // connection repointed at another database, where the earlier step CAN be reached and
-    // the database moved. The sentence has to be true of every cause it covers.
-    ["unavailable", "could not be carried into this question"],
-    ["error", "could not be carried into this question"],
-  ])("a %s conversation renders its own sentence", async (declined, copy) => {
+    ["disabled", ["switched off on this server"]],
+    /*
+      Since #512 the re-pointed connection carries its own code, because it is the only
+      decline that is not a failure — every check the route makes passed, and the server refused
+      the carry on purpose. Both halves are pinned, because the half that was wrong was
+      the second one: it claimed the decline persists until the connection is pointed
+      back, and the route writes the CURRENT identity onto the run it opens, so the next
+      follow-up continues off THAT run and carries normally.
+
+      Not "could not be reached" for the five under `unavailable` either: the sentence
+      still has to be true of every cause it covers, and one of them is a predecessor that
+      simply has not ended yet, which can be reached perfectly well.
+    */
+    [
+      "repointed",
+      ["re-pointed after the earlier step ran", "Follow-ups from here continue on the connection as it points now"],
+    ],
+    ["unavailable", ["could not be carried into this question"]],
+    ["error", ["could not be carried into this question"]],
+  ])("a %s conversation renders its own sentence", async (declined, copies) => {
     mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE], {
       runId: "arun_b",
       status: "queued",
@@ -477,7 +505,40 @@ describe("AgentRail", () => {
     });
     await view.findByTestId("agent-thread-notice");
 
-    expect(view.getByTestId("agent-thread-notice").textContent).toContain(copy);
+    for (const copy of copies) expect(view.getByTestId("agent-thread-notice").textContent).toContain(copy);
+  });
+
+  /*
+    The persistence claim, pinned as an ABSENCE, because that is the shape the defect had:
+    the sentence's first half was true and its second half was not, and a test asserting
+    only the first half stayed green through it (#512).
+
+    The negative is anchored on the positive in the same assertion pair, so it cannot go
+    vacuous: rename the testid or the copy and the `toContain` fails before the `not`
+    can pass on an empty string.
+  */
+  test("the re-pointed sentence does not claim later questions keep being declined", async () => {
+    mockAgentFetch([OPENED_LINE, STARTED_LINE, FINISHED_LINE], {
+      runId: "arun_b",
+      status: "queued",
+      mode: "planning",
+      thread: { threadId: "arun_a", steps: [], text: "", declined: "repointed" },
+    });
+    const view = render(<AgentRail {...DEFAULT_PROPS} />);
+
+    fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "chart those" } });
+    await act(async () => {
+      fireEvent.click(view.getByTestId("agent-start"));
+    });
+    await view.findByTestId("agent-thread-notice");
+
+    const notice = view.getByTestId("agent-thread-notice").textContent ?? "";
+    expect(notice).toContain("Follow-ups from here continue on the connection as it points now");
+    // The exact false claim that shipped, and the family it belongs to: the run this
+    // question opens records the connection as it points NOW, so the follow-up after it
+    // matches and carries. Nothing here may promise otherwise.
+    expect(notice).not.toContain("keep starting");
+    expect(notice).not.toMatch(/until the connection/i);
   });
 
   test("a first question renders no conversation strip", async () => {
@@ -2069,8 +2130,9 @@ describe("AgentRail", () => {
     });
 
     /**
-     * The ledger records less than the tracker charges, in three known ways
-     * (`docs/BACKLOG.md` B12 and B13) — the largest being that the run's schema
+     * The ledger records less than the tracker charges, in known ways
+     * (`docs/BACKLOG.md` B13, and a ledger written before #512, whose failed statements
+     * carry no duration) — the largest being that the run's schema
      * capture reaches `executeAuditedOperation` without going through `runStep`, so
      * its two-to-three catalog reads are paid for and never itemized. A meter that
      * did not say so would read as exact while sitting two statements low from the
@@ -2081,8 +2143,57 @@ describe("AgentRail", () => {
 
       const caveats = getByTestId("agent-budget-caveats").textContent ?? "";
       expect(caveats).toContain("schema capture's catalog reads are not itemized");
-      expect(caveats).toContain("records no duration");
       expect(caveats).toContain("a floor, never a ceiling");
+      /*
+        The blanket claim is GONE since #512: a failed statement now records the
+        duration the tracker charged it, and a caveat that still said otherwise would
+        be describing a defect the run does not have. What
+        replaces it is per-run and conditional, asserted below.
+      */
+      expect(caveats).not.toContain("records no duration");
+    });
+
+    /**
+     * #512's residue. A failed statement records its duration from
+     * here on, but a ledger written BEFORE it did carries none, and a fold cannot
+     * invent one — so the run says how many of its statements have no duration on
+     * record instead of summing them as zero and calling the total measured (#477).
+     */
+    test("a run holding a failed statement with no duration on record says so", async () => {
+      mockAgentFetch([OPENED_LINE, AGENT_STARTED_LINE, COMPLETED_LINE, UNTIMED_FAILURE_LINE]);
+      const { getByTestId, findByText } = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      // Two statements charged, and only one of them with a duration in the ledger.
+      await findByText(`2 / ${AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxStatementsPerRun}`);
+      const caveats = getByTestId("agent-budget-caveats").textContent ?? "";
+      // The count, and the app's own words for what it means. Written number-neutral on
+      // purpose — "that spend" reads the same for one statement and for five — so the
+      // sentence needs no plural branch nobody would test both sides of.
+      expect(caveats).toContain("holds no duration for 1 of this run's charged statements");
+      expect(caveats).toContain("not in the figure above");
+    });
+
+    /**
+     * And the sentence is NOT shown to a run whose every charged statement carries one:
+     * a caveat that always fires is one a reader learns to skip, and it would be making
+     * a claim about this run that is not true of it.
+     */
+    test("a run whose statements all carry a duration is told nothing about missing ones", async () => {
+      mockAgentFetch([OPENED_LINE, AGENT_STARTED_LINE, COMPLETED_LINE]);
+      const { getByTestId, findByText } = render(<AgentRail {...DEFAULT_PROPS} />);
+      fireEvent.change(getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
+      await act(async () => {
+        fireEvent.click(getByTestId("agent-start"));
+      });
+
+      await findByText(`1 / ${AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxStatementsPerRun}`);
+      // The SAME phrase the test above proves this rail can render, so the absence is a
+      // fact about this run and not an artifact of a wording that moved.
+      expect(getByTestId("agent-budget-caveats").textContent ?? "").not.toContain("holds no duration for");
     });
 
     // Every ceiling is per drive (`docs/BACKLOG.md` B6), so a resumed run starts

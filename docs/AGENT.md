@@ -28,9 +28,13 @@ Three properties frame everything below, and each of them is load-bearing rather
   editor's `/api/db/query` reaches the provider directly (`src/app/api/db/query/route.ts:44`).
 - **Agent mode requires PostgreSQL or SQLite — except the `operations` workflow, which runs
   anywhere.** They are the only providers implementing `queryReadOnly` (`postgres.ts:870`,
-  `sqlite.ts:397`), so any other engine fails profiled acquisition with
-  `PROFILE_UNSUPPORTED_BY_PROVIDER` and the run ends `engine-unsupported`
-  (`src/lib/agent/runtime.ts:199`). Surfaces that must *state* that reach — the login hero does,
+  `sqlite.ts:397`), so on any other engine an agent-mode run whose workflow sends a statement is
+  **refused when it is started**: `POST /api/agent/runs` answers `400` with the posture's own
+  paragraph before a run id exists or a model turn is spent (#512). The provider factory's gate sits
+  behind that one and is what refuses a run reaching the drive some other way - profiled acquisition
+  fails with `PROFILE_UNSUPPORTED_BY_PROVIDER` and the run ends `engine-unsupported`
+  (`src/lib/agent/runtime.ts:199`), which is what a run opened by an earlier build still does. Both
+  read the same fact, which is why the route can refuse without duplicating the decision. Surfaces that must *state* that reach — the login hero does,
   since #425 — read `AGENT_EXECUTION_ENGINES` (`src/lib/agent/engine-support.ts`), which mirrors the
   gate rather than replacing it: the factory keeps probing `typeof provider.queryReadOnly`, and
   `tests/unit/lib/agent/engine-support.test.ts` measures the provider prototypes so the constant
@@ -1957,7 +1961,7 @@ model passed the capability probe**; for anybody else the answer is that there i
 | **A free-form markdown report**, opening with a performance score out of 100 and closing with configuration advice. | A report is claims, each citing an artifact this run read or the snapshot it captured, verified against the run's own ledger before it is recorded. A number cited to nothing cannot be reported — the citation is what is checked, never the claim's text, so a fabricated score citing a real artifact would be accepted. | `src/lib/agent/tools.ts` (`composeReportTool`); `tests/evals/legacy-surface-coverage.test.ts` — an invented correlation id is refused and the run ends `unanswered (no-report)`. |
 | **Maintenance tasks** — `VACUUM`, `ANALYZE`, reindexing — in the same report. | Nothing proposes them: the `change` card has two members and neither is maintenance. It stays where it was before the panels — the monitoring surface, and the user's own editor. | `src/lib/agent/tools.ts` (`recommendationSchema`). |
 | **Multi-turn conversation.** NL2SQL replayed the whole exchange on every request, so "and how many in the second one?" was answerable. | **Largely restored, and differently.** A follow-up is still a NEW run — a run's objective is fixed when it starts, and no ledger event records a later question — but it now belongs to a CONVERSATION and is told about it: every earlier step's objective, and the most recent step's report, derived server-side from those runs' own ledgers and fenced before the model reads it. What is not restored is the replay: NL2SQL re-sent the whole exchange verbatim, while a conversation carries a bounded account of it, and only the newest step's findings. Two other differences are deliberate — the run still re-reads the catalog, because its inventory is its own evidence; and `LIBREDB_AGENT_THREAD_CONTEXT=false` turns the whole thing off, which no panel offered. See [the conversation a run belongs to](#the-conversation-a-run-belongs-to). | `src/lib/agent/thread-context.ts`; `src/app/api/agent/runs/route.ts`; `tests/evals/thread-context.test.ts` — a three-step conversation, and the fence the block arrives inside. |
-| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes SQL for **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is never guessed at — since #414 it is read a different way instead of being refused. Nothing refuses the run at its start, so a run opened on another engine begins, and what it can then do differs by MODE. **Agent mode is still the two dialects**: its read-class tools reach the database through `provider.queryReadOnly`, so a schema-workflow run on any other engine still ends `engine-unsupported` with the same sentence. **Plan mode is now every engine**: its grounding acquires `agent-operations` and calls `provider.getSchema()` (`db.schema.read`), so a plan run on MongoDB is ordinarily grounded and is asked for one statement or command **in that engine's own language**, in a block still tagged with the canonical type-id. What the engine decides is no longer whether a plan is grounded but HOW — a composed catalog statement or a provider inventory, and whether estimated statistics exist at all — and the four prefaces say which. Where the reading itself fails, the run is steered to the `NO STATEMENT:` refusal with the capture's own diagnosis. **The `operations` workflow reaches every engine in both modes**, because it composes no SQL at all, and since #411 it is grounded under the same rule as everything else. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`, `captureFromProvider`, `packOperationsInventory`), `src/lib/db/operations/descriptors.ts` (`db.schema.read`); `tests/unit/lib/agent/context-snapshot.test.ts` — the provider path, its timeout and its refusals; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`; `tests/evals/plan-grounding.test.ts` — a plan run whose provider cannot describe itself runs no statement and says it is ungrounded; `tests/isolated/agent-investigation.test.ts` — a plan run grounded through the engine's own schema inspection. |
+| **MongoDB, MySQL and every other engine.** Both panels ran against whatever the connection was, and NL2SQL emitted Mongo query documents when the connection's query language was JSON. | The agent composes SQL for **two** dialects. `CATALOG_COMPOSERS` and `CATALOG_PLANS` carry `postgres` and `sqlite` only, and an unlisted dialect is never guessed at — since #414 it is read a different way instead of being refused. **A run whose workflow sends statements is refused on another engine before it opens**: `POST /api/agent/runs` answers 400 with the posture's own sentence when the mode is agent and `AGENT_WORKFLOW_SENDS_STATEMENTS` holds for the requested workflow, so no run id and no model turn are spent on a refusal the connection's type already decided. What an engine that IS admitted can then do differs by MODE. **Agent mode is still the two dialects**: its read-class tools reach the database through `provider.queryReadOnly`, which is the same fact the refusal reads. **Plan mode is now every engine**: its grounding acquires `agent-operations` and calls `provider.getSchema()` (`db.schema.read`), so a plan run on MongoDB is ordinarily grounded and is asked for one statement or command **in that engine's own language**, in a block still tagged with the canonical type-id. What the engine decides is no longer whether a plan is grounded but HOW — a composed catalog statement or a provider inventory, and whether estimated statistics exist at all — and the four prefaces say which. Where the reading itself fails, the run is steered to the `NO STATEMENT:` refusal with the capture's own diagnosis. **The `operations` workflow reaches every engine in both modes**, because it composes no SQL at all, and since #411 it is grounded under the same rule as everything else. | `src/lib/agent/composed-sql.ts`, `src/lib/agent/context-snapshot.ts` (`captureContextSnapshot`, `captureFromProvider`, `packOperationsInventory`), `src/lib/db/operations/descriptors.ts` (`db.schema.read`); `tests/unit/lib/agent/context-snapshot.test.ts` — the provider path, its timeout and its refusals; `tests/unit/lib/agent/composed-sql.test.ts` — `UNSUPPORTED_DIALECT`; `tests/evals/plan-grounding.test.ts` — a plan run whose provider cannot describe itself runs no statement and says it is ungrounded; `tests/isolated/agent-investigation.test.ts` — a plan run grounded through the engine's own schema inspection. |
 
 One of these has since been restored under its own workflow (the monitoring row, which closed both
 deferrals that tracked it), and the first row is Phase 1's own boundary rather than a defect (B21 is
@@ -2012,7 +2016,7 @@ that follows. What green rules out is a fault that was already on disk when the 
 | Route | Purpose |
 | --- | --- |
 | `GET /api/agent/config` | Whether this server runs agents, and if not, which condition failed: `{"enabled": true, "ledgerVerified": …}` or `{"enabled": false, "reason": …, "detail": "…"}`. The reason is one code per operator action — `OPERATOR_DISABLED`, `NO_MODEL_CONFIGURED`, `LEDGER_UNAVAILABLE`, `LEDGER_INCOMPATIBLE`, `UNSANCTIONED_WORLD_TARGET`, `IMPLICIT_HOSTED_WORLD`. `LEDGER_INCOMPATIBLE` is separate from `LEDGER_UNAVAILABLE` deliberately: the path is writable and the action is removing or replacing one `version.txt`, so an operator sent to a permission would find nothing wrong with the directory. The last two are backend refusals and keep their own codes deliberately: neither is a disk problem, and `IMPLICIT_HOSTED_WORLD` fires before anything is asked of a filesystem at all. `ledgerVerified` distinguishes the two kinds of yes: `true` after the writable-path probe passed, `false` for the Postgres carve-out, where the backend is accepted without being contacted (B31). Session-verified. `enabled` is a literal boolean because the rail compares `=== true`. `reason` goes to every session — it names an operator action and no path — while `detail` goes to **admin sessions only**, because the ledger details carry an absolute server path plus an OS error string or a quoted fragment of a file on that disk; every other session gets one stable sentence instead, and loses nothing, since the rail renders nothing when the answer is no. Never 500s, and never names a key's value. The ledger half of the answer is memoised for a few seconds, in-flight promise included — the route sits outside the `ai` rate-limit bucket on purpose, so the memo is what stops an authenticated caller turning a page-load probe into a write per request, including a burst that arrives while one probe is still running. |
-| `POST /api/agent/runs` | Opens a run (mode, optional `workflowType`, objective, `connectionId`, and optional `previousRunId` to continue the conversation a run this session opened belongs to) and returns `202` with the run id, the PERSISTED mode and workflow type, and the `thread` the run actually belongs to. An unrecognised `workflowType` is refused rather than defaulted. An inline connection in the body is refused. A `previousRunId` that is not a non-empty string is refused `400`; one that cannot be reached does **not** refuse the start — the run opens with no conversation and `thread.declined` says so. An agent run whose model was established as unable to call tools is refused `422` before any run is opened. |
+| `POST /api/agent/runs` | Opens a run (mode, optional `workflowType`, objective, `connectionId`, and optional `previousRunId` to continue the conversation a run this session opened belongs to) and returns `202` with the run id, the PERSISTED mode and workflow type, and the `thread` the run actually belongs to. An unrecognised `workflowType` is refused rather than defaulted. An inline connection in the body is refused. A `previousRunId` that is not a non-empty string is refused `400`; one that cannot be reached does **not** refuse the start — the run opens with no conversation and `thread.declined` says so. An agent run whose workflow sends a statement is refused `400`, before any run is opened, when the connection's engine implements no read-only statement path - `operations` is admitted on every engine, and a planning run is never refused this way. An agent run whose model was established as unable to call tools is refused `422` before any run is opened. |
 | `GET /api/agent/runs/{runId}` | The run record, folded from its ledger. |
 | `DELETE /api/agent/runs/{runId}` | Requests a stop. Cancellation is enforced by the run loop's own persisted state, not by a driver cancel propagating — so this is "asked to stop", not "has stopped". |
 | `GET /api/agent/runs/{runId}/stream` | The ledger as NDJSON, one entry per line. |
@@ -2085,9 +2089,9 @@ so the ⓘ is never the only route to it.
 
 Both `blocked` readings are presentation of a refusal the provider factory already decides, and they
 gate nothing — **Start** stays live, because the `operations` workflow sends no statement and runs on
-every engine. What the strip does not do is make the offered-then-withdrawn run impossible: an agent
-run started there still spends a model turn before it ends `engine-unsupported`, which is what is
-left of B38.
+every engine. What the strip does not do is decide anything: the refusal it describes is now the route's, which
+answers 400 before a run id or a model turn is spent. **Start** stays live because `operations`
+sends no statement and is admitted on the same connection the strip warns about.
 
 **One module, two questions, because with a run open they stop having the same answer.** The strip
 says what the OPEN run does, and both of its axes come off that run (`describedMode` and
@@ -2199,8 +2203,11 @@ Two further rules govern it:
   (B11).
 - **The meter reports only what is actually enforced** — statements, database time, the run deadline,
   repair attempts — and states the SQLite non-preemption caveat rather than implying that an
-  overrunning statement is cut short. It reports no token budget because none is enforced (B10), and
-  two of its figures are honest undercounts (B12, B13).
+  overrunning statement is cut short. It reports no token budget because none is enforced (B10). A statement that
+  failed at the database now carries the span the tracker charged for it, so the database-time figure
+  no longer counts completed reads only; what is left uncounted is the catalog capture's own reads
+  and the difference between an engine's elapsed time and the span measured around the call (B13),
+  which is why the figure is still stated as a floor.
 
 Results the agent stored **hydrate the existing surfaces**: the results grid, the explain view and the
 charts view in the bottom panel, carrying a read-only provenance badge that names the run. There is
@@ -2437,9 +2444,16 @@ the role's own grants are the whole boundary (A3).
 - **B9** — nothing enqueues a drive, so an interrupted run is resumable but never resumed.
 - **B10** — no token budget is enforced, so the meter reports none.
 - **B11** — the rail can stop a run but cannot pause or resume one.
-- **B12** — a statement that failed at the database records no duration, so the meter's database time
-  counts completed reads only.
 - **B13** — three spends the ledger never records, so the meter reads low.
+- **B77** — the curated health reading reports `slowQueryCount` off a capped list, so on MySQL it
+  saturates at the limit and the rows behind it are Studio's own introspection traffic.
+- **B78** — a failed statement's recorded span is a delta, and what makes the subtraction
+  unambiguous is one frozen concurrency constant that no test guards.
+- **B79** — the re-pointed decline has never been reached from the UI: in the default storage mode
+  the only server-held connections are the seeds, and editing a seed makes it browser-local, which
+  the rail refuses before any thread check.
+- **B80** — the engine refusal shows the posture's whole paragraph in the error line while the
+  pre-start card two elements above is showing the same one.
 - **B15** — a run's stored results are released when it ends, so a report's citations can outlive its
   rows.
 - **B16** — the opt-in `@workflow/world-postgres` backend is not present in the standalone payload,
@@ -2482,9 +2496,6 @@ as they are fixed, and a numeral here goes stale silently.
   re-checked, so a resumed drive can read a repointed database while carrying a conversation and a
   captured schema established against the old one. The record now carries the identity needed to close
   it; what a run should DO when its connection moves under it is the undecided part.
-- **B76** — `declined: "unavailable"` collapses six causes, so the rail has one sentence for all of
-  them and it is specific about none. The repoint case is the one whose remedy differs, and it is the
-  candidate for a code of its own.
 - **B69** — a reload ends a conversation and the rail does not say so before the next question. The
   result is honest (no thread, no strip); the transition is silent.
 - **B70** — a run writes no summary for the step after it. The conversation carries the previous
@@ -2494,9 +2505,6 @@ as they are fixed, and a numeral here goes stale silently.
 - **B71** — `@ai-sdk/workflow`'s `WorkflowAgent` offers the durability this repository implements by
   hand, and is not used: it requires the workflow runtime's programming model, which would bind the
   agent to a hosting runtime this product deliberately does not depend on.
-- **B38** — an engine with no read-only execution path is offered a run anyway, and refuses only after
-  the run has opened and spent a model turn. The rail withholds every other capability the host
-  cannot serve; this is the one it does not.
 - **B39** — a data-analysis run has no honest way to conclude that the question is not about this
   database. Its only route to `answered` is a reading of the data, so a run that establishes the
   question is unanswerable fabricates one — the #356 shape again, in a new place.

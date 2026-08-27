@@ -385,7 +385,7 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
       // (measured on sqld 0.24.33). SQLite has no ALTER that adds a constraint - the
       // key has to be part of the CREATE TABLE - so the honest line names the
       // recreation. The `sqlite` id has the same limit and still emits the statement
-      // below; that is its own defect rather than something to copy (BACKLOG D34).
+      // below; that is its own defect rather than something to copy (BACKLOG D36).
       if (dialect === "libsql") {
         lines.push(
           `-- libSQL: Cannot add a foreign key on ${escapeIdentifier(fk.columnName, dialect)}. SQLite declares one only in CREATE TABLE; recreate the table and copy the rows.`,

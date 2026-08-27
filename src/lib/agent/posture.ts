@@ -123,6 +123,12 @@ function planPosture(): AgentPosture {
  * Two facts travel with the refusal because leaving either out reads as a dead end: plan
  * mode drafts here, and the `operations` workflow runs here too - it composes no statement
  * at all, so its acquisition never asks the engine for a read-only one.
+ *
+ * The body says the refusal happens AT START, which is what `POST /api/agent/runs` now
+ * does: a run whose workflow sends a statement is refused from the connection's own type
+ * before a run id exists (#512). It used to say the run ends
+ * `engine-unsupported` before its first statement, which was true while the refusal was
+ * the provider factory's alone - and would now describe a run this build does not open.
  */
 function unsupportedPosture(engineLabel: string): AgentPosture {
   return {
@@ -130,7 +136,7 @@ function unsupportedPosture(engineLabel: string): AgentPosture {
     headline: `Cannot execute on ${engineLabel}`,
     qualifier: "plan mode drafts here, and the operations workflow still runs",
     title: `Agent mode has no read-only statement path on ${engineLabel}`,
-    body: `Agent mode executes only where the provider implements a database-native read-only statement path — ${engineNames(AGENT_EXECUTION_ENGINES)}. On ${engineLabel} a profiled acquisition is refused and the run ends engine-unsupported before its first statement. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.`,
+    body: `Agent mode executes only where the provider implements a database-native read-only statement path — ${engineNames(AGENT_EXECUTION_ENGINES)}. On ${engineLabel} a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.`,
   };
 }
 

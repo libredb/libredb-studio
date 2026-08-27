@@ -63,6 +63,10 @@ const DATABASE_ERROR: AgentToolRefusal = {
   class: "database-error",
   statementFingerprint: "sha256-8e1b",
   message: 'column "totl" does not exist',
+  // The span the tracker charged this failed execution against `maxTotalRunMs`
+  // (#512). In the fixture rather than left out, because the shape a
+  // run written by this build produces is the one worth pinning.
+  elapsedMs: 31,
 };
 
 /**
@@ -329,6 +333,42 @@ describe("contract shapes", () => {
     expect(DATABASE_ERROR.class).toBe("database-error");
     expect("message" in DATABASE_ERROR).toBe(true);
     expect("statementFingerprint" in DATABASE_ERROR).toBe(true);
+  });
+
+  /**
+   * Since #512, a duration belongs to the two variants the tracker CHARGED
+   * and to no others, and the boundary is structural rather than a convention a writer
+   * has to remember: a policy denial and an approval requirement return before
+   * `beginExecution`, so a duration on either would be a spend nobody made.
+   */
+  test("only the refusals that cost database time can carry a duration", () => {
+    const charged: AgentToolRefusal[] = [
+      DATABASE_ERROR,
+      { class: "reading-refused", reasonCode: "READING_OVER_BUDGET", elapsedMs: 9 },
+    ];
+    expect(charged.every((refusal) => "elapsedMs" in refusal)).toBe(true);
+
+    // @ts-expect-error — a policy denial charges nothing, so a duration is inexpressible on it.
+    const denied: AgentToolRefusal = { class: "policy-denied", reasonCode: "ROLE_FORBIDDEN", elapsedMs: 9 };
+    // @ts-expect-error — nor may an approval requirement carry one.
+    const held: AgentToolRefusal = { class: "approval-required", operationId: "sql.explain.analyze", elapsedMs: 9 };
+    expect([denied.class, held.class]).toEqual(["policy-denied", "approval-required"]);
+  });
+
+  /**
+   * And the field is OPTIONAL, because every refusal recorded before it existed carries
+   * none. A required duration would have made those ledgers unreadable, and a fold that
+   * read the absence as `0` would state that a failed statement cost the database no
+   * time — which is what #477 forbids.
+   */
+  test("a refusal recorded before the field existed is still a refusal", () => {
+    const older: AgentToolRefusal = {
+      class: "database-error",
+      statementFingerprint: "sha256-old",
+      message: 'relation "custmers" does not exist',
+    };
+
+    expect("elapsedMs" in older).toBe(false);
   });
 
   test("a chart spec cannot ask for a histogram, because the run has no bins to show", () => {

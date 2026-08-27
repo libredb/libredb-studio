@@ -165,7 +165,15 @@ function readThread(value: unknown): AgentThreadContext | null {
     threadId: candidate.threadId,
     steps,
     text: candidate.text,
-    ...(declined === "unavailable" || declined === "disabled" || declined === "error" ? { declined } : {}),
+    // Every code the header may carry is admitted here, and an unrecognised one is
+    // dropped. Dropping is the safe half only as long as this list is complete: a code
+    // the server writes and this narrowing does not know leaves the rail with no
+    // `declined` at all, so a continuation that was refused renders no notice rather
+    // than the wrong one. That is how `"repointed"` had to be added here as well as to
+    // the union (#512).
+    ...(declined === "unavailable" || declined === "disabled" || declined === "error" || declined === "repointed"
+      ? { declined }
+      : {}),
   };
 }
 

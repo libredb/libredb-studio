@@ -986,7 +986,7 @@ Opens a run and returns immediately; the drive happens in the background.
 | `workflowReading` | string | No | How that decision WENT, as against who made it: `"classified"` (a classifier named this workflow), `"unclassified"` (a classifier was asked and reached its fallback) or `"unrecorded"` (nothing classified anything — what a caller naming its own workflow sends). Absent means `"unrecorded"`. An unrecognised value is **refused, not defaulted**, for the reason `workflowSource` is: the surface reads this field back to choose which of three sentences it says about the run, and a fallback presented as a verdict is the one it may not say |
 | `objective` | string | Yes | Non-empty, at most 4000 characters |
 | `connectionId` | string | Yes | Must resolve **server-side**. An inline `connection` object in the body is refused |
-| `previousRunId` | string | No | Continue the **conversation** a run this session opened belongs to. The server derives the earlier steps' objectives and the most recent step's report from those runs' own ledgers, verifies the named run belongs to this session, is on this connection and has ended, and persists the result as `thread` on the new run's header. A run it cannot reach **does not refuse the start**: the run opens carrying no conversation and the response says so through `thread.declined`. Only a value that is not a non-empty string is refused, with `400` — that is a malformed request rather than a runtime condition |
+| `previousRunId` | string | No | Continue the **conversation** a run this session opened belongs to. The server derives the earlier steps' objectives and the most recent step's report from those runs' own ledgers, verifies the named run belongs to this session, is on this connection and has ended, and persists the result as `thread` on the new run's header. A run it cannot reach **does not refuse the start**: the run opens carrying no conversation and the response says so through `thread.declined` — `"repointed"` when the predecessor was reachable but was established against a different database than this connection now addresses — the run still opens, and it records the connection as it now addresses it, so a follow-up naming **that** run carries normally: the decline is one question long, not a state the connection is left in — `"disabled"` when the server has conversations switched off, `"error"` on an unreadable ledger, and `"unavailable"` for the five remaining causes, which are deliberately not told apart. Only a value that is not a non-empty string is refused, with `400` — that is a malformed request rather than a runtime condition |
 
 **Response (202 Accepted):**
 
@@ -1014,6 +1014,7 @@ could arrive twice.
 { "error": "mode must be \"planning\" or \"agent\"" }
 { "error": "An agent run needs a server-resolvable connectionId; an inline connection cannot be resumed" }
 { "error": "previousRunId must be a non-empty string when provided" }
+{ "error": "Agent mode executes only where the provider implements a database-native read-only statement path — PostgreSQL and SQLite. On MySQL a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine." }
 
 // 404 Not Found — this server runs no agents
 { "error": "The agent runtime is not enabled on this server" }
@@ -1025,6 +1026,15 @@ could arrive twice.
   "disproved": []
 }
 ```
+
+> **The engine refusal is a `400`, and it changed this contract.** Since #512 an `agent` run whose
+> `workflowType` sends a statement — every workflow but `operations` — is refused here when the
+> connection's engine implements no database-native read-only statement path, and `error` carries the
+> posture's whole paragraph. It is refused **before a run id exists**: a client that used to receive
+> `202` for `investigation` on MySQL and then read `engine-unsupported` off the run receives `400`
+> and no run. `operations` is admitted on every engine because it sends no statement at all, and a
+> `planning` run is never refused this way — it executes nothing anywhere. The refusal reads the
+> same fact the provider factory does (`typeof provider.queryReadOnly`), so the two cannot disagree.
 
 > `422` rather than `400`: the request is well-formed and it is the server's configuration that
 > cannot honour it. Only a **positively established** incapability refuses this way — a bad key, a

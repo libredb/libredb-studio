@@ -230,6 +230,44 @@ export const AGENT_WORKFLOW_PRESENTS_ANSWER: Readonly<Record<AgentRunWorkflowTyp
   "data-analysis": true,
 } satisfies Record<AgentRunWorkflowType, boolean>);
 
+/**
+ * Which workflows SEND A STATEMENT the engine has to run under a read-only path — and
+ * therefore which ones can be offered at all on an engine whose provider implements no
+ * such path.
+ *
+ * A property of the workflow, stated here beside `AGENT_WORKFLOW_PRESENTS_ANSWER`
+ * rather than a list inside the route that refuses, and for the same reason: the set is
+ * then explicit, total over the union, and pinned to the tool sets by a test instead of
+ * being a claim a reader has to re-derive from `WORKFLOW_TOOLS`. A new workflow stops
+ * this file compiling until somebody decides whether it drafts SQL, which is the
+ * question that decides where it may run.
+ *
+ * `operations` is the false one, and it is the whole reason this record exists rather
+ * than a blanket rule about agent mode. Its tools are the curated provider readings
+ * every engine implements, served under `AGENT_OPERATIONS_PROFILE`, whose acquisition
+ * does not require `queryReadOnly` (`PROFILE_ACQUISITION` in `src/lib/db/factory.ts`).
+ * A refusal that ignored this axis would withhold from MySQL, Oracle, SQL Server,
+ * MongoDB, Redis and the rest a workflow that runs on them today (#411).
+ *
+ * It says nothing about PLAN mode, which drafts on every engine and executes nothing it
+ * drafts: a caller reading this record has to have established the mode first, exactly
+ * as `selectAgentTools` does.
+ *
+ * The binding to the tool set is not left to prose. `tools.test.ts` asserts, over every
+ * workflow, that `selectAgentTools` offers a tool whose operation carries a STATEMENT
+ * exactly when this record says true — so a workflow that gains such a tool without the
+ * flag (it would open on an engine that then refuses its first statement) or the flag
+ * without the tools (it would be withheld from an engine it runs on) fails the build
+ * rather than shipping the mismatch.
+ */
+export const AGENT_WORKFLOW_SENDS_STATEMENTS: Readonly<Record<AgentRunWorkflowType, boolean>> = Object.freeze({
+  investigation: true,
+  "query-optimization": true,
+  "database-assessment": true,
+  operations: false,
+  "data-analysis": true,
+} satisfies Record<AgentRunWorkflowType, boolean>);
+
 /** A run that has stopped, and why. Terminal states are never re-entered. */
 export type AgentRunTerminalStatus = "succeeded" | "failed" | "cancelled";
 
@@ -499,12 +537,39 @@ export type AgentReadingDenyCode = "KIND_UNSUPPORTED_BY_PROVIDER" | "READING_OVE
  * is the server's own decision about a curated reading it will not deliver, and its
  * reason code is a closed union rather than prose for the same reason the policy
  * variant's is.
+ *
+ * `elapsedMs` is on exactly the two variants that COST the run database time, and the
+ * split is the accounting's and not a style choice (#512). Both are decided inside the
+ * invoke callback, so `tracker.beginExecution` has run and `endExecution` charges the
+ * span against `maxTotalRunMs` on the failure path exactly as it does on the success
+ * one; a policy denial and an approval requirement return before `beginExecution` and
+ * are charged nothing at all, so a duration on either would be a spend nobody made.
+ * It was absent, and the consequence was concrete: the rail folds its database-time
+ * meter out of this ledger, so a run whose statement failed reported LESS than the
+ * tracker had already charged it — and under-reporting a spend a bound has taken is
+ * the direction that misleads, since it reads as room the run does not have.
+ *
+ * It sits beside the engine's `message` under a different rule, and the difference is
+ * the point. A duration is a MEASUREMENT this server took with its own clock, so it is
+ * recorded as data and read as data; the message is text the engine wrote, so it stays
+ * untrusted input that any prompt re-entering it has to label and quote.
+ *
+ * Optional, and the absence is a reading rather than a hedge: every refusal recorded
+ * before this field existed carries none, and a fold that read one as `0` would state
+ * that a failed statement cost the database no time — which is exactly what #477
+ * forbids. A reader therefore counts such an entry as unmeasured and says so, instead
+ * of folding a fabricated zero into a total it then presents as measured.
  */
 export type AgentToolRefusal =
   | { readonly class: "policy-denied"; readonly reasonCode: PolicyDenyCode }
   | { readonly class: "approval-required"; readonly operationId: string }
-  | { readonly class: "database-error"; readonly statementFingerprint: string; readonly message: string }
-  | { readonly class: "reading-refused"; readonly reasonCode: AgentReadingDenyCode };
+  | {
+      readonly class: "database-error";
+      readonly statementFingerprint: string;
+      readonly message: string;
+      readonly elapsedMs?: number;
+    }
+  | { readonly class: "reading-refused"; readonly reasonCode: AgentReadingDenyCode; readonly elapsedMs?: number };
 
 interface AgentRunEventBase {
   /** Epoch milliseconds. A number, not a Date: a Date does not round-trip. */
@@ -1057,7 +1122,47 @@ export interface AgentThreadContext {
    * conversation would keep reporting that one step was dropped. Absent means none.
    */
   readonly droppedSteps?: number;
-  readonly declined?: "unavailable" | "disabled" | "error";
+  /**
+   * Why continuing did not happen, in codes a surface can say something specific about.
+   *
+   * `"disabled"` is the operator's switch (`LIBREDB_AGENT_THREAD_CONTEXT`), `"error"` an
+   * unreadable ledger, and `"repointed"` a predecessor established against another
+   * database than this connection now addresses.
+   *
+   * `"repointed"` is split out and the rest are not, and the line between them is NOT a
+   * remedy. It was written as one — the decline was said to persist until the connection
+   * is pointed back — and that was false: the route writes the CURRENT identity onto the
+   * run this question opens (`route.ts`, the `connectionIdentity` field of its `start`
+   * call), and an ordinary follow-up continues THAT run (`AgentRail.tsx`,
+   * `continueTarget`), so the next question matches and carries. The decline is exactly
+   * one question long, and pointing the connection back afterwards does not restore the
+   * old conversation either — it declines once more, in the other direction.
+   *
+   * What earns the split is that this is the only code here that does not report a
+   * failure. It is reached only after every check in `route.ts` has PASSED: the
+   * predecessor exists, is this session's, is on this connection, has ended, and its
+   * ledger read. The server then refuses the carry on purpose, because the earlier steps'
+   * claims are about a database this run is not reading — carrying them would have been
+   * WRONG, not merely impossible. Two consequences a shared sentence cannot deliver: the
+   * user must not go hunting for a fault that does not exist, and they must learn that
+   * their own saved connection has moved, which nothing else tells them. That last is
+   * mechanical, not a guess: no client module computes `connectionIdentity` at all, and
+   * the rail's own connection sentence (`AgentRail.tsx`, `connectionDropped`) compares
+   * the connection's ID, which re-pointing a saved record does not change. This code is
+   * the only channel the operator has for learning it moved.
+   *
+   * The five left under `"unavailable"` are failures and are alike as failures — the
+   * predecessor does not exist, is not this session's, is on another connection, has not
+   * ended, or is named by an id the ledger refuses. Two are the caller's own bug (no such
+   * run, malformed id), one is transient and resolves by itself (not ended yet), one is
+   * session-scoped and cannot be fixed from this session at all (another session's run),
+   * and the last is a case the rail never reaches, because it withholds `previousRunId`
+   * itself when the editor has moved and owns a specific sentence for it (`AgentRail.tsx`,
+   * `connectionDropped`). Splitting them would also start telling a caller guessing ids
+   * which of its guesses were wrong, which is the leak `"repointed"` does not have
+   * (#512).
+   */
+  readonly declined?: "unavailable" | "disabled" | "error" | "repointed";
 }
 
 /**

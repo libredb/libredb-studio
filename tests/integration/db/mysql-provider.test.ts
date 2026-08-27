@@ -104,6 +104,37 @@ function makeMySQLConfig(overrides: Partial<DatabaseConnection> = {}): DatabaseC
 }
 
 /**
+ * The refusal a real MySQL-family server answers for `sql_text` over
+ * `performance_schema.events_statements_summary_by_digest` - the one column that table
+ * does not have on any build.
+ *
+ * Every fixture here that models the digest table answers WITH THIS rather than a row,
+ * and that is the repair the test file needed (#512): a mock that answers a statement no
+ * server accepts is how the defect survived every gate. The health line asked for
+ * `LEFT(sql_text, 100)`, the fixture invented a `query` column for it, and the read looked
+ * like a working one for as long as it was only mocked. The fields are the ones `mysql2`
+ * puts on the error - measured 2026-08-27 on MySQL 26.7.0, Percona Server 8.4.11-11 and
+ * MariaDB 12.3.2, with `@@performance_schema` 1 and 0 alike:
+ *
+ *   errno=1054 code=ER_BAD_FIELD_ERROR sqlState=42S22
+ *   Unknown column 'sql_text' in 'field list'
+ *
+ * (MariaDB words the same error `Unknown column 'sql_text' in 'SELECT'`; the code, errno
+ * and SQLSTATE are identical, and nothing under test reads the wording.)
+ */
+function sqlTextRefusal(): Error & { code: string; errno: number; sqlState: string } {
+  const error = new Error("Unknown column 'sql_text' in 'field list'") as Error & {
+    code: string;
+    errno: number;
+    sqlState: string;
+  };
+  error.code = "ER_BAD_FIELD_ERROR";
+  error.errno = 1054;
+  error.sqlState = "42S22";
+  return error;
+}
+
+/**
  * Default mock execute that matches SQL patterns and returns mock data.
  */
 function defaultMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
@@ -162,13 +193,29 @@ function defaultMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
   }
 
   // performance_schema.events_statements_summary_by_digest (slow queries)
+  //
+  // THE SHARED FIXTURE REFUSES `sql_text` TOO, and that is the repair this fixture
+  // needed (#512): about a hundred of the tests in this file run against this function,
+  // and while it answered a row for ANY statement over the digest table it answered the
+  // health line's `LEFT(sql_text, 100)` as readily as the real one - which is how a
+  // statement no server has ever executed passed every gate. `sqlTextRefusal()` says what
+  // a server says instead. The columns below are the aliases the real statement asks for;
+  // the former `avgTime: "12.5ms"` is gone with it, an invention of the same kind (that
+  // alias belonged to the broken health statement, and nothing reads it now).
+  //
+  // Routing every digest fixture through the one refusal helper is prophylactic: reverting
+  // this function to its unfaithful shape leaves the suite green, because the tests that
+  // need the refusal use dedicated fixtures. Nothing here can tell whether the shared mock
+  // is honest - `docs/BACKLOG.md` T6.
   if (normalized.includes("events_statements_summary_by_digest")) {
+    if (normalized.includes("sql_text")) {
+      return Promise.reject(sqlTextRefusal());
+    }
     return Promise.resolve([
       [
         {
           query: "SELECT * FROM users",
           calls: "100",
-          avgTime: "12.5ms",
           query_id: "abc123",
           total_time_ms: "1250",
           avg_time_ms: "12.5",
@@ -442,8 +489,102 @@ function perfSchemaDisabledMockExecute(sql: string): Promise<[unknown[], unknown
     return Promise.resolve([[{ hit_ratio: null }], []]);
   }
 
+  // OFF does not remove the column list. A server with `@@performance_schema` = 0 still
+  // rejects `sql_text` over this table with ER_BAD_FIELD_ERROR - the column does not
+  // exist on any build, whatever the switch says - and answering `[[], []]` to that
+  // statement too modelled a server that does not exist: it let BOTH the working read
+  // and the broken one produce `[]`, so the off-server test could not tell them apart.
   if (normalized.includes("events_statements_summary_by_digest")) {
+    if (normalized.includes("sql_text")) {
+      return Promise.reject(sqlTextRefusal());
+    }
     return Promise.resolve([[], []]);
+  }
+
+  return defaultMockExecute(sql);
+}
+
+/**
+ * The digest table with the columns a real server gives it, and the refusal a real
+ * server answers for the one column it does not have.
+ *
+ * `defaultMockExecute` used to invent a `query`/`calls`/`avgTime` row for ANY statement
+ * over `events_statements_summary_by_digest`, which is exactly how the defect survived
+ * every gate (#512): the health line asked for `LEFT(sql_text, 100)` and the mock
+ * answered it, while no MySQL-family server will. Measured 2026-08-27 via `information_schema.columns` on
+ * MySQL 26.7.0, Percona Server 8.4.11-11 and MariaDB 12.3.2 - the digest table carries
+ * `DIGEST_TEXT`, never `SQL_TEXT` (that one belongs to `events_statements_current`,
+ * MySQL 9.4 manual 29.12.20.1 / 29.12.20.3) - and asking for it answers
+ *
+ *   errno=1054 code=ER_BAD_FIELD_ERROR sqlState=42S22
+ *   Unknown column 'sql_text' in 'field list'
+ *
+ * on all three, with `@@performance_schema` 1 or 0 alike. So this mock refuses it too.
+ */
+function digestTableMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
+  const normalized = sql.trim().toLowerCase();
+
+  if (normalized.includes("events_statements_summary_by_digest")) {
+    if (normalized.includes("sql_text")) {
+      return Promise.reject(sqlTextRefusal());
+    }
+    // The two rows MySQL 26.7.0 answered on the live d32 database, verbatim: mysql2
+    // hands DECIMAL divisions back as strings, which is why the times are quoted.
+    return Promise.resolve([
+      [
+        {
+          query_id: "4a851b710602abe1a349ea94f18828aa1ebd9c71a2aca9192b19239e7e644a71",
+          query: "CREATE TABLE IF NOT EXISTS `t` ( `id` INTEGER PRIMARY KEY )",
+          calls: "1",
+          total_time_ms: "15.3182",
+          avg_time_ms: "15.3182",
+          min_time_ms: "15.3182",
+          max_time_ms: "15.3182",
+          rows_examined: "0",
+        },
+        {
+          query_id: "ce25f4e6e4f27e1f15596c115886fcd761a1bdceb78383cf698d675423e8d23a",
+          query: "SELECT COUNT ( * ) FROM `t`",
+          calls: "2",
+          total_time_ms: "4.1114",
+          avg_time_ms: "2.0557",
+          min_time_ms: "0.0622",
+          max_time_ms: "4.0492",
+          rows_examined: "0",
+        },
+      ],
+      [],
+    ]);
+  }
+
+  return defaultMockExecute(sql);
+}
+
+/**
+ * The digest table present but UNREADABLE - the grant denied on it. This is the other
+ * half of what actually reaches the failure path (the first is the schema being absent
+ * outright, below); off-ness never does, it answers 0 rows.
+ *
+ * Measured 2026-08-27 on MySQL 26.7.0 with a user granted only `SELECT ON d32.*` plus
+ * `PROCESS`:
+ *
+ *   errno=1142 code=ER_TABLEACCESS_DENIED_ERROR sqlState=42000
+ *   SELECT command denied to user 'nops'@'172.17.0.1' for table
+ *   'events_statements_summary_by_digest'
+ *
+ * Everything else that connection can read still answers, which is why this fixture
+ * delegates the rest: the point of the tests below is that ONE unreadable source costs
+ * one reading and names itself, rather than emptying a list that is then counted.
+ */
+function digestGrantDeniedMockExecute(sql: string): Promise<[unknown[], unknown[]]> {
+  if (sql.trim().toLowerCase().includes("events_statements_summary_by_digest")) {
+    const error = new Error(
+      "SELECT command denied to user 'nops'@'172.17.0.1' for table 'events_statements_summary_by_digest'",
+    ) as Error & { code: string; errno: number; sqlState: string };
+    error.code = "ER_TABLEACCESS_DENIED_ERROR";
+    error.errno = 1142;
+    error.sqlState = "42000";
+    return Promise.reject(error);
   }
 
   return defaultMockExecute(sql);
@@ -685,10 +826,10 @@ describe("MySQLProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("getLabels()", () => {
-    // The only label this provider declares. Until #U12 the monitoring Queries panel
-    // told a MySQL operator to install a PostgreSQL extension; `getSlowQueries()` reads
-    // `performance_schema.events_statements_summary_by_digest` and swallows a failure
-    // into `[]`, so the Performance Schema is the switch the sentence must name.
+    // The only label this provider declares. Until #U12 the monitoring Queries panel told
+    // a MySQL operator to install a PostgreSQL extension, so the sentence has to name the
+    // source MySQL actually has:
+    // `performance_schema.events_statements_summary_by_digest`.
     test("names the Performance Schema, not a Postgres extension, as the source of query stats", () => {
       provider = new MySQLProvider(makeMySQLConfig());
       const { slowQueriesEmptyState, entityName } = provider.getLabels();
@@ -698,6 +839,25 @@ describe("MySQLProvider", () => {
       expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
       // Everything else is still the inherited SQL wording, which is right for MySQL.
       expect(entityName).toBe("Table");
+    });
+
+    // The sentence describes the source and stops. `QueriesTab` renders this ONE fixed
+    // string for every empty list whatever produced it, so it cannot be a reason carrier
+    // and must not read as one: an instruction in it is addressed to causes it cannot tell
+    // apart. It used to end "enable the Performance Schema to see them", which named the
+    // one cause that never reaches the failure path - off-ness answers 0 rows, measured -
+    // and was unactionable for the ones that do (a denied grant, a tenant with no
+    // `performance_schema` database). Those reject now and reach the panel as the server's
+    // own sentence through `PanelUnavailable`, a different string on a different branch.
+    test("the empty-state sentence gives no instruction, because it cannot know which cause emptied the list", () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      const { slowQueriesEmptyState } = provider.getLabels();
+
+      expect(slowQueriesEmptyState).not.toMatch(/enable/i);
+      expect(slowQueriesEmptyState).not.toMatch(/not available|unavailable/i);
+      // What it does say: the two things an empty list can mean once an unreadable source
+      // rejects instead of emptying.
+      expect(slowQueriesEmptyState).toContain("recorded nothing");
     });
   });
 
@@ -784,8 +944,137 @@ describe("MySQLProvider", () => {
       // with one honest gap in it.
       expect(health.cacheHitRatio).toBe(CACHE_HIT_RATIO_UNAVAILABLE);
       expect(health.activeConnections).toBe(5);
-      expect(health.slowQueries[0].query).toBe("Performance schema not available");
+      // EMPTY, not a sentence about the Performance Schema: see the slow-query line
+      // section below and the reason recorded next to the read in `mysql.ts`. A row here
+      // is counted
+      // (`slowQueryCount` in the agent's curated health reading), so a sentence
+      // wearing a row's clothes is a fabricated measurement.
+      expect(health.slowQueries).toEqual([]);
       expect(Array.isArray(health.activeSessions)).toBe(true);
+    });
+
+    // ------------------------------------------------------------------------
+    // #512: the slow-query line stated a capability as absent on servers that had it
+    // ------------------------------------------------------------------------
+
+    test("the health slow-query line carries the digest rows the panel reads, not a capability sentence", async () => {
+      mockExecuteFn = digestTableMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      expect(health.slowQueries).toEqual([
+        {
+          query: "CREATE TABLE IF NOT EXISTS `t` ( `id` INTEGER PRIMARY KEY )",
+          calls: 1,
+          avgTime: "15.32ms",
+        },
+        { query: "SELECT COUNT ( * ) FROM `t`", calls: 2, avgTime: "2.06ms" },
+      ]);
+    });
+
+    test("no health read names sql_text, the column the digest table does not have", async () => {
+      mockExecuteFn = digestTableMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      protocolCalls = [];
+      await provider.getHealth();
+
+      // The regression guard that does not depend on the mock's kindness: the mock
+      // above refuses `sql_text` the way a server does, and this asserts the provider
+      // never asks for it in the first place.
+      expect(protocolCalls.filter((c) => c.sql.toLowerCase().includes("sql_text"))).toEqual([]);
+    });
+
+    test("the health slow-query line and the Queries panel report the same statements", async () => {
+      mockExecuteFn = digestTableMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const health = await provider.getHealth();
+      const panel = await provider.getSlowQueries({ limit: 5 });
+
+      // The panel beside the health line must never be able to disprove it, which is
+      // only structurally true while both come from the one digest statement.
+      expect(health.slowQueries.map((q) => q.query)).toEqual(panel.map((q) => q.query));
+      expect(health.slowQueries.map((q) => q.calls)).toEqual(panel.map((q) => q.calls));
+    });
+
+    test("the health slow-query line is empty on a server whose Performance Schema is off", async () => {
+      mockExecuteFn = perfSchemaDisabledMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const health = await provider.getHealth();
+
+      // Measured 2026-08-27 on MySQL 26.7.0 started with `--performance-schema=OFF` and
+      // on MariaDB 12.3.2, which ships it off: the digest table still EXISTS and answers
+      // 0 rows rather than throwing. So off-ness never reaches the catch, and the honest
+      // reading here is no rows.
+      expect(health.slowQueries).toEqual([]);
+    });
+
+    test("the health slow-query read is the five heaviest digests with no slowness threshold", async () => {
+      mockExecuteFn = digestTableMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      protocolCalls = [];
+      await provider.getHealth();
+
+      const digestRead = protocolCalls.find((c) => c.sql.toLowerCase().includes("events_statements_summary_by_digest"));
+      const normalized = digestRead?.sql.trim().toLowerCase() ?? "";
+
+      // WHAT THIS LIST IS, pinned so nobody can read its length as a count of slow
+      // statements. There is no slowness predicate anywhere in the statement: the only
+      // WHERE term is the connected schema, "slow" is an ORDERING (`SUM_TIMER_WAIT
+      // DESC`), and the LIMIT is 5. So on any server with five or more digests for this
+      // schema the list is five rows whatever their times are, and
+      // `health.slowQueries.length` - which the agent's curated health reading forwards
+      // as `slowQueryCount` (src/lib/agent/tools.ts) - reports 5 forever. It saturates at
+      // the cap; it is not a count, and no threshold makes a member of it "slow".
+      expect(normalized).toContain("order by sum_timer_wait desc");
+      expect(normalized.endsWith("limit 5;")).toBe(true);
+      expect(normalized.split("where")[1]?.split("order by")[0]?.trim()).toBe("schema_name = ?");
+    });
+
+    test("a denied grant on the digest table empties the health line and names itself on the panel path", async () => {
+      mockExecuteFn = digestGrantDeniedMockExecute;
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+
+      // THE HEALTH LINE DROPS THE REASON, and this asserts exactly that rather than
+      // claiming otherwise: `HealthInfo.slowQueries` is a `SlowQuery[]` with no error
+      // field, so an unreadable source is indistinguishable here from a source that
+      // measured nothing. Empty is the least-wrong shape - a row saying "Performance
+      // schema not available" was what representing it anyway looked like, and it was
+      // counted as a slow query (#512). Everything else the connection can read still
+      // answers.
+      const health = await provider.getHealth();
+      expect(health.slowQueries).toEqual([]);
+      expect(health.activeConnections).toBe(5);
+      expect(health.activeSessions).toHaveLength(2);
+
+      // The reason is not lost to the operator, because the panel path has a channel for
+      // it: `getSlowQueries()` rejects rather than swallowing, `getMonitoringData()`
+      // (src/lib/db/base-provider.ts) records the rejection under `errors.slowQueries`,
+      // and `QueriesTab` renders that through `PanelUnavailable` with the server's own
+      // sentence. Without this test the comments saying so would be assertions about
+      // nothing: before the repair `getSlowQueries()` returned `[]` here too, and then
+      // `errors.slowQueries` could never be set for MySQL at all.
+      await expect(provider.getSlowQueries()).rejects.toThrow(
+        /SELECT command denied .* for table 'events_statements_summary_by_digest'/,
+      );
+
+      const monitoring = await provider.getMonitoringData({ includeTables: false, includeIndexes: false });
+      expect(monitoring.slowQueries).toBeUndefined();
+      expect(monitoring.errors?.slowQueries).toContain("events_statements_summary_by_digest");
+      // One refused panel costs only itself.
+      expect(monitoring.overview).toBeDefined();
+      expect(monitoring.activeSessions?.length).toBe(2);
     });
   });
 

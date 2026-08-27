@@ -30,13 +30,23 @@ import {
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import {
   AGENT_WORKFLOW_PRESENTS_ANSWER,
+  AGENT_WORKFLOW_SENDS_STATEMENTS,
   type AgentRunEvent,
   type AgentRunRecord,
   type AgentRunWorkflowType,
 } from "@/lib/agent/types";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
-import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
+import {
+  createCanonicalOperationRegistry,
+  dbOperationsReadDescriptor,
+  dbSchemaReadDescriptor,
+  sqlExplainAnalyzeDescriptor,
+  sqlExplainEstimateDescriptor,
+  sqlQueryReadDescriptor,
+  sqlTableProfileDescriptor,
+} from "@/lib/db/operations/descriptors";
+import { agentPlanExecutionSqlInput, agentReadSqlInput } from "@/lib/db/operations/statement-guard";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import * as errorModule from "@/lib/db/errors";
 import {
@@ -260,6 +270,53 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
     // And the record is not vacuously false everywhere, which would satisfy the loop
     // above while the feature did not exist.
     expect(AGENT_WORKFLOW_PRESENTS_ANSWER["data-analysis"]).toBe(true);
+  });
+
+  test("a statement-carrying tool is offered exactly where AGENT_WORKFLOW_SENDS_STATEMENTS says so", () => {
+    /*
+      The binding that lets `POST /api/agent/runs` refuse a run BEFORE it opens on an
+      engine whose provider implements no read-only statement path (#512). The route reads
+      that record and nothing else, so this is what keeps it equal to the tool sets: a
+      workflow that gained a statement tool without the flag would
+      open there and end `engine-unsupported` after a model turn, and one that gained the
+      flag without such a tool would be withheld from an engine it runs on today.
+
+      Which operations carry a statement is MEASURED off the descriptors rather than
+      listed here: a statement-carrying operation is one whose input contract is a
+      statement schema, and those are exactly the calls that reach the engine through
+      `provider.queryReadOnly`.
+    */
+    const statementCarrying = new Set(
+      [
+        sqlQueryReadDescriptor,
+        sqlExplainEstimateDescriptor,
+        sqlExplainAnalyzeDescriptor,
+        sqlTableProfileDescriptor,
+        dbOperationsReadDescriptor,
+        dbSchemaReadDescriptor,
+      ]
+        .filter(
+          (descriptor) =>
+            descriptor.inputSchema === agentReadSqlInput || descriptor.inputSchema === agentPlanExecutionSqlInput,
+        )
+        .map((descriptor) => descriptor.id),
+    );
+    // Not vacuous in either direction: the four SQL operations are in the set, and the
+    // two that name no statement at all - the curated reading and the provider's own
+    // schema read - are out of it.
+    expect(statementCarrying).toEqual(
+      new Set(["sql.query.read", "sql.explain.estimate", "sql.explain.analyze", "sql.table.profile"]),
+    );
+
+    for (const workflowType of WORKFLOW_TYPES) {
+      const sendsStatement = selectAgentTools(persisted("agent", workflowType)).some(
+        (tool) => tool.operationId !== undefined && statementCarrying.has(tool.operationId),
+      );
+      expect(sendsStatement, workflowType).toBe(AGENT_WORKFLOW_SENDS_STATEMENTS[workflowType]);
+    }
+    // And the record is not uniformly true, which would satisfy the loop above while
+    // leaving no workflow for an unsupported engine to run.
+    expect(AGENT_WORKFLOW_SENDS_STATEMENTS.operations).toBe(false);
   });
 
   test("no workflow but operations is offered the curated reading", () => {
@@ -1435,6 +1492,73 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
     }
     expect(outcome.refusal.message).toContain("ordr_id");
     expect(outcome.refusal.statementFingerprint).toBe(fingerprintStatement("SELECT ordr_id FROM orders"));
+  });
+
+  /**
+   * Since #512 (`docs/BACKLOG.md` B78 for what that left open). `executeAuditedOperation`
+   * charges `maxTotalRunMs` from a failed execution exactly as it does from a completed
+   * one, and the refusal used to carry no duration at all — so a meter folded from the
+   * ledger sat BELOW the bound the server was already enforcing on the run, which is the
+   * direction that misleads.
+   *
+   * The figure is read off the tracker rather than measured a second time here: what
+   * the meter owes a user is what the enforcer charged, and two measurements of one
+   * span are two things that can disagree.
+   */
+  test("a failed statement records the database time the tracker charged it", async () => {
+    const h = harness({}, async () => {
+      throw new QueryError('column "ordr_id" does not exist', "postgres", "SELECT ordr_id FROM orders");
+    });
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT ordr_id FROM orders" });
+
+    if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") {
+      throw new Error(`expected a database error, got ${JSON.stringify(outcome)}`);
+    }
+    expect(outcome.refusal.elapsedMs).toBe(h.tracker.usage("run-1").totalElapsedMs);
+    // Non-vacuous: the harness clock spans 1_000 to 1_012, so a seam that recorded a
+    // zero or dropped the field would pass the equality above on a run that spent
+    // nothing.
+    expect(outcome.refusal.elapsedMs).toBe(12);
+  });
+
+  /**
+   * The same figure on a run that has ALREADY spent time — the case that separates
+   * "what this execution cost" from "what the run has spent so far".
+   *
+   * The test above cannot separate them: its failing execution is the run's first, so
+   * the charge before it is 0 and the delta is trivially the running total. Replacing
+   * `chargedBeforeMs` with a literal 0 leaves it green while turning the field into the
+   * run's cumulative total — and `foldLedgerEntries` adds that on TOP of the completed
+   * reads' own `summary.elapsedMs`, so the rail's database-time gauge would OVER-report,
+   * inverting the "a spend shown here is a floor, never a ceiling" sentence it prints.
+   *
+   * The clock hands out two spans: 1_000 -> 1_040 for the read that settles, then
+   * 1_040 -> 1_045 for the one that fails. `executeAuditedOperation` reads the clock
+   * exactly twice per execution (`startedAtMs`, then `elapsedSince`), so the tracker's
+   * running total is 45 and this execution's own span is 5.
+   */
+  test("the recorded time is THIS execution's span, not the run's running total", async () => {
+    let attempt = 0;
+    const h = harness({ clock: stubClock(1_000, 1_040, 1_040, 1_045) }, async () => {
+      attempt += 1;
+      if (attempt === 1) return queryResult();
+      throw new QueryError('column "ordr_id" does not exist', "postgres", "SELECT ordr_id FROM orders");
+    });
+
+    const settled = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+    if (settled.kind !== "completed") throw new Error(`expected completed, got ${settled.kind}`);
+    // The prior execution is genuinely charged, so `chargedBeforeMs` below is not 0.
+    expect(h.tracker.usage("run-1").totalElapsedMs).toBe(40);
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT ordr_id FROM orders" });
+
+    if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") {
+      throw new Error(`expected a database error, got ${JSON.stringify(outcome)}`);
+    }
+    expect(h.tracker.usage("run-1").totalElapsedMs).toBe(45);
+    expect(outcome.refusal.elapsedMs).toBe(5);
+    expect(outcome.refusal.elapsedMs).not.toBe(h.tracker.usage("run-1").totalElapsedMs);
   });
 
   test("the row budget refusal names the LIMIT to use, for a model that earned the advice", async () => {
@@ -3183,8 +3307,54 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     const outcome = await inspectOperationsTool(h.context, { kind: "storage" });
 
     if (outcome.kind !== "refused") throw new Error("expected refused");
-    expect(outcome.refusal).toEqual({ class: "reading-refused", reasonCode: "KIND_UNSUPPORTED_BY_PROVIDER" });
+    /*
+      Whole-object, so a field arriving on this variant has to be decided rather than
+      slip in. `elapsedMs` is what the tracker charged this execution (#512) — the
+      refusal is raised inside the invoke callback, after `beginExecution`, so the charge
+      is real and the ledger records it.
+    */
+    const charged = h.tracker.usage(h.context.runId).totalElapsedMs;
+    expect(charged).toBeGreaterThan(0);
+    expect(outcome.refusal).toEqual({
+      class: "reading-refused",
+      reasonCode: "KIND_UNSUPPORTED_BY_PROVIDER",
+      elapsedMs: charged,
+    });
     expect(outcome.modelText).toContain("serves no reading of that kind");
+  });
+
+  /**
+   * The `reading-refused` half of the same delta (#512), on a run that has ALREADY spent
+   * time. Both tests that pin this field elsewhere use a run's FIRST execution, so
+   * `chargedBeforeMs` is 0 there and the delta cannot be told apart from the run's
+   * cumulative total: replacing it with a literal 0 leaves them green while turning the
+   * field into that total, which `foldLedgerEntries` then adds on TOP of the completed
+   * readings' own `summary.elapsedMs` — the rail's database-time gauge would
+   * OVER-report, inverting the "a spend shown here is a floor, never a ceiling"
+   * sentence it prints.
+   *
+   * The measured spans: `curatedHarness`'s clock advances 3 ms per read, so the settled
+   * sessions reading is charged 9 ms — `executeAuditedOperation` reads the clock around
+   * the call and the curated path measures its OWN `executionTime` inside the invoke
+   * callback, four reads in all — while the unsupported kind is refused before that
+   * inner measurement and is charged 3. The tracker's running total after both is 12.
+   */
+  test("a refused reading records THIS execution's span, not the run's running total", async () => {
+    const h = curatedHarness({}, { getStorageStats: undefined });
+
+    const settled = await inspectOperationsTool(h.context, { kind: "sessions" });
+    expect(settled.kind).toBe("completed");
+    // The prior execution is genuinely charged, so `chargedBeforeMs` below is not 0.
+    expect(h.tracker.usage(h.context.runId).totalElapsedMs).toBe(9);
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "storage" });
+
+    if (outcome.kind !== "refused" || outcome.refusal.class !== "reading-refused") {
+      throw new Error(`expected a refused reading, got ${JSON.stringify(outcome)}`);
+    }
+    expect(h.tracker.usage(h.context.runId).totalElapsedMs).toBe(12);
+    expect(outcome.refusal.elapsedMs).toBe(3);
+    expect(outcome.refusal.elapsedMs).not.toBe(h.tracker.usage(h.context.runId).totalElapsedMs);
   });
 
   test("a refused reading SETTLES the step, because the call was made and charged", async () => {
@@ -3230,7 +3400,16 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     const outcome = await inspectOperationsTool(h.context, { kind: "storage" });
 
     if (outcome.kind !== "refused") throw new Error("expected refused");
-    expect(outcome.refusal).toEqual({ class: "reading-refused", reasonCode: "READING_OVER_BUDGET" });
+    // The provider method RAN and returned rows before the byte cap refused them, so
+    // this is the variant with the most database time behind it — and the entry now
+    // carries what the tracker charged for it rather than nothing (#512).
+    const overBudgetCharge = h.tracker.usage(h.context.runId).totalElapsedMs;
+    expect(overBudgetCharge).toBeGreaterThan(0);
+    expect(outcome.refusal).toEqual({
+      class: "reading-refused",
+      reasonCode: "READING_OVER_BUDGET",
+      elapsedMs: overBudgetCharge,
+    });
     expect(outcome.modelText).toContain("smaller limit");
   });
 

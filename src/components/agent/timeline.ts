@@ -356,6 +356,23 @@ export interface AgentRunTimeline {
   readonly failureReason: AgentRunFailureReason | null;
   readonly budget: readonly AgentBudgetGauge[];
   /**
+   * How many of this run's CHARGED statements carry no duration on the ledger, so the
+   * database-time gauge above is missing whatever they cost (#512).
+   *
+   * A count rather than a flag, and a fact rather than an estimate: it is the number of
+   * settled steps whose entry the tracker charged and which record no `elapsedMs`. That
+   * is every refusal written before the field existed, and it is why the gauge does not
+   * simply sum a zero for them — a zero would state that a failed statement cost the
+   * database no time, and #477's rule is that an unknown measurement may not be
+   * presented as a measured one.
+   *
+   * Zero for a run whose every charged statement carries its duration, which is what a
+   * run driven by this build produces — so the rail says nothing about missing durations
+   * on such a run. The caveat is per RUN for that reason: a standing claim would keep
+   * describing a defect the run in front of the reader does not have.
+   */
+  readonly statementsWithoutDuration: number;
+  /**
    * What the run was opened FOR, folded from its header — and therefore which row of
    * `AGENT_WORKFLOW_BUDGETS` the server is enforcing on it. The gauges above are
    * built from that row, and the rail states the ceilings nothing counts from the
@@ -1310,20 +1327,22 @@ function reportOf(claims: readonly AgentReportClaim[], index: LedgerIndex): Agen
  *    inside the invoke callback, after the pipeline allowed the call and
  *    `beginExecution` ran, so the tracker has already counted it; and no rewording
  *    could have changed the answer, so the repair ledger does not.
- *  - Database time is the elapsed time completed reads reported. A statement that
- *    failed has none in the ledger, so none is invented for it — the caveat the
- *    rail shows beside the meter is what says so.
+ *  - Database time is the elapsed time each CHARGED statement recorded: a completed
+ *    read's own `summary.elapsedMs`, and, for the two refusal classes the tracker
+ *    charged, the span it charged them (#512). An entry carrying no
+ *    duration — every refusal written before that field existed — contributes nothing
+ *    rather than a zero, and is counted into `statementsWithoutDuration` so the rail
+ *    can name what the figure is missing instead of presenting an invented one (#477).
  *
  * Every figure this produces is therefore a FLOOR on what the run has spent, and
  * the rail says so rather than presenting it as exact. The ledger is narrower than
- * the tracker in four known ways, all recorded: a failed statement's duration is
- * absent (`docs/BACKLOG.md` B12), and B13 holds the other three — the run's schema
- * capture reaches `executeAuditedOperation` through `captureContextSnapshot` rather
- * than through the run loop's `runStep`, so its two-to-three catalog reads are
- * charged without writing a `tool-completed` entry; an acquisition failure is
- * charged a statement and settles no step; and a completed read reports the
- * engine's own elapsed time while the tracker charges the span around the whole
- * call. The list is what is KNOWN, not a proof that nothing else is missing.
+ * the tracker in three known ways, all recorded in B13: the run's schema capture
+ * reaches `executeAuditedOperation` through `captureContextSnapshot` rather than
+ * through the run loop's `runStep`, so its two-to-three catalog reads are charged
+ * without writing a `tool-completed` entry; an acquisition failure is charged a
+ * statement and settles no step; and a completed read reports the engine's own
+ * elapsed time while the tracker charges the span around the whole call. The list is
+ * what is KNOWN, not a proof that nothing else is missing.
  */
 export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRunTimeline {
   const items: AgentTimelineItem[] = [];
@@ -1332,6 +1351,8 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
   let failureReason: AgentRunFailureReason | null = null;
   let statements = 0;
   let databaseMs = 0;
+  /** Charged statements whose entry records no duration (#512). See the field's doc. */
+  let statementsWithoutDuration = 0;
   let repairs = 0;
   let claims: readonly AgentReportClaim[] | null = null;
 
@@ -1462,11 +1483,20 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
       } else if (event.kind === "tool-refused" && event.refusal.class === "database-error") {
         statements += 1;
         repairs += 1;
+        // The span the tracker charged this failed execution (#512), which it charges
+        // exactly as it charges a completed one's. An entry from before the refusal
+        // carried it adds nothing and is counted as unmeasured instead: a zero here
+        // would claim the statement cost the database no time.
+        if (event.refusal.elapsedMs === undefined) statementsWithoutDuration += 1;
+        else databaseMs += event.refusal.elapsedMs;
       } else if (event.kind === "tool-refused" && event.refusal.class === "reading-refused") {
         // Counted as a statement and NOT as a repair, which is what actually happened:
         // the call was admitted and executed against the run's budget, and no repair
         // attempt was spent because no rewording could have changed the answer.
         statements += 1;
+        // And charged the same time, read the same way and absent for the same reason.
+        if (event.refusal.elapsedMs === undefined) statementsWithoutDuration += 1;
+        else databaseMs += event.refusal.elapsedMs;
       }
     }
     // Indexed, because two entries can legitimately be identical in content and
@@ -1531,6 +1561,7 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
       { id: "database-time", label: "Database time", used: databaseMs, limit: budgets.maxTotalRunMs, unit: "ms" },
       { id: "repairs", label: "Repair attempts", used: repairs, limit: AGENT_MAX_REPAIR_ATTEMPTS, unit: "count" },
     ],
+    statementsWithoutDuration,
     report: claims === null ? null : reportOf(claims, { artifacts, statements: statementsByStep, captures }),
     capture,
   };

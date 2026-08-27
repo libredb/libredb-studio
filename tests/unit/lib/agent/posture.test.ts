@@ -172,7 +172,7 @@ describe("agentPosture in agent mode, where it cannot execute", () => {
     expect(posture.qualifier).toBe("plan mode drafts here, and the operations workflow still runs");
     expect(posture.title).toBe("Agent mode has no read-only statement path on MongoDB");
     expect(posture.body).toBe(
-      `Agent mode executes only where the provider implements a database-native read-only statement path — ${EXECUTION_ENGINE_NAMES}. On MongoDB a profiled acquisition is refused and the run ends engine-unsupported before its first statement. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.`,
+      `Agent mode executes only where the provider implements a database-native read-only statement path — ${EXECUTION_ENGINE_NAMES}. On MongoDB a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.`,
     );
   });
 
@@ -186,7 +186,7 @@ describe("agentPosture in agent mode, where it cannot execute", () => {
 
     expect(posture.tone).toBe("blocked");
     expect(posture.headline).toBe("Cannot execute on Oracle");
-    expect(posture.body).toContain("On Oracle a profiled acquisition is refused");
+    expect(posture.body).toContain("On Oracle a run whose workflow sends a statement is refused when it is started");
   });
 
   test("no resolved connection claims nothing about an engine it has not seen", () => {

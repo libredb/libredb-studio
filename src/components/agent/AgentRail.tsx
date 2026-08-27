@@ -783,7 +783,7 @@ export function AgentRail({
    *
    * The rail's own sentence rather than the server's: it is a deliberate, correct
    * behaviour and the rail is the layer that knows it happened, while the server's
-   * `declined` collapses five causes it may not tell apart.
+   * `declined: "unavailable"` collapses the five causes it may not tell apart.
    */
   const [connectionDropped, setConnectionDropped] = useState(false);
   /** An ask that arrived while the user was typing, waiting for them to take it. */
@@ -1103,7 +1103,7 @@ export function AgentRail({
         ? run.runId
         : undefined;
     // Two reasons the rail withholds an id it has, and it OWNS both sentences: the
-    // server's own refusal collapses five causes it must not tell apart, while these
+    // server's `unavailable` collapses five causes it must not tell apart, while these
     // two are deliberate and specific, so saying "could not be reached" of either
     // would blame a failure for a choice.
     const connectionHeld = openedOn.current?.id === decided.connection.id;
@@ -2186,10 +2186,12 @@ export function AgentRail({
           those, and a strip that said "this question started on its own" over every
           first question would be noise standing where a real notice has to be read.
 
-          The three sentences come from three different knowers, and each says only
-          what it knows: the rail owns the connection change (deliberate, and it is the
-          layer that saw it), the server owns `declined` (five causes it may not tell
-          apart), and the step list is the run's own header.
+          The sentences come from different knowers, and each says only what it knows:
+          the rail owns the connection change (deliberate, and it is the layer that saw
+          it), the server owns `declined` — its own switch, an unreadable ledger, a
+          re-pointed connection, and five causes it may not tell apart under
+          `unavailable` (#512) — and the step list is the run's own
+          header.
         */}
         {(threadSteps.length > 0 || threadDeclined !== undefined || connectionDropped) && (
           <div data-testid="agent-thread" className="mt-2 text-[0.625rem] text-fg-muted">
@@ -2235,7 +2237,27 @@ export function AgentRail({
                   ? "Connection changed, so this question started a new conversation."
                   : threadDeclined === "disabled"
                     ? "Conversation context is switched off on this server, so every question starts on its own."
-                    : "The earlier step could not be carried into this question, so it started on its own."}
+                    : threadDeclined === "repointed"
+                      ? /*
+                          Says what the server measured and no more. What it compared is the
+                          connection's fingerprint - server, database, role, tunnel - so the
+                          copy says "re-pointed" rather than naming the database, which is
+                          only one of the four things that can have moved.
+
+                          The second half is scope, and it is scope because the decline is a
+                          ONE-QUESTION event: the route writes the CURRENT identity onto the
+                          run it opens here (`route.ts`, the `connectionIdentity` field of the
+                          `start` call), and an ordinary follow-up continues THAT run
+                          (`continueTarget` above), whose identity matches - so the next
+                          question carries normally. An earlier draft promised the opposite,
+                          that the decline persists until the connection is pointed back, and
+                          it was false in both directions: nothing keeps declining, and
+                          pointing back does not restore the old conversation either, because
+                          by then the run this question opened is the one being followed
+                          (#512).
+                        */
+                        "This connection was re-pointed after the earlier step ran, so this question started a new conversation. Follow-ups from here continue on the connection as it points now."
+                      : "The earlier step could not be carried into this question, so it started on its own."}
               </p>
             )}
           </div>
@@ -2558,10 +2580,26 @@ export function AgentRail({
                   Every ceiling is per drive, so a run resumed after a restart starts each of them again and these
                   totals can read past a single drive&apos;s ceiling. What is counted comes from the run&apos;s ledger,
                   which records less than the server charges: the schema capture&apos;s catalog reads are not itemized,
-                  a statement that failed at the database records no duration, and a completed read reports the
-                  engine&apos;s own elapsed time rather than the span the budget was charged. So a spend shown here is a
-                  floor, never a ceiling. On SQLite a statement over its timeout is refused once it returns, not
-                  interrupted while it runs.
+                  and a completed read reports the engine&apos;s own elapsed time rather than the span the budget was
+                  charged. So a spend shown here is a floor, never a ceiling.
+                  {/*
+                    The one remaining gap in the database-time figure, and it is per RUN
+                    rather than a standing claim (#512). A failed
+                    statement now records the span the tracker charged it, so a run driven
+                    by this build has nothing missing here and is told nothing — a caveat
+                    that fires on every run is one a reader stops seeing. A run folded from
+                    an OLDER ledger holds refusals with no duration on them, and the fold
+                    counts those instead of summing a zero, so this says how many rather
+                    than letting the total read as measured (#477).
+                  */}
+                  {run.timeline.statementsWithoutDuration > 0 && (
+                    <>
+                      {" "}
+                      The ledger holds no duration for {run.timeline.statementsWithoutDuration} of this run&apos;s
+                      charged statements, so that spend is not in the figure above.
+                    </>
+                  )}{" "}
+                  On SQLite a statement over its timeout is refused once it returns, not interrupted while it runs.
                 </span>
               </InfoNote>
             </span>

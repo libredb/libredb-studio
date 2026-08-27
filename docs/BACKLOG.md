@@ -22,12 +22,12 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections)
+- [Drivers and connections](#drivers-and-connections) — D1–D38, U17, U22–U23 · 16
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2–X14, U2–U21 · 10
-- [Authentication and security headers](#authentication-and-security-headers) — AU3
-- [Tests](#tests) — T1–T5 · 4
+- [Authentication and security headers](#authentication-and-security-headers) — AU4
+- [Tests](#tests) — T1–T7 · 6
 - [Dependencies](#dependencies) — P1–P5 · 5
 - [Documentation](#documentation) — DOC1, DOC3 · 2
 - [Release pipeline](#release-pipeline) — REL1–REL3 · 3
@@ -36,7 +36,7 @@ None of it is a GitHub issue.
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C2–C10 · 9
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K2–K4 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A6 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B76 · 46
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B1–B80 · 47
 
 ---
 
@@ -348,28 +348,6 @@ across two connections where the second one's read fails, not through the hook i
 
 ---
 
-### D32. The MySQL health panel reports `performance_schema` unavailable on a server that has it
-
-Measured 2026-08-26 while probing Percona Server for MySQL, and confirmed on the baseline in the
-same pass, which is what makes it ours: `getHealth()` returns
-`slowQueries: [{ query: "Performance schema not available", calls: 0, avgTime: "N/A" }]` on both
-`percona/percona-server:8.4` and a stock **MySQL 26.7.0**, while on each of them
-`@@performance_schema` is `1` and `getSlowQueries()` on the same connection returns real rows.
-
-So the health reading states an engine capability as absent when it is present, and the panel
-beside it disproves the statement. It is a fabricated absence rather than a missing number, which
-is the class the absence rule (#477) exists to prevent - the honest reading is either the rows
-`getSlowQueries()` can already produce, or no slow-query line at all.
-
-Not Percona's, not new, and not caused by the wire-compatible work - it just took a drop-in build
-to notice, because a caveat had to be written about a reading that turned out to be the baseline's.
-
-**Done when:** the health panel's slow-query line either carries the rows the slow-query read
-returns or is absent, and the "not available" wording appears only on a server where
-`@@performance_schema` is actually 0 - both arms measured, one server of each kind.
-
----
-
 ### D33. Every parameterised read still prepares, so an engine without PREPARE loses all of them
 
 Measured 2026-08-27 against `datafuselabs/databend:v1.2.925-patch-11` (issue #424, Phase 0).
@@ -402,7 +380,55 @@ than concatenated, and `runMaintenance` on an engine that answers `ANALYZE` with
 reports a result instead of throwing - both verified against the container, and the reading
 unchanged on MySQL, MariaDB and one analytics relative.
 
-### D34. The migration generator emits `ADD CONSTRAINT` for SQLite, which SQLite cannot parse
+### D34. A pinned SSH host key has no way to be set, so the protection resets on restart
+
+Giving the tunnel a `hostVerifier` created two sources for the expected fingerprint: a durable
+`sshTunnel.hostKeyFingerprint` on the connection, which wins, and otherwise a first-contact memory
+keyed by the bastion's `host:port`. Only the second one is reachable today, and it lives in the server
+process. Measured 2026-08-26 when the verifier landed: **nothing writes `hostKeyFingerprint`.** There is no
+input for it (`ConnectionModal` renders from `use-connection-form`, which does not carry the field),
+seed configs do not model `sshTunnel` at all, and there is no server-to-client write-back for a
+fingerprint the tunnel just accepted.
+
+So the shipped behaviour is: a key that changes WITHIN a server's lifetime is refused, naming both
+fingerprints; a restart re-enters first contact and accepts whatever answers. That is strictly better
+than the previous behaviour, which verified nothing ever, and it is not the durable pin the code is
+already able to honour.
+
+There is also a latent drop waiting for whoever adds the writer: `use-connection-form.ts` rebuilds
+`SSHTunnelConfig` from form state on every save and does not spread `hostKeyFingerprint` through, so
+editing and re-saving a connection would silently clear its pin. Inert today — the field has no writer
+— and a one-line spread when it gets one.
+
+**Done when:** an accepted fingerprint can be persisted onto the connection it belongs to, surviving a
+restart and a round trip through the connection dialog, and the accept/reject decision for a key that
+legitimately changed has an answer in the product rather than only in a doc.
+
+Filed as D32 when the verifier landed in #509 - an id this file has since reused for an unrelated
+entry, which is why citing it is no longer safe - and lost the same day: #510 branched before that
+merge and its copy of this file overwrote both entries, which is also why they are renumbered.
+Restored 2026-08-27 from `35294140`.
+
+### D35. The live SSH arm was driven once by hand, and no fixture keeps it true
+
+The mismatch arm HAS been measured against a real server. 2026-08-26, `openssh-server` on port 2226,
+through the real `createSSHTunnel`, three arms: no pin accepted and reported
+`SHA256:JWLQciyX8RYEeuK+bwRLW/YSpStz0/L7BlbVcejL1/U`, byte-identical to
+`ssh-keyscan -p 2226 127.0.0.1 | ssh-keygen -lf -`; the correct pin connected; a wrong pin was refused
+with both fingerprints in the message. So the fingerprint format and the refusal are confirmed
+end-to-end against a live sshd, not only against generated key files and a mocked handshake, and
+`docs/providers/README.md` records that measurement.
+
+What does not exist is a STANDING fixture. `tests/unit/ssh-tunnel.test.ts` still drives a mocked `ssh2`,
+which is what runs in CI, so the live result is a one-time observation rather than a property the suite
+holds. A regression in the verifier would be caught by the mock only to the extent the mock is faithful
+to ssh2 - and the mock was written from reading ssh2's source, which is the thing most likely to drift.
+
+**Done when:** an sshd service exists alongside the other container fixtures and the three arms above
+run against it, or a note beside the mock records that its fidelity to ssh2 is the assumption CI rests
+on and names the source it was derived from.
+
+### D36. The migration generator emits `ADD CONSTRAINT` for SQLite, which SQLite cannot parse
 
 Found 2026-08-27 while registering the `libsql` type-id (issue #424, Phase 5), and it is the
 `sqlite` dialect's own defect rather than the new one's.
@@ -426,6 +452,52 @@ Narrow, and it does not throw: the file generates, and the failure happens when 
 **Done when:** `sqlite` declines an added foreign key the way `libsql` does, with a comment naming
 recreation rather than a statement, and a test pins both directions for it - the way
 `tests/unit/schema-diff/migration-generator.test.ts` now pins them for `libsql` and `cassandra`.
+
+### D37. Five HTTP providers read the SSL mode and drop the rest of the TLS panel
+
+Found 2026-08-27 in the #511 review (issue #424, Phase 5). Not libSQL's - libSQL is the
+fifth of five instances of one gap, and the fix already exists in the codebase.
+
+`ssl.caCert`, `ssl.clientCert`, `ssl.clientKey` and `ssl.rejectUnauthorized` reach the
+driver on every provider that uses one. On the providers that speak HTTP through global
+`fetch` they reach nothing: ClickHouse, Druid, Elasticsearch/OpenSearch, Trino and libSQL
+each read `ssl.mode` only, to decide `http:` against `https:`, and Node's `fetch` cannot carry
+a custom CA or relax verification without an undici `Agent` as `dispatcher` - and undici
+must not become a dependency. So a self-hosted server with a private CA is reachable only
+by trusting it at the OS level, and the form's own TLS fields silently do nothing.
+
+**Couchbase already solved this and is the pattern**: `providers/document/couchbase/http-transport.ts`
+sends plaintext through `fetch` and TLS through `node:https`, a built-in that takes
+`ca`/`cert`/`key`/`rejectUnauthorized` directly (D26). Its `CouchbaseTlsMaterial` mapping,
+including `rejectUnauthorized: ssl.rejectUnauthorized ?? ssl.mode !== "require"`, is the
+behaviour the other five need.
+
+Not a defect in what any of them measures - it is a field the form offers and the transport
+discards, which is the kind of silence a security setting must not have.
+
+**Done when:** the TLS material mapping is shared rather than copied, the five `fetch`
+transports route TLS through it, and one test per transport pins that a supplied CA and a
+`verify-*` mode reach the request options - plus one that a `require` mode does not verify.
+
+### D38. `getConnectionInfo` masks a password in a connection string but not a token in a query string
+
+Found 2026-08-27 in the #511 review. Pre-existing, dead today, and cheap to close before it
+is not.
+
+`base-provider.ts`'s `protected getConnectionInfo()` returns
+`connectionString.replace(/:([^:@]+)@/, ":***@")`, which masks `:secret@` in an authority and
+nothing else. A libSQL connection string carries its credential in the query string instead -
+`libsql://db-org.turso.io?authToken=<jwt>` - so the whole token would survive the mask. The
+same is true of any `?password=`/`?sslkey=` form.
+
+It is currently unreachable: the only callers are in `tests/unit/db/base-provider.test.ts`, so
+no production path prints it. That is the reason this is a backlog entry rather than an issue,
+and also the reason it is worth doing - a future health-panel caller would inherit a leak that
+looks redacted.
+
+**Done when:** the mask also strips the value of every credential-shaped query parameter
+(`authToken`, `password`, `token`, `sslkey`), with a test per shape - or the method is deleted,
+since nothing in `src/` calls it.
 
 ### U22. The connection form renders fields the engine does not take, and a comment says otherwise
 
@@ -470,52 +542,6 @@ who is trying to account for the bytes.
 provider's own labels the way the maintenance and slow-query wordings already do
 (`ProviderLabels`), with a component test pinning it for one PostgreSQL and one
 non-PostgreSQL engine.
-
-### D35. Five HTTP providers read the SSL mode and drop the rest of the TLS panel
-
-Found 2026-08-27 in the #511 review (issue #424, Phase 5). Not libSQL's - libSQL is the
-fifth of five instances of one gap, and the fix already exists in the codebase.
-
-`ssl.caCert`, `ssl.clientCert`, `ssl.clientKey` and `ssl.rejectUnauthorized` reach the
-driver on every provider that uses one. On the providers that speak HTTP through global
-`fetch` they reach nothing: ClickHouse, Druid, Elasticsearch/OpenSearch, Trino and libSQL
-each read `ssl.mode` only, to decide `http:` against `https:`, and Node's `fetch` cannot carry
-a custom CA or relax verification without an undici `Agent` as `dispatcher` - and undici
-must not become a dependency. So a self-hosted server with a private CA is reachable only
-by trusting it at the OS level, and the form's own TLS fields silently do nothing.
-
-**Couchbase already solved this and is the pattern**: `providers/document/couchbase/http-transport.ts`
-sends plaintext through `fetch` and TLS through `node:https`, a built-in that takes
-`ca`/`cert`/`key`/`rejectUnauthorized` directly (D26). Its `CouchbaseTlsMaterial` mapping,
-including `rejectUnauthorized: ssl.rejectUnauthorized ?? ssl.mode !== "require"`, is the
-behaviour the other five need.
-
-Not a defect in what any of them measures - it is a field the form offers and the transport
-discards, which is the kind of silence a security setting must not have.
-
-**Done when:** the TLS material mapping is shared rather than copied, the five `fetch`
-transports route TLS through it, and one test per transport pins that a supplied CA and a
-`verify-*` mode reach the request options - plus one that a `require` mode does not verify.
-
-### D36. `getConnectionInfo` masks a password in a connection string but not a token in a query string
-
-Found 2026-08-27 in the #511 review. Pre-existing, dead today, and cheap to close before it
-is not.
-
-`base-provider.ts`'s `protected getConnectionInfo()` returns
-`connectionString.replace(/:([^:@]+)@/, ":***@")`, which masks `:secret@` in an authority and
-nothing else. A libSQL connection string carries its credential in the query string instead -
-`libsql://db-org.turso.io?authToken=<jwt>` - so the whole token would survive the mask. The
-same is true of any `?password=`/`?sslkey=` form.
-
-It is currently unreachable: the only callers are in `tests/unit/db/base-provider.test.ts`, so
-no production path prints it. That is the reason this is a backlog entry rather than an issue,
-and also the reason it is worth doing - a future health-panel caller would inherit a leak that
-looks redacted.
-
-**Done when:** the mask also strips the value of every credential-shaped query parameter
-(`authToken`, `password`, `token`, `sslkey`), with a test per shape - or the method is deleted,
-since nothing in `src/` calls it.
 
 ---
 
@@ -764,25 +790,34 @@ recorded reason it is withheld.
 
 ## Authentication and security headers
 
-### AU3. The two headers that would protect a subresource are the two nobody has decided on
+### AU4. A sibling subdomain can time an authenticated endpoint, and the fix has nowhere to land
 
-Closing AU2 delivered `X-Content-Type-Options` and `X-Frame-Options` to the paths `src/proxy.ts`'s
-matcher skips, through `next.config.ts`'s `headers()`. Four of the six document headers were
-deliberately left out of that path and the reasons are recorded beside the rule: a `next.config`
-header set is baked at BUILD time while `src/lib/security/config.ts` reads its env per process, so a
-copy of the CSP would strand the `CSP_REPORT_ONLY` escape hatch, and a copy of HSTS — which is
-host-scoped, so the last value the browser receives wins — would let a request for `/logo.svg`
-silently downgrade the policy the document just set. `Referrer-Policy` and `Permissions-Policy` act
-on a document and are inert on an image or a script.
+Left open by the cross-origin header work in #512, which answered both headers it was filed for:
+`Cross-Origin-Opener-Policy: same-origin` is delivered from `securityHeaders()` and classified
+document-only in `next.config.ts`, and `Cross-Origin-Resource-Policy` is refused with the reason
+recorded beside the header rule. This entry is what the refusal gives up.
 
-What that leaves is the pair that WOULD add real protection to a subresource and that neither the
-Phase 1 set nor AU2 ever decided on: `Cross-Origin-Resource-Policy` and `Cross-Origin-Opener-Policy`.
-Both are constant values, so the build-time objection above does not apply to them. Neither has been
-measured against this app: CORP restricts who may embed our assets, and the app serves Monaco's
-workers from its own origin, so a wrong value breaks the editor rather than failing quietly.
+`auth-token` is `SameSite=Lax` (`src/lib/auth.ts`), which withholds it from a cross-*site* no-cors
+subresource request but sends it to a same-*site*, cross-*origin* one. So a page on any host under
+the deployment's own registrable domain - an XSS on a sibling, a dangling subdomain - can load a
+Studio URL as an `<img>`, a `<script>` or a no-cors `fetch` and read the load-versus-error and
+coarse-timing signal against an authenticated response. `nosniff` stops execution, the Origin check
+stops state change, `X-Frame-Options` and `frame-ancestors` stop framing; none of them stops the
+oracle. Recorded in `docs/SECURITY.md` under Known limits.
 
-**Done when:** each of the two is either delivered, with the value measured against a running editor
-and the Monaco worker path, or refused with the reason written next to the header rule.
+`Cross-Origin-Resource-Policy: same-origin` is the control, and #512 refused it for a structural
+reason rather than a doubt about the value: CORP acts only on subresources, `src/proxy.ts`'s matcher
+skips subresources, and the one path that does reach them - `next.config.ts`'s `headers()` - is baked
+at BUILD time. The correct value is the one header in the set that depends on deployment topology
+rather than on the application: `same-origin` blocks a second origin's document from reading this
+origin's subresources, cross-origin `importScripts` included, and `NEXT_PUBLIC_MONACO_VS_PATH`
+documents a topology where a host page loads Monaco from a Studio deployment. So a value an operator
+must be able to change cannot be delivered where it would act. Closing this starts with the delivery
+architecture, not with the header.
+
+**Done when:** a runtime-configurable header reaches `/monaco/vs/*` and `public/*` - which means
+admitting the header-only paths to `src/proxy.ts`'s matcher, returning before any auth decision -
+or the exposure is accepted in writing with the sibling-subdomain trust assumption stated.
 
 ## Tests
 
@@ -853,6 +888,46 @@ gap in the guard rather than a defect it is hiding.
 
 **Done when:** the check resolves a route's imports transitively, or the set of indirect helpers is
 itself pinned so a new one cannot appear unnoticed.
+
+### T6. A shared mock still answers a statement no server would answer
+
+Found 2026-08-27 while closing the MySQL health defect in #512. `defaultMockExecute` in
+`tests/integration/db/mysql-provider.test.ts` used to invent `query`/`calls`/`avgTime` rows for ANY
+statement against the digest table - including one naming `sql_text`, a column that table does not
+have - and about a hundred of that file's tests run against it. That fixture unfaithfulness is
+precisely how a health read asking for a non-existent column survived every gate, 100% line coverage
+and the reviews: the mock answered what a real server refuses.
+
+All three digest fixtures now route through one `sqlTextRefusal()` helper, so a fourth cannot drift
+from the others. But the repair is **prophylactic and unpinned**: reverting the shared fixture to its
+unfaithful shape leaves the suite at 111 pass / 0 fail, because the tests that need the refusal use
+dedicated fixtures. Nothing can tell whether the shared mock is honest.
+
+The general shape is worth a rule rather than one fixture's fix: a provider mock that answers a
+statement the engine would reject makes every test built on it a test of the mock.
+
+**Done when:** a mock that answers a statement its engine refuses fails something - by construction
+(one shared refusal path every fixture must go through) or by a test that drives the fixture itself.
+
+### T7. A user-facing sentence nobody tests, under a smell that hides it
+
+Found 2026-08-27 while verifying two external reviews of #512. `src/components/agent/AgentRail.tsx`
+selects the conversation-decline sentence in a four-arm nested ternary, and SonarCloud reports the
+nesting (`typescript:S3358`) because #512 added the fourth arm. The cosmetic complaint is not the
+finding. Three of the four sentences are asserted by `tests/components/agent/AgentRail.test.tsx`; the
+fourth - `connectionDropped`, *"Connection changed, so this question started a new conversation."* -
+is asserted nowhere, and `connectionDropped` appears in no test in the repository. It is live copy:
+`AgentRail.tsx:1112` sets it whenever a follow-up target exists and the rail is no longer on the
+connection the previous run opened on.
+
+The coverage gate cannot see this. All four arms are ONE expression, so a single covered line covers
+every arm, and 100% line coverage is reached with three of the four sentences never rendered in a
+test. Extracting the selection - which is what the smell asks for - gives each arm its own line and
+would fail the gate until the fourth is driven, which is the honest order to do it in and the reason
+#512 declined to extract it as a review nit.
+
+**Done when:** each of the four decline sentences is rendered by a test that names its trigger, and
+the selection is extracted so a fifth arm cannot be added without one.
 
 ## Dependencies
 
@@ -1876,25 +1951,6 @@ is the path B6 already complicates.
 **Done when:** either control exists in the service with its own ledger record, and the rail renders it
 because the service can honour it.
 
-### B12. A failed statement records no duration, so the meter counts completed reads only
-
-Opened by #329 T10b. `ExecutionBudgetTracker` charges `maxTotalRunMs` from every execution's elapsed
-time, on the failure path as well as the success one (`execution.ts` calls `endExecution` with
-`statements: 1` in both).
-
-The durable ledger is narrower. `tool-completed` carries the artifact's `summary.elapsedMs`, while
-`tool-refused` carries an `AgentToolRefusal`, whose database-error variant records a fingerprint and
-the engine's message and no duration at all. The rail folds its meter from the ledger, so its
-database-time figure is the sum over completed reads and sits BELOW what the tracker enforced whenever
-a statement failed.
-
-The rail says so beside the meter rather than quietly rounding: under-reporting the time a bound has
-already spent is the direction that misleads.
-
-**Done when:** a run whose statement failed shows the same database time the tracker charged it, with a
-test that fails on the current under-count. Recording the elapsed time of a failed execution means
-putting it in the refusal, which is a T2 contract change.
-
 ### B13. Three spends the agent run ledger never records, so the budget meter reads low
 
 Opened by #329 T10b, found by the task's own fresh-context review.
@@ -2218,40 +2274,6 @@ a run resumed often enough passes any constant.
 **Done when:** a drive's artifact allowance is derived from the run's own history rather than from a
 per-drive constant — most likely as part of B6 — with a test that drives one run twice past the cap and
 shows the first drive's cited results still readable, or the surface stating that they are not.
-
-### B38. A run is offered on an engine that cannot run it, and refuses only after a model turn
-
-Driven live on 2026-08-15. Starting an agent run on the bundled `libredb` sample opens the run, drafts a
-statement, invokes `run_read_query` and ends `failed` with `engine-unsupported`: "The agent cannot run on
-this database engine: it offers no read-only execution profile."
-
-The sentence is exact and the failure is honest. It is also entirely predictable before the run:
-`queryReadOnly` is a property of the provider, known from the connection's type, and nothing about the
-objective can change it.
-
-Since #414 the run also captures a schema on that engine successfully. So it now spends a model turn AND
-is grounded in a schema it will never be allowed to read a row of, which makes the offered-then-withdrawn
-shape worse rather than better.
-
-This repository follows the opposite rule everywhere else: `HydrationControls` renders no control the
-host cannot serve, the stop button is absent rather than disabled, and `canHandOver` withholds the
-auto-execute checkbox from a host with no runner.
-
-**The telling half landed with the rail redesign (2026-08-21).** The safety strip reads *Cannot execute
-on `<engine>`* before anything is started, an amber pre-start card (`agent-engine-unsupported-notice`)
-carries the same facts with a **Switch to Plan** button, and both are pinned by tests.
-
-**What did not land was refused rather than deferred: Start must stay live.** The `operations` workflow
-sends no statement at all and runs on every engine (#411), so a disabled Start would withhold a workflow
-over a claim that is not true of it. So a user who starts an analytical run there is now warned first,
-and still spends a model turn and a run id to reach `engine-unsupported`.
-
-**Done when:** a run whose workflow needs a read-only statement path is refused on such an engine at the
-point the run is opened — from the connection's own type, with the sentence the rail already shows, and
-without a run id or a drive turn being spent — while a workflow that sends no statement still opens
-there. The workflow has to be known first, so under **Automatic** the refusal lands after the classify
-call and before the open. Tests: the refusal itself, an operations run still opening on the same
-connection, and no drive reaching the model.
 
 ### B39. An analysis run cannot say "this database cannot answer that" without fabricating a read
 
@@ -2719,19 +2741,92 @@ so), and none of them has been measured.
 **Done when:** a resume onto a repointed connection does one stated thing, and the run's own record
 says which.
 
-### B76. `declined: "unavailable"` collapses six causes into one sentence
+### B77. The agent is told a count of slow queries that is a cap, and the rows are our own traffic
 
-The thread header records `declined: "unavailable"` for six different situations: the run does not
-exist, is not this session's, is on another connection, was established against another database (new
-the newest), has not ended, or names an id the ledger refuses. The rail therefore has one sentence for
-all six, and adding the database check made that sentence wrong for one of them — the earlier step COULD be reached,
-the database moved — which is why it now reads "could not be carried into this question" rather than
-"could not be reached". True of all six, and specific about none.
+Surfaced 2026-08-27 by the work that removed MySQL's fabricated "Performance schema not available"
+row. `src/lib/agent/tools.ts` projects `slowQueryCount: health.slowQueries.length`, and the health
+read that fills it is `LIMIT 5` with no slowness predicate at all - the ordering is
+`SUM_TIMER_WAIT DESC` and the only filter is the schema. So any server with five or more digests for
+the connected schema reports `slowQueryCount: 5` forever: the limit, not a count.
 
-The repoint case is the one with a genuinely different remedy: the others are transient or
-session-scoped, while this one persists until the operator changes the connection back or accepts the
-new conversation. A distinct code (`declined: "repointed"`) plus its own sentence is a type, route and
-rail change — the rail already has the sentence shape for the client-side `connectionDropped` case.
+Measured on a live MySQL 26.7.0 in that pass: 59 digests for the probed schema, and all five rows the
+health read returns are **Studio's own introspection statements**, the slow-query read itself first.
+So the model is handed a saturated constant and, if it ever reads the rows, our own monitoring
+traffic. The provider now records the cap where it is produced (`HEALTH_SLOW_QUERY_LIMIT`, and
+`docs/providers/mysql.md`), which is why this is a projection defect rather than a provider one.
 
-**Done when:** a cause whose remedy differs from the others carries its own code, or the collapse is
-recorded as deliberate with the reason.
+Not MySQL's alone: any provider whose `getHealth()` caps this list feeds the same projection, so the
+fix belongs with the curated reading rather than with one engine.
+
+**A source that could not be read reaches the model as the same zero.** Where the digest table
+cannot be read at all - a grant denied on it, or no `performance_schema` database at all
+(`ERROR 1049`, measured on an OceanBase tenant) - `getHealth()` leaves the list empty on purpose,
+because `HealthInfo.slowQueries` is a `SlowQuery[]` with no field a reason could travel in and a row
+carrying one is the fabrication #512 removed. The projection then hands the model
+`slowQueryCount: 0`, which says *this server has no slow queries* where the truth is *nobody could
+look*. The operator does get the reason, on the path that has a channel for it
+(`errors.slowQueries` -> `PanelUnavailable`); the model does not. So this is the absence rule (#477)
+one level up from the row, and it is the same fix site: the curated reading, not the provider.
+
+**Done when:** the curated health reading either carries a figure that is a measurement (a count
+under a stated threshold, or the digest total) or names the cap it is reporting, no engine's capped
+list can be read as a count, and a source that could not be read is ABSENT from the projection
+rather than present as a zero.
+
+### B78. The delta a failed statement records is unambiguous only because one constant says so
+
+Left open by #512. A failed execution now records its own span, computed as
+`tracker.usage(runId).totalElapsedMs` before the call subtracted from after
+(`src/lib/agent/tools.ts`), and a two-execution harness test pins that it is a delta rather than the
+run's running total. What makes the delta correct is `maxConcurrentExecutions: 1`
+(`src/lib/agent/execution-policy.ts`) - a single frozen constant, not a per-workflow value: with two
+executions in flight the subtraction would silently attribute the other one's time to whichever
+failed.
+
+Nothing fails if that constant is raised. The premise is documented next to the code and unguarded by
+any test, which is the same shape as a comment standing in for an assertion.
+
+The write side is the other half: `elapsedMs` survives `parseLedgerLine` under test, but nothing pins
+that the run service WRITES it into the NDJSON line in the first place - both are pass-through casts,
+so a field dropped at the write would be invisible to the fold and to the reader.
+
+**Done when:** raising `maxConcurrentExecutions` fails a test that names the delta as its reason, and
+one assertion covers the ledger write rather than only the parse.
+
+### B79. The re-pointed decline cannot be reached from the UI in the default storage mode
+
+Measured 2026-08-27, driving the built app in Chrome. `declined: "repointed"` fires when a follow-up
+names a predecessor whose `connectionIdentity` differs from the connection's current one, and the
+server is the one that compares - so the connection has to be one the SERVER holds. In the default
+`STORAGE_PROVIDER=local` deployment the only server-held connections are the seeds, and the seeds are
+not editable: opening a seed in the connection dialog and saving it writes a browser-local copy under
+the same id. The rail then refuses the run before any thread check, with the eligibility sentence
+"`<name>` cannot be rebuilt on the server: its settings live in this browser."
+
+So the drive that produces the decline is: a seed run, an edit of that seed's target ON THE SERVER
+between two questions, and a second question with the rail mounted throughout. That is a server-side
+config change, not something a user does in the product. The decline is real - `tests/api/agent/runs.test.ts`
+drives it end to end, including that it lasts exactly one question - and the sentence the rail shows
+for it is pinned by a component test. What has never been observed is a person reaching it.
+
+Two readings, and they need deciding rather than guessing: either this is a deployment-shaped path
+that only `STORAGE_PROVIDER=sqlite|postgres` installations can hit, in which case the rail's sentence
+should say so; or a seed edit ought to stay server-held, which is a storage decision and not this
+entry's to make.
+
+**Done when:** the decline is observed from the UI in some supported configuration, or the rail's
+sentence names the configuration it belongs to.
+
+### B80. The engine refusal renders the same paragraph twice, in two different registers
+
+Measured 2026-08-27 in Chrome, closing the engine refusal in #512. Starting an agent-mode run on the bundled LibreDB sample
+returns 400 and the rail renders `body.error` in the `agent-error` line - the posture's full body,
+about 350 characters. The amber pre-start card two elements above is showing the identical paragraph,
+because both read the same posture. So the operator is told the same four sentences twice, once as a
+standing explanation and once as the outcome of the action they just took.
+
+Reusing the posture was deliberate and is right: a third phrasing of one fact is worse. What is
+missing is the register. An error line wants the consequence ("this run was not opened") and a
+pointer to the standing explanation already on screen, not a second copy of it.
+
+**Done when:** the refused start says what happened to the request, and the explanation is read once.

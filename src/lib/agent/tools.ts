@@ -1593,6 +1593,30 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
   // to shape, and on a throw there is no result to carry this in.
   const phase = { statementSent: false };
 
+  /*
+    What the tracker had charged this run BEFORE this execution, so a refusal below can
+    say what this one cost it (#512).
+
+    Read off the tracker rather than measured here with `context.clock`. The figure the
+    meter owes a user is the one the ENFORCER charged against `maxTotalRunMs`, and a
+    second measurement of the same span is a second number that can disagree with it —
+    which is already the defect B13 records for the completed path, where the entry
+    carries the engine's own elapsed time and the tracker charges the span around the
+    whole call.
+
+    A delta over a running total is only unambiguous while one execution of a run can
+    be in flight, and it is: every agent workflow's budget freezes
+    `maxConcurrentExecutions: 1` (`execution-policy.ts`, gated for every workflow by
+    "runs one statement at a time: the loop is sequential"), and the policy pipeline
+    DENIES a second call while `activeExecutions` has reached that ceiling, so no
+    sibling can reach `endExecution` inside this span. `endRun` cannot land in it
+    either — it refuses while an execution is live. Raise that ceiling above 1 and this
+    delta becomes a sum over whatever settled alongside; read the tracker per execution
+    then, rather than around the call. Nothing FAILS if it is raised, though — the premise
+    is stated here and pinned by no test, which is what `docs/BACKLOG.md` B78 is open for.
+  */
+  const chargedBeforeMs = context.tracker.usage(context.runId).totalElapsedMs;
+
   let outcome: Awaited<ReturnType<typeof executeAuditedOperation<QueryResult>>>;
   try {
     outcome = await executeAuditedOperation<QueryResult>(
@@ -1635,7 +1659,15 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
       context.repairs.recordFailure(fingerprint, "reading-refused");
       return {
         kind: "refused",
-        refusal: { class: "reading-refused", reasonCode: error.reasonCode },
+        // The duration goes on this variant for the same reason the class exists: the
+        // execution was charged, and for `READING_OVER_BUDGET` the provider method
+        // actually ran and returned rows. A ledger that recorded the statement and not
+        // its cost would under-report a spend the tracker made.
+        refusal: {
+          class: "reading-refused",
+          reasonCode: error.reasonCode,
+          elapsedMs: context.tracker.usage(context.runId).totalElapsedMs - chargedBeforeMs,
+        },
         // The server's own words: nothing an engine wrote is in this sentence, so it
         // is not fenced.
         modelText: READING_REFUSAL_TEXT[error.reasonCode],
@@ -1649,7 +1681,16 @@ async function runAuditedAgentCall(context: AgentToolContext, call: AuditedAgent
     context.repairs.recordFailure(fingerprint, "database-error");
     return {
       kind: "refused",
-      refusal: { class: "database-error", statementFingerprint: fingerprint, message: error.message },
+      // `elapsedMs` is the tracker's own charge for this failed execution, recorded so
+      // the meter folded from the ledger cannot sit below the bound being enforced
+      // (#512). It is data, unlike `message`, which is the engine's text and is fenced
+      // wherever it re-enters a prompt.
+      refusal: {
+        class: "database-error",
+        statementFingerprint: fingerprint,
+        message: error.message,
+        elapsedMs: context.tracker.usage(context.runId).totalElapsedMs - chargedBeforeMs,
+      },
       // The engine's own words: untrusted, so fenced. The fingerprint stands in for
       // a correlation id, which a failed execution never produced.
       //
@@ -2336,6 +2377,10 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
           activeConnections: health.activeConnections ?? null,
           databaseSize: health.databaseSize,
           cacheHitRatio: health.cacheHitRatio,
+          // The LENGTH of a list the provider caps, not a count of slow statements:
+          // an engine whose health read returns its limit reports that limit forever.
+          // Named where it is produced rather than fixed here, because every capped
+          // provider feeds the same projection (`docs/BACKLOG.md` B77).
           slowQueryCount: health.slowQueries.length,
           activeSessionCount: health.activeSessions.length,
         },

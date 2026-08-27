@@ -17,6 +17,9 @@ import * as realAuth from "@/lib/auth";
 import * as realSeed from "@/lib/seed/resolve-connection";
 import * as realGate from "@/lib/agent/capability-gate";
 import { AgentRunStoreError } from "@/lib/agent/run-store";
+import { agentPosture } from "@/lib/agent/posture";
+import { AGENT_WORKFLOW_SENDS_STATEMENTS, type AgentRunWorkflowType } from "@/lib/agent/types";
+import { getDBConfig } from "@/lib/db-ui-config";
 
 const { SeedConnectionError } = realSeed;
 
@@ -270,7 +273,11 @@ describe("POST /api/agent/runs", () => {
 
       expect(res.status).toBe(202);
       const thread = mockStart.mock.calls.at(-1)?.[0].thread;
-      expect(thread).toMatchObject({ steps: [], text: "", declined: "unavailable" });
+      // Since #512 the re-pointed carry has its own code, because it is the only decline
+      // that is not a failure - every check above passed and the carry was refused on
+      // purpose, while the five under `unavailable` are the caller's own bug, transient,
+      // or another session's. How long it lasts is the next test's subject, not this one's.
+      expect(thread).toMatchObject({ steps: [], text: "", declined: "repointed" });
       // Nothing of the earlier step survives: not its objective, and not its claim.
       expect(thread?.steps).toEqual([]);
       expect(thread?.text).toBe("");
@@ -280,6 +287,63 @@ describe("POST /api/agent/runs", () => {
     } finally {
       // Restored by hand: `mock.module` is re-applied per test with the SAME mock
       // object, so an implementation left here would outlive this test.
+      if (original !== undefined) mockResolveConnection.mockImplementation(original);
+    }
+  });
+
+  /*
+    The SCOPE of the decline (#512), which is what the rail's sentence had wrong: it read
+    as a persisting condition, and the route makes it a one-question event. The run
+    opened by the declined question records the connection as it points NOW
+    (`connectionIdentity: connectionIdentityOfRun` in the `start` call below the check),
+    and an ordinary follow-up continues THAT run (`AgentRail.tsx`, `continueTarget`), so
+    the identity matches and the conversation carries. Three questions across one
+    re-point is the smallest shape that shows it.
+  */
+  test("the decline lasts one question: the follow-up after it carries on the re-pointed connection", async () => {
+    const original = mockResolveConnection.getMockImplementation();
+    try {
+      // Q1, against the database the connection addressed then.
+      await POST(startRequest(VALID_BODY));
+      const establishedIdentity = mockStart.mock.calls.at(-1)?.[0].connectionIdentity;
+      runs.set("arun_1", fakeRun({ status: "succeeded", connectionIdentity: establishedIdentity }));
+
+      // The user edits the connection to address staging. Same record, same id.
+      mockResolveConnection.mockImplementation(async (body: { connectionId?: string }) => ({
+        id: body.connectionId ?? "seed:sales",
+        name: "Sales",
+        type: "postgres",
+        database: "staging",
+      }));
+
+      // Q2 names Q1's run and is declined - the arm the test above pins.
+      await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_1" }));
+      const declinedStart = mockStart.mock.calls.at(-1)?.[0];
+      expect(declinedStart?.thread).toMatchObject({ declined: "repointed" });
+      const repointedIdentity = declinedStart?.connectionIdentity;
+      // Non-vacuous: the second run really is on a different database from the first,
+      // so what follows is about the decline's scope and not about nothing having moved.
+      expect(repointedIdentity).not.toBe(establishedIdentity);
+
+      // Q2's run ends. It is the one the rail names next, and it carries the identity
+      // the route just wrote - staging, not the production Q1 read.
+      runs.set(
+        "arun_new",
+        fakeRun({
+          runId: "arun_new",
+          status: "succeeded",
+          connectionIdentity: repointedIdentity,
+          objective: "why is checkout slow",
+        }),
+      );
+
+      // Q3, on the connection still pointed at staging.
+      await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_new" }));
+      const carried = mockStart.mock.calls.at(-1)?.[0].thread;
+
+      expect(carried?.declined).toBeUndefined();
+      expect(carried?.steps).toEqual([{ runId: "arun_new", objective: "why is checkout slow" }]);
+    } finally {
       if (original !== undefined) mockResolveConnection.mockImplementation(original);
     }
   });
@@ -467,6 +531,94 @@ describe("POST /api/agent/runs", () => {
 
     expect(body.missing).toEqual(["toolCalling", "structuredOutput", "streaming"]);
     expect(body.disproved).toEqual(["streaming"]);
+  });
+
+  /*
+    An engine that has no read-only statement path is refused when the run is OPENED,
+    not after a model turn (#512).
+
+    Driven live on 2026-08-15 before this landed: a run on the bundled `libredb` sample
+    opened, captured a schema, drafted a statement, called `run_read_query` and ended
+    `failed` with `engine-unsupported`. Nothing about the objective could have changed
+    that outcome - `queryReadOnly` is a property of the provider - so the whole spend
+    bought a sentence the server could have said first.
+
+    What the tests below pin is the pair, because either half alone is wrong: the
+    statement-sending workflows are refused, and `operations` still opens on the SAME
+    connection. A blanket refusal would withhold a workflow over a claim that is not
+    true of it (#411), which is exactly why the rail's amber card does not gate Start.
+  */
+  const UNSUPPORTED_ENGINE = { id: "seed:sample", name: "LibreDB Sample", type: "libredb" };
+
+  /** The sentence the rail's own pre-start card shows, read from the same module. */
+  const unsupportedSentence = agentPosture({
+    mode: "agent",
+    engine: "libredb",
+    engineLabel: getDBConfig("libredb").label,
+    handover: false,
+  }).body;
+
+  test("a statement-sending workflow is refused on an engine with no read-only statement path", async () => {
+    mockResolveConnection.mockResolvedValueOnce(UNSUPPORTED_ENGINE);
+
+    const res = await POST(startRequest(VALID_BODY));
+    const body = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    // The rail's sentence, not a third phrasing of the same fact.
+    expect(body.error).toBe(unsupportedSentence);
+    // No run id and no drive: the point of the entry is that neither is spent.
+    expect(mockStart).not.toHaveBeenCalled();
+    expect(mockDriveAgentRun).not.toHaveBeenCalled();
+    // And no model turn either - not even the capability probe, which is a model call
+    // of its own. The engine fact needs no model to establish, so it is answered first.
+    expect(mockAdmitAgentModel).not.toHaveBeenCalled();
+  });
+
+  test("every workflow is refused there exactly when AGENT_WORKFLOW_SENDS_STATEMENTS says it sends one", async () => {
+    // The route reads the record rather than a list of its own, so this loop is what
+    // keeps the two from drifting: a workflow that gained a statement tool without the
+    // flag would open here and end `engine-unsupported`, and one that gained the flag
+    // without the tools would be withheld from an engine it runs on.
+    for (const workflowType of ["investigation", "query-optimization", "database-assessment", "data-analysis"]) {
+      mockResolveConnection.mockResolvedValueOnce(UNSUPPORTED_ENGINE);
+      const res = await POST(startRequest({ ...VALID_BODY, workflowType }));
+      expect(res.status, workflowType).toBe(400);
+      expect(AGENT_WORKFLOW_SENDS_STATEMENTS[workflowType as AgentRunWorkflowType], workflowType).toBe(true);
+    }
+    expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  test("the operations workflow still opens on the same connection", async () => {
+    // It sends no statement at all: its reads are the curated provider methods every
+    // engine implements, under a profile whose gate does not ask for `queryReadOnly`.
+    mockResolveConnection.mockResolvedValueOnce(UNSUPPORTED_ENGINE);
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }));
+
+    expect(res.status).toBe(202);
+    expect(AGENT_WORKFLOW_SENDS_STATEMENTS.operations).toBe(false);
+    expect(mockStart).toHaveBeenCalledTimes(1);
+    expect(mockDriveAgentRun).toHaveBeenCalledTimes(1);
+  });
+
+  test("plan mode still opens there, because it executes nothing it drafts", async () => {
+    mockResolveConnection.mockResolvedValueOnce(UNSUPPORTED_ENGINE);
+
+    const res = await POST(startRequest({ ...VALID_BODY, mode: "planning" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart).toHaveBeenCalledTimes(1);
+  });
+
+  test("an engine that HAS a read-only statement path opens every workflow", async () => {
+    // The negative control: without it the refusal above could be refusing everything.
+    for (const workflowType of ["investigation", "operations", "data-analysis"]) {
+      mockStart.mockClear();
+      const res = await POST(startRequest({ ...VALID_BODY, workflowType }));
+      expect(res.status, workflowType).toBe(202);
+      expect(mockStart, workflowType).toHaveBeenCalledTimes(1);
+    }
   });
 
   test("opens a run for the session's own actor and reports it queued", async () => {

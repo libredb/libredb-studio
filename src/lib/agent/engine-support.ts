@@ -10,8 +10,11 @@ import type { DatabaseType } from "@/lib/types";
  * `engine-unsupported`. `queryReadOnly` exists on exactly two providers today
  * (`providers/sql/postgres.ts`, `providers/sql/sqlite.ts`), and that probe stays the real
  * rule: replacing it with this list would let the list go stale against the drivers.
- * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it measures the
- * provider prototypes and fails if this array and reality diverge in either direction.
+ * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
+ * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
+ * factory would construct (`mongodb` excepted: its module cannot be imported under Bun, so
+ * that one id is checked by source scan), and fails if this array and the drivers diverge in
+ * either direction.
  *
  * Two things it deliberately does NOT say, because user-facing copy that compresses them
  * overclaims (docs/AGENT.md, "How the agent is bounded"):

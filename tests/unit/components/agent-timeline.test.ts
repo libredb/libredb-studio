@@ -1523,9 +1523,163 @@ describe("foldLedgerEntries — the budget meter", () => {
 
     expect(gauge(view, "statements").used).toBe(1);
     expect(gauge(view, "repairs").used).toBe(1);
-    // The ledger records no duration for a statement that failed, so the meter
-    // does not invent one — the caveat beside it is what says so.
+    /*
+      An entry with no duration on it — the shape every refusal had before #512, and
+      the shape a ledger written by an older build still holds: every entry written
+      before the refusal here carries one, and every hand-written fixture. The meter adds nothing for it
+      rather than a zero — a zero would say this statement cost the database no time,
+      which is not what the absence records — and the run is COUNTED as holding an
+      unmeasured statement, so the rail can say so rather than presenting a total it
+      cannot stand behind (#477).
+    */
     expect(gauge(view, "database-time").used).toBe(0);
+    expect(view.statementsWithoutDuration).toBe(1);
+  });
+
+  /**
+   * Since #512 a failed statement carries the span the tracker charged it. The tracker
+   * charges a failed execution's elapsed time against `maxTotalRunMs` exactly as it
+   * charges a completed one's, so a meter that skipped it reported less than the bound
+   * the server was enforcing.
+   */
+  test("a failed statement that recorded its duration is counted, like the read that succeeded", () => {
+    const view = foldLedgerEntries([
+      completed("s1", "corr_1", 12),
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-refused",
+          atMs: 8,
+          stepId: "s2",
+          refusal: {
+            class: "database-error",
+            statementFingerprint: "fp1",
+            message: 'relation "custmers"',
+            elapsedMs: 30,
+          },
+        },
+      }),
+    ]);
+
+    expect(gauge(view, "statements").used).toBe(2);
+    expect(gauge(view, "database-time").used).toBe(42);
+    // Nothing is unmeasured on this run, so the rail owes it no such sentence.
+    expect(view.statementsWithoutDuration).toBe(0);
+  });
+
+  /**
+   * A MEASURED zero is a measurement, and `0` is the one duration that can be mistaken for
+   * an absence: the fold asks `refusal.elapsedMs === undefined`, and rewriting that as a
+   * truthiness check would move a statement the tracker charged 0 ms into the count of
+   * statements that recorded nothing - a refusal reported as "we do not know" about a span
+   * the server does know. The two tests above separate `undefined` from `30`, which a
+   * falsy check passes either way, so neither of them can see that inversion.
+   */
+  test("a failed statement charged zero milliseconds is measured, not counted as unmeasured", () => {
+    const view = foldLedgerEntries([
+      completed("s1", "corr_1", 12),
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-refused",
+          atMs: 8,
+          stepId: "s2",
+          refusal: {
+            class: "reading-refused",
+            reasonCode: "READING_OVER_BUDGET",
+            elapsedMs: 0,
+          },
+        },
+      }),
+    ]);
+
+    expect(gauge(view, "statements").used).toBe(2);
+    // 12 + 0: the zero is added as a span, which is why the sum does not move.
+    expect(gauge(view, "database-time").used).toBe(12);
+    expect(view.statementsWithoutDuration).toBe(0);
+  });
+
+  /**
+   * The same sum, but reached the way the rail really reaches it. Every other test in
+   * this describe folds object literals, and the only fixture here that carried a
+   * duration through `parseLedgerLine` is a `tool-completed` — so `refusal.elapsedMs`
+   * was never pinned across the NDJSON the run store is written as.
+   *
+   * It does survive today: `run-service.ts` puts the whole `settlement.refusal` on the
+   * `tool-refused` event, and `parseLedgerLine` validates `kind` and then casts, so it
+   * narrows nothing. This is the assertion that would notice if either end ever started
+   * dropping fields it does not name.
+   */
+  test("a refusal's duration survives the NDJSON line the ledger is actually written as", () => {
+    const refused = event({
+      kind: "event",
+      event: {
+        kind: "tool-refused",
+        atMs: 8,
+        stepId: "s2",
+        refusal: {
+          class: "database-error",
+          statementFingerprint: "fp1",
+          message: 'relation "custmers"',
+          elapsedMs: 30,
+        },
+      },
+    });
+
+    const parsed = [completed("s1", "corr_1", 12), refused]
+      .map((entry) => parseLedgerLine(JSON.stringify(entry)))
+      .filter((entry): entry is AgentLedgerEntry => entry !== null);
+
+    // Non-vacuous: a line dropped by the parser would leave a shorter list and a
+    // smaller sum that this length check catches first.
+    expect(parsed).toHaveLength(2);
+    expect(parsed[1]).toEqual(refused);
+    expect(gauge(foldLedgerEntries(parsed), "database-time").used).toBe(42);
+  });
+
+  /**
+   * The refused operational reading is charged the same way and for the same reason:
+   * it is decided inside the invoke callback, after `beginExecution`, so the tracker
+   * has already charged whatever the provider method spent getting there.
+   */
+  test("a refused reading's recorded duration is counted too", () => {
+    const view = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-refused",
+          atMs: 8,
+          stepId: "s1",
+          refusal: { class: "reading-refused", reasonCode: "READING_OVER_BUDGET", elapsedMs: 9 },
+        },
+      }),
+    ]);
+
+    expect(gauge(view, "statements").used).toBe(1);
+    expect(gauge(view, "database-time").used).toBe(9);
+    expect(gauge(view, "repairs").used).toBe(0);
+    expect(view.statementsWithoutDuration).toBe(0);
+  });
+
+  /**
+   * A refusal that charged NOTHING must not be reported as an unmeasured spend: the
+   * pipeline returned before `beginExecution`, so there is no missing duration to
+   * confess — the absence is the truth, not a gap in the record.
+   */
+  test("a denial is not an unmeasured spend, because nothing was charged", () => {
+    const view = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-refused",
+          atMs: 8,
+          stepId: "s1",
+          refusal: { class: "policy-denied", reasonCode: "ROLE_FORBIDDEN" },
+        },
+      }),
+    ]);
+
+    expect(view.statementsWithoutDuration).toBe(0);
   });
 
   test("a policy denial and an approval requirement cost nothing, because nothing ran", () => {
